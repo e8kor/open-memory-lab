@@ -843,6 +843,56 @@ entry.
 The same payload, naming the entry as it stood. The commit removes the entry and ends its
 sessions; the user's agent keys are untouched (ADR-0045 d13).
 
+### web.signed_up
+
+*Proposed · [ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d2*
+
+```json
+{ "email_digest": "sha256:…", "user": "u7k2m9xd4tp", "admin": false, "provider": "github",
+  "terms_version": "2026-11-06", "self_signup": true, "by_key_id": "…" }
+```
+
+A person signed up in open mode. The actor is the `signup.issuer` admin key; the fold is
+`web.email_allowed`'s, with `terms_version` recorded on the entry. The user is drawn, never
+derived from the email.
+
+### web.quota_set
+
+```json
+{ "user": "u7k2m9xd4tp", "user_root": "…", "quota": "keys", "limit": 10 }
+```
+
+An admin key set one person's quota, or with `"limit": null` returned it to the default
+(ADR-0068 d5).
+
+### web.user_disabled
+
+```json
+{ "user": "u7k2m9xd4tp", "by_key_id": "…" }
+```
+
+An admin key disabled a person: every entry of the user is disabled and its sessions end in the
+same commit. Each of the person's live agent keys is then cut off by its own `key.denied`
+(ADR-0068 d8).
+
+### web.deletion_requested
+
+```json
+{ "user": "u7k2m9xd4tp" }
+```
+
+The person asked, through `<user>-web`, for their account to be deleted. Nothing ends and no
+access changes (ADR-0068 d6).
+
+### web.deletion_closed
+
+```json
+{ "user": "u7k2m9xd4tp", "by_key_id": "…" }
+```
+
+An admin key closed the request after disabling the person. The memories stay until they are
+erased (ADR-0068 d6).
+
 ### memory.admin_read
 
 ```json

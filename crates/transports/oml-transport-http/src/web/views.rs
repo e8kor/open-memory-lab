@@ -157,6 +157,7 @@ fn grant_line(role: Role, path: &str) -> String {
 
 fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
     let mut tabs = vec![
+        ("/web/start", "Start"),
         ("/web", "Keys"),
         ("/web?view=setup", "Set up"),
         ("/web?view=memories", "Memories"),
@@ -170,8 +171,9 @@ fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
     tabs
 }
 
-const ADMIN_TABS: [(&str, &str); 7] = [
+const ADMIN_TABS: [(&str, &str); 8] = [
     ("/web/admin", "People"),
+    ("/web/admin/users", "Quotas"),
     ("/web/admin?view=queue", "Queue"),
     ("/web/admin?view=memories", "Memories"),
     ("/web/admin?view=review", "Review"),

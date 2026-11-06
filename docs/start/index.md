@@ -18,6 +18,25 @@ server the key is the only setting.
 The commands on this page are for v0.6.0; the default server dates from v0.4.1 and sign-in from
 v0.5.0 ([releases](../product/releases.md)).
 
+## Sign up on the public server: no key yet
+
+Once the operator opens sign-up on the public server ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md), proposed), you need only
+a Google or GitHub account. Sign in at `https://memory.doublegate.io/web`, accept the terms, and
+you land on `/web/start`:
+
+1. Choose your client: claude.ai, Claude Desktop or the phone app; Claude Code; or another MCP
+   tool.
+2. One button issues the right credential, shown once: a connect code and the connector URL for
+   claude.ai, a key and the plugin's install commands for Claude Code, or the URL and a key for
+   the rest.
+3. The page waits for your agent's first connection, then for its first memory, which you review
+   on the same site.
+
+You get a private space nobody else can read, up to 1,000 memories, 5 keys and 5 connections;
+the operator can raise a limit. Your agents' writes wait for your review. The operator of the
+server can read what you store. Export everything as JSON, or ask for your account to be
+deleted, from `/web/start`.
+
 ## Use OML: you have a key, and perhaps a server address
 
 You need Claude Code on your machine and an agent key from your administrator. With a key from

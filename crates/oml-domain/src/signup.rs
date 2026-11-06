@@ -1,0 +1,220 @@
+//! Open sign-up's pure rules (ADR-0068): the mode, the per-person quotas
+//! and their defaults, the user name a sign-up draws, and the quota check.
+//! The flow and the store are the application's.
+
+use crate::name::Name;
+use crate::oauth::CROCKFORD_ALPHABET;
+
+/// `signup.mode` (ADR-0068 d1): `allowlist`, the shipped default, keeps
+/// ADR-0045 unchanged; `open` lets a verified email no entry holds sign up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SignupMode {
+    #[default]
+    Allowlist,
+    Open,
+}
+
+impl SignupMode {
+    /// The setting's value, or `None` for anything else.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "allowlist" => Some(SignupMode::Allowlist),
+            "open" => Some(SignupMode::Open),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SignupMode::Allowlist => "allowlist",
+            SignupMode::Open => "open",
+        }
+    }
+}
+
+/// One of the four per-person quotas (ADR-0068 d5): the closed set the
+/// refusal's `details.quota` and the metric's label take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Quota {
+    Memories,
+    Keys,
+    Connections,
+    RequestsPerMinute,
+}
+
+impl Quota {
+    /// Every quota, in the order the pages list them.
+    pub const ALL: [Quota; 4] = [
+        Quota::Memories,
+        Quota::Keys,
+        Quota::Connections,
+        Quota::RequestsPerMinute,
+    ];
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Quota::Memories => "memories",
+            Quota::Keys => "keys",
+            Quota::Connections => "connections",
+            Quota::RequestsPerMinute => "requests_per_minute",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        Quota::ALL.into_iter().find(|q| q.as_str() == value)
+    }
+}
+
+/// The largest limit an admin may set (ADR-0068 d5).
+pub const QUOTA_LIMIT_MAX: u64 = 1_000_000;
+
+/// The per-person limits: the deployment's defaults, or one person's after
+/// an admin's override (ADR-0068 d1, d5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Quotas {
+    pub memories: u64,
+    pub keys: u64,
+    pub connections: u64,
+    pub requests_per_minute: u64,
+}
+
+impl Default for Quotas {
+    /// The operator's defaults of 2026-11-06, unmeasured (issue #164).
+    fn default() -> Self {
+        Self {
+            memories: 1000,
+            keys: 5,
+            connections: 5,
+            requests_per_minute: 120,
+        }
+    }
+}
+
+impl Quotas {
+    #[must_use]
+    pub fn get(&self, quota: Quota) -> u64 {
+        match quota {
+            Quota::Memories => self.memories,
+            Quota::Keys => self.keys,
+            Quota::Connections => self.connections,
+            Quota::RequestsPerMinute => self.requests_per_minute,
+        }
+    }
+
+    /// These limits with one person's overrides applied: an override
+    /// replaces its quota's default, and an absent one keeps it.
+    #[must_use]
+    pub fn with_overrides(mut self, overrides: &[(Quota, u64)]) -> Self {
+        for (quota, limit) in overrides {
+            match quota {
+                Quota::Memories => self.memories = *limit,
+                Quota::Keys => self.keys = *limit,
+                Quota::Connections => self.connections = *limit,
+                Quota::RequestsPerMinute => self.requests_per_minute = *limit,
+            }
+        }
+        self
+    }
+}
+
+/// A quota reached: what was hit, its limit and what is used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuotaReached {
+    pub quota: Quota,
+    pub limit: u64,
+    pub used: u64,
+}
+
+/// Whether one more of `quota` fits: `used` already counted, one more
+/// allowed only while `used < limit`, so a limit of zero admits none.
+pub fn check_quota(quota: Quota, limit: u64, used: u64) -> Result<(), QuotaReached> {
+    if used < limit {
+        Ok(())
+    } else {
+        Err(QuotaReached { quota, limit, used })
+    }
+}
+
+/// How many Crockford base32 symbols follow the `u` of a drawn user name.
+pub const DRAWN_USER_SYMBOLS: usize = 10;
+
+/// A sign-up's user name (ADR-0068 d2): `u` and ten lower-case Crockford
+/// base32 symbols drawn from `random`, never from the email, so no name
+/// carries the address.
+#[must_use]
+pub fn drawn_user(random: &[u8; 32]) -> Name {
+    let alphabet = CROCKFORD_ALPHABET.as_bytes();
+    let mut name = String::from("u");
+    for byte in random.iter().take(DRAWN_USER_SYMBOLS) {
+        name.push(char::from(alphabet[usize::from(*byte & 31)]).to_ascii_lowercase());
+    }
+    Name::parse(&name).expect("u and lower-case Crockford symbols are a name")
+}
+
+/// Whether the 90% doctor warning holds for `used` of `limit`.
+#[must_use]
+pub fn near_quota(limit: u64, used: u64) -> bool {
+    limit > 0 && used.saturating_mul(10) >= limit.saturating_mul(9)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_shipped_defaults_are_the_operators_choice() {
+        let q = Quotas::default();
+        assert_eq!(
+            (q.memories, q.keys, q.connections, q.requests_per_minute),
+            (1000, 5, 5, 120)
+        );
+    }
+
+    #[test]
+    fn a_quota_admits_one_more_only_below_its_limit() {
+        assert!(check_quota(Quota::Keys, 5, 4).is_ok());
+        let reached = check_quota(Quota::Keys, 5, 5).unwrap_err();
+        assert_eq!((reached.limit, reached.used), (5, 5));
+        assert!(check_quota(Quota::Memories, 0, 0).is_err());
+    }
+
+    #[test]
+    fn an_override_replaces_only_its_own_quota() {
+        let q = Quotas::default().with_overrides(&[(Quota::Memories, 5000)]);
+        assert_eq!(q.memories, 5000);
+        assert_eq!(q.keys, 5);
+    }
+
+    #[test]
+    fn a_drawn_user_is_a_name_that_starts_with_u_and_carries_no_email() {
+        let name = drawn_user(&[0xff; 32]);
+        assert_eq!(name.as_str().len(), 1 + DRAWN_USER_SYMBOLS);
+        assert!(name.as_str().starts_with('u'));
+        assert!(
+            name.as_str()
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        );
+        assert_ne!(drawn_user(&[0; 32]), drawn_user(&[1; 32]));
+    }
+
+    #[test]
+    fn the_mode_and_quota_names_round_trip() {
+        assert_eq!(SignupMode::parse("open"), Some(SignupMode::Open));
+        assert_eq!(SignupMode::parse("Open"), None);
+        for q in Quota::ALL {
+            assert_eq!(Quota::parse(q.as_str()), Some(q));
+        }
+    }
+
+    #[test]
+    fn near_quota_is_ninety_percent() {
+        assert!(near_quota(1000, 900));
+        assert!(!near_quota(1000, 899));
+        assert!(!near_quota(0, 0));
+    }
+}

@@ -2455,9 +2455,69 @@ impl<'a> From<&'a String> for Bearer<'a> {
     }
 }
 
+/// Open sign-up as the composition configured it (ADR-0068 d1): the mode,
+/// the tenant sign-ups land in and whose people are under quotas, the admin
+/// key that adds each entry, the terms a person accepts, the per-address
+/// limit and the per-person defaults.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignupPolicy {
+    pub mode: oml_domain::signup::SignupMode,
+    pub tenant_id: Uuid,
+    pub issuer: Name,
+    pub terms_version: String,
+    pub terms_url: String,
+    pub privacy_url: String,
+    pub per_ip_per_hour: u64,
+    pub quotas: oml_domain::signup::Quotas,
+}
+
+/// What one person holds against their quotas (ADR-0068 d5).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UserUsage {
+    /// Distinct memories in the root or below it, every state.
+    pub memories: u64,
+    /// The root's live bearer and connector keys.
+    pub keys: u64,
+    /// Open connections of the root's connector keys.
+    pub connections: u64,
+}
+
+impl UserUsage {
+    #[must_use]
+    pub fn get(&self, quota: oml_domain::signup::Quota) -> u64 {
+        use oml_domain::signup::Quota;
+        match quota {
+            Quota::Memories => self.memories,
+            Quota::Keys => self.keys,
+            Quota::Connections => self.connections,
+            Quota::RequestsPerMinute => 0,
+        }
+    }
+}
+
+/// A person's request to have their account deleted, pending until an admin
+/// closes it (ADR-0068 d6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeletionRequest {
+    pub user: Name,
+    pub requested_at: EventTime,
+}
+
 /// A typed application refusal; every variant names the rule it enforces.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    /// One of a person's quotas is reached; nothing was journalled
+    /// (`limit.quota`, `details: {quota, limit, used}`; ADR-0068 d5).
+    #[error("the {} quota of {} is reached", .0.quota.as_str(), .0.limit)]
+    QuotaReached(oml_domain::signup::QuotaReached),
+    /// A key of a person under quotas made more requests this minute than
+    /// its limit (`limit.rate`, `Retry-After`; ADR-0068 d5).
+    #[error("this key made {limit} requests this minute, its limit")]
+    KeyRateLimited { limit: u64, retry_after_secs: u64 },
+    /// A sign-up from an address past its hourly limit (`limit.rate`,
+    /// `Retry-After`; ADR-0068 d9).
+    #[error("too many sign-ups from this address; try again later")]
+    SignupRateLimited { retry_after_secs: u64 },
     #[error("unknown api key (reads fail closed — http-api.md authentication)")]
     Unauthorized,
     #[error(
@@ -2919,6 +2979,12 @@ pub struct WebEntry {
     /// The admin key that added the entry: the entry's first sign-in issues
     /// the person's session keys under it (ADR-0045 d6).
     pub added_by: Uuid,
+    /// The terms version the person accepted when they signed up
+    /// themselves; `None` for an entry an admin added (ADR-0068 d2).
+    pub terms_version: Option<String>,
+    /// When an admin disabled the entry's person; a disabled entry signs
+    /// in to nothing and cannot sign up again (ADR-0068 d8).
+    pub disabled_at: Option<EventTime>,
 }
 
 impl WebEntry {

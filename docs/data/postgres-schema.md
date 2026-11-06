@@ -979,6 +979,39 @@ The same migration lets `api_keys.credential` be `session` and adds `api_keys.se
 (`oml_name`), the allowlist user a session key serves, set exactly on a session key
 (`api_keys_session_user`); a session key, like a connector key, has no hash.
 
+## open sign-up (ADR-0068)
+
+*Proposed (migration `0037_open_signup`) · [ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d2, d5, d6, d8*
+
+```sql
+ALTER TABLE web_emails ADD COLUMN terms_version text;        -- set on a self-signed-up entry
+ALTER TABLE web_emails ADD COLUMN disabled_at   timestamptz; -- set by web.user_disabled
+
+CREATE TABLE user_quotas (
+    tenant_id uuid   NOT NULL REFERENCES tenants (id),
+    user_root uuid   NOT NULL,                 -- the person's root
+    quota     text   NOT NULL,                 -- memories | keys | connections | requests_per_minute
+    max_count bigint NOT NULL,                 -- 0 to 1 000 000
+    PRIMARY KEY (tenant_id, user_root, quota)
+);
+
+CREATE TABLE web_deletion_requests (
+    tenant_id    uuid        NOT NULL REFERENCES tenants (id),
+    user_name    oml_name    NOT NULL,
+    requested_at timestamptz NOT NULL,
+    closed_at    timestamptz,                  -- set by web.deletion_closed; the row is kept
+    PRIMARY KEY (tenant_id, user_name, requested_at)
+);  -- one pending row per user: UNIQUE (tenant_id, user_name) WHERE closed_at IS NULL
+```
+
+`web_emails.terms_version` is folded from `web.signed_up`'s payload and `disabled_at` from
+`web.user_disabled`, whose commit also deletes the user's sessions. `user_quotas` is folded from
+`web.quota_set`: a row replaces its quota's deployment default for that person, and a cleared
+limit deletes the row. `web_deletion_requests` is folded from `web.deletion_requested` and
+`web.deletion_closed`; no row is deleted. Both tables are under `tenant_isolation`; the serving
+role holds `SELECT, INSERT, UPDATE, DELETE` on `user_quotas` and `SELECT, INSERT, UPDATE` on
+`web_deletion_requests`.
+
 ## vocabularies (ADR-0021)
 
 Vocabulary state is claims plus two folds of the journal and one per-release materialization:

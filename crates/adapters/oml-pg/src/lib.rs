@@ -2976,7 +2976,8 @@ async fn apply_fold(
         MetadataFold::WebEmailAllowed(entry) => {
             sqlx::query(
                 "INSERT INTO web_emails (tenant_id, email_hash, email, user_name, admin, \
-                 created_at, added_by) VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, $7)",
+                 created_at, added_by, terms_version) \
+                 VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, $7, $8)",
             )
             .bind(tenant_id)
             .bind(entry.email.digest().0.to_vec())
@@ -2985,6 +2986,7 @@ async fn apply_fold(
             .bind(entry.admin)
             .bind(at.as_str())
             .bind(entry.added_by)
+            .bind(entry.terms_version.as_deref())
             .execute(&mut **tx)
             .await
             .map_err(|e| match &e {
@@ -3035,6 +3037,76 @@ async fn apply_fold(
                     "web.email_removed names an entry the tenant does not hold".to_owned(),
                 ));
             }
+        }
+        MetadataFold::QuotaSet {
+            user_root,
+            quota,
+            limit,
+        } => {
+            match limit {
+                Some(limit) => sqlx::query(
+                    "INSERT INTO user_quotas (tenant_id, user_root, quota, max_count) \
+                     VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, user_root, quota) \
+                     DO UPDATE SET max_count = EXCLUDED.max_count",
+                )
+                .bind(tenant_id)
+                .bind(user_root)
+                .bind(quota.as_str())
+                .bind(i64::try_from(limit).map_err(backend)?),
+                None => sqlx::query(
+                    "DELETE FROM user_quotas WHERE tenant_id = $1 AND user_root = $2 \
+                     AND quota = $3",
+                )
+                .bind(tenant_id)
+                .bind(user_root)
+                .bind(quota.as_str()),
+            }
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::UserDisabled { user } => {
+            sqlx::query("DELETE FROM web_sessions WHERE tenant_id = $1 AND user_name = $2")
+                .bind(tenant_id)
+                .bind(user.as_str())
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            sqlx::query(
+                "UPDATE web_emails SET disabled_at = ($3)::timestamptz \
+                 WHERE tenant_id = $1 AND user_name = $2",
+            )
+            .bind(tenant_id)
+            .bind(user.as_str())
+            .bind(at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::DeletionRequested { user } => {
+            sqlx::query(
+                "INSERT INTO web_deletion_requests (tenant_id, user_name, requested_at) \
+                 VALUES ($1, $2, ($3)::timestamptz) \
+                 ON CONFLICT (tenant_id, user_name) WHERE closed_at IS NULL DO NOTHING",
+            )
+            .bind(tenant_id)
+            .bind(user.as_str())
+            .bind(at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::DeletionClosed { user } => {
+            sqlx::query(
+                "UPDATE web_deletion_requests SET closed_at = ($3)::timestamptz \
+                 WHERE tenant_id = $1 AND user_name = $2 AND closed_at IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(user.as_str())
+            .bind(at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
         }
         MetadataFold::CrewCreated(c) => {
             sqlx::query(
@@ -5207,6 +5279,65 @@ pub const SPARSE_MAX_ATTEMPTS: i32 = 5;
 pub const SPARSE_LEASE_SECS: i64 = 300;
 
 impl JournalStore for PgStore {
+    async fn user_usage(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<oml_app::types::UserUsage, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let (memories, keys, connections): (i64, i64, i64) = sqlx::query_as(
+            "SELECT \
+               (SELECT count(*) FROM (SELECT DISTINCT m.workarea_id, m.claim_key \
+                  FROM memories m JOIN workareas w \
+                    ON w.tenant_id = m.tenant_id AND w.id = m.workarea_id \
+                  WHERE m.tenant_id = $1 AND (w.id = $2 OR w.namespace_root_id = $2)) d), \
+               (SELECT count(*) FROM api_keys k WHERE k.tenant_id = $1 AND k.user_root_id = $2 \
+                  AND k.revoked_at IS NULL AND k.credential <> 'session'), \
+               (SELECT count(*) FROM oauth_connections c JOIN api_keys k \
+                  ON k.tenant_id = c.tenant_id AND k.id = c.key_id \
+                  WHERE c.tenant_id = $1 AND k.user_root_id = $2 AND c.state = 'open')",
+        )
+        .bind(tenant_id)
+        .bind(user_root)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let count = |n: i64| u64::try_from(n).unwrap_or(0);
+        Ok(oml_app::types::UserUsage {
+            memories: count(memories),
+            keys: count(keys),
+            connections: count(connections),
+        })
+    }
+
+    async fn user_quota_overrides(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<Vec<(oml_app::domain::signup::Quota, u64)>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT quota, max_count FROM user_quotas WHERE tenant_id = $1 AND user_root = $2",
+        )
+        .bind(tenant_id)
+        .bind(user_root)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.into_iter()
+            .map(|(quota, limit)| {
+                let quota = oml_app::domain::signup::Quota::parse(&quota).ok_or_else(|| {
+                    StoreError::Backend(format!("user_quotas.quota {quota:?} is not a quota"))
+                })?;
+                Ok((quota, u64::try_from(limit).map_err(backend)?))
+            })
+            .collect()
+    }
+
     async fn commit_chain(&self, reqs: Vec<CommitRequest>) -> Result<CommitReceipt, StoreError> {
         // Everything networked happened before BEGIN (ADR-0024): the events
         // arrive signed; inside the transaction nothing waits on anything
@@ -6908,8 +7039,12 @@ async fn end_entry_sessions(
     Ok(())
 }
 
-const WEB_ENTRY_COLUMNS: &str =
-    "tenant_id, email, user_name, admin, google_subject, github_subject, added_by";
+const WEB_ENTRY_COLUMNS: &str = concat!(
+    "tenant_id, email, user_name, admin, google_subject, github_subject, added_by, ",
+    "terms_version, ",
+    utc!("disabled_at"),
+    " AS disabled_at_signed"
+);
 
 fn web_entry_from_row(row: &PgRow) -> Result<WebEntry, StoreError> {
     let email: String = row.try_get("email").map_err(backend)?;
@@ -6922,6 +7057,8 @@ fn web_entry_from_row(row: &PgRow) -> Result<WebEntry, StoreError> {
         google_subject: row.try_get("google_subject").map_err(backend)?,
         github_subject: row.try_get("github_subject").map_err(backend)?,
         added_by: row.try_get("added_by").map_err(backend)?,
+        terms_version: row.try_get("terms_version").map_err(backend)?,
+        disabled_at: event_time_column(row, "disabled_at_signed")?,
     })
 }
 
@@ -7223,6 +7360,35 @@ impl WebStore for PgStore {
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         rows.iter().map(memory_from_row).collect()
+    }
+
+    async fn web_deletion_requests(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Vec<oml_app::types::DeletionRequest>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(concat!(
+            "SELECT user_name, ",
+            utc!("requested_at"),
+            " AS requested_at_signed FROM web_deletion_requests \
+             WHERE tenant_id = $1 AND closed_at IS NULL ORDER BY requested_at"
+        ))
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter()
+            .map(|row| {
+                let user: String = row.try_get("user_name").map_err(backend)?;
+                Ok(oml_app::types::DeletionRequest {
+                    user: Name::parse_reference(&user).map_err(backend)?,
+                    requested_at: event_time_column(row, "requested_at_signed")?
+                        .ok_or_else(|| StoreError::Backend("requested_at is null".to_owned()))?,
+                })
+            })
+            .collect()
     }
 
     async fn web_sessions_sweep(&self, tenant_id: Uuid, at: &EventTime) -> Result<u64, StoreError> {

@@ -128,7 +128,9 @@ off the host. This is the operator's decision for now (ADR-0058 d5), stated plai
   versions); recreating it costs less than running backups and rehearsing restores today.
 - **The trigger to add them.** Backups and one rehearsed [restore](restore.md) are added before
   the first of: a key or a sign-in allowlist entry for anyone but the operator; a second
-  organisation; or memories the operator would not recreate by hand. The scope is then a daily
+  organisation; or memories the operator would not recreate by hand. Setting `signup.mode = open`
+  ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md))
+  creates such entries, so it waits for this too. The scope is then a daily
   `pg_dump` (as the PostgreSQL superuser, since forced row security stops the owner role's dump)
   copied off the host, the keyring copied with it under its own protection, a retention window
   declared in [deployment](deployment.md)'s backup table, and the [backup failed](runbooks.md#backup-failed)

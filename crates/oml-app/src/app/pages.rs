@@ -298,6 +298,10 @@ where
         connector: bool,
     ) -> Result<IssuedKey, AppError> {
         let user_name = self.web_user_of(web).await?;
+        // A person of the sign-up tenant holds at most their keys quota
+        // (ADR-0068 d5).
+        self.require_quota(&web.key, oml_domain::signup::Quota::Keys)
+            .await?;
         if SESSION_KEY_SUFFIXES.contains(&suffix) {
             return Err(field(
                 "name",

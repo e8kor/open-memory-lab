@@ -8,12 +8,14 @@
 mod pages;
 mod rescan;
 mod search;
+mod signup;
 mod sparse;
 mod usage;
 mod web;
 pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
+pub use signup::{DRAWS_MAX, SignupState, StartStatus, UserRow};
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
@@ -213,6 +215,9 @@ pub struct App<J, S, C, I, Sc> {
     /// The claim formats this deployment serves (ADR-0056 d1, d3): prose
     /// alone until the composition gives it the compiled-in adapters.
     formats: Arc<dyn crate::ports::Formats>,
+    /// Open sign-up and its counters; `None` where the deployment has no
+    /// sign-up tenant, and then no quotas (ADR-0068 d1, d5).
+    signup: Option<Arc<signup::SignupState>>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -1253,6 +1258,7 @@ where
             feedback_counts: std::sync::Mutex::default(),
             sparse: None,
             formats: Arc::new(crate::ports::ProseFormats),
+            signup: None,
         }
     }
 
@@ -1388,6 +1394,9 @@ where
     /// effective access; ADR-0025 d1).
     async fn authenticate(&self, api_key: &str) -> Result<Caller, AppError> {
         let key = self.key_of_value(api_key).await?;
+        // A person of the sign-up tenant's key under its request rate
+        // (ADR-0068 d5).
+        self.admit_request(&key).await?;
         self.caller_of(key).await
     }
 
@@ -1397,7 +1406,10 @@ where
     async fn authenticate_bearer(&self, bearer: Bearer<'_>) -> Result<Caller, AppError> {
         match bearer {
             Bearer::Key(value) => self.authenticate(value).await,
-            Bearer::Connection(caller) => self.caller_of(caller.key.clone()).await,
+            Bearer::Connection(caller) => {
+                self.admit_request(&caller.key).await?;
+                self.caller_of(caller.key.clone()).await
+            }
             Bearer::Session(caller) => {
                 let mut fresh = self.caller_of(caller.key.clone()).await?;
                 fresh.own_keys.clone_from(&caller.own_keys);
@@ -4633,6 +4645,10 @@ where
             }
             return Err(refusal);
         }
+        // A person of the sign-up tenant writes at most their memories
+        // quota; nothing is journalled past it (ADR-0068 d5).
+        self.require_quota(key, oml_domain::signup::Quota::Memories)
+            .await?;
 
         // An omitted claim_key is derived from the author and the text; the
         // `auto-` prefix is the server's alone (ADR-0039 d6). The author id
@@ -8965,6 +8981,12 @@ where
             .into_iter()
             .find(|c| c.state == ConnectionState::Open)
             .map(|c| c.connection_id);
+        // A new connection, not a replacement, counts against the person's
+        // connections quota (ADR-0068 d5).
+        if replaces.is_none() {
+            self.require_quota(key, oml_domain::signup::Quota::Connections)
+                .await?;
+        }
         let (issued, tokens) = self.mint_token_pair(now);
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(

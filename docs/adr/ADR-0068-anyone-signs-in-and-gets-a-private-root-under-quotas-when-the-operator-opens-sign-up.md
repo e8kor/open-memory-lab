@@ -114,8 +114,9 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
   principal `<user>-review`. R2 excludes the keys and principals of the row's lineage closure
   (ADR-0044 d8), so `<user>-review` may approve an agent's write and is refused any row it
   wrote or proposed. The person's own direct writes from the pages run as `<user>-web`, also a
-  different key from the reviewer, under the same rule. Every verdict, transition and
-  ratification where author and reviewer name one person carries `same_user: true`
+  different key from the reviewer, under the same rule. Every promotion, transition and
+  ratification where author and reviewer name one person carries `same_user: true`, and
+  `self_signed: false`
   ([ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)
   d2; ADR-0055 d7). An auditor reading the export sees a person approving their own agents'
   work, and the pages say "(you)" beside such a verdict. Nothing here self-signs. ADR-0001 d5's
@@ -172,7 +173,7 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
       designed). The operator then erases the person's memories with `oml erase`. Until then the
       closure is a cut-off with the content kept, and the terms say so. That is R4: never
       silent, and never a delete. `oml doctor` under an admin key warns
-      `warn signup: <n> deletion requests pending, oldest <age>`.
+      `warn signup: <n> deletion requests pending, oldest requested <time>`.
 
 - **d7 — There is no anonymous access.** Every page but the sign-in page and the terms page needs
   a live session. Every API and MCP route needs a key or a connection, as before. The status
@@ -263,7 +264,7 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     | a quota reached | `limit.quota` with `{quota, limit, used}` | `warn quota` (d5) |
     | a key's request rate | `limit.rate` with `Retry-After` | — (metrics) |
     | a disabled entry | `auth.invalid`, `disabled` | — |
-    | deletion requests pending | — | `warn signup` with count and oldest age (d6) |
+    | deletion requests pending | — | `warn signup` with the count and the oldest request's time (d6) |
     | open sign-up on a deployment with no backup | — | — (an ADR-0058 d5 rule; the production page checklist) |
 
 ## Consequences

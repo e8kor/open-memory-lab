@@ -83,6 +83,10 @@ pub struct Config {
     /// `brief.max_tokens`: the budget a workarea's brief is cut to, in
     /// budget tokens; 400 when unset, unmeasured (ADR-0046 d8; FR-77).
     pub brief_max_tokens: u64,
+    /// `signup.*` and `quota.*`: open sign-up, its tenant, issuer and
+    /// terms, and the per-person limits; `None` in allowlist mode
+    /// (ADR-0068 d1).
+    pub signup: Option<oml_app::types::SignupPolicy>,
     /// `search.enabled` and `search.default`: the pipelines served and the
     /// default (ADR-0049 d4), with `search.rerank.depth` and
     /// `search.rerank.floor` (ADR-0053 d4, d6).
@@ -435,6 +439,17 @@ const KEY_WEB_GOOGLE_CLIENT_SECRET: &str = "web.google.client_secret";
 const KEY_WEB_GITHUB_CLIENT_ID: &str = "web.github.client_id";
 const KEY_WEB_GITHUB_CLIENT_SECRET: &str = "web.github.client_secret";
 const KEY_BRIEF_MAX_TOKENS: &str = "brief.max_tokens";
+const KEY_SIGNUP_MODE: &str = "signup.mode";
+const KEY_SIGNUP_TENANT: &str = "signup.tenant";
+const KEY_SIGNUP_ISSUER: &str = "signup.issuer";
+const KEY_SIGNUP_TERMS_VERSION: &str = "signup.terms_version";
+const KEY_SIGNUP_TERMS_URL: &str = "signup.terms_url";
+const KEY_SIGNUP_PRIVACY_URL: &str = "signup.privacy_url";
+const KEY_SIGNUP_PER_IP_PER_HOUR: &str = "signup.per_ip_per_hour";
+const KEY_QUOTA_MEMORIES: &str = "quota.memories";
+const KEY_QUOTA_KEYS: &str = "quota.keys";
+const KEY_QUOTA_CONNECTIONS: &str = "quota.connections";
+const KEY_QUOTA_REQUESTS_PER_MINUTE: &str = "quota.requests_per_minute";
 const KEY_SEARCH_ENABLED: &str = "search.enabled";
 const KEY_SEARCH_DEFAULT: &str = "search.default";
 const KEY_RERANK_MODEL: &str = "search.rerank.model";
@@ -465,6 +480,83 @@ fn file_lookup<'a>(doc: &'a toml::Value, key: &str) -> Option<&'a toml::Value> {
         node = node.get(part)?;
     }
     Some(node)
+}
+
+/// `signup.*` and `quota.*` (ADR-0068 d1): `None` in allowlist mode, the
+/// shipped default; in open mode every required value set, and the pages'
+/// origin, `oauth.issuer`, set too. A missing or malformed value stops the
+/// start, naming the setting.
+fn signup_policy(
+    lookup: &dyn Fn(&str) -> Option<String>,
+    issuer_set: bool,
+) -> Result<Option<oml_app::types::SignupPolicy>, ConfigError> {
+    use oml_app::domain::signup::{QUOTA_LIMIT_MAX, Quotas, SignupMode};
+    let mode = match lookup(KEY_SIGNUP_MODE) {
+        None => SignupMode::Allowlist,
+        Some(value) => SignupMode::parse(&value).ok_or_else(|| {
+            ConfigError::Invalid(format!(
+                "{KEY_SIGNUP_MODE} {value:?} is allowlist or open (ADR-0068 d1)"
+            ))
+        })?,
+    };
+    if mode == SignupMode::Allowlist {
+        return Ok(None);
+    }
+    if !issuer_set {
+        return Err(ConfigError::Invalid(format!(
+            "{KEY_SIGNUP_MODE} is open and {KEY_OAUTH_ISSUER} is not: the pages are served on its origin (ADR-0068 d1)"
+        )));
+    }
+    let required = |key: &str| {
+        lookup(key).filter(|v| !v.trim().is_empty()).ok_or_else(|| {
+            ConfigError::Invalid(format!(
+                "{key} is required when {KEY_SIGNUP_MODE} is open (ADR-0068 d1)"
+            ))
+        })
+    };
+    let tenant = required(KEY_SIGNUP_TENANT)?;
+    let tenant_id = Uuid::parse_str(tenant.trim()).map_err(|_| {
+        ConfigError::Invalid(format!(
+            "{KEY_SIGNUP_TENANT} {tenant:?} is not a tenant id (ADR-0068 d1)"
+        ))
+    })?;
+    let issuer = required(KEY_SIGNUP_ISSUER)?;
+    let issuer = oml_app::domain::name::Name::parse(issuer.trim())
+        .map_err(|e| ConfigError::Invalid(format!("{KEY_SIGNUP_ISSUER}: {e} (ADR-0068 d1)")))?;
+    let number = |key: &str, default: u64| -> Result<u64, ConfigError> {
+        match lookup(key) {
+            None => Ok(default),
+            Some(v) => v
+                .trim()
+                .parse::<u64>()
+                .ok()
+                .filter(|n| *n <= QUOTA_LIMIT_MAX)
+                .ok_or_else(|| {
+                    ConfigError::Invalid(format!(
+                        "{key} {v:?} is not a whole number from 0 to {QUOTA_LIMIT_MAX} (ADR-0068 d1)"
+                    ))
+                }),
+        }
+    };
+    let defaults = Quotas::default();
+    Ok(Some(oml_app::types::SignupPolicy {
+        mode,
+        tenant_id,
+        issuer,
+        terms_version: required(KEY_SIGNUP_TERMS_VERSION)?,
+        terms_url: required(KEY_SIGNUP_TERMS_URL)?,
+        privacy_url: required(KEY_SIGNUP_PRIVACY_URL)?,
+        per_ip_per_hour: number(KEY_SIGNUP_PER_IP_PER_HOUR, 5)?,
+        quotas: Quotas {
+            memories: number(KEY_QUOTA_MEMORIES, defaults.memories)?,
+            keys: number(KEY_QUOTA_KEYS, defaults.keys)?,
+            connections: number(KEY_QUOTA_CONNECTIONS, defaults.connections)?,
+            requests_per_minute: number(
+                KEY_QUOTA_REQUESTS_PER_MINUTE,
+                defaults.requests_per_minute,
+            )?,
+        },
+    }))
 }
 
 impl Config {
@@ -621,6 +713,7 @@ impl Config {
                 ))
             })?,
         };
+        let signup = signup_policy(&lookup, oauth_issuer.is_some())?;
         // A TOML array in the file, comma-separated in the environment; an
         // unknown name, an empty set or a default outside it stops the start
         // (configuration.md search.*; ADR-0049 d4).
@@ -804,6 +897,7 @@ impl Config {
             web_google,
             web_github,
             brief_max_tokens,
+            signup,
             search,
             rerank,
             sparse,
@@ -822,13 +916,17 @@ impl Config {
             providers.push((Provider::GitHub, github.client_id.clone()));
         }
         (!providers.is_empty()).then(|| {
-            WebPages::new(
+            let pages = WebPages::new(
                 providers,
                 ProviderClients {
                     google: self.web_google.clone(),
                     github: self.web_github.clone(),
                 },
-            )
+            );
+            match &self.signup {
+                Some(policy) => pages.with_signup(policy.clone()),
+                None => pages,
+            }
         })
     }
 
@@ -1638,6 +1736,13 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
         Some(issuer) => app.with_oauth_issuer(issuer),
         None => app,
     };
+    // Open sign-up and the quotas of its tenant (ADR-0068 d1): an issuer
+    // that is not a live admin key of that tenant stops the start.
+    let app = match web.as_ref().and_then(|w| w.signup_policy().cloned()) {
+        Some(policy) => app.with_signup(policy),
+        None => app,
+    };
+    app.check_signup_policy().await?;
     // The naming signs, and the lead never signs on top of a fork (ADR-0002
     // d7): after a failed fork check the start only reads whether a row has
     // no name.

@@ -110,6 +110,26 @@ impl<J: Retriever> Retriever for Timed<J> {
 }
 
 impl<J: JournalStore> JournalStore for Timed<J> {
+    fn user_usage(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> impl Future<Output = Result<oml_app::types::UserUsage, StoreError>> + Send {
+        timed("user_usage", self.inner.user_usage(tenant_id, user_root))
+    }
+
+    fn user_quota_overrides(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> impl Future<Output = Result<Vec<(oml_app::domain::signup::Quota, u64)>, StoreError>> + Send
+    {
+        timed(
+            "user_quota_overrides",
+            self.inner.user_quota_overrides(tenant_id, user_root),
+        )
+    }
+
     fn brief_edge(
         &self,
         tenant_id: Uuid,
@@ -866,6 +886,16 @@ impl<J: WebStore> WebStore for Timed<J> {
         timed(
             "web_admin_search",
             self.inner.web_admin_search(tenant_id, search),
+        )
+    }
+
+    fn web_deletion_requests(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::DeletionRequest>, StoreError>> + Send {
+        timed(
+            "web_deletion_requests",
+            self.inner.web_deletion_requests(tenant_id),
         )
     }
 

@@ -357,6 +357,12 @@ impl Traffic {
         self
     }
 
+    /// Whether `server.trusted_proxies` names any proxy (ADR-0068 d9).
+    #[must_use]
+    pub fn proxies_trusted(&self) -> bool {
+        !self.trusted.is_empty()
+    }
+
     /// The metrics the layer and the MCP facade record, which the
     /// composition serves on `server.metrics_listen` (ADR-0042 d11).
     #[must_use]
@@ -486,6 +492,16 @@ async fn catch_panics(State(traffic): State<Traffic>, req: Request, next: Next) 
     }
 }
 
+/// The client address the request line logs, for a handler that limits
+/// by it (ADR-0042 d7; ADR-0068 d9); `None` without a peer.
+#[derive(Debug, Clone, Copy)]
+pub struct ClientAddr(pub Option<IpAddr>);
+
+/// A refusal that names a quota, for `oml_quota_refused_total`
+/// (ADR-0068 d5): the quota's name from the closed set.
+#[derive(Debug, Clone, Copy)]
+pub struct QuotaRefused(pub &'static str);
+
 pub(crate) async fn layer(
     State(traffic): State<Traffic>,
     mut req: Request,
@@ -504,6 +520,9 @@ pub(crate) async fn layer(
         .get::<ConnectInfo<SocketAddr>>()
         .map(|c| c.0.ip());
     let client = traffic.trusted.client_ip(peer, req.headers());
+    // The sign-up limit reads the logged address (ADR-0068 d9).
+    req.extensions_mut()
+        .insert(ClientAddr(client.map(|(ip, _)| ip)));
     let agent = req
         .headers()
         .get(header::USER_AGENT)
@@ -616,6 +635,9 @@ pub(crate) async fn layer(
     );
     if let Some((pipeline, fallback, access)) = observed.search {
         traffic.metrics.recall(pipeline, fallback, access);
+    }
+    if let Some(refused) = response.extensions().get::<QuotaRefused>() {
+        traffic.metrics.quota_refused(refused.0);
     }
     if let Some((outcome, reason)) = observed.rerank {
         traffic.metrics.rerank(outcome, reason);

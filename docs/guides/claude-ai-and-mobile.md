@@ -23,6 +23,28 @@ role can create roles, as CI's does, and no green run of either is recorded yet.
 claude.ai itself has been made either, so every step below that names a claude.ai screen is
 Anthropic's documentation, not a recorded run.
 
+## On the public server: sign up, then follow /web/start
+
+Where the operator has opened sign-up ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md), proposed), no administrator is needed.
+Sign up at `https://memory.doublegate.io/web` with Google or GitHub, accept the terms, and on
+`/web/start` choose **claude.ai, Desktop or phone**. One button issues a connector key and shows
+its connect code once, with the exact connector URL and copy buttons. Then in claude.ai:
+
+1. Open Customize, then Connectors.
+2. Add a custom connector and paste the URL.
+3. Connect, and enter the code on the page that opens.
+
+The page turns from "Waiting for your first connection…" to "Connected ✓", and then to "First
+memory held — review it". Behind a copy button the page also offers a line for claude.ai's
+personal preferences, so Claude uses the connector without being asked each time:
+
+> I use the Open Memory Lab connector as my long-term memory. Before answering about my projects,
+> decisions or preferences, search it with oml_read. When we settle a fact, a decision or a
+> finding worth keeping, save it with oml_write in one or two plain sentences. What you write
+> waits for my review before anyone else can read it.
+
+The rest of this guide is for a server you run, where an administrator issues the code.
+
 ## What the server needs
 
 1. A public HTTPS origin, with `oauth.issuer` set to it (`OML_OAUTH__ISSUER=https://oml.example.com`).

@@ -19,6 +19,7 @@ pub mod admin_read;
 pub mod emails;
 pub mod page;
 pub mod render;
+pub mod start;
 pub mod views;
 
 use std::collections::HashSet;
@@ -59,6 +60,14 @@ pub const WEB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/web/callback/{provider}"),
     ("GET", "/web/admin"),
     ("POST", "/web/admin"),
+    // Open sign-up and onboarding (ADR-0068 d10).
+    ("POST", "/web/sign-up"),
+    ("GET", "/web/start"),
+    ("POST", "/web/start"),
+    ("GET", "/web/start/status"),
+    ("GET", "/web/start/export"),
+    ("GET", "/web/admin/users"),
+    ("POST", "/web/admin/users"),
 ];
 
 /// The user page's closed `action` set (ADR-0045 d1, d9).
@@ -91,6 +100,10 @@ pub const ADMIN_ACTIONS: &[&str] = &[
     "cut_off",
 ];
 
+/// The purpose a pending sign-up is sealed under, so no other sealed
+/// value opens as one (ADR-0068 d2).
+const SIGN_UP_PURPOSE: &[u8] = b"oml web sign-up";
+
 /// The session cookie (ADR-0045 d5).
 pub const SESSION_COOKIE: &str = "__Host-oml_session";
 /// The sign-in-in-progress cookie (ADR-0045 d3).
@@ -116,12 +129,19 @@ pub struct WebPages {
     exchange: Arc<dyn DynExchange>,
     session_ttl_secs: i64,
     sealer: AeadSealer,
+    /// Seals a pending sign-up's identity for the terms page (ADR-0068 d2).
+    signup_sealer: AeadSealer,
+    /// Sign-ups per client address in the last hour (ADR-0068 d9).
+    signups: start::SignupLimiter,
     /// Seals the frame route's tokens, which open for no other purpose
     /// (ADR-0056 d9).
     render_sealer: AeadSealer,
     /// The sources the frame route draws, held here and never in a token.
     render_sources: render::Sources,
     counters: [ProviderCounter; 2],
+    /// Open sign-up as configured, which the composition hands the app
+    /// (ADR-0068 d1).
+    signup: Option<oml_app::types::SignupPolicy>,
 }
 
 #[derive(Default)]
@@ -151,10 +171,26 @@ impl WebPages {
             exchange: Arc::new(exchange),
             session_ttl_secs: WEB_SESSION_TTL_SECS,
             sealer: AeadSealer::generate_for(WEB_SIGN_IN_PURPOSE),
+            signup_sealer: AeadSealer::generate_for(SIGN_UP_PURPOSE),
+            signups: start::SignupLimiter::default(),
             render_sealer: AeadSealer::generate_for(render::RENDER_PURPOSE),
             render_sources: render::Sources::default(),
             counters: Default::default(),
+            signup: None,
         }
+    }
+
+    /// The pages with open sign-up configured (ADR-0068 d1).
+    #[must_use]
+    pub fn with_signup(mut self, policy: oml_app::types::SignupPolicy) -> Self {
+        self.signup = Some(policy);
+        self
+    }
+
+    /// The configured sign-up, which the composition hands the app.
+    #[must_use]
+    pub fn signup_policy(&self) -> Option<&oml_app::types::SignupPolicy> {
+        self.signup.as_ref()
     }
 
     /// A session lifetime other than the shipped default.
@@ -372,6 +408,13 @@ where
             ("GET", "/web/callback/{provider}") => get(Self::callback),
             ("GET", "/web/admin") => get(Self::admin_page),
             ("POST", "/web/admin") => post(Self::admin_act),
+            ("POST", "/web/sign-up") => post(Self::sign_up),
+            ("GET", "/web/start") => get(Self::start_page),
+            ("POST", "/web/start") => post(Self::start_act),
+            ("GET", "/web/start/status") => get(Self::start_status),
+            ("GET", "/web/start/export") => get(Self::start_export),
+            ("GET", "/web/admin/users") => get(Self::users_page),
+            ("POST", "/web/admin/users") => post(Self::users_act),
             _ => panic!("{method} {path} is in WEB_ROUTES with no handler"),
         }
     }
@@ -407,8 +450,10 @@ where
     }
 
     fn refused(&self, error: &ApiError, line: WebLine) -> Answer {
+        let mut response = self.refusal_page(error);
+        error.mark_quota(&mut response);
         Answer {
-            response: self.refusal_page(error),
+            response,
             error_code: Some(error.code),
             line,
         }
@@ -824,7 +869,19 @@ where
         let entry = match admitted {
             Ok(entry) => entry,
             Err(refusal) => {
+                // Open mode: a verified identity no entry holds goes to the
+                // terms page, with nothing written (ADR-0068 d2).
+                if let Some(mut response) = self.unlisted(&refusal) {
+                    sign_in_line(request_id, provider, "terms", None);
+                    append_cookie(&mut response, &clear_cookie(SIGN_IN_COOKIE));
+                    return Answer {
+                        response,
+                        error_code: None,
+                        line,
+                    };
+                }
                 let (error, outcome) = match refusal {
+                    CallbackRefusal::Unlisted(_) => unreachable!("answered above"),
                     CallbackRefusal::Refused(r) => (
                         map_app_error(AppError::WebSignIn(r), ErrorContext::Write),
                         r.reason(),
@@ -898,8 +955,11 @@ where
         };
         line.session(&opened.record);
         sign_in_line(request_id, provider, "signed_in", Some(&opened.record));
+        // A person with no agent key yet lands on the onboarding page
+        // (ADR-0068 d10).
+        let landing = self.landing(&entry).await;
         let mut response = self.redirect(
-            "/web",
+            landing,
             Some(set_cookie(
                 SESSION_COOKIE,
                 &opened.token,

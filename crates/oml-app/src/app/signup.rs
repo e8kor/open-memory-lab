@@ -1,0 +1,738 @@
+//! Open sign-up's use cases (ADR-0068): a person's own sign-up after the
+//! terms page, the quotas of the sign-up tenant's people and the per-key
+//! request rate, an admin's quota override and disable switch, the
+//! deletion request and its closure, the onboarding status, and the
+//! person's export. The pages are the transport's.
+
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+
+use serde_json::{Value, json};
+use uuid::Uuid;
+
+use oml_domain::name::{Name, NamedKind, Reference, UNIVERSE};
+use oml_domain::signup::{QUOTA_LIMIT_MAX, Quota, Quotas, SignupMode, check_quota, drawn_user};
+use oml_domain::web::{ProviderIdentity, session_key_names};
+use oml_domain::{Role, event_types};
+
+use super::{App, Caller, require_role};
+use crate::ports::{Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, WebStore};
+use crate::types::{
+    AdminSearch, AppError, Credential, DeletionRequest, KeyRecord, SignupPolicy, UserUsage,
+    WebEntry,
+};
+use oml_domain::MemoryStatus;
+
+/// How many times a sign-up draws a user name before it is refused
+/// `name.taken` (ADR-0068 d2).
+pub const DRAWS_MAX: usize = 3;
+
+/// The most memories the export and the status read (ADR-0068 d6); a
+/// person's quota is below it unless an admin raised it past.
+pub const EXPORT_MAX: usize = 100_000;
+
+/// Open sign-up's configuration and the process's counters: each key's
+/// requests in its current minute, and the keys of the sign-up tenant
+/// that authenticated since the process started (ADR-0068 d5, d10).
+#[derive(Debug)]
+pub struct SignupState {
+    policy: SignupPolicy,
+    /// Per key: the UTC minute, the requests in it, and the limit read at
+    /// its start.
+    windows: Mutex<BTreeMap<Uuid, (i64, u64, u64)>>,
+}
+
+impl SignupState {
+    #[must_use]
+    pub fn new(policy: SignupPolicy) -> Self {
+        Self {
+            policy,
+            windows: Mutex::new(BTreeMap::new()),
+        }
+    }
+}
+
+/// One person of the sign-up tenant as the admin's users page lists them
+/// (ADR-0068 d5, d6, d8).
+#[derive(Debug, Clone)]
+pub struct UserRow {
+    pub user: Name,
+    pub root: Option<Uuid>,
+    pub signed_up: bool,
+    pub disabled: bool,
+    /// Whether the tenant is the sign-up tenant, whose people are under
+    /// quotas (ADR-0068 d5).
+    pub under_quotas: bool,
+    pub usage: UserUsage,
+    pub quotas: Quotas,
+}
+
+/// The onboarding page's state (ADR-0068 d10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartStatus {
+    pub connected: bool,
+    /// The newest memory's state: held or promoted; `None` before one.
+    pub first_memory: Option<MemoryStatus>,
+}
+
+impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
+where
+    J: WebStore + ConnectionStore,
+    S: Signer,
+    C: Clock,
+    I: IdGen,
+    Sc: Scanner,
+{
+    /// A person's own sign-up (ADR-0068 d2), after the terms page: in open
+    /// mode, for a provider-verified identity no entry holds, with the
+    /// current terms version accepted. A drawn user, the entry under
+    /// `signup.issuer` journalled as `web.signed_up` with the email's
+    /// digest, the provider subject pinned. The caller then issues the
+    /// session keys and opens a session.
+    pub async fn web_sign_up(
+        &self,
+        identity: &ProviderIdentity,
+        accepted_terms: &str,
+    ) -> Result<WebEntry, AppError> {
+        let policy = self
+            .signup_policy()
+            .filter(|p| p.mode == SignupMode::Open)
+            .ok_or(AppError::NotFound)?;
+        if accepted_terms != policy.terms_version {
+            return Err(AppError::WebField {
+                field: "terms_version",
+                message: "the terms changed since this page was shown; read them again",
+            });
+        }
+        let tenant_id = policy.tenant_id;
+        let email_hash = identity.email.digest();
+        if let Some(entry) = self.journal.web_entry_by_email(&email_hash).await? {
+            // Someone holds the address: a disabled entry stays refused,
+            // and a live one signs in rather than signing up again.
+            if entry.disabled_at.is_some() {
+                return Err(AppError::WebSignIn(
+                    oml_domain::web::SignInRefusal::Disabled,
+                ));
+            }
+            return Ok(entry);
+        }
+        let issuer = self.signup_issuer(policy).await?;
+        let mut user = None;
+        for _ in 0..DRAWS_MAX {
+            let drawn = drawn_user(&self.ids.new_secret());
+            if self.user_name_free(tenant_id, &drawn).await? {
+                user = Some(drawn);
+                break;
+            }
+        }
+        let user = user.ok_or_else(|| AppError::NameTaken {
+            kind: NamedKind::Workarea,
+            name: drawn_user(&[0; 32]),
+        })?;
+        let entry = WebEntry {
+            tenant_id,
+            email: identity.email.clone(),
+            user,
+            admin: false,
+            google_subject: None,
+            github_subject: None,
+            added_by: issuer.key_id,
+            terms_version: Some(policy.terms_version.clone()),
+            disabled_at: None,
+        };
+        let prev = self.head_event(tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::WEB_SIGNED_UP,
+            &issuer.principal,
+            Some(issuer.key_id),
+            json!({
+                "email_digest": email_hash.to_prefixed(),
+                "user": entry.user.as_str(),
+                "admin": false,
+                "provider": identity.provider.as_str(),
+                "terms_version": policy.terms_version,
+                "self_signup": true,
+                "by_key_id": issuer.key_id.to_string(),
+            }),
+        )?;
+        self.commit(event, MetadataFold::WebEmailAllowed(entry.clone()), None)
+            .await?;
+        self.journal
+            .web_pin(tenant_id, &email_hash, identity.provider, &identity.subject)
+            .await?;
+        Ok(entry)
+    }
+
+    /// The live admin key `signup.issuer` names in the sign-up tenant;
+    /// otherwise the start's check failed or the key was revoked since,
+    /// and the sign-up fails closed (ADR-0068 d1, d11).
+    async fn signup_issuer(&self, policy: &SignupPolicy) -> Result<KeyRecord, AppError> {
+        let id = self
+            .journal
+            .resolve_name(policy.tenant_id, NamedKind::Key, &policy.issuer)
+            .await?
+            .ok_or(AppError::WebKeyMissing {
+                capacity: "signup issuer",
+            })?;
+        self.journal
+            .key(policy.tenant_id, id)
+            .await?
+            .filter(|k| k.role == Role::Admin && k.revoked_at.is_none())
+            .ok_or(AppError::WebKeyMissing {
+                capacity: "signup issuer",
+            })
+    }
+
+    /// Whether the start's settings name a live admin key in an existing
+    /// tenant (ADR-0068 d1): the composition stops when not.
+    pub async fn check_signup_policy(&self) -> Result<(), String> {
+        let Some(policy) = self.signup_policy() else {
+            return Ok(());
+        };
+        self.signup_issuer(policy).await.map(|_| ()).map_err(|_| {
+            format!(
+                "signup.issuer {} is not a live admin key of the tenant signup.tenant names (ADR-0068 d1)",
+                policy.issuer.as_str()
+            )
+        })
+    }
+
+    /// A drawn name no workarea, key or entry of the tenant holds.
+    async fn user_name_free(&self, tenant_id: Uuid, user: &Name) -> Result<bool, AppError> {
+        if self
+            .journal
+            .resolve_name(tenant_id, NamedKind::Workarea, user)
+            .await?
+            .is_some()
+        {
+            return Ok(false);
+        }
+        for key in session_key_names(user) {
+            if self
+                .journal
+                .resolve_name(tenant_id, NamedKind::Key, &key)
+                .await?
+                .is_some()
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    // -- the admin's users page ---------------------------------------------
+
+    /// The sign-up tenant's people, as `<admin>-admin` reads them: each user
+    /// with an entry, whether they signed up themselves, whether disabled,
+    /// what they hold and their limits (ADR-0068 d5).
+    pub async fn web_users(&self, admin: &Caller) -> Result<Vec<UserRow>, AppError> {
+        require_role(&admin.key, Role::Admin, "web_users")?;
+        let tenant_id = admin.key.tenant_id;
+        let mut by_user: BTreeMap<Name, (bool, bool)> = BTreeMap::new();
+        let mut after = None;
+        loop {
+            let page = self
+                .journal
+                .web_entries(tenant_id, after.as_ref(), 500)
+                .await?;
+            let Some(last) = page.last() else { break };
+            after = Some(last.email.digest());
+            for e in &page {
+                let row = by_user.entry(e.user.clone()).or_insert((false, false));
+                row.0 |= e.terms_version.is_some();
+                row.1 |= e.disabled_at.is_some();
+            }
+            if page.len() < 500 {
+                break;
+            }
+        }
+        let under_quotas = self
+            .signup_policy()
+            .is_some_and(|p| p.tenant_id == tenant_id);
+        let mut out = Vec::new();
+        for (user, (signed_up, disabled)) in by_user {
+            let root = self.signup_root(tenant_id, &user).await?;
+            let (usage, quotas) = match root {
+                Some(root) => (
+                    self.journal.user_usage(tenant_id, root).await?,
+                    self.quotas_of(tenant_id, root).await?,
+                ),
+                None => (UserUsage::default(), self.default_quotas()),
+            };
+            out.push(UserRow {
+                user,
+                root,
+                signed_up,
+                disabled,
+                under_quotas,
+                usage,
+                quotas,
+            });
+        }
+        Ok(out)
+    }
+
+    /// `set_quota` (ADR-0068 d5): one person's override of one quota, or
+    /// with `None` the default again, journalled as `web.quota_set`.
+    pub async fn web_set_quota(
+        &self,
+        admin: &Caller,
+        user: &Name,
+        quota: Quota,
+        limit: Option<u64>,
+    ) -> Result<(), AppError> {
+        require_role(&admin.key, Role::Admin, "web_users")?;
+        if limit.is_some_and(|l| l > QUOTA_LIMIT_MAX) {
+            return Err(AppError::WebField {
+                field: "limit",
+                message: "a quota's limit is a whole number from 0 to 1000000",
+            });
+        }
+        let tenant_id = admin.key.tenant_id;
+        let root = self
+            .signup_root(tenant_id, user)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let prev = self.head_event(tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::WEB_QUOTA_SET,
+            &admin.key.principal,
+            Some(admin.key.key_id),
+            json!({
+                "user": user.as_str(),
+                "user_root": root.to_string(),
+                "quota": quota.as_str(),
+                "limit": limit,
+            }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::QuotaSet {
+                user_root: root,
+                quota,
+                limit,
+            },
+            None,
+        )
+        .await?;
+        if quota == Quota::RequestsPerMinute {
+            self.forget_windows();
+        }
+        Ok(())
+    }
+
+    /// `disable_user` (ADR-0068 d8): `web.user_disabled`, which disables
+    /// every entry of the user and ends their sessions, then one
+    /// `key.denied` on `universe` for each live bearer and connector key of
+    /// the root. Session keys are reached only from sessions, which ended.
+    pub async fn web_disable_user(&self, admin: &Caller, user: &Name) -> Result<usize, AppError> {
+        require_role(&admin.key, Role::Admin, "web_users")?;
+        let tenant_id = admin.key.tenant_id;
+        let prev = self.head_event(tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::WEB_USER_DISABLED,
+            &admin.key.principal,
+            Some(admin.key.key_id),
+            json!({ "user": user.as_str(), "by_key_id": admin.key.key_id.to_string() }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::UserDisabled { user: user.clone() },
+            None,
+        )
+        .await?;
+        let mut cut = 0;
+        if let Some(root) = self.signup_root(tenant_id, user).await? {
+            let universe_id = self.universe(tenant_id).await?;
+            let universe = Reference::Name(Name::parse(UNIVERSE).expect("universe is a name"));
+            for key in self.journal.web_user_keys(tenant_id, root).await? {
+                if key.revoked_at.is_some() || key.credential == Credential::Session {
+                    continue;
+                }
+                let denied = self
+                    .journal
+                    .key_access(tenant_id, key.key_id)
+                    .await?
+                    .is_some_and(|a| a.denials.iter().any(|d| d.denial.node == universe_id));
+                if denied {
+                    continue;
+                }
+                self.deny_key_by(&admin.key, Reference::Id(key.key_id), universe.clone())
+                    .await?;
+                cut += 1;
+            }
+        }
+        Ok(cut)
+    }
+
+    /// `request_deletion` (ADR-0068 d6), as `<user>-web`: the pending
+    /// request, journalled as `web.deletion_requested`. It ends nothing and
+    /// changes no access.
+    pub async fn web_request_deletion(&self, web: &Caller) -> Result<(), AppError> {
+        let user = web
+            .key
+            .session_user
+            .clone()
+            .ok_or(AppError::WebKeyMissing { capacity: "web" })?;
+        let tenant_id = web.key.tenant_id;
+        let prev = self.head_event(tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::WEB_DELETION_REQUESTED,
+            &web.key.principal,
+            Some(web.key.key_id),
+            json!({ "user": user.as_str() }),
+        )?;
+        self.commit(event, MetadataFold::DeletionRequested { user }, None)
+            .await?;
+        Ok(())
+    }
+
+    /// Whether the session's user has a deletion request pending.
+    pub async fn web_deletion_pending(&self, web: &Caller) -> Result<bool, AppError> {
+        let Some(user) = &web.key.session_user else {
+            return Ok(false);
+        };
+        Ok(self
+            .journal
+            .web_deletion_requests(web.key.tenant_id)
+            .await?
+            .iter()
+            .any(|r| &r.user == user))
+    }
+
+    /// The tenant's pending deletion requests, oldest first (ADR-0068 d6).
+    pub async fn web_deletions(&self, admin: &Caller) -> Result<Vec<DeletionRequest>, AppError> {
+        require_role(&admin.key, Role::Admin, "web_users")?;
+        Ok(self
+            .journal
+            .web_deletion_requests(admin.key.tenant_id)
+            .await?)
+    }
+
+    /// `close_deletion` (ADR-0068 d6): the person disabled (d8), then the
+    /// request closed, journalled as `web.deletion_closed`. The bytes wait
+    /// for erasure.
+    pub async fn web_close_deletion(&self, admin: &Caller, user: &Name) -> Result<(), AppError> {
+        require_role(&admin.key, Role::Admin, "web_users")?;
+        let tenant_id = admin.key.tenant_id;
+        if !self
+            .journal
+            .web_deletion_requests(tenant_id)
+            .await?
+            .iter()
+            .any(|r| &r.user == user)
+        {
+            return Err(AppError::NotFound);
+        }
+        self.web_disable_user(admin, user).await?;
+        let prev = self.head_event(tenant_id).await?;
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::WEB_DELETION_CLOSED,
+            &admin.key.principal,
+            Some(admin.key.key_id),
+            json!({ "user": user.as_str(), "by_key_id": admin.key.key_id.to_string() }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::DeletionClosed { user: user.clone() },
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// `GET /v2/web/users`, admin by key role (ADR-0068 d5, d6, d11): the
+    /// people of the tenant with their usage and limits, and the pending
+    /// deletion requests, for the admin page's CLI twin and `oml doctor`.
+    pub async fn signup_overview(
+        &self,
+        bearer: impl Into<crate::types::Bearer<'_>>,
+    ) -> Result<(Vec<UserRow>, Vec<DeletionRequest>), AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        Ok((
+            self.web_users(&caller).await?,
+            self.web_deletions(&caller).await?,
+        ))
+    }
+
+    // -- the onboarding page ---------------------------------------------------
+
+    /// The onboarding page's state for `<user>-web` (ADR-0068 d10):
+    /// connected once any of the person's keys authenticated since the
+    /// process started or a connector key has an open connection; the
+    /// newest memory's state.
+    pub async fn web_start_status(&self, web: &Caller) -> Result<StartStatus, AppError> {
+        let tenant_id = web.key.tenant_id;
+        let Some(root) = web.key.user else {
+            return Ok(StartStatus {
+                connected: false,
+                first_memory: None,
+            });
+        };
+        let keys = self.journal.web_user_keys(tenant_id, root).await?;
+        let agent_keys: Vec<&KeyRecord> = keys
+            .iter()
+            .filter(|k| k.credential != Credential::Session)
+            .collect();
+        let seen = {
+            let windows = self.signup_windows();
+            agent_keys.iter().any(|k| windows.contains(&k.key_id))
+        };
+        let connected = seen || self.journal.user_usage(tenant_id, root).await?.connections > 0;
+        let newest = self.root_memories(tenant_id, root, 1).await?;
+        Ok(StartStatus {
+            connected,
+            first_memory: newest.first().map(|m| m.status),
+        })
+    }
+
+    /// Whether the person holds any bearer or connector key: a sign-in
+    /// whose person holds none lands on the onboarding page (ADR-0068 d10).
+    pub async fn web_has_agent_key(&self, entry: &WebEntry) -> Result<bool, AppError> {
+        let Some(root) = self.signup_root(entry.tenant_id, &entry.user).await? else {
+            return Ok(false);
+        };
+        Ok(self
+            .journal
+            .web_user_keys(entry.tenant_id, root)
+            .await?
+            .iter()
+            .any(|k| k.credential != Credential::Session && k.revoked_at.is_none()))
+    }
+
+    /// The person's export (ADR-0068 d6), as `<user>-web`: every memory in
+    /// their root and below, every state, their keys and their entry's
+    /// terms version. Nothing a second person wrote lies in the root.
+    pub async fn web_export(&self, web: &Caller) -> Result<Value, AppError> {
+        let tenant_id = web.key.tenant_id;
+        let root = web
+            .key
+            .user
+            .ok_or(AppError::WebKeyMissing { capacity: "web" })?;
+        let nodes = self.journal.workarea_subtree(tenant_id, root).await?;
+        let paths: BTreeMap<Uuid, String> = {
+            let by_id: BTreeMap<Uuid, &crate::types::WorkareaRecord> =
+                nodes.iter().map(|w| (w.workarea_id, w)).collect();
+            nodes
+                .iter()
+                .map(|w| {
+                    let mut parts = vec![w.name.as_str().to_owned()];
+                    let mut at = w.parent_id;
+                    while let Some(p) = at.and_then(|id| by_id.get(&id)) {
+                        parts.push(p.name.as_str().to_owned());
+                        at = p.parent_id;
+                    }
+                    parts.push(UNIVERSE.to_owned());
+                    parts.reverse();
+                    (w.workarea_id, parts.join("."))
+                })
+                .collect()
+        };
+        let memories = self.root_memories(tenant_id, root, EXPORT_MAX).await?;
+        let keys = self.journal.web_user_keys(tenant_id, root).await?;
+        Ok(json!({
+            "format": "oml-export/personal-1",
+            "user": web.key.session_user.as_ref().map(Name::as_str),
+            "exported_at": self.clock.now().as_str(),
+            "memories": memories.iter().map(|m| json!({
+                "memory_id": m.memory_id.to_string(),
+                "workarea": paths.get(&m.workarea_id),
+                "claim_key": m.claim_key,
+                "version": m.version,
+                "status": m.status.as_str(),
+                "text": m.body,
+                "created_at": m.created_at.as_str(),
+                "promoted_at": m.promoted_at.as_ref().map(oml_domain::EventTime::as_str),
+            })).collect::<Vec<_>>(),
+            "keys": keys.iter().map(|k| json!({
+                "name": k.name.as_ref().map(Name::as_str),
+                "role": k.role.as_str(),
+                "credential": k.credential.as_str(),
+                "revoked": k.revoked_at.is_some(),
+            })).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// The root's memories, every state, newest first, at most `limit`.
+    async fn root_memories(
+        &self,
+        tenant_id: Uuid,
+        root: Uuid,
+        limit: usize,
+    ) -> Result<Vec<crate::types::MemoryRecord>, AppError> {
+        let nodes: Vec<Uuid> = self
+            .journal
+            .workarea_subtree(tenant_id, root)
+            .await?
+            .into_iter()
+            .map(|w| w.workarea_id)
+            .collect();
+        Ok(self
+            .journal
+            .web_admin_search(
+                tenant_id,
+                &AdminSearch {
+                    query: None,
+                    nodes: Some(nodes),
+                    state: None,
+                    after: None,
+                    limit,
+                },
+            )
+            .await?)
+    }
+}
+
+impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
+where
+    J: crate::ports::JournalStore,
+    S: Signer,
+    C: Clock,
+    I: IdGen,
+    Sc: Scanner,
+{
+    /// The app with open sign-up configured (ADR-0068 d1); without it the
+    /// deployment has no sign-up tenant and no quotas.
+    #[must_use]
+    pub fn with_signup(self, policy: SignupPolicy) -> Self {
+        Self {
+            signup: Some(std::sync::Arc::new(SignupState::new(policy))),
+            ..self
+        }
+    }
+
+    /// The configured sign-up, if any.
+    #[must_use]
+    pub fn signup_policy(&self) -> Option<&SignupPolicy> {
+        self.signup.as_deref().map(|s| &s.policy)
+    }
+
+    fn default_quotas(&self) -> Quotas {
+        self.signup_policy().map(|p| p.quotas).unwrap_or_default()
+    }
+
+    /// The root a key's person is under quotas by: a user key, or a
+    /// person's session key, of the sign-up tenant (ADR-0068 d5).
+    fn quota_root(&self, key: &KeyRecord) -> Option<Uuid> {
+        let policy = self.signup_policy()?;
+        (key.tenant_id == policy.tenant_id)
+            .then_some(key.user)
+            .flatten()
+    }
+
+    /// A person's limits: the defaults with their overrides.
+    pub(crate) async fn quotas_of(&self, tenant_id: Uuid, root: Uuid) -> Result<Quotas, AppError> {
+        let overrides = self.journal.user_quota_overrides(tenant_id, root).await?;
+        Ok(self.default_quotas().with_overrides(&overrides))
+    }
+
+    /// One more of `quota` for `key`'s person, or `limit.quota` naming
+    /// what was hit (ADR-0068 d5); a key under no quota passes.
+    pub(crate) async fn require_quota(
+        &self,
+        key: &KeyRecord,
+        quota: Quota,
+    ) -> Result<(), AppError> {
+        let Some(root) = self.quota_root(key) else {
+            return Ok(());
+        };
+        let limit = self.quotas_of(key.tenant_id, root).await?.get(quota);
+        let used = self
+            .journal
+            .user_usage(key.tenant_id, root)
+            .await?
+            .get(quota);
+        check_quota(quota, limit, used).map_err(AppError::QuotaReached)
+    }
+
+    /// The key's request in its UTC minute (ADR-0068 d5): past its limit,
+    /// `limit.rate` with the seconds left in the minute. The limit is read
+    /// at each minute's first request, so an override holds from the next
+    /// minute. Every key of the sign-up tenant is recorded, which is the
+    /// onboarding page's "connected" (d10).
+    pub(crate) async fn admit_request(&self, key: &KeyRecord) -> Result<(), AppError> {
+        let Some(state) = self.signup.as_deref() else {
+            return Ok(());
+        };
+        let Some(root) = self.quota_root(key) else {
+            return Ok(());
+        };
+        let now = self.clock.now().unix_micros().div_euclid(1_000_000);
+        let minute = now.div_euclid(60);
+        let current = {
+            let windows = state.windows.lock().expect("rate lock");
+            windows.get(&key.key_id).copied()
+        };
+        let limit = match current {
+            Some((m, _, limit)) if m == minute => limit,
+            _ => {
+                self.quotas_of(key.tenant_id, root)
+                    .await?
+                    .requests_per_minute
+            }
+        };
+        let mut windows = state.windows.lock().expect("rate lock");
+        let slot = windows.entry(key.key_id).or_insert((minute, 0, limit));
+        if slot.0 != minute {
+            *slot = (minute, 0, limit);
+        }
+        if slot.1 >= slot.2 {
+            let retry = u64::try_from(60 - now.rem_euclid(60)).unwrap_or(60);
+            return Err(AppError::KeyRateLimited {
+                limit: slot.2,
+                retry_after_secs: retry,
+            });
+        }
+        slot.1 += 1;
+        Ok(())
+    }
+
+    /// The keys whose requests this process counted: the "connected" set.
+    fn signup_windows(&self) -> std::collections::BTreeSet<Uuid> {
+        self.signup.as_deref().map_or_else(Default::default, |s| {
+            s.windows
+                .lock()
+                .expect("rate lock")
+                .keys()
+                .copied()
+                .collect()
+        })
+    }
+
+    /// Every key's window restarts, so a changed rate holds at once; the
+    /// keys stay recorded as seen.
+    fn forget_windows(&self) {
+        if let Some(state) = self.signup.as_deref() {
+            for slot in state.windows.lock().expect("rate lock").values_mut() {
+                slot.0 = i64::MIN;
+            }
+        }
+    }
+
+    /// The root a user's name names, if it is a user root.
+    async fn signup_root(&self, tenant_id: Uuid, user: &Name) -> Result<Option<Uuid>, AppError> {
+        let Some(id) = self
+            .journal
+            .resolve_name(tenant_id, NamedKind::Workarea, user)
+            .await?
+        else {
+            return Ok(None);
+        };
+        Ok(self
+            .journal
+            .workarea(tenant_id, id)
+            .await?
+            .filter(|w| w.user_root)
+            .map(|w| w.workarea_id))
+    }
+}

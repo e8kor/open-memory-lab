@@ -566,6 +566,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `POST /v2/tenants` | operator (key role) | designed |
 | `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) | served |
 | `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *since v0.5.0* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | served |
+| `GET /v2/web/users` | admin (key role); the people with their quota use and limits, and the pending deletion requests ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d11) | served |
 | `POST /v2/admin/memories/search` · `GET /v2/admin/memories/{artifact_id}` | admin (key role), lead only, every answer journalled as `memory.admin_read`; *since v0.5.0* ([admin read](#admin-read)) | served |
 | `GET /v2/admin/rescan` | admin (key role); the stored versions rescanned by rule, nothing changed or journalled; *since v0.6.0* ([rescan](#rescan)) | served |
 | `GET /v2/search` · `POST /v2/search/default` | admin (key role); the tenant's default search pipeline, journalled as `search.default_set`; *since v0.5.5* ([search settings](#search-settings)) | served |
@@ -597,6 +598,9 @@ provider, and authenticated by a session cookie alone, never by a key
 | `GET /web` · `POST /web` | none for the sign-in page; a session, acting as its `<user>-web` session key, for the user page | served |
 | `POST /web/sign-in` · `GET /web/callback/{provider}` | none; the person proves a listed, verified email at the provider | served |
 | `GET /web/admin` · `POST /web/admin` | a session whose allowlist entry is an admin's, acting as the session key each act needs | served |
+| `POST /web/sign-up` | none; a sealed, verified identity no entry holds, in open sign-up ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d2) | served |
+| `GET /web/start` · `POST /web/start` · `GET /web/start/status` · `GET /web/start/export` | a session, acting as its `<user>-web` session key ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d6, d10) | served |
+| `GET /web/admin/users` · `POST /web/admin/users` | an admin session, acting as its `<user>-admin` session key ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d5, d8) | served |
 
 Promote, sign and delete appear nowhere in these tables on purpose: promotion is an effect of
 ratification inside the admission pipeline, signing is `oml-server`'s alone, and deletion does not
@@ -1746,6 +1750,18 @@ role: the CLI's `oml web allow`, `oml web list` and `oml web remove`, and how a 
 admin email gets in. An email is unique in the deployment (`name.taken`, kind `email`); a `user`
 a shared workarea holds, or whose composed key names a key holds, is `name.taken`. Removing an
 email ends its sessions and leaves the user's agent keys working.
+
+**Open sign-up.** *Proposed · [ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md).* Where `signup.mode` is `open`, a verified email
+no entry holds reaches a terms page instead of `not_allowed`; `POST /web/sign-up` with
+`accept_terms=yes` and the current `terms_version` creates the entry under a drawn user in the
+sign-up tenant, journalled as `web.signed_up`, issues the two session keys and answers
+`303 /web/start`. `/web/start` issues one credential per client, polls `GET /web/start/status`
+(`{connected, first_memory}`), serves the person's JSON export at `GET /web/start/export` and
+takes a deletion request. The admin's `/web/admin/users` sets one person's quota, disables a
+person and closes a deletion request. `GET /v2/web/users`, admin key role, serves the same
+people and requests to `oml doctor`. The people of the sign-up tenant are under quotas:
+`limit.quota` past a memories, keys or connections quota, and `limit.rate` past a key's requests
+per minute ([errors](errors.md)).
 
 ### Rescan
 
