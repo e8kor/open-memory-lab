@@ -1802,3 +1802,190 @@ pub trait SparseEncoder: Send + Sync {
     /// (ADR-0052 d14, d15).
     fn encode_documents(&self, texts: Vec<String>) -> SparseFuture<'_>;
 }
+
+// ---------------------------------------------------------------------------
+// The format port (ADR-0056 d3)
+// ---------------------------------------------------------------------------
+
+/// A decoded string the scan reads beside the source, with the path it came
+/// from: a finding on a view names the path, never the value (ADR-0056 d6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScanView {
+    pub path: String,
+    pub text: String,
+}
+
+/// What an adapter derived from a source it accepted, handed back to the
+/// adapter's other operations.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Parsed {
+    /// The text the lexical, postings, sparse and rerank stages read.
+    pub search_text: String,
+    /// The decoded strings the scan reads beside the source.
+    pub views: Vec<ScanView>,
+    /// A finding the format's own rule raises (`secret.keyed_value`, ADR-0056
+    /// d6): a veto naming the key path, never the value.
+    pub veto: Option<String>,
+}
+
+/// A refusal of a source by its adapter: a named reason with the line and
+/// column it was found at (`submission.format_invalid`, ADR-0056 d13).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{reason}: {message} (line {line}, column {column})")]
+pub struct FormatRefusal {
+    pub reason: &'static str,
+    pub message: String,
+    pub line: u32,
+    pub column: u32,
+}
+
+impl FormatRefusal {
+    #[must_use]
+    pub fn new(reason: &'static str, message: impl Into<String>, line: u32, column: u32) -> Self {
+        Self {
+            reason,
+            message: message.into(),
+            line,
+            column,
+        }
+    }
+}
+
+/// What a page and a client may do with a source (ADR-0056 d9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderHint {
+    /// The source escaped in a monospaced block, nothing rendered.
+    Escaped,
+    /// The source, and beside it a drawing in a sandboxed frame.
+    Diagram,
+}
+
+/// One difference of a structural diff (ADR-0056 d3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatChange {
+    pub op: &'static str,
+    pub path: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+/// A structural comparison of two sources of one format.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatDiff {
+    pub equivalent: bool,
+    pub changes: Vec<FormatChange>,
+}
+
+/// One adapter: pure and deterministic, with no I/O, clock or randomness
+/// (ADR-0056 d3). The adapters are compiled in; no plugin loads at run time.
+pub trait Format: Send + Sync {
+    /// The adapter and its version, `mermaid/1`, recorded as `search_text_by`.
+    fn id(&self) -> &'static str;
+    /// Accepts the source or refuses it by name, before the scan.
+    fn validate(&self, source: &str) -> Result<Parsed, FormatRefusal>;
+    /// The text the search stages read.
+    fn search_text(&self, parsed: &Parsed) -> String;
+    /// The decoded strings the scan reads beside the source.
+    fn scan_views(&self, parsed: &Parsed) -> Vec<ScanView>;
+    fn render_hint(&self) -> RenderHint;
+    /// Compares two sources the adapter accepts.
+    fn diff(&self, old: &str, new: &str) -> Result<FormatDiff, FormatRefusal>;
+}
+
+/// A media type the registry resolved: its canonical spelling and adapter.
+#[derive(Clone)]
+pub struct ResolvedFormat {
+    /// The spelling that is signed and stored (`text/vnd.oml.code; lang=rust`).
+    pub media_type: String,
+    /// Prose is `text/plain` and `text/markdown`: their search text is the
+    /// source, and they are the only formats the other kinds take.
+    pub prose: bool,
+    pub adapter: std::sync::Arc<dyn Format>,
+}
+
+impl std::fmt::Debug for ResolvedFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedFormat")
+            .field("media_type", &self.media_type)
+            .field("adapter", &self.adapter.id())
+            .finish()
+    }
+}
+
+/// The closed list of formats the deployment serves (ADR-0056 d1).
+pub trait Formats: Send + Sync {
+    /// `Err` carries the accepted values, so a refusal lists them.
+    fn resolve(&self, media_type: &str) -> Result<ResolvedFormat, Vec<String>>;
+    fn allowed(&self) -> Vec<String>;
+    /// Every adapter id with its version, for doctor and `/readyz`.
+    fn adapters(&self) -> Vec<&'static str>;
+}
+
+/// The identity adapter of `text/plain` and `text/markdown` (ADR-0056 d4): the
+/// search text is the source and nothing is derived.
+pub struct IdentityFormat;
+
+impl Format for IdentityFormat {
+    fn id(&self) -> &'static str {
+        "identity/1"
+    }
+    fn validate(&self, source: &str) -> Result<Parsed, FormatRefusal> {
+        Ok(Parsed {
+            search_text: source.to_owned(),
+            ..Parsed::default()
+        })
+    }
+    fn search_text(&self, parsed: &Parsed) -> String {
+        parsed.search_text.clone()
+    }
+    fn scan_views(&self, _parsed: &Parsed) -> Vec<ScanView> {
+        Vec::new()
+    }
+    fn render_hint(&self) -> RenderHint {
+        RenderHint::Escaped
+    }
+    fn diff(&self, old: &str, new: &str) -> Result<FormatDiff, FormatRefusal> {
+        let same = old == new;
+        Ok(FormatDiff {
+            equivalent: same,
+            changes: if same {
+                Vec::new()
+            } else {
+                vec![FormatChange {
+                    op: "replace",
+                    path: String::new(),
+                    before: Some(old.to_owned()),
+                    after: Some(new.to_owned()),
+                }]
+            },
+        })
+    }
+}
+
+/// The two prose media types.
+pub const PROSE_FORMATS: [&str; 2] = ["text/plain", "text/markdown"];
+
+/// The registry an `App` has until the composition gives it the compiled-in
+/// one: prose only, so a write that names another format is refused naming
+/// the accepted values.
+pub struct ProseFormats;
+
+impl Formats for ProseFormats {
+    fn resolve(&self, media_type: &str) -> Result<ResolvedFormat, Vec<String>> {
+        PROSE_FORMATS
+            .iter()
+            .find(|m| **m == media_type)
+            .map(|m| ResolvedFormat {
+                media_type: (*m).to_owned(),
+                prose: true,
+                adapter: std::sync::Arc::new(IdentityFormat),
+            })
+            .ok_or_else(|| self.allowed())
+    }
+    fn allowed(&self) -> Vec<String> {
+        PROSE_FORMATS.iter().map(|m| (*m).to_owned()).collect()
+    }
+    fn adapters(&self) -> Vec<&'static str> {
+        vec!["identity/1"]
+    }
+}

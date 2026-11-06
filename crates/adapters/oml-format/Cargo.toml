@@ -1,0 +1,15 @@
+[package]
+name = "oml-format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The compiled-in claim format adapters behind oml-app's Format port: Mermaid, JSON, YAML and code snippets; pure, with no I/O (ADR-0056 d3)."
+
+[dependencies]
+oml-app.workspace = true
+serde_json.workspace = true
+saphyr-parser = "0.3"
+
+[lints]
+workspace = true

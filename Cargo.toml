@@ -9,6 +9,7 @@ members = [
     "crates/adapters/oml-pg",
     "crates/adapters/oml-fetch",
     "crates/adapters/oml-rerank",
+    "crates/adapters/oml-format",
     "crates/transports/oml-transport-http",
     "crates/bins/oml-server-lead",
     "crates/bins/oml-cli",
@@ -33,6 +34,8 @@ oml-server-lead = { path = "crates/bins/oml-server-lead", default-features = fal
 oml-transport-http = { path = "crates/transports/oml-transport-http" }
 oml-pg = { path = "crates/adapters/oml-pg" }
 oml-fetch = { path = "crates/adapters/oml-fetch" }
+# The claim format adapters (ADR-0056 d3): pure, no I/O.
+oml-format = { path = "crates/adapters/oml-format" }
 # Without its `model` feature unless a member asks for it (the lead does,
 # by its `rerank` feature), so no graph builds candle by inheritance.
 oml-rerank = { path = "crates/adapters/oml-rerank", default-features = false }
