@@ -10,7 +10,9 @@ from `Cargo.toml` for the footer and the install command (ADR-0069).
 
 `privacy.html` and `terms.html` are drafts. Until the operator publishes them, the footers do not
 link them: `gen_design_tokens.py --legal-links` adds the Privacy and Terms links, and
-`LEGAL_LINKS` in the script is the default that `--check` compares against. Deploying it is a copy to `/srv/data/www/memory/`, an operator step. Caddy serves `index.html`, `teams.html`, `personal.html`, `privacy.html` and `terms.html` for `/`, `/teams`, `/personal`, `/privacy` and `/terms` alone and passes every other path to the lead.
+`LEGAL_LINKS` in the script is the default that `--check` compares against. `CONTACT_URL` and
+`CONTACT_EMAIL` in the script set where "Ask about access" goes and the address the footers show;
+change them there to point at a form or another address. Deploying it is a copy to `/srv/data/www/memory/`, an operator step. Caddy serves `index.html`, `teams.html`, `personal.html`, `privacy.html` and `terms.html` for `/`, `/teams`, `/personal`, `/privacy` and `/terms` alone and passes every other path to the lead.
 
 ```caddyfile
 memory.doublegate.io {

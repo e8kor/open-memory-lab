@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Open Memory Lab for you</title>
-<meta name="description" content="Stop re-explaining your work to AI. Your projects, preferences and decisions, remembered across Claude Code, claude.ai, your phone and your other AI tools. You approve what it keeps.">
+<meta name="description" content="Stop re-explaining your work to AI. Your agents save your projects, preferences and decisions; approve what is worth keeping, and Claude Code, claude.ai and your phone recall it.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="{{GROUND_DARK}}" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="{{GROUND_LIGHT}}" media="(prefers-color-scheme: light)">
 <link rel="canonical" href="https://memory.doublegate.io/personal">
 <meta property="og:title" content="Open Memory Lab for you">
-<meta property="og:description" content="Stop re-explaining your work to AI. You approve what it keeps.">
+<meta property="og:description" content="Stop re-explaining your work to AI. Nothing sticks until you approve it.">
 <meta property="og:url" content="https://memory.doublegate.io/personal">
 <link rel="icon" type="image/svg+xml" href="{{FAVICON}}">
 <style>
@@ -24,27 +24,48 @@
   <div class="hero">
     <div class="hero-copy">
       <h1>Stop re-explaining your work to AI.</h1>
-      <p class="lede">Your projects, preferences and decisions, remembered across Claude Code, claude.ai, your phone and your other AI tools. You approve what it keeps.</p>
-      <div class="row"><a class="btn primary" href="/#start">Get started</a></div>
-      <p class="caption">The hosted server is by invitation; the software is free to run yourself.</p>
+      <p class="lede">Your agents save your projects, preferences and decisions. Approve what is worth keeping, and Claude Code, claude.ai and your phone all recall it.</p>
+      <div class="row"><a class="btn primary" href="{{CONTACT_URL}}">Ask about access</a><a class="btn" href="{{DOCS_URL}}start/quickstart/">Run it yourself</a></div>
+      <p class="caption">The public server is by invitation. Your own takes about five minutes to start; claude.ai and phones need it on a public HTTPS address.</p>
     </div>
-    <div class="stack" role="img" aria-label="Three memories as your page lists them: two promoted, written from Claude Code and claude.ai; one held, waiting for your review.">
+    <div class="stack" role="img" aria-label="Three memories as your page lists them: two approved, saved from Claude Code and claude.ai; one waiting for your approval.">
       <ul class="mlist" aria-hidden="true">
-        <li class="mrow"><span class="top"><span class="chip is-promoted">{{GLYPH:promoted}}promoted</span><span class="tx">This repo's tests run with cargo nextest, never cargo test.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-code</span> agent</span><span class="vb"><ol><li><i class="superseded"></i></li><li aria-current="true"><i class="promoted"></i></li></ol>v2 · tip</span><span>you approved</span></span></li>
-        <li class="mrow"><span class="top"><span class="chip is-promoted">{{GLYPH:promoted}}promoted</span><span class="tx">Write docs in British English, sentence-case headings.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-ai</span> agent</span><span class="vb"><ol><li aria-current="true"><i class="promoted"></i></li></ol>v1 · tip</span><span>you approved</span></span></li>
-        <li class="mrow"><span class="top"><span class="chip is-held">{{GLYPH:held}}held</span><span class="tx">The garden project moved from Notion to a plain Markdown folder.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">phone</span> agent</span><span class="vb"><ol><li aria-current="true"><i class="held"></i></li></ol>v1</span><span>waits for you</span></span></li>
+        <li class="mrow"><span class="top"><span class="chip is-promoted">{{GLYPH:promoted}}approved</span><span class="tx">This repo's tests run with cargo nextest, never cargo test.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-code</span></span><span class="vb"><ol><li><i class="superseded"></i></li><li aria-current="true"><i class="promoted"></i></li></ol>v2 · current</span><span>you approved</span></span></li>
+        <li class="mrow"><span class="top"><span class="chip is-promoted">{{GLYPH:promoted}}approved</span><span class="tx">Write docs in British English, sentence-case headings.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-ai</span></span><span class="vb"><ol><li aria-current="true"><i class="promoted"></i></li></ol>v1 · current</span><span>you approved</span></span></li>
+        <li class="mrow"><span class="top"><span class="chip is-held">{{GLYPH:held}}waiting</span><span class="tx">The garden project moved from Notion to a plain Markdown folder.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-mobile</span></span><span class="vb"><ol><li aria-current="true"><i class="held"></i></li></ol>v1</span><span>waits for you</span></span></li>
       </ul>
     </div>
   </div>
 
   <section aria-labelledby="why-h">
-    <h2 id="why-h">What you get</h2>
+    <h2 id="why-h">Tell it once</h2>
     <div class="vals">
-      <div><span class="v-prom">{{GLYPH:promoted}}</span><h3>One memory, every tool</h3><p class="caption">What Claude Code learns, claude.ai and Codex recall.</p></div>
-      <div><span class="v-gate">{{GLYPH:agent}}</span><h3>Connect in minutes</h3><p class="caption">Claude Code takes your key in one command. claude.ai and your phone take a connect code from your page.</p></div>
-      <div><span class="v-held">{{GLYPH:person}}</span><h3>You review what is kept</h3><p class="caption">What your agents save waits as <code>held</code> until you approve it from your page.</p></div>
+      <div><span class="v-prom">{{GLYPH:promoted}}</span><h3>One memory, many tools</h3><p class="caption">What Claude Code saves in the morning, claude.ai and your phone recall once you approve it.</p></div>
+      <div><span class="v-held">{{GLYPH:person}}</span><h3>You decide what sticks</h3><p class="caption">Until you approve a memory, your other tools never see it, so a wrong guess doesn't spread. Approving is a click on your page.</p></div>
+      <div><span class="v-gate">{{GLYPH:gate}}</span><h3>Yours alone</h3><p class="caption">Your memories live in your own workarea, which other people's keys cannot read. A pasted password is refused, not saved.</p></div>
     </div>
-    <div class="row"><a class="btn primary" href="/#start">Get started</a></div>
+  </section>
+
+  <section aria-labelledby="connect-h">
+    <div class="start">
+      <div class="hero-copy">
+        <h2 id="connect-h">Connect your phone in three steps</h2>
+        <ol>
+          <li><b>Get a code.</b> On your page, under Connect Claude on the web or a phone, issue a connector key and copy its code. It works for ten minutes.</li>
+          <li><b>Add the connector.</b> On claude.ai, open Customize &gt; Connectors and add a custom connector at <code>https://memory.doublegate.io/mcp</code>.</li>
+          <li><b>Paste and confirm.</b> Paste the code on the page that opens. Every Claude app on that account, your phone included, can then use it.</li>
+        </ol>
+        <p class="caption">Claude's Free plan allows one custom connector. Your memory text stays on the server you choose; its request logs carry none of it and are kept at most 30 days.</p>
+        <p class="links"><a href="{{DOCS_URL}}guides/claude-ai-and-mobile/">claude.ai and phone guide</a><a href="{{DOCS_URL}}guides/claude-code/">Claude Code guide</a><a href="{{DOCS_URL}}operations/observability/">What is logged</a></p>
+      </div>
+      <div class="term">
+        <div class="bar"><span>Claude Code</span></div>
+<pre><span class="c"># after installing oml (see Get started)</span>
+<span class="p">$ </span>oml login https://memory.doublegate.io
+<span class="p">$ </span>oml setup claude-code</pre>
+      </div>
+    </div>
+    <div class="row"><a class="btn primary" href="{{CONTACT_URL}}">Ask about access</a><a class="btn" href="/#start">Set it up</a></div>
   </section>
 </main>
 

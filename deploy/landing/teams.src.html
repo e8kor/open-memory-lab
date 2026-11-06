@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Open Memory Lab for teams</title>
-<meta name="description" content="Organizational memory for AI agents. Nothing becomes shared knowledge until someone other than its author approves it, with the source, reviewer and history on every entry.">
+<meta name="description" content="One reviewed memory for your team's AI agents. Every memory has an author, an approver and a signed record, and secrets are refused before anyone reads them.">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="{{GROUND_DARK}}" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="{{GROUND_LIGHT}}" media="(prefers-color-scheme: light)">
 <link rel="canonical" href="https://memory.doublegate.io/teams">
 <meta property="og:title" content="Open Memory Lab for teams">
-<meta property="og:description" content="Organizational memory for AI agents, approved by someone other than its author.">
+<meta property="og:description" content="One reviewed memory for your team's AI agents.">
 <meta property="og:url" content="https://memory.doublegate.io/teams">
 <link rel="icon" type="image/svg+xml" href="{{FAVICON}}">
 <style>
@@ -23,32 +23,41 @@
 <main class="site">
   <div class="hero">
     <div class="hero-copy">
-      <h1>Organizational memory for AI agents.</h1>
-      <p class="lede">Every agent and teammate draws on one knowledge base. Nothing becomes shared knowledge until someone other than its author approves it, with the source, reviewer and history on every entry.</p>
-      <div class="row"><a class="btn primary" href="https://e8kor.github.io/open-memory-lab/start/run-your-own/">Run your own</a><a class="btn" href="https://github.com/e8kor/open-memory-lab/discussions">Request access</a></div>
-      <p class="caption">Apache-2.0 on PostgreSQL. The hosted server is by invitation.</p>
+      <h1>One reviewed memory for your team's AI agents.</h1>
+      <p class="lede">Agents forget, contradict each other and leak secrets, and nobody owns what they know. Here every memory has an author, an approver and a record.</p>
+      <div class="row"><a class="btn primary" href="{{CONTACT_URL}}">Ask about access</a><a class="btn" href="{{DOCS_URL}}start/run-your-own/">Run your own</a></div>
+      <p class="caption">Hosted access by invitation; self-hosting is free under Apache-2.0. Questions? <a href="{{DISCUSSIONS_URL}}">Ask in GitHub Discussions (public)</a>.</p>
     </div>
-    <article class="card proof queue" aria-label="The review queue, as the admin page shows it">
-      <div class="bar2"><h2 class="h3">Held for you</h2><span class="meta">3 held · 2 picked</span></div>
+    <article class="card proof queue" aria-label="The approval queue, as the admin page shows it">
+      <div class="bar2"><h2 class="h3">Waiting for your approval</h2><span class="meta">3 waiting · 2 picked</span></div>
       <ul class="qlist">
-        <li class="qitem"><span class="box" aria-hidden="true"></span><span class="stack"><span class="head"><span class="chip is-held">{{GLYPH:held}}held</span><span class="actor">{{GLYPH:agent}}<span class="who">crew/scout</span> agent</span><span class="end">→ platform</span></span><span class="text">The CLI splits a bulk verdict into requests of 200.</span></span></li>
-        <li class="qitem on"><span class="box" aria-hidden="true">{{GLYPH:can}}</span><span class="stack"><span class="head"><span class="chip is-held">{{GLYPH:held}}held</span><span class="actor">{{GLYPH:agent}}<span class="who">crew/writer</span> agent</span><span class="end">→ ops</span></span><span class="text">The ops runbook names the backup window in its first line.</span></span></li>
-        <li class="qitem on"><span class="box" aria-hidden="true">{{GLYPH:can}}</span><span class="stack"><span class="head"><span class="chip is-held">{{GLYPH:held}}held</span><span class="actor">{{GLYPH:person}}<span class="who">ana</span> person</span><span class="end">→ platform</span></span><span class="text">Workareas carry a name beside their id.</span></span></li>
+        <li class="qitem"><span class="box" aria-hidden="true"></span><span class="stack"><span class="head"><span class="chip is-held">{{GLYPH:held}}waiting</span><span class="actor">{{GLYPH:agent}}<span class="who">crew/scout</span> agent</span><span class="end">→ platform</span></span><span class="text">Staging database credentials rotate on the 1st. Read them from Vault, never from .env.</span></span></li>
+        <li class="qitem on"><span class="box" aria-hidden="true">{{GLYPH:can}}</span><span class="stack"><span class="head"><span class="chip is-held">{{GLYPH:held}}waiting</span><span class="actor">{{GLYPH:agent}}<span class="who">crew/writer</span> agent</span><span class="end">→ ops</span></span><span class="text">The ops runbook names the backup window in its first line.</span></span></li>
+        <li class="qitem on"><span class="box" aria-hidden="true">{{GLYPH:can}}</span><span class="stack"><span class="head"><span class="chip is-held">{{GLYPH:held}}waiting</span><span class="actor">{{GLYPH:person}}<span class="who">ana</span> person</span><span class="end">→ platform</span></span><span class="text">API v1 is frozen. New endpoints go under /v2.</span></span></li>
       </ul>
-      <p class="consequence">Approving shows these to every key that reads <code>acme.platform</code> or <code>acme.ops</code>.</p>
+      <p class="consequence">Approving shares these with every agent and teammate who reads Platform or Ops.</p>
       <div class="row" aria-hidden="true"><span class="btn primary">Approve 2…</span><span class="btn">Reject 2…</span></div>
     </article>
   </div>
 
+  <section aria-labelledby="problem-h">
+    <h2 id="problem-h">Why a team needs it</h2>
+    <p class="lede">Each engineer's AI tools remember something different, and nobody checks it. One agent saves a wrong fact and every later session repeats it.</p>
+    <p class="caption">Open Memory Lab gives every tool the same approved memory. The cost is review time: a new memory reaches the team only after a person or a reviewer agent has looked at it.</p>
+  </section>
+
   <section aria-labelledby="why-h">
-    <h2 id="why-h">What a team gets</h2>
+    <h2 id="why-h">Know who wrote it and who checked it</h2>
     <div class="vals">
-      <div><span class="v-held">{{GLYPH:held}}</span><h3>A review queue</h3><p class="caption">Agent writes wait as <code>held</code>. A person or a reviewer crew approves them; the author never can.</p></div>
-      <div><span class="v-gate">{{GLYPH:gate}}</span><h3>Access by workarea</h3><p class="caption">Workareas mirror your teams and crews. A key reads only the workareas its grant covers.</p></div>
-      <div><span class="v-sup">{{GLYPH:superseded}}</span><h3>A signed history</h3><p class="caption">Every write, verdict and removal is a signed, hash-chained journal entry. Nothing is deleted silently.</p></div>
-      <div><span class="v-gate">{{GLYPH:can}}</span><h3>Yours to run</h3><p class="caption">Self-host it on PostgreSQL, or ask for a place on the hosted server.</p></div>
+      <div><span class="v-held">{{GLYPH:held}}</span><h3>An approval queue</h3><p class="caption">Agents' memories wait until a person or a reviewer agent that didn't write them approves. The author never can.</p></div>
+      <div><span class="v-gate">{{GLYPH:blocked}}</span><h3>Secrets refused at the door</h3><p class="caption">A memory holding a private key, API token or password is refused before anyone reads it. <code>oml admin rescan</code> reports matches already stored.</p></div>
+      <div><span class="v-gate">{{GLYPH:gate}}</span><h3>Team rules, checked</h3><p class="caption">Guardrails such as "never push to the release branch" load into every Claude Code session and are checked before a matching tool call.</p></div>
+      <div><span class="v-prom">{{GLYPH:promoted}}</span><h3>Tied to your code</h3><p class="caption">A memory can name the repository, commit and file it came from, and recall marks it when that file has changed.</p></div>
+      <div><span class="v-gate">{{GLYPH:can}}</span><h3>Access by workarea</h3><p class="caption">Memory is split into workareas that mirror your teams and projects. Each agent reads only the workareas it is granted.</p></div>
+      <div><span class="v-sup">{{GLYPH:superseded}}</span><h3>An audit trail you can verify</h3><p class="caption">Every write, approval and removal is signed and chained, so a later edit shows. Nothing is deleted without a record.</p></div>
+      <div><span class="v-gate">{{GLYPH:shared}}</span><h3>Yours to run</h3><p class="caption">Self-host on your own PostgreSQL 17 or later, and every memory, key and log stays in your infrastructure. Each organisation is isolated by row-level security.</p></div>
     </div>
-    <div class="row"><a class="btn primary" href="https://e8kor.github.io/open-memory-lab/start/run-your-own/">Run your own</a><a class="btn" href="https://github.com/e8kor/open-memory-lab/discussions">Request access</a></div>
+    <div class="row"><a class="btn primary" href="{{CONTACT_URL}}">Ask about access</a><a class="btn" href="{{DOCS_URL}}start/run-your-own/">Run your own</a></div>
   </section>
 </main>
 

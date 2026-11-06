@@ -53,6 +53,11 @@ GITHUB_URL = "https://github.com/e8kor/open-memory-lab"
 # The footers link /privacy and /terms only with --legal-links: both are drafts until the
 # operator publishes them (deploy/landing/README.md).
 LEGAL_LINKS = False
+# Where "Ask about access" goes, and the address the footer shows so it works without a mail
+# client. The operator swaps either for a form or another address here.
+CONTACT_EMAIL = "contact@doublegate.io"
+CONTACT_URL = f"mailto:{CONTACT_EMAIL}?subject=OML%20access"
+DISCUSSIONS_URL = f"{GITHUB_URL}/discussions"
 WEB_GLYPHS = (
     "held", "promoted", "superseded", "retired", "rejected", "unreviewed", "in-progress",
     "stale", "self-signed", "pending", "same-user", "gate", "agent", "person", "can", "blocked",
@@ -317,7 +322,7 @@ def landing_footer(version: str, legal: bool) -> str:
         links += '<a href="/privacy">Privacy</a><a href="/terms">Terms</a>'
     return ('<footer>\n'
             f'  <span>Open Memory Lab · Apache-2.0 · memory.doublegate.io v{version}</span>\n'
-            f'  <nav aria-label="Footer">{links}</nav>\n'
+            f'  <nav aria-label="Footer">{links}<a href="{CONTACT_URL}">{CONTACT_EMAIL}</a></nav>\n'
             '</footer>')
 
 
@@ -339,6 +344,10 @@ def landing(t: dict, legal: bool = LEGAL_LINKS) -> dict[Path, str]:
             "{{HEADER}}": landing_header(page),
             "{{FOOTER}}": landing_footer(version, legal),
             "{{VERSION}}": version,
+            "{{CONTACT_URL}}": CONTACT_URL,
+            "{{CONTACT_EMAIL}}": CONTACT_EMAIL,
+            "{{DISCUSSIONS_URL}}": DISCUSSIONS_URL,
+            "{{DOCS_URL}}": DOCS_URL,
             "{{GROUND_DARK}}": ground["dark"],
             "{{GROUND_LIGHT}}": ground["light"],
             "{{FAVICON}}": "data:image/svg+xml," + urllib.parse.quote(fav, safe=" =:/\".,-"),
