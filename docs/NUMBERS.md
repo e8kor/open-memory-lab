@@ -89,7 +89,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0062 | `design/delta-mapping` | #74 | oml sync maps a delta lakes tables into anchored claims from the log a | open |
 | adr | 0063 | `feat/chat-memory-r2` | #88 | a chat turn becomes memory only when the agent in it writes the fact a | open |
 | adr | 0063 | `main` |  | a chat turn becomes memory only when the agent in it writes the fact a | used |
-| adr | 0064 | `design/implicit-code-capture` | #80 | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
+| adr | 0064 | `feat/implicit-capture` | #80 | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
 | adr | 0065 | `feat/content-scanner-r2` | #92 | the scan is a versioned compiled in rule set that vetoes leaked keys a | open |
 | adr | 0065 | `main` |  | the scan is a versioned compiled in rule set that vetoes leaked keys a | used |
 | fr | 1 | `main` |  | Erasure destroys body and attachment bytes by destroying their keys; a | used |
@@ -240,13 +240,13 @@ is a collision: the branch that reserved later renumbers.
 | fr | 163 | `main` |  | One person's chat on two machines produces two pseudonymous sessions t | used |
 | fr | 164 | `feat/chat-memory-r2` | #88 | The chat benchmark's QA numbers wait for an API key in the environment | open |
 | fr | 164 | `main` |  | The chat benchmark's QA numbers wait for an API key in the environment | used |
-| fr | 170 | `design/implicit-code-capture` | #80 | The pre-tool hook chooses an anchor's file from the paths a fact names | open |
-| fr | 171 | `design/implicit-code-capture` | #80 | A fact's span is the indentation block of the one definition line its  | open |
-| fr | 172 | `design/implicit-code-capture` | #80 | Every latency budget of ADR-0064 d22 is chosen: 100 ms for a git hook  | open |
-| fr | 173 | `design/implicit-code-capture` | #80 | Session start recalls the repository's knowledge with `k` 6 under 600  | open |
-| fr | 174 | `design/implicit-code-capture` | #80 | A chat fact about code carries its turn in `origin.turn`, stored and s | open |
-| fr | 175 | `design/implicit-code-capture` | #80 | Each repository a person opts into adds one workarea under their code  | open |
-| fr | 176 | `design/implicit-code-capture` | #80 | A hook manager that rewrites `core.hooksPath` on install silently remo | open |
+| fr | 170 | `feat/implicit-capture` | #80 | The pre-tool hook chooses an anchor's file from the paths a fact names | open |
+| fr | 171 | `feat/implicit-capture` | #80 | A fact's span is the indentation block of the one definition line its  | open |
+| fr | 172 | `feat/implicit-capture` | #80 | Every latency budget of ADR-0064 d22 is chosen: 100 ms for a git hook  | open |
+| fr | 173 | `feat/implicit-capture` | #80 | Session start recalls the repository's knowledge with `k` 6 under 600  | open |
+| fr | 174 | `feat/implicit-capture` | #80 | A chat fact about code carries its turn in `origin.turn`, stored and s | open |
+| fr | 175 | `feat/implicit-capture` | #80 | Each repository a person opts into adds one workarea under their code  | open |
+| fr | 176 | `feat/implicit-capture` | #80 | A hook manager that rewrites `core.hooksPath` on install silently remo | open |
 | fr | 180 | `feat/content-scanner-r2` | #92 | The personal-data rules (`pii.email`, `pii.phone`) are compiled in and | open |
 | fr | 180 | `main` |  | The personal-data rules (`pii.email`, `pii.phone`) are compiled in and | used |
 | fr | 181 | `feat/content-scanner-r2` | #92 | `GET /v2/admin/rescan` reads one window of at most 1,000 journal event | open |
