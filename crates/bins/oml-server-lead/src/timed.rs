@@ -94,6 +94,19 @@ impl<J: Retriever> Retriever for Timed<J> {
             self.inner.suggest(tenant_id, scope, words, limit),
         )
     }
+
+    fn similar_candidates(
+        &self,
+        tenant_id: Uuid,
+        scope: &CandidateScope,
+        keys: &[i64],
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send {
+        timed(
+            "similar_candidates",
+            self.inner.similar_candidates(tenant_id, scope, keys, limit),
+        )
+    }
 }
 
 impl<J: JournalStore> JournalStore for Timed<J> {

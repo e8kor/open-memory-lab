@@ -147,6 +147,7 @@ async fn world() -> World {
 
 fn submit(idem: &str, body: &str, from: Option<&str>, until: Option<&str>) -> SubmitRequest {
     SubmitRequest {
+        on_similar: Default::default(),
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -164,6 +165,7 @@ fn submit(idem: &str, body: &str, from: Option<&str>, until: Option<&str>) -> Su
 
 fn recall(query: &str, pipeline: Pipeline) -> RecallRequest {
     RecallRequest {
+        timings: false,
         query: query.to_owned(),
         k: 10,
         workarea: None,
@@ -464,6 +466,7 @@ async fn valid_time_is_refused_on_steering_and_on_a_retirement() {
         .promoted("t", "the deploy runs on fridays", None, None)
         .await;
     let retire = SupersedeRequest {
+        on_similar: Default::default(),
         idempotency_key: "r".to_owned(),
         target_id: target,
         body: "no longer true".to_owned(),
@@ -491,6 +494,7 @@ async fn a_fact_ends_by_a_reviewed_supersession_and_a_successor_inherits_no_vali
         .promoted("a", "the freeze holds", Some("2026-10"), None)
         .await;
     let supersede = |idem: &str, until: Option<&str>| SupersedeRequest {
+        on_similar: Default::default(),
         idempotency_key: idem.to_owned(),
         target_id: v1,
         body: "the freeze holds".to_owned(),
@@ -588,6 +592,7 @@ async fn a_ratified_supersession_ends_the_replaced_version_where_the_successor_b
         .promoted("a", "the api is at version 3", Some("2025-01"), None)
         .await;
     let next = SupersedeRequest {
+        on_similar: Default::default(),
         idempotency_key: "b".to_owned(),
         target_id: v1,
         body: "the api is at version 4".to_owned(),

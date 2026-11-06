@@ -78,6 +78,11 @@ struct Observed {
     answered: Option<(&'static str, &'static str, f64)>,
     /// A verdict and the seconds its memory waited for it (ADR-0054 d1).
     verdict: Option<(&'static str, f64)>,
+    /// A write's similar check: the best relation named, `on_similar`, and
+    /// its seconds (ADR-0050 d1; ADR-0054 d1).
+    similar: Option<(&'static str, &'static str, f64)>,
+    /// A recall's stages: pipeline, stage and seconds (ADR-0049 d14).
+    stages: Vec<(&'static str, &'static str, f64)>,
 }
 
 impl Scope {
@@ -176,6 +181,16 @@ pub fn recall_answered(pipeline: &'static str, result: &'static str, seconds: f6
     in_scope(|scope| scope.update(|o, _| o.answered = Some((pipeline, result, seconds))));
 }
 
+/// The request's write ran the similar check (ADR-0050 d1).
+pub fn similar_checked(relation: &'static str, on_similar: &'static str, seconds: f64) {
+    in_scope(|scope| scope.update(|o, _| o.similar = Some((relation, on_similar, seconds))));
+}
+
+/// The request's recall spent `seconds` in `stage` (ADR-0049 d14).
+pub fn recall_stage(pipeline: &'static str, stage: &'static str, seconds: f64) {
+    in_scope(|scope| scope.update(|o, _| o.stages.push((pipeline, stage, seconds))));
+}
+
 /// The request's verdict committed `waited` seconds after its memory was
 /// submitted (ADR-0054 d1).
 pub fn verdict(verdict: &'static str, waited: f64) {
@@ -224,6 +239,14 @@ impl RequestObserver for ScopeObserver {
 
     fn verdict(&self, verdict: &'static str, waited_seconds: f64) {
         self::verdict(verdict, waited_seconds);
+    }
+
+    fn similar_checked(&self, relation: &'static str, on_similar: &'static str, seconds: f64) {
+        similar_checked(relation, on_similar, seconds);
+    }
+
+    fn recall_stage(&self, pipeline: &'static str, stage: &'static str, seconds: f64) {
+        recall_stage(pipeline, stage, seconds);
     }
 }
 
@@ -505,6 +528,14 @@ pub(crate) async fn layer(
     }
     if let Some((pipeline, result, seconds)) = observed.answered {
         traffic.metrics.recall_answered(pipeline, result, seconds);
+    }
+    if let Some((relation, on_similar, seconds)) = observed.similar {
+        traffic
+            .metrics
+            .similar_checked(relation, on_similar, seconds);
+    }
+    for &(pipeline, stage, seconds) in &observed.stages {
+        traffic.metrics.recall_stage(pipeline, stage, seconds);
     }
     if let Some((verdict, waited)) = observed.verdict {
         traffic.metrics.verdict(verdict, waited);
