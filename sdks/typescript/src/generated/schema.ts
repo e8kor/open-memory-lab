@@ -1133,6 +1133,7 @@ export interface components {
              */
             on_similar?: "hold" | "refuse";
             anchor?: components["schemas"]["Anchor"];
+            origin?: components["schemas"]["Origin"];
         };
         SubmitAccepted: {
             artifact_id: string;
@@ -1254,6 +1255,8 @@ export interface components {
             promoted_at: string | null;
             /** @description The version's anchor, as its author declared it, or null (ADR-0057 d1, d2). */
             anchor: components["schemas"]["Anchor"] | null;
+            /** @description What kind of source the version's text came from, as signed; null on versions written before ADR-0063 (d1-d3). */
+            origin?: components["schemas"]["Origin"] | null;
             /** @description changed or removed from the served version's latest source check; null otherwise, and always null on a held version (ADR-0057 d5). */
             stale: components["schemas"]["Stale"] | null;
             /** @description The version's latest source check, or null; always null on a held version (ADR-0057 d5). */
@@ -1291,6 +1294,7 @@ export interface components {
             include_text?: boolean;
             anchor_repo?: components["schemas"]["AnchorRepo"];
             anchor_path_prefix?: components["schemas"]["AnchorPathPrefix"];
+            origin_kinds?: components["schemas"]["OriginKinds"];
             /** @description When true, the calling key's own held rows (kind memory or derived_fact, never steering or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by the kinds filter when one is sent as promoted hits are, join the hits, ranked in the same order, with memory.state held and unreviewed true; they count against k and max_tokens. Inside a workarea a person put in progress, every author's held memories on the served nodes join too, and absent means true there; absent means false everywhere else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md. */
             include_unreviewed?: boolean;
             /**
@@ -1556,6 +1560,7 @@ export interface components {
             /** @description The claim's latest version the caller can read, as it last read it: its promoted versions where it reads the workarea and its own keys' versions; never another author's held version. Any other is 409 submission.version_conflict, details.current_version (ADR-0057 d19). */
             expected_version: number;
             anchor?: components["schemas"]["Anchor"];
+            origin?: components["schemas"]["Origin"];
             /** @description When sent, the target's workarea, by id or name; any other is request.validation, details.field /workarea (ADR-0039 d7). */
             workarea?: components["schemas"]["WorkareaRef"];
             /**
@@ -1586,22 +1591,30 @@ export interface components {
         /** @description The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event, immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither. Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path or fragment is submission.scan_veto. */
         Anchor: {
             repo?: components["schemas"]["AnchorRepo"];
-            /** @description A page outside a repository: an absolute https URL with no user information and no fragment. */
+            /** @description A page outside a repository: an absolute https URL with no user information and no fragment. Or a chat turn's session, chat://<harness>/<session>, the session 32 lower-case hex digits derived by the plugin, never the harness's own id; then rev is refused and fragment, hash and hasher oml-turn/1 are required (ADR-0063 d4, d5). */
             uri?: string;
             /** @description With repo, required: a full git object id, 40 or 64 lower-case hex digits. With uri, optional: a page version, printable ASCII without whitespace. */
             rev?: string;
             /** @description With repo, required; with uri, refused. NFC, relative POSIX, at most 1,024 UTF-8 bytes, no empty, . or .. segment, no leading /, no backslash or control character. */
             path?: string;
-            /** @description The part of the file or page: a heading slug, an ADR decision handle dN, or a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file or page (ADR-0057 d3, d21). */
+            /** @description The part of the file or page: a heading slug, an ADR decision handle dN, or a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file or page (ADR-0057 d3, d21). With a chat uri, required: turn=<n> or turn=<n>-<m>, 1 <= n <= m <= 100000, the person's prompts counted from 1; turn= is refused with any other anchor (ADR-0063 d4). */
             fragment?: string;
             /** @description Digest of the fragment's text, or the file's, under hasher. */
             hash?: string;
             /**
-             * @description oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7).
+             * @description oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7). oml-turn/1: HMAC-SHA-256 of the person's prompt as the harness passed it, UTF-8 after NFC, keyed by the person's chat salt, which never leaves their machine; with a chat uri alone (ADR-0063 d4).
              * @enum {string}
              */
-            hasher?: "oml-md/1";
+            hasher?: "oml-md/1" | "oml-turn/1";
         };
+        /** @description What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission event, immutable per version, never inherited by a successor. Omitted on a write, it is recorded manual. chat requires a chat anchor and a chat anchor requires chat; either mismatch is request.validation naming /origin/kind. */
+        Origin: {
+            kind: components["schemas"]["OriginKind"];
+        };
+        /** @enum {string} */
+        OriginKind: "repo" | "doc" | "code" | "lake" | "chat" | "web" | "manual";
+        /** @description Rows whose origin kind is one of these, combined with every other filter by AND; rows without a kind are left out (ADR-0063 d3). */
+        OriginKinds: components["schemas"]["OriginKind"][];
         /** @description A repository, scheme, credentials and .git dropped (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows whose anchor names it; unanchored rows are left out (d4). */
         AnchorRepo: string;
         /** @description A byte prefix of the anchor path, at most 1,024 UTF-8 bytes; rows whose anchor path starts with it, unanchored rows left out (ADR-0057 d4). */
@@ -2473,6 +2486,8 @@ export interface operations {
                 anchor_repo?: components["schemas"]["AnchorRepo"];
                 /** @description Rows whose anchor path starts with these bytes; unanchored rows are left out (ADR-0057 d4). */
                 anchor_path_prefix?: components["schemas"]["AnchorPathPrefix"];
+                /** @description Comma-separated: rows whose origin kind is one of these; rows without a kind are left out (ADR-0063 d3). Malformed is request.validation naming origin_kinds. */
+                origin_kinds?: components["schemas"]["OriginKinds"];
                 since?: string;
                 until?: string;
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */

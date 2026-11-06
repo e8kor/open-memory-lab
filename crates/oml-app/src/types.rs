@@ -10,6 +10,7 @@ use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::oauth::{
     ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
 };
+use oml_domain::origin::OriginKind;
 use oml_domain::valid_time::{ValidTime, ValidTimeError, Window};
 use oml_domain::vocab_edges::{CycleRefused, EdgeState};
 use oml_domain::web::{Email, GitHubEmail, Provider, SignInRefusal, UserTooLong};
@@ -1059,6 +1060,9 @@ pub struct MemoryRecord {
     /// submission event and immutable (ADR-0057 d1, d2). Boxed: most rows
     /// carry none.
     pub anchor: Option<Box<Anchor>>,
+    /// The version's `origin.kind`, signed in its submission event and
+    /// immutable; `None` on versions written before ADR-0063 (d1, d2).
+    pub origin_kind: Option<OriginKind>,
     /// The version's latest source check, kept only on a promoted version
     /// (ADR-0057 d5, d18); `stale` is computed from it alone.
     pub source_check: Option<Box<SourceCheck>>,
@@ -1090,20 +1094,36 @@ impl SourceCheck {
 pub struct AnchorFilter {
     pub repo: Option<String>,
     pub path_prefix: Option<String>,
+    /// `origin_kinds`: a row passes when its kind is one of them; a row
+    /// without a kind never passes a set filter (ADR-0063 d3).
+    pub origin_kinds: Vec<OriginKind>,
 }
 
 impl AnchorFilter {
     /// Whether neither filter is set.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
+        self.repo.is_none() && self.path_prefix.is_none() && self.origin_kinds.is_empty()
+    }
+
+    /// Whether the anchor filters, `repo` and `path_prefix`, are unset.
+    #[must_use]
+    pub const fn anchor_is_empty(&self) -> bool {
         self.repo.is_none() && self.path_prefix.is_none()
+    }
+
+    /// Whether a row with `anchor` and `kind` passes every origin filter.
+    #[must_use]
+    pub fn admits_row(&self, anchor: Option<&Anchor>, kind: Option<OriginKind>) -> bool {
+        (self.origin_kinds.is_empty() || kind.is_some_and(|k| self.origin_kinds.contains(&k)))
+            && self.admits(anchor)
     }
 
     /// Whether a row with `anchor` passes: an unanchored row passes only
     /// an empty filter.
     #[must_use]
     pub fn admits(&self, anchor: Option<&Anchor>) -> bool {
-        if self.is_empty() {
+        if self.anchor_is_empty() {
             return true;
         }
         let Some(anchor) = anchor else {
@@ -1428,6 +1448,8 @@ pub struct SubmitRequest {
     /// The origin the author declares, grammar-checked by the transport
     /// (ADR-0057 d1-d3).
     pub anchor: Option<Anchor>,
+    /// `origin.kind` as declared; `None` is recorded `manual` (ADR-0063 d2).
+    pub origin: Option<OriginKind>,
 }
 
 /// The stored idempotent response: a replayed submit returns this byte for
@@ -2110,6 +2132,9 @@ pub struct SupersedeRequest {
     pub valid_until: Option<String>,
     /// The successor's own anchor; nothing is inherited (ADR-0057 d2).
     pub anchor: Option<Anchor>,
+    /// The successor's own `origin.kind`; `None` is recorded `manual`,
+    /// never inherited (ADR-0063 d2).
+    pub origin: Option<OriginKind>,
     /// The claim's latest live version as the caller last read it; any
     /// other is [`AppError::VersionConflict`] (ADR-0057 d19).
     pub expected_version: u32,
@@ -2625,6 +2650,15 @@ pub enum AppError {
     /// errors.md `access.verb_ceiling`, reason `bulk_review_is_human_only`).
     #[error("bulk review is a person's act: a {} key held by {} is refused (ADR-0055 d1, access.verb_ceiling)", .role.as_str(), .held_by.as_str())]
     BulkReviewHumanOnly { role: Role, held_by: HeldBy },
+    /// `origin` outside its grammar, or out of step with the anchor
+    /// (ADR-0063 d1, d2; request.validation, `details.field`).
+    #[error("{field}: {reason} (ADR-0063, request.validation)")]
+    OriginInvalid { field: String, reason: String },
+    /// A person's chat workarea, `chat` directly under a user root, is
+    /// created only by a key held by a human (ADR-0063 d8;
+    /// `access.verb_ceiling`, reason `chat_scope_is_human_only`).
+    #[error("the chat workarea is a person's to open: a key held by {} is refused (ADR-0063 d8, access.verb_ceiling)", .held_by.as_str())]
+    ChatScopeHumanOnly { held_by: HeldBy },
     /// Only a person's key sets a workarea's mode (ADR-0030 d1; errors.md
     /// `access.verb_ceiling`, reason `mode_is_human_only`).
     #[error("a workarea's mode is set by a person's key: a {} key held by {} is refused (ADR-0030 d1, access.verb_ceiling)", .role.as_str(), .held_by.as_str())]

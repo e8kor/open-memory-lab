@@ -81,7 +81,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0060 | `feat/lake-writer` | #75 | the lake writer drains the outbox it has seals what it materializes an | open |
 | adr | 0061 | `design/rust-adapter` | #70 | oml sync reads a rust workspace as one claim per crate and one per mod | open |
 | adr | 0062 | `design/delta-mapping` | #74 | oml sync maps a delta lakes tables into anchored claims from the log a | open |
-| adr | 0063 | `feat/chat-memory` | #78 | a chat turn becomes memory only when the agent in it writes the fact a | open |
+| adr | 0063 | `feat/chat-memory-r2` | #88 | a chat turn becomes memory only when the agent in it writes the fact a | open |
 | adr | 0064 | `design/implicit-code-capture` | #80 | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
 | adr | 0065 | `feat/content-scanner` | #81 | the scan is a versioned compiled in rule set that vetoes leaked keys a | open |
 | fr | 1 | `main` |  | Erasure destroys body and attachment bytes by destroying their keys; a | used |
@@ -207,11 +207,11 @@ is a collision: the branch that reserved later renumbers.
 | fr | 145 | `design/delta-mapping` | #74 | A table copied to a new location reads `removed` there and `new` here  | open |
 | fr | 146 | `design/delta-mapping` | #74 | A lake sync records source checks one request each through ADR-0057's  | open |
 | fr | 147 | `design/delta-mapping` | #74 | ADR-0062 d1 moves ADR-0020 d7's row reading to the client, which strea | open |
-| fr | 160 | `feat/chat-memory` | #78 | Whether the agent's own extraction of chat facts answers more LongMemE | open |
-| fr | 161 | `feat/chat-memory` | #78 | The turns of a session that ends between two captures are not captured | open |
-| fr | 162 | `feat/chat-memory` | #78 | Per-turn recall's relevance is unlabelled: at least 30 labelled inject | open |
-| fr | 163 | `feat/chat-memory` | #78 | One person's chat on two machines produces two pseudonymous sessions t | open |
-| fr | 164 | `feat/chat-memory` | #78 | The chat benchmark's QA numbers wait for an API key in the environment | open |
+| fr | 160 | `feat/chat-memory-r2` | #88 | Whether the agent's own extraction of chat facts answers more LongMemE | open |
+| fr | 161 | `feat/chat-memory-r2` | #88 | The turns of a session that ends between two captures are not captured | open |
+| fr | 162 | `feat/chat-memory-r2` | #88 | Per-turn recall's relevance is unlabelled: at least 30 labelled inject | open |
+| fr | 163 | `feat/chat-memory-r2` | #88 | One person's chat on two machines produces two pseudonymous sessions t | open |
+| fr | 164 | `feat/chat-memory-r2` | #88 | The chat benchmark's QA numbers wait for an API key in the environment | open |
 | fr | 170 | `design/implicit-code-capture` | #80 | The pre-tool hook chooses an anchor's file from the paths a fact names | open |
 | fr | 171 | `design/implicit-code-capture` | #80 | A fact's span is the indentation block of the one definition line its  | open |
 | fr | 172 | `design/implicit-code-capture` | #80 | Every latency budget of ADR-0064 d22 is chosen: 100 ms for a git hook  | open |
@@ -248,5 +248,5 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0027 | `feat/remember-dedup-r2` | #84 | similar keys | open |
 | migration | 0026 | `main` |  | valid time | used |
 | migration | 0028 | `feat/in-progress-r2-r2` | #86 | in progress | open |
-| migration | 0029 | `feat/chat-memory` | #78 | origin kind | open |
-| migration | 0030 | `feat/chat-memory` | #78 | origin kind validate | open |
+| migration | 0029 | `feat/chat-memory-r2` | #88 | origin kind | open |
+| migration | 0030 | `feat/chat-memory-r2` | #88 | origin kind validate | open |

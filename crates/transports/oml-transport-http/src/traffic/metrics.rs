@@ -60,6 +60,11 @@ fn review_histogram() -> Histogram {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct OriginLabels {
+    origin_kind: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct AnswerLabels {
     pipeline: String,
     result: String,
@@ -181,6 +186,7 @@ struct Quality {
     lag: Gauge<f64, AtomicU64>,
     purge_overdue: Gauge,
     unrecalled: Family<AgeLabels, Gauge>,
+    origins: Family<OriginLabels, Counter>,
     stages: Family<StageLabels, Histogram, fn() -> Histogram>,
     similar: Family<SimilarLabels, Counter>,
     similar_duration: Histogram,
@@ -200,6 +206,7 @@ impl Quality {
             lag: Gauge::default(),
             purge_overdue: Gauge::default(),
             unrecalled: Family::default(),
+            origins: Family::default(),
             stages: Family::new_with_constructor(histogram as fn() -> Histogram),
             similar: Family::default(),
             similar_duration: histogram(),
@@ -268,6 +275,11 @@ impl Quality {
             "oml_telemetry_purge_overdue",
             "organisations holding recall telemetry rows past the 30 days and a minute: the purge is behind",
             q.purge_overdue.clone(),
+        );
+        registry.register(
+            "oml_recall_hits_by_origin",
+            "recall hits served, by the origin kind of the version, none for one written before kinds (ADR-0063 d13)",
+            q.origins.clone(),
         );
         registry.register(
             "oml_memories_unrecalled",
@@ -557,6 +569,16 @@ impl Metrics {
                 pipeline: pipeline.to_owned(),
             })
             .observe(seconds);
+    }
+
+    /// One recall hit of `origin_kind`, one of eight closed values.
+    pub(crate) fn recall_hit_origin(&self, origin_kind: &str) {
+        self.quality
+            .origins
+            .get_or_create(&OriginLabels {
+                origin_kind: origin_kind.to_owned(),
+            })
+            .inc();
     }
 
     /// One recall stage's seconds (ADR-0049 d14).

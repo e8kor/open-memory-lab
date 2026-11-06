@@ -9,8 +9,21 @@
 use serde_json::{Map, Value};
 use unicode_normalization::UnicodeNormalization;
 
-/// The hashers the server admits (ADR-0057 d3, d7): `oml-md/1` in v0.5.8.
-pub const HASHERS: [&str; 1] = ["oml-md/1"];
+/// The hashers the server admits (ADR-0057 d3, d7): `oml-md/1` in v0.5.8,
+/// and `oml-turn/1` for a chat anchor alone (ADR-0063 d4).
+pub const HASHERS: [&str; 2] = ["oml-md/1", TURN_HASHER];
+
+/// A chat turn's hasher: the SHA-256 of the person's prompt as the harness
+/// passed it, UTF-8 after NFC (ADR-0063 d4).
+pub const TURN_HASHER: &str = "oml-turn/1";
+/// A chat anchor's scheme (ADR-0063 d4).
+pub const CHAT_SCHEME: &str = "chat://";
+/// The longest harness name in a chat anchor.
+pub const HARNESS_MAX: usize = 32;
+/// The digits of a chat anchor's pseudonymous session (ADR-0063 d5).
+pub const SESSION_HEX: usize = 32;
+/// The greatest turn a chat fragment may name.
+pub const TURN_MAX: u64 = 100_000;
 
 /// The longest `repo`, in characters (ADR-0057 d3).
 pub const REPO_MAX: usize = 200;
@@ -121,11 +134,19 @@ impl Anchor {
                 }
             }
             (None, Some(uri)) => {
-                check_uri(uri).map_err(|r| refuse(&field("uri"), r))?;
+                let chat = uri.starts_with(CHAT_SCHEME);
+                if chat {
+                    check_chat_uri(uri).map_err(|r| refuse(&field("uri"), r))?;
+                } else {
+                    check_uri(uri).map_err(|r| refuse(&field("uri"), r))?;
+                }
                 if text("path")?.is_some() {
                     return Err(refuse(&field("path"), "refused with uri"));
                 }
                 let rev = text("rev")?;
+                if chat && rev.is_some() {
+                    return Err(refuse(&field("rev"), "refused with a chat uri"));
+                }
                 if let Some(rev) = rev
                     && (rev.is_empty()
                         || rev.len() > REV_MAX
@@ -142,9 +163,25 @@ impl Anchor {
                 }
             }
         };
+        let chat = matches!(&origin, Origin::Uri { uri, .. } if uri.starts_with(CHAT_SCHEME));
         let fragment = text("fragment")?;
         if let Some(fragment) = fragment {
             check_fragment(fragment).map_err(|r| refuse(&field("fragment"), r))?;
+            if chat {
+                turn_span(fragment).ok_or_else(|| {
+                    refuse(
+                        &field("fragment"),
+                        "a chat turn is turn=<n> or turn=<n>-<m>, 1 <= n <= m <= 100000",
+                    )
+                })?;
+            } else if fragment.starts_with("turn=") {
+                return Err(refuse(
+                    &field("fragment"),
+                    "turn=<n> names a chat turn alone",
+                ));
+            }
+        } else if chat {
+            return Err(refuse(&field("fragment"), "required with a chat uri"));
         }
         let hash = match (text("hash")?, text("hasher")?) {
             (None, None) => None,
@@ -158,11 +195,20 @@ impl Anchor {
                     ));
                 }
                 if !HASHERS.contains(&hasher) {
-                    return Err(refuse(&field("hasher"), "one of oml-md/1"));
+                    return Err(refuse(&field("hasher"), "one of oml-md/1, oml-turn/1"));
+                }
+                if chat != (hasher == TURN_HASHER) {
+                    return Err(refuse(
+                        &field("hasher"),
+                        "oml-turn/1 with a chat uri, and with nothing else",
+                    ));
                 }
                 Some((hash.to_owned(), hasher.to_owned()))
             }
         };
+        if chat && hash.is_none() {
+            return Err(refuse(&field("hash"), "required with a chat uri"));
+        }
         Ok(Self {
             origin,
             fragment: fragment.map(ToOwned::to_owned),
@@ -205,6 +251,13 @@ impl Anchor {
             Origin::Repo { repo, .. } => Some(repo),
             Origin::Uri { .. } => None,
         }
+    }
+
+    /// Whether this is a chat anchor, `chat://<harness>/<session>`
+    /// (ADR-0063 d4).
+    #[must_use]
+    pub fn is_chat(&self) -> bool {
+        matches!(&self.origin, Origin::Uri { uri, .. } if uri.starts_with(CHAT_SCHEME))
     }
 
     /// The path, for a repository anchor.
@@ -284,6 +337,60 @@ fn check_uri(uri: &str) -> Result<(), &'static str> {
         return Err(WHY);
     }
     Ok(())
+}
+
+/// A chat anchor's `uri`: `chat://<harness>/<session>`, the harness 1 to
+/// 32 of `[a-z0-9-]` starting with a letter, the session exactly 32
+/// lower-case hex digits, nothing else (ADR-0063 d4, d5).
+///
+/// # Errors
+///
+/// Why it fails.
+pub fn check_chat_uri(uri: &str) -> Result<(), &'static str> {
+    const WHY: &str = "chat://<harness>/<session>: a harness of 1 to 32 [a-z0-9-] starting with a \
+                       letter, and a session of exactly 32 lower-case hex digits";
+    let rest = uri.strip_prefix(CHAT_SCHEME).ok_or(WHY)?;
+    let (harness, session) = rest.split_once('/').ok_or(WHY)?;
+    let harness_ok = !harness.is_empty()
+        && harness.len() <= HARNESS_MAX
+        && harness.as_bytes()[0].is_ascii_lowercase()
+        && harness
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    let session_ok = session.len() == SESSION_HEX
+        && session
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if harness_ok && session_ok {
+        Ok(())
+    } else {
+        Err(WHY)
+    }
+}
+
+/// The turns a chat fragment names, `(n, m)`: `turn=<n>` or
+/// `turn=<n>-<m>`, no leading zero, `1 <= n <= m <= 100000` (ADR-0063 d4).
+#[must_use]
+pub fn turn_span(fragment: &str) -> Option<(u64, u64)> {
+    let number = |s: &str| -> Option<u64> {
+        if s.is_empty()
+            || s.starts_with('0')
+            || s.len() > 6
+            || !s.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let n: u64 = s.parse().ok()?;
+        (1..=TURN_MAX).contains(&n).then_some(n)
+    };
+    let span = fragment.strip_prefix("turn=")?;
+    match span.split_once('-') {
+        None => number(span).map(|n| (n, n)),
+        Some((a, b)) => {
+            let (n, m) = (number(a)?, number(b)?);
+            (n <= m).then_some((n, m))
+        }
+    }
 }
 
 /// `path`'s grammar, which `anchor_path_prefix` shares but for its last

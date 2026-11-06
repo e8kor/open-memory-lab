@@ -3878,6 +3878,8 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
             "/healthz",
             "/readyz",
             "/v2/whoami",
+            // Whether the server takes origin_kinds (ADR-0063 d13).
+            "/v1/memories",
             "/v2/workareas/w1",
             "/v2/edges",
             "/v2/events"

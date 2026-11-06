@@ -1071,6 +1071,19 @@ anchor index and scores only them, a broad one joins the indexed columns; the re
 equality and the prefix a range on leakproof operators. The statistics a score uses are the
 unfiltered ones, so a filtered recall is the unfiltered list filtered then cut.
 
+**Origin kind and the chat anchor.** *Planned for v0.6.0 ([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md) d1–d5).* Submit
+and supersede take an optional `origin: {kind}`, one of `repo`, `doc`, `code`, `lake`, `chat`,
+`web`, `manual`; omitted, `manual` is recorded and journalled. It is signed in the submission
+event, immutable, and never inherited. `chat` requires a chat anchor and a chat anchor requires
+`chat`, else `request.validation` naming `/origin/kind`. A chat anchor is
+`{uri: "chat://<harness>/<session>", fragment: "turn=<n>", hash, hasher: "oml-turn/1"}`, the
+session 32 lower-case hex digits; `rev` is refused with it. Every memory item carries `origin`, or
+`null` on a version written before 0.6.0. Recall takes `origin_kinds`, a list of one to seven
+kinds, and `GET /v1/memories` takes it comma-separated or repeated; it combines by AND with the
+other filters inside the candidate statement and leaves out rows without a kind. Creating a
+workarea named `chat` directly under a user root needs a key `held_by: human`; any other key is
+`403 access.verb_ceiling`, `details.reason` `chat_scope_is_human_only`.
+
 **Source check — `POST /v1/memories/{artifact_id}/source-check`.** `{rev, result, hash?, path?,
 fragment?}`, `result` one of `fresh`, `equivalent`, `moved`, `changed`, `removed`; `path` (and
 `fragment`) only with `moved`, where `path` is required. Admits a promoted, anchored served tip

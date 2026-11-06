@@ -2585,14 +2585,16 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // lexemes, generated from the claim (ADR-0049 d12); 0025 adds
             // the anchor and the latest source check, null on every row
             // written before it (ADR-0057 d1, d5); 0026 adds valid time, open
-            // on every existing row (proposed ADR-0059 d11).
+            // on every existing row (proposed ADR-0059 d11); 0029 adds the origin
+            // kind, null on every row written before it and never backfilled
+            // (ADR-0063 d2).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
                  - 'anchor_fragment' - 'anchor_hash' - 'anchor_hasher' - 'source_check_rev' \
                  - 'source_check_result' - 'source_check_hash' - 'source_check_path' \
                  - 'source_check_fragment' - 'source_check_at' \
-                 - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us'"
+                 - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us' - 'origin_kind'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -5885,8 +5887,10 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 28, "every migration through 0028_in_progress");
+    assert_eq!(
+        applied, 30,
+        "every migration through 0030_origin_kind_validate"
+    );
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7330,8 +7334,10 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 28, "every migration through 0028_in_progress");
+    assert_eq!(
+        applied, 30,
+        "every migration through 0030_origin_kind_validate"
+    );
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8206,8 +8212,10 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 28, "every migration through 0028_in_progress");
+    assert_eq!(
+        applied, 30,
+        "every migration through 0030_origin_kind_validate"
+    );
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;

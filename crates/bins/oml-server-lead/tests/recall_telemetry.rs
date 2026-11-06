@@ -298,6 +298,7 @@ impl World {
                 &SubmitRequest {
                     on_similar: Default::default(),
                     anchor: None,
+                    origin: None,
                     idempotency_key: fresh_id().to_string(),
                     claim_key: None,
                     verb: None,
@@ -1091,6 +1092,13 @@ async fn every_quality_metric_label_is_from_its_declared_set() {
             "promoted_for",
             &["7d", "30d", "90d", "older"],
         ),
+        (
+            "oml_recall_hits_by_origin_total",
+            "origin_kind",
+            &[
+                "repo", "doc", "code", "lake", "chat", "web", "manual", "none",
+            ],
+        ),
     ];
     for (family, label, values) in declared {
         for line in text
@@ -1115,6 +1123,9 @@ async fn every_quality_metric_label_is_from_its_declared_set() {
         r#"oml_recall_outcomes_total{label="get"} 1"#,
         r#"oml_recall_events_total{outcome="written"} 2"#,
         r#"oml_remember_duplicates_total{relation="same_text"} 1"#,
+        // The one served hit was written without an origin: manual
+        // (ADR-0063 d13).
+        r#"oml_recall_hits_by_origin_total{origin_kind="manual"} 1"#,
         "oml_recall_duration_seconds_count{pipeline=\"bm25-postings\"} 2",
     ] {
         assert!(text.contains(expected), "no {expected} in:\n{text}");

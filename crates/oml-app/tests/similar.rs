@@ -133,6 +133,7 @@ async fn world_on(store: MemStore) -> World {
 
 fn submit(idem: &str, body: &str, workarea: Uuid, on_similar: OnSimilar) -> SubmitRequest {
     SubmitRequest {
+        origin: None,
         on_similar,
         idempotency_key: idem.to_owned(),
         claim_key: None,
@@ -345,6 +346,7 @@ async fn a_supersession_never_lists_its_own_claim() {
         .supersede(
             &w.alice,
             &SupersedeRequest {
+                origin: None,
                 on_similar: OnSimilar::Hold,
                 idempotency_key: "c".to_owned(),
                 target_id: original,

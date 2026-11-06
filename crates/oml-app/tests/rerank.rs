@@ -146,6 +146,7 @@ fn submit(idem: &str, body: &str, workarea: Option<Uuid>) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
         anchor: None,
+        origin: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,

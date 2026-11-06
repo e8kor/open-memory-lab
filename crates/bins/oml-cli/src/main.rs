@@ -115,6 +115,11 @@ enum Command {
         #[command(subcommand)]
         command: DenyCommand,
     },
+    /// A person's chat memory (ADR-0063).
+    Chat {
+        #[command(subcommand)]
+        command: ChatCommand,
+    },
     /// Workarea tree verbs.
     Workareas {
         #[command(subcommand)]
@@ -275,7 +280,31 @@ enum GuardrailsCommand {
 }
 
 #[derive(Subcommand)]
+enum ChatCommand {
+    /// Open your chat workarea, `chat` under your user root, with a key a
+    /// person holds; agents are refused (access.verb_ceiling,
+    /// chat_scope_is_human_only). Prints the OML_CHAT_WORKAREA value the
+    /// plugin's capture and per-turn recall read (ADR-0063 d8).
+    Init {
+        /// The parent, by id or name; omitted, your key's user root.
+        #[arg(long)]
+        parent: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum HookCommand {
+    /// Count the turn and record its hash for chat capture, and with
+    /// OML_TURN_RECALL=1 inject what the prompt recalls within its budget;
+    /// always exits 0 (ADR-0063 d6, d10).
+    UserPrompt,
+    /// With OML_CHAT_CAPTURE=1, when a capture is due, ask the agent to
+    /// write the facts the uncaptured turns established; always exits 0
+    /// (ADR-0063 d6).
+    Stop,
+    /// Record that the session compacted, so the next Stop asks at once;
+    /// prints nothing and never blocks (ADR-0063 d6).
+    PreCompact,
     /// Print the SessionStart context from the plugin's url and api_key
     /// options, else OML_URL and OML_API_KEY — steering, this key's recent
     /// submissions, the matching memories — or nothing; always exits 0
@@ -881,6 +910,11 @@ struct WriteArgs {
     /// (ADR-0057 d1).
     #[arg(long, value_parser = parse_anchor_arg)]
     anchor: Option<serde_json::Value>,
+    /// What kind of source the text came from: repo, doc, code, lake,
+    /// chat, web or manual; omitted, the server records manual (ADR-0063
+    /// d1, d2).
+    #[arg(long = "origin-kind", value_parser = ORIGIN_KINDS)]
+    origin_kind: Option<String>,
     /// Propose retiring the --replaces claim; the text says why.
     #[arg(long, requires = "replaces")]
     retirement: bool,
@@ -955,7 +989,14 @@ struct ReadArgs {
     /// prefix, such as docs/adr/ (ADR-0057 d4).
     #[arg(long = "anchor-path-prefix", conflicts_with = "artifact_id")]
     anchor_path_prefix: Option<String>,
+    /// Recall or list only memories of this origin kind; repeat for
+    /// several, such as --origin-kind chat --origin-kind doc (ADR-0063 d3).
+    #[arg(long = "origin-kind", value_parser = ORIGIN_KINDS, conflicts_with = "artifact_id")]
+    origin_kinds: Vec<String>,
 }
+
+/// The closed set of `origin.kind` (ADR-0063 d1).
+const ORIGIN_KINDS: [&str; 7] = ["repo", "doc", "code", "lake", "chat", "web", "manual"];
 
 #[derive(Args)]
 struct EventsArgs {
@@ -1286,6 +1327,28 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 "nothing was recalled",
                 |var, stdin| hook::tool_failure(var, stdin),
             ),
+            HookCommand::UserPrompt => run_hook(
+                "user-prompt",
+                std::time::Duration::from_millis(oml_cli::chat::BUDGET_MAX_MS + 1000),
+                "nothing was recalled",
+                |var, stdin| {
+                    oml_cli::events::dispatch(oml_cli::events::Event::UserPromptSubmit, var, stdin)
+                },
+            ),
+            HookCommand::Stop => run_hook(
+                "stop",
+                hook::SESSION_END_DEADLINE,
+                "nothing was captured",
+                |var, stdin| oml_cli::events::dispatch(oml_cli::events::Event::Stop, var, stdin),
+            ),
+            HookCommand::PreCompact => run_hook(
+                "pre-compact",
+                hook::SESSION_END_DEADLINE,
+                "the compaction was not recorded",
+                |var, stdin| {
+                    oml_cli::events::dispatch(oml_cli::events::Event::PreCompact, var, stdin)
+                },
+            ),
             HookCommand::SessionEnd => run_hook(
                 "session-end",
                 hook::SESSION_END_DEADLINE,
@@ -1599,6 +1662,10 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
 
+        Command::Chat {
+            command: ChatCommand::Init { parent },
+        } => run_chat_init(cli, &stored, parent.as_deref()),
+
         Command::Workareas {
             command: WorkareasCommand::Status { command },
         } => run_workarea_status(cli, &stored, command),
@@ -1852,6 +1919,109 @@ fn run_hook(
     ExitCode::SUCCESS
 }
 
+/// `oml chat init`: creates `chat` under the key's user root, or under
+/// `parent`, and prints the value the plugin reads; an existing one is
+/// named, not an error. Then asks for ADR-0030's in-progress mode where the
+/// server serves it (ADR-0063 d8).
+fn run_chat_init(
+    cli: &Cli,
+    stored: &Credentials,
+    parent: Option<&str>,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let mut body = json!({ "name": oml_cli::chat::CHAT_WORKAREA });
+    if let Some(parent) = parent {
+        body["parent"] = json!(parent);
+    }
+    let created = match client.post("/v2/workareas", &body, &write_opts()) {
+        Ok((_, response)) => response,
+        Err(CliError::Refused { code, .. }) if code == "name.taken" => {
+            // The name is reserved for a person's key (d8), but an existing
+            // `chat` is adopted only where a person's chat workarea sits:
+            // directly under this key's user root, never elsewhere.
+            let (_, existing) = client.get(&format!(
+                "/v2/workareas/{}",
+                segment(oml_cli::chat::CHAT_WORKAREA)?
+            ))?;
+            let me = client.whoami()?;
+            let user = me["user"]["name"].as_str().unwrap_or_default();
+            let path = existing["path"].as_str().unwrap_or_default();
+            if let Err(why) = oml_cli::chat::adopt(path, user) {
+                return Err(CliError::local(format!("oml chat init: {why}")));
+            }
+            println!(
+                "your chat workarea {path} already exists; set OML_CHAT_WORKAREA={}",
+                field(&existing, "id")
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+        Err(e) => return Err(e),
+    };
+    let id = field(&created, "id").to_owned();
+    let mode = client.put(
+        &format!("/v2/workareas/{id}/mode"),
+        &json!({ "mode": "in_progress" }),
+    );
+    if cli.json {
+        print_json(&json!({ "workarea": created, "in_progress": mode.is_ok() }));
+        return Ok(ExitCode::SUCCESS);
+    }
+    println!(
+        "created {} ({}), held facts stay inside it until you review them",
+        field(&created, "path"),
+        id
+    );
+    match mode {
+        Ok(_) => {
+            println!("in progress: your agents read each other's chat facts, labelled unreviewed")
+        }
+        Err(e) => println!(
+            "not in progress ({}): each agent key reads only its own chat facts until the server serves ADR-0030's mode",
+            one_line_error(&e)
+        ),
+    }
+    println!();
+    println!("Set these where the plugin runs (or the plugin's chat_workarea option):");
+    println!("  OML_CHAT_WORKAREA={id}");
+    println!("  OML_CHAT_CAPTURE=1      # ask the agent to write chat facts at Stop");
+    println!("  OML_TURN_RECALL=1       # optional: recall on every prompt");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The chat lines only the server answers (ADR-0063 d13): whether it takes
+/// `origin_kinds`, and whether the named chat workarea resolves and is the
+/// key's user's own.
+fn chat_doctor(client: &Client, me: Option<&Value>) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Err(CliError::Refused {
+        status, envelope, ..
+    }) = client.get("/v1/memories?own=true&limit=1&origin_kinds=manual")
+    {
+        out.extend(oml_cli::chat::origin_probe_line(status, &envelope));
+    }
+    let var = |name: &str| std::env::var(name).ok();
+    if let Some(named) = oml_cli::chat::chat_workarea(&var) {
+        let user = me.and_then(|m| m["user"]["name"].as_str());
+        match segment(&named).and_then(|s| client.get(&format!("/v2/workareas/{s}"))) {
+            Ok((_, node)) => out.extend(oml_cli::chat::chat_scope_line(node["path"].as_str(), user)),
+            Err(_) => out.push(format!(
+                "warn chat: {} names {named}, which this key cannot resolve; run oml chat init and use the id it prints",
+                oml_cli::chat::WORKAREA_VAR
+            )),
+        }
+    }
+    out
+}
+
+fn one_line_error(e: &CliError) -> String {
+    match e {
+        CliError::Refused { code, .. } => code.clone(),
+        CliError::Local(why) => why.lines().next().unwrap_or("").to_owned(),
+        #[allow(unreachable_patterns)]
+        _ => "refused".to_owned(),
+    }
+}
+
 fn write_opts() -> CallOpts {
     CallOpts {
         auth: true,
@@ -1985,6 +2155,7 @@ struct Write<'a> {
     severity: Option<&'a str>,
     rule: Option<&'a serde_json::Value>,
     anchor: Option<&'a serde_json::Value>,
+    origin_kind: Option<&'a str>,
 }
 
 impl<'a> Write<'a> {
@@ -2003,6 +2174,7 @@ impl<'a> Write<'a> {
             severity: args.severity.as_deref(),
             rule: args.rule.as_ref(),
             anchor: args.anchor.as_ref(),
+            origin_kind: args.origin_kind.as_deref(),
         }
     }
 }
@@ -2060,6 +2232,9 @@ fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitC
     }
     if let Some(anchor) = write.anchor {
         body["anchor"] = anchor.clone();
+    }
+    if let Some(kind) = write.origin_kind {
+        body["origin"] = json!({ "kind": kind });
     }
     if let Some(expected) = write.expected_version {
         body["expected_version"] = json!(expected);
@@ -2140,6 +2315,9 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
         if let Some(prefix) = &args.anchor_path_prefix {
             body["anchor_path_prefix"] = json!(prefix);
         }
+        if !args.origin_kinds.is_empty() {
+            body["origin_kinds"] = json!(args.origin_kinds);
+        }
         let read = CallOpts {
             auth: true,
             idempotency: false, // read-shaped POST (http-api.md idempotency)
@@ -2162,6 +2340,9 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
             if let Some(value) = value {
                 params.push((name, value.clone()));
             }
+        }
+        if !args.origin_kinds.is_empty() {
+            params.push(("origin_kinds", args.origin_kinds.join(",")));
         }
         client
             .get(&format!("/v1/memories?{}", query_string(&params)))?
@@ -4198,6 +4379,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut default_node: Option<Value> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
+    // The chat workarea's path and whether the server takes origin_kinds
+    // (ADR-0063 d13).
+    let mut chat_server: Vec<String> = Vec::new();
     let mut held_blocking: Option<usize> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
@@ -4206,6 +4390,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         if let Some(key) = source.as_ref().and_then(|s| s.key) {
             let client = Client::new(url.clone(), Some(key.clone()));
             me = Some(client.whoami());
+            chat_server = chat_doctor(&client, me.as_ref().and_then(|m| m.as_ref().ok()));
             if let Some(Ok(v)) = &me
                 && v["user"].is_object()
             {
@@ -4301,6 +4486,10 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         &std::env::current_dir().unwrap_or_default(),
     );
     let sync_warn = sync.iter().any(|line| line.starts_with("warn"));
+    // The chat hooks' local state (ADR-0063 d13).
+    let mut chat = oml_cli::chat::doctor_lines(&|name: &str| std::env::var(name).ok());
+    chat.extend(chat_server);
+    let chat_warn = chat.iter().any(|line| line.starts_with("warn"));
     let sources = sources_doctor(
         server_version(ready.as_ref()).as_deref(),
         default_node.as_ref(),
@@ -4326,6 +4515,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || review_warn
         || telemetry_warn
         || sync_warn
+        || chat_warn
         || sources_warn
         || in_progress_warn
     {
@@ -4370,6 +4560,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "search": search,
             "review": review,
             "sync": sync,
+            "chat": chat,
             "telemetry": telemetry,
             "sources": sources,
             "in_progress": in_progress,
@@ -4480,6 +4671,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &sync {
             println!("sync        : {line}");
+        }
+        for line in &chat {
+            println!("chat        : {line}");
         }
         for line in &sources {
             println!("sources     : {line}");

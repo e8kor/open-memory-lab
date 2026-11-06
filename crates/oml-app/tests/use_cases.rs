@@ -189,6 +189,7 @@ fn submit_req(idem: &str, body: &str) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
         anchor: None,
+        origin: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -235,6 +236,7 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
     SupersedeRequest {
         on_similar: Default::default(),
         anchor: None,
+        origin: None,
         expected_version: 1,
         idempotency_key: idem.to_owned(),
         target_id: target,
