@@ -89,6 +89,14 @@ build took a narrower reading than the proposal.
       file whose first line carries `@generated` is skipped and reported;
     - **undeclared files:** a `.rs` file under `src/` that no parent declares with `mod <name>;` is
       not compiled, and is reported `undeclared`, not extracted;
+    - **packages a workspace leaves out:** when a `[workspace]` root manifest is in the source, only
+      its `members` (globs allowed), its root package and the path dependencies of those inside its
+      directory are crates; an `exclude`d or unlisted manifest is skipped and reported `not a
+      workspace member`. A dependency renamed with `package =` or through `[workspace.dependencies]`
+      is recorded under its real package name;
+    - **files over a cap:** a `.rs` file over 1 MiB, or a leading doc over 64 KiB, is skipped and
+      reported `too large`; a manifest over 256 KiB makes its crate unreadable. A `/*!` block or
+      `#![` attribute that never closes is no doc, with a warning;
     - **packages outside the source:** `oml sync crates` reads the nine under `crates/` and not
       `testing/oml-port-contracts`, so a dependent outside the source is not listed (d6).
 

@@ -41,12 +41,33 @@ impl DocBlock {
     }
 }
 
-/// The doc block at the head of `src`, `None` when the file has none.
+/// The largest doc block, in bytes of its lines, a claim carries.
+pub const MAX_DOC_BYTES: usize = 64 * 1024;
+
+/// What the prefix lexer found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lexed {
+    pub doc: Option<DocBlock>,
+    /// A `/*!` block or a `#![` attribute that never closes: the file does
+    /// not compile, so it has no doc and nothing after the opener is text.
+    pub unterminated: bool,
+}
+
+/// The doc block at the head of `src`, `None` when the file has none or its
+/// head never closes (see [`lex`]).
 ///
 /// # Errors
 /// The reason the file is `unsupported`: a `#![doc = …]` attribute in the
 /// prefix, whose text the lexer does not read.
 pub fn leading_docs(src: &str) -> Result<Option<DocBlock>, String> {
+    lex(src).map(|l| l.doc)
+}
+
+/// The prefix of `src`, with whether it ended inside an unterminated block.
+///
+/// # Errors
+/// As [`leading_docs`].
+pub fn lex(src: &str) -> Result<Lexed, String> {
     let src = src.strip_prefix('\u{feff}').unwrap_or(src);
     let b = src.as_bytes();
     let mut i = 0;
@@ -77,7 +98,12 @@ pub fn leading_docs(src: &str) -> Result<Option<DocBlock>, String> {
                     .position(|&c| c == b'\n')
                     .map_or(b.len(), |n| i + n);
                 if b[i..].starts_with(b"//!") {
-                    lines.push(src[i + 3..end].trim_end_matches('\r').to_owned());
+                    lines.push(
+                        src.get(i + 3..end)
+                            .unwrap_or("")
+                            .trim_end_matches('\r')
+                            .to_owned(),
+                    );
                     note(&mut first, &mut last, line, line);
                 } else if b[i..].starts_with(b"///") && !b[i..].starts_with(b"////") {
                     break;
@@ -95,6 +121,7 @@ pub fn leading_docs(src: &str) -> Result<Option<DocBlock>, String> {
                 let start = i;
                 let start_line = line;
                 let mut depth = 0;
+                let mut closed = false;
                 while i < b.len() {
                     if b[i..].starts_with(b"/*") {
                         depth += 1;
@@ -103,6 +130,7 @@ pub fn leading_docs(src: &str) -> Result<Option<DocBlock>, String> {
                         depth -= 1;
                         i += 2;
                         if depth == 0 {
+                            closed = true;
                             break;
                         }
                     } else {
@@ -112,8 +140,16 @@ pub fn leading_docs(src: &str) -> Result<Option<DocBlock>, String> {
                         i += 1;
                     }
                 }
+                if inner && !closed {
+                    return Ok(Lexed {
+                        doc: None,
+                        unterminated: true,
+                    });
+                }
                 if inner {
-                    let body = &src[start + 3..i.saturating_sub(2).max(start + 3)];
+                    let body = src
+                        .get(start + 3..i.saturating_sub(2).max(start + 3))
+                        .unwrap_or("");
                     lines.extend(
                         body.split('\n')
                             .map(|l| l.trim_end_matches('\r').to_owned()),
@@ -123,8 +159,14 @@ pub fn leading_docs(src: &str) -> Result<Option<DocBlock>, String> {
             }
             b'#' if b[i..].starts_with(b"#![") => {
                 let start = i;
-                i = skip_brackets(b, i + 2);
-                let attr = &src[start + 3..i.saturating_sub(1).max(start + 3)];
+                let Some(end) = skip_brackets(b, i + 2) else {
+                    return Ok(Lexed {
+                        doc: None,
+                        unterminated: true,
+                    });
+                };
+                i = end;
+                let attr = src.get(start + 3..i - 1).unwrap_or("");
                 let name_end = attr
                     .find(|c: char| !(c.is_alphanumeric() || c == '_'))
                     .unwrap_or(attr.len());
@@ -139,11 +181,15 @@ pub fn leading_docs(src: &str) -> Result<Option<DocBlock>, String> {
             _ => break,
         }
     }
-    Ok((!lines.is_empty()).then_some(DocBlock { lines, first, last }))
+    Ok(Lexed {
+        doc: (!lines.is_empty()).then_some(DocBlock { lines, first, last }),
+        unterminated: false,
+    })
 }
 
-/// The index after the `]` that closes the `[` at `open`, strings skipped.
-fn skip_brackets(b: &[u8], open: usize) -> usize {
+/// The index after the `]` that closes the `[` at `open`, strings skipped;
+/// `None` when it never closes.
+fn skip_brackets(b: &[u8], open: usize) -> Option<usize> {
     let mut depth = 0;
     let mut i = open;
     while i < b.len() {
@@ -152,7 +198,7 @@ fn skip_brackets(b: &[u8], open: usize) -> usize {
             b']' => {
                 depth -= 1;
                 if depth == 0 {
-                    return i + 1;
+                    return Some(i + 1);
                 }
             }
             b'"' => {
@@ -163,7 +209,7 @@ fn skip_brackets(b: &[u8], open: usize) -> usize {
         }
         i += 1;
     }
-    b.len()
+    None
 }
 
 /// The index after the string literal whose opening quote is at `open`.

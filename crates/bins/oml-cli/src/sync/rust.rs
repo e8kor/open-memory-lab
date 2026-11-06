@@ -10,7 +10,15 @@ use super::adapter::{Adapter, Extraction, Item, SetExtraction, fit_key};
 use super::hash::{
     HASHER_CRATE, HASHER_RUSTDOC, crate_hash, md_normal, nfc, rustdoc_hash, rustdoc_text,
 };
-use super::rustdoc::{DocBlock, leading_docs, skip_string};
+use super::rustdoc::{DocBlock, MAX_DOC_BYTES, lex, skip_string};
+use super::source::glob_match;
+
+/// The largest `.rs` file read, in bytes (PR 88 review); a larger one is
+/// skipped by name, its claims neither written nor retired.
+pub const MAX_SOURCE_BYTES: usize = 1024 * 1024;
+/// The largest `Cargo.toml` read, in bytes; a larger one makes its crate
+/// unreadable by name.
+pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 
 pub struct RustAdapter;
 
@@ -85,12 +93,18 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
         if path.rsplit('/').next() != Some("Cargo.toml") {
             continue;
         }
-        match std::str::from_utf8(b)
-            .map_err(|e| format!("{path} is not UTF-8 ({e})"))
-            .and_then(|t| {
-                t.parse::<toml::Table>()
-                    .map_err(|e| format!("{path} does not parse: {e}"))
-            }) {
+        match (if b.len() > MAX_MANIFEST_BYTES {
+            Err(format!(
+                "{path} is too large ({} bytes; the cap is {MAX_MANIFEST_BYTES})",
+                b.len()
+            ))
+        } else {
+            std::str::from_utf8(b).map_err(|e| format!("{path} is not UTF-8 ({e})"))
+        })
+        .and_then(|t| {
+            t.parse::<toml::Table>()
+                .map_err(|e| format!("{path} does not parse: {e}"))
+        }) {
             Ok(t) => tables.push(((*path).to_owned(), t)),
             Err(why) => {
                 // Everything under a manifest that cannot be read is skipped,
@@ -116,11 +130,51 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
             .and_then(toml::Value::as_str)
             .map(ToOwned::to_owned)
     });
+    let roots: Vec<WorkspaceRoot> = tables
+        .iter()
+        .filter_map(|(path, t)| {
+            let w = t.get("workspace")?.as_table()?;
+            let list = |k: &str| -> Vec<String> {
+                w.get(k)
+                    .and_then(toml::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(toml::Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect()
+            };
+            Some(WorkspaceRoot {
+                dir: parent(path).to_owned(),
+                members: list("members"),
+                exclude: list("exclude"),
+                deps: w
+                    .get("dependencies")
+                    .and_then(toml::Value::as_table)
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+        })
+        .collect();
+    // The nearest workspace root at or above a directory.
+    let root_of = |dir: &str| -> Option<&WorkspaceRoot> {
+        roots
+            .iter()
+            .filter(|r| r.dir == dir || under(&r.dir, dir))
+            .max_by_key(|r| r.dir.len())
+    };
+    let members = member_manifests(&tables, &root_of);
     let mut packages: Vec<Package> = Vec::new();
     for (path, t) in &tables {
         let Some(p) = t.get("package").and_then(toml::Value::as_table) else {
             continue;
         };
+        if !members.contains(path) {
+            out.skipped.push((
+                path.clone(),
+                "not a workspace member: its workspace's members and exclude leave it out, so it is not a crate of this source (ADR-0061 d1)".to_owned(),
+            ));
+            continue;
+        }
         let Some(name) = str_of(p, "name") else {
             out.unreadable
                 .push((path.clone(), format!("{path}: [package] has no name")));
@@ -191,13 +245,10 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
         bins.retain(|(_, r)| bytes.contains_key(r.as_str()));
         bins.sort();
         let mut deps = BTreeSet::new();
+        let inherited = root_of(&dir).map(|r| &r.deps);
         let mut collect = |table: &toml::Table| {
             for (key, v) in table {
-                let real = v
-                    .as_table()
-                    .and_then(|d| str_of(d, "package"))
-                    .unwrap_or(key);
-                deps.insert(real.to_owned());
+                deps.insert(real_package(key, v, inherited).to_owned());
             }
         };
         if let Some(d) = t.get("dependencies").and_then(toml::Value::as_table) {
@@ -285,6 +336,9 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
                 let Some(b) = bytes.get(file.as_str()) else {
                     continue;
                 };
+                if b.len() > MAX_SOURCE_BYTES {
+                    continue;
+                }
                 let Ok(text) = std::str::from_utf8(b) else {
                     continue;
                 };
@@ -355,10 +409,27 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
         let lib = pkg.lib_root.as_ref().and_then(|r| docs.get(r));
         let first_bin = pkg.bins.first().and_then(|(_, r)| docs.get(r));
         let mut unreadable_root = None;
+        let mut skipped_root = None;
         for r in pkg.lib_root.iter().chain(pkg.bins.iter().map(|(_, r)| r)) {
-            if let Some(Docs::Unreadable(why)) = docs.get(r) {
-                unreadable_root = Some((r.clone(), why.clone()));
+            match docs.get(r) {
+                Some(Docs::Unreadable(why)) => unreadable_root = Some((r.clone(), why.clone())),
+                Some(Docs::TooLarge(why)) => skipped_root = Some((r.clone(), why.clone())),
+                Some(Docs::Unterminated) => per_file
+                    .entry(r.clone())
+                    .or_default()
+                    .warnings
+                    .push(unterminated_warning(r)),
+                _ => {}
             }
+        }
+        if let Some((root, why)) = skipped_root
+            && unreadable_root.is_none()
+        {
+            out.skipped.push((
+                manifest.clone(),
+                format!("{why}: its root {root} is not read, so the crate claim is not written"),
+            ));
+            continue;
         }
         if let Some((root, why)) = unreadable_root {
             out.unreadable.push((
@@ -458,6 +529,12 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
                 file.clone(),
                 "generated: its first line carries @generated".to_owned(),
             )),
+            Docs::TooLarge(why) => out.skipped.push((file.clone(), why)),
+            Docs::Unterminated => per_file
+                .entry(file.clone())
+                .or_default()
+                .warnings
+                .push(unterminated_warning(file)),
             Docs::None => per_file
                 .entry(file.clone())
                 .or_default()
@@ -525,6 +602,16 @@ enum Docs {
     None,
     Generated,
     Unreadable(String),
+    /// A `/*!` block or `#![` attribute that never closes: no doc.
+    Unterminated,
+    /// A file or doc over its cap, by name.
+    TooLarge(String),
+}
+
+fn unterminated_warning(path: &str) -> String {
+    format!(
+        "{path} has an unterminated /*! block or #![ attribute at its head, so it yields no claim"
+    )
 }
 
 impl Docs {
@@ -537,6 +624,12 @@ impl Docs {
 }
 
 fn read_docs(path: &str, bytes: &[u8]) -> Docs {
+    if bytes.len() > MAX_SOURCE_BYTES {
+        return Docs::TooLarge(format!(
+            "too large: {path} is {} bytes, over the {MAX_SOURCE_BYTES}-byte cap",
+            bytes.len()
+        ));
+    }
     let text = match std::str::from_utf8(bytes) {
         Ok(t) => t,
         Err(e) => return Docs::Unreadable(format!("{path} is not UTF-8 ({e})")),
@@ -548,10 +641,143 @@ fn read_docs(path: &str, bytes: &[u8]) -> Docs {
     {
         return Docs::Generated;
     }
-    match leading_docs(text) {
-        Ok(Some(d)) => Docs::Block(d),
-        Ok(None) => Docs::None,
+    match lex(text) {
+        Ok(l) if l.unterminated => Docs::Unterminated,
+        Ok(l) => match l.doc {
+            Some(d) if d.lines.iter().map(String::len).sum::<usize>() > MAX_DOC_BYTES => {
+                Docs::TooLarge(format!(
+                    "too large: the leading doc of {path} is over the {MAX_DOC_BYTES}-byte cap"
+                ))
+            }
+            Some(d) => Docs::Block(d),
+            None => Docs::None,
+        },
         Err(why) => Docs::Unreadable(why),
+    }
+}
+
+/// A workspace's root manifest: its members, excludes and shared
+/// dependencies.
+struct WorkspaceRoot {
+    dir: String,
+    members: Vec<String>,
+    exclude: Vec<String>,
+    deps: toml::Table,
+}
+
+/// The real package a dependency entry names: its `package =` rename, or the
+/// workspace table's entry for `foo.workspace = true`, or its key.
+fn real_package<'a>(key: &'a str, v: &'a toml::Value, shared: Option<&'a toml::Table>) -> &'a str {
+    let Some(d) = v.as_table() else { return key };
+    if d.get("workspace").and_then(toml::Value::as_bool) == Some(true)
+        && let Some(w) = shared
+            .and_then(|s| s.get(key))
+            .and_then(toml::Value::as_table)
+    {
+        return str_of(w, "package").unwrap_or(key);
+    }
+    str_of(d, "package").unwrap_or(key)
+}
+
+/// `a/./b/../c` as `a/c`.
+fn normalize(path: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for seg in path.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                out.pop();
+            }
+            s => out.push(s),
+        }
+    }
+    out.join("/")
+}
+
+/// The dependency tables of a manifest, target tables included.
+fn dep_tables(t: &toml::Table) -> Vec<&toml::Table> {
+    fn take<'a>(t: &'a toml::Table, out: &mut Vec<&'a toml::Table>) {
+        for k in ["dependencies", "dev-dependencies", "build-dependencies"] {
+            if let Some(d) = t.get(k).and_then(toml::Value::as_table) {
+                out.push(d);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    take(t, &mut out);
+    if let Some(targets) = t.get("target").and_then(toml::Value::as_table) {
+        for cfg in targets.values().filter_map(toml::Value::as_table) {
+            take(cfg, &mut out);
+        }
+    }
+    out
+}
+
+/// The manifests that are crates of the source: a package outside every
+/// workspace root in the source, a root package, a member the root's globs
+/// list and its `exclude` does not remove, and any path dependency of a
+/// member that sits inside the root's directory and is not excluded (as
+/// cargo does).
+fn member_manifests<'a>(
+    tables: &[(String, toml::Table)],
+    root_of: &dyn Fn(&str) -> Option<&'a WorkspaceRoot>,
+) -> BTreeSet<String> {
+    let has_package = |t: &toml::Table| t.get("package").is_some_and(toml::Value::is_table);
+    let excluded =
+        |r: &WorkspaceRoot, dir: &str| r.exclude.iter().any(|g| glob_match(&join(&r.dir, g), dir));
+    let mut members: BTreeSet<String> = BTreeSet::new();
+    for (path, _) in tables.iter().filter(|(_, t)| has_package(t)) {
+        let dir = parent(path);
+        let ok = match root_of(dir) {
+            None => true,
+            Some(r) if r.dir == dir => true,
+            Some(r) => {
+                r.members.iter().any(|g| glob_match(&join(&r.dir, g), dir)) && !excluded(r, dir)
+            }
+        };
+        if ok {
+            members.insert(path.clone());
+        }
+    }
+    // Path dependencies pull their packages in, transitively.
+    loop {
+        let mut added = Vec::new();
+        for (path, t) in tables.iter().filter(|(p, _)| members.contains(p)) {
+            let dir = parent(path);
+            let root = root_of(dir);
+            for table in dep_tables(t) {
+                for (key, v) in table {
+                    let Some(d) = v.as_table() else { continue };
+                    let target = if let Some(p) = str_of(d, "path") {
+                        normalize(&join(dir, p))
+                    } else if d.get("workspace").and_then(toml::Value::as_bool) == Some(true)
+                        && let Some(r) = root
+                        && let Some(p) = r
+                            .deps
+                            .get(key)
+                            .and_then(toml::Value::as_table)
+                            .and_then(|w| str_of(w, "path"))
+                    {
+                        normalize(&join(&r.dir, p))
+                    } else {
+                        continue;
+                    };
+                    let manifest = join(&target, "Cargo.toml");
+                    let inside = root.is_none_or(|r| r.dir.is_empty() || under(&r.dir, &target))
+                        && root.is_none_or(|r| !excluded(r, &target));
+                    if inside
+                        && !members.contains(&manifest)
+                        && tables.iter().any(|(p, t)| *p == manifest && has_package(t))
+                    {
+                        added.push(manifest);
+                    }
+                }
+            }
+        }
+        if added.is_empty() {
+            return members;
+        }
+        members.extend(added);
     }
 }
 

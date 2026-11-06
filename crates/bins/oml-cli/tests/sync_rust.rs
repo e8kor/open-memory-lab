@@ -708,7 +708,10 @@ fn a_source_file_over_the_size_cap_is_skipped_by_name_and_the_others_are_read() 
     let big = format!("//! Big.\n//! {}\n", "x".repeat(1_048_576));
     let x = extract(&[
         ("crates/a/Cargo.toml", "[package]\nname = \"oml-a\"\n"),
-        ("crates/a/src/lib.rs", "//! A root.\npub mod m;\npub mod n;\n"),
+        (
+            "crates/a/src/lib.rs",
+            "//! A root.\npub mod m;\npub mod n;\n",
+        ),
         ("crates/a/src/m.rs", &big),
         ("crates/a/src/n.rs", "//! N.\n"),
     ]);
