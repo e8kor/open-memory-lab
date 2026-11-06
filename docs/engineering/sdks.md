@@ -6,15 +6,15 @@ answers: "which generators make the Python and TypeScript clients from openapi.y
 
 # Client SDKs
 
-#122 asks for "generated Python and TypeScript clients from
+ asks for "generated Python and TypeScript clients from
 [openapi.yaml](../api/openapi.yaml) with hand-written wrappers for idempotency, uploads and
 pagination". This page decides how those clients are made and kept current: the generators and
 their pins, the package names, what the hand-written wrapper covers, and the regeneration rule.
-#122's other half, `POST /v1/memories:batch`, changes the server and is not decided here; the
+'s other half, `POST /v1/memories:batch`, changes the server and is not decided here; the
 row stays open until the batch path and the upload wrapper are built. Since 2026-10-31 both
 clients are in `sdks/` and their tests run against a real `oml-server-lead`. Neither offers an
 upload: the server serves no upload sessions yet, and the raising stub that stood for one left
-in `0.2.0` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d10).
+in `0.2.0`.
 
 ## Two layers
 
@@ -23,15 +23,13 @@ Each client has two layers, and only one of them is written by hand:
 - **The generated layer** is the output of a pinned generator run over `docs/api/openapi.yaml`.
   It is committed and never edited, and it carries every operation and schema openapi.yaml
   declares, which is exactly what the server routes; the designed operations of
-  `openapi-designed.yaml` generate nothing
-  ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d9).
+  `openapi-designed.yaml` generate nothing.
 - **The wrapper** is a small hand-written module over the generated layer. It covers what a
   generator cannot know: where the URL and key come from, how a write's `Idempotency-Key`
   survives its retries, how a listing's cursor is followed, how a refusal becomes the one error
   type, and which route a verb's fields choose.
 
-The contract stays declared once, in openapi.yaml and [errors.md](../api/errors.md)
-([ADR-0018](../adr/ADR-0018-the-documentation-set.md) d5): the wrapper builds every request and
+The contract stays declared once, in openapi.yaml and [errors.md](../api/errors.md): the wrapper builds every request and
 reads every response through the generated types, and the fields its methods take keep the
 spec's own spellings, but for `write`'s `text`, `oml_write`'s name for the body a served claim
 also answers as `text`.
@@ -62,22 +60,21 @@ so its output does not depend on any ruff configuration found around the output 
 Both names were unclaimed on PyPI and npm on 2026-10-31. Neither package is released to a
 registry: both install from a checkout, as each package's README shows, and the release
 pipeline ([CI and toolchain](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md)) ships no SDK artifact. Both carry their own
-version, `0.2.0` since the v0.4.0 rewrite renamed their verbs
-([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d12), independent of the Cargo
+version, `0.2.0` since the v0.4.0 rewrite renamed their verbs, independent of the Cargo
 workspace's version.
 
 ## What the wrapper covers
 
 | Concern | Rule |
 |---|---|
-| The URL and key | One pair, as the CLI starts from ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d15): the constructor's `url` and `api_key` (`apiKey` in TypeScript), else `OML_URL` and `OML_API_KEY`, taken from the first of those two sources that sets either value. A source setting one alone is refused with `ConfigError` naming the other, so a key is never sent to a URL from another source, and no source at all is refused the same way; either way nothing is sent and no server is guessed. The URL is the server's, without `/mcp`. The key appears in no `repr`, message or exception the wrapper builds. |
+| The URL and key | One pair, as the CLI starts from: the constructor's `url` and `api_key` (`apiKey` in TypeScript), else `OML_URL` and `OML_API_KEY`, taken from the first of those two sources that sets either value. A source setting one alone is refused with `ConfigError` naming the other, so a key is never sent to a URL from another source, and no source at all is refused the same way; either way nothing is sent and no server is guessed. The URL is the server's, without `/mcp`. The key appears in no `repr`, message or exception the wrapper builds. |
 | Idempotency | Every state-creating `POST` the wrapper sends carries one `Idempotency-Key` per call: the caller's, or a fresh UUIDv4. Every retry of that call reuses it, so a retry after a lost response replays the stored response instead of writing twice ([idempotency](../api/http-api.md#idempotency)). A write returns its result with the key it used and whether the answer carried `Idempotency-Replay: true`, so a caller that retries later, past the wrapper's own attempts, can send the same key. |
 | Retries | A call is retried after a transport failure and after a refusal whose `retryable` is `true`, waiting for `Retry-After` when the refusal sends one (at most 30 seconds), else 0.2 seconds doubling per attempt; two retries by default, each attempt bounded by a 10-second timeout. A refusal with `retryable: false`, `idempotency.digest_mismatch` among them, is raised at once. |
-| Request bodies | The wrapper sends only the fields the caller set: a `write` without `claim_key` sends none, nor a verb or a kind, and the server derives each (ADR-0039 d3, d6). The generated Python models would otherwise send their schema defaults, and a server that does not serve a field refuses it by name ([recall](../api/http-api.md#recall-post-v1memoriesrecall)). |
+| Request bodies | The wrapper sends only the fields the caller set: a `write` without `claim_key` sends none, nor a verb or a kind, and the server derives each. The generated Python models would otherwise send their schema defaults, and a server that does not serve a field refuses it by name ([recall](../api/http-api.md#recall-post-v1memoriesrecall)). |
 | Pagination | `read`'s listing as one page with its `next_cursor`, and as an iterator (`pages` and `iter_memories`; `pages` and `memories` in TypeScript) that follows `next_cursor` until it is `null`, sending the same filters on every page. Cursors are positions, not snapshots ([pagination](../api/http-api.md#pagination)): an iteration can miss or repeat a row that changed between pages, and the wrapper does not hide that. |
-| Errors | One error type, `ApiError`, for every refusal, carrying the envelope of [errors.md](../api/errors.md) — `code`, `message`, `rule`, `retryable`, `details`, `request_id` (`requestId` in TypeScript) — and the HTTP status ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d11). A `write` or `read` whose fields fall outside the mode they choose raises the same `request.validation` the server and `oml_write` or `oml_read` answer, `details.field` naming the field, before anything is sent, its `request_id` `null`. Each family of errors.md has its subclass of `ApiError`, chosen by the code's family prefix, so a code the client has never seen lands in its family's class, and a family it has never seen lands in the base class `ApiError`: never a crash, as the [versioning rule](../api/http-api.md#versioning-and-deprecation) asks of clients. The Python wrapper reads error bodies itself rather than through the generated `ErrorEnvelope`, whose `ErrorCode` enum refuses a code that the spec it was generated from does not list. |
+| Errors | One error type, `ApiError`, for every refusal, carrying the envelope of [errors.md](../api/errors.md) — `code`, `message`, `rule`, `retryable`, `details`, `request_id` (`requestId` in TypeScript) — and the HTTP status. A `write` or `read` whose fields fall outside the mode they choose raises the same `request.validation` the server and `oml_write` or `oml_read` answer, `details.field` naming the field, before anything is sent, its `request_id` `null`. Each family of errors.md has its subclass of `ApiError`, chosen by the code's family prefix, so a code the client has never seen lands in its family's class, and a family it has never seen lands in the base class `ApiError`: never a crash, as the [versioning rule](../api/http-api.md#versioning-and-deprecation) asks of clients. The Python wrapper reads error bodies itself rather than through the generated `ErrorEnvelope`, whose `ErrorCode` enum refuses a code that the spec it was generated from does not list. |
 | Uploads | None while the server serves no upload sessions. When it does, the wrapper gains the session flow of the [HTTP API](../api/http-api.md#attachments): create, put each part, complete, with the digest computed client-side and the session restarted on `upload.session_invalid`. |
-| Verbs | Seven, those of [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d10, which replaced `remember`, `learn`, `supersede`, `recall`, `get`, the listings and `verdict`. `write` takes `oml_write`'s fields, `text` sent as the HTTP `body`: without `replaces` one submit, with it one supersede, `retirement` included; it sends no `kind` unless the caller names one, so the server stores `memory` where 0.1.0's `learn` sent `derived_fact`. `read` takes `oml_read`'s: `artifact_id` fetches, `query` recalls, and neither lists, `own` defaulting to true, in `pages` and `iter_memories` (`memories`) too; `include_text` joins recall's fields. `workarea` reads one node, omitted the key's default as `GET /v2/whoami` names it; `events` tails the journal; `review_next` (`reviewNext`), `approve` and `reject` run the review ceremony for a dreamer key. A verdict sends the `serve_id` its `review next` returned, or none for the one item the key has claimed, and never builds one: identifiers are opaque ([conventions](../api/http-api.md#conventions)). Administration — bootstrap, workareas, keys — is the CLI's ([ADR-0015](../adr/ADR-0015-cli-administration.md)); the generated layer carries those operations, and the wrapper adds no second administration surface. |
+| Verbs | Seven, those, which replaced `remember`, `learn`, `supersede`, `recall`, `get`, the listings and `verdict`. `write` takes `oml_write`'s fields, `text` sent as the HTTP `body`: without `replaces` one submit, with it one supersede, `retirement` included; it sends no `kind` unless the caller names one, so the server stores `memory` where 0.1.0's `learn` sent `derived_fact`. `read` takes `oml_read`'s: `artifact_id` fetches, `query` recalls, and neither lists, `own` defaulting to true, in `pages` and `iter_memories` (`memories`) too; `include_text` joins recall's fields. `workarea` reads one node, omitted the key's default as `GET /v2/whoami` names it; `events` tails the journal; `review_next` (`reviewNext`), `approve` and `reject` run the review ceremony for a dreamer key. A verdict sends the `serve_id` its `review next` returned, or none for the one item the key has claimed, and never builds one: identifiers are opaque ([conventions](../api/http-api.md#conventions)). Administration — bootstrap, workareas, keys — is the CLI's; the generated layer carries those operations, and the wrapper adds no second administration surface. |
 
 The family subclasses are named after the family: `AuthError`, `AccessError`, `RequestError`,
 `IdempotencyError`, `SubmissionError`, `WorkareaError`, `ReviewError`, `SimulationError`,
@@ -103,7 +100,7 @@ retry).
   gap cannot land unnoticed and a closed one shows as a diff. The report is empty. Its one gap,
   openapi-python-client 0.29.1 naming the inline `status` enum of `Workarea` `WorkareaStatus`,
   the name of the status read's schema, and so dropping `Workarea`, `WorkareaPage` and
-  `WorkareaView`, closed when ADR-0039 d9 removed that read and its schema.
+  `WorkareaView`, closed when removed that read and its schema.
 
 ## Tests
 
@@ -111,8 +108,7 @@ Both suites run against a real `oml-server-lead` on a throwaway database, never 
 double. Each suite:
 
 1. mints a uniquely named owner/serving role pair and a database the owner owns, boots the
-   server on it, migrating under the owner and serving under the serving role
-   ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d2, d4, d8),
+   server on it, migrating under the owner and serving under the serving role,
    with a keyring in a scratch directory, and reads the enrollment token from its stdout;
    minting takes a superuser, and under a role that cannot mint the server tests skip with
    `did not run: <role> cannot create roles`, or fail under `OML_TEST_REQUIRE_SPLIT=1`, as CI
@@ -142,7 +138,7 @@ and `sdk-generated` runs the regeneration check.
 ## Rejected alternatives
 
 - **Hand-written clients.** Two hand-kept copies of every request and response shape drift from
-  openapi.yaml with nothing to catch the drift: the paraphrase ADR-0018 d5 forbids, in code.
+  openapi.yaml with nothing to catch the drift: the paraphrase forbids, in code.
   Generated layers keep the spec the one declaration site, and a stale client becomes a CI
   failure instead of a bug report.
 - **openapi-generator.** It runs on the JVM — its README asks for a "Java 11 runtime at a
@@ -160,4 +156,4 @@ and `sdk-generated` runs the regeneration check.
 - **Retrying every refusal.** A refusal the server marks `retryable: false` answers the same way
   every time; retrying it only delays the caller.
 - **Wrapping the administration verbs.** It would make the SDK a second administration surface
-  beside the CLI, which ADR-0015 makes the only one.
+  beside the CLI, which makes the only one.

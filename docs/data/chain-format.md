@@ -10,7 +10,7 @@ This page is the normative byte-level specification of the per-tenant signed has
 envelope fields are signed, how `signed_bytes` is constructed, how `hash` and `sig` are computed,
 how events chain, how a recipient obtains and authenticates the deployment public key, and the
 verification procedure an auditor can implement from this page alone. It is the byte-level annex
-of D1 ([ADR-0002](../adr/ADR-0002-postgresql-system-of-record.md)); the commit point, the
+of D1; the commit point, the
 chain-head lock and key custody are declared in
 [storage](../architecture/storage.md#the-per-tenant-hash-chain) and
 [security](../architecture/security.md); the journal DDL is in
@@ -270,6 +270,6 @@ versions.
 ## Decision record
 
 This page is the byte-level annex of D1, registered as
-[ADR-0002](../adr/ADR-0002-postgresql-system-of-record.md) in the
-[decision register](../adr/index.md); chain custody and the commit point remain declared in
+ in the
+decision register; chain custody and the commit point remain declared in
 [storage](../architecture/storage.md).

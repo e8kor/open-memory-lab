@@ -18,8 +18,7 @@ The schema moves by **sqlx migrations, forward-only, numbered `NNNN_name`**,
 and they are executed by **the bootstrap workload under the owner role — on
 first install and on every upgrade**. The reasons, one per clause:
 
-- *sqlx migrate* because the stack is already sqlx
-  ([ADR-0006](../adr/ADR-0006-pure-rust.md)) and a second migration tool is a
+- *sqlx migrate* because the stack is already sqlx and a second migration tool is a
   second thing to trust with DDL.
 - *Forward-only* because down migrations are a fiction on a system of record:
   no `DROP` can un-happen against a journal, and a tested forward path is
@@ -41,9 +40,7 @@ first install and on every upgrade**. The reasons, one per clause:
 The bootstrap workload is decided, not built. Until it is, the lead runs the
 migrations at boot under `postgres.owner_url`, closes that pool and serves
 under `postgres.url`, the serving role, which owns nothing; it refuses to
-start, with `postgres.role_split`, when the two URLs log in as one role
-([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
-d4, d5). Step 2 below is then the lead's own boot at step 5.
+start, with `postgres.role_split`, when the two URLs log in as one role. Step 2 below is then the lead's own boot at step 5.
 
 The forward-only rule forces the **expand-contract discipline**: every
 migration in version N+1 must leave a schema that version N binaries still
@@ -85,7 +82,7 @@ Every upgrade, every profile, in this order:
    unavoidable write-refusal window of the upgrade lands after every other
    component is already proven on N+1 — if anything earlier went wrong, the
    upgrade aborts without ever having touched the write path. The window's
-   size is unmeasured (#117); it counts against
+   size is unmeasured; it counts against
    the write SLI ([observability — SLOs](observability.md#slos)), which is
    the honest accounting, not an exemption.
 
@@ -110,8 +107,7 @@ restart, stated plainly: a one-host profile upgrades with a one-host outage.
 A build before v0.3.1 migrated and served under one Postgres role, which
 owned every table. v0.3.1 refuses that role on both URLs, so an install made
 before it is split once, in one outage, by moving ownership to a new owner
-role ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
-d7). The old build cannot run once ownership moves, so it stays stopped from
+role. The old build cannot run once ownership moves, so it stays stopped from
 the second step to the last. A superuser runs every statement, connected to
 the install's database.
 
@@ -175,21 +171,18 @@ and `oml_server` (d2).
 Until v0.3.1 starts, rollback reverses the move (`REASSIGN OWNED BY <owner>
 TO <role>`, or the same `ALTER … OWNER TO` back) and restarts the old build;
 after it starts, the way back is the backup and [restore](restore.md). The
-live host's split is not run; it waits for the maintainer, and its output is
-recorded in ADR-0034 d7 with the date.
+live host's split is not run; it waits for the maintainer, and its output is with the date.
 
 ## Server, CLI and plugin together (the upgrade to v0.4.0)
 
 *Available since v0.4.0 · [releases](../changelog.md)*
 
 v0.4.0 rewrites the agent and HTTP surfaces and leaves the data alone: keys, grants, stored
-memories and the journal do not change
-([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d13). The schema only grows: two
+memories and the journal do not change. The schema only grows: two
 forward-only migrations, `0012_connections` and `0013_oauth_clients`, add `api_keys.credential`,
 with every existing key folded as `bearer`, make `api_keys.hash` nullable for connector keys,
 and add the five connection tables, each under `FORCE ROW LEVEL SECURITY` and granted to the
-serving role in 0007's form
-([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7, d8, d10). The lead runs
+serving role in 0007's form. The lead runs
 them at start under `postgres.owner_url`, as every migration since v0.3.1, so the upgrade needs
 no step of its own for them. Its clients change with it,
 so the server, the `oml` CLI and the Claude Code plugin move in one window; the
@@ -205,8 +198,7 @@ so the server, the `oml` CLI and the Claude Code plugin move in one window; the
    ([CLI reference](../cli/reference.md#start-settings)).
 4. **Update and configure the plugin**: `claude plugin update oml@open-memory-lab`, then set
    its `url` and `api_key` with `/plugin configure oml@open-memory-lab` or the
-   `claude plugin configure --values-stdin` pipeline
-   ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md)). The plugin serves no tools
+   `claude plugin configure --values-stdin` pipeline. The plugin serves no tools
    until both are set; exported variables alone no longer reach it.
 5. **Replace the permission rules.** A `permissions.allow` rule naming a v0.3 tool allows
    nothing. Allow `mcp__plugin_oml_oml__oml_read` and `mcp__plugin_oml_oml__oml_workarea`, or
@@ -223,7 +215,7 @@ so the server, the `oml` CLI and the Claude Code plugin move in one window; the
 
 A raw MCP client or a script that still called a v0.3 tool name or CLI verb kept working
 through v0.5.0, hidden, and each MCP call logged `mcp_alias_called` with the calling key's
-`key_id` (ADR-0039 d12). v0.5.1 removed the old names: such a call is now JSON-RPC -32602
+`key_id`. v0.5.1 removed the old names: such a call is now JSON-RPC -32602
 `Unknown tool`, logged as `mcp_call` with `tool` `unknown` under the calling key's `key_id`,
 and an old CLI verb or flag is a usage error, exit `2`. Rolling back means the v0.3
 server, CLI and plugin together; the two migrations stay, as every migration does, and no
@@ -303,7 +295,7 @@ expand-contract rule is scoped to it. Consequences:
   most. Upgrade through N+1.
 - A skew held longer than one upgrade window — half a fleet parked on N for
   a week — is outside the policy's intent even though nothing enforces it
-  yet; the conformance suite that would (#117)
+  yet; the conformance suite that would
   tests profiles, and a skew case belongs in it when upgrades become real.
 
 ## Rollback: binaries only, never schema
@@ -326,7 +318,6 @@ loss structurally). That cost is the reason step 1 is a requirement.
 
 Numeric upgrade cadences, maintenance windows, and how long two minors may
 coexist in hours are deployment-site choices. The measured size of the lead's
-write-refusal window is #117; proof that the three
-profiles upgrade as one product belongs to the same conformance effort as
-#117; the standalone migration verb is a
+write-refusal window is; proof that the three
+profiles upgrade as one product belongs to the same conformance effort as; the standalone migration verb is a
 CLI gap tracked as an issue.

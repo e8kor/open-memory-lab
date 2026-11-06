@@ -14,7 +14,7 @@ worked integration flow: the complete loop from queue to verdict, with the refus
 meet and what each one means. Every endpoint here is declared on the
 [HTTP API page](http-api.md#review) and in [openapi.yaml](openapi.yaml); every error is the
 typed taxonomy of [errors.md](errors.md). Nothing below exists as code; review throughput is
-unmeasured — #98.
+unmeasured —.
 
 ## Plain HTTP, deliberately — why not MCP
 
@@ -280,8 +280,7 @@ a journalled event, recoverable only by a journalled re-enqueue
 
 `review/next` is a poll — there is no push on this surface, by the same decision that made the
 MCP transport stateless ([mcp-plugin.md](mcp-plugin.md#transport-streamable-http-stateless)).
-No number is stated here, because no measured number exists
-(#98): **poll at the cadence your review SLA implies; the
+No number is stated here, because no measured number exists: **poll at the cadence your review SLA implies; the
 oldest-held expiry is the backstop.** Concretely:
 
 - The queue read gives `oldest_age_seconds` per workarea; the policy gives `held_item_expiry`.
@@ -338,7 +337,6 @@ condition, not a victim of it ([errors.md](errors.md),
 
 The review ceremony, the served-reviewer rule and the division of labour (crews review;
 reviewer keys record verdicts and nothing else) are
-[ADR-0012](../adr/ADR-0012-admission-and-review.md)'s; the serve binding and the two-ring
-placement of the verdict verbs are [ADR-0014](../adr/ADR-0014-http-api-and-mcp-facade.md) and
-[ADR-0022](../adr/ADR-0022-two-ring-api.md)'s. This page adds no decision — it is the worked
+'s; the serve binding and the two-ring
+placement of the verdict verbs are 's. This page adds no decision — it is the worked
 consumer flow over decisions those records own.

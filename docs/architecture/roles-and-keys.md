@@ -52,8 +52,7 @@ requirement is satisfied through a journalled, issuance-time attestation: a key 
 evidence exports. The honesty boundary is the same sentence: the server verifies the
 attestation, never the humanness — a mis-attested key is an admin's journalled misstatement, not
 a server failure. `human_required_classes` consumes exactly this attribute: only verdicts from
-keys attested `held_by: human` satisfy it ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md),
-[ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). The attestation has a third member,
+keys attested `held_by: human` satisfy it ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md),). The attestation has a third member,
 `held_by: service`, which a tenant admin issues under the ordinary
 [issuer ceiling](#issuer-ceiling) for infrastructure processes — the reconciler's repair key, a
 forwarding follower's zero-grant hop key ([security](security.md)) — never for review. Only an
@@ -123,7 +122,7 @@ settings, tenants — a column names the key's role itself.
     ⁵ The calling key may fetch its [own](#own) rows in any state (own-work path); everyone else
     sees promoted rows only ([http-api](../api/http-api.md)).
     ⁶ **Admin structure reads.** This footnote is the single declaration site of what an admin key
-    reads without grants ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d15). An admin key reads the
+    reads without grants. An admin key reads the
     structure of every workarea in its tenant by its key role: the workarea read and the lookup by
     path, the tree, a node's workarea edges and its status read — names, ids, parents, paths,
     statuses, crew records, children, workarea edges, review policy objects, pending transitions —
@@ -142,7 +141,7 @@ settings, tenants — a column names the key's role itself.
     records no verdict and reads no claim's content — and "admin is never a reviewer" holds as
     before.
 
-    ⁷ *Since v0.5.0* ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d6): a writer
+    ⁷ *Since v0.5.0*: a writer
     [user key](#user-keys) creates a workarea under a parent inside its own user root where its
     effective access confers `writer`; it never re-parents, and a tenant writer key creates nothing.
 
@@ -158,7 +157,7 @@ settings, tenants — a column names the key's role itself.
     beyond it. How a
     `self_signed` version may take a claim's tip is declared in
     [audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip). The
-    exception is declared in [workareas.md](workareas.md) and ADR-0001; it does not change this
+    exception is declared in [workareas.md](workareas.md) and; it does not change this
     matrix — it changes the review policy a development workarea applies.
 
 ## Grant admissibility and refusal order
@@ -166,8 +165,7 @@ settings, tenants — a column names the key's role itself.
 *Available since v0.2.0; `tenant` and `default_workarea` in place of `tenant_id` and `default_workarea_id` since v0.4.0 · [releases](../changelog.md)*
 
 This section is the single declaration site for which grant roles a key may carry and for the
-order in which a workarea-scoped verb is refused
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d1, d2).
+order in which a workarea-scoped verb is refused.
 
 ??? info "Details"
 
@@ -198,8 +196,7 @@ order in which a workarea-scoped verb is refused
        admin minting an operator key, with details `{role, admissible}`: `role` the requested key
        role, `admissible` the key roles this issuer may issue; and, on an operator key's issuance of
        an admin key, the tenant `tenant` names already holds a key of any role, revoked or expired
-       included — `access.issuer_ceiling`, `admissible` empty
-       ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d5);
+       included — `access.issuer_ceiling`, `admissible` empty;
     3. grant admissibility (the table above) — `access.issuer_ceiling`, with details `{role,
        admissible, grant_index}`: `role` the first refused grant's role, `admissible` the key role's
        admissible set, `grant_index` that grant's 0-based position in `grants`;
@@ -301,7 +298,7 @@ order in which a workarea-scoped verb is refused
       status-transition ratify with `access.verb_ceiling`, before any
       lookup, as at step 1 of the refusal order. A service key's dreamer grant confers those verbs
       like any dreamer grant; this rule, not the grant, keeps it out of review and out of every
-      ratification ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d1).
+      ratification.
     - **admin and operator verbs** — the key's own role, as the [matrix](#permission-matrix) states.
 
 ## Own
@@ -342,7 +339,7 @@ the calling key and its journalled `rotated_from` chain — never against one ke
     (`parent_id`) and names (path segments) the [workarea read](../api/http-api.md#workareas) and every
     derived path already disclose, and a re-parented node's former parent, which `workarea.reparent`
     names as the workarea read did before the move; the workarea read omits the children the key
-    cannot read ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3).
+    cannot read.
 
 ## Effective verbs
 
@@ -394,7 +391,7 @@ A dreamer key carries one role name and two capability classes:
     pending edges, a dreamer cannot launder authorship by proposing an edit and reviewing the result
     before the edit is ratified. A dreamer's own proposals always need another reviewer.
 
-    *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d8):* the
+    *Since v0.5.0:* the
     exclusion stays per key and principal for [user keys](#user-keys) too: `user` is not in
     it, so a person may review their own agents' writes through a separate dreamer key in their root,
     and the journal shows that both keys name the same user.
@@ -402,8 +399,7 @@ A dreamer key carries one role name and two capability classes:
     **Rival successors.** While a successor is held, the reviewer-exclusion set of every other held
     successor of the same target (same workarea, `claim_key` and `replaces`) also contains its
     author's key and principal; review next never serves such a row to that key, and a verdict from
-    it answers `review.author_in_lineage`
-    ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10). Competing successors of one
+    it answers `review.author_in_lineage`. Competing successors of one
     tip are decided by the tip compare-and-set
     ([audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)), so a rival's
     author judging the other successor would be deciding its own row's fate. A row's
@@ -434,8 +430,7 @@ key acting as reviewer by fiat.
     history is part of the evidence export. One combination the service refuses to mint or amend:
     a key holding the admin role never carries dreamer-class grants
     (`access.role_exclusive`, [errors.md](../api/errors.md)) — the two-key rule. A person who both
-    administers and does dreamer work holds two keys, so the journal shows which capacity acted
-    ([ADR-0010](../adr/ADR-0010-roles-and-keys.md)).
+    administers and does dreamer work holds two keys, so the journal shows which capacity acted.
 
     **Workareas.** Create, re-parent, and propose/ratify status transitions; workarea edges are not
     an admin fiat — they go through the dreamer propose/ratify ceremony declared in
@@ -532,7 +527,7 @@ A key is issued with a role no higher than the issuer's. Concretely:
 *Available since v0.3.0 · [releases](../changelog.md)*
 
 A key carries three identifying fields, and they are independent: none is derived from another on
-the server ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d9). This section is their single
+the server. This section is their single
 declaration site.
 
 ??? info "Details"
@@ -556,7 +551,7 @@ declaration site.
 
 ## User keys
 
-*Available since v0.5.0 · [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) · [releases](../changelog.md)*
+*Available since v0.5.0 · · [releases](../changelog.md)*
 
 This section is the single declaration site for user keys. A key
 carries a fourth identifying field, `user`: the person an admin attests the key acts for, named as
@@ -589,14 +584,14 @@ key**; a key without it is a **tenant key**, which every key issued before the b
       each write held and reviewed by a dreamer on `universe` outside its lineage closure
       ([admission](admission.md)).
     - **Review.** The [reviewer-exclusion set](#the-dreamer-split) stays per key and principal: `user`
-      is not in it, so a user's own dreamer key may review that user's agents' writes (ADR-0044 d8).
+      is not in it, so a user's own dreamer key may review that user's agents' writes.
     - **The row names a user root.** A key whose stored `user` names a node that is not a user root is
       served nothing: `auth.invalid` with `details.reason: user_root`, which `oml doctor` under the key
-      reports (ADR-0044 d14).
+      reports.
 
 ## Session keys
 
-*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) · [releases](../changelog.md)*
+*Since v0.5.0 · · [releases](../changelog.md)*
 
 A **session key** is a key with `credential: session`, beside `bearer` and `connection`: issued
 `held_by: human` with no value and no connection, held by the server for one person and acted
@@ -664,10 +659,8 @@ where the value may never appear.
     caller's `Authorization` header is a defect. The one exception is the file `oml keys issue-agent
     --out` creates for it, the one place a key value may rest outside the show-once response: new,
     owner-only (mode 0600), written once, never overwritten, and the operator's to delete once the key
-    is in the environment that needs it ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation),
-    [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1). The stored response in the idempotency
-    record of an issuance or a rotation is a copy this rule does not yet exclude
-    (#127). A connector key has no value anywhere: the server mints none,
+    is in the environment that needs it ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation),). The stored response in the idempotency
+    record of an issuance or a rotation is a copy this rule does not yet exclude. A connector key has no value anywhere: the server mints none,
     and `api_keys.hash` is null ([connections](#connections)).
 
 ## Key lifecycle
@@ -679,9 +672,9 @@ where the value may never appear.
 
     ```mermaid
     stateDiagram-v2
-        [*] --> active : issue (show-once,\njournalled issued-without-value)
-        active --> expired : expiry reached
-        active --> revoked : revoke (journalled,\npermission epoch bump)
+        [*] --> active: issue (show-once,\njournalled issued-without-value)
+        active --> expired: expiry reached
+        active --> revoked: revoke (journalled,\npermission epoch bump)
         expired --> [*]
         revoked --> [*]
     ```
@@ -719,7 +712,7 @@ where the value may never appear.
 ## Connections
 
 This section is the single declaration site for connector keys, connect codes, connections and
-their tokens ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7, d8, d10, d11).
+their tokens.
 The HTTP side — the `/mcp` challenge, the discovery documents, the OAuth endpoints and the
 authorization page — is declared on the
 [HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients). A **connection** is one
@@ -733,7 +726,7 @@ the `/v2` connect-code and connection-revoke routes and a key's connections on i
 `--connect-code`, `oml keys connect-code`, `oml keys disconnect` and the connections in
 `oml keys show`; and doctor's `oauth_discovery`. **Not built:** whether a listed connection is
 live, the doctor checks `connect_codes` and `connections`, and the cluster lease's issuer. No live
-claude.ai connection has run (#115).
+claude.ai connection has run.
 
 ??? info "Details"
 
@@ -778,15 +771,15 @@ claude.ai connection has run (#115).
 
     ```mermaid
     stateDiagram-v2
-        [*] --> code_live : connector key issued, or code minted\n(connection.code_issued)
-        code_live --> code_voided : newer code minted,\na connection of the key revoked,\nor key revoked
-        code_live --> code_lapsed : expiry reached
-        code_live --> code_spent : correct entry on the page
-        code_spent --> authorized : Connect\n(authorization code, 60 s)
-        code_spent --> [*] : Cancel, the page lapses after 10 minutes,\nor a newer code or a connection revoke voids it
-        authorized --> open : token exchange\n(connection.opened)
-        authorized --> [*] : authorization code expires unexchanged,\nor a newer code or a connection revoke voids it
-        open --> revoked : admin revoke, refresh or code reuse,\nor a newer connection for the key\n(connection.revoked, or the newer connection.opened)
+        [*] --> code_live: connector key issued, or code minted\n(connection.code_issued)
+        code_live --> code_voided: newer code minted,\na connection of the key revoked,\nor key revoked
+        code_live --> code_lapsed: expiry reached
+        code_live --> code_spent: correct entry on the page
+        code_spent --> authorized: Connect\n(authorization code, 60 s)
+        code_spent --> [*]: Cancel, the page lapses after 10 minutes,\nor a newer code or a connection revoke voids it
+        authorized --> open: token exchange\n(connection.opened)
+        authorized --> [*]: authorization code expires unexchanged,\nor a newer code or a connection revoke voids it
+        open --> revoked: admin revoke, refresh or code reuse,\nor a newer connection for the key\n(connection.revoked, or the newer connection.opened)
         code_voided --> [*]
         code_lapsed --> [*]
         revoked --> [*]
@@ -814,7 +807,7 @@ claude.ai connection has run (#115).
       and a new code's connection replaces it;
     - one whose resource is not the current `<issuer>/mcp`, after `oauth.issuer` was changed or unset,
       is refused at every request, and works again only if that origin is set again before its
-      refresh token lapses ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d1).
+      refresh token lapses.
 
     An open connection that is not live is still replaced, and so never revives, once a newer
     connection of its key opens. A revoked connection never reopens: the key needs a new code.
@@ -897,8 +890,7 @@ resolved at promotion time from journalled key→crew→external-manager metadat
     `external_manager`. A key that names no crew satisfies neither optional requirement, and a crew
     that records no external manager satisfies no manager-inequality requirement: such a verdict does
     not count toward the requirement it cannot establish, and the row stays held until one that does
-    — failing closed by holding, as admission does everywhere
-    ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d8).
+    — failing closed by holding, as admission does everywhere.
 
     Both checks use metadata as journalled at promotion time, so a later crew reshuffle does not
     rewrite what was independent when the verdict landed.
@@ -914,13 +906,13 @@ resolved at promotion time from journalled key→crew→external-manager metadat
 
 ## Decision record
 
-This page's decisions are registered as ADR-0010 ([decision register](../adr/index.md)); grant
+This page's decisions are registered as (decision register); grant
 admissibility, the refusal order, the issuance order, own and the effective verbs are
-[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1–d3, d14); key names and the
+'s (d1–d3, d14); key names and the
 key's crew and the admin structure reads are the proposed
-[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d8, d9, d15). One
+'s (d8, d9, d15). One
 adjacent decision is named elsewhere: programs hold keys and humans hold ceremonies. Connector
 keys, connect codes and connections are
-[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s (d7, d8, d10, d11). User keys, user
+'s (d7, d8, d10, d11). User keys, user
 roots, curators and the user in the reviewer exclusion are the proposed
-[ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)'s.
+'s.

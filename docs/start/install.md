@@ -6,8 +6,7 @@ answers: "what install.sh and install.ps1 check and their two outcomes word for 
 
 # Install the `oml` command
 
-Two scripts install the `oml` CLI for the current user, write one file and print the next command
-([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d1–d5). The lines
+Two scripts install the `oml` CLI for the current user, write one file and print the next command. The lines
 below fetch them at the tag `v0.6.0`; CI's `install-smoke` job runs both on every change.
 
 | Platform | Build |
@@ -35,7 +34,7 @@ Windows, in Windows PowerShell 5.1 or PowerShell 7:
 irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/install/install.ps1 | iex
 ```
 
-**What a piped install trusts** (ADR-0041 d5):
+**What a piped install trusts**:
 
 - The pipe trusts GitHub's TLS, the repository and the tag. A tag can be moved by whoever can push
   to the repository, which is why the cosign check below pins the tag in the signer's identity.
@@ -69,7 +68,7 @@ the release's `SHA256SUMS` over HTTPS, and compares the archive's SHA-256 with i
     oml install: checked: the archive matches SHA256SUMS; its signature was NOT checked, because cosign is not on PATH. That catches a damaged download, not a tampered release: install cosign and rerun with --require-signature for that
     ```
 
-    The PowerShell script names `-RequireSignature` instead. Issue #132 tracks verifying the signature without cosign.
+    The PowerShell script names `-RequireSignature` instead. Issue tracks verifying the signature without cosign.
 
 Every refusal names its reason and installs nothing: a cosign failure, a checksum mismatch, a
 missing line in `SHA256SUMS`, or `--require-signature` without cosign. After the copy the script
@@ -81,7 +80,7 @@ throws rather than exits, so `| iex` never closes your shell.
 
 | `install.sh` | `install.ps1` | Variable | Default |
 |---|---|---|---|
-| `--version X.Y.Z` or `latest` | `-Version` | `OML_VERSION` | the release the script was cut with: 0.6.0 at `v0.6.0` (ADR-0041 d3) |
+| `--version X.Y.Z` or `latest` | `-Version` | `OML_VERSION` | the release the script was cut with: 0.6.0 at `v0.6.0` |
 | `--dir PATH` | `-Dir` | `OML_INSTALL_DIR` | `$HOME/.local/bin`; `%LOCALAPPDATA%\Programs\oml\bin` |
 | `--require-signature` | `-RequireSignature` | `OML_REQUIRE_SIGNATURE=1` | off |
 
@@ -153,5 +152,5 @@ reference](../cli/reference.md#installing-oml-and-what-differs-on-windows).
 
 Homebrew, Scoop and winget are not offered. Since Homebrew 6.0.0 a third-party tap needs `brew
 trust` before it installs, and winget publishes through a reviewed pull request per release; each
-can follow the script, and none is one command on every OS today (ADR-0041, rejected
+can follow the script, and none is one command on every OS today (rejected
 alternatives). An npm or `npx` wrapper would make Node a dependency of a static binary.

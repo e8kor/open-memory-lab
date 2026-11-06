@@ -18,7 +18,7 @@ Four ideas carry the product; the sections below explain the rest in reading ord
   stops the server.
 
 What the server promises and what it does not are on [guarantees](product/commitments.md). Each
-section links the page or [design record](adr/index.md) that decides the concept; where a
+section links the page or design record that decides the concept; where a
 sentence here and that page disagree, that page wins.
 
 ## Tenant
@@ -27,7 +27,7 @@ A tenant is one organization's isolated space in a deployment. Everything below 
 keys, claims, the journal — exists per tenant. Tenant identity is derived server-side from the
 API key, never taken from the request, and row-level security applies it to every table. No
 structure in this design crosses a tenant boundary; relating tenants into one "whole world" is
-not built ([#151](https://github.com/e8kor/open-memory-lab/issues/151)). A tenant has a name, unique in the
+not built ([](https://github.com/e8kor/open-memory-lab/issues/151)). A tenant has a name, unique in the
 deployment.
 
 ## Names
@@ -35,7 +35,7 @@ deployment.
 Workareas, crews, keys and tenants each carry a **name** beside their id: unique in its namespace,
 given at creation, never changed and never released. Since v0.5.0 a workarea's name is unique
 within one user's root or within the shared rest of the tree, and `alice.project` is the
-qualified name that is unique in the tenant (ADR-0044). A name is accepted everywhere the row's id
+qualified name that is unique in the tenant. A name is accepted everywhere the row's id
 is — an agent can target `metals-crew` rather than a UUID — and the server resolves it to the id
 before any check that reads state, so a name the caller
 may not see answers exactly as its id would, and everything stored still binds to ids
@@ -91,7 +91,7 @@ subtree grants a top: it is permanently `committed`, cannot be deleted or re-par
 direct claim writes. Claims live in the workareas beneath it. A workarea's path is the names from
 `universe` down to it, joined with `.`.
 
-*Since v0.5.0* ([ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)): every
+*Since v0.5.0*: every
 **user** — a person an admin attests a key acts for — gets a **user root**, `universe.<user>`, a
 child of `universe` created when the first key naming that user is issued; the tree stays one
 tree. A **user key** names its user, reaches only its own root and `universe`'s own claims, and
@@ -175,8 +175,7 @@ against — so every access answer is reproducible from journalled records.
 *Since v0.5.0:* a key may name the **user** it acts for, making it a user key
 confined to that user's root, and a grant may cover its node alone (`covers: node`), which is how
 every user key reads `universe` without reading anyone else's root; the reviewer exclusion stays
-per key, so a person may review their own agents' work through a separate key ([user keys](architecture/roles-and-keys.md#user-keys),
-[ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)).
+per key, so a person may review their own agents' work through a separate key ([user keys](architecture/roles-and-keys.md#user-keys),).
 
 Keys are shown once at issuance, expire, and rotate by minting a journalled **successor key**
 (linked by `rotated_from`, with a bounded grace window on the old key) — there is no in-place
@@ -298,24 +297,24 @@ rank prefix that fits ([retrieval](architecture/retrieval.md#token-budgets)).
 
 | Concept | Owning page | Decision record |
 |---|---|---|
-| Tenant and isolation | [architecture/security.md](architecture/security.md) | [ADR-0007](adr/ADR-0007-tenancy-first-class.md) |
-| The constitution (R1–R4, the development exception) | [architecture/overview.md](architecture/overview.md) §5 | [ADR-0001](adr/ADR-0001-the-constitution.md) |
-| Claim versions, the tip, lineage closure | [architecture/audit-and-lineage.md](architecture/audit-and-lineage.md) | [ADR-0005](adr/ADR-0005-erasure-by-crypto-shredding.md) (erasure), [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md) (the record) |
-| Workarea tree, grants, denies, edges, crews | [architecture/workareas.md](architecture/workareas.md) | [ADR-0008](adr/ADR-0008-workarea-algebra.md), [ADR-0026](adr/ADR-0026-names-are-keys.md) |
-| Users, user roots, curation into universe | [architecture/workareas.md](architecture/workareas.md#user-roots), [architecture/roles-and-keys.md](architecture/roles-and-keys.md#user-keys) | [ADR-0044](adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) |
-| Names | [api/http-api.md](api/http-api.md#names-and-ids) | [ADR-0026](adr/ADR-0026-names-are-keys.md) |
-| The status ladder | [architecture/workareas.md](architecture/workareas.md) | [ADR-0009](adr/ADR-0009-status-ladder.md) |
-| Vocabularies, terms, releases | [architecture/ontologies.md](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md) | [ADR-0021](adr/ADR-0021-ai-human-ontologies.md) |
-| Roles, the dreamer split, key lifecycle | [architecture/roles-and-keys.md](architecture/roles-and-keys.md) | [ADR-0010](adr/ADR-0010-roles-and-keys.md) |
-| The admission pipeline and review policies | [architecture/admission.md](architecture/admission.md) | [ADR-0012](adr/ADR-0012-admission-and-review.md) |
-| Attachments | [architecture/storage.md](architecture/storage.md) | [ADR-0004](adr/ADR-0004-bodies-and-attachments.md) |
-| Simulations and taint | [architecture/simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
-| The journal and the commit point | [architecture/storage.md](architecture/storage.md) | [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md) |
-| The evidence export and erasure | [architecture/audit-and-lineage.md](architecture/audit-and-lineage.md) | [ADR-0005](adr/ADR-0005-erasure-by-crypto-shredding.md) |
-| The lake and the outbox | [architecture/storage.md](architecture/storage.md), [data/delta-tables.md](data/delta-tables.md) | [ADR-0003](adr/ADR-0003-delta-lake-derived-lakehouse.md) |
-| Reads and the read log | [architecture/retrieval.md](architecture/retrieval.md) | [ADR-0013](adr/ADR-0013-reads-served-from-postgres.md) |
-| Steering and the recall order | [architecture/retrieval.md](architecture/retrieval.md) | [ADR-0013](adr/ADR-0013-reads-served-from-postgres.md) |
-| The overlay tip | [architecture/simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md) | [ADR-0011](adr/ADR-0011-simulations.md) |
-| The fold | [architecture/storage.md](architecture/storage.md), [architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md) | [ADR-0002](adr/ADR-0002-postgresql-system-of-record.md), [ADR-0017](adr/ADR-0017-reconciliation.md) |
-| The module shape and plugin points | [architecture/overview.md](architecture/overview.md) §3 | [ADR-0019](adr/ADR-0019-hexagonal-architecture-and-plugins.md) |
-| The vocabulary itself | — | [ADR-0018](adr/ADR-0018-the-documentation-set.md) d4, with the rows [ADR-0025](adr/ADR-0025-the-agent-only-memory-surface.md) d6 and d11 and the proposed [ADR-0026](adr/ADR-0026-names-are-keys.md) d1 add |
+| Tenant and isolation | [architecture/security.md](architecture/security.md) | |
+| The constitution (R1–R4, the development exception) | [architecture/overview.md](architecture/overview.md) §5 | |
+| Claim versions, the tip, lineage closure | [architecture/audit-and-lineage.md](architecture/audit-and-lineage.md) | (erasure), (the record) |
+| Workarea tree, grants, denies, edges, crews | [architecture/workareas.md](architecture/workareas.md) | |
+| Users, user roots, curation into universe | [architecture/workareas.md](architecture/workareas.md#user-roots), [architecture/roles-and-keys.md](architecture/roles-and-keys.md#user-keys) | |
+| Names | [api/http-api.md](api/http-api.md#names-and-ids) | |
+| The status ladder | [architecture/workareas.md](architecture/workareas.md) | |
+| Vocabularies, terms, releases | [architecture/ontologies.md](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md) | |
+| Roles, the dreamer split, key lifecycle | [architecture/roles-and-keys.md](architecture/roles-and-keys.md) | |
+| The admission pipeline and review policies | [architecture/admission.md](architecture/admission.md) | |
+| Attachments | [architecture/storage.md](architecture/storage.md) | |
+| Simulations and taint | [architecture/simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md) | |
+| The journal and the commit point | [architecture/storage.md](architecture/storage.md) | |
+| The evidence export and erasure | [architecture/audit-and-lineage.md](architecture/audit-and-lineage.md) | |
+| The lake and the outbox | [architecture/storage.md](architecture/storage.md), [data/delta-tables.md](data/delta-tables.md) | |
+| Reads and the read log | [architecture/retrieval.md](architecture/retrieval.md) | |
+| Steering and the recall order | [architecture/retrieval.md](architecture/retrieval.md) | |
+| The overlay tip | [architecture/simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md) | |
+| The fold | [architecture/storage.md](architecture/storage.md), [architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md) | |
+| The module shape and plugin points | [architecture/overview.md](architecture/overview.md) §3 | |
+| The vocabulary itself | — |, with the rows and d11 and the proposed add |

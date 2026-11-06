@@ -45,7 +45,7 @@ touches these tables.
 | Zone / table | What it is FOR | What never enters it | Mutated by |
 |---|---|---|---|
 | `bronze.events` | Digest-only columnar mirror of the per-tenant journal: the substrate for event analytics and for cross-checking the lake against the chain without loading Postgres | Body plaintext, body ciphertext, held content of any kind — payloads are digests and ciphertext *references* only | Append only; never MERGEd |
-| `silver.claims` | One row per promoted claim version with ciphertext body and full attribution: the reconciliation target ([architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)) and the materialized record of who wrote what, when, in which workarea | Held bodies (materialization is enqueued by promotion only); `self_signed` development rows (the constitution's development exception, [ADR-0001](../adr/ADR-0001-the-constitution.md)); plaintext anywhere | Append on promotion; MERGE on retract |
+| `silver.claims` | One row per promoted claim version with ciphertext body and full attribution: the reconciliation target ([architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md)) and the materialized record of who wrote what, when, in which workarea | Held bodies (materialization is enqueued by promotion only); `self_signed` development rows (the constitution's development exception,); plaintext anywhere | Append on promotion; MERGE on retract |
 | `gold.lineage` | Ratified edges of the claim graph and the workarea relation graph, for lineage analytics and the evidence export | Pending edges (the promotion-time lineage closure over pending + ratified edges is computed in Postgres, never here) | Append on ratification; MERGE on retract |
 | `gold.areas` | Current snapshot of the workarea tree — node, name, parent, path, status, crew id — so lineage and analytics can join claims to governance context | Grants, denies, keys and crew records (authorization state and crew records stay in Postgres only) | MERGE-maintained snapshot |
 | `gold.curated_<table>` | One table per **validated** workarea: the frozen area's promoted claim versions, ciphertext-bodied, as a stable curated set; the substrate for future per-audience decrypted exports (deferred — issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)) | New writes, promotions, reassignments in — refused by the status ladder itself ([architecture/workareas.md](../architecture/workareas.md)); simulation-tainted rows (refused promotion into validated, [architecture/simulations.md](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)) | Created at validation; thereafter MERGE on demote/erase only |
@@ -261,10 +261,10 @@ avoided.
 
 One row per **promoted claim version**. The row exists because a promotion
 event was drained from the outbox — held bodies never reach the lake, and
-`self_signed` development rows never enter silver at all (the constitution's development exception, [ADR-0001](../adr/ADR-0001-the-constitution.md)).
+`self_signed` development rows never enter silver at all (the constitution's development exception,).
 This table is the lake's purpose made physical: pure memory data with full
 attribution — who and when wrote it, what space — with bodies encrypted at
-rest, exactly as [ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md)
+rest, exactly as 
 commits.
 
 | Column | Delta | Arrow | Null | Meaning |
@@ -273,7 +273,7 @@ commits.
 | `artifact_id` | STRING | utf8 | no | Claim artifact UUID — MERGE key, with `version` |
 | `version` | LONG | int64 | no | Version within the `claim_key` lineage — MERGE key |
 | `claim_key` | STRING | utf8 | no | Groups versions of one claim |
-| `kind` | STRING | utf8 | no | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` (+ `dataset_manifest`, ADR-0020) |
+| `kind` | STRING | utf8 | no | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` (+ `dataset_manifest`,) |
 | `state` | STRING | utf8 | no | `promoted` \| `demoted` \| `erased` \| `held` — `held` is reachable **only** by the reassign-to-stricter-policy retract below, never by admission |
 | `workarea_id` | STRING | utf8 | no | Stable workarea node id; updated by reassign |
 | `workarea_path_at_write` | STRING | utf8 | no | ltree path as derived at write time — history, not identity; **immutable**, moves are read from bronze and `gold.areas` |
@@ -308,7 +308,7 @@ maintenance window.
 ## gold.lineage
 
 Ratified edges only, from both graphs: claim↔claim
-(`derives_from`, supersession) and workarea↔workarea labelled relations
+(`derives_from`, supersession) and workarea↔workarea labeled relations
 (`relates_to`, `continues`, `derived_from`, `mirrors` — zero access conferred,
 [architecture/workareas.md](../architecture/workareas.md)). Pending edges stay
 in Postgres: the gate changes visibility, and an unratified edge is not
@@ -353,7 +353,7 @@ to get wrong than a slowly-changing-dimension table, at the cost that
 | `workarea_id` | STRING | utf8 | no | Node id — MERGE key |
 | `parent_id` | STRING | utf8 | yes | NULL only for the tenant's `universe` root |
 | `path` | STRING | utf8 | no | Current derived ltree path; rewritten by the re-parent MERGE |
-| `name` | STRING | utf8 | no | The node's name, never changed ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d1): from `workarea.create`, or from `system.names_assigned` for a node that predates names |
+| `name` | STRING | utf8 | no | The node's name, never changed: from `workarea.create`, or from `system.names_assigned` for a node that predates names |
 | `status` | STRING | utf8 | no | `development` \| `committed` \| `validated` |
 | `crew_id` | STRING | utf8 | yes | The crew record the node names, recorded, not operated (D7): from `workarea.create` and `workarea.crew_updated`, or from `system.names_assigned` for crew metadata that predates crew records; NULL when it names none |
 | `created_at` | TIMESTAMP | timestamp[µs, UTC] | no | |
@@ -361,8 +361,7 @@ to get wrong than a slowly-changing-dimension table, at the cost that
 | `applied_seq` | LONG | int64 | no | Per-row frontier column |
 
 Crew records are not snapshotted in the lake: they stay in Postgres, and their `crew.created`
-and `crew.updated` events reach the lake only as `bronze.events` rows
-([ADR-0026](../adr/ADR-0026-names-are-keys.md) d8).
+and `crew.updated` events reach the lake only as `bronze.events` rows.
 
 **Partitioning:** none; workarea counts are governance-bounded.
 
@@ -488,7 +487,7 @@ hygiene.
 This page instantiates D2, D5 and D6 at column level; the owning declarations
 are [architecture/storage.md](../architecture/storage.md) and
 [architecture/security.md](../architecture/security.md), and the register is
-[adr/index.md](../adr/index.md) (ADR-0003, ADR-0006, ADR-0007).
+adr/index.md.
 
 Lake write latency, maintenance cost and table-size ceilings are unmeasured,
 and no number is asserted for these tables until one is measured (D17).

@@ -11,7 +11,7 @@ answers: "who OML is for, the problem it answers, what it gives and costs, and w
 OML is for teams that run external AI crews, agents built and managed elsewhere on whatever
 framework the team chose, and that must answer for what those agents learned. When an agent acts
 on a remembered "fact" and the action is wrong, someone is asked who wrote the fact, who checked
-it and why it was served as true. If nobody in your organisation is asked that, a plain memory
+it and why it was served as true. If nobody in your organization is asked that, a plain memory
 store is cheaper and faster.
 
 ## The problem
@@ -27,11 +27,11 @@ hallucination or a planted instruction.
 OML treats every memory as a claim under test. A new memory, text or files, arrives held,
 is scanned, and becomes visible to others only when an identity that did not write it approves.
 Every write, verdict, removal and key issuance is a signed entry in a tamper-evident record, and
-an export produces the per-memory decision trail on demand. Memory is organised in workareas that
+an export produces the per-memory decision trail on demand. Memory is organized in workareas that
 mirror your crews.
 
 The cost is a real gate. A memory is not visible to others until a reviewer has acted, and your
-organisation supplies that review capacity, normally a reviewing crew with a person as the
+organization supplies that review capacity, normally a reviewing crew with a person as the
 exception path. A team that wants writes visible instantly is asking for what OML exists to
 refuse. [In-progress workareas](../use/workareas.md) narrow the delay inside a development
 workarea, with unreviewed memories marked.
@@ -42,9 +42,9 @@ Every role is designed to be held by an agent; people enter through the same rol
 pipeline, and the human verdict sits where a mistake is expensive. Every extension is on top of
 the memory provider, never instead of it: with all extensions off OML is a full provider (own-held
 recall, get and supersede on MCP, the journalled retire-proposal and token-budget recall). The
-API makes the layering structural ([ADR-0022](../adr/ADR-0022-two-ring-api.md)): `/v1` is the
+API makes the layering structural: `/v1` is the
 provider ring, `/v2` the lab ring. One host, one compose file or one chart runs the same
-binaries and journal ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)).
+binaries and journal.
 
 ## What the record is for
 
@@ -59,8 +59,7 @@ reviewer distinct from the writer, and that leaves a signed decision record.
 
 - **No management console beyond two pages.** Administration is the `oml` command; every command
   has machine-readable output. People sign in with Google or GitHub to a user page for their own
-  keys and memories and an admin page for the allowlist
-  ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)).
+  keys and memories and an admin page for the allowlist.
 - **No automatic extraction.** OML never watches a conversation and decides what to remember. A
   memory exists because an agent submitted a claim and stands as its author; extraction in the
   provider would put it in the author's seat. Chat memory keeps only facts the agent writes

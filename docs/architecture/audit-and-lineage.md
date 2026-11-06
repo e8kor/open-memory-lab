@@ -14,7 +14,7 @@ per-tenant hash chain and signing are mechanics owned by [storage](storage.md); 
 retention and anchoring are owned by [retrieval](retrieval.md); the simulation fence whose rows
 every export must separate is owned by [simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md); the CLI verb that produces
 the export, `oml audit export`, is specified in the [CLI reference](../cli/reference.md). The
-decision record for erasure is ADR-0005 in the [decision register](../adr/index.md).
+decision record for erasure is in the decision register.
 
 Nothing below exists as code. Every mechanism is a design commitment whose exit criterion is
 tracked in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap). The claim this page makes for the system is the
@@ -41,7 +41,7 @@ Two deliberate attestation limits travel with every claim this page makes about 
 
 - **The signature attests the deployment, not a unique process.** The signing key is loaded by
   the **lead only** — at most one process, lease-guarded, every takeover journalled
-  (`system.lead_acquired`, [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md));
+  (`system.lead_acquired`,);
   a compromised lead is a compromised key. The threat model is
   [security](security.md)'s to state; the evidence export inherits the limit.
 - **Undeclared derivation is invisible.** A writer that omits `derives_from` produces a row the
@@ -140,7 +140,7 @@ The rules, enforced as constraints in the [Postgres schema](https://github.com/e
   `version` of any row of that `claim_key` in the workarea, whatever its state, so ordinals grow
   past rejected versions and past a tip that a tip override moved back to an earlier version. `replaces` names the target; the ordinal only places the version in
   the claim's history. The ordinal is read before the capture transaction opens, like every
-  deterministic input of a capture ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1);
+  deterministic input of a capture;
   the per-tenant chain lock serializes commits, the `memories_claim_version` index refuses a
   capture whose ordinal a concurrent capture took first, and the server retries that capture.
   The retry re-runs every pre-`BEGIN` read of the capture, the `claim_key` collision test
@@ -150,7 +150,7 @@ The rules, enforced as constraints in the [Postgres schema](https://github.com/e
   a stated residual: a successor's version ordinal, returned to its proposer and shown on every
   version, counts every earlier version of the `claim_key` in any state, so a key learns how many
   versions it cannot read (held, rejected or demoted, by any author) precede it — a count, never
-  content (#129).
+  content.
 - **A `claim_key` names one live claim per `(tenant, workarea_id)`.** A new claim (version 1)
   collides with a held, promoted or demoted version of that `claim_key` in the workarea —
   held now, or promoted at some point and not erased (`submission.claim_key_conflict`). A
@@ -170,8 +170,7 @@ The rules, enforced as constraints in the [Postgres schema](https://github.com/e
   version of its `claim_key` already carries is refused with the same code. The collision is a
   stated residual: it tells any writer on the workarea that a held version, or a promoted or
   demoted one the writer cannot read, holds that `claim_key` — a name, never content
-  (#129; [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)
-  d18).
+  (#129;).
 - **Supersession targets the current served tip, and only ratification moves the tip.** A
   supersession is a held successor that names the version it replaces; the replaced version
   stays the served tip, and stays in every reader's recall, until a non-author ratifies the
@@ -201,14 +200,13 @@ The rules, enforced as constraints in the [Postgres schema](https://github.com/e
   default-tip compare-and-set, and an overlay whose target stops being the default tip stops
   shadowing it. A version's `tip`, on every read that serves it, is computed for the calling key,
   audience-scoped: a key in the simulation's audience sees the overlay as the tip and the default
-  tip it shadows with `tip: false`; every other key sees the default tip and never an overlay
-  ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10).
+  tip it shadows with `tip: false`; every other key sees the default tip and never an overlay.
 - **A successor's kind changes only within its class.** A successor of a `memory`,
   `derived_fact` or `steering` target may take any of those three kinds, so a revision can turn a
   memory into a derived fact or a standing instruction under review; a successor of a `term`,
   `term_mapping` or `vocab_release` target keeps the target's kind; a retirement successor keeps
   the target's kind. Any other `kind` is `request.validation`, and an omitted `kind` is the
-  target's ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d11).
+  target's.
 - **A self-signed version takes the tip only from a self-signed tip.** In a `development`
   workarea whose policy permits self-signing, a `self_signed` version may take the tip only as a
   claim's first version or from a `self_signed` tip. A supersession or retirement whose target
@@ -216,9 +214,7 @@ The rules, enforced as constraints in the [Postgres schema](https://github.com/e
   policy does not admit self-sign for that row. `self_signed` rows are served only to reads
   whose scope node is their own workarea ([retrieval](retrieval.md)), so a self-signed
   replacement would take reviewed content away from every recall and listing scoped above the
-  workarea with no second identity
-  ([ADR-0001](../adr/ADR-0001-the-constitution.md) d5;
-  [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d17).
+  workarea with no second identity.
 - **A retirement version as tip makes a retired claim.** A ratified supersession carrying
   `retirement: true` takes the tip; recall then serves nothing of the claim — neither hits nor
   steering ([retrieval](retrieval.md#the-recall-ordering-contract-steering-rows-first-unranked))
@@ -281,12 +277,12 @@ here rather than restating it.
 | Postgres temporary and spill files; standby replicas' own disks | Transient plaintext-derived content (sorts, hash spills over index rows) on the primary's and every standby's volume | Bounded by volume encryption at rest plus the operating system's temp-file lifetime; a standby's disk holds the same WAL and table copies as the primary and inherits every bound above. Named here because the inventory's rule is completeness, not comfort |
 | OS/block-level volume snapshots of the Postgres volume | Everything the volume held at snapshot time — plaintext-derived index content **and** wrapped DEKs — outside the base-backup/WAL accounting above | Whether the deployment takes volume snapshots is an operational choice; if it does, their retention window joins the erasure SLO composition exactly as base backups do, and the [deployment](../operations/deployment.md) backup table must list them |
 | `artifact_keys.wrapped_dek` in Postgres base backups and WAL | The **wrapped DEK itself** — a usable key copy, not content | The live row is nulled at erase; copies in base backups and WAL survive until the backup retention window expires, and **while the wrapping KEK lives, a restored backup plus KMS unwrap could recover the DEK and decrypt every surviving ciphertext copy**. The designed bound: scheduled KEK rotation re-wraps **live** DEKs only, and a retired KEK is destroyed once the backup horizon has passed — destroying it invalidates every wrapped-DEK copy in older backups. Erasure therefore completes against live stores immediately, and against backups no later than **backup retention window + KEK rotation period** ([security](security.md) owns key custody; the fenced-restore ceremony is [deployment](../operations/deployment.md)'s) |
-| The `kms-file` keyring file and its backups (standalone and docker profiles, [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d4) | The **KEK itself**, held as a host file behind the KMS port — not content, the key that unwraps every DEK it wrapped | The live file's retired-KEK destruction is file deletion, journalled. Any backup of the keyring file — host backup, volume snapshot, copied compose volume — is a usable key copy and extends the erasure SLO exactly as wrapped-DEK copies in Postgres backups do; its window is whatever backs up that path, which only the operator controls, and the bound is stated as exactly that strong (#154; the backup table in [deployment](../operations/deployment.md) lists this class) |
+| The `kms-file` keyring file and its backups (standalone and docker profiles,) | The **KEK itself**, held as a host file behind the KMS port — not content, the key that unwraps every DEK it wrapped | The live file's retired-KEK destruction is file deletion, journalled. Any backup of the keyring file — host backup, volume snapshot, copied compose volume — is a usable key copy and extends the erasure SLO exactly as wrapped-DEK copies in Postgres backups do; its window is whatever backs up that path, which only the operator controls, and the bound is stated as exactly that strong (#154; the backup table in [deployment](../operations/deployment.md) lists this class) |
 | `held_fts` (decided, not built — [retrieval](retrieval.md#held-text-containment)) — `tsvector` entries, the class above, on a row of its own for its held transitions | **Plaintext-derived** `tsvector` rows of held versions, readable only by the authoring key | Inserted by every transition into `held` and removed by every transition out of it, each in the commit that makes the transition ([retrieval](retrieval.md#held-text-containment) owns the list), so a held row's index entry never outlives its held state; persists in Postgres base backups and WAL until the backup retention window expires, exactly as the `tsvector` row above |
 | `read_events` | Memory ids and query digests, not bodies | Retention-bounded by tenant policy ([retrieval](retrieval.md)); in this inventory because a query digest can correlate with erased content until its window closes |
 | Serving-path caches | Decrypted bodies in flight | Invalidated at erase; any cache added later enters this inventory as a named copy class before it ships |
 | Attribution metadata (writer identity, principal, timestamps, workarea path) | Plaintext, in journal, metadata rows and lake rows | **Not erased by crypto-shredding.** Its erasure or pseudonymization is a tracked issue with an exit criterion in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) — open, not solved |
-| `terms` CURIE annotations ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)) | Clear vocabulary labels on claims — they semantically label even an erased claim ("this erased claim was tagged X") | **Not erased by crypto-shredding**, same class as attribution metadata above; inherited by the same issue |
+| `terms` CURIE annotations | Clear vocabulary labels on claims — they semantically label even an erased claim ("this erased claim was tagged X") | **Not erased by crypto-shredding**, same class as attribution metadata above; inherited by the same issue |
 
 ### The honest boundary
 
@@ -337,12 +333,10 @@ is that an erase **produces the evidence an auditor asks for** — the erase eve
 and a chain that still verifies.
 
 ## Decision records
-
-- ADR-0005 — erasure by crypto-shredding with a named inventory and honest boundary
-  ([decision register](../adr/index.md)).
-- The journal's own decisions (system of record, per-tenant chains) are ADR-0002, owned by
-  [storage](storage.md); the read log's are ADR-0013, owned by [retrieval](retrieval.md).
-- [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) — the tip moves only at
+ — erasure by crypto-shredding with a named inventory and honest boundary
+  (decision register).
+- The journal's own decisions (system of record, per-tenant chains) are, owned by
+  [storage](storage.md); the read log's are, owned by [retrieval](retrieval.md). — the tip moves only at
   ratification, by a compare-and-set bound to the successor's workarea and `claim_key`; distinct
   version ordinals; rival successors' authors kept off each other's review; retirement as a
   supersession; the self-signed tip rule; the `claim_key` release after a never-promoted rejection

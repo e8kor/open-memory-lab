@@ -9,8 +9,7 @@ answers: "how oml sync keeps a workarea in step with a repository's documents an
 `oml sync` keeps a workarea in step with committed markdown. It reads git's object store at one
 commit, extracts claims through an adapter, diffs them against what the workarea holds and
 writes the difference, each memory anchored to the repository, commit, path, fragment and
-fingerprint of the span it came from
-([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)).
+fingerprint of the span it came from.
 
 1. **Pick the source and the adapter.** `adr` yields one claim per decision bullet plus a summary
    and a rejected-alternatives claim; `headings` one claim per heading of level 2 to 4; `lines`
@@ -34,5 +33,5 @@ without the sync's anchor need `--adopt`; a changed adapter or exclude set needs
 `--change-adapter` or `--change-exclude`. A file whose name matches a secret pattern (`.env*`,
 `*.pem`, `*id_*`, `*credentials*`) is reported `unreadable` and skipped. Whether a reviewer
 catches a wrong extraction in a batch of 200 is open work
-([#138](https://github.com/e8kor/open-memory-lab/issues/138)). The verbs are in the
+([](https://github.com/e8kor/open-memory-lab/issues/138)). The verbs are in the
 [CLI reference](../cli/reference.md#oml-sync-a-workarea-in-step-with-a-repositorys-documents).

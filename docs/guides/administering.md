@@ -6,8 +6,7 @@ answers: "how an administrator runs an OML server with the oml CLI: the first ho
 
 # Guide: administering a server
 
-Administration is the `oml` CLI; there is no web console
-([ADR-0015](../adr/ADR-0015-cli-administration.md)). Every verb below is one request to the
+Administration is the `oml` CLI; there is no web console. Every verb below is one request to the
 server's [HTTP API](../api/http-api.md), journalled by the server, and every refusal names its
 rule. The full contract of each verb is the [CLI reference](../cli/reference.md); this page is the
 order and the tasks.
@@ -226,6 +225,6 @@ verify-chain` exists and is refused while the server serves no chain export.
   the request.
 
 Guardrails, the reviewed rules every session loads and each tool call is checked against, arrived
-in v0.5.1 ([ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)). An admin sets a key's guardrail scope at issuance with
+in v0.5.1. An admin sets a key's guardrail scope at issuance with
 `--guardrail-scope workarea|ancestors`, `ancestors` when omitted; a key's scope changes only by
 reissuing it.

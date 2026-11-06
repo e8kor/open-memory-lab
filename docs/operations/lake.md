@@ -6,11 +6,8 @@ answers: "how to run the lake writer, where the lake lives, what each table hold
 
 # The lake
 
-The lake writer, `oml-lakewriter`, copies what Postgres commits into Delta tables for analysis
-([ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md),
-[ADR-0060](../adr/ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md)).
-No client reads the lake: recall, search and get are served from Postgres
-([ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md)). The lake answers the operator's
+The lake writer, `oml-lakewriter`, copies what Postgres commits into Delta tables for analysis.
+No client reads the lake: recall, search and get are served from Postgres. The lake answers the operator's
 questions about how the system is used.
 
 ## Running it
@@ -30,8 +27,7 @@ time: a second waits for the first's lease. Losing the KEK file makes every seal
 lake unreadable, as erase does.
 
 The KEK file must be owner-only (mode 600); `run` and `drain-once` refuse to start on one that
-group or others can read. Rotate it with the writer stopped
-(ADR-0060 d19):
+group or others can read. Rotate it with the writer stopped:
 
 ```sh
 oml-lakewriter keygen --rotate --kek-file <kek-file>   # takes the lease, re-wraps, retires the old KEK
@@ -97,7 +93,7 @@ Spark reads the same paths with `spark.read.format("delta").load(path)`.
 `oml-lakewriter doctor` prints one line per check, `ok`, `warn` or `fail`, and exits 1 when one
 fails: `lake.writer` (no writer holds the lease), `lake.lag`, `lake.lag_seconds`,
 `lake.heartbeat`, `lake.kek` (pass `--kek-file`; permissions, and a warning past 90 days), `lake.commits`, `lake.schema`, `lake.dead_letter`, `lake.maintenance`.
-The metrics listener serves the `oml_lake_*` families ADR-0060 d16 lists.
+The metrics listener serves the `oml_lake_*` families lists.
 
 ## Erasure
 

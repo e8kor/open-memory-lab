@@ -8,8 +8,7 @@ answers: "what chat memory captures, what it does not, how to switch it on and o
 
 Chat memory keeps the facts an agent writes from your conversation. It does not store the
 conversation: a turn becomes a memory only when the agent in it writes the fact, and every
-memory says what kind of source it came from (`origin.kind`)
-([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md)).
+memory says what kind of source it came from (`origin.kind`).
 
 1. **Create the workarea.** `oml chat init` creates `chat` under your own user root and puts it in
    progress, then prints the `OML_CHAT_WORKAREA` value. Only a person's key (held by a human)
@@ -28,5 +27,5 @@ memory says what kind of source it came from (`origin.kind`)
 **Privacy.** The cache keeps a keyed hash of each prompt, never the prompt. Sessions are
 pseudonymous: the session id is hashed with a salt kept on your machine (`oml/chat-salt`, mode
 0600), so one person's chat on two machines yields two sessions
-([#139](https://github.com/e8kor/open-memory-lab/issues/139)). On a server whose operators
+([](https://github.com/e8kor/open-memory-lab/issues/139)). On a server whose operators
 read memories, such as the public one, treat captured facts as readable by them.

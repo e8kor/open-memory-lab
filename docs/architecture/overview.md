@@ -12,7 +12,7 @@ write it, and only then visible to others. This page is the map: the system in i
 containers inside the Kubernetes boundary, the module structure inside every container, the five
 runtime scenarios that exercise them, and where each constitutional rule is enforced. Contracts live on the pages that own them — this page
 links, it does not restate. The constitution itself (rules R1–R4 and their one bounded exception)
-is declared in [ADR-0001](../adr/ADR-0001-the-constitution.md).
+is.
 
 ## 0. What the build runs
 
@@ -20,23 +20,23 @@ Sections 1 to 6 are the design. Release v0.6.0 runs a subset of it:
 
 | Part | As built | Decision |
 |---|---|---|
-| Server | `oml-server-lead`, holding the signing key, and since v0.6.0 `oml-lakewriter`; no follower, reconciler or separate indexer | [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md); the rest [not scheduled](../changelog.md) |
-| Store | PostgreSQL alone: journal, metadata, outbox rows the lake writer drains into Delta tables since v0.6.0, full-text search per tenant. No object store or vector search | [ADR-0002](../adr/ADR-0002-postgresql-system-of-record.md), [ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md) |
-| Database roles | the lead migrates as the owner role (`postgres.owner_url`) and serves as a role that owns nothing (`postgres.url`), and refuses to start when both log in as one role | [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d2, d4 |
-| Agent surface | three MCP tools, `oml_write`, `oml_read` and `oml_workarea`, over `/v1`; the eight v0.3 names answered hidden through v0.5.0 and are unknown tools since v0.5.1 | [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d2, d12 |
-| OAuth | the lead is the protected resource and its own authorization server, on the origin that serves `/mcp`, only where `oauth.issuer` names that origin | [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d1 |
+| Server | `oml-server-lead`, holding the signing key, and since v0.6.0 `oml-lakewriter`; no follower, reconciler or separate indexer |; the rest [not scheduled](../changelog.md) |
+| Store | PostgreSQL alone: journal, metadata, outbox rows the lake writer drains into Delta tables since v0.6.0, full-text search per tenant. No object store or vector search | |
+| Database roles | the lead migrates as the owner role (`postgres.owner_url`) and serves as a role that owns nothing (`postgres.url`), and refuses to start when both log in as one role | |
+| Agent surface | three MCP tools, `oml_write`, `oml_read` and `oml_workarea`, over `/v1`; the eight v0.3 names answered hidden through v0.5.0 and are unknown tools since v0.5.1 | |
+| OAuth | the lead is the protected resource and its own authorization server, on the origin that serves `/mcp`, only where `oauth.issuer` names that origin | |
 | Release artifacts | the CLI per platform (four Unix targets and Windows x86_64), the server for Intel and Arm Linux, one image index for both, the chart, the plugins as an archive and a pinned marketplace, and the agent kit, each signed with cosign and summed in `SHA256SUMS` | [release artifacts](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md) |
-| Installers | `install.sh` and `install.ps1` fetch the CLI archive and `SHA256SUMS`, verify with cosign when present, and write one file | [ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d1, d2 |
+| Installers | `install.sh` and `install.ps1` fetch the CLI archive and `SHA256SUMS`, verify with cosign when present, and write one file | |
 
 ## Clients and how they start
 
 Every client starts from one pair, the server's URL without `/mcp` and a key, and reads
-everything else from `GET /v2/whoami` (ADR-0039 d15).
+everything else from `GET /v2/whoami`.
 
 | Client | Reaches | Its pair comes from | Adds |
 |---|---|---|---|
 | `oml` CLI | `/v1`, `/v2` | `--url`/`--api-key`, then `OML_URL`/`OML_API_KEY`, then the credentials file `oml login` writes | `oml setup claude-code`, `oml quickstart` |
-| Claude Code plugin `oml` | `/mcp` | the plugin's `userConfig` options `url` and `api_key`, the key in the system keychain, set by `oml setup claude-code` or the install dialog ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md) d1) | the skill, the SessionStart, PostToolUseFailure and SessionEnd hooks through `oml hook`, the librarian |
+| Claude Code plugin `oml` | `/mcp` | the plugin's `userConfig` options `url` and `api_key`, the key in the system keychain, set by `oml setup claude-code` or the install dialog | the skill, the SessionStart, PostToolUseFailure and SessionEnd hooks through `oml hook`, the librarian |
 | Agent kit: Codex CLI, Cursor, Gemini CLI, VS Code, Claude Desktop | `/mcp` | `OML_API_KEY`, and `OML_URL` where the tool expands it in a URL ([kit](https://github.com/e8kor/open-memory-lab/blob/main/kit/README.md)) | the `AGENTS.md` block; Gemini CLI's session-start hook |
 | claude.ai, Claude Desktop connectors, the Claude apps | `/mcp` | no pair: an OAuth connection bound to one connector key through a connect code | nothing beyond the three tools |
 | Python and TypeScript SDKs | `/v1`, `/v2` | `OML_URL` and `OML_API_KEY` ([client SDKs](../engineering/sdks.md)) | typed wrappers |
@@ -70,7 +70,7 @@ flowchart LR
   over HTTP. Who may review what: [roles-and-keys.md](roles-and-keys.md); how a verdict is bound
   to what was served: [cli/reference.md](../cli/reference.md) and [admission.md](admission.md).
 - **Admins and the operator** use the `oml` CLI, which speaks the same HTTP API with
-  admin/operator keys. Beside the CLI, since v0.5.0, a user page and an admin page for people signed in with Google or GitHub (§6; [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)). CLI verbs: [cli/reference.md](../cli/reference.md).
+  admin/operator keys. Beside the CLI, since v0.5.0, a user page and an admin page for people signed in with Google or GitHub (§6;). CLI verbs: [cli/reference.md](../cli/reference.md).
 
 Tenancy is derived server-side from the API key, never from the request; everything below is
 per-tenant ([security.md](security.md)).
@@ -108,7 +108,7 @@ flowchart TB
 
 | Container | Role | Signing key | Owning page |
 |---|---|---|---|
-| oml-server | The only API surface; the single transactional commit point is the Postgres transaction it runs | **lead only** — followers never ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)) | [storage.md](storage.md) |
+| oml-server | The only API surface; the single transactional commit point is the Postgres transaction it runs | **lead only** — followers never | [storage.md](storage.md) |
 | oml-lakewriter | Sole outbox drain; lake writes and all lake maintenance | no | [storage.md](storage.md) |
 | oml-reconciler | Read-only journal-vs-lake comparison; repairs re-emitted via oml-server | no | [reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md) |
 | oml-indexer | Computes embeddings for the serving tier | no | [retrieval.md](retrieval.md) |
@@ -121,19 +121,15 @@ unique process ([storage.md](storage.md)).
 
 ## 3. Module structure
 
-Inside each of the four service binaries the code has one shape, decided in
-[ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md): a hexagon. A pure domain core
+Inside each of the four service binaries the code has one shape, decided in: a hexagon. A pure domain core
 (`oml-domain`) holds the admission state machine, the workarea algebra, the role/verb ceilings,
 the status ladder and the taint predicate — every constitution invariant, and no I/O. Around it,
 the application layer (`oml-app`) declares ports as Rust traits. On the driven side, everything
 that touches the world — store, lake, object store, KMS, plugins — is an adapter implementing one
-of those traits; on the driving side, the HTTP transport (both rings,
-[ADR-0022](../adr/ADR-0022-two-ring-api.md)) and the MCP facade are adapters
+of those traits; on the driving side, the HTTP transport (both rings,) and the MCP facade are adapters
 the other way around: they depend on `oml-app` and call its use-cases, the application's inbound
 port. The four binaries are thin compositions of the same core with the adapter set each job
-needs; the `oml` CLI reaches the same hexagon only through the HTTP transport
-([ADR-0015](../adr/ADR-0015-cli-administration.md)). The crate list is committed in
-[ADR-0006](../adr/ADR-0006-pure-rust.md).
+needs; the `oml` CLI reaches the same hexagon only through the HTTP transport. The crate list is committed in.
 
 ```mermaid
 flowchart LR
@@ -171,8 +167,7 @@ dependency in this picture points at the hexagon, and the hexagon knows no adapt
 Plugins exist only at the scanner, embedder and exporter ports; in v1 they are compiled-in Rust
 implementations selected by journalled configuration. A plugin can narrow, never widen — it
 cannot mint verbs, can move admission only toward holding, never sits on the signing or erasure
-path, and its identity and version ride the journal events its work informs
-([ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md)).
+path, and its identity and version ride the journal events its work informs.
 
 ## 4. Runtime scenarios
 
@@ -277,8 +272,7 @@ sequenceDiagram
 
 ## 5. The invariant map
 
-Where each constitutional rule is mechanically enforced. The rules are declared in
-[ADR-0001](../adr/ADR-0001-the-constitution.md); each enforcement point is specified on its owning page.
+Where each constitutional rule is mechanically enforced. The rules are declared in; each enforcement point is specified on its owning page.
 
 | Rule | Statement | Enforced at | Owning pages |
 |---|---|---|---|
@@ -290,19 +284,18 @@ Where each constitutional rule is mechanically enforced. The rules are declared 
 One bounded exception exists and is named in the constitution, not discovered later: a
 `development` workarea may, by journalled tenant policy, relax R2/R3 for rows marked
 `self_signed`, which are readable only inside that workarea and never promote beyond it
-([workareas.md](workareas.md), [ADR-0001](../adr/ADR-0001-the-constitution.md)). One honesty limit sits beside the
+([workareas.md](workareas.md),). One honesty limit sits beside the
 invariants: undeclared derivation — a writer omitting `derives_from` — is not detectable by the
 service; lineage exclusion is exactly as good as the declared graph.
 
 ## 6. What is deliberately not here
 
 - **No web UI, beyond two planned pages.** Administration is the `oml` CLI against the same HTTP API; a web console was
-  considered and declined ([cli/reference.md](../cli/reference.md),
-  [ADR-0015](../adr/ADR-0015-cli-administration.md)). [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) amends that
+  considered and declined ([cli/reference.md](../cli/reference.md),). amends that
   to a user page and an admin page with a closed set of routes, since v0.5.0;
   dashboards, recall views and graph pictures stay declined.
 - **No grounded Q&A.** Clients are agents that recall and reason themselves; OML returns
-  memories, not answers. Out of scope for v1, recorded in [ADR-0013](../adr/ADR-0013-reads-served-from-postgres.md) and
+  memories, not answers. Out of scope for v1 and
   [retrieval.md](retrieval.md).
 - **Reads are never served from the lake.** The Delta lake is derived — reconciliation, lineage,
   metadata analytics, future journalled exports — and serves no client read; the serving tier is

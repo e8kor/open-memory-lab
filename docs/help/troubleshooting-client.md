@@ -6,11 +6,11 @@ answers: "what to do when something does not work, by symptom: the plugin servin
 
 # Troubleshooting by symptom
 
-Each entry is a symptom, its cause and the command that fixes it. The behaviour is declared on
+Each entry is a symptom, its cause and the command that fixes it. The behavior is declared on
 the pages linked from each entry; this page only orders it by what you see. Common questions
 are in the [FAQ](../faq.md). Whether Claude Code runs the plugin's hooks, and a live connection
-from claude.ai, are open verifications ([#114](https://github.com/e8kor/open-memory-lab/issues/114),
-[#115](https://github.com/e8kor/open-memory-lab/issues/115)).
+from claude.ai, are open verifications ([](https://github.com/e8kor/open-memory-lab/issues/114),
+[](https://github.com/e8kor/open-memory-lab/issues/115)).
 
 ## Start with `oml doctor`
 
@@ -64,8 +64,7 @@ Work down the list; each step assumes the ones above it hold.
    `https://memory.doublegate.io`. A key from another server is refused there with `401
    auth.invalid`, and that server's operator has seen it: set `url` to your server and ask your
    administrator to replace the key. `oml setup claude-code` given no URL prints that it used the
-   public server, and on a refusal that the key went there
-   ([ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md) d7).
+   public server, and on a refusal that the key went there.
 3. **`url` without `/mcp`.** The plugin appends `/mcp` itself; a `url` ending in `/mcp` points at
    `/mcp/mcp`.
 4. **An agent key.** `oml setup claude-code` refuses an `admin` or `operator` key as
@@ -199,8 +198,7 @@ To check by hand, follow [by hand, with cosign](../start/install.md#by-hand-with
 ## Server: the lead exits with `postgres.role_split`
 
 The lead checks its two database roles before and after migrating, and exits before binding a
-listener when the split is wrong, logging `event` `role_split_refused` with the reason
-([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d5). A good boot logs
+listener when the split is wrong, logging `event` `role_split_refused` with the reason. A good boot logs
 `role_split_booted` with `owner_role` and `serving_role`.
 
 | Reason | Means | Fix |
@@ -211,8 +209,8 @@ listener when the split is wrong, logging `event` `role_split_refused` with the 
 | `serving_role_privileged` | The serving role is a superuser, has `CREATEDB`, `CREATEROLE`, `REPLICATION` or `BYPASSRLS`, is a member of a role, or can create in the database or `public`. | `ALTER ROLE <role> NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;` and `REVOKE CREATE ON DATABASE <database> FROM <role>;` |
 | `serving_role_owns` | The serving role owns the database or an object in it, as every unsplit install does. | Move ownership to the owner (`REASSIGN OWNED`, step 4 of the split). |
 | `serving_role_reads_migrations` | The serving role holds a privilege on `_sqlx_migrations`. | Revoke it; the serving role holds none there. |
-| `serving_role_ungranted` | The serving role has no `SELECT` on `journal`: the migrations did not grant the role `postgres.url` names. | ADR-0034 d5 declares the grant. |
-| `table_unfenced`, `definer_function` | A table but `_sqlx_migrations` is not the owner's, lacks forced row-level security or has no policy; or a function in `public` is `SECURITY DEFINER`. | No setting fixes these; ADR-0034 d5 declares each rule. |
+| `serving_role_ungranted` | The serving role has no `SELECT` on `journal`: the migrations did not grant the role `postgres.url` names. | declares the grant. |
+| `table_unfenced`, `definer_function` | A table but `_sqlx_migrations` is not the owner's, lacks forced row-level security or has no policy; or a function in `public` is `SECURITY DEFINER`. | No setting fixes these; declares each rule. |
 
 `postgres.role_split: the check could not read the catalog: …` proves nothing and refuses as
 well: the owner URL could not read the catalog.
@@ -240,8 +238,7 @@ cannot read a proxy's configuration, so it cannot check this for you
 (R1; [the verb ceiling](../api/mcp-plugin.md#the-verb-ceiling-what-this-surface-can-never-do-r1)),
 and a verdict counts only from an identity that wrote neither the memory nor anything it derives
 from (R2). Two keys with one principal are one identity for this check. The one exception, a
-`development` workarea's `self_signed` rows, is declared in
-[ADR-0001](../adr/ADR-0001-the-constitution.md).
+`development` workarea's `self_signed` rows, is declared in.
 
 **Where are credentials stored?** The CLI keeps `url` and `api_key` in the owner-only file
 `~/.config/oml/credentials`, under `%USERPROFILE%` on Windows when `HOME` is unset;

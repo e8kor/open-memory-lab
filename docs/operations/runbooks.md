@@ -99,7 +99,7 @@ long.
 **Meaning.** `oml_review_queue_oldest_age_seconds` is closing on the
 policy's `held_item_expiry`: items are about to dead-letter not because they
 are poison but because review capacity lagged arrivals — the failure mode
-#98 exists to quantify, arriving before #98 has
+ exists to quantify, arriving before has
 numbers.
 
 **Diagnose.** `oml doctor`: `queue_depth_per_step` and `oldest_held_age` vs
@@ -122,7 +122,7 @@ window; `review_availability` to rule out the harder condition above.
   quietly turn.
 
 **Evidence.** Queue ages and depths per workarea, the verdict rate over the
-window, the policy's expiry value — the #98-shaped numbers this incident
+window, the policy's expiry value — the -shaped numbers this incident
 produced for free.
 
 ## Dead letters present
@@ -186,7 +186,7 @@ self-test catches an object store changed under the pin
 - Batches completing but slow → capacity, and Delta commit cost grows with
   version-history depth; check `oml_lake_maintenance_duration_seconds` —
   overdue OPTIMIZE/checkpoint work is the usual suspect. Throughput numbers
-  are unmeasured, tracked as #101.
+  are.
 - A `stale-frontier` finding with a healthy writer → the cached frontier
   column is behind, not the lake; the reconciler corrects it
   ([observability — doctor](observability.md)).
@@ -251,8 +251,7 @@ keeps losing its lease, and **every takeover is a write-refusal window** —
 writes refuse as `system.unavailable` until a lead-eligible node takes the
 lease and passes the fork check ([deployment — the lead lease](deployment.md)).
 Nonzero during failover or rolling updates is the lease working; a climbing
-steady-state rate is this condition. The window's size is unmeasured
-(#117).
+steady-state rate is this condition. The window's size is unmeasured.
 
 **Diagnose.** `oml_lead_lease_age_seconds` (a sawtooth is churn), doctor's
 `lead_lease` (holder, address, epoch — a climbing epoch counts fights), the
@@ -357,7 +356,7 @@ is itself a finding, not a starting point.
 - Passes hitting the deadline → a killed pass redoes work, never corrupts
   it, but it also never finishes: raise the deadline (an unmeasured profile
   default) or investigate what grew — journal size growth is
-  #99's territory.
+  's territory.
 - Scheduler dead → restart it; the cursor's journalled checkpoints mean the
   next pass resumes, not restarts.
 - Cursor fails verification → stop; that is a `repair-halted`-grade event:
@@ -419,7 +418,7 @@ followers); follower replica count over the window; the effective quota via
   (`oml settings validate`, then `oml settings apply`) — never an in-place
   edit.
 - Replica churn artifact → stabilize the follower count; the enforcement
-  error is #133's open bound, documented rather than hidden.
+  error is 's open bound, documented rather than hidden.
 - Abusive traffic → the admission-side valve is `oml bans add` with its
   reach preview; quota is for budgeting, bans are for refusal.
 
@@ -527,7 +526,7 @@ previous one being complete.
    the complete decision trail, grants history,
    chain verification and separated simulation record. Retain it outside the
    deployment: after offboarding this bundle is also the tenant's last
-   externally held chain head (#152).
+   externally held chain head.
 3. **Erase content.** `oml erase <artifact>` per artifact, `--dry-run` first
    where the inventory should be inspected. No bulk-erase verb exists yet —
    tracked as an issue — so offboarding a large tenant is an enumerated loop
@@ -544,8 +543,7 @@ previous one being complete.
    security.
 6. **What survives, on purpose.** The tenant's digest-only chain remains in
    the journal and still verifies end to end — the evidence outlives the
-   content. Attribution metadata survives too; its erasure is
-   #146, and an offboarding agreement that needs it
+   content. Attribution metadata survives too; its erasure is, and an offboarding agreement that needs it
    gone is blocked on that row, stated honestly.
 
 **Evidence.** The export bundle, the erase event ids, the revocation events,
@@ -556,8 +554,8 @@ the disposition record for the prefixes.
 A rehearsal that an erase does what the
 [inventory](../architecture/audit-and-lineage.md#the-erasure-inventory) says,
 run on a canary before a data subject or an auditor makes it urgent. The
-drill rehearses #108's end-to-end bound; it does
-not produce #108's measurement — that requires the published, dated run the
+drill rehearses 's end-to-end bound; it does
+not produce 's measurement — that requires the published, dated run the
 row's exit criterion names.
 
 1. **Plant the canary.** Submit a marked memory with an attachment through

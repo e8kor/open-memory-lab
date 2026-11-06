@@ -18,7 +18,7 @@ are defined in [workareas](workareas.md); the transactional commit point and the
 performs release are defined in [storage](storage.md). The constitution behind all of it —
 the gate is not callable by the thing being gated, the reviewer is never the author, the gate
 changes visibility, not ranking, no silent deletion — is declared in
-[ADR-0001](../adr/ADR-0001-the-constitution.md) and not restated here.
+ and not restated here.
 
 Nothing below exists as code. Every mechanism is a design commitment with its exit criterion
 tracked in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
@@ -64,7 +64,7 @@ Reading the diagram:
   commit protocol is [storage](storage.md)'s to define. The author can see their own held
   claim; nobody else can see it at all. Supersession targets the current served tip
   ([HTTP API](../api/http-api.md#supersede-post-v1memoriesartifact_idsupersede)); revising one's
-  own held claim before its review is #156. Claim text is
+  own held claim before its review is. Claim text is
   Unicode-normalized to **NFC** at this step — before the plaintext digest is computed and before the scan runs — so the digest,
   the scan verdict and every downstream index see one canonical byte form; what search does with
   the normalized text is [retrieval](retrieval.md)'s to state. Bans are checked at capture, before quarantine
@@ -72,14 +72,13 @@ Reading the diagram:
   and nothing from it is held, stored or queued ([roles and keys](roles-and-keys.md),
   [security](security.md)). Everything networked and everything deterministic completes
   **before that transaction opens**: DEK generation and the KMS wrap, body encryption, both
-  digests, and the quarantine PUT for a bucket-placed body all precede `BEGIN`
-  ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1) — the transaction holds nothing
+  digests, and the quarantine PUT for a bucket-placed body all precede `BEGIN` — the transaction holds nothing
   but the chain-head read, the signature and one insert statement.
 - **Scan** happens in the same call as capture, before the transaction, and can veto — see
   [the deterministic scan](#the-deterministic-scan) below. A veto is a deterministic refusal,
   not a silent drop: the caller gets a typed error naming the rule class, and the verdict is
   reproducible from the journalled rule-set pin — refusals journal nothing (a durable veto
-  trace is #140 on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)).
+  trace is on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)).
 - **Review and ratification.** Reviewers record verdicts; when the workarea's policy is
   satisfied (k approving verdicts from identities meeting the independence axis), the server
   ratifies: a journalled promotion event carrying a snapshot of the policy it was decided
@@ -108,8 +107,7 @@ Reading the diagram:
 One rule holds across every workarea status: effective access decides who may *write*
 (defined in [workareas](workareas.md)); status changes only which review policy applies,
 never grant resolution. A `development` workarea may, by journalled tenant policy, permit
-marked `self_signed` rows — the one bounded exception, scoped in
-[ADR-0001](../adr/ADR-0001-the-constitution.md); such rows never promote beyond that workarea.
+marked `self_signed` rows — the one bounded exception, scoped in; such rows never promote beyond that workarea.
 Simulation writes pass this same pipeline with their audience as the reviewer pool
 ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)).
 
@@ -140,7 +138,7 @@ quarantine** — bytes no journal event references. The mechanism that handles i
 quarantine objects whose digest no journalled event references, holding no decrypt grant and
 reading no plaintext — the orphan is ciphertext whose DEK was never journalled, so the sweep
 is harmless by construction. It is a named background mechanism, never an inline concern on
-the write path ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1; the quarantine
+the write path (the quarantine
 store itself is [storage](storage.md)'s).
 
 Attachments upload into the same quarantine regime through resumable upload sessions, bound
@@ -149,11 +147,9 @@ into the submission envelope by digest; their storage protocol is
 
 ## The deterministic scan
 
-*Available since v0.1.0, as the marker scanner; the `oml-scan/1` rule set since v0.6.0
-([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md)) · [releases](../changelog.md)*
+*Available since v0.1.0, as the marker scanner; the `oml-scan/1` rule set since v0.6.0 · [releases](../changelog.md)*
 
-The scan runs in the same call as capture — before the commit transaction, never inside it
-([ADR-0024](../adr/ADR-0024-performance-foundation.md) d1) — and returns before the call does:
+The scan runs in the same call as capture — before the commit transaction, never inside it — and returns before the call does:
 the writer learns the scan outcome synchronously, and a veto means the submission is refused
 before capture — nothing is journalled and nothing waits in the queue. The scan is same-call by design: an asynchronous
 scan either delays the author's error to a moment they are no longer listening, or admits
@@ -171,7 +167,7 @@ extractor exists for the type, the extracted text is scanned and gated; for opaq
 the reviewed claim is provenance + digest + scan result, stated honestly per type
 ([storage](storage.md) owns the attachment rules). A rule pass scales with body bytes: under
 `oml-scan/1`, about 4 µs for a 124-byte chat turn, 26 µs for a 1.5 KB abstract and 13 ms for a
-mebibyte of base64, with one field bounded at 1 MiB ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d9).
+mebibyte of base64, with one field bounded at 1 MiB.
 
 One scanner lives outside the default set: the **vocab scanner**, selected only where a
 workarea's `vocabulary_policy` (below) names a vocabulary. It checks cited CURIEs against the
@@ -210,16 +206,16 @@ The v1 shipped registry:
 | Class | Fires on | Default |
 |---|---|---|
 | `secret.private_key` | A named private-key pattern — PEM-delimited key blocks, OpenSSH private keys — in claim text or deterministically extracted attachment text | veto |
-| `secret.api_token` | A named credential-token pattern: provider-prefixed tokens the pattern list enumerates, OML's own credential formats among them — a key, `oml_[A-Za-z0-9]{43}`, and a connection's access and refresh tokens, `oml_at_[A-Za-z0-9]{43}` and `oml_rt_[A-Za-z0-9]{43}` ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d10) | veto |
+| `secret.api_token` | A named credential-token pattern: provider-prefixed tokens the pattern list enumerates, OML's own credential formats among them — a key, `oml_[A-Za-z0-9]{43}`, and a connection's access and refresh tokens, `oml_at_[A-Za-z0-9]{43}` and `oml_rt_[A-Za-z0-9]{43}` | veto |
 | `secret.credential_pair` | A named user-and-password pattern — connection strings, basic-auth URLs | veto |
-| `secret.assignment` | A password, secret, token or API-key assignment whose value passes the entropy test ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d3) | veto |
-| `anchor.secret_path` | An anchor's or a moved check's path with a secret-shaped component ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d2; ADR-0065 d4) | veto |
-| `format.scan_bound` | One scanned field over 1 MiB (ADR-0065 d9) | veto |
-| `injection.override`, `injection.role`, `injection.tool_call` | An instruction aimed at the reader: overriding earlier instructions, a chat template or system-prompt tag, a covert or reader-triggered action (ADR-0065 d5) | hold |
-| `unicode.bidi`, `unicode.invisible` | A bidirectional control; more than three invisible format characters, or tag characters outside a flag (ADR-0065 d5) | hold |
-| `encoding.base64_blob` | A dense base64 run of 400 characters or more (ADR-0065 d5) | hold |
-| `pii.email`, `pii.phone` | An email address or a phone number; off unless a tenant turns them on (ADR-0065 d6) | hold |
-| `test.marker` | The two test markers the proof of concept used, kept so suites can force either outcome (ADR-0065 d10) | veto, hold |
+| `secret.assignment` | A password, secret, token or API-key assignment whose value passes the entropy test | veto |
+| `anchor.secret_path` | An anchor's or a moved check's path with a secret-shaped component | veto |
+| `format.scan_bound` | One scanned field over 1 MiB | veto |
+| `injection.override`, `injection.role`, `injection.tool_call` | An instruction aimed at the reader: overriding earlier instructions, a chat template or system-prompt tag, a covert or reader-triggered action | hold |
+| `unicode.bidi`, `unicode.invisible` | A bidirectional control; more than three invisible format characters, or tag characters outside a flag | hold |
+| `encoding.base64_blob` | A dense base64 run of 400 characters or more | hold |
+| `pii.email`, `pii.phone` | An email address or a phone number; off unless a tenant turns them on | hold |
+| `test.marker` | The two test markers the proof of concept used, kept so suites can force either outcome | veto, hold |
 | `format.encoding` | Declared text that is not valid UTF-8 or cannot be NFC-normalized (the normalization step above has nothing lawful to produce) | veto |
 | `format.media_type_mismatch` | Attachment bytes whose leading structure contradicts the declared media type | veto |
 | `vocab.term_pending` | A citation of a CURIE that exists but is still held — distinct from unknown ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md)) | annotate |
@@ -231,7 +227,7 @@ The **default** column is the class's behavior when no policy says otherwise: a 
 refuses the submission (`submission.scan_veto` — a refusal like any other refusal, journalling
 nothing: the scan is deterministic, so the verdict is reproducible from the journalled rule-set
 pin and needs no event of its own; whether refused submissions deserve a durable trace outside
-the chain is #140 on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)); an `annotate` class
+the chain is on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)); an `annotate` class
 records the finding on the held item and never blocks. The `secret.*` and `format.*` families
 ship in the default scanner set; the `vocab.*` family is emitted only by the vocab scanner,
 selected where a workarea's `vocabulary_policy` names a vocabulary (above). The exact pattern
@@ -242,8 +238,7 @@ enumerated on this page — what is fixed here is the class vocabulary a policy 
 the routing mechanism the vocab scanner paragraph above already uses: a deterministic finding
 whose class a workarea's policy names requires at least one human verdict for ratification, and
 no parallel human-gate machinery exists. The shipped vocabulary defaults name
-`vocab.deprecation_replaced_by` and `vocab.mapping_exactMatch`
-([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); a tenant may tune any class in or out by
+`vocab.deprecation_replaced_by` and `vocab.mapping_exactMatch`; a tenant may tune any class in or out by
 the journalled policy act, including to zero
 ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md) owns the zero-human conditions).
 
@@ -262,7 +257,7 @@ promotion against the exact policy it satisfied. Its fields:
 | `human_required_classes` | claim classes (by kind, scan finding class, or provenance) whose ratification requires at least one human verdict via the CLI |
 | `independence_axis` | how far apart reviewer and author must be: reviewer principal ≠ author principal always (constitution R2, enforced at promotion against the row's lineage closure — [roles and keys](roles-and-keys.md)); optionally, for `committed` workareas by policy, reviewer crew / external manager ≠ author crew, resolved from journalled key→crew→manager metadata at promotion time ([roles and keys](roles-and-keys.md)) |
 | `held_item_expiry` | how long an item may wait in the queue before it is dead-lettered |
-| `vocabulary_policy` | optional `{vocabulary, release, enforcement: require \| annotate \| off}` — **default off**: which vocabulary and pinned release the vocab scanner checks cited CURIEs against, and whether a failing citation blocks (`require`), records a finding (`annotate`), or is not checked at all ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md), [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)) |
+| `vocabulary_policy` | optional `{vocabulary, release, enforcement: require \| annotate \| off}` — **default off**: which vocabulary and pinned release the vocab scanner checks cited CURIEs against, and whether a failing citation blocks (`require`), records a finding (`annotate`), or is not checked at all ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md),) |
 
 Policy objects are per workarea because workareas mirror crews with different stakes: a
 `development` area's policy may be permissive to the marked limit the constitution allows; a
@@ -306,8 +301,7 @@ collusion visible rather than impossible — the evidence export surfaces recipr
 statistics per key pair — and makes independence checkable at promotion time; it cannot make
 an external crew diligent. These decisions — review composition, the served-reviewer rule (a
 signature counts only from a reviewer the gate served), and the division of labour (crews
-review; reviewer keys record verdicts and nothing else) — are recorded in
-[ADR-0012](../adr/ADR-0012-admission-and-review.md).
+review; reviewer keys record verdicts and nothing else) — are recorded in.
 
 ## Fail closed
 
@@ -327,7 +321,7 @@ When review is unavailable, nothing promotes. Concretely:
   [errors.md](../api/errors.md)); it lands held, surfaces in `oml status` / `oml doctor` as
   review unavailability, and dead-letters on expiry. Declaring ancestors can only shrink who may
   judge a row, never select a friendlier judge — and a false or padded lineage is itself grounds
-  for rejection at review ([ADR-0012](../adr/ADR-0012-admission-and-review.md)).
+  for rejection at review.
 - A simulation whose audience contains no dreamer can promote nothing
   ([simulations](https://github.com/e8kor/open-memory-lab/blob/main/design/simulations.md)).
 - A verdict whose serve has expired or whose served digests no longer match the artifact is
@@ -360,11 +354,11 @@ version's text re-enters the author-fenced held index in the reopen's commit
 ## Throughput is the honest open question
 
 Review throughput for OML is unmeasured — no code exists to measure. The
-[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) carries review-throughput measurement as #98, with an exit
+[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) carries review-throughput measurement as, with an exit
 criterion (a measured drain rate for a stated policy and crew configuration, published beside
 the method).
 
 One structural expectation can be stated without a measurement: ingress throughput is not
 end-to-end review capacity, and the queue, not the store, is where an admission-controlled
 system saturates. The binding constraints will be the tenant's crew capacity and the server's
-verdict path — both unmeasured until #98's exit criterion is met.
+verdict path — both unmeasured until 's exit criterion is met.

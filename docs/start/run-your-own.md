@@ -36,7 +36,7 @@ In order, it:
 A second run in the same directory is refused as `quickstart.exists`; a machine without compose
 is refused as `quickstart.docker`; `--port` frees a taken port. `docker compose
 --project-directory oml down -v` removes the stack and its data
-([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d9, [CLI
+([CLI
 reference](../cli/reference.md#oml-setup-claude-code-and-oml-quickstart-the-quick-start)).
 
 The containers are separated from each other, but anyone with root on the host reads every
@@ -49,8 +49,7 @@ The quickstart gives no TLS, public address, backups or signing key held apart f
 For a team on one host:
 
 1. Run PostgreSQL 18 with pgvector and the two roles the server needs: an owner that migrates and
-   a serving role that owns nothing
-   ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d2). The server
+   a serving role that owns nothing. The server
    refuses to start when both URLs log in as one role.
 2. Install `oml-server-lead` from the [server archive](../operations/deployment.md#the-server-archive),
    verified with cosign, and set `OML_POSTGRES__OWNER_URL` and `OML_POSTGRES__URL`.
@@ -68,11 +67,10 @@ For a team on one host:
 
 The chart in `deploy/helm/oml` runs one server instance under `Recreate` against an external
 PostgreSQL, with its keyring on a claim that `helm uninstall` keeps
-([the chart](../operations/deployment.md#the-interim-chart-the-current-build-on-kubernetes),
-[ADR-0033](../adr/ADR-0033-interim-helm-chart.md)); the [Kubernetes guide](../guides/kubernetes.md)
+([the chart](../operations/deployment.md#the-interim-chart-the-current-build-on-kubernetes),); the [Kubernetes guide](../guides/kubernetes.md)
 walks the install. CI installs it on kind. Every upgrade and restart stops the API until the new
 instance is ready. Read followers and cluster mode are open work
-([#117](https://github.com/e8kor/open-memory-lab/issues/117)).
+([](https://github.com/e8kor/open-memory-lab/issues/117)).
 
 ## Next
 

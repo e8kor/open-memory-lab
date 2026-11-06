@@ -124,8 +124,7 @@ The same sequence in every profile; only step 3 differs per profile.
    ([deployment — the reconciler](deployment.md)) — folds the whole journal
    and compares the stores. Its findings drain through the ordinary repair
    channels. Traffic resumes only when the pass completes and `oml doctor`
-   reports no failing field; its runtime at realistic journal sizes is
-   unmeasured, tracked as #99.
+   reports no failing field; its runtime at realiztic journal sizes is.
 10. **Resume traffic and file the evidence.** Scale the services back up,
     take a fresh `oml audit export`, and retain it outside the deployment —
     the restored era's first externally held head.
@@ -178,8 +177,8 @@ check, erase replay, the full-genesis verification pass and a clean `oml doctor`
 full-genesis pass runs before traffic resumes, because serving reads from stores the journal has
 not re-verified would trade integrity for a faster-looking recovery. Recovery point is whatever
 your backup cadence makes it; the figures to measure are
-[#99](https://github.com/e8kor/open-memory-lab/issues/99) and
-[#117](https://github.com/e8kor/open-memory-lab/issues/117).
+[](https://github.com/e8kor/open-memory-lab/issues/99) and
+[](https://github.com/e8kor/open-memory-lab/issues/117).
 
 | Scenario | What is lost | Recovery |
 |---|---|---|
@@ -194,7 +193,7 @@ your backup cadence makes it; the figures to measure are
 Not recoverable by design: erased content (a destroyed DEK is destroyed everywhere, and the
 ceremony re-destroys what backups resurrect), acknowledged writes past the recovery point (the
 chain rewinds consistently; only an externally retained head shows the gap,
-[#152](https://github.com/e8kor/open-memory-lab/issues/152)), and content whose KEK is gone.
+[](https://github.com/e8kor/open-memory-lab/issues/152)), and content whose KEK is gone.
 Losing or rotating the signing key never loses history: signatures verify against the key that
 made them ([signing-key compromise](runbooks.md#signing-key-compromise)).
 
@@ -209,10 +208,9 @@ made them ([signing-key compromise](runbooks.md#signing-key-compromise)).
 - **Prove its own innocence.** A restore and a key-holding attacker's chain
   rewrite look identical from inside the deployment. The pre-restore evidence
   (step 2) and the retained exports are what distinguish them, and the
-  standing-anchor question is #152.
+  standing-anchor question is.
 
 The profile migration path
-([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d10)
-inherits this ceremony wholesale, and #117's
+inherits this ceremony wholesale, and 's
 rehearsal is the exit criterion that turns this page from design into
 procedure.

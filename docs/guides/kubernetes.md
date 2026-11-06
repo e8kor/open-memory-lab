@@ -8,7 +8,7 @@ answers: "how to install OML v0.4.0 on Kubernetes with the release's chart: prer
 
 The chart, `deploy/helm/oml`, runs one `oml-server-lead` against a PostgreSQL you bring, with its
 signing keyring on a volume claim that `helm uninstall` keeps. Its decisions are in
-[ADR-0033](../adr/ADR-0033-interim-helm-chart.md) (proposed) and its operation on
+ (proposed) and its operation on
 [deployment](../operations/deployment.md#the-interim-chart-the-current-build-on-kubernetes); this
 page is the order. Every value named here is a key of the chart's `values.yaml`.
 
@@ -30,8 +30,7 @@ page is the order. Every value named here is a key of the chart's `values.yaml`.
   certificate.
 
 **The role pair.** The lead needs two Postgres roles, each with `LOGIN` and no other attribute: an
-owner, which owns the database and runs the migrations, and a serving role, which owns nothing
-([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d2, d4). The lead
+owner, which owns the database and runs the migrations, and a serving role, which owns nothing. The lead
 refuses to start, with `postgres.role_split`, when both URLs log in as one role. As a superuser,
 the same statements CI runs:
 
@@ -199,7 +198,7 @@ chain ([fork check failing](../operations/runbooks.md#fork-check-failing)).
    release's `image.digest` and run the old image.
 
     ```sh
-    helm upgrade oml ./oml-X.Y.Z.tgz --namespace oml --reuse-values --set image.digest=sha256:...
+    helm upgrade oml./oml-X.Y.Z.tgz --namespace oml --reuse-values --set image.digest=sha256:...
     ```
 
 The lead runs the new migrations at boot under the owner URL; there is no migration step of your

@@ -9,10 +9,9 @@ answers: "how to connect Claude Code to an OML server from nothing: install the 
 From nothing to an agent that saves and finds shared memory in Claude Code. You need Claude Code
 2.1.285 or later and an agent key from your administrator. The plugin connects to the maintainer's
 public server, `https://memory.doublegate.io`, unless you name another, so with a key from that
-server the key is the only setting; for any other server you also need its address
-([ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)). The commands
+server the key is the only setting; for any other server you also need its address. The commands
 and their flags are declared in the [CLI reference](../cli/reference.md) and the plugin's
-behaviour in its [README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md);
+behavior in its [README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md);
 this page links them rather than restating them.
 
 ## 1. Install the CLI
@@ -49,14 +48,13 @@ Given a key and no URL, it pairs the key with `https://memory.doublegate.io` and
 stderr before it sends anything; when that server refuses the key, it says the key went there and
 names `--url`, and installs nothing. It refuses an `admin` or `operator` key (`setup.admin_key`), checks `claude --version`, adds the
 marketplace at the CLI's own tag, installs `oml@open-memory-lab` and hands the pair to `claude
-plugin configure --values-stdin`, so the key reaches neither a command line nor a transcript
-([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d7). With a key file from
+plugin configure --values-stdin`, so the key reaches neither a command line nor a transcript. With a key file from
 `oml keys issue-agent --out`, skip step 2 and run the line the administrator sent you, `oml setup
 claude-code --url <url> --key-file <file>`. With `--print` it runs nothing and prints the
 commands.
 
 Then run `/reload-plugins` in Claude Code, or restart it. A run against a real Claude Code is
-tracked as [#114](https://github.com/e8kor/open-memory-lab/issues/114).
+tracked as [](https://github.com/e8kor/open-memory-lab/issues/114).
 
 ## 4. The first write and read
 
@@ -64,14 +62,14 @@ Ask the agent to remember a decision. It calls `oml_write` and the answer carrie
 "held"`: the agent reads it back at once with `oml_read` and `include_unreviewed: true`, and no
 other key reads or recalls it until a reviewer who did not write it approves it. The agent
 learns that outcome by listing its own work with `oml_read` and `state`. About two minutes from
-step 1 to this held write is a target, unmeasured (#107).
+step 1 to this held write is a target, unmeasured.
 
 ## 5. Every session starts from memory
 
 With `oml` on `PATH`, the plugin's SessionStart hook runs `oml hook session-start` at each start,
 resume, clear, compaction and fork, and adds the workarea's steering, the key's ten newest writes
 and the memories matching the project directory's name, within 800 budget tokens
-([ADR-0029](../adr/ADR-0029-session-start-hook.md); [CLI
+([CLI
 reference](../cli/reference.md#oml-hook-session-start-session-context-for-the-agent-plugin)). It
 reads the plugin's two settings, and sends nothing and prints nothing when the server cannot be
 reached. `OML_SESSION_CONTEXT=off` turns it off.
@@ -96,7 +94,7 @@ the write is still held for review.
 ## 6. Optional: the librarian and failure recall
 
 - `@agent-oml:librarian` answers "what does OML hold about X" with up to eight searches on Haiku,
-  with `oml_read` as its only tool ([ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) d10).
+  with `oml_read` as its only tool.
 - `OML_FAILURE_RECALL=1` makes a failed Bash command search for up to three distinctive words of
   its error; the cost is that those words go to your server
   ([CLI reference](../cli/reference.md#oml-hook-tool-failure-recall-after-a-failed-command)).
@@ -111,7 +109,7 @@ Inside Claude Code:
 ```
 
 The install opens a dialog for `url` and `api_key`; the key field is masked and Claude Code keeps
-it in the system keychain ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md)). Paste the
+it in the system keychain. Paste the
 key; leave `url` empty or at its default, `https://memory.doublegate.io`, for the public server,
 or enter your own server's address. Left at the default, a key from another server is refused
 there with `401 auth.invalid`: the plugin serves no tools, and that server's operator has seen the

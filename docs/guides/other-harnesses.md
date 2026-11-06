@@ -34,8 +34,7 @@ given. None of the kit's files holds a key.
 | VS Code | `vscode/.vscode/mcp.json` to `.vscode/mcp.json`; the header's `${env:OML_API_KEY}` is unverified |
 | Claude Desktop | `claude-desktop/claude_desktop_config.json` to the app's config directory; runs the `mcp-remote` bridge, unverified on Windows |
 
-Every file names `https://memory.doublegate.io/mcp`, the maintainer's public server
-([ADR-0043](../adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)).
+Every file names `https://memory.doublegate.io/mcp`, the maintainer's public server.
 With a key from that server, there is nothing to edit. For your own server, replace
 `https://memory.doublegate.io` with its address and keep `/mcp`, the same edit in every file. A
 key sent to the wrong server is refused there with `401 auth.invalid`, and that server's operator
@@ -81,5 +80,5 @@ not the keychain. The plugin, through `oml setup claude-code`, keeps the key in 
 
 Cursor can install a server from a link. The kit offers none: a link carries its configuration in
 the URL, and until a connection can open without a key, through
-[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s connect code from Cursor too,
-that configuration would carry the key. Whether Cursor completes ADR-0031's flow is untested.
+'s connect code from Cursor too,
+that configuration would carry the key. Whether Cursor completes 's flow is untested.

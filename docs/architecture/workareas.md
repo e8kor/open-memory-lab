@@ -31,8 +31,7 @@ every node has one derivable path from the root. Every workarea has a
 [name](../api/http-api.md#names-and-ids), unique in its tenant across the whole
 tree (since v0.5.0, within the shared namespace or one user's root:
 [user roots](#user-roots)) and never changed, and the root's is `universe` in every tenant: tenant
-creation creates the root under that name, so no other workarea can take it
-([ADR-0026](../adr/ADR-0026-names-are-keys.md) d6).
+creation creates the root under that name, so no other workarea can take it.
 
 The universe root is special in three ways, all of them refusals:
 
@@ -43,7 +42,7 @@ The universe root is special in three ways, all of them refusals:
   universe exists so that paths, subtree grants, and subtree denies have a
   well-defined top, not so that anything is stored at the top.
 
-*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)):* the third
+*Since v0.5.0:* the third
 refusal becomes a curation rule. `universe` holds only the claims curators place
 there — tenant writer keys an admin granted writer on the `universe` node — each
 held and reviewed by a second identity like every write; no user key can write or
@@ -58,7 +57,7 @@ Nothing on this page extends across a tenant boundary.
 
 The diagram shows one tenant's tree. Solid arrows are the containment tree
 (exactly one parent per node). Dashed arrows are `related` edges — a separate,
-labelled edge kind that confers **zero access** and is not part of the tree.
+labeled edge kind that confers **zero access** and is not part of the tree.
 
 ```mermaid
 flowchart TD
@@ -90,7 +89,7 @@ child (see [the status ladder](#the-status-ladder-d8)). `run-grid` under
 
 ## User roots
 
-*Available since v0.5.0 · [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) · [releases](../changelog.md)*
+*Available since v0.5.0 · · [releases](../changelog.md)*
 
 Every user — a person an admin attests a key acts for — has a **user root**: a
 direct child of `universe` named after the user, `universe.<user>`, marked
@@ -176,16 +175,14 @@ grant row and a denial row each store their own event's seq as their epoch
 `api_keys.issued_seq` and the epoch of each grant row reproduced for it are the
 `key.rotated` seq. A
 [re-parent](#re-parenting)'s `workarea.reparent` event joins that list for
-every key of the tenant (when re-parent is built, ADR-0025 d14), because it
+every key of the tenant (when re-parent is built,), because it
 changes which nodes a node-id grant covers. A tenant's journal seq only increases, so the epoch is monotone and
-reproducible from the journal; no separate counter exists beside it
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d14).
+reproducible from the journal; no separate counter exists beside it.
 
 Effective access is computed on every request, and no resolution is cached:
 the epoch labels the journalled state an answer was computed against, and
 invalidates nothing. The cost is one grants read and one ancestry walk per
-request, unmeasured like every cost on the request path
-(#150). A revocation, grant change or denial
+request, unmeasured like every cost on the request path. A revocation, grant change or denial
 therefore applies to the key's next request served by the lead. In cluster
 mode a follower resolves keys, grants and denials from its local replica, so
 on follower-served reads a revocation, grant change or denial takes effect
@@ -199,8 +196,7 @@ that states its own staleness window there.
 
 *Available since v0.2.0 · [releases](../changelog.md)*
 
-<a id="node-grants"></a>*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
-d4):* a grant gains `covers`, `subtree` (the default, every grant
+<a id="node-grants"></a>*Since v0.5.0:* a grant gains `covers`, `subtree` (the default, every grant
 today) or `node`. A `node` grant covers its own node and no descendant, carries no
 deny entries, and otherwise enters the formula below like every grant, so "covers"
 in step 1 means "N is the grant's node or, for a `subtree` grant, a descendant of
@@ -267,7 +263,7 @@ refused are answered from status and policy snapshots alone.
 
 ### Edge kinds
 
-`related` is a separate labelled edge between two workarea nodes. The label set
+`related` is a separate labeled edge between two workarea nodes. The label set
 is closed: `relates_to`, `continues`, `derived_from`, `mirrors`. An edge
 confers **zero access** — it is pure recorded structure for lineage and
 navigation, never an input to effective-access computation. (Claim-level
@@ -301,7 +297,7 @@ appears as pending in graph reads.
 
 A crew is a named record of its own: `{crew_id, name, charter_uri,
 external_manager}`. This section is the single declaration site for the record
-and its relations ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d8). The record
+and its relations. The record
 answers "who runs this crew, under what charter" — it does not make OML a crew
 orchestrator. OML never contacts the external manager, never schedules the crew,
 and never validates the charter URI beyond storing it; "recorded, not operated"
@@ -389,7 +385,7 @@ stateDiagram-v2
   permit `self_signed` rows under the one bounded constitutional exception
   (such rows are marked, readable only inside that workarea, never promote
   beyond it, and never enter silver or gold — the full scope is declared in
-  the constitution, [ADR-0001](../adr/index.md)). How a `self_signed` version
+  the constitution,). How a `self_signed` version
   may take a claim's tip is declared in
   [audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip).
 - **committed** — full non-author review required; promotions allowed. The
@@ -415,7 +411,7 @@ time.
 
 #### Readings the build takes
 
-[ADR-0009](../adr/ADR-0009-status-ladder.md) d3 and d4 leave eight points open
+ and d4 leave eight points open
 that code cannot leave open. Each line below is **the build's reading**, with
 the rule it follows; none is a new decision about the ladder.
 
@@ -463,8 +459,7 @@ the rule it follows; none is a new decision about the ladder.
   tenant are never served, and `proposed_by_key_id` is null to every key
   outside the proposer's own key set, an admin key reading structure
   included, as it is on `workarea.status_proposed` in the
-  [events tail](../api/http-api.md#events-tail). It follows the tail's rule
-  ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d15): a reader
+  [events tail](../api/http-api.md#events-tail). It follows the tail's rule: a reader
   learns that a proposal waits on a node it reads, never which identity made
   it, so the two reads of one proposal never disagree.
 - **The policy snapshot is the policy in force plus the precondition.**
@@ -485,10 +480,10 @@ the rule it follows; none is a new decision about the ladder.
 - **A user root is a node like any other.** A user root and every workarea under it climb the
   ladder, and inside a user root the user's own dreamer keys propose and ratify, independence
   being per key and principal; `universe` stays `committed`
-  ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d1, d2, after ADR-0044 d1 and d8). Whether a user
+  (after and d8). Whether a user
   root may reach `validated`: no, it climbs to `committed` at most and is refused `user_root`;
   a ratification by another key of the same user is admitted and marked `same_user`
-  (ADR-0046 d1, d2, answered on 2026-11-04), read from the workarea row's `user_root` and
+  (answered on 2026-11-04), read from the workarea row's `user_root` and
   the keys' `user`.
 - **No simulation is fenced, vacuously.** Simulations are not built, so "no
   simulation is fenced on the subtree" holds of every subtree today; the build
@@ -506,7 +501,7 @@ consulted.
 | Operation | `development` | `committed` | `validated` |
 |---|---|---|---|
 | New claim write | admitted (held) | admitted (held) | **refused** |
-| Promotion of a claim in the area | allowed (policy of the area; `self_signed` only under the constitution's bounded development exception, [ADR-0001](../adr/ADR-0001-the-constitution.md) d5) | allowed (full non-author review) | **refused** (nothing new promotes into it) |
+| Promotion of a claim in the area | allowed (policy of the area; `self_signed` only under the constitution's bounded development exception,) | allowed (full non-author review) | **refused** (nothing new promotes into it) |
 | Demote | allowed (journalled) | allowed (journalled) | allowed (journalled) |
 | Erasure (crypto-shred) | allowed (journalled) | allowed (journalled) | allowed (journalled) |
 | Reassignment of a claim **into** the area | allowed (re-enters `held` if destination policy is stricter; see [roles-and-keys.md](roles-and-keys.md)) | allowed (same rule) | **refused** |
@@ -537,8 +532,7 @@ behind. The proposed reading refuses approve and reject alike with
 `workarea.frozen`, and `review/next` serves no row whose workarea is
 `validated`, so a held row left by a freeze stays held, visible to its author.
 The alternative admits reject, because a rejection promotes nothing. The
-operator decides before the build refuses verdicts by status
-([ADR-0009](../adr/ADR-0009-status-ladder.md) d5; [ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d10). The build
+operator decides before the build refuses verdicts by status. The build
 refuses approve and admits reject, so a held row left by a freeze can still be drained.
 
 ## Medallion words name lake zones only
@@ -553,11 +547,11 @@ lake is declared: unreviewed content never enters a consumer-readable zone.
 
 ## Decision record
 
-The workarea algebra is registered as ADR-0008 and the status ladder as
-ADR-0009 ([adr/index.md](../adr/index.md)); the permission-epoch reading and
+The workarea algebra is registered as and the status ladder as
+ (adr/index.md); the permission-epoch reading and
 per-request effective access are
-[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1, d14); the
+'s (d1, d14); the
 root's name, names as references and crew records are the proposed
-[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d6–d8). User roots, node grants, the
+'s (d6–d8). User roots, node grants, the
 qualified name and curation into `universe` are the proposed
-[ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)'s.
+'s.

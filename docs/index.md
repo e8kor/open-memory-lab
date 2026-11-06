@@ -60,7 +60,7 @@ write that waits. [What OML guarantees](product/commitments.md) has the full lis
 | [Concepts](concepts.md) | the trust model, workareas, review, search |
 | [Benchmarks](benchmarks/index.md) | recall quality and latency, with methodology |
 | [FAQ and troubleshooting](faq.md) | when something does not work |
-| [Design records](adr/index.md) | every decision, numbered |
+| Design records | every decision, numbered |
 
 The current release is v0.6.0 ([release notes](changelog.md)). Open work is tracked as
 [GitHub issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap). The code is

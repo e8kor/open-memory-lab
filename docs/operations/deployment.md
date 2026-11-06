@@ -16,7 +16,7 @@ and only *placed* here: the commit point and chain in
 page's retention windows feed in
 [audit and lineage](../architecture/audit-and-lineage.md), and the per-profile
 guarantee differences in [commitments](../product/commitments.md). The
-deployment principle ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)):
+deployment principle:
 **the service is the same four processes wherever they run; the profile chooses
 their supervisor and their stores.**
 
@@ -48,7 +48,7 @@ owner/migration role split, `SET LOCAL` — bind in **all three** profiles.
 
 A profile is a deployment payload, not a runtime flag: the binaries are
 profile-blind and read [one configuration surface](configuration.md) (file + env) naming their
-adapters per [ADR-0019](../adr/ADR-0019-hexagonal-architecture-and-plugins.md)
+adapters
 — Postgres URL, object-store URI (`s3://…` | `file:///…`), KMS adapter
 (`aws` | `file`), scheduler mode, node role. The payloads are Helm values, the
 compose file, and `oml-standalone.toml`; there is no `--profile` flag to drift
@@ -69,7 +69,7 @@ by exactly one process, the lead.
 
 | Workload | Runs as (kubernetes / docker / standalone) | Replication | State it holds | Credentials it holds |
 |---|---|---|---|---|
-| `oml-server` (lead) | Deployment `oml-server-lead`, replicas 1, lease-guarded / compose service / supervised process | Exactly one (the lead lease, see below) | None in the process. All state is Postgres; chain-head assignment is serialized in Postgres, not in any process. | The **deployment signing key** — the only process in the deployment that loads it. A Postgres serving role (RLS-governed, write) that owns nothing and holds only the DML its statements use, through `postgres.url`; until the bootstrap workload is built, also the owner role through `postgres.owner_url`, under which it migrates at boot and then creates each new tenant's partition, and nothing else; it refuses to start when the two log in as one role ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d2, d4, d5). KMS decrypt and generate-data-key (admission and serving paths). Object-store credentials for the quarantine and bodies prefixes. In the non-KMS profiles, the keyring file mount. |
+| `oml-server` (lead) | Deployment `oml-server-lead`, replicas 1, lease-guarded / compose service / supervised process | Exactly one (the lead lease, see below) | None in the process. All state is Postgres; chain-head assignment is serialized in Postgres, not in any process. | The **deployment signing key** — the only process in the deployment that loads it. A Postgres serving role (RLS-governed, write) that owns nothing and holds only the DML its statements use, through `postgres.url`; until the bootstrap workload is built, also the owner role through `postgres.owner_url`, under which it migrates at boot and then creates each new tenant's partition, and nothing else; it refuses to start when the two log in as one role. KMS decrypt and generate-data-key (admission and serving paths). Object-store credentials for the quarantine and bodies prefixes. In the non-KMS profiles, the keyring file mount. |
 | `oml-server` (follower) | Deployment `oml-server-follower`, replicas N (default **0**), HPA on the read path / compose service under `--profile followers` / not available | Scale-out for reads; forwards every write verb to the lead | None in the process. | **Never the signing key.** KMS decrypt for the serving path only — never generate-data-key. An RLS-scoped **read** role plus read-log append. No keyring mount beyond serving-path unwrap. |
 | `oml-lakewriter` | Deployment, 1 replica (lease + store fence, see below) / compose service, 1 replica / supervised process, 1 child | Singleton | None in the process. Recovery authority is the Delta log's per-table transaction versions; the Postgres frontier column is a cache. | A SET-tenant, RLS-scoped Postgres session role (no BYPASSRLS). A KMS grant limited to generate-data-key / encrypt — **never decrypt** (in the non-KMS profiles the keyring is simply not mounted / not readable). Object-store write credentials for the per-tenant lake prefixes. Never the signing key. |
 | `oml-reconciler` | CronJob (`--once`) / compose service (`--every`) / supervised process (`--every`) — three schedulers, one binary (below) | One pass at a time, by scheduler contract or by construction | Its persisted cursor (last reconciled seq + running chain hash) lives in Postgres and is itself journalled — nothing in the process. | Read-only Postgres credentials. Object-store read access — it verifies ciphertext digests and needs no key. A service credential to `oml-server` for journalled repair re-enqueues. No KMS decrypt, no signing key. |
@@ -89,7 +89,7 @@ next, the lead last — is specified in [upgrades](upgrades.md).
 ## The Kubernetes profile
 
 One Helm umbrella chart, two value sets — `local` and `scaled`
-([ADR-0016](../adr/ADR-0016-kubernetes-workloads.md), which governs this
+(which governs this
 profile). The same workload set runs in both; the value sets differ only in
 what backs Postgres and the object store, and in the durability caveat that
 difference creates.
@@ -125,18 +125,16 @@ correctness environment, not a durability one.
 - **Object store:** S3, with conditional put (supported natively). Per-tenant
   lake prefixes and, when externalized, per-tenant storage credentials per
   [security](../architecture/security.md).
-- `oml-server` scales by **followers**, not by signing replicas
-  ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d13): the
+- `oml-server` scales by **followers**, not by signing replicas: the
   lead Deployment stays at one replica and is the only process that loads the
   signing key; `oml-server-follower` scales the read path
   (`--set server.followers.replicas=N`, default 0). Chain serialization stays
   in Postgres, so followers add read capacity without touching ordering.
   Per-tenant write throughput is bounded by the per-tenant chain lock as
   before; cross-tenant aggregate write throughput now funnels through the one
-  lead — stated, unmeasured, tracked as #117.
+  lead — stated.
 
-Where the scale ceiling actually sits is unmeasured — tracked as
-#99.
+Where the scale ceiling actually sits is unmeasured — tracked as.
 
 ### Kubernetes quickstart
 
@@ -172,29 +170,28 @@ create a tenant, issue its first admin key, create workareas, issue crew keys.
 
 *Available since v0.3.0 · [releases](../changelog.md)*
 
-**Built** — `deploy/helm/oml`, decided in the proposed
-[ADR-0033](../adr/ADR-0033-interim-helm-chart.md). CI job `chart` installs it on kind; no other
+**Built** — `deploy/helm/oml`, decided in the proposed. CI job `chart` installs it on kind; no other
 cluster is recorded running it. The chart holds the one server binary the build has,
 `oml-server-lead`, and nothing else. It is the first revision of the umbrella chart above, not a
 second chart: the designed workloads and the `local` and `scaled` value sets join it at their
 milestones (critical path). Where it differs from the designed
 chart:
 
-| | Designed chart ([ADR-0016](../adr/ADR-0016-kubernetes-workloads.md), [ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d16) | Interim chart |
+| | Designed chart | Interim chart |
 |---|---|---|
-| Server | `oml-server-lead`, lease-guarded, and `oml-server-follower`, default 0 | `oml-server-lead` alone: one replica under `Recreate`, which stops the old lead before the new one starts; the chain lock stays the fence (ADR-0033 d2) |
+| Server | `oml-server-lead`, lease-guarded, and `oml-server-follower`, default 0 | `oml-server-lead` alone: one replica under `Recreate`, which stops the old lead before the new one starts; the chain lock stays the fence |
 | Other workloads | lake-writer, reconciler CronJob, indexer, bootstrap hook Job | none — decided, not built |
-| Signing key | a Secret or KMS; no volume holds the deployment's identity | the `kms-file` keyring on a ReadWriteOnce claim that `helm uninstall` keeps (ADR-0033 d3) |
-| Migrations | the bootstrap Job, under the owner role | the lead, at boot, under `postgres.owner_url`, before it serves under `postgres.url` ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d4) |
-| Enrollment token | a Secret the bootstrap Job mints | the pod log: the lead prints a fresh token at every boot while no tenant exists (ADR-0033 d8) |
-| Postgres | CloudNativePG (`local`) or a managed service (`scaled`) | external, through an existing Secret's key (ADR-0033 d6) |
+| Signing key | a Secret or KMS; no volume holds the deployment's identity | the `kms-file` keyring on a ReadWriteOnce claim that `helm uninstall` keeps |
+| Migrations | the bootstrap Job, under the owner role | the lead, at boot, under `postgres.owner_url`, before it serves under `postgres.url` |
+| Enrollment token | a Secret the bootstrap Job mints | the pod log: the lead prints a fresh token at every boot while no tenant exists |
+| Postgres | CloudNativePG (`local`) or a managed service (`scaled`) | external, through an existing Secret's key |
 | Object store | MinIO at the pinned tag (`local`) or S3 (`scaled`) | none: the build has no attachments |
 | Value sets | `local` and `scaled` | one `values.yaml`, whose comments carry each value's meaning |
 | Publication | a chart repository (the mockup above) | the `.tgz` and its signature bundle on each release page, from the first tag that runs the chart jobs ([CI and toolchain](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md)) |
 
 The pod runs as the image's `oml` user, uid and gid 999, with `fsGroup: 999` under
 `fsGroupChangePolicy: OnRootMismatch`, a read-only root filesystem, every capability dropped,
-seccomp `RuntimeDefault` and no service account token (ADR-0033 d4, d5). Resource requests and limits
+seccomp `RuntimeDefault` and no service account token. Resource requests and limits
 ship as comments in `values.yaml`, not values; no number for them is measured
 ([capacity](deployment.md#capacity)).
 
@@ -216,8 +213,7 @@ From a release that carries the chart, the archive's URL replaces the checkout p
 with `--set image.digest=sha256:…` from that release's notes to pin the image. The two roles each
 hold `LOGIN` and no other attribute; the owner role owns the database, and the serving role owns
 nothing. The lead applies migrations at boot under the owner URL, which grant the serving role its
-privileges, then serves under the serving URL, and refuses to start when both log in as one role
-(ADR-0034 d2, d4, d5).
+privileges, then serves under the serving URL, and refuses to start when both log in as one role.
 
 #### Claiming the first admin key: the bootstrap race
 
@@ -262,7 +258,7 @@ connections to DNS and the Postgres port alone.
 
 Every upgrade and every restart stops the API, reads included, until the new lead is ready:
 `Recreate` stops the old pod first. The window is unmeasured; lead replacement is
-#117's to measure. `helm uninstall` leaves the keyring claim
+'s to measure. `helm uninstall` leaves the keyring claim
 (`oml-keyring` for a release named `oml`), and a reinstall under the same release name and
 namespace takes it back; under another name, `--set keyring.existingClaim=<claim>` attaches it.
 Losing the claim while the database is kept — deleting it, or losing the volume behind it —
@@ -274,7 +270,7 @@ loses the deployment's identity, and the lead then refuses readiness (the fork-c
 |---|---|---|
 | The pod waits in `CreateContainerConfigError`, naming the Secret | The Postgres Secret or its key is missing | Create it (Install, above); the pod starts on its own once it exists |
 | `CrashLoopBackOff`; the log ends `fatal: postgres connect: …` | The URL in the Secret does not reach Postgres | Fix the Secret's URL or the network path; with the NetworkPolicy on, check `networkPolicy.postgres` |
-| `CrashLoopBackOff`; the log ends `fatal: keyring: keyring file permissions are not 0600 (ADR-0023 d4 kms-file shape)` | Something changed the keyring file's mode: the pod's `fsGroupChangePolicy` set back to `Always`, or a volume that applies an fsGroup itself or maps modes (ADR-0033 d4) | Restore `OnRootMismatch`, or move the claim to a volume that keeps file modes; set the file back to 0600 from a pod that mounts the claim as uid 999. Never replace the file: it holds the signing key |
+| `CrashLoopBackOff`; the log ends `fatal: keyring: keyring file permissions are not 0600 (kms-file shape)` | Something changed the keyring file's mode: the pod's `fsGroupChangePolicy` set back to `Always`, or a volume that applies an fsGroup itself or maps modes | Restore `OnRootMismatch`, or move the claim to a volume that keeps file modes; set the file back to 0600 from a pod that mounts the claim as uid 999. Never replace the file: it holds the signing key |
 | `/readyz` answers 503 with `fork_check: failed`; the log says `STARTUP FORK CHECK FAILED`; no token is printed | The lead loaded a different signing key than the one that signed the chain — the keyring claim was replaced or emptied while the database was kept | Reattach the claim that holds the deployment's key ([Fork check failing](runbooks.md#fork-check-failing)); never delete the chain head |
 | No `enr_` line in the pod log | A tenant exists — the deployment was claimed — or the fork check failed (row above) | A claimed deployment prints no token; issue further keys with the admin key |
 
@@ -284,7 +280,7 @@ loses the deployment's identity, and the lead then refuses readiness (the fork-c
 
 A release attaches
 `oml-server-lead-X.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-gnu` and
-`aarch64-unknown-linux-gnu`, holding `oml-server-lead` with the README and licence; the `oml` CLI
+`aarch64-unknown-linux-gnu`, holding `oml-server-lead` with the README and license; the `oml` CLI
 is a separate archive ([CI and toolchain](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md)).
 An upgrade of a host that runs the binary downloads and verifies the new archive before it stops
 anything:
@@ -310,8 +306,7 @@ runs. An archive that does not verify is not installed.
 
 Claude's hosted apps — claude.ai, Claude Desktop and the Claude mobile apps — reach OML through a
 connection opened by a one-time connect code
-([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients),
-[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)). The lead serves the whole
+([HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients),). The lead serves the whole
 surface itself, on the origin that already serves `/mcp`: there is no separate host, port or
 service to run. Two settings make it reachable.
 
@@ -353,7 +348,7 @@ service to run. Two settings make it reachable.
 
 `oml doctor` then checks the route from wherever it runs: it reads the lead's `oauth.issuer` from
 `/readyz` at the configured URL, a route that does not depend on the discovery paths, fetches both
-discovery documents from that issuer, and reports `oauth : failing` with the URL that failed when
+discovery documents from that issuer, and reports `oauth: failing` with the URL that failed when
 the proxy does not pass a path, a `404` included, or a node serves another issuer; `off` means the
 lead names no issuer ([observability](observability.md#the-doctor-contract)). With connections on,
 `oml keys issue-agent <key-name> --principal <principal> --workarea <workarea> --connect-code`
@@ -364,7 +359,7 @@ Since v0.4.1 the lead logs each request's client address ([observability](observ
 Behind a proxy on the same host every socket peer is the proxy, so set
 `server.trusted_proxies = ["127.0.0.1/32", "::1/128"]`, or `OML_SERVER__TRUSTED_PROXIES=127.0.0.1/32,::1/128`,
 and the lead reads the client from the `X-Forwarded-For` the proxy sets; unset, every line logs
-`127.0.0.1` ([configuration](configuration.md), [ADR-0042](../adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) d7). The proxy's own
+`127.0.0.1` ([configuration](configuration.md),). The proxy's own
 access log holds the same addresses and falls under the same 30 days
 ([log retention](observability.md#log-retention)).
 
@@ -372,8 +367,7 @@ access log holds the same addresses and falls under the same 30 days
 
 *Available since v0.1.0 · [releases](../changelog.md)*
 
-One host, no orchestrator
-([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d2–d5).
+One host, no orchestrator.
 `oml standalone up` is a small supervisor that forks the four real binaries —
 `oml-server`, `oml-lakewriter`, `oml-reconciler`, `oml-indexer` — as child
 processes, restarts them with backoff, and propagates shutdown. The binaries
@@ -399,8 +393,7 @@ Backing choices:
 - **KMS:** the `kms-file` software keyring — a file-held KEK (0600, optionally
   passphrase-protected) behind the existing KMS port. What that collapses is
   stated in [security](../architecture/security.md) and bounded in
-  [commitments](../product/commitments.md); the mechanism is
-  #154. The keyring file is a copy class in the
+  [commitments](../product/commitments.md); the mechanism is. The keyring file is a copy class in the
   [erasure inventory](../architecture/audit-and-lineage.md) — see the backup
   table below.
 
@@ -434,8 +427,7 @@ root operator key (shown once, journalled as issued-without-value): oml_8Wkd****
 
 *Available since v0.1.0 · [releases](../changelog.md)*
 
-One compose file
-([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d7). The
+One compose file. The
 services:
 
 - `postgres` — `pgvector/pgvector:pg17` (the pgvector project's image, pinned
@@ -484,8 +476,7 @@ the consequences.
 the lead and `pgvector/pgvector:pg17` alone, pinned to the CLI's version, with an owner-only
 `.env` of generated passwords, brings it up on `127.0.0.1`, claims the lead, issues an agent key
 and a reviewer key into owner-only files and checks one write end to end
-([ADR-0041](../adr/ADR-0041-a-quick-start-in-one-command-per-role.md) d9;
-[CLI reference](../cli/reference.md#oml-setup-claude-code-and-oml-quickstart-the-quick-start);
+([CLI reference](../cli/reference.md#oml-setup-claude-code-and-oml-quickstart-the-quick-start);
 [self-hosting](../start/run-your-own.md)). It is not the full profile above: it runs no
 `oml-bootstrap` service, no MinIO and none of the other workloads, and reads the enrollment
 token from the lead's log until `oml-bootstrap` exists.
@@ -495,7 +486,7 @@ oml quickstart                # --dir oml, --port 8080 by default
 ```
 
 No transcript is shown here yet: the page shows the output of a CI run of the verb, and CI's
-`compose` job has not run it green on a pushed branch. Until it has, the verb's behaviour is the
+`compose` job has not run it green on a pushed branch. Until it has, the verb's behavior is the
 reference's row, held by `oml-cli`'s `quickstart` suite against a fake `docker`.
 
 ## The lake-writer singleton and its two fences
@@ -532,16 +523,14 @@ The cost of this arrangement: failover is not instant (lease expiry or restart
 before a new process drains), so outbox frontier lag is the metric that pages,
 not process restarts ([observability](observability.md)). Whether delta-rs
 exposes transaction ids exactly as this relies on is verified at
-implementation time — the conformance test is #101,
-run per object-store backend (`file://`, pinned MinIO, S3) under
-#117.
+implementation time — the conformance test is,
+run per object-store backend (`file://`, pinned MinIO, S3) under.
 
 ## The lead lease
 
 *Not scheduled · [releases](../changelog.md)*
 
-Cluster mode gives `oml-server` two roles
-([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d13–d17):
+Cluster mode gives `oml-server` two roles:
 the **lead** owns the write path and is the only process in the deployment
 that loads the signing key; **followers** serve reads and forward every write
 verb to the lead. The lead singleton is fenced exactly like the lake-writer,
@@ -566,7 +555,7 @@ lead when". During the takeover window, writes are refused and reads keep
 flowing wherever followers exist; in-flight writes are atomic by construction
 (one Postgres transaction, C1) and retried safely under the existing
 idempotency machinery. Lease TTL, heartbeat and the measured takeover window
-ship as unmeasured profile defaults — #117.
+ship as unmeasured profile defaults —.
 
 Defaults per profile — lead-only everywhere; followers are scale-out, never a
 prerequisite:
@@ -585,7 +574,7 @@ Read-log writes split by role: followers append read-log rows directly (a
 non-journal table, their own RLS-scoped credentials); anchoring a batch digest
 into the journal is the lead's act, on the lead's cadence. The
 unanchored-tail window therefore also covers follower-written rows awaiting
-the lead's anchor — the exact split is #154.
+the lead's anchor — the exact split is.
 
 ## The reconciler: three schedulers, one binary
 
@@ -625,7 +614,7 @@ Kubernetes and a one-off invocation of the same binary in the other two
 profiles, with its own, larger deadline. The
 deadline values themselves are unmeasured; they ship as profile defaults to be
 revised when reconciliation has numbers (the measurement belongs to the same
-effort as #99).
+effort as).
 
 ## Probes
 
@@ -655,11 +644,11 @@ docker, and the supervisor in standalone — same endpoints, three consumers.
 
 What grows with load, and what binds each workload first. Measured figures are in
 [Operating OML](operating.md#capacity-measured-so-far); open measurements are
-[#99](https://github.com/e8kor/open-memory-lab/issues/99) and
-[#150](https://github.com/e8kor/open-memory-lab/issues/150).
+[](https://github.com/e8kor/open-memory-lab/issues/99) and
+[](https://github.com/e8kor/open-memory-lab/issues/150).
 
 - **One submit** writes one idempotency record, one signed journal row (digests, never body
-  bytes), the fold rows and one outbox row in a single transaction serialised per tenant on the
+  bytes), the fold rows and one outbox row in a single transaction serialized per tenant on the
   chain lock. The lake writer then drains the outbox row, and after promotion the indexer writes
   the search rows. A memory's whole life adds one journal event per scan verdict, review verdict
   and ratification. The journal grows linearly and is never compacted.
@@ -676,7 +665,7 @@ What grows with load, and what binds each workload first. Measured figures are i
 
 | Workload | Binds first | Why |
 |---|---|---|
-| Lead, per tenant | commit latency inside the chain lock | the lock holds read-head, hash, sign, one insert and the commit; a tenant cannot exceed about one submit per commit latency ([ADR-0024](../adr/ADR-0024-performance-foundation.md)) |
+| Lead, per tenant | commit latency inside the chain lock | the lock holds read-head, hash, sign, one insert and the commit; a tenant cannot exceed about one submit per commit latency |
 | Lead, aggregate | group-commit amortisation, then admission CPU and KMS wrap calls | tenants do not share locks |
 | Followers | page cache | they serve recall and get from replicas; staleness equals replication lag |
 | Lake writer | object-store PUT latency per Delta commit | frontier lag is the signal that pages |
@@ -695,7 +684,7 @@ exist to recover, and what recovery can never get back, is
 |---|---|---|
 | Postgres (kubernetes) | Base backups + WAL archiving (CloudNativePG-managed locally; the managed service's facility when scaled) | Plaintext-derived rows — pgvector embeddings, tsvector entries — are removed from live tables at erase time but **persist in base backups and WAL until the retention window expires**. The window is therefore an upper bound on how long erased-memory derivatives survive, and it is stated, per tenant policy, in the evidence export. |
 | Postgres (docker, standalone) | The host's own facility: `pg_dump` / base backups + WAL archiving against the host or containerized Postgres | Same shape, same window arithmetic — the erasure SLO follows the backup facility, not the profile. A profile with **no** backups has a trivially short window and a trivially absent restore story; both facts belong in the operator's declaration, not in silence. |
-| **Keyring file (`kms-file` profiles: docker, standalone, and the [interim chart](#the-interim-chart-the-current-build-on-kubernetes))** | Whatever backs up the keyring path or its volume — host backups, volume snapshots, compose-volume copies, snapshots of the interim chart's keyring claim | **A new copy class.** The keyring holds the KEK itself: any backup of it is a usable key copy, exactly like wrapped-DEK rows in Postgres backups, and it extends the erasure SLO the same way. Retired-KEK destruction is file deletion by the same host admin, journalled; the bound is only as real as the operator's file hygiene, and the inventory says so ([audit and lineage](../architecture/audit-and-lineage.md), #154). |
+| **Keyring file (`kms-file` profiles: docker, standalone, and the [interim chart](#the-interim-chart-the-current-build-on-kubernetes))** | Whatever backs up the keyring path or its volume — host backups, volume snapshots, compose-volume copies, snapshots of the interim chart's keyring claim | **A new copy class.** The keyring holds the KEK itself: any backup of it is a usable key copy, exactly like wrapped-DEK rows in Postgres backups, and it extends the erasure SLO the same way. Retired-KEK destruction is file deletion by the same host admin, journalled; the bound is only as real as the operator's file hygiene, and the inventory says so ([audit and lineage](../architecture/audit-and-lineage.md),). |
 | Delta tables | Table history until `VACUUM` + checkpoint cleanup, run inside the lake-writer — identical in all three profiles | Old parquet versions and checkpoints hold **ciphertext** of erased bodies until vacuumed. The DEK is already destroyed, so the bytes are unreadable, but the inventory still names them, and the vacuum cadence is the stated bound on their lifetime. |
 | Object store | Versioning (if enabled) on quarantine and bodies prefixes; in standalone, any host-level backup of the data directory plays the same role | Same shape: ciphertext versions survive until lifecycle rules (or host backup expiry) remove them; the window is the stated bound. Quarantine objects of refused submissions get a short, named expiry of their own. |
 | Read-event log | Partition drops on the retention window set by tenant policy ([retrieval](../architecture/retrieval.md)) | Not a backup, but the same discipline: the window is declared, and exports scope to it. |
@@ -721,8 +710,7 @@ reconciliation pass before traffic — is specified in [restore](restore.md).
 What each profile can lose and what recovery costs, stated structurally and
 never as a number, is [disaster recovery](restore.md#disaster-recovery)'s. The
 profile migration path
-([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d10,
-rehearsed as #117) inherits the restore ceremony
+(rehearsed as) inherits the restore ceremony
 wholesale.
 
 ## What this page does not decide
@@ -733,7 +721,6 @@ scrapes the metrics are deployment-site choices the payloads parameterize but
 this design does not fix. The configuration surface those payloads feed is
 specified in [configuration](configuration.md), and what can honestly be said
 about sizing before anything is measured is [capacity](deployment.md#capacity)'s. Postgres sizing beyond "the journal domain is
-synchronous" is open until #99 has a measured
+synchronous" is open until has a measured
 ceiling; lease TTLs and takeover windows are open until
-#117 has numbers; the keyring mechanism is
-#154.
+ has numbers; the keyring mechanism is.

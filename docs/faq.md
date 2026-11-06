@@ -15,7 +15,7 @@ GitHub's macOS runners are unreliable; build from source on a Mac ([install](sta
 **The installer printed "NOT checked" about the signature. Is that a failure?** No. Without
 `cosign` it checks the SHA-256 against `SHA256SUMS`, which catches a damaged download but not a
 tampered release. Install cosign and rerun with `--require-signature`
-([#132](https://github.com/e8kor/open-memory-lab/issues/132) tracks checking without it).
+([](https://github.com/e8kor/open-memory-lab/issues/132) tracks checking without it).
 
 **`oml: command not found` after install.** The script writes one file to `$HOME/.local/bin`
 (Windows: `%LOCALAPPDATA%\Programs\oml\bin`) and edits no profile. Add the PATH line it printed.
@@ -27,7 +27,7 @@ oml@open-memory-lab`), not `OML_API_KEY` in the shell, then reload plugins. You 
 
 **I get `401 auth.invalid` right after setup.** The key is for another server. With an empty `url`
 the plugin uses `https://memory.doublegate.io`; set your own server's URL and use a key issued
-there ([ADR-0043](adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)).
+there.
 
 **`oml login` says "cannot reach the server" behind our proxy or internal CA.** The CLI carries
 public roots and does not read the system trust store. Use a public certificate, or a proxy that
@@ -65,7 +65,7 @@ the approval counts once and is marked `self_signed`.
 
 **How do I review 100 memories at once?** Review a listed set in one act: each item is judged and
 signed as its own verdict. Use `oml review list --ids-only | oml review approve --ids -` or the
-user page ([reviewing](guides/reviewing.md); [ADR-0055](adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)).
+user page ([reviewing](guides/reviewing.md);).
 
 **Approving says `review.serve_invalid`.** The serve expired, was already used, or its content
 changed. Run `oml review next` again.
@@ -88,11 +88,11 @@ items already present without the sync's anchor (`--adopt`), and the public serv
 The server also refuses to start when the owner and serving database URLs log in as one role
 ([troubleshooting](help/troubleshooting-client.md#server-readyz-answers-503)).
 
-**Many writers get `503 system.unavailable` "chain head contention".** Writes in one organisation
-serialise on the chain head. Retry after `Retry-After`; the ceiling is not yet measured
-([#100](https://github.com/e8kor/open-memory-lab/issues/100)).
+**Many writers get `503 system.unavailable` "chain head contention".** Writes in one organization
+serialize on the chain head. Retry after `Retry-After`; the ceiling is not yet measured
+([](https://github.com/e8kor/open-memory-lab/issues/100)).
 
 **Is my data sent anywhere, and can I delete it?** On the public server its operator can read
 stored memories, and request logs are kept 30 days. Erasure by crypto-shredding is designed and
 not built, so deletion there is a manual operator act. A self-hosted server keeps its data with
-you ([#146](https://github.com/e8kor/open-memory-lab/issues/146)).
+you ([](https://github.com/e8kor/open-memory-lab/issues/146)).

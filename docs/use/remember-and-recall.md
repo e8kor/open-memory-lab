@@ -17,13 +17,10 @@ demote or delete ([MCP tools](../api/mcp-plugin.md)).
 kind, the memories it derives from, and a source anchor. Every save is **held**.
 
 - **Duplicates.** A write names up to three memories it can read that hold the same words in the
-  same order or a near copy, and `on_similar: refuse` turns the write away
-  ([ADR-0050](../adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found.md)).
+  same order or a near copy, and `on_similar: refuse` turns the write away.
 - **Secrets.** The scan vetoes leaked keys and holds what a reviewer should judge; a vetoed write
-  is stored nowhere and answers `submission.scan_veto` with the rule that fired
-  ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md)).
-- **When it is true.** A memory may state a valid time; recall hides what has ended
-  ([ADR-0059](../adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md)).
+  is stored nowhere and answers `submission.scan_veto` with the rule that fired.
+- **When it is true.** A memory may state a valid time; recall hides what has ended.
 - **Where it came from.** A memory carries the source its author declares (repository, commit,
   path, fingerprint) and an `origin.kind` that says whether it came from an agent, a document
   sync or a chat ([sync](sync.md), [chat memory](chat-memory.md)).
@@ -44,7 +41,7 @@ own work by state (held, approved, rejected) or the promoted tips of a workarea.
   (`expected_version`); it is held, and others keep the old version until it is approved.
 - **Retire.** Mark the write a retirement with a reason. Approval removes the claim from recall;
   every version stays fetchable as history.
-- **Link.** A labelled link between two memories (`supports`, `contradicts` and others) is
+- **Link.** A labeled link between two memories (`supports`, `contradicts` and others) is
   proposed by one reviewer and confirmed by another, on the HTTP API and `oml edges`
   ([CLI reference](../cli/reference.md#oml-edges-claim-links-and-the-brief)).
 - **Why was it refused or rejected?** `oml_read` lists the agent's own work by state. The

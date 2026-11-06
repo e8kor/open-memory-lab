@@ -7,7 +7,7 @@ answers: "every journal event type and its payload shape, the digest-only rule, 
 # Journal event catalog
 
 Every state change in OML is a journal event: signed, hash-chained per tenant, append-only. This
-page catalogues every event type and its payload shape. The chain mechanics (sequencing, signing,
+page catalogs every event type and its payload shape. The chain mechanics (sequencing, signing,
 the commit transaction) are declared in [storage](../architecture/storage.md); the table that holds
 these events is in [postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations). Event names and field spellings below are
 design identifiers — normative in shape, adjustable in spelling at implementation without a design
@@ -62,8 +62,7 @@ Every creation event of a named record — `workarea.create`, `crew.created`, `k
 `key.rotated` (for the successor), `tenant.created` and `tenant.genesis` — records the record's
 [name](../api/http-api.md#names-and-ids), and the reserved provider tenant's `tenant.genesis`,
 whose tenant has none, records `name: null`; every other payload field names a row by its id, never
-its name, so the journal binds ids exactly as before
-([ADR-0026](../adr/ADR-0026-names-are-keys.md)).
+its name, so the journal binds ids exactly as before.
 
 ## Submission family
 
@@ -93,21 +92,19 @@ Writes enter held; nothing in this family changes visibility. Pipeline:
 
 `origin` is the version's `origin.kind`, as declared, or `manual` when none was sent; it is
 signed here and never inherited by a successor, and a chat anchor's `uri` is
-`chat://<harness>/<session>` with a `turn=<n>` fragment ([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md) d1, d2, d4).
+`chat://<harness>/<session>` with a `turn=<n>` fragment.
 `submission.learn` carries it the same way.
 
 A writer submits a memory; it is held on arrival, scanned in the same call, and visible to no one
 else until ratified. A supersession is a submission at the claim's next unused version whose
 `derives_from` includes the replaced version: `replaces` is then
 `{"artifact_id": "…", "version": 3}`, naming that version, and `retirement: true` marks a
-proposal to retire the claim
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10, d11). `body_bytes` is the
+proposal to retire the claim. `body_bytes` is the
 UTF-8 octet length of the NFC-normalized body — the clear integer the recall budget counts
 ([retrieval](../architecture/retrieval.md#token-budgets)).
 `anchor` is the origin the author declared, by value, or `null`: signed with the version and
 immutable, never inherited by a successor, and clear metadata that erasure does not remove
-([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
-d1, d2; since v0.5.8). `submission.learn` carries it the same way.
+(since v0.5.8). `submission.learn` carries it the same way.
 
 ### submission.learn
 
@@ -129,7 +126,7 @@ Same admission as `remember` but the claim is derived from named prior claims, s
 (`submission.lineage_required`, [errors.md](../api/errors.md)) and this event is never written for
 one. A derived conclusion without nameable lineage is submitted as `remember` with
 `kind: derived_fact` and journals `submission.remember`. The honesty rule of
-[ADR-0001](../adr/ADR-0001-the-constitution.md) still bounds what the required field proves: the
+ still bounds what the required field proves: the
 service cannot verify that a declared lineage is complete or true, so the lineage closure is only
 as good as what writers declare.
 
@@ -143,7 +140,7 @@ as good as what writers declare.
 }
 ```
 
-*Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d5, d18).*
+*Since v0.5.8.*
 A statement, by the version's author key or a dreamer on its workarea, that a promoted version's
 anchored span was compared with its source at `rev`: `result` is `fresh`, `equivalent`, `moved`,
 `changed` or `removed`, and `path` and `fragment` name where a `moved` span went. It changes no
@@ -240,7 +237,7 @@ The act that finds the review policy satisfied — for a claim or a proposed cla
 full lineage closure at this moment, with the policy snapshot journalled. A claim edge's and a
 brief edge's ratification (`subject_kind: "brief_edge"`, with `edge_id`, the member's
 `artifact_id` and the `workarea_id`) also carry `same_user`, `true` when the ratifying key and
-the proposing key act for one person ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d2, d8), by the one rule
+the proposing key act for one person, by the one rule
 `lifecycle.promote` states. A brief edge's ratification carries no lineage digest:
 membership in a brief widens no closure.
 
@@ -272,13 +269,13 @@ Claim↔claim connection proposals enter the admission pipeline; ratification is
 }
 ```
 
-A dreamer(propose) key proposes a labelled claim↔claim edge; the proposal is pending, confers
+A dreamer(propose) key proposes a labeled claim↔claim edge; the proposal is pending, confers
 nothing, and enters the lineage closure computed at promotion time. The label vocabulary is not
 fixed by the design — an open detail in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 
 ## Brief-edge family
 
-A claim proposed into a workarea's brief ([ADR-0046](../adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) d7, d8); ratification is
+A claim proposed into a workarea's brief; ratification is
 journalled as `review.ratify` with `subject_kind: "brief_edge"`. Neither reaches the events tail.
 
 ### brief_edge.proposed
@@ -312,16 +309,13 @@ Visibility and existence changes. Each enqueues its outbox row in the same trans
 
 Ratified content becomes readable by others and silver materialization is enqueued. Journalled for
 a claim's first promoted version, with `previous_tip_version` null; the promotion of a supersession
-journals `lifecycle.supersede` instead
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10). `same_user` is `true` when the
+journals `lifecycle.supersede` instead. `same_user` is `true` when the
 reviewing key and the authoring key act for one person. That is one rule for a claim's approval,
 a transition's ratification and an edge's: each key's person is read from its row as a name, a
 user key's root's name or a session key's `session_user`, so a person's `<user>-review` key is
 that person; a tenant key with no session user acts for no one and makes the mark `false`, and
 so do two keys of two people. A verdict from a bulk review journals this event per item, the same as a
-single verdict
-([ADR-0055](../adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
-d4, d7). A record a server before v0.5.7 journalled carries no `same_user`.
+single verdict. A record a server before v0.5.7 journalled carries no `same_user`.
 
 ### lifecycle.demote
 
@@ -336,8 +330,7 @@ d4, d7). A record a server before v0.5.7 journalled carries no `same_user`.
 
 Removes a version from service while keeping its bytes (R4); the lake sees a retract through the
 outbox. `workarea_id`, `claim_key` and `version` name the subject, so the
-[events tail](../api/http-api.md#events-tail) filters this event from the journal alone
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d15).
+[events tail](../api/http-api.md#events-tail) filters this event from the journal alone.
 
 ### lifecycle.erase
 
@@ -377,8 +370,7 @@ Journalled at ratification, after the compare-and-set that the replaced version 
 under the successor's own `workarea_id` and `claim_key`, so the one `workarea_id` names both
 versions: it promotes the successor and flips the tip in one event, so the tip flip is a single
 journalled fact rather than a demote/promote pair to correlate. `self_signed` carries the
-successor's marks, `self_signed` and `same_user`, exactly as `lifecycle.promote` carries a first version's
-([ADR-0001](../adr/ADR-0001-the-constitution.md) d5): it is the promotion event of the version it
+successor's marks, `self_signed` and `same_user`, exactly as `lifecycle.promote` carries a first version's: it is the promotion event of the version it
 names, so the mark reaches the journal, the `memories.self_signed` fold and the
 [events tail](../api/http-api.md#events-tail) from this event alone. Several held successors of one tip
 may coexist; the first ratified takes the tip, and a lost compare-and-set refuses the verdict and
@@ -446,16 +438,15 @@ Tree and edge governance. Rules: [workareas](../architecture/workareas.md).
 A new node under an existing parent; refused when the parent is validated. `name` is unique in
 the tenant and never changes; a tenant's root is created by this event with the name `universe`
 and a null `parent_id`. `crew_id` names the [crew record](#crewcreated) the workarea names, or is
-null. Before ADR-0026 this event carried a `crew` object instead; such events stay as they were
+null. Before this event carried a `crew` object instead; such events stay as they were
 signed, and `system.names_assigned` turns their objects into crew records. A non-null `prefix`
-registers the workarea as a vocabulary ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)): the
+registers the workarea as a vocabulary: the
 prefix is tenant-unique and **permanent** — never reused or reassigned, even after the vocabulary
 retires — and `vocab_prefixes` folds from exactly these events. `user_root` is `true` on the one
 event that creates a [user root](../architecture/workareas.md#user-roots), `universe.<user>`, which
 the issuance of the first key naming that user journals with the issuing admin as actor, and
 `false` on every other; an event signed before v0.5.0 carries no `user_root` and folds as `false`.
-A node created beneath a user root takes its name in that root's namespace ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d1, d2, d5,
-d12).
+A node created beneath a user root takes its name in that root's namespace.
 
 ### workarea.reparent
 
@@ -480,7 +471,7 @@ untouched because they bind node ids.
 }
 ```
 
-Proposes a labelled edge conferring zero access; the proposer needs dreamer(propose) on at least
+Proposes a labeled edge conferring zero access; the proposer needs dreamer(propose) on at least
 one endpoint and reader on both.
 
 ### workarea.relate_ratified
@@ -524,8 +515,7 @@ status read — until a second, non-proposing principal ratifies it.
 
 Forward-only ladder step — the ratification of a pending `workarea.status_proposed`, which it
 references — by a second, distinct dreamer/admin principal, with the policy that held at the
-moment snapshotted. `policy_snapshot` is the build's reading of [ADR-0009](../adr/ADR-0009-status-ladder.md)
-d3 ([workareas](../architecture/workareas.md#readings-the-build-takes)): the review policy in
+moment snapshotted. `policy_snapshot` is the build's reading ([workareas](../architecture/workareas.md#readings-the-build-takes)): the review policy in
 force — today the one PoC constant `{k: 1, required_roles: ["dreamer"]}` that `review.ratify`'s
 snapshot also reads — plus the precondition the ratification evaluated, `children_all_validated`,
 which is `true` on a step to `validated` (a false one is refused, never journalled) and absent on
@@ -542,7 +532,7 @@ a step to `committed`, which has no precondition.
 
 Crew metadata update — recorded, not operated: the workarea now names this crew record. Permitted
 on validated areas, since freeze covers claim content and promotions, not workarea metadata.
-Before ADR-0026 it carried a `crew` object; such events stay as they were signed.
+Before it carried a `crew` object; such events stay as they were signed.
 
 ## Crew family
 
@@ -627,19 +617,16 @@ genesis byte rule).
 unique in its namespace and never released; `crew_id` is the crew record it named at issuance, or
 null, fixed for the key's life. `credential` is `bearer` for a key with a value and `connection`
 for a connector key, which has no value at all; its connect code follows in
-`connection.code_issued` ([roles and keys](../architecture/roles-and-keys.md#connections),
-[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7). `user` is the id of the
+`connection.code_issued` ([roles and keys](../architecture/roles-and-keys.md#connections),). `user` is the id of the
 key's [user root](../architecture/roles-and-keys.md#user-keys), fixed for the key's life, or null
-for a tenant key; an event signed before v0.5.0 carries no `user` and folds as null ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d2,
-d12). Since v0.5.0 `credential` may be `session`, a key the server holds for a person and acts
+for a tenant key; an event signed before v0.5.0 carries no `user` and folds as null. Since v0.5.0 `credential` may be `session`, a key the server holds for a person and acts
 with only from their web session, which has no value; such an event also carries
-`session_user`, the allowlist user it serves, absent on every other key
-([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d6).
+`session_user`, the allowlist user it serves, absent on every other key.
 
 A key issued without its value (show-once ceremony; the journal never learns the secret), under the
 issuer ceiling: role no higher than the issuer's. `held_by` is the issuing admin's journalled
 attestation that the key is held by a human, an agent, or a service process — the server verifies
-the attestation, never the humanness ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md));
+the attestation, never the humanness;
 `human_required_classes` consumes it, and the evidence export shows it. A key attested
 `held_by: service` can never satisfy `human_required_classes` and never counts as review capacity.
 
@@ -689,7 +676,7 @@ permission epoch ([workareas](../architecture/workareas.md#grants-bind-to-node-i
 
 Binds a key to a workarea node id (never a path) with per-grant deny masks; `covers` is `subtree`,
 the node and every descendant, or `node`, the node alone, which carries no deny entry; an event
-signed before v0.5.0 carries no `covers` and folds as `subtree` ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d4, d12); `epoch` is this
+signed before v0.5.0 carries no `covers` and folds as `subtree`; `epoch` is this
 event's own journal seq, which makes every historical effective-access computation reproducible
 ([workareas](../architecture/workareas.md)).
 
@@ -761,8 +748,7 @@ removal of governance acts).
 A connect code minted for a connector key, at its issuance or later. The payload carries the
 code's id and expiry and nothing derived from the code, not even its digest: the journal is kept
 forever and exported, and a digest of a 60-bit secret is a brute-force target that a code alive for
-minutes never needs to outlast; the digest lives only in `connect_codes`
-([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d8). `voids_code_id` names the
+minutes never needs to outlast; the digest lives only in `connect_codes`. `voids_code_id` names the
 unredeemed code of the same key that this one replaces, else null. The same commit voids the
 key's other codes as [roles and keys](../architecture/roles-and-keys.md#connections) declares;
 which codes those are follows from the journal, since every `connection.opened` names its
@@ -785,10 +771,10 @@ A connection opens at the token exchange, when its first tokens exist. The envel
 `api_key_id` and `principal` are the connector key's. `client_id`, `client_kind` (`cimd` or
 `dcr`) and the digest of the client's document or registration tell the admin which client
 software used the code, and not whose account: every connection from claude.ai names the same
-client and redirect URI, whichever claude.ai account completed it (ADR-0031 d8). `resource` is the
+client and redirect URI, whichever claude.ai account completed it. `resource` is the
 `<issuer>/mcp` the connection's tokens are bound to. `replaces_connection_id` names the key's
 earlier open connection, live or not, which this commit revokes with no event of its own, so an
-open connection that had stopped working never revives (ADR-0031 d7, d11, d12).
+open connection that had stopped working never revives.
 Like the rest of the `connection.*` family, the event is on no key's events tail
 ([HTTP API](../api/http-api.md#events-tail)); the evidence export carries it.
 
@@ -814,7 +800,7 @@ its connections with no event of this type
 
 ## Web family
 
-*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d2*
+*Since v0.5.0 · *
 
 ### web.email_allowed
 
@@ -834,7 +820,7 @@ entry.
 ### web.email_removed
 
 The same payload, naming the entry as it stood. The commit removes the entry and ends its
-sessions; the user's agent keys are untouched (ADR-0045 d13).
+sessions; the user's agent keys are untouched.
 
 ### memory.admin_read
 
@@ -842,7 +828,7 @@ sessions; the user's agent keys are untouched (ADR-0045 d13).
 { "artifact_ids": ["…"], "query_digest": "sha256:…" }
 ```
 
-*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d21.* An admin key read
+*Since v0.5.0 ·.* An admin key read
 memories' text and attribution through the admin read: the ids served, and for a search the
 SHA-256 of its query, null for a read of one memory. Never the text and never the query. The
 envelope names the admin key; nothing but the journal changes.
@@ -853,7 +839,7 @@ envelope names the admin key; nothing but the journal changes.
 { "pipeline": "bm25", "by_key_id": "…" }
 ```
 
-*Since v0.5.5 · [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d4.* An admin
+*Since v0.5.5 ·.* An admin
 key set the tenant's default search pipeline, or, with `pipeline` null, cleared it so the
 deployment's default applies. The fold writes `tenants.search_default`; recalls use it from the
 next request. Setting the default the tenant already has journals nothing.
@@ -864,7 +850,7 @@ next request. Setting the default the tenant already has journals nothing.
 { "query_text": true, "by_key_id": "…" }
 ```
 
-*Since v0.5.7 · [ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d3.* An admin key turned the tenant's recall query text on
+*Since v0.5.7 ·.* An admin key turned the tenant's recall query text on
 or off. The fold writes `tenants.telemetry_query_text_since`, the commit's instant when on and
 `NULL` when off; off also nulls the text of the tenant's stored recall events in the same commit.
 Setting what is already set journals nothing.
@@ -875,17 +861,17 @@ Setting what is already set journals nothing.
 { "events": 50, "with_text": 12, "newest": "…", "oldest": "…" }
 ```
 
-*Since v0.5.7 · [ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2.* An admin key read the tenant's recall events: how
+*Since v0.5.7 ·.* An admin key read the tenant's recall events: how
 many, how many carried query text, and the page's bounds; never a query. Folds nothing, as
 `memory.admin_read` does not.
 
 ### telemetry.replayed
 
 ```json
-{ "pipelines": ["bm25-postings"], "labelled": 212, "ran": 209, "capped": false }
+{ "pipelines": ["bm25-postings"], "labeled": 212, "ran": 209, "capped": false }
 ```
 
-*Since v0.5.7 · [ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d11.* An admin key replayed the tenant's labelled recalls
+*Since v0.5.7 ·.* An admin key replayed the tenant's labeled recalls
 through the named pipelines; the counts, never a query. Folds nothing.
 
 ## Simulation family
@@ -946,8 +932,7 @@ data, never backdating; a submission whose `derives_from` touches a simulation r
 server-forced to carry that row's `simulation_id`. It is a simulation row's submission event and
 carries every field `submission.remember` carries: `body_bytes`, the clear integer the recall
 budget counts ([retrieval](../architecture/retrieval.md#token-budgets)); `replaces`, naming the
-version a simulation successor replaces; and `retirement`, marking a proposal to retire the claim
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d6, d10, d11). Its visibility on
+version a simulation successor replaces; and `retirement`, marking a proposal to retire the claim. Its visibility on
 the events tail is declared beside the `submission.*` family's
 ([HTTP API](../api/http-api.md#events-tail)).
 
@@ -1066,7 +1051,7 @@ empty and present for the audit trail.
 }
 ```
 
-A lead takeover ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d14): signed
+A lead takeover: signed
 by the **new** lead as its first act after acquiring the lead lease and passing the startup fork
 check, so the journal always answers "which process was lead when." Journalled in the reserved
 provider tenant's chain. The lease itself is never load-bearing — the per-tenant chain lock is;
@@ -1128,7 +1113,7 @@ passes; the payload carries that evidence: `retired_by_event_id` names the `syst
 event that retired this KEK, `backup_horizon` is the instant past which no retained backup holds
 DEKs wrapped by it, and `evidence_digest` is the digest of the operator's retention-evidence
 record. In the standalone and docker profiles the destruction is journalled file deletion of the
-keyring entry ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md) d4).
+keyring entry.
 
 ### system.names_assigned
 
@@ -1161,7 +1146,7 @@ the workareas that name it; a crew record appears only under `crews`, never in `
 The `import.*` namespace (manifest_submitted, completed, superseded, erased) is reserved for
 dataset onboarding — one chain event per imported dataset, never per row, with per-row digests
 anchored by Merkle roots inside the signed manifest event. The family's definitions live in
-[ADR-0020](../adr/ADR-0020-dataset-onboarding.md) and enter this catalog when that post-v1 feature
+ and enter this catalog when that post-v1 feature
 is scheduled. Until then, `provenance: connector` appears in the schema's CHECK constraint with no
 submission event that produces it — reserved, not an oversight.
 
@@ -1174,10 +1159,9 @@ become visible. A **scan veto is not an event either**: `submission.scan_veto` i
 any other refusal, and refusals journal nothing — the deterministic scan's verdict is reproducible
 from the journalled rule-set pin, and letting hostile input write into the signed chain would hand
 an attacker the chain's growth. Whether refused submissions should leave a durable trace outside
-the chain (a scan-refusal log shaped like the read log) is #140 on the
+the chain (a scan-refusal log shaped like the read log) is on the
 [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap). Upload-session part arrivals are operational state in `upload_sessions`; only the
-completed attachment binding (`submission.attach`) is journalled. On the connection surface
-([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d12), issuing an access token
+completed attachment binding (`submission.attach`) is journalled. On the connection surface, issuing an access token
 and refreshing are not events: they change no authority, and one event per access-token lifetime
 per connection would grow the chain with events that decide nothing and tie a refresh to the
 per-tenant chain lock. Authorization requests, wrong connect-code entries, client registrations

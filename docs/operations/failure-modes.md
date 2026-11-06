@@ -58,7 +58,7 @@ Reads split by profile:
 - **Single-replica profiles** (standalone, docker, kubernetes without cluster
   mode): every read also refuses `system.unavailable` — the serving store is
   the store that is down.
-- **Cluster mode** ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)):
+- **Cluster mode**:
   followers keep serving promoted-row recall and get from their local replicas.
   The degradation is staleness: replication has halted, so the follower's
   staleness bound — replication lag, exposed as a follower metric
@@ -98,19 +98,19 @@ The KMS wraps and unwraps per-artifact DEKs; the KEK never leaves it
   `system.unavailable`. Nothing is ever admitted unencrypted.
 - **Recall, get, attachment download** decrypt on serve
   ([retrieval — decrypt on serve](../architecture/retrieval.md#decrypt-on-serve)).
-  The DEK serving cache ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d3)
+  The DEK serving cache
   masks the outage for artifacts whose keys are cached, within the cache TTL;
   a cache miss refuses `system.unavailable` for the body-bearing read. The
   degradation window is exactly the TTL, which is itself a term in
-  #108's erasure bound.
+  's erasure bound.
 - **Verdict**: recording a verdict against a valid serve is a journalled write
   with no decryption — unaffected. Creating a *new* serve decrypts the held
   body and its attachments for the reviewer, so serves refuse
   `system.unavailable`; review drains only as far as outstanding serves reach.
 - **Attachment upload** sessions store and digest-verify bytes; the DEK work
   happens at the submission that binds the digest, which is where a KMS outage
-  refuses (the precise encryption moment for session bytes is an ADR-0004 open
-  point, #147).
+  refuses (the precise encryption moment for session bytes is an open
+  point,).
 - **Evidence export** is digest-only and verifies signatures keylessly — the
   bundle never decrypts a body — so it is unaffected.
 
@@ -232,6 +232,5 @@ visibly, instead of converting it into a trust problem silently
 Timing. How long each refusal window lasts, how fast staleness grows, how
 quickly a follower drains its buffered read events after reconnecting — every
 such number is unmeasured, tracked by the rows the architecture pages already
-cite (#98, #108,
-#117, #154). This page
+cite. This page
 commits to the shape of each failure, and refuses to guess its duration.

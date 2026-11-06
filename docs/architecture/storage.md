@@ -83,8 +83,7 @@ the verification procedure, with computed test vectors — are declared normativ
 in [data/chain-format.md](../data/chain-format.md).
 
 **Signing, stated honestly (D17).** The **lead** loads the deployment signing
-key (Kubernetes Secret/KMS); followers never do
-([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)). What is
+key (Kubernetes Secret/KMS); followers never do. What is
 single is chain-head assignment in Postgres — the lead lease keeps the common
 case quiet, but the chain lock is the load-bearing fence. The signature attests
 *the deployment*: one signer process at a time, each takeover journalled
@@ -142,8 +141,7 @@ to a standby with a differing clock, or a clock step on the primary, can make
 `at` regress between consecutive `seq` values without violating any guarantee —
 verification orders by `seq` and never by `at`
 ([data/chain-format.md](../data/chain-format.md)). The expectation in every
-profile — standalone, docker, kubernetes
-([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)) — is NTP (or
+profile — standalone, docker, kubernetes — is NTP (or
 the platform's equivalent) on the host that runs Postgres. Without it, chain
 integrity and ordering do not degrade; what degrades is everything compared
 against wall clock — serve expiries, `key.rotated` grace deadlines, read-log
@@ -169,8 +167,7 @@ and lake disagree, the journal wins and the lake is repaired
 reads online is that its write path can be asynchronous, batchy, and
 repairable without a serving outage; the cost is running a second storage
 system whose only consumers are batch jobs, accepted because the data the lake
-exists to hold — pure memory data, who and when wrote them, what space
-([ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md)) — wants a
+exists to hold — pure memory data, who and when wrote them, what space — wants a
 columnar, versioned substrate the journal's digest-only rows cannot be.
 
 Containment rules, restated from their owning pages because the lake writer
@@ -323,7 +320,7 @@ the problem inside unbounded lag, so the skip is journalled instead.
 
 Lake-writer throughput and Delta commit latency are unmeasured — nothing has
 run — and no figure is asserted until one is measured (D17); the exactly-once
-claim itself awaits #101's conformance test
+claim itself awaits 's conformance test
 ([open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)).
 
 ## Attachments (D3)
@@ -386,5 +383,4 @@ exclusively a consequence of promotion, carried by the outbox
 
 ## Decision record
 
-This page declares D1, D2, D3 and D5, registered as ADR-0002, ADR-0003,
-ADR-0004 and ADR-0006 in the [decision register](../adr/index.md).
+This page declares D1, D2, D3 and D5, registered as in the decision register.

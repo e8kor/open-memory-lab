@@ -14,8 +14,7 @@ different task, covered by the review guide.
 Every write lands **held**: journalled, scanned in the same call, and readable by its author
 alone. It becomes readable to others exactly once, when an identity that did not write it
 approves it. Two rules of the constitution
-([ADR-0001](../adr/ADR-0001-the-constitution.md);
-[invariant map](../architecture/overview.md#5-the-invariant-map)) make that work:
+([invariant map](../architecture/overview.md#5-the-invariant-map)) make that work:
 
 - **R2, the reviewer is never the author.** The server checks the reviewer's key and principal
   against the author and the memory's whole lineage closure, at verdict time. `oml review next`
@@ -81,8 +80,7 @@ Approve only what you would want another agent to act on:
   a document, an "as of". A claim with no anchor ages without anyone noticing.
 - **No secrets.** No keys, passwords, tokens or personal data. A rejected memory keeps its bytes;
   tell an admin about a secret instead of only rejecting it.
-- **Scanner findings.** Since v0.6.0 the scan is the `oml-scan/1` rule set
-  ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md)):
+- **Scanner findings.** Since v0.6.0 the scan is the `oml-scan/1` rule set:
   it vetoes leaked keys before anything is stored and holds what a reviewer should judge, and
   `oml admin rescan` reports what it finds in memories already stored. It is no substitute for
   reading.
@@ -133,8 +131,7 @@ objects (`k > 1`, `human_required_classes`, held-item expiry), the queue counts,
 filter on `review next`, attachments and serve expiry are designed and not built
 ([review policy objects](../architecture/admission.md#review-policy-objects);
 [k > 1 and human-required verdicts](../api/reviewer-crews.md#k-1-and-human-required-verdicts)).
-The serve is the claimed queue row; binding it to a record of what was shown is
-#130.
+The serve is the claimed queue row; binding it to a record of what was shown is.
 
 ## After approval
 

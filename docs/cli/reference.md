@@ -45,7 +45,7 @@ Per-command sections below omit these options.
 | `oml workareas status propose` | Propose the next forward rung; it waits for a second identity |
 | `oml workareas status ratify` | Ratify a pending proposal under a key that did not propose it |
 | `oml workareas status pending` | The workarea's live proposals and the review policy in force |
-| `oml edges propose claim` | A labelled link from one claim to another: supports, contradicts, relates_to and continues are the recommended labels |
+| `oml edges propose claim` | A labeled link from one claim to another: supports, contradicts, relates_to and continues are the recommended labels |
 | `oml edges propose brief` | A promoted claim proposed into a workarea's brief |
 | `oml edges ratify` | Ratify a pending edge of either kind under a key that did not propose it |
 | `oml edges list` | One page of one kind's edges, pending and ratified, newest first |
@@ -60,8 +60,8 @@ Per-command sections below omit these options.
 | `oml search set-default` | Set the tenant's default pipeline (search.default_set), journalled; recalls use it from the next request, no restart |
 | `oml usage settings` | Whether this server records recalls and whether the tenant's keep their query text; with --query-text, turn it on or off (telemetry.settings_set), journalled |
 | `oml usage events` | The tenant's recalls of the last 30 days with what their readers did next, newest first |
-| `oml usage eval` | Replay the tenant's labelled recalls through each pipeline, under each original key's scope, inside the server; prints the scores alone |
-| `oml admin read` | One memory with its text and attribution, or with --query, --workarea or --state a search over every memory of the organisation (memory.admin_read) |
+| `oml usage eval` | Replay the tenant's labeled recalls through each pipeline, under each original key's scope, inside the server; prints the scores alone |
+| `oml admin read` | One memory with its text and attribution, or with --query, --workarea or --state a search over every memory of the organization (memory.admin_read) |
 | `oml admin rescan` | Rescan every stored version with the server's rule set and report what it would refuse or hold, by rule and place, never the text. |
 | `oml write` | Write a claim, held until reviewed: a submission, or with --replaces a new version of a claim or its retirement |
 | `oml read` | Read memories: fetch one by artifact id, recall with --query, or list with neither |
@@ -340,7 +340,7 @@ oml workareas show [OPTIONS] <WORKAREA>
 
 ### `oml workareas mode`
 
-Put a workarea in progress, or commit it back to standard: a person's dreamer key only. Inside an in-progress workarea readers recall unreviewed memories, labelled; nothing leaves until the commit, refused while anything is held
+Put a workarea in progress, or commit it back to standard: a person's dreamer key only. Inside an in-progress workarea readers recall unreviewed memories, labeled; nothing leaves until the commit, refused while anything is held
 
 ```
 oml workareas mode [OPTIONS] <WORKAREA> <MODE>
@@ -427,7 +427,7 @@ Propose an edge; it stays pending until another key ratifies it
 
 ### `oml edges propose claim`
 
-A labelled link from one claim to another: supports, contradicts, relates_to and continues are the recommended labels
+A labeled link from one claim to another: supports, contradicts, relates_to and continues are the recommended labels
 
 ```
 oml edges propose claim [OPTIONS] --label <LABEL> <FROM> <TO>
@@ -640,7 +640,7 @@ oml usage events [OPTIONS]
 
 ### `oml usage eval`
 
-Replay the tenant's labelled recalls through each pipeline, under each original key's scope, inside the server; prints the scores alone
+Replay the tenant's labeled recalls through each pipeline, under each original key's scope, inside the server; prints the scores alone
 
 ```
 oml usage eval [OPTIONS] --pipelines <PIPELINES>
@@ -657,7 +657,7 @@ An administrator's reads of every memory's text and attribution, each recorded i
 
 ### `oml admin read`
 
-One memory with its text and attribution, or with --query, --workarea or --state a search over every memory of the organisation (memory.admin_read)
+One memory with its text and attribution, or with --query, --workarea or --state a search over every memory of the organization (memory.admin_read)
 
 ```
 oml admin read [OPTIONS] [MEMORY]

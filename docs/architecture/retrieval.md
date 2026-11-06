@@ -48,8 +48,7 @@ events tail shows their events only when its `workarea` is that workarea
 ([events tail](../api/http-api.md#events-tail)). Get resolves no workarea and
 takes a row's own workarea as its implicit scope, so a non-own `self_signed`
 version is readable by id by a key with reader effective access on its own
-workarea, and by no other key
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3, d8).
+workarea, and by no other key.
 
 ## The serving tier
 
@@ -62,11 +61,9 @@ Two indexes over promoted rows, both in Postgres, both under tenant RLS:
   tenant, so a read reaches its tenant's partition alone, and row-level
   security stays the fence. No function is marked `LEAKPROOF`, so an FTS read
   scans its tenant's partition rather than using its index; its latency per
-  tenant size is unmeasured (#150). The built form
+  tenant size is unmeasured. The built form
   today is the PoC's `memories_claim_fts` over `memories`
-  ([ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md)
-  d11, d13;
-  [postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
+  ([postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
 - **Vector search**: `memory_embeddings`, embeddings over promoted claim text.
 
 Of the rows they admit, the indexes hold every promoted version, superseded
@@ -85,21 +82,19 @@ Two kinds are excluded from both shared indexes by default: vocabulary rows
 (`term`, `term_mapping`, `vocab_release` — a 50k-term vocabulary must not
 drown a tenant's organic memories in every hybrid recall; a vocabulary
 workarea's journalled policy may opt in, and its vocabulary rows are then
-[hits](#the-recall-ordering-contract-steering-rows-first-unranked),
-[ADR-0021](../adr/ADR-0021-ai-human-ontologies.md))
-and, when ADR-0020 lands, imported rows under its `index_policy` default. The
+[hits](#the-recall-ordering-contract-steering-rows-first-unranked),)
+and, when lands, imported rows under its `index_policy` default. The
 exclusions mirror each other deliberately: reference data is fetch- and
 filter-served unless a journalled policy prices it into the shared indexes.
 
-Recall accepts a `terms` filter (CURIE annotations, ADR-0021) and
+Recall accepts a `terms` filter (CURIE annotations,) and
 `expand_terms: descendants`, which widens that filter through the
 **materialized per-release `is_a` closure** before retrieval — a lookup, never
 a graph walk at query time. Expansion resolves per CURIE against the release
 pinned by the vocabulary that owns the expanded prefix; steering order, `k`
 and the [token budget](#token-budgets) are untouched by expansion. A server
 that does not yet serve `terms` or `expand_terms` refuses them by name with
-`request.validation`, never ignores them
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d16).
+`request.validation`, never ignores them.
 
 ### Text handling
 
@@ -118,7 +113,7 @@ that it has. The cost is stated plainly: with no stemming, morphological
 variants do not match — a query for "deploy" does not find "deployments" — and
 FTS recall for morphology-rich languages is lower than a language-specific
 configuration would give. How much lower is unmeasured, like every retrieval
-number (#102).
+number.
 
 Two consequences of the setting's scope:
 
@@ -152,7 +147,7 @@ Two query-shape decisions:
   the limit is satisfied or the configured scan ceiling is reached
   (`hnsw.max_scan_tuples` and the scan-memory bound), trading extra index
   traversal for far less silent under-returning. The ceiling and its tuning are
-  part of #102's measurement — under-return is reduced, not eliminated. The
+  part of 's measurement — under-return is reduced, not eliminated. The
   trade is still the point: a filtered search that quietly returns 3 of 10
   requested hits is a correctness bug wearing a latency costume.
 - **Subtree filtering is a filter column, not a join.** Each embedding row
@@ -168,7 +163,7 @@ Two query-shape decisions:
 ### What is unmeasured, said plainly
 
 Nothing has run. **Recall quality, query latency, and the exact-vs-approximate
-behaviour of filtered HNSW at our data shapes are unmeasured** — tracked as
+behavior of filtered HNSW at our data shapes are unmeasured** — tracked as
 pgvector recall/latency issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap),
 with measurement as the exit criterion. The choice of embedding model and
 where it runs is an open RS on the same page. No vector-search number is
@@ -187,7 +182,7 @@ inventory is declared ([audit-and-lineage.md](audit-and-lineage.md)).
 
 ## Search pipelines
 
-*Since v0.5.5 · [ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md); the stages are [ADR-0048](../adr/ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md)'s*
+*Since v0.5.5 ·; the stages are 's*
 
 **How recall ranks.** A recall's hits come from a **pipeline**: one or more retrievers, each
 producing a ranked list, merged by a fusion the core runs. The core computes what may be ranked
@@ -213,12 +208,12 @@ request ── core: authenticate, scope = readable nodes ∩ kinds (+ own held 
 |---|---|---|
 | `keyword-all` | every query word, exactly, under `simple`, by `ts_rank`: the recall served up to v0.5.0 | one list |
 | `keyword-any` | any query word, exactly, under `simple`, by `ts_rank`; the existing GIN index | one list |
-| `bm25` | each version's lexemes, stored when it is written: its `simple` words, the identifier parts it lacks (`useInvoiceFilters.ts` → `use`, `invoice`, `filters`, `ts`) and the `english` stems neither holds, each occurrence counted once; the query's words through the same normaliser, less its English stop words when it has other words, each scored by its best form; BM25 with k1 1.2 and b 0.75 whose statistics are computed per query over the rows the key may read | one list |
-| `bm25-trigram` | `bm25`'s list and `pg_trgm` word similarity above 0.3 of the query to the normalised text, for misspellings and fragments | reciprocal rank, constant 60, each list read 50 deep |
-| `bm25-postings` | *Since v0.5.6 ([ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)).* `bm25`'s score, read from integer postings an index serves under row security: the readable rows' counts, kept per workarea, decide which words are frequent; those are left out of the postings read and still scored for every row the other words reach; a query of only frequent words is answered by `bm25`'s scan | one list |
-| `sparse` (since v0.5.7, opt-in, [ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d14, d16) | learned sparse weights of `opensearch-neural-sparse-encoding-doc-v3-distill` (Apache-2.0), written by a local model after each version commits, read from postings an index serves under row security: a row scores the sum over the query's tokens of the weight the model ships for the token times the row's own weight. No corpus statistic is read and no model runs for a query. It matches related words a memory does not say (the model's expansions), English only | one list |
-| `bm25-sparse` (since v0.5.7, opt-in, [ADR-0052](../adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md) d13, d16) | `bm25-postings` and `sparse`, each read 100 deep | convex combination: each list's scores min-max normalised over its own candidates for the query, then 0.3 × `bm25-postings` + 0.7 × `sparse` |
-| `bm25-rerank` (since v0.5.6, opt-in, [ADR-0053](../adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md)) | `bm25`'s list, read `search.rerank.depth` deep (10), its head reordered by a local cross-encoder (`ms-marco-MiniLM-L6-v2` on the CPU, pure Rust) over the text of rows the core has admitted; the relevance is between 0 and 1 and reads the query and the text alone | one list, then the reranker |
+| `bm25` | each version's lexemes, stored when it is written: its `simple` words, the identifier parts it lacks (`useInvoiceFilters.ts` → `use`, `invoice`, `filters`, `ts`) and the `english` stems neither holds, each occurrence counted once; the query's words through the same normalizer, less its English stop words when it has other words, each scored by its best form; BM25 with k1 1.2 and b 0.75 whose statistics are computed per query over the rows the key may read | one list |
+| `bm25-trigram` | `bm25`'s list and `pg_trgm` word similarity above 0.3 of the query to the normalized text, for misspellings and fragments | reciprocal rank, constant 60, each list read 50 deep |
+| `bm25-postings` | *Since v0.5.6.* `bm25`'s score, read from integer postings an index serves under row security: the readable rows' counts, kept per workarea, decide which words are frequent; those are left out of the postings read and still scored for every row the other words reach; a query of only frequent words is answered by `bm25`'s scan | one list |
+| `sparse` (since v0.5.7, opt-in,) | learned sparse weights of `opensearch-neural-sparse-encoding-doc-v3-distill` (Apache-2.0), written by a local model after each version commits, read from postings an index serves under row security: a row scores the sum over the query's tokens of the weight the model ships for the token times the row's own weight. No corpus statistic is read and no model runs for a query. It matches related words a memory does not say (the model's expansions), English only | one list |
+| `bm25-sparse` (since v0.5.7, opt-in,) | `bm25-postings` and `sparse`, each read 100 deep | convex combination: each list's scores min-max normalized over its own candidates for the query, then 0.3 × `bm25-postings` + 0.7 × `sparse` |
+| `bm25-rerank` (since v0.5.6, opt-in,) | `bm25`'s list, read `search.rerank.depth` deep (10), its head reordered by a local cross-encoder (`ms-marco-MiniLM-L6-v2` on the CPU, pure Rust) over the text of rows the core has admitted; the relevance is between 0 and 1 and reads the query and the text alone | one list, then the reranker |
 
 **Choosing one.** The deployment's `search.enabled` lists the pipelines it serves and
 `search.default` the default ([configuration](../operations/configuration.md)); a tenant's admin
@@ -228,7 +223,7 @@ refused naming `/search`, never replaced. `match: "all"` keeps only rows holding
 when none does, serves the any-word hits with `search.fallback: "any_term"`.
 
 **What the answer says.** `search.pipeline`, `search.terms` (the query's words as read),
-`search.fallback`, `search.access` and `search.pruned` (*since v0.5.6*, ADR-0052 d11: `postings` or
+`search.fallback`, `search.access` and `search.pruned` (*since v0.5.6*,: `postings` or
 `scan`, and the words pruned), and `search.did_you_mean`: when a recall finds fewer than three hits (or fewer
 than its `k`), spellings for the words no hit holds, under every pipeline but `keyword-all`. They
 come from a vocabulary kept per workarea, the words of its promoted served tips, written by the
@@ -237,10 +232,10 @@ nodes' vocabulary and never a row, so no spelling names a word only an unreadabl
 words it holds, `of` how many the query had, and `via` the retrievers that found it; *since
 v0.5.7*, `tokens`, the learned sparse word pieces that scored it with each contribution and
 whether the model added it (`expanded`), and `expanded`, the pieces it matched only through the
-model's expansion, so a match by expansion never reads as a word the memory says (ADR-0052 d17).
+model's expansion, so a match by expansion never reads as a word the memory says.
 Scores compare within one answer only.
 
-**Learned sparse postings** *(since v0.5.7, ADR-0052 d14, d15)*. A version that gets postings is
+**Learned sparse postings** *(since v0.5.7,)*. A version that gets postings is
 queued for the encoder in its own write's transaction; the lead's encoder task takes the queue
 oldest first, runs the model on the CPU in its own pool, and writes the version's kind 2 postings
 (its 128 largest weights at or above 0.1) with the version's current state, so promotion,
@@ -250,7 +245,7 @@ and any failed encode, which is retried after at most an hour. A deployment that
 pipeline and lacks the model's files does not start, and names the file; one that names none
 reads no model file.
 
-**Postings, pruning and the scan** *(since v0.5.6, ADR-0052)*. Under row security no text operator
+**Postings, pruning and the scan** *(since v0.5.6,)*. Under row security no text operator
 reaches an index, but integer equality does, so `bm25-postings` reads each version's lexemes as
 integer postings (`search_postings`, one partition per tenant under the same policy; [schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)).
 Before it reads a posting it sums the served versions' counts over the readable workareas, adding
@@ -264,12 +259,12 @@ whole, so `search.pruned` names every word whose rows may be missing, and `prune
 list is `bm25`'s. The best `4 × k` candidates the kept forms reach are rescored with every form, so each
 returned row's score is its full BM25 score. Candidates come only from the forms read, so what
 pruning loses is a row that holds only frequent words, a loss in the long tail of the list: it is
-why the budget, not the share, decides when to prune (ADR-0052 d6, amended 2026-11-05). The answer names those words in `search.pruned`. When every form present is frequent, the
+why the budget, not the share, decides when to prune (amended 2026-11-05). The answer names those words in `search.pruned`. When every form present is frequent, the
 `bm25` statement answers over the stored lexemes, ranked as `bm25` ranks, and the answer says
 `search.access: "scan"`; otherwise `"postings"`. Under `match: "all"` it reads only the rarest
 word's postings, which every answer must hold, and prunes nothing. Which words are pruned depends
 on the rows the key may read alone; a word only unreadable rows hold reads as a word no row holds.
-`FREQUENT_SHARE` is 0.1 and `POSTING_BUDGET` 10,000, set by the runs ADR-0052 open question 2
+`FREQUENT_SHARE` is 0.1 and `POSTING_BUDGET` 10,000, set by the runs open question 2
 records. A key holding many own held rows pays for them: at 10,000 such rows a universe recall
 with `include_unreviewed` measured 266 ms p95 (open question 7).
 
@@ -277,35 +272,35 @@ with `include_unreviewed` measured 266 ms p95 (open question 7).
 widens it, never reads a verdict, a reviewer or `promoted_at`, and computes any statistic over
 the scope alone, so a row the key cannot read never moves another row's rank. Steering never
 enters a retriever. The laws every adapter passes, the in-memory test store and PostgreSQL
-alike, are in `oml-port-contracts` (ADR-0049 d7). A reranker is held to the same rule from the
+alike, are in `oml-port-contracts`. A reranker is held to the same rule from the
 other side: the core hands it the query and the text of rows it would serve, and nothing else,
 and its laws (one relevance per passage, in `[0, 1]`, the same alone as among others) run against
-the test double and the real model alike (ADR-0053 d10).
+the test double and the real model alike.
 
 **Measured.** The recall eval runs every served pipeline through `oml_read` in CI and gates the
-default (ADR-0049 d9); the public benchmarks run the same served path over BEIR SciFact and
+default; the public benchmarks run the same served path over BEIR SciFact and
 NFCorpus, LoCoMo, and SciFact grown ten times to 51,830 rows. Their generated pages hold every number,
 with the date, commit and host of each run: [benchmarks](../benchmarks/index.md). `bm25` was
 v0.5.5's default: it passes its gate and ranks best on every external set; `bm25-trigram` matches
 misspellings at many times the latency, needs `pg_trgm`, and is served only where a deployment
-enables it (ADR-0049 d12). Under row security no text or trigram index can serve the serving
-role's reads (ADR-0034 d13), so 0020 builds none and `bm25`'s cost grows with the rows in its
+enables it. Under row security no text or trigram index can serve the serving
+role's reads, so 0020 builds none and `bm25`'s cost grows with the rows in its
 scope; the scale page shows by how much. *Since v0.5.6:* `bm25-postings` is the default, as
-ADR-0052 d9's evidence held on the build that ships it: `bm25`'s gate passed (success@1 0.826,
+'s evidence held on the build that ships it: `bm25`'s gate passed (success@1 0.826,
 success@5 0.934), nDCG@10, R@20 and R@100 equal to `bm25`'s on SciFact, NFCorpus and LoCoMo, and
 a p95 of 25.5 ms at 99,721 readable rows, universe scope, against `bm25`'s 485 ms
 ([scale report](https://github.com/e8kor/open-memory-lab/blob/main/bench/scale/REPORT.md)).
 `bm25` stays served as its fallback and comparison. *Since v0.5.7:* `bm25-sparse` passes the same gate (success@1 0.860,
 success@5 0.983) and ranks above `bm25-postings` on SciFact (0.730 against 0.685 nDCG@10), NFCorpus
 (0.349 against 0.321) and LoCoMo (0.550 against 0.503), and stays opt-in: at 60,341 readable rows its
-two lists took 272 ms at p95, universe scope, against the 50 ms bar (ADR-0052 d16; #104).
+two lists took 272 ms at p95, universe scope, against the 50 ms bar ().
 
-**Capped before fusion.** *Since v0.5.8 ([ADR-0049](../adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md) d13):*
+**Capped before fusion.** *Since v0.5.8:*
 the depth the core reads each list to (`k` alone, at least 50 for reciprocal rank, at least 100
 for a convex combination, at least the rerank depth) is a cap the core enforces before fusion,
 whatever an adapter returns, so no retriever contributes more candidates than another.
 
-**Filtered by origin, marked by the source.** *Since v0.5.8 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) d4, d5):*
+**Filtered by origin, marked by the source.** *Since v0.5.8:*
 `anchor_repo` and `anchor_path_prefix` are a predicate of each retriever's candidate statement,
 combined by AND with every other filter; either leaves out unanchored rows. The PostgreSQL store
 first reads the readable anchored ids by the anchor index, up to `ANCHOR_FIRST_MAX` (2,000): within
@@ -313,7 +308,7 @@ it, a list scores only those ids' postings or rows (anchor-first); above it, the
 the filter on the indexed columns (postings-first). The repository is an equality and the prefix
 the range `[prefix, upper)` on `text_pattern_ops`' leakproof `~>=~` and `~<~`, so the index
 serves the serving role under row security. Corpus statistics and document frequencies stay the
-unfiltered ones, so a filtered list is the unfiltered list filtered then cut; #138 records the
+unfiltered ones, so a filtered list is the unfiltered list filtered then cut; records the
 latency. Every served item carries its
 `anchor`, and `stale` (`changed` or `removed`) from its latest source check: checks are recorded
 only on promoted served tips, so a mark never derives from a held version and tells no reader
@@ -336,8 +331,7 @@ A recall result has two segments, in this order:
    order of a combined query — fusion weighting is an implementation choice
    inside this contract and is unmeasured like the rest of the tier).
 
-Membership and order of both segments are fixed
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d8):
+Membership and order of both segments are fixed:
 
 - **Applicable steering** for scope node N is every promoted, served-tip row
   of kind `steering` that is not part of a retired claim, whose workarea is N
@@ -351,13 +345,12 @@ Membership and order of both segments are fixed
   applies to hits only.
 - **Hits** are served tips (tip, state `promoted`) of kind `memory` or
   `derived_fact` — plus, in a workarea whose journalled policy opts the
-  vocabulary kinds into the shared indexes
-  ([ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)), served tips of kind
+  vocabulary kinds into the shared indexes, served tips of kind
   `term`, `term_mapping` or `vocab_release` — never retirement versions, never
   versions of retired claims, plus the caller's own held rows when it asks for
   them ([below](#own-held-rows-in-recall)). A `self_signed` version is a hit
   only when the scope node is its own workarea. The `kinds` filter names only
-  `memory` and `derived_fact`, as ADR-0021 d9 keeps it: a recall that sends it
+  `memory` and `derived_fact`, as keeps it: a recall that sends it
   narrows the hits to those kinds, and one that omits it also receives
   opted-in vocabulary hits. The order is total: score descending,
   then `artifact_id` ascending in byte order. The score is the
@@ -367,7 +360,7 @@ Membership and order of both segments are fixed
   with normalization 0, v0.5.0's; in the in-memory test store, which serves
   the two keyword pipelines with PostgreSQL's semantics on plain words, it
   is the count of distinct query terms matched. The two stores agree on the
-  set of hits and on the tie order, not on every rank (ADR-0049 d7). A superseded version is never a hit; it stays fetchable by id
+  set of hits and on the tie order, not on every rank. A superseded version is never a hit; it stays fetchable by id
   as history.
 - **Served tip**, in both bullets above: for a key in a simulation's
   audience, a claim's served tip is its overlay tip for that simulation where
@@ -379,10 +372,10 @@ Membership and order of both segments are fixed
   ([the simulation read predicate](#the-simulation-read-predicate)).
 - **Determinism** holds over a fixed candidate list: the same candidates
   always come back in the same order. Whether approximate vector search fixes
-  the candidate list for a given query is part of #102's measurement, not a
+  the candidate list for a given query is part of 's measurement, not a
   property this page claims.
 
-*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d10):*
+*Since v0.5.0:*
 when the scope node lies inside a [user root](workareas.md#user-roots),
 the hits also include the served tips of the `universe` node itself where the key's
 reader access covers it — every user key's node grant does — ranked with the
@@ -390,15 +383,13 @@ scope's own hits in the one total order above. Applicable steering needs no chan
 `universe` is an ancestor of every scope. A universe claim is served with no
 principal, no `derives_from` and no path below `universe`
 ([HTTP API](../api/http-api.md#get-get-v1memoriesartifact_id)). Whether universe
-hits crowd out a project's own is unmeasured, tracked as
-#145.
+hits crowd out a project's own is unmeasured, tracked as.
 
 The contract is part of the API surface ([api/http-api.md](../api/http-api.md)
 and the MCP `recall` tool): clients may rely on segment order, and nothing a
 client sends re-ranks segment 1.
 
-How the result is assembled is a hot-path rule, not an implementation accident
-([ADR-0024](../adr/ADR-0024-performance-foundation.md) d4): steering rows, hits
+How the result is assembled is a hot-path rule, not an implementation accident: steering rows, hits
 and bodies hydrate in **one or two prepared statements, fetched set-wise, never
 one query per hit**; fusion of the FTS and vector candidate lists is computed
 in one pass, never a third query round; and the server-side
@@ -410,9 +401,7 @@ wire.
 
 *Available since v0.2.0; the name `include_unreviewed` since v0.4.0 · [releases](../changelog.md)*
 
-A recall with `include_unreviewed: true`, v0.3.0's `include_own_held`
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d4;
-[ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d4) also takes
+A recall with `include_unreviewed: true`, v0.3.0's `include_own_held` also takes
 as hit candidates the calling key's [own](roles-and-keys.md#own) rows that
 are:
 
@@ -433,7 +422,7 @@ successor carries `replaces`; the promoted tip it would replace stays among
 the hits until ratification, and the two are never deduplicated. Own held
 steering and own held retirement versions never enter recall — neither is in
 force — and own-work status and get reach them. `include_unreviewed` defaults to
-`false`, which is exactly the prior behaviour; no other key's result changes,
+`false`, which is exactly the prior behavior; no other key's result changes,
 and the recall ceiling stays reader on the scope, so a writer-only key reads
 its held rows through own-work status and get.
 
@@ -452,15 +441,14 @@ compare directly. Because a held row has no vector term, under any fusion in
 which an absent list contributes nothing and a vector match never lowers a
 score, it scores no higher than it would once promoted, so own held rows rank
 at or below their promoted rank; this affects only the author's own result,
-and how far below is unmeasured (#102). In cluster
+and how far below is unmeasured. In cluster
 mode the request is an own-held read
 ([reads in cluster mode](#reads-in-cluster-mode)).
 
 ## Held text containment
 
 Held text is matched only through a read fenced to its author, never through
-the shared serving indexes
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d5) — the same
+the shared serving indexes — the same
 containment-by-construction stance as the
 [simulation read predicate](#the-simulation-read-predicate): a forgotten
 predicate fails toward invisibility.
@@ -506,8 +494,7 @@ predicate fails toward invisibility.
 
 *Available since v0.2.0; the name `include_text` since v0.4.0 · [releases](../changelog.md)*
 
-This section is the single declaration site for recall budgets
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d6, d7).
+This section is the single declaration site for recall budgets.
 
 **The budget token.** The recall budget unit is the **budget token** under
 counter `oml-tc/1`: tokens(row) = ⌈`body_bytes` ÷ 4⌉, where `body_bytes` is the
@@ -517,8 +504,7 @@ submission event journals: `submission.remember`, `submission.learn`, or
 ([event catalog](../data/event-catalog.md#submission-family)).
 Only the body text is counted, never ids, paths or metadata. The divisor 4 is a
 convention, not a measured ratio, and the count is not any model's tokenizer
-count; how far the two differ for real text is unmeasured —
-#106. Clients convert with their own ratio from the
+count; how far the two differ for real text is unmeasured —. Clients convert with their own ratio from the
 per-row counts. Changing the function mints a new counter id; `oml-tc/1` never
 changes meaning.
 
@@ -561,7 +547,7 @@ with `used_tokens` 420, `truncated` true, `hits_omitted` 2, `next_hit_tokens`
 **What the cut costs.** `k` caps the candidates before the budget applies;
 counts come from `body_bytes` without decryption; rows the budget cuts are
 never hydrated, decrypted or sent, and the served rows hydrate in one set-wise
-statement ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d4). A strict
+statement. A strict
 prefix can serve zero hits when the top hit exceeds what remains of the
 budget; the budget object says so.
 
@@ -583,7 +569,7 @@ caching decrypted bodies anywhere outside that path is refused by design, and
 any serving-path cache is itself a copy class in the erasure inventory.
 
 One serving-path cache is named rather than left generic: the **DEK serving
-cache** ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d3). Without
+cache**. Without
 it, a recall with k hits pays k per-artifact key unwraps against the KMS —
 a network call each — on every request; with it, the serving path holds
 **plaintext keys of erase-eligible artifacts**, which is why it is a declared
@@ -591,19 +577,18 @@ design object and not an optimization detail. Its rules: it is a named copy
 class in the erasure inventory
 ([audit-and-lineage.md](audit-and-lineage.md)); erase purges it
 **synchronously**; it is TTL-bounded, and that TTL composes into
-#108's end-to-end erasure bound. Whether it caches
+'s end-to-end erasure bound. Whether it caches
 per-artifact DEKs or an unwrapped per-tenant KEK — different KMS-call
 profiles, blast radii and erasure reasoning — is the open decision recorded
-as #154.
+as.
 
 ## Reads in cluster mode
 
 *Not scheduled · [releases](../changelog.md)*
 
-In cluster mode ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md))
+In cluster mode
 a follower's hot path is recall and get, only — writes forward to the lead —
-and its reads follow one routing policy
-([ADR-0024](../adr/ADR-0024-performance-foundation.md) d9):
+and its reads follow one routing policy:
 
 - **Own-held reads route to the lead and the primary.** A read of the caller's
   own held rows — a recall with `include_unreviewed: true` among them — and any
@@ -627,8 +612,7 @@ and its reads follow one routing policy
 *Not scheduled · [releases](../changelog.md)*
 
 *Not the recall telemetry.* Since v0.5.7 each recall is also recorded in `recall_events`, with
-the labels of what its reader did next, for 30 days, to a tenant admin alone
-([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2): that table answers whether a recall helped, and is never offered as
+the labels of what its reader did next, for 30 days, to a tenant admin alone: that table answers whether a recall helped, and is never offered as
 an audit record. The read log below answers who read what, for an auditor, under a retention the
 tenant sets, and is not built.
 
@@ -639,8 +623,7 @@ since an author reading its own rows is still a read — never the candidate lis
 before the cuts. `query_digest` is SHA-256 over the RFC 8785 JSON of an object
 whose members, listed below, are always present, with defaults applied before
 digesting. Two members keep their v0.3.0 names when the request fields they digest are renamed,
-so a digest logged before v0.4.0 and one logged after compare
-([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7):
+so a digest logged before v0.4.0 and one logged after compare:
 
 | Member | Value digested |
 |---|---|
@@ -657,7 +640,7 @@ so a digest logged before v0.4.0 and one logged after compare
 So two requests share a digest only when they differ solely in the order or
 repetition of `kinds` or `terms` entries, and one request gets one digest on
 every server; the served ids, logged beside it, record what each read
-returned ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d9).
+returned.
 Design commitments:
 
 - **Outside the hash chain.** Read events go to `read_events`, a partitioned,
@@ -673,13 +656,11 @@ Design commitments:
 - **Follower reads log asynchronously.** `read_events` lives on the primary, so
   a follower serving recall writes its read events upstream as an
   **asynchronous batched insert**, never a synchronous write inside its read
-  path ([ADR-0024](../adr/ADR-0024-performance-foundation.md) d9). The honest
+  path. The honest
   cost: follower buffering enlarges the unanchored tail — a crashed follower
   loses its unflushed read-event buffer — which is stated where
   [commitments](../product/commitments.md) states the read-log bound; who
-  batches and anchors the follower-written rows is the open decision
-  #154
-  ([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)).
+  batches and anchors the follower-written rows is the open decision.
 - **Retention is tenant policy.** The retention window of `read_events` is a
   journalled per-tenant policy, not a constant. Evidence exports scope their
   read-log section to that window, and `read_events` appears in the
@@ -725,15 +706,15 @@ never moved.
 
 OML answers no questions. Clients are agents that recall and reason
 themselves; the provider serves memories, never synthesized answers. The
-decision is ADR-0013 in the [decision register](../adr/index.md), which
+decision is in the decision register, which
 declines the feature for v1 rather than deferring it silently. If a
 grounded-answer surface ever returns, it enters as a new decision with its own
 review, not as a quiet extension of recall.
 
 ## Decision record
 
-This page's decisions are registered as ADR-0013
-([decision register](../adr/index.md)); own held rows in recall, held text
+This page's decisions are registered as 
+(decision register); own held rows in recall, held text
 containment, token budgets, the segment membership and order, and the read-log
-content are the proposed [ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s,
-which would amend ADR-0013 d1, d2 and d5.
+content are the proposed 's,
+which would amend and d5.

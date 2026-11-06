@@ -8,11 +8,10 @@ answers: "how claude.ai, Claude Desktop's connectors and the Claude mobile apps 
 
 Claude on the web, Claude Desktop's connectors and the Claude apps for iOS and Android cannot run
 `oml login`, so OML links them to one agent key through a one-time connect code, over OAuth 2.1,
-on the same origin that serves `/mcp`: there is no separate host, port or service
-([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)). Claude never
+on the same origin that serves `/mcp`: there is no separate host, port or service. Claude never
 receives the key, only a connection the server can withdraw.
 
-The server's `oauth_flow` and the CLI's `connect_flow` suites run this flow end to end in CI. A live connection from claude.ai is open ([#115](https://github.com/e8kor/open-memory-lab/issues/115)), so the steps that name a claude.ai screen follow Anthropic's documentation.
+The server's `oauth_flow` and the CLI's `connect_flow` suites run this flow end to end in CI. A live connection from claude.ai is open ([](https://github.com/e8kor/open-memory-lab/issues/115)), so the steps that name a claude.ai screen follow Anthropic's documentation.
 
 ## What the server needs
 
@@ -43,7 +42,7 @@ that ran out before use is replaced with `oml keys connect-code <key>`
    address.
 2. Claude opens OML's connect page. Enter the code only if you reached the page this way yourself;
    if someone sent you a link to it, close it.
-3. The page shows the organisation, the agent identity and the workareas the connection will use,
+3. The page shows the organization, the agent identity and the workareas the connection will use,
    and what it may do there. Where it may write, it says that nothing written reaches anyone else
    until someone else reviews it. Confirm.
 4. The connector is then available in every Claude app signed in to that account, the phone apps
@@ -57,23 +56,21 @@ fetched 2026-11-04: "Free users are limited to one custom connector.").
 
 The three tools, `oml_write`, `oml_read` and `oml_workarea`, under the connector key's grants.
 They get no skill, no session-start hook, no failure recall and no librarian: those are parts of
-the Claude Code plugin ([ADR-0040](../adr/ADR-0040-plugin-setup-in-claude-code.md),
-consequences). The agent searches when the server's instructions and the tools' descriptions lead
+the Claude Code plugin (consequences). The agent searches when the server's instructions and the tools' descriptions lead
 it to. Every write is held, as from any client.
 
 ## Ending a connection
 
 The administrator ends one connection with `oml keys disconnect <key> <connection>`, after
 `oml keys show <key>` names it; withdrawing the key's access with `oml deny set <key> universe`
-ends every connection's reach, since a connection's token is exactly its key
-([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d11). Changing `oauth.issuer`
+ends every connection's reach, since a connection's token is exactly its key. Changing `oauth.issuer`
 stops every connection at its next request.
 
 ## Open: claude.ai's request headers
 
 Anthropic's help page also describes a Request headers setting for a connector, to "add fixed
 credentials such as API keys that Claude sends on every request" (fetched 2026-11-04 through a
-summarising fetch, so the quote is reported, not checked against the page's source). If it holds,
-claude.ai could reach OML with a bearer key and no OAuth, which ADR-0031's premise does not
+summarizing fetch, so the quote is reported, not checked against the page's source). If it holds,
+claude.ai could reach OML with a bearer key and no OAuth, which 's premise does not
 expect. OML has not tested that route, it would put the key value in claude.ai's settings, and
 this guide does not recommend it. The connect code is the documented path.
