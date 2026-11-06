@@ -688,3 +688,21 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
 | **Per-address rate limits** | Behind a proxy every request has the proxy's address; the connect page made the same choice. |
 | **A web route or MCP tool for agents to drive the pages** | The pages exist for people; an agent's surface is the three MCP tools and the API under its own key (R1). |
 | **A dashboard, a recall view, graph pictures or an assistant on the pages** | Each is the accretion ADR-0015 warned of; none is a duty a person cannot do without, and each would need its own record. |
+
+## Threat table moved from the security page (2026-11-06)
+
+The [security page](../architecture/security.md) keeps a short table for the web pages. The full controls, as the page stated them before the trim, are kept here.
+
+| Threat | Control | What remains |
+|---|---|---|
+| An agent uses the pages | An `Authorization` header on a web route answers `access.verb_ceiling`. `/v1`, `/v2` and `/mcp` never read `Cookie`. A session key has no value and no connect code. | An agent that drives a person's signed-in browser acts as that person. OML cannot tell them apart. |
+| Session fixation | No session identifier exists before the callback admits. The token is minted then. | None known. |
+| Session cookie theft | The cookie uses the `__Host-` prefix and is `Secure`, `HttpOnly` and `SameSite=Lax`. The server holds only its SHA-256. It expires after a fixed lifetime. Sign-out and any change to the allowlist entry end it. | A stolen cookie acts as the person until it expires. There is no idle timeout. |
+| Cross-site request forgery | `SameSite=Lax` withholds the cookie from cross-site `POST`s. Every `POST` passes the same-origin check and carries a `csrf_token`. Every `GET` is free of effect. | None known. |
+| Login forgery | The callback admits only the `state` sealed in the cookie of the browser that started the flow. | None known. |
+| A moved or recycled email address | Only a verified address from the provider counts. The provider account is pinned at first sign-in, and another account with the same address is `identity_changed`. | Before an entry's first sign-in, whoever controls the address at the provider holds it. |
+| Memory text rendered to a person | OML escapes it and strips control and bidirectional characters. | The text appears as text and still says whatever it says. |
+| Secrets in logs | Logs record the route template, never the query. No cookie, token or email reaches a line. The journal holds an email's digest. | Your reverse proxy's access log must drop the query on `/web/callback/*`. OML cannot check that. |
+| A person outliving their access | Removing an email ends its sessions. | The person's agent keys keep working until an admin cuts each off with a global denial. |
+| Admin authority through the pages | The admin key never reviews. Review runs as the person's reviewer key. The admin key reads content only on two admin read routes, and the journal records each read as `memory.admin_read`. | A tenant's admin can read every person's memories, held ones included. People who need privacy from that admin need their own tenant. |
+

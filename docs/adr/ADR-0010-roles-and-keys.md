@@ -119,3 +119,19 @@ Everything here is decided, not built.
   share them, which destroys attribution. The separation that matters is not at the key, it is
   at promotion: the lineage-closure check (d5) refuses the one combination that violates R2,
   and lets every other combination stand.
+
+## Rationale moved from the roles-and-keys page (2026-11-06)
+
+The user-facing page [roles and keys](../architecture/roles-and-keys.md) keeps what a user or operator acts on. Its design rationale lives here.
+
+- **Plain SHA-256 for API keys.** A password hash needs a salt because people pick guessable passwords. A 256-bit random key has no dictionary to attack, and the plain hash lets every request find its key with one index lookup.
+- **Rejected: an admin who approves content.** The authority that issues keys would also decide what is true.
+- **Rejected: independence from a single principal check.** One person can hold many keys, so the check runs at approval against the author and the derivation lineage, not at issuance.
+- **Rejected: a salted, slow hash for keys.** The keys are random and the hash sits on every request path.
+- **Why admin verdicts are refused on the server.** Otherwise the authority that issued an author's key could act as reviewer by fiat. An admin who writes uses a separate writer key, so the journal holds no unreviewed admin write; an admin fixing a typo waits for a reviewer like everyone else.
+- **Why the independence metadata is read as journaled.** A later reshuffle of crews does not change what was independent at approval time. Every workarea has the same base review policy; a `committed` workarea can require a differing reviewer crew or external manager.
+- **Connect-code guess bound.** With L live codes and G wrong entries during their life, the chance that any wrong entry hits a live code is at most L·G / 2^60. The code is never in a log, URL or journal payload and the database holds a digest only; a newer code, a revoked connection or a revoked key voids it.
+- **Connection liveness.** A connection that stops being live (key unusable or newest refresh token expired) stays `open` in the table without a journal event, because no actor ended it. A revoked connection never reopens; the key needs a new code. OML accepts a token nowhere but `/mcp`, so a connection can do at most what its key can.
+- **Session keys.** `<user>-review` has its own principal, so the review check lets it approve the person's agents' writes and never a version it proposed itself. A user's separate dreamer key can review their own agents' writes; the journal shows both keys name the same user.
+- **Costs.** A person who administers and reviews carries two keys. Writes wait for a reviewer, an admin included. Lineage exclusion knows only what writers declare, and nothing stops two distinct principals approving each other's work; how often that happens has not been measured.
+

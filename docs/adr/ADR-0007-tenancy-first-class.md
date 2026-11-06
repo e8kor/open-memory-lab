@@ -120,3 +120,14 @@ and the STRIDE analysis written against hostile co-tenants are declared in
   every endpoint becomes a place where validation can be forgotten, and every
   proxy a place where the header can be injected. Deriving tenant from the key
   costs one join on a row the server already reads for authentication.
+
+## Tenancy rationale moved from the security page (2026-11-06)
+
+- Deriving the tenant on the server removes the class of bugs where a valid key is combined with someone else's tenant id: a request that tries to name a tenant has no vocabulary to do it in.
+- RLS is the second fence behind application scoping: a query that escapes a `WHERE` clause still cannot cross a tenant boundary, because Postgres evaluates the policy.
+- `FORCE` binds the owner's table reads but not its `pg_stats` view, which can show another tenant's indexed words, or its DDL, which can lift `FORCE`. That is why the owner role only migrates and the serving role owns nothing.
+- Per-tenant journal chains mean one tenant's write rate never serializes against another's chain lock. No embedding or full-text index spans tenants, so a correctly pruned query never ranks foreign rows; pruning is planner behavior and not a security boundary.
+- The signature attests the deployment: one signer process at a time, each takeover journaled.
+- Steering rows get no stricter global default because a human-verdict default would impose review effort that machine-written steering often does not need.
+- The lake writer copies ciphertext the lead already produced; the journal's ciphertext digests expose any corruption.
+- The cost: RLS predicates sit on every query plan, and a full-text read scans its tenant's partition under RLS.

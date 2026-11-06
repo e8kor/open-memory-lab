@@ -909,3 +909,24 @@ D9, D13 and D14 cells of the D-register name it, `llms.txt` names it, and one
 | **d14 — Every limit a setting** | A value with one caller is a constant, and these bounds are security properties a deployment should not loosen by editing a file. |
 | **d15 — Leave `info.version` at `0.3.0-design`** | The shared error taxonomy changes, which the changelog's rule names, after `0.3.0-design` was tagged `spec-v0.3`. |
 | **d16 — Build now, before names** | Issuance, `issue-agent` and the key tables all change again when names land. |
+
+## Threat table moved from the security page (2026-11-06)
+
+The [security page](../architecture/security.md) keeps a short table of the OAuth surface. The full controls, as the page stated them before the trim, are kept here.
+
+| Threat | Control | What remains |
+|---|---|---|
+| A connect code is read or intercepted and entered first by someone else | Single use. It lives 10 minutes. It never appears in a URL, log or journal. A key has one live code. `oml keys show` lists connections, so an admin can spot and end an unexpected one. | For its minutes, the code is a bearer secret. Whoever enters it first connects as the key, within the key's grants and only at `/mcp`. For claude.ai, the admin sees that a connection opened and when, not whose account made it. |
+| Consent phishing: an attacker starts an authorization and sends the person the link | The page names the client and the redirect host before it asks for the code. It tells the person to enter a code only on a page they opened themselves. OML delivers an authorization code only to `https://claude.ai/api/mcp/auth_callback`. | The page cannot tell which claude.ai account started the request. The warning is the defense, and it works only if the person reads it. |
+| A co-tenant hands a person a code for the co-tenant's own key | The confirmation names the tenant the key belongs to, using the name the operator set. No tenant admin can set it. | A person who does not read the tenant name connects into the other tenant. |
+| Mix-up: a malicious connector steers the authorization code to its own endpoint | Every authorization response carries `iss`, and the discovery document advertises support for it. | The defense works only if the client checks `iss`. |
+| Cross-site request forgery on the page | OML sets no cookie. Each `POST` must carry the request handle and pass a same-origin check. It refuses `Origin: null` as `oauth.origin_refused`. | None known. |
+| Clickjacking and injected content | `frame-ancestors 'none'`, a content policy with no script, and escaped client-supplied names. | None known. |
+| Open redirect | OML admits a redirect URI only by exact match against a fixed allowlist. A refused URI gets a page, never a redirect. | None known. |
+| Authorization code interception | S256 PKCE only. A code lives 60 seconds and works once. | Your reverse proxy must not log the authorize redirect or OAuth request bodies. OML cannot check that. |
+| Access-token theft | Tokens are opaque and stored as digests. They work only at `/mcp`, only in the `Authorization` header, and for 1 hour. Each request re-checks the key. | A stolen access token acts as the key at `/mcp` until it expires or you end the connection. |
+| Refresh-token theft | A refresh token never authenticates `/mcp`. Every use rotates it. A rotated token presented again revokes the connection. | A thief who refreshes before the client does holds the connection until the client's next refresh trips the reuse check. |
+| Server-side request forgery through a client metadata URL | The lead fetches public unicast addresses only, with no proxy, no redirect, and caps on size, time and concurrency. | The lead makes outbound HTTPS requests to hosts an unauthenticated client names. Your egress policy must refuse internal address ranges, including NAT64 prefixes. |
+| Registration and request flooding | Unused registrations lapse after 24 hours and are capped at 10,000. Past the cap, registration answers `429 limit.rate`. An authorization request writes no row until a connect code verifies. | A flood stalls new dynamic registrations. Slow document hosts can hold every fetch slot for a while. Open connections keep working. |
+| Guessing a connect code | 60 bits per code. One message covers every invalid case. | With L live codes and G wrong entries, the chance of a hit is at most L·G / 2⁶⁰. That is a bound, not a measurement. No limit keys on a source address. |
+
