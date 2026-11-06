@@ -137,6 +137,7 @@ fn fresh_key_name() -> Name {
 
 fn issue_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKeyRequest {
     IssueKeyRequest {
+        profile: None,
         role,
         name: fresh_key_name(),
         principal: principal.to_owned(),
@@ -188,6 +189,7 @@ fn submit_req(idem: &str, body: &str) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
         anchor: None,
+        origin: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -219,7 +221,7 @@ fn recall_req(query: &str) -> RecallRequest {
         workarea: None,
         kinds: Vec::new(),
         include_text: true,
-        include_unreviewed: false,
+        include_unreviewed: Some(false),
         max_tokens: None,
         search: None,
         match_mode: oml_app::search::MatchMode::Any,
@@ -234,6 +236,7 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
     SupersedeRequest {
         on_similar: Default::default(),
         anchor: None,
+        origin: None,
         expected_version: 1,
         idempotency_key: idem.to_owned(),
         target_id: target,
@@ -931,6 +934,10 @@ async fn submission_digests_nfc_text() {
     assert_eq!(event.payload["retirement"], false);
     assert!(event.payload["replaces"].is_null());
     assert!(event.payload.get("body").is_none(), "digest-only payloads");
+    // The scan names the rule set its verdict was taken under; the double
+    // pins none (ADR-0065 d1).
+    assert_eq!(event.payload["scan"]["result"], "pass");
+    assert!(event.payload["scan"]["scanner_version"].is_null());
 
     // The scan sees the NFC text too: a rule on the composed spelling
     // vetoes the decomposed one.
@@ -4022,7 +4029,7 @@ fn tokens(text: &str) -> u64 {
 fn own_held(query: &str) -> RecallRequest {
     RecallRequest {
         timings: false,
-        include_unreviewed: true,
+        include_unreviewed: Some(true),
         ..recall_req(query)
     }
 }
@@ -6216,6 +6223,7 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
     let value = "oml_operator-fixture-value".to_owned();
     let key_id = Uuid::from_u128(0x0BE7_0001);
     let record = KeyRecord {
+        profile: None,
         key_id,
         tenant_id: tenant,
         role: Role::Operator,
@@ -9341,7 +9349,7 @@ async fn recall_never_serves_kind_guardrail() {
             &author.value,
             &RecallRequest {
                 timings: false,
-                include_unreviewed: true,
+                include_unreviewed: Some(true),
                 ..recall_req("canary")
             },
         )
@@ -13581,4 +13589,111 @@ async fn a_recall_reads_each_served_workareas_ancestry_once_however_many_hits_it
         reads(1).await,
         "six hits read what one hit reads"
     );
+}
+
+#[tokio::test]
+async fn a_rescan_reports_a_stored_version_by_rule_and_changes_nothing() {
+    // A version stored by a scanner whose veto marker it never carried,
+    // then rescanned by one that vetoes it (ADR-0065 d13).
+    let store = MemStore::new();
+    let before = App::new(
+        store.clone(),
+        MemSigner::new(TEST_SEED),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner {
+            veto_marker: "[never-matches]".to_owned(),
+            hold_marker: "[never-matches]".to_owned(),
+        },
+    );
+    let (boot, crew) = tenant(&before).await;
+    let admin = boot.admin_key.value.clone();
+    let writer = issue(&before, &admin, Role::Writer, "wanda", crew).await;
+    let stored = before
+        .submit_memory(
+            &writer.value,
+            &submit_req("old", "deploy key -----BEGIN PRIVATE KEY----- kept"),
+        )
+        .await
+        .expect("stored before the rule set")
+        .receipt;
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    let now = app_over(store.clone());
+    let report = now.rescan(&admin, 0, 1000).await.expect("rescan");
+    assert_eq!(report.scanned, 1);
+    assert_eq!(report.next_after_seq, None);
+    assert_eq!(report.hits.len(), 1);
+    let hit = &report.hits[0];
+    assert_eq!(hit.artifact_id, stored.memory_id);
+    assert!(hit.finding.veto);
+    assert!(
+        !format!("{report:?}").contains("kept"),
+        "no text: {report:?}"
+    );
+    assert_eq!(report.by_rule.len(), 1);
+    assert_eq!(report.by_rule[0].3, 1);
+
+    // Nothing journalled, nothing changed: the row is still held.
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+    let row = now
+        .get_memory(&writer.value, stored.memory_id)
+        .await
+        .expect("still there")
+        .memory;
+    assert_eq!(row.status, MemoryStatus::Held);
+
+    // A writer is refused the verb.
+    let err = now.rescan(&writer.value, 0, 10).await.unwrap_err();
+    assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_claim_key_or_a_verdict_reason_carrying_a_finding_is_refused() {
+    // Both reach the journal as plaintext, so the scan reads them, and only
+    // a veto refuses (ADR-0065 d7). The double vetoes "-----BEGIN".
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&app, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&app, admin, Role::Dreamer, "dana", crew).await;
+    let err = app
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                claim_key: Some("key-----BEGIN-x".to_owned()),
+                ..submit_req("ck", "a clean body")
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ScanVeto(_)), "{err:?}");
+    let id = app
+        .submit_memory(&writer.value, &submit_req("ok", "a clean body"))
+        .await
+        .expect("submit")
+        .receipt
+        .memory_id;
+    let head = journal(&store, boot.tenant_id).await.len();
+    let err = app
+        .post_verdict(
+            &dreamer.value,
+            id,
+            Verdict::Reject,
+            Some("it quotes -----BEGIN PRIVATE KEY-----"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::ScanVeto(_)), "{err:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+    // A hold-class finding in a reason does not refuse.
+    app.post_verdict(
+        &dreamer.value,
+        id,
+        Verdict::Approve,
+        Some("[needs-human] fine"),
+    )
+    .await
+    .expect("a hold finding in a reason passes");
 }

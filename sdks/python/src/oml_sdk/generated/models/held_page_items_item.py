@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from ..models.anchor import Anchor
     from ..models.attachment_descriptor import AttachmentDescriptor
     from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
+    from ..models.origin import Origin
     from ..models.source_checked import SourceChecked
 
 
@@ -40,6 +41,8 @@ class HeldPageItemsItem:
         workarea_path (None | str): Derived at read time; grants bind to node ids. Null wherever workarea_id is.
         kind (MemorySummaryKind):
         state (MemorySummaryState):
+        unreviewed (bool): True exactly when the served version is held: the caller's own held version, or, inside a
+            workarea a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4).
         tokens (int): Budget tokens of the body (counter oml-tc/1): ceil(UTF-8 bytes of the NFC body / 4); not any
             model's count (docs/architecture/retrieval.md, Token budgets).
         retirement (bool): True on a retirement version; a claim whose served tip is one is a retired claim, which
@@ -76,6 +79,8 @@ class HeldPageItemsItem:
             own rows in any state, promoted rows within its reader effective access (ADR-0025 d3); the lineage read shows
             the full closure, elided where unreadable.
         attachments (list[AttachmentDescriptor] | Unset):
+        origin (None | Origin | Unset): What kind of source the version's text came from, as signed; null on versions
+            written before ADR-0063 (d1-d3).
         valid_from (None | str | Unset): When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM,
             YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2).
         valid_until (None | str | Unset): When it stops holding, as signed, or the instant a ratified supersession ended
@@ -95,6 +100,7 @@ class HeldPageItemsItem:
     workarea_path: None | str
     kind: MemorySummaryKind
     state: MemorySummaryState
+    unreviewed: bool
     tokens: int
     replaces: MemorySummaryReplacesType0 | None
     held_expires_at: datetime.datetime | None
@@ -116,6 +122,7 @@ class HeldPageItemsItem:
     plaintext_digest: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     attachments: list[AttachmentDescriptor] | Unset = UNSET
+    origin: None | Origin | Unset = UNSET
     valid_from: None | str | Unset = UNSET
     valid_until: None | str | Unset = UNSET
     replaces_valid_until: str | Unset = UNSET
@@ -125,6 +132,7 @@ class HeldPageItemsItem:
     def to_dict(self) -> dict[str, Any]:
         from ..models.anchor import Anchor
         from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
+        from ..models.origin import Origin
         from ..models.source_checked import SourceChecked
 
         artifact_id = self.artifact_id
@@ -144,6 +152,8 @@ class HeldPageItemsItem:
         kind = self.kind.value
 
         state = self.state.value
+
+        unreviewed = self.unreviewed
 
         tokens = self.tokens
 
@@ -230,6 +240,14 @@ class HeldPageItemsItem:
                 attachments_item = attachments_item_data.to_dict()
                 attachments.append(attachments_item)
 
+        origin: dict[str, Any] | None | Unset
+        if isinstance(self.origin, Unset):
+            origin = UNSET
+        elif isinstance(self.origin, Origin):
+            origin = self.origin.to_dict()
+        else:
+            origin = self.origin
+
         valid_from: None | str | Unset
         if isinstance(self.valid_from, Unset):
             valid_from = UNSET
@@ -258,6 +276,7 @@ class HeldPageItemsItem:
                 "workarea_path": workarea_path,
                 "kind": kind,
                 "state": state,
+                "unreviewed": unreviewed,
                 "tokens": tokens,
                 "retirement": retirement,
                 "replaces": replaces,
@@ -291,6 +310,8 @@ class HeldPageItemsItem:
             field_dict["derives_from"] = derives_from
         if attachments is not UNSET:
             field_dict["attachments"] = attachments
+        if origin is not UNSET:
+            field_dict["origin"] = origin
         if valid_from is not UNSET:
             field_dict["valid_from"] = valid_from
         if valid_until is not UNSET:
@@ -307,6 +328,7 @@ class HeldPageItemsItem:
         from ..models.anchor import Anchor
         from ..models.attachment_descriptor import AttachmentDescriptor
         from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
+        from ..models.origin import Origin
         from ..models.source_checked import SourceChecked
 
         d = dict(src_dict)
@@ -335,6 +357,8 @@ class HeldPageItemsItem:
         kind = MemorySummaryKind(d.pop("kind"))
 
         state = MemorySummaryState(d.pop("state"))
+
+        unreviewed = d.pop("unreviewed")
 
         tokens = d.pop("tokens")
 
@@ -487,6 +511,23 @@ class HeldPageItemsItem:
 
                 attachments.append(attachments_item)
 
+        def _parse_origin(data: object) -> None | Origin | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                origin_type_0 = Origin.from_dict(data)
+
+                return origin_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Origin | Unset, data)
+
+        origin = _parse_origin(d.pop("origin", UNSET))
+
         def _parse_valid_from(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -518,6 +559,7 @@ class HeldPageItemsItem:
             workarea_path=workarea_path,
             kind=kind,
             state=state,
+            unreviewed=unreviewed,
             tokens=tokens,
             retirement=retirement,
             replaces=replaces,
@@ -539,6 +581,7 @@ class HeldPageItemsItem:
             plaintext_digest=plaintext_digest,
             derives_from=derives_from,
             attachments=attachments,
+            origin=origin,
             valid_from=valid_from,
             valid_until=valid_until,
             replaces_valid_until=replaces_valid_until,

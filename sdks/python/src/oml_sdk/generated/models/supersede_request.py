@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.anchor import Anchor
     from ..models.guardrail_rule import GuardrailRule
+    from ..models.origin import Origin
 
 
 T = TypeVar("T", bound="SupersedeRequest")
@@ -35,6 +36,10 @@ class SupersedeRequest:
                 shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither.
                 Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path
                 or fragment is submission.scan_veto.
+            origin (Origin | Unset): What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission
+                event, immutable per version, never inherited by a successor. Omitted on a write, it is recorded manual. chat
+                requires a chat anchor and a chat anchor requires chat; either mismatch is request.validation naming
+                /origin/kind.
             workarea (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side before
                 any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a
                 bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared
@@ -70,6 +75,7 @@ class SupersedeRequest:
     body: str
     expected_version: int
     anchor: Anchor | Unset = UNSET
+    origin: Origin | Unset = UNSET
     workarea: str | Unset = UNSET
     retirement: bool | Unset = False
     kind: SupersedeRequestKind | Unset = UNSET
@@ -89,6 +95,10 @@ class SupersedeRequest:
         anchor: dict[str, Any] | Unset = UNSET
         if not isinstance(self.anchor, Unset):
             anchor = self.anchor.to_dict()
+
+        origin: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.origin, Unset):
+            origin = self.origin.to_dict()
 
         workarea: str | Unset
         if isinstance(self.workarea, Unset):
@@ -134,6 +144,8 @@ class SupersedeRequest:
         )
         if anchor is not UNSET:
             field_dict["anchor"] = anchor
+        if origin is not UNSET:
+            field_dict["origin"] = origin
         if workarea is not UNSET:
             field_dict["workarea"] = workarea
         if retirement is not UNSET:
@@ -161,6 +173,7 @@ class SupersedeRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.anchor import Anchor
         from ..models.guardrail_rule import GuardrailRule
+        from ..models.origin import Origin
 
         d = dict(src_dict)
         body = d.pop("body")
@@ -173,6 +186,13 @@ class SupersedeRequest:
             anchor = UNSET
         else:
             anchor = Anchor.from_dict(_anchor)
+
+        _origin = d.pop("origin", UNSET)
+        origin: Origin | Unset
+        if isinstance(_origin, Unset):
+            origin = UNSET
+        else:
+            origin = Origin.from_dict(_origin)
 
         def _parse_workarea(data: object) -> str | Unset:
             if isinstance(data, Unset):
@@ -223,6 +243,7 @@ class SupersedeRequest:
             body=body,
             expected_version=expected_version,
             anchor=anchor,
+            origin=origin,
             workarea=workarea,
             retirement=retirement,
             kind=kind,

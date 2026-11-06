@@ -169,6 +169,8 @@ struct WriteArgs {
     valid_until: Option<String>,
     /// The origin the author declares (ADR-0057 d1).
     anchor: Option<Value>,
+    /// What kind of source the text came from (ADR-0063 d1, d2).
+    origin: Option<Value>,
 }
 
 /// The successor kinds `oml_write` takes with `replaces`: no vocabulary
@@ -209,11 +211,14 @@ struct ReadArgs {
     /// The origin filters, in recall and listing modes (ADR-0057 d4).
     anchor_repo: Option<String>,
     anchor_path_prefix: Option<String>,
+    /// The kind filter, in recall and listing modes (ADR-0063 d3).
+    origin_kinds: Option<Vec<String>>,
 }
 
 /// `oml_read`'s modes and the arguments each takes (ADR-0039 d4).
 const READ_GET: [&str; 1] = ["artifact_id"];
-const READ_RECALL: [&str; 12] = [
+const READ_RECALL: [&str; 13] = [
+    "origin_kinds",
     "query",
     "workarea",
     "k",
@@ -227,7 +232,8 @@ const READ_RECALL: [&str; 12] = [
     "anchor_repo",
     "anchor_path_prefix",
 ];
-const READ_LISTING: [&str; 11] = [
+const READ_LISTING: [&str; 12] = [
+    "origin_kinds",
     "anchor_repo",
     "anchor_path_prefix",
     "own",
@@ -567,6 +573,7 @@ where
                 ("valid_until", args.valid_until.map(Value::from)),
                 ("expected_version", args.expected_version),
                 ("anchor", args.anchor),
+                ("origin", args.origin),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -606,6 +613,7 @@ where
                 ("valid_from", args.valid_from.map(Value::from)),
                 ("valid_until", args.valid_until.map(Value::from)),
                 ("anchor", args.anchor),
+                ("origin", args.origin),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -694,6 +702,7 @@ where
             ("now", args.now.is_some()),
             ("anchor_repo", args.anchor_repo.is_some()),
             ("anchor_path_prefix", args.anchor_path_prefix.is_some()),
+            ("origin_kinds", args.origin_kinds.is_some()),
         ];
         if let Some((field, _)) = sent
             .iter()
@@ -749,6 +758,7 @@ where
                     "anchor_path_prefix",
                     args.anchor_path_prefix.map(Value::from),
                 ),
+                ("origin_kinds", args.origin_kinds.clone().map(Value::from)),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -779,6 +789,7 @@ where
                 ("cursor", args.cursor),
                 ("anchor_repo", args.anchor_repo),
                 ("anchor_path_prefix", args.anchor_path_prefix),
+                ("origin_kinds", args.origin_kinds.map(|k| k.join(","))),
             ] {
                 if let Some(value) = value {
                     params.push((name.to_owned(), value));
@@ -893,6 +904,8 @@ fn claim_item(m: &Value) -> Map<String, Value> {
         ("version", "version"),
         ("kind", "kind"),
         ("state", "state"),
+        // True exactly when the version is held (ADR-0030 d4).
+        ("unreviewed", "unreviewed"),
         ("tip", "tip"),
         ("retirement", "retirement"),
         ("replaces", "replaces"),
@@ -904,6 +917,7 @@ fn claim_item(m: &Value) -> Map<String, Value> {
         ("valid_from", "valid_from"),
         ("valid_until", "valid_until"),
         ("anchor", "anchor"),
+        ("origin", "origin"),
         ("stale", "stale"),
         ("source_checked", "source_checked"),
     ]

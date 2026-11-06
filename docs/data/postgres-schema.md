@@ -1156,6 +1156,13 @@ CREATE TABLE artifact_keys (
 );
 ```
 
+As built by migration 0031 (ADR-0060 d6), the lake writer creates the row when it first
+materializes a version, with `created_at` and the check that `wrapped_dek` is NULL exactly
+when `destroyed_at` is set, and on `lifecycle.erase` nulls the key. Its sibling,
+`lake_dead_letter (tenant_id, outbox_seq, lake_table, reason, at, repaired_at)`, records an
+outbox row a lake table skipped (ADR-0060 d14). Both have row security and no serving-role
+grant.
+
 The erase transaction journals the erase event, sets `wrapped_dek` to NULL and `destroyed_at`, and
 removes plaintext-derived index rows (FTS, embeddings) in the same commit. Ciphertext copies
 elsewhere (lake parquet versions, object-store versions, Postgres backups) become unreadable, not
@@ -1807,6 +1814,22 @@ against 0.17 ms at 45,000 held
 ([ADR-0055](../adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
 d9).
 
+
+### Origin kind (0029, 0030)
+
+```sql
+ALTER TABLE memories ADD COLUMN origin_kind text;  -- repo, doc, code, lake, chat, web, manual
+CREATE INDEX memories_origin_kind ON memories (tenant_id, origin_kind)
+    WHERE origin_kind IS NOT NULL AND origin_kind <> 'manual';
+```
+
+`origin_kind` holds the kind the version's submission event signed, written at capture and never
+updated; a check keeps it to the closed set. Versions written before 0029 hold `NULL` and are never
+backfilled, so every kind filter leaves them out. The filter is one more predicate of the origin
+filters, in the candidate statement before ranking's cut. 0029 adds the column and the check
+`NOT VALID` in one transaction; 0030 runs outside any transaction, validating the check under SHARE
+UPDATE EXCLUSIVE and building the empty partial index, so reads and writes go on during the scan ([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md) d1-d3). The number
+0029 follows 0026 to 0028, which the other v0.6.0 lanes use.
 
 ### Source anchors and source checks (0025)
 

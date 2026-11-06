@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.anchor import Anchor
     from ..models.guardrail_rule import GuardrailRule
+    from ..models.origin import Origin
 
 
 T = TypeVar("T", bound="SubmitRequest")
@@ -68,6 +69,10 @@ class SubmitRequest:
                 shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither.
                 Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path
                 or fragment is submission.scan_veto.
+            origin (Origin | Unset): What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission
+                event, immutable per version, never inherited by a successor. Omitted on a write, it is recorded manual. chat
+                requires a chat anchor and a chat anchor requires chat; either mismatch is request.validation naming
+                /origin/kind.
     """
 
     body: str
@@ -82,6 +87,7 @@ class SubmitRequest:
     derives_from: list[str] | Unset = UNSET
     on_similar: SubmitRequestOnSimilar | Unset = UNSET
     anchor: Anchor | Unset = UNSET
+    origin: Origin | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -127,6 +133,10 @@ class SubmitRequest:
         if not isinstance(self.anchor, Unset):
             anchor = self.anchor.to_dict()
 
+        origin: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.origin, Unset):
+            origin = self.origin.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -156,6 +166,8 @@ class SubmitRequest:
             field_dict["on_similar"] = on_similar
         if anchor is not UNSET:
             field_dict["anchor"] = anchor
+        if origin is not UNSET:
+            field_dict["origin"] = origin
 
         return field_dict
 
@@ -163,6 +175,7 @@ class SubmitRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.anchor import Anchor
         from ..models.guardrail_rule import GuardrailRule
+        from ..models.origin import Origin
 
         d = dict(src_dict)
         body = d.pop("body")
@@ -224,6 +237,13 @@ class SubmitRequest:
         else:
             anchor = Anchor.from_dict(_anchor)
 
+        _origin = d.pop("origin", UNSET)
+        origin: Origin | Unset
+        if isinstance(_origin, Unset):
+            origin = UNSET
+        else:
+            origin = Origin.from_dict(_origin)
+
         submit_request = cls(
             body=body,
             verb=verb,
@@ -237,6 +257,7 @@ class SubmitRequest:
             derives_from=derives_from,
             on_similar=on_similar,
             anchor=anchor,
+            origin=origin,
         )
 
         submit_request.additional_properties = d

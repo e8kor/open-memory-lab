@@ -317,24 +317,13 @@ pub fn check_repo(repo: &str) -> Result<(), String> {
     }
 }
 
-/// Whether any component of a path matches the client's secret patterns,
-/// which a run refuses to read (ADR-0057 d6, ADR-0047 d3): `.env*`,
-/// `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `id_*`,
-/// `*credentials*`, `*secret*`, `.npmrc`, `.netrc`, `.pgpass`,
-/// `.htpasswd`. A directory so named hides every file under it.
+/// Whether any component of a path matches the secret patterns, which a
+/// run refuses to read (ADR-0057 d6, ADR-0047 d3): the one list `oml-scan`
+/// keeps and the server's anchor scan applies (ADR-0065 d4). A directory so
+/// named hides every file under it.
 #[must_use]
 pub fn is_secret_shaped(path: &str) -> bool {
-    path.split('/').any(|part| {
-        let name = part.to_lowercase();
-        name.starts_with(".env")
-            || [".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"]
-                .iter()
-                .any(|ext| name.ends_with(ext))
-            || name.starts_with("id_")
-            || name.contains("credentials")
-            || name.contains("secret")
-            || matches!(name.as_str(), ".npmrc" | ".netrc" | ".pgpass" | ".htpasswd")
-    })
+    oml_scan::secret_path(path)
 }
 
 /// Whether a repository-relative path matches an `--exclude` glob: `**`

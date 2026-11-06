@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design, 0.5.6-design, 0.5.7-design and 0.5.8-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design, 0.5.6-design, 0.5.7-design, 0.5.8-design and 0.6.0-design and the unreleased 0.6.0-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.5.8-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.6.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -26,6 +26,80 @@ implementation milestone where it changes what the repository holds.
   starting with `spec-v0.1` at implementation start, so an implementation can state exactly which
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
+
+## 0.6.0-design
+
+Opened for release v0.6.0, which carries this revision: [ADR-0030](adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md), [ADR-0050](adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found.md), [ADR-0058](adr/ADR-0058-the-public-server-runs-to-stated-slos-with-an-error-budget-and-without-backups-until-a-second-person-stores-data.md), [ADR-0059](adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md), [ADR-0060](adr/ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md), [ADR-0063](adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md) and [ADR-0065](adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md), each accepted and introduced in v0.6.0.
+
+What changes for someone using OML:
+
+- **In-progress workareas.** Inside a development workarea that opts in, readers recall memories still waiting for review, marked `unreviewed`; reads from outside see nothing of it, and a commit needs zero memories waiting. A key with the `curator` profile may only narrow inside one.
+- **Chat memory.** Every memory says what kind of source it came from (`origin.kind`), recall and the listings filter on it, and a person's chat workarea holds the facts an opted-in agent writes from a conversation.
+- **Valid time.** A write may state `valid_from` and `valid_until`; recall hides what has ended unless `include_expired` is set; `bm25-postings-time` is an opt-in pipeline that searches the dates a query names.
+- **Near-duplicate checks.** A write lists the memories you may read that hold its text or a near copy, and `on_similar: refuse` writes nothing instead.
+- **The real secret scanner.** `oml-scan/1` vetoes leaked provider tokens, key-value secrets, URL credentials and private keys, and holds injection attempts and hidden Unicode; `oml admin rescan` reports what it finds in memories already stored, changing nothing.
+- **The Delta lake writer.** A separate binary, `oml-lakewriter` (a release archive for x86_64 and aarch64 Linux, gnu), reads the outbox and writes per-tenant Delta tables under its own Postgres role; it is not part of `oml-server-lead` or the CLI, and runs as its own service (see [the lake](operations/lake.md)).
+- **Production.** The public server's SLOs, error budget and runbook are in [production](operations/production.md).
+- **Breaking changes.** None for callers of the v0.5.8 API. Recall and the write verbs gain optional fields only, and the one new route is `GET /v2/admin/rescan`.
+- **Migrations.** 0026 (valid time), 0027 (similar keys, which fills every existing version in one statement per tenant while it holds a lock on `memories`, so writes wait for the fill), 0028 (workarea mode and key profile), 0029 and 0030 (origin kind) and 0031 (lake writer tables) run at upgrade.
+
+### 2026-11-05 — Chat memory and origin kinds (ADR-0063, proposed)
+
+What changes for someone using OML: every memory says what kind of source it came from, recall
+can be narrowed to what a person said or to what documents say, and an opted-in agent writes the
+facts a conversation settled into the person's own chat workarea, held until they review them.
+
+- `info.version` is `0.6.0-design`. `SubmitRequest` and `SupersedeRequest` gain `origin`;
+  `RecallRequest` and `GET /v1/memories` gain `origin_kinds`; `MemorySummary` gains `origin`; the
+  `Anchor` schema admits a `chat://` uri and the `oml-turn/1` hasher. No error code is added.
+- `oml_write` gains `origin`, `oml_read` gains `origin_kinds`; the catalog stays three tools.
+- `submission.remember` and `submission.learn` carry `origin`. Migration 0030 adds
+  `memories.origin_kind` and `memories_origin_kind`.
+- The CLI gains `oml chat init`, `--origin-kind` on `oml write` and `oml read`, and the hook verbs
+  `user-prompt`, `stop` and `pre-compact`; the plugin gains their three hooks, the
+  `oml-chat-capture` skill and the `chat_workarea` option.
+
+Engineering practices (process only, no behaviour change): a number registry (`docs/NUMBERS.md`,
+`scripts/reserve_number.py`) with a CI check that no pull request introduces an ADR, FR or
+migration number reserved by another branch; a pre-review checklist; lints for migrations, port
+5432 defaults and LIKE in candidate SQL; changelog fragments in `changes/`; a weekly dependency
+pass; and lane hygiene notes in `CONTRIBUTING.md`.
+
+### 2026-11-05 — the deterministic scan's rule set (ADR-0065, proposed)
+
+- **[ADR-0065](adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md)** replaces the marker scanner with `oml-scan/1`, a compiled-in,
+  versioned rule set in a leaf crate: provider tokens, key-value secrets above an entropy floor,
+  URL credentials and private keys veto; instructions aimed at the reader, bidirectional and
+  invisible Unicode and long base64 runs hold; personal-data rules exist and stay off. One
+  secret-shaped path list serves the anchor scan and `oml sync`. A finding names its class, rule,
+  field and line, never what it matched. `scan.scanner_version` carries the rule set, and the
+  findings metric counts by rule. `/readyz` and `oml doctor` name the rule set, its rule count
+  and the personal-data setting; `GET /v2/admin/rescan` and `oml admin rescan` report what the
+  rule set finds in versions already stored, by rule and place, changing nothing (d13). The
+  per-tenant personal-data setting is FR-180, and the rescan's window is FR-181.
+- After review: each rule runs as its own regex, with the base64 and AWS-pair rules counted by
+  hand, so a mebibyte scans in about 13 ms rather than 5 s, and a field over 64 KiB is scanned off
+  the async worker. Claim keys and verdict reasons are scanned (d7). Key assignments need an
+  operator and a value that is not a written identifier. JSON `Authorization` headers,
+  `curl -u`, legacy `sk-` keys and a bare AWS secret beside its key id are vetoed. Provider tokens
+  glued to a word are found. The veto rules also read a normalised view (d14). The gitleaks
+  notice ships as `LICENSES/gitleaks-MIT.txt`. The path list no longer refuses `id_generator.rs`,
+  `.env.example` or this record, which was renamed so its file name holds no `secret`.
+- Pages touched: [admission](architecture/admission.md) (the registry's new classes and the
+  measured pass), [errors](api/errors.md) (`details.finding`'s shape),
+  [workspace plan](engineering/workspace-plan.md) (the second leaf crate),
+  [HTTP API](api/http-api.md) and [OpenAPI](api/openapi.yaml) (the rescan route and `/readyz`'s
+  `scan`), and the [roadmap](product/roadmap.md) (FR-180, FR-181).
+
+- **An in-progress workarea serves unreviewed memories inside it, and nothing leaves until a person commits it** ([ADR-0030](adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) r2). A person's key puts a workarea in progress; inside it a recall may include the unreviewed memories of its curators, and a commit with zero unreviewed memories is what lets them out. Keys gain a `curator` profile. Migration 0028 adds `workareas.mode` and `api_keys.profile`; both default to today's behaviour.
+
+- **The lake writer** ([ADR-0060](adr/ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md)). `oml-lakewriter` drains the outbox into per-tenant Delta tables under its own Postgres role and a single-writer lease, seals each claim version's body under its own key, destroys that key on erase, and answers the operator's named queries; no client reads the lake. The writer holds the lake KEK (amends ADR-0005 d1): the file must be owner-only, `keygen --rotate` re-wraps the data keys and retires the old version, and `doctor` prints `lake.kek`. The C library aws-lc is linked into this binary alone (an ADR-0006 exception). Migration 0032 adds `artifact_keys` and `lake_dead_letter`.
+
+- **The public server runs to stated SLOs, with an error budget** ([ADR-0058](adr/ADR-0058-the-public-server-runs-to-stated-slos-with-an-error-budget-and-without-backups-until-a-second-person-stores-data.md)). The SLOs, the error budget and the days the server runs without backups (until a second person stores data) are stated, and [production operations](operations/production.md) holds the runbook for memory.doublegate.io. Documentation only; no behaviour changes.
+
+- **Remembering checks what is already held** ([ADR-0050](adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found.md)). Every write looks up the memories the writer may read that hold the same text or a near copy (90% of its words) and lists them in `similar`; `on_similar: refuse` writes nothing and answers `submission.similar_exists` instead. Migration 0027 adds the integer keys the lookup reads and fills them for every existing version, one statement per tenant.
+
+- **A memory states when it is true, and recall hides what has ended** ([ADR-0059](adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md)). A submission or a supersession may carry `valid_from` and `valid_until`; recall hides a memory whose end has passed unless the caller sets `include_expired` or names a `now`; a ratified supersession ends the version it replaces; and the opt-in `bm25-postings-time` pipeline searches the dates a query names with the `oml-when/1` parser, no model involved. Migration 0026 adds the columns.
 
 ## 0.5.8-design
 

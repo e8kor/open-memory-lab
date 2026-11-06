@@ -39,6 +39,10 @@ use crate::search::{
 /// surfaces to a concurrent writer (ADR-0002: one chain head, one assigner).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
+    /// An in-progress commit found a held version on its subtree inside
+    /// the committing transaction; the commit wrote nothing (ADR-0030 d6).
+    #[error("a version in the committed subtree is still held")]
+    HeldRemaining,
     #[error("chain head moved: expected seq {expected_seq}, commit carries seq {found_seq}")]
     SeqConflict { expected_seq: u64, found_seq: u64 },
     #[error("prev_hash does not match the stored head at seq {seq}")]
@@ -187,6 +191,17 @@ pub enum MetadataFold {
     WorkareaCrewUpdated {
         workarea_id: Uuid,
         crew_id: Uuid,
+    },
+    /// `workarea.mode_set`: the node's `mode` is now `in_progress` or
+    /// `standard` (ADR-0030 d1); the store refuses a node it does not hold.
+    ///
+    /// `held_free`, on a commit, names the subtree's nodes: the store refuses
+    /// the commit with [`StoreError::HeldRemaining`] when any version on
+    /// them is held, tested in the committing transaction (d6).
+    WorkareaModeSet {
+        workarea_id: Uuid,
+        in_progress: bool,
+        held_free: Vec<Uuid>,
     },
     /// `system.names_assigned`: each listed row of the commit's tenant, and
     /// the tenant itself, takes the name the event assigns, every workarea's
@@ -855,6 +870,15 @@ pub trait JournalStore: Retriever + Send + Sync {
         workarea_id: Uuid,
         claim_key: &str,
     ) -> impl Future<Output = Result<ClaimKeyState, StoreError>> + Send;
+
+    /// How many versions on `nodes` are in state `held`, dead-lettered ones
+    /// included: the commit's precondition and doctor's count (ADR-0030 d6,
+    /// d14).
+    fn held_count(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
 
     /// How many promoted served tips on `workarea_id` itself read `stale`:
     /// their latest source check found the source `changed` or `removed`
@@ -1638,9 +1662,65 @@ pub enum ScanOutcome {
     Veto(String),
 }
 
+/// One finding as the rescan reports it (ADR-0065 d13): the class, the
+/// rule, whether it vetoes, and where in the scanned text it fired — never
+/// what it matched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScanFinding {
+    pub class: String,
+    pub rule: String,
+    pub veto: bool,
+    /// The field and line inside the scanned text, `/body line 3`.
+    pub at: String,
+}
+
+/// What a scanner says about itself, for `/readyz` and doctor's scan line
+/// (ADR-0065 d11): its version, how many rules it loaded, and whether the
+/// personal-data rules are on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannerInfo {
+    pub version: &'static str,
+    pub rules: usize,
+    pub pii: bool,
+}
+
 /// The scanner port: deterministic, synchronous, in-process (admission.md).
 pub trait Scanner: Send + Sync {
     fn scan(&self, envelope: &AdmissionEnvelope<'_>) -> ScanOutcome;
+
+    /// The rule-set version every verdict is journalled under, the
+    /// submission event's `scan.scanner_version` (ADR-0065 d1; ADR-0019 d4);
+    /// `None` for a scanner that pins none, as the test doubles do.
+    fn version(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Every finding in the envelope's text, counting nothing (ADR-0065
+    /// d13). A scanner that reports only its outcome answers one finding
+    /// whose class and rule are its reason.
+    fn findings(&self, envelope: &AdmissionEnvelope<'_>) -> Vec<ScanFinding> {
+        match self.scan(envelope) {
+            ScanOutcome::Pass => Vec::new(),
+            ScanOutcome::Hold(reason) => vec![ScanFinding {
+                class: reason.clone(),
+                rule: reason,
+                veto: false,
+                at: String::new(),
+            }],
+            ScanOutcome::Veto(reason) => vec![ScanFinding {
+                class: reason.clone(),
+                rule: reason,
+                veto: true,
+                at: String::new(),
+            }],
+        }
+    }
+
+    /// The scanner's version, rule count and personal-data setting, or
+    /// `None` for one that pins no rule set.
+    fn info(&self) -> Option<ScannerInfo> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -1695,6 +1775,12 @@ pub trait RequestObserver: Send + Sync {
         let _ = (pipeline, result, seconds);
     }
 
+    /// The `origin.kind` of each hit a recall served, `none` for a version
+    /// written before kinds (ADR-0063 d13). Telling no one is the default.
+    fn recall_hits_by_origin(&self, kinds: &[&'static str]) {
+        let _ = kinds;
+    }
+
     /// A write's similar check named rows of `relation` at best (`none`,
     /// `same_text` or `near_copy`) under `on_similar` (`hold` or
     /// `refuse`), in `seconds` (ADR-0050 d1; ADR-0054 d1). Telling no one
@@ -1715,6 +1801,22 @@ pub trait RequestObserver: Send + Sync {
     /// default.
     fn verdict(&self, verdict: &'static str, waited_seconds: f64) {
         let _ = (verdict, waited_seconds);
+    }
+
+    /// A recall served `n` hits labelled `unreviewed` (ADR-0030 d5).
+    fn unreviewed_hits(&self, n: u64) {
+        let _ = n;
+    }
+
+    /// A person's key set a workarea's mode (ADR-0030 d5).
+    fn mode_set(&self, mode: &'static str) {
+        let _ = mode;
+    }
+
+    /// A curator key committed an act: `reject`, `retire`, `flag` or
+    /// `write` (ADR-0030 d5, d9).
+    fn curation(&self, act: &'static str) {
+        let _ = act;
     }
 }
 

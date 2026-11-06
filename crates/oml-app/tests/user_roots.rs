@@ -84,6 +84,7 @@ fn node_grant(node: Reference, role: Role) -> GrantRequest {
 
 fn user_req(role: Role, user: &str, principal: &str, grants: Vec<GrantRequest>) -> IssueKeyRequest {
     IssueKeyRequest {
+        profile: None,
         role,
         name: fresh_key_name(),
         principal: principal.to_owned(),
@@ -180,6 +181,7 @@ fn submit(idem: &str, body: &str, workarea: Option<&str>) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
         anchor: None,
+        origin: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -217,7 +219,7 @@ fn recall(query: &str, workarea: Option<&str>) -> RecallRequest {
         workarea: workarea.map(by_name),
         kinds: Vec::new(),
         include_text: true,
-        include_unreviewed: false,
+        include_unreviewed: Some(false),
         max_tokens: None,
         search: None,
         match_mode: oml_app::search::MatchMode::Any,

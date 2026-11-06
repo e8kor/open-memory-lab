@@ -63,6 +63,7 @@ jobs:
       - run: python scripts/check_changelog_fragment.py --base origin/main
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          HEAD_REF: ${{ github.head_ref }}
 
   lints:
     name: migration, port 5432 and LIKE lints

@@ -64,6 +64,7 @@ async fn issue(app: &TestApp, admin: &str, role: Role, grants: Vec<GrantRequest>
     app.issue_key(
         admin,
         &IssueKeyRequest {
+            profile: None,
             role,
             name: name(&format!("rerank-key-{n}")),
             principal: format!("principal-{n}"),
@@ -145,6 +146,7 @@ fn submit(idem: &str, body: &str, workarea: Option<Uuid>) -> SubmitRequest {
     SubmitRequest {
         on_similar: Default::default(),
         anchor: None,
+        origin: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -192,7 +194,7 @@ fn recall(query: &str) -> RecallRequest {
         workarea: None,
         kinds: Vec::new(),
         include_text: true,
-        include_unreviewed: false,
+        include_unreviewed: Some(false),
         max_tokens: None,
         search: None,
         match_mode: MatchMode::Any,
@@ -297,7 +299,7 @@ async fn an_own_held_row_is_reranked_by_the_same_function_as_a_promoted_one() {
             &w.writer,
             &RecallRequest {
                 timings: false,
-                include_unreviewed: true,
+                include_unreviewed: Some(true),
                 ..recall("rotate signing key")
             },
         )

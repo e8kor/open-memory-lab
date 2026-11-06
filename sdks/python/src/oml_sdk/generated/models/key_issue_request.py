@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 
 from ..models.guardrail_scope import GuardrailScope
 from ..models.key_issue_request_held_by import KeyIssueRequestHeldBy
+from ..models.key_issue_request_profile import KeyIssueRequestProfile
 from ..models.role import Role
 from ..types import UNSET, Unset
 
@@ -50,6 +51,9 @@ class KeyIssueRequest:
             alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted,
             journalled in key.issued; no request changes it, and any other value is request.validation, details.field
             /guardrail_scope (ADR-0037 d4; since v0.5.1).
+        profile (KeyIssueRequestProfile | Unset): curator: a dreamer key held by an agent that may reject, propose
+            retirements and summaries, and flag contradictions inside an in-progress workarea only, and never approves; any
+            other role or held_by is request.validation, details.field /profile (ADR-0030 d8, d9).
         connect_code (bool | Unset): Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries
             connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role),
             held_by service (held_by_service), or a deployment without oauth.issuer (not_configured). Default: False.
@@ -65,6 +69,7 @@ class KeyIssueRequest:
     label: str | Unset = UNSET
     principal: str | Unset = UNSET
     guardrail_scope: GuardrailScope | Unset = UNSET
+    profile: KeyIssueRequestProfile | Unset = UNSET
     connect_code: bool | Unset = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -105,6 +110,10 @@ class KeyIssueRequest:
         if not isinstance(self.guardrail_scope, Unset):
             guardrail_scope = self.guardrail_scope.value
 
+        profile: str | Unset = UNSET
+        if not isinstance(self.profile, Unset):
+            profile = self.profile.value
+
         connect_code = self.connect_code
 
         field_dict: dict[str, Any] = {}
@@ -131,6 +140,8 @@ class KeyIssueRequest:
             field_dict["principal"] = principal
         if guardrail_scope is not UNSET:
             field_dict["guardrail_scope"] = guardrail_scope
+        if profile is not UNSET:
+            field_dict["profile"] = profile
         if connect_code is not UNSET:
             field_dict["connect_code"] = connect_code
 
@@ -188,6 +199,13 @@ class KeyIssueRequest:
         else:
             guardrail_scope = GuardrailScope(_guardrail_scope)
 
+        _profile = d.pop("profile", UNSET)
+        profile: KeyIssueRequestProfile | Unset
+        if isinstance(_profile, Unset):
+            profile = UNSET
+        else:
+            profile = KeyIssueRequestProfile(_profile)
+
         connect_code = d.pop("connect_code", UNSET)
 
         key_issue_request = cls(
@@ -201,6 +219,7 @@ class KeyIssueRequest:
             label=label,
             principal=principal,
             guardrail_scope=guardrail_scope,
+            profile=profile,
             connect_code=connect_code,
         )
 

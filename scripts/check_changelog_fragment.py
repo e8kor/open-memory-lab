@@ -4,7 +4,8 @@
     python scripts/check_changelog_fragment.py [--base origin/main]
 
 The label `no-changelog` on the pull request skips the check; CI passes the labels in
-PR_LABELS (comma separated).
+PR_LABELS (comma separated). A release branch (`release/*`, named in HEAD_REF) passes when it
+assembles the fragments into docs/changelog.md, since that deletes them rather than adding one.
 """
 from __future__ import annotations
 
@@ -23,8 +24,10 @@ def changed(root: str, base: str) -> list[tuple[str, str]]:
     return [tuple(l.split("\t", 1)) for l in out.splitlines() if "\t" in l]
 
 
-def verdict(files: list[tuple[str, str]], labels: list[str]) -> str | None:
+def verdict(files: list[tuple[str, str]], labels: list[str], head_ref: str = "") -> str | None:
     if "no-changelog" in labels:
+        return None
+    if head_ref.startswith("release/") and any(p == "docs/changelog.md" for _, p in files):
         return None
     if not any(p.startswith(NEEDS) for _, p in files):
         return None
@@ -39,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--root", default=".")
     a = ap.parse_args(argv)
     labels = [l.strip() for l in os.environ.get("PR_LABELS", "").split(",")]
-    msg = verdict(changed(a.root, a.base), labels)
+    msg = verdict(changed(a.root, a.base), labels, os.environ.get("HEAD_REF", ""))
     print(f"changelog: {msg or 'ok'}")
     return 1 if msg else 0
 

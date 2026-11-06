@@ -6,11 +6,13 @@
 //! (ADR-0025 d1).
 
 mod pages;
+mod rescan;
 mod search;
 mod sparse;
 mod usage;
 mod web;
 pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
+pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
@@ -40,6 +42,10 @@ use oml_domain::guardrail::{
     self, GuardrailScope, LOAD_WARNING, OWN_HELD_MAX_LINES, SET_CAP, Severity, conflicts,
     guardrail_order, set_digest,
 };
+use oml_domain::in_progress::{
+    self as in_progress, CuratorAct, CuratorRefusal, InProgressReason, KeyProfile, WorkareaMode,
+    admissible_roles, crosses_into, curator_scope, curator_verb, may_set_mode, profile_admits,
+};
 use oml_domain::name::{
     Assignment, CrewObject, Name, NamedKind, Namespace, Naming, Reference, UNIVERSE, UnnamedRow,
     assign_names, unresolved_qualified, unresolved_value,
@@ -55,6 +61,7 @@ use oml_domain::oauth::{
     decide_refresh, open_request, refresh_token_digest, select_redirect, token_kind,
     validate_document, validate_registration,
 };
+use oml_domain::origin::OriginKind;
 use oml_domain::similar::{
     Fingerprint, MAX_CANDIDATES as SIMILAR_MAX_CANDIDATES, MAX_LISTED as SIMILAR_MAX_LISTED,
     Relation, relate,
@@ -269,6 +276,24 @@ impl Caller {
     }
 }
 
+/// The served node set of a scoped read (ADR-0030 d2), the nodes of it
+/// inside the scope's in-progress root, where every author's held memories
+/// are served (d3), and that root.
+struct ServedNodes {
+    nodes: Vec<Uuid>,
+    inside: Vec<Uuid>,
+    scope_root: Option<Uuid>,
+}
+
+/// Whether a held version may be served unreviewed inside an in-progress
+/// subtree: a memory or derived fact, never a retirement version (ADR-0030
+/// d3).
+fn served_unreviewed(m: &MemoryRecord) -> bool {
+    m.status == MemoryStatus::Held
+        && !m.retirement
+        && matches!(m.kind, MemoryKind::Memory | MemoryKind::DerivedFact)
+}
+
 /// How an issuance runs once its issuer is known (ADR-0045 d6, d16).
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Issuance<'a> {
@@ -307,13 +332,29 @@ fn require_role(key: &KeyRecord, role: Role, verb: &'static str) -> Result<(), A
 /// verb needs. It reads no node, so it runs before the workarea resolves
 /// (roles-and-keys.md grant admissibility and refusal order; ADR-0025 d1).
 fn require_admissible(key: &KeyRecord, needed: Role, verb: &'static str) -> Result<(), AppError> {
-    if admissible_grant_roles(key.role).contains(&needed) {
+    // A curator key reaches only the verbs that read or narrow (ADR-0030
+    // d9), before any lookup.
+    if key.profile == Some(KeyProfile::Curator) {
+        curator_verb(verb).map_err(|refusal| AppError::Curator { verb, refusal })?;
+    }
+    if admissible_roles(key.role, key.profile).contains(&needed) {
         Ok(())
     } else {
         Err(AppError::VerbCeiling {
             role: key.role,
             verb,
         })
+    }
+}
+
+/// The role the refusal order reads for `needed`: a curator key's writer
+/// grants confer the writer verbs, which a dreamer's ceiling would refuse
+/// (ADR-0030 d8).
+fn ceiling_role(key: &KeyRecord, needed: Role) -> Role {
+    if key.profile == Some(KeyProfile::Curator) && needed == Role::Writer {
+        Role::Writer
+    } else {
+        key.role
     }
 }
 
@@ -462,7 +503,37 @@ fn submit_request_digest(
         }
     }
     let doc = with_anchor(doc, req.anchor.as_ref());
+    let doc = with_origin(doc, req.origin);
     sha256_digest_string(doc.to_string().as_bytes())
+}
+
+/// The name of a person's chat workarea under their user root (ADR-0063
+/// d8).
+pub const CHAT_WORKAREA: &str = "chat";
+
+/// A request digest's document with `origin` when sent, and unchanged
+/// otherwise, so a request without one digests as it did before
+/// ADR-0063.
+fn with_origin(mut doc: Value, origin: Option<OriginKind>) -> Value {
+    if let (Some(kind), Some(members)) = (origin, doc.as_object_mut()) {
+        members.insert("origin".to_owned(), kind.to_json());
+    }
+    doc
+}
+
+/// The kind a submission records: as declared, `manual` when none was
+/// sent, after the two compositions with the anchor (ADR-0063 d2).
+fn recorded_origin(
+    origin: Option<OriginKind>,
+    anchor: Option<&Anchor>,
+) -> Result<OriginKind, AppError> {
+    let kind = origin.unwrap_or(OriginKind::Manual);
+    kind.check_with(anchor)
+        .map_err(|e| AppError::OriginInvalid {
+            field: e.field,
+            reason: e.reason,
+        })?;
+    Ok(kind)
 }
 
 /// A request digest's document with the anchor when sent, and unchanged
@@ -605,6 +676,7 @@ fn supersede_request_digest(req: &SupersedeRequest) -> Result<String, AppError> 
     if let Some(body) = doc.get_mut("body") {
         *body = with_guardrail_fields(body.take(), req.severity, req.rule.as_ref());
         *body = with_anchor(body.take(), req.anchor.as_ref());
+        *body = with_origin(body.take(), req.origin);
         if let Some(members) = body.as_object_mut() {
             for (name, value) in [
                 ("valid_from", &req.valid_from),
@@ -853,7 +925,7 @@ fn recall_query_digest(
         "k": req.k,
         "kinds": kinds,
         "include_bodies": req.include_text,
-        "include_own_held": req.include_unreviewed,
+        "include_own_held": req.include_unreviewed.unwrap_or(false),
         "max_tokens": req.max_tokens,
         "terms": [],
         "expand_terms": "none",
@@ -1214,6 +1286,13 @@ where
         Self { search, ..self }
     }
 
+    /// The scanner's version, rule count and personal-data setting, for
+    /// `/readyz` and doctor's scan line (ADR-0065 d11).
+    #[must_use]
+    pub fn scanner_info(&self) -> Option<crate::ports::ScannerInfo> {
+        self.scanner.info()
+    }
+
     /// The deployment's search settings.
     #[must_use]
     pub fn search_config(&self) -> &SearchConfig {
@@ -1510,8 +1589,12 @@ where
         verb: &'static str,
     ) -> Result<(), AppError> {
         let ancestry = self.ancestry(caller.key.tenant_id, node).await?;
-        resolve(caller.key.role, &caller.effective(&ancestry), needed)
-            .map_err(|refusal| access_refusal(refusal, node, verb))
+        resolve(
+            ceiling_role(&caller.key, needed),
+            &caller.effective(&ancestry),
+            needed,
+        )
+        .map_err(|refusal| access_refusal(refusal, node, verb))
     }
 
     /// Freeze as admission policy: `workarea.frozen` when the stored status
@@ -1548,8 +1631,18 @@ where
         if memory.author_key_id == caller.key.key_id {
             return Ok(!caller.denied(&ancestry));
         }
-        Ok(memory.status == MemoryStatus::Promoted
-            && caller.effective(&ancestry).contains(&Role::Reader))
+        let reader = caller.effective(&ancestry).contains(&Role::Reader);
+        if memory.status == MemoryStatus::Held && reader {
+            // Inside an in-progress subtree a reader reads another author's
+            // held memory, never a steering, guardrail or retirement version
+            // (ADR-0030 d3).
+            return Ok(served_unreviewed(memory)
+                && self
+                    .in_progress_root(caller.key.tenant_id, memory.workarea_id)
+                    .await?
+                    .is_some());
+        }
+        Ok(memory.status == MemoryStatus::Promoted && reader)
     }
 
     /// The served tip of `claim_key` in the workarea as a refusal may name it:
@@ -1712,6 +1805,144 @@ where
         Ok(nodes)
     }
 
+    /// An edge whose endpoints have different in-progress roots, or one and
+    /// none, crosses the boundary (ADR-0030 d7): `workarea.in_progress_refused`,
+    /// reason `edge_crosses`, naming the first endpoint's workarea.
+    async fn refuse_crossing_edge(
+        &self,
+        tenant_id: Uuid,
+        src: Uuid,
+        dst: Uuid,
+    ) -> Result<(), AppError> {
+        if self.in_progress_root(tenant_id, src).await?
+            != self.in_progress_root(tenant_id, dst).await?
+        {
+            return Err(AppError::InProgressRefused {
+                workarea_id: src,
+                reason: InProgressReason::EdgeCrosses,
+            });
+        }
+        Ok(())
+    }
+
+    /// A status transition on a node inside an in-progress subtree waits for
+    /// its commit (ADR-0030 d6): `workarea.in_progress_refused`, reason
+    /// `commit_first`.
+    async fn refuse_inside(&self, tenant_id: Uuid, node: Uuid) -> Result<(), AppError> {
+        match self.in_progress_root(tenant_id, node).await? {
+            Some(_) => Err(AppError::InProgressRefused {
+                workarea_id: node,
+                reason: InProgressReason::CommitFirst,
+            }),
+            None => Ok(()),
+        }
+    }
+
+    /// The node's in-progress root, or `None` (ADR-0030 d1).
+    async fn in_progress_root(
+        &self,
+        tenant_id: Uuid,
+        node: Uuid,
+    ) -> Result<Option<Uuid>, AppError> {
+        let marks: Vec<(Uuid, bool, bool)> = self
+            .journal
+            .workarea_ancestry(tenant_id, node)
+            .await?
+            .unwrap_or_default()
+            .iter()
+            .map(|w| {
+                (
+                    w.workarea_id,
+                    w.in_progress,
+                    w.status == WorkareaStatus::Development,
+                )
+            })
+            .collect();
+        Ok(in_progress::in_progress_root_of(&marks))
+    }
+
+    /// Each node of subtree(`top`) with its in-progress root, parent before
+    /// child (ADR-0030 d1).
+    async fn subtree_roots(
+        &self,
+        tenant_id: Uuid,
+        top: Uuid,
+    ) -> Result<BTreeMap<Uuid, Option<Uuid>>, AppError> {
+        let mut roots = BTreeMap::new();
+        let top_root = self.in_progress_root(tenant_id, top).await?;
+        for node in self.journal.workarea_subtree(tenant_id, top).await? {
+            // A node that is not `development` is never inside, nor is
+            // anything beneath it (ADR-0030 d3).
+            let root = if node.status != WorkareaStatus::Development {
+                None
+            } else if node.in_progress {
+                Some(node.workarea_id)
+            } else if node.workarea_id == top {
+                top_root
+            } else {
+                node.parent_id
+                    .and_then(|p| roots.get(&p).copied().flatten())
+            };
+            roots.insert(node.workarea_id, root);
+        }
+        Ok(roots)
+    }
+
+    /// The served node set of a read scoped at `scope` (ADR-0030 d2): the
+    /// nodes of subtree(scope) where the caller reads, less every node whose
+    /// in-progress root differs from the scope's; with the scope's root.
+    async fn served_nodes(&self, caller: &Caller, scope: Uuid) -> Result<ServedNodes, AppError> {
+        let tenant_id = caller.key.tenant_id;
+        let nodes = self.nodes_with(caller, scope, Role::Reader).await?;
+        let roots = self.subtree_roots(tenant_id, scope).await?;
+        let scope_root = roots.get(&scope).copied().flatten();
+        let mut served = ServedNodes {
+            nodes: Vec::with_capacity(nodes.len()),
+            inside: Vec::new(),
+            scope_root,
+        };
+        for node in nodes {
+            let root = roots.get(&node).copied().flatten();
+            if crosses_into(scope_root, root) {
+                continue;
+            }
+            // Inside the scope's root, every node of which is development;
+            // a committed or validated node, and anything under one, never
+            // is (d3).
+            if root.is_some() {
+                served.inside.push(node);
+            }
+            served.nodes.push(node);
+        }
+        Ok(served)
+    }
+
+    /// A curator act on a row or target on `node` (ADR-0030 d9): inside an
+    /// in-progress subtree only, and never on what the curator's key or
+    /// principal authored or derived from (R2 per key and principal).
+    async fn curator_may_act(
+        &self,
+        key: &KeyRecord,
+        verb: &'static str,
+        node: Uuid,
+        subject: Option<&MemoryRecord>,
+    ) -> Result<(), AppError> {
+        if key.profile != Some(KeyProfile::Curator) {
+            return Ok(());
+        }
+        curator_scope(self.in_progress_root(key.tenant_id, node).await?)
+            .map_err(|refusal| AppError::Curator { verb, refusal })?;
+        if let Some(m) = subject
+            && (m.author_key_id == key.key_id
+                || m.author_principal == key.principal
+                || m.lineage_key_ids.contains(&key.key_id)
+                || m.lineage_principals.contains(&key.principal))
+        {
+            return Err(AppError::AuthorInLineage);
+        }
+        Ok(())
+    }
+
     /// Every node where dreamer is effective for the caller: the union over
     /// its dreamer grants' subtrees, a row outside which is never served
     /// (ADR-0025 d1).
@@ -1844,6 +2075,7 @@ where
             (Credential::Bearer, format!("oml_{}", base62_43(&secret)))
         };
         let record = KeyRecord {
+            profile: req.profile,
             key_id: self.ids.new_id(),
             tenant_id,
             role: req.role,
@@ -1891,6 +2123,10 @@ where
         // (ADR-0045 d6).
         if let (Some(user), Some(obj)) = (&record.session_user, payload.as_object_mut()) {
             obj.insert("session_user".to_owned(), json!(user.as_str()));
+        }
+        // The profile, absent for a key with none (ADR-0030 d8).
+        if let (Some(profile), Some(obj)) = (record.profile, payload.as_object_mut()) {
+            obj.insert("profile".to_owned(), json!(profile.as_str()));
         }
         payload
     }
@@ -2101,6 +2337,7 @@ where
     /// d1, d2).
     async fn create_user_root(&self, issuer: &KeyRecord, user: &UserRoot) -> Result<(), AppError> {
         let workarea = WorkareaRecord {
+            in_progress: false,
             workarea_id: user.id,
             tenant_id: issuer.tenant_id,
             parent_id: Some(user.universe),
@@ -2206,6 +2443,7 @@ where
 
         let root_workarea_id = self.ids.new_id();
         let workarea = WorkareaRecord {
+            in_progress: false,
             workarea_id: root_workarea_id,
             tenant_id,
             parent_id: None,
@@ -2239,6 +2477,7 @@ where
         // The ceremony's admin key takes the name the claim gives it
         // (ADR-0026 d9).
         let issue = IssueKeyRequest {
+            profile: None,
             role: Role::Admin,
             name: req.admin_key_name.clone(),
             principal: req.admin_principal.clone(),
@@ -2377,7 +2616,25 @@ where
             Issuance::PersonsOwn => Role::Admin,
             Issuance::Plain | Issuance::Session(_) => issuer.role,
         };
-        check_issuance(ceiling, req.role, &grants).map_err(issuance_refusal)?;
+        // A curator is a dreamer key held by an agent, whose writer grants
+        // the dreamer's admissible set is read as if absent (ADR-0030 d8).
+        if let Some(profile) = req.profile
+            && !profile_admits(profile, req.role, req.held_by.unwrap_or(HeldBy::Agent))
+        {
+            return Err(AppError::ProfileMismatch {
+                profile: profile.as_str(),
+            });
+        }
+        let checked: Vec<Grant> = if req.profile == Some(KeyProfile::Curator) {
+            grants
+                .iter()
+                .filter(|g| g.role != Role::Writer)
+                .cloned()
+                .collect()
+        } else {
+            grants.clone()
+        };
+        check_issuance(ceiling, req.role, &checked).map_err(issuance_refusal)?;
         // Step 4: every grant node and deny node is the tenant's, and so is
         // the crew record. A user root this issuance is to create sits
         // directly under `universe` (ADR-0044 d1).
@@ -2764,6 +3021,19 @@ where
             ),
             None => None,
         };
+        // `chat` is reserved in every user root's namespace for a key a
+        // person holds, at any depth, so an agent never takes the name
+        // before the person opens their chat workarea; refused before
+        // anything is journalled (ADR-0063 d8).
+        if let Some(parent) = ancestors.first()
+            && parent.user().is_some()
+            && name.as_str() == CHAT_WORKAREA
+            && key.held_by != HeldBy::Human
+        {
+            return Err(AppError::ChatScopeHumanOnly {
+                held_by: key.held_by,
+            });
+        }
         if let Some(parent) = ancestors.first()
             && frozen_refuses(parent.status, FrozenOp::CreateChild)
         {
@@ -2787,6 +3057,7 @@ where
             });
         }
         let workarea = WorkareaRecord {
+            in_progress: false,
             workarea_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
             parent_id,
@@ -2882,7 +3153,10 @@ where
         } else {
             self.journal.stale_count(tenant_id, node).await?
         };
+        // The node's in-progress root, read off the ancestry (ADR-0030 d13).
+        let in_progress_root = ancestry.iter().find(|w| w.in_progress).cloned();
         Ok(WorkareaInfo {
+            in_progress_root,
             stale_versions,
             path: derived_path(&ancestry),
             policy: review_policy(),
@@ -3286,6 +3560,120 @@ where
         Ok(updated)
     }
 
+    /// Set a workarea's mode (ADR-0030 d1, d6): a dreamer key a person holds,
+    /// with dreamer effective access on the node, and no other key, refused
+    /// before any lookup. `in_progress` is refused on `universe`, a node not
+    /// `development`, or one with a marked ancestor or descendant;
+    /// `standard` on an in-progress root is its commit, refused while any
+    /// version in its subtree is held. The chain head is read before the
+    /// held test, so a capture landing between the test and the commit moves
+    /// the head and the commit conflicts. Setting the mode a node already
+    /// holds journals nothing. Journalled as `workarea.mode_set`.
+    pub async fn set_workarea_mode(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        workarea: Reference,
+        mode: WorkareaMode,
+    ) -> Result<WorkareaRecord, AppError> {
+        const VERB: &str = "workarea_mode";
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let key = &caller.key;
+        if !may_set_mode(key.role, key.held_by, key.profile) {
+            return Err(AppError::ModeHumanOnly {
+                role: key.role,
+                held_by: key.held_by,
+            });
+        }
+        let tenant_id = key.tenant_id;
+        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        self.observer.workarea(workarea_id);
+        self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
+            .await?;
+        let prev = self.head_event(tenant_id).await?;
+        let ancestry = self
+            .journal
+            .workarea_ancestry(tenant_id, workarea_id)
+            .await?
+            .unwrap_or_default();
+        let node = ancestry.first().cloned().ok_or(AppError::NotFound)?;
+        let current = if node.in_progress {
+            WorkareaMode::InProgress
+        } else {
+            WorkareaMode::Standard
+        };
+        if current == mode {
+            return Ok(node);
+        }
+        let subtree = self
+            .journal
+            .workarea_subtree(tenant_id, workarea_id)
+            .await?;
+        let mut held_free = Vec::new();
+        match mode {
+            WorkareaMode::InProgress => {
+                let marks: Vec<(Uuid, bool)> = ancestry
+                    .iter()
+                    .map(|w| (w.workarea_id, w.in_progress))
+                    .collect();
+                let below = subtree
+                    .iter()
+                    .any(|w| w.workarea_id != workarea_id && w.in_progress);
+                let development = subtree
+                    .iter()
+                    .all(|w| w.status == WorkareaStatus::Development);
+                in_progress::check_mark(&marks, below, development).map_err(|reason| {
+                    AppError::InProgressRefused {
+                        workarea_id,
+                        reason,
+                    }
+                })?;
+            }
+            WorkareaMode::Standard => {
+                // The commit: nothing in the subtree may still be held,
+                // dead-lettered versions included (ADR-0030 d6).
+                let nodes: Vec<Uuid> = subtree.iter().map(|w| w.workarea_id).collect();
+                if self.journal.held_count(tenant_id, &nodes).await? > 0 {
+                    return Err(AppError::HeldRemaining { workarea_id });
+                }
+                held_free = nodes;
+            }
+        }
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::WORKAREA_MODE_SET,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "mode": mode.as_str(),
+                "from": current.as_str(),
+            }),
+        )?;
+        // The commit's zero-held test runs again inside the committing
+        // transaction, so no held row created without a chain event slips
+        // past it (ADR-0030 d6).
+        self.commit(
+            event,
+            MetadataFold::WorkareaModeSet {
+                workarea_id,
+                in_progress: mode == WorkareaMode::InProgress,
+                held_free,
+            },
+            None,
+        )
+        .await
+        .map_err(|e| match e {
+            AppError::Store(StoreError::HeldRemaining) => AppError::HeldRemaining { workarea_id },
+            other => other,
+        })?;
+        self.observer.mode_set(mode.as_str());
+        Ok(WorkareaRecord {
+            in_progress: mode == WorkareaMode::InProgress,
+            ..node
+        })
+    }
+
     /// Point a workarea at a crew record, each by id or name, admin by key
     /// role: the journalled crew-metadata update `workarea.crew_updated`,
     /// carrying the record's `crew_id`. A workarea the tenant does not hold
@@ -3462,9 +3850,17 @@ where
             else {
                 continue;
             };
+            // A claim inside an in-progress subtree the brief's node is not
+            // inside is left out, whenever its edge was made (ADR-0030 d2).
             if memory.status == MemoryStatus::Promoted
                 && memory.is_tip
                 && self.readable(caller, &memory).await?
+                && !crosses_into(
+                    self.in_progress_root(caller.key.tenant_id, workarea)
+                        .await?,
+                    self.in_progress_root(caller.key.tenant_id, memory.workarea_id)
+                        .await?,
+                )
             {
                 members.push(memory);
             }
@@ -3562,6 +3958,7 @@ where
             .workarea(key.tenant_id, workarea_id)
             .await?
             .ok_or(AppError::NotFound)?;
+        self.refuse_inside(key.tenant_id, workarea_id).await?;
         let children: Vec<WorkareaStatus> = self
             .journal
             .workarea_children(key.tenant_id, workarea_id)
@@ -3655,6 +4052,7 @@ where
                 .await?;
         }
         let prev = self.head_event(key.tenant_id).await?;
+        self.refuse_inside(key.tenant_id, workarea_id).await?;
         let proposal = self
             .journal
             .transition(key.tenant_id, transition_id)
@@ -3903,8 +4301,16 @@ where
             let scope = self.target_workarea(key, req.workarea.as_ref()).await?;
             self.require_access(&caller, scope, Role::Reader, "list")
                 .await?;
-            let nodes = self.nodes_with(&caller, scope, Role::Reader).await?;
-            (ListingScope::Tips { nodes }, None)
+            // The served node set, and inside an in-progress scope every
+            // author's held rows on it (ADR-0030 d2, d3).
+            let served = self.served_nodes(&caller, scope).await?;
+            (
+                ListingScope::Tips {
+                    nodes: served.nodes,
+                    held: served.inside,
+                },
+                None,
+            )
         };
         let now = self.clock.now();
         let after = req
@@ -3953,8 +4359,10 @@ where
                 ListingScope::Own { key_ids, masked } => {
                     key_ids.contains(&m.author_key_id) && !masked.contains(&m.workarea_id)
                 }
-                ListingScope::Tips { nodes } => {
-                    m.status == MemoryStatus::Promoted && m.is_tip && nodes.contains(&m.workarea_id)
+                ListingScope::Tips { nodes, held } => {
+                    nodes.contains(&m.workarea_id)
+                        && ((m.status == MemoryStatus::Promoted && m.is_tip)
+                            || (held.contains(&m.workarea_id) && served_unreviewed(&m)))
                 }
             };
             if admitted {
@@ -4035,6 +4443,7 @@ where
             own_held: Some(OwnHeldScope {
                 author_key_ids: vec![key.key_id],
                 nodes: readable.clone(),
+                any_author: false,
             }),
             // A copy is a copy even once its valid time has ended
             // (ADR-0050 d1; proposed ADR-0059 d3).
@@ -4239,6 +4648,12 @@ where
             false,
         )?;
         self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
+        // The claim key reaches the journal as plaintext, so a veto in it
+        // refuses as one in the body does (ADR-0065 d7).
+        if let Some(claim_key) = req.claim_key.as_deref() {
+            self.scan_veto_only(key.tenant_id, "claim_key", claim_key)?;
+        }
+        let origin = recorded_origin(req.origin, req.anchor.as_ref())?;
 
         // Deterministic scan: same call, before the commit transaction. A
         // veto is a refusal like any other: it journals nothing and stores
@@ -4255,7 +4670,13 @@ where
 
         // The lineage closure: the author plus every declared ancestor's
         // closure — R2 runs over the whole of it (roles-and-keys.md). An
-        // ancestor the key cannot read is indistinguishable from none.
+        // ancestor the key cannot read is indistinguishable from none. A
+        // target inside an in-progress subtree the write is not inside is
+        // unreadable at the write's node (ADR-0030 d7). A curator writes
+        // inside an in-progress subtree only (d9).
+        self.curator_may_act(key, "submit", workarea_id, None)
+            .await?;
+        let write_root = self.in_progress_root(key.tenant_id, workarea_id).await?;
         let mut principals = BTreeSet::from([key.principal.clone()]);
         let mut key_ids = BTreeSet::from([key.key_id]);
         for ancestor in &req.derives_from {
@@ -4264,7 +4685,12 @@ where
                 .memory(key.tenant_id, *ancestor)
                 .await?
                 .ok_or(AppError::LineageUnknown(*ancestor))?;
-            if !self.readable(&caller, &m).await? {
+            if !self.readable(&caller, &m).await?
+                || crosses_into(
+                    write_root,
+                    self.in_progress_root(key.tenant_id, m.workarea_id).await?,
+                )
+            {
                 return Err(AppError::LineageUnknown(*ancestor));
             }
             principals.extend(m.lineage_principals);
@@ -4315,14 +4741,15 @@ where
             guardrail,
             valid: Box::new(valid),
             anchor: req.anchor.clone().map(Box::new),
+            origin_kind: Some(origin),
             source_check: None,
         };
 
         // The catalog payload of submission.remember: digest-only, body
         // plaintext never rides the journal (ADR-0002 d1; event-catalog.md).
         // The PoC stores the body inline and unencrypted, so there is no
-        // ciphertext digest, and it pins no scan rule set, so there is no
-        // scanner version (admission.md rule-set registry).
+        // ciphertext digest; the scanner names the rule set its verdict was
+        // taken under, or none (admission.md rule-set registry; ADR-0065 d1).
         let mut payload = json!({
             "artifact_id": memory_id.to_string(),
             "workarea_id": workarea_id.to_string(),
@@ -4335,13 +4762,14 @@ where
             "attachments": [],
             "derives_from": req.derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "anchor": anchor_payload(req.anchor.as_ref()),
+            "origin": origin.to_json(),
             "provenance": "agent",
             "simulation_id": Value::Null,
             "replaces": Value::Null,
             "retirement": false,
             "scan": {
                 "result": if scan_finding.is_some() { "hold" } else { "pass" },
-                "scanner_version": Value::Null,
+                "scanner_version": self.scanner.version(),
                 "finding": scan_finding,
             },
         });
@@ -4400,6 +4828,9 @@ where
         }
         for cited in &req.derives_from {
             self.offer_act(key.tenant_id, key.key_id, *cited, Label::Derived);
+        }
+        if key.profile == Some(KeyProfile::Curator) {
+            self.observer.curation(CuratorAct::Write.as_str());
         }
         Ok(SubmitOutcome {
             receipt,
@@ -4680,6 +5111,9 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_person_reviewer(key)?;
+        if let Some(reason) = req.reason.as_deref() {
+            self.scan_veto_only(key.tenant_id, "reason", reason)?;
+        }
         let ids_refused = |reason: String| AppError::BulkShape {
             field: "/artifact_ids",
             reason,
@@ -4778,7 +5212,36 @@ where
         reason: Option<&str>,
         recording: Option<VerdictRecording>,
     ) -> Result<VerdictOutcome, AppError> {
+        let curator = caller.key.profile == Some(KeyProfile::Curator);
+        // A curator never approves, inside or out: it narrows and never
+        // widens (ADR-0030 d9).
+        if curator && verdict == Verdict::Approve {
+            return Err(AppError::Curator {
+                verb: "verdict",
+                refusal: CuratorRefusal::NarrowOnly,
+            });
+        }
+        let outcome = self
+            .verdict_judged(caller, memory_id, verdict, reason, recording)
+            .await?;
+        if curator {
+            self.observer.curation(CuratorAct::Reject.as_str());
+        }
+        Ok(outcome)
+    }
+
+    async fn verdict_judged(
+        &self,
+        caller: &Caller,
+        memory_id: Uuid,
+        verdict: Verdict,
+        reason: Option<&str>,
+        recording: Option<VerdictRecording>,
+    ) -> Result<VerdictOutcome, AppError> {
         let key = &caller.key;
+        if let Some(reason) = reason {
+            self.scan_veto_only(key.tenant_id, "reason", reason)?;
+        }
         // The head first, then every read R2 and the compare-and-set judge:
         // the row's closure, which a claim edge's proposal widens while the
         // row is held, its rivals and its target. A commit landing after the
@@ -4791,6 +5254,10 @@ where
             .await?
             .ok_or(AppError::NotFound)?;
         self.require_access(caller, memory.workarea_id, Role::Dreamer, "verdict")
+            .await?;
+        // A curator rejects inside an in-progress subtree only (ADR-0030
+        // d9); R2 below refuses it what it authored or derived from.
+        self.curator_may_act(key, "verdict", memory.workarea_id, None)
             .await?;
         let mut exclusion = memory.lineage_closure();
         if let Some(target) = memory.replaces
@@ -5087,6 +5554,26 @@ where
             shape,
             started.elapsed().as_secs_f64(),
         );
+        let kinds: Vec<&'static str> = result
+            .hits
+            .iter()
+            .map(|h| {
+                h.served
+                    .memory
+                    .origin_kind
+                    .map_or("none", OriginKind::as_str)
+            })
+            .collect();
+        self.observer.recall_hits_by_origin(&kinds);
+        // Hits served labelled `unreviewed` (ADR-0030 d5).
+        let unreviewed = result
+            .hits
+            .iter()
+            .filter(|h| h.served.memory.status == MemoryStatus::Held)
+            .count() as u64;
+        if unreviewed > 0 {
+            self.observer.unreviewed_hits(unreviewed);
+        }
         for (stage, seconds) in &result.timings.stages {
             self.observer
                 .recall_stage(result.pipeline.as_str(), stage.as_str(), *seconds);
@@ -5177,8 +5664,28 @@ where
             })
             .collect();
 
-        let readable = self.nodes_with(caller, scope, Role::Reader).await?;
-        let hit_nodes = with_universe(caller, &readable, &scope_ancestry);
+        // The served node set leaves out every in-progress subtree the scope
+        // is not inside; inside one, `include_unreviewed` defaults to true
+        // and admits every author's held rows on the served nodes, all of
+        // which lie inside the scope's root (ADR-0030 d2, d3, d4).
+        let ServedNodes {
+            nodes: readable,
+            inside,
+            scope_root,
+        } = self.served_nodes(caller, scope).await?;
+        let include_unreviewed = req.include_unreviewed.unwrap_or(scope_root.is_some());
+        let any_author = include_unreviewed && scope_root.is_some();
+        // A scope inside a user root also searches `universe`'s own claims
+        // where the key reads that node, ranked with the scope's own; own
+        // held rows never include them (ADR-0044 d10).
+        let mut hit_nodes = readable.clone();
+        if scope_ancestry.iter().any(|w| w.user_root)
+            && let Some(&universe) = ancestry.last()
+            && caller.effective(&[universe]).contains(&Role::Reader)
+            && !hit_nodes.contains(&universe)
+        {
+            hit_nodes.push(universe);
+        }
         let kinds: Vec<MemoryKind> = HIT_KINDS
             .into_iter()
             .filter(|kind| req.kinds.is_empty() || req.kinds.contains(kind))
@@ -5191,9 +5698,16 @@ where
         let candidate_scope = CandidateScope {
             promoted_nodes: hit_nodes.clone(),
             kinds: kinds.clone(),
-            own_held: req.include_unreviewed.then(|| OwnHeldScope {
+            own_held: include_unreviewed.then(|| OwnHeldScope {
                 author_key_ids: vec![key.key_id],
-                nodes: readable.clone(),
+                // Every author's held rows on the nodes inside alone; the
+                // key's own on every served node otherwise (ADR-0030 d3).
+                nodes: if any_author {
+                    inside.clone()
+                } else {
+                    readable.clone()
+                },
+                any_author,
             }),
             // An ended version is outside the scope unless asked for: a
             // visibility rule, never a weight (proposed ADR-0059 d3).
@@ -5229,9 +5743,11 @@ where
             let admitted = match m.status {
                 MemoryStatus::Promoted => m.is_tip && hit_nodes.contains(&m.workarea_id),
                 MemoryStatus::Held => {
-                    req.include_unreviewed
-                        && m.author_key_id == key.key_id
-                        && readable.contains(&m.workarea_id)
+                    include_unreviewed
+                        && ((m.author_key_id == key.key_id && readable.contains(&m.workarea_id))
+                            || (any_author
+                                && served_unreviewed(m)
+                                && inside.contains(&m.workarea_id)))
                 }
                 _ => false,
             };
@@ -5854,6 +6370,20 @@ where
     /// (ADR-0057 d2): a path whose file name has a secret's shape, and any
     /// finding of the deterministic scanner, hold or veto alike, refuses the
     /// write naming the field, since a written anchor is never erased.
+    /// A field the journal keeps as plaintext beside a body, a claim key or
+    /// a verdict's reason: a veto finding refuses, a hold finding passes,
+    /// since no review follows (ADR-0065 d7).
+    fn scan_veto_only(&self, tenant_id: Uuid, kind: &str, text: &str) -> Result<(), AppError> {
+        match self.scanner.scan(&AdmissionEnvelope {
+            tenant_id,
+            kind,
+            body: text,
+        }) {
+            ScanOutcome::Veto(reason) => Err(AppError::ScanVeto(reason)),
+            ScanOutcome::Pass | ScanOutcome::Hold(_) => Ok(()),
+        }
+    }
+
     fn scan_anchor(&self, tenant_id: Uuid, anchor: Option<&Anchor>) -> Result<(), AppError> {
         let Some(anchor) = anchor else {
             return Ok(());
@@ -6126,6 +6656,10 @@ where
         if !self.readable(&caller, &target).await? {
             return Err(AppError::NotFound);
         }
+        // A curator retires or rewrites inside an in-progress subtree only,
+        // and never what it authored or derived from (ADR-0030 d9).
+        self.curator_may_act(key, "supersede", target.workarea_id, Some(&target))
+            .await?;
         if dreamer {
             // Step 4: edit-as-proposal needs dreamer and reader on the
             // target's workarea, whoever authored it.
@@ -6235,6 +6769,7 @@ where
             req.retirement,
         )?;
         self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
+        let origin = recorded_origin(req.origin, req.anchor.as_ref())?;
         let scan_finding = match self.scanner.scan(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
             kind: kind.as_str(),
@@ -6333,6 +6868,7 @@ where
             guardrail,
             valid: Box::new(valid),
             anchor: req.anchor.clone().map(Box::new),
+            origin_kind: Some(origin),
             source_check: None,
         };
 
@@ -6356,6 +6892,7 @@ where
             "attachments": [],
             "derives_from": derives_from.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "anchor": anchor_payload(req.anchor.as_ref()),
+            "origin": origin.to_json(),
             "provenance": "agent",
             "simulation_id": Value::Null,
             "replaces": {
@@ -6365,7 +6902,7 @@ where
             "retirement": req.retirement,
             "scan": {
                 "result": if scan_finding.is_some() { "hold" } else { "pass" },
-                "scanner_version": Value::Null,
+                "scanner_version": self.scanner.version(),
                 "finding": scan_finding,
             },
         });
@@ -6434,6 +6971,13 @@ where
         );
         for cited in &req.derives_from {
             self.offer_act(key.tenant_id, key.key_id, *cited, Label::Derived);
+        }
+        if key.profile == Some(KeyProfile::Curator) {
+            self.observer.curation(if req.retirement {
+                CuratorAct::Retire.as_str()
+            } else {
+                CuratorAct::Write.as_str()
+            });
         }
         Ok(SupersedeOutcome {
             receipt,
@@ -6535,6 +7079,22 @@ where
         let (src, dst) = (&endpoints[0], &endpoints[1]);
         self.refuse_user_edge_into_universe(key, &[src.workarea_id, dst.workarea_id])
             .await?;
+        self.refuse_crossing_edge(key.tenant_id, src.workarea_id, dst.workarea_id)
+            .await?;
+        // A curator flags a contradiction between two claims of one
+        // in-progress subtree, neither its own (ADR-0030 d9).
+        if key.profile == Some(KeyProfile::Curator) {
+            if req.label != "contradicts" {
+                return Err(AppError::Curator {
+                    verb: VERB,
+                    refusal: CuratorRefusal::NarrowOnly,
+                });
+            }
+            self.curator_may_act(key, VERB, src.workarea_id, Some(src))
+                .await?;
+            self.curator_may_act(key, VERB, dst.workarea_id, Some(dst))
+                .await?;
+        }
         check_edge_label(&req.label, src, dst)?;
 
         let edge_id = self.ids.new_id();
@@ -6596,6 +7156,9 @@ where
             });
         }
         committed?;
+        if key.profile == Some(KeyProfile::Curator) {
+            self.observer.curation(CuratorAct::Flag.as_str());
+        }
         Ok(ClaimEdgeProposalOutcome {
             proposal,
             replayed: false,
@@ -6651,6 +7214,8 @@ where
             return Err(AppError::NotFound);
         }
         self.refuse_user_edge_into_universe(key, &[memory.workarea_id, workarea_id])
+            .await?;
+        self.refuse_crossing_edge(key.tenant_id, memory.workarea_id, workarea_id)
             .await?;
         if memory.status != MemoryStatus::Promoted || !memory.is_tip {
             return Err(AppError::BriefMemberNotServed {
@@ -6750,6 +7315,12 @@ where
             .ok_or(AppError::NotFound)?;
         self.require_access(&caller, edge.workarea_id, Role::Dreamer, VERB)
             .await?;
+        // A pending edge across the boundary is not ratified after a mark
+        // (ADR-0030 d7).
+        if let Some(claim) = self.journal.memory(key.tenant_id, edge.artifact_id).await? {
+            self.refuse_crossing_edge(key.tenant_id, claim.workarea_id, edge.workarea_id)
+                .await?;
+        }
         if ratifier_is_proposer(
             edge.proposer_key_id,
             &edge.proposer_principal,
@@ -6878,6 +7449,7 @@ where
             .map(|cursor| ClaimEdgeCursor::resume(cursor, key.key_id, &filter, &now))
             .transpose()?;
         let position = |e: &BriefEdgeRecord| (e.created_at.as_str().to_owned(), e.edge_id);
+        let scope_root = self.in_progress_root(key.tenant_id, workarea_id).await?;
         let mut served = Vec::new();
         for edge in self.journal.brief_edges(key.tenant_id, workarea_id).await? {
             if let Some(after) = &after
@@ -6888,7 +7460,15 @@ where
             let Some(memory) = self.journal.memory(key.tenant_id, edge.artifact_id).await? else {
                 continue;
             };
-            if self.readable(&caller, &memory).await? {
+            // The boundary at the read's node, whenever the edge was made
+            // (ADR-0030 d2).
+            if self.readable(&caller, &memory).await?
+                && !crosses_into(
+                    scope_root,
+                    self.in_progress_root(key.tenant_id, memory.workarea_id)
+                        .await?,
+                )
+            {
                 served.push(edge);
             }
             if served.len() > limit {
@@ -6994,6 +7574,10 @@ where
                 .await?;
         }
         let (src, dst) = (&endpoints[0], &endpoints[1]);
+        // A pending edge across the boundary is not ratified after a mark
+        // (ADR-0030 d7).
+        self.refuse_crossing_edge(key.tenant_id, src.workarea_id, dst.workarea_id)
+            .await?;
         // The proposal's label check again: an `oml:replaced_by` or
         // `oml:consider` edge is ratified only inside its deprecation's
         // verdict, and `oml:about` only once classification is built, so a
@@ -7195,6 +7779,29 @@ where
         // array that grows with the tenant's workareas, unmeasured (FR-7,
         // FR-25).
         let readable_nodes = self.nodes_holding(&caller, Role::Reader).await?;
+        // A scoped read: at `workarea`, else the key's default workarea, an
+        // edge with an endpoint inside an in-progress subtree the scope is
+        // not inside is not served (ADR-0030 d2).
+        // With neither, the scope has no root, so every in-progress subtree
+        // is left out (fail closed). Inside the scope's root, an endpoint
+        // held by any author is served, as recall serves it (d3).
+        let scope_root = match workarea_id.or(key.default_workarea) {
+            Some(scope) => self.in_progress_root(tenant_id, scope).await?,
+            None => None,
+        };
+        let mut kept = Vec::with_capacity(readable_nodes.len());
+        let mut held_nodes = Vec::new();
+        for node in readable_nodes {
+            let root = self.in_progress_root(tenant_id, node).await?;
+            if crosses_into(scope_root, root) {
+                continue;
+            }
+            if root.is_some() {
+                held_nodes.push(node);
+            }
+            kept.push(node);
+        }
+        let readable_nodes = kept;
         let within = match workarea_id {
             None => None,
             Some(node) => {
@@ -7217,6 +7824,7 @@ where
         let selection = ClaimEdgeSelection {
             artifact_id: filter.artifact_id,
             within,
+            held_nodes,
             readable_nodes,
             reader_key_id: key.key_id,
         };
@@ -7316,12 +7924,28 @@ where
             scope,
         };
         let mut ancestries: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::new();
+        // The tail is a scoped read: an event whose subject lies inside an
+        // in-progress subtree the scope is not inside is left out (ADR-0030
+        // d2).
+        let scope_root = self.in_progress_root(key.tenant_id, scope).await?;
+        let mut roots: BTreeMap<Uuid, Option<Uuid>> = BTreeMap::new();
         let mut events = Vec::new();
         for TailEvent { event, subject } in scan.events {
             let envelope = &event.envelope;
             let Some(judged) = judged_subject(envelope, subject.as_ref()) else {
                 continue;
             };
+            let root = match roots.get(&judged.node) {
+                Some(root) => *root,
+                None => {
+                    let root = self.in_progress_root(key.tenant_id, judged.node).await?;
+                    roots.insert(judged.node, root);
+                    root
+                }
+            };
+            if crosses_into(scope_root, root) {
+                continue;
+            }
             let ancestry: &Vec<Uuid> = match ancestries.entry(judged.node) {
                 Entry::Occupied(known) => known.into_mut(),
                 Entry::Vacant(new) => new.insert(self.ancestry(key.tenant_id, judged.node).await?),

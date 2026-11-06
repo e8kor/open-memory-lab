@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Open Memory Lab HTTP API
-  version: 0.5.8-design
+  version: 0.6.0-design
   summary: >-
     The two-ring JSON API of OML, an agentic external memory provider: /v1 the provider ring,
     /v2 the memory lab.
@@ -146,6 +146,7 @@ paths:
         - { name: own, in: query, schema: { type: boolean, default: false } }
         - { name: anchor_repo, in: query, schema: { $ref: '#/components/schemas/AnchorRepo' }, description: "Rows whose anchor names this repository, with own or without it; unanchored rows are left out (ADR-0057 d4). Malformed is request.validation naming anchor_repo." }
         - { name: anchor_path_prefix, in: query, schema: { $ref: '#/components/schemas/AnchorPathPrefix' }, description: "Rows whose anchor path starts with these bytes; unanchored rows are left out (ADR-0057 d4)." }
+        - { name: origin_kinds, in: query, style: form, explode: false, schema: { $ref: '#/components/schemas/OriginKinds' }, description: "Comma-separated: rows whose origin kind is one of these; rows without a kind are left out (ADR-0063 d3). Malformed is request.validation naming origin_kinds." }
         - { name: since, in: query, schema: { type: string, format: date-time } }
         - { name: until, in: query, schema: { type: string, format: date-time } }
         - { $ref: '#/components/parameters/Limit' }
@@ -624,6 +625,37 @@ paths:
                   external_manager: crewd.example.com
                 created_at: '2026-09-02T09:14:33Z'
               schema: { $ref: '#/components/schemas/Workarea' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/workareas/{workarea}/mode:
+    post:
+      tags: [workareas]
+      operationId: setWorkareaMode
+      summary: A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
+      description: 'Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool reaches it.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              mode: in_progress
+            schema: { $ref: '#/components/schemas/WorkareaModeSet' }
+      responses:
+        '200':
+          description: The node as the key reads it.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkareaView' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -2254,6 +2286,45 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/admin/rescan:
+    get:
+      tags: [admin]
+      operationId: adminRescan
+      summary: Rescan the versions the tenant stores with the server's rule set and report what it would refuse or hold, by rule and place, never the text.
+      description: 'Requires: admin key role (ADR-0065 d13); every other role answers access.verb_ceiling. Reads the submissions journalled after after_seq, at most limit journal events, and scans each stored version but an erased one, body and anchor, as admission does. Changes nothing and journals nothing: a version it would veto stays where it is for a person to retire (ADR-0001 R4). A finding names its class, rule and place, never the matched text. Since v0.6.0.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: after_seq, in: query, required: false, schema: { type: integer, minimum: 0, default: 0 }, description: 'Rescan the submissions journalled after this sequence number.' }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 1000, default: 1000 }, description: 'The most journal events this window reads.' }
+      responses:
+        '200':
+          description: What this window found.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                scanner_version: oml-scan/1
+                scanned: 2
+                findings:
+                - artifact_id: 00000000-0000-4000-8000-0000000000a1
+                  workarea_id: 00000000-0000-4000-8000-0000000000b1
+                  version: 1
+                  state: promoted
+                  class: secret.api_token
+                  rule: github-token
+                  action: veto
+                  at: /body line 3
+                by_rule:
+                - { class: secret.api_token, rule: github-token, action: veto, count: 1 }
+                next_after_seq: null
+              schema: { $ref: '#/components/schemas/RescanReport' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2610,6 +2681,8 @@ components:
         - submission.similar_exists
         - submission.universe_refused
         - workarea.frozen
+        - workarea.in_progress_refused
+        - workarea.held_remaining
         - workarea.transition_refused
         - review.author_in_lineage
         - review.ratifier_is_proposer
@@ -2674,6 +2747,7 @@ components:
           description: Artifact ids; the declared lineage (omission is undetectable — honesty rule).
         on_similar: { type: string, enum: [hold, refuse], description: "Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. Not part of the request digest. Since v0.5.9." }
         anchor: { $ref: '#/components/schemas/Anchor' }
+        origin: { $ref: '#/components/schemas/Origin' }
 
     SubmitAccepted:
       type: object
@@ -2741,7 +2815,7 @@ components:
 
     MemorySummary:
       type: object
-      required: [artifact_id, claim_key, version, tip, workarea_id, workarea_path, kind, state, tokens, retirement, replaces, held_expires_at, created_at, promoted_at, anchor, stale, source_checked]
+      required: [artifact_id, claim_key, version, tip, workarea_id, workarea_path, kind, state, unreviewed, tokens, retirement, replaces, held_expires_at, created_at, promoted_at, anchor, stale, source_checked]
       properties:
         artifact_id: { type: string }
         claim_key: { type: string }
@@ -2751,6 +2825,7 @@ components:
         workarea_path: { type: [string, 'null'], description: "Derived at read time; grants bind to node ids. Null wherever workarea_id is." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail] }
         state: { type: string, enum: [held, promoted, demoted, rejected, erased] }
+        unreviewed: { type: boolean, description: "True exactly when the served version is held: the caller's own held version, or, inside a workarea a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4)." }
         severity: { type: string, enum: [never, must, should], description: "On kind guardrail alone, except a retirement version (ADR-0037 d2)." }
         rule: { description: "On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8)." }
         load_warning: { type: string, description: "On a held guardrail alone: every reader of it is told that every key reading its workarea will load the rule once it binds (ADR-0037 d10)." }
@@ -2780,6 +2855,11 @@ components:
           description: The version's anchor, as its author declared it, or null (ADR-0057 d1, d2).
           oneOf:
             - { $ref: '#/components/schemas/Anchor' }
+            - { type: 'null' }
+        origin:
+          description: What kind of source the version's text came from, as signed; null on versions written before ADR-0063 (d1-d3).
+          oneOf:
+            - { $ref: '#/components/schemas/Origin' }
             - { type: 'null' }
         stale:
           description: changed or removed from the served version's latest source check; null otherwise, and always null on a held version (ADR-0057 d5).
@@ -2832,15 +2912,17 @@ components:
         include_text: { type: boolean, default: true, description: Whether each served item carries its text (ADR-0039 d7). }
         anchor_repo: { $ref: '#/components/schemas/AnchorRepo' }
         anchor_path_prefix: { $ref: '#/components/schemas/AnchorPathPrefix' }
+        origin_kinds: { $ref: '#/components/schemas/OriginKinds' }
         include_unreviewed:
           type: boolean
-          default: false
           description: >-
             When true, the calling key's own held rows (kind memory or derived_fact, never steering
             or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by
             the kinds filter when one is sent as promoted hits are, join the hits, ranked in the
-            same order, with memory.state held; they count against k and max_tokens.
-            Rules: docs/architecture/retrieval.md.
+            same order, with memory.state held and unreviewed true; they count against k and
+            max_tokens. Inside a workarea a person put in progress, every author's held memories
+            on the served nodes join too, and absent means true there; absent means false
+            everywhere else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md.
         max_tokens:
           type: integer
           format: int64
@@ -3129,6 +3211,7 @@ components:
         body: { type: string, description: 'Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired.' }
         expected_version: { type: integer, minimum: 1, description: "The claim's latest version the caller can read, as it last read it: its promoted versions where it reads the workarea and its own keys' versions; never another author's held version. Any other is 409 submission.version_conflict, details.current_version (ADR-0057 d19)." }
         anchor: { $ref: '#/components/schemas/Anchor' }
+        origin: { $ref: '#/components/schemas/Origin' }
         workarea: { $ref: '#/components/schemas/WorkareaRef', description: "When sent, the target's workarea, by id or name; any other is request.validation, details.field /workarea (ADR-0039 d7)." }
         retirement: { type: boolean, default: false, description: 'true proposes retiring the claim, and body states why. Refused with request.validation when the target''s kind is term (terms deprecate), or when a kind is sent that differs from the target''s.' }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail], description: 'Omitted, the successor takes the target''s kind — the one field inherited from the target. A memory, derived_fact or steering target admits any of those three; a vocabulary-kind target and a retirement keep the target''s kind; anything else is request.validation (docs/architecture/audit-and-lineage.md).' }
@@ -3152,12 +3235,36 @@ components:
         submission.scan_veto.
       properties:
         repo: { $ref: '#/components/schemas/AnchorRepo' }
-        uri: { type: string, maxLength: 2048, pattern: '^((https|s3|gs)://[^@#?\s/][^@#?\s]*|file:///[^@#?\s]+)$', description: 'A page outside a repository, or a Delta table (ADR-0062 d5): an absolute https, s3, gs or file URL with no user information, no query and no fragment; an s3 or gs bucket is a DNS-safe name, and an s3, gs or file path has no trailing slash.' }
+        uri: { type: string, maxLength: 2048, pattern: '^((https|s3|gs)://[^@#?\s/][^@#?\s]*|file:///[^@#?\s]+|chat://[a-z][a-z0-9-]{0,31}/[0-9a-f]{32})$', description: 'A page outside a repository, a Delta table (ADR-0062 d5) or a chat turn''s session (ADR-0063 d4, d5): an absolute https, s3, gs or file URL with no user information, no query and no fragment; an s3 or gs bucket is a DNS-safe name, and an s3, gs or file path has no trailing slash. A chat uri is chat://<harness>/<session>, the session 32 lower-case hex digits derived by the plugin, never the harness''s own id; then rev is refused and fragment, hash and hasher oml-turn/1 are required.' }
         rev: { type: string, minLength: 1, maxLength: 128, description: 'With repo, required: a full git object id, 40 or 64 lower-case hex digits. With uri, optional: a page version or a Delta table version in decimal, printable ASCII without whitespace.' }
         path: { type: string, minLength: 1, description: 'With repo, required; with uri, refused. NFC, relative POSIX, at most 1,024 UTF-8 bytes, no empty, . or .. segment, no leading /, no backslash or control character.' }
-        fragment: { type: string, minLength: 1, maxLength: 256, description: 'The part of the file or page: a heading slug, an ADR decision handle dN, a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000), or a Delta column col=<path> (ADR-0062 d5); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file, page or table (ADR-0057 d3, d21).' }
+        fragment: { type: string, minLength: 1, maxLength: 256, description: 'The part of the file or page: a heading slug, an ADR decision handle dN, a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000), or a Delta column col=<path> (ADR-0062 d5); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file, page or table (ADR-0057 d3, d21). With a chat uri, required: turn=<n> or turn=<n>-<m>, 1 <= n <= m <= 100000, the person''s prompts counted from 1; turn= is refused with any other anchor (ADR-0063 d4).' }
         hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$', description: "Digest of the fragment's text, or the file's, under hasher." }
-        hasher: { type: string, enum: [oml-md/1, oml-delta-table/1, oml-delta-schema/1, oml-delta-col/1], description: 'oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7). oml-delta-table/1, oml-delta-schema/1 and oml-delta-col/1 hash the facts a Delta table claim, its schema claim and a column claim state (ADR-0062 d7).' }
+        hasher: { type: string, enum: [oml-md/1, oml-delta-table/1, oml-delta-schema/1, oml-delta-col/1, oml-turn/1], description: 'oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7). oml-delta-table/1, oml-delta-schema/1 and oml-delta-col/1 hash the facts a Delta table claim, its schema claim and a column claim state (ADR-0062 d7). oml-turn/1: HMAC-SHA-256 of the person''s prompt as the harness passed it, UTF-8 after NFC, keyed by the person''s chat salt, which never leaves their machine; with a chat uri alone (ADR-0063 d4).' }
+
+    Origin:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      description: >-
+        What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission
+        event, immutable per version, never inherited by a successor. Omitted on a write, it is
+        recorded manual. chat requires a chat anchor and a chat anchor requires chat; either
+        mismatch is request.validation naming /origin/kind.
+      properties:
+        kind: { $ref: '#/components/schemas/OriginKind' }
+
+    OriginKind:
+      type: string
+      enum: [repo, doc, code, lake, chat, web, manual]
+
+    OriginKinds:
+      type: array
+      minItems: 1
+      maxItems: 7
+      uniqueItems: true
+      items: { $ref: '#/components/schemas/OriginKind' }
+      description: 'Rows whose origin kind is one of these, combined with every other filter by AND; rows without a kind are left out (ADR-0063 d3).'
 
     AnchorRepo:
       type: string
@@ -3261,6 +3368,13 @@ components:
       properties:
         crew: { $ref: '#/components/schemas/CrewRef' }
 
+    WorkareaModeSet:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [in_progress, standard], description: "in_progress puts the node in progress; standard on an in-progress root is its commit (ADR-0030 d1, d6)." }
+
     Workarea:
       type: object
       required: [id, name, parent_id, path, status]
@@ -3276,6 +3390,7 @@ components:
             - { $ref: '#/components/schemas/Crew' }
             - { type: 'null' }
         user_root: { type: boolean, description: "Whether the node is a user root, universe.<user>, which only the issuance of the first key naming its user creates (ADR-0044 d1, d11)." }
+        mode: { type: string, enum: [standard, in_progress], description: "in_progress when a person's key put the node in progress: readers inside recall unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1, d2)." }
         created_at: { type: string, format: date-time }
 
     WorkareaView:
@@ -3285,6 +3400,11 @@ components:
         - type: object
           required: [children, edges, my_effective_verbs, permission_epoch, policy, pending_transitions, brief, stale_versions]
           properties:
+            in_progress_root:
+              description: "The in-progress workarea this node lies inside, itself for a root, by id and name; null outside every in-progress subtree (ADR-0030 d13)."
+              oneOf:
+                - { $ref: '#/components/schemas/WhoamiRef' }
+                - { type: 'null' }
             stale_versions: { type: integer, minimum: 0, description: "The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workarea." }
             children:
               type: array
@@ -3626,6 +3746,7 @@ components:
         label: { type: string, description: A free-text note; unique nowhere. }
         principal: { type: string, description: 'Who acts — the attribution identity, shared across one identity''s keys; free text.' }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
+        profile: { type: string, enum: [curator], description: "curator: a dreamer key held by an agent that may reject, propose retirements and summaries, and flag contradictions inside an in-progress workarea only, and never approves; any other role or held_by is request.validation, details.field /profile (ADR-0030 d8, d9)." }
         connect_code: { type: boolean, default: false, description: "Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), held_by service (held_by_service), or a deployment without oauth.issuer (not_configured)." }
 
     Key:
@@ -3653,6 +3774,7 @@ components:
         epoch: { type: integer }
         credential: { type: string, enum: [bearer, connection, session], description: "bearer: the key has a value presented as Authorization: Bearer. connection: a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7). session: a key the server holds for a person and acts with only from their web session, no value (ADR-0045 d6)." }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
+        profile: { type: [string, 'null'], enum: [curator, null], description: "The key's profile as key.issued journals it; null for none (ADR-0030 d8)." }
         connections: { type: array, items: { $ref: '#/components/schemas/Connection' }, description: "A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11)." }
 
     Severity:
@@ -3801,6 +3923,7 @@ components:
             - { type: 'null' }
         grants: { type: array, items: { $ref: '#/components/schemas/WhoamiGrant' }, description: "The key's stored grants, each with its epoch and without its deny masks." }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
+        profile: { type: [string, 'null'], enum: [curator, null], description: "The key's profile; null for none (ADR-0030 d8)." }
 
     KeyIssued:
       allOf:
@@ -3930,6 +4053,52 @@ components:
             The lead's oauth.issuer, or null where connections are off; doctor reads whether
             connections are on here, not from the discovery paths it checks (ADR-0031 d14).
         build: { $ref: '#/components/schemas/Build' }
+        scan:
+          type: [object, 'null']
+          description: >-
+            The scanner's rule set, how many rules it loaded and whether the personal-data rules
+            are on, or null for a server that pins none; doctor's scan line reads it (ADR-0065
+            d11). Its findings are counted on the metrics listener, never here.
+          properties:
+            version: { type: string }
+            rules: { type: integer, minimum: 0 }
+            pii: { type: boolean }
+
+    RescanReport:
+      type: object
+      description: One rescan window (ADR-0065 d13). No field carries a version's text, claim key or anchor value.
+      required: [scanner_version, scanned, findings, by_rule, next_after_seq]
+      additionalProperties: false
+      properties:
+        scanner_version: { type: [string, 'null'] }
+        scanned: { type: integer, minimum: 0, description: 'Versions scanned in this window: every stored state but erased.' }
+        findings:
+          type: array
+          items:
+            type: object
+            required: [artifact_id, workarea_id, version, state, class, rule, action, at]
+            additionalProperties: false
+            properties:
+              artifact_id: { type: string }
+              workarea_id: { type: string }
+              version: { type: integer, minimum: 1 }
+              state: { type: string }
+              class: { type: string }
+              rule: { type: string }
+              action: { type: string, enum: [veto, hold] }
+              at: { type: string, description: 'The field and line, /body line 3.' }
+        by_rule:
+          type: array
+          items:
+            type: object
+            required: [class, rule, action, count]
+            additionalProperties: false
+            properties:
+              class: { type: string }
+              rule: { type: string }
+              action: { type: string, enum: [veto, hold] }
+              count: { type: integer, minimum: 1 }
+        next_after_seq: { type: [integer, 'null'], description: 'The after_seq of the next window, or null at the chain head.' }
 
     Build:
       type: object

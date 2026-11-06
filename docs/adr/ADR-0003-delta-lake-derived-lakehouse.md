@@ -7,7 +7,7 @@ answers: why the Delta lakehouse is derived and never the authority; why one out
 
 # ADR-0003 — Delta Lake is the derived body lakehouse: outbox-fed, single-writer, never the authority
 
-**Status:** accepted design · 2026-10-29
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0060](ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md) (proposed)
 
 **Release:** not scheduled ([releases](../product/releases.md#decisions))
 

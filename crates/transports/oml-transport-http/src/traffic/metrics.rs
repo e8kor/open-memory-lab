@@ -60,6 +60,11 @@ fn review_histogram() -> Histogram {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct OriginLabels {
+    origin_kind: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct AnswerLabels {
     pipeline: String,
     result: String,
@@ -103,6 +108,16 @@ struct RelationLabels {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct ModeLabels {
+    mode: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct ActLabels {
+    act: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct VerdictLabels {
     verdict: String,
 }
@@ -134,6 +149,18 @@ struct TokenLabels {
     outcome: String,
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct ScanLabels {
+    class: String,
+    rule: String,
+    action: String,
+}
+
+/// Where the scan findings come from: the composition's rule set, read at
+/// each scrape (ADR-0065 d11). Counts by class, rule and action, nothing
+/// else.
+pub type ScanCounts = fn() -> Vec<(&'static str, &'static str, &'static str, u64)>;
+
 /// The four families (ADR-0042 d12).
 #[derive(Debug)]
 pub struct Metrics {
@@ -146,11 +173,17 @@ pub struct Metrics {
     recalls: Family<RecallLabels, Counter>,
     reranks: Family<RerankLabels, Counter>,
     bulk_items: Family<BulkLabels, Counter>,
+    unreviewed_hits: Counter,
+    mode_changes: Family<ModeLabels, Counter>,
+    curation_acts: Family<ActLabels, Counter>,
     source_checks: Family<BulkLabels, Counter>,
     web_failures: Family<WebFailureLabels, Counter>,
     quality: Quality,
     sparse_encoded: Family<SparseLabels, Counter>,
     sparse_backlog: Gauge,
+    scan_findings: Family<ScanLabels, Counter>,
+    scan_counts: std::sync::OnceLock<ScanCounts>,
+    scan_refresh: std::sync::Mutex<()>,
 }
 
 /// The recall and remember quality families (ADR-0054 d1, as accepted):
@@ -168,6 +201,7 @@ struct Quality {
     lag: Gauge<f64, AtomicU64>,
     purge_overdue: Gauge,
     unrecalled: Family<AgeLabels, Gauge>,
+    origins: Family<OriginLabels, Counter>,
     stages: Family<StageLabels, Histogram, fn() -> Histogram>,
     similar: Family<SimilarLabels, Counter>,
     similar_duration: Histogram,
@@ -187,6 +221,7 @@ impl Quality {
             lag: Gauge::default(),
             purge_overdue: Gauge::default(),
             unrecalled: Family::default(),
+            origins: Family::default(),
             stages: Family::new_with_constructor(histogram as fn() -> Histogram),
             similar: Family::default(),
             similar_duration: histogram(),
@@ -257,6 +292,11 @@ impl Quality {
             q.purge_overdue.clone(),
         );
         registry.register(
+            "oml_recall_hits_by_origin",
+            "recall hits served, by the origin kind of the version, none for one written before kinds (ADR-0063 d13)",
+            q.origins.clone(),
+        );
+        registry.register(
             "oml_memories_unrecalled",
             "served memories no recall of the last 30 days returned, by how long ago they were promoted",
             q.unrecalled.clone(),
@@ -280,6 +320,9 @@ impl Default for Metrics {
         let recalls = Family::<RecallLabels, Counter>::default();
         let reranks = Family::<RerankLabels, Counter>::default();
         let bulk_items = Family::<BulkLabels, Counter>::default();
+        let unreviewed_hits = Counter::default();
+        let mode_changes = Family::<ModeLabels, Counter>::default();
+        let curation_acts = Family::<ActLabels, Counter>::default();
         let source_checks = Family::<BulkLabels, Counter>::default();
         let web_failures = Family::<WebFailureLabels, Counter>::default();
         let sparse_encoded = Family::<SparseLabels, Counter>::default();
@@ -331,6 +374,26 @@ impl Default for Metrics {
             "items of bulk verdicts by outcome",
             bulk_items.clone(),
         );
+        // No label: hits served labelled unreviewed inside an in-progress
+        // scope, or a key's own held rows (ADR-0030 d5).
+        registry.register(
+            "oml_recall_unreviewed_hits",
+            "recall hits served labelled unreviewed",
+            unreviewed_hits.clone(),
+        );
+        // The mode is a closed set: in_progress or standard (ADR-0030 d5).
+        registry.register(
+            "oml_workarea_mode_changes",
+            "workarea modes set by a person's key, by the mode set; standard on an in-progress root is its commit",
+            mode_changes.clone(),
+        );
+        // The act is a closed set: reject, retire, flag or write (ADR-0030
+        // d5, d9).
+        registry.register(
+            "oml_curation_acts",
+            "acts committed by curator keys inside in-progress workareas, by act",
+            curation_acts.clone(),
+        );
         // The outcome is a closed set: fresh, equivalent, moved, changed or
         // removed (ADR-0057 d17).
         registry.register(
@@ -359,6 +422,15 @@ impl Default for Metrics {
             "versions waiting for the learned sparse encoder across the deployment",
             sparse_backlog.clone(),
         );
+        // Every label is from the rule set's closed vocabulary: the finding
+        // class, the rule id and veto or hold — never what a rule matched
+        // (ADR-0065 d8, d11).
+        let scan_findings = Family::<ScanLabels, Counter>::default();
+        registry.register(
+            "oml_scan_findings",
+            "deterministic scan findings since start, by finding class, rule and action",
+            scan_findings.clone(),
+        );
         Self {
             registry,
             http,
@@ -369,11 +441,17 @@ impl Default for Metrics {
             recalls,
             reranks,
             bulk_items,
+            unreviewed_hits,
+            mode_changes,
+            curation_acts,
             source_checks,
             web_failures,
             quality,
             sparse_encoded,
             sparse_backlog,
+            scan_findings,
+            scan_counts: std::sync::OnceLock::new(),
+            scan_refresh: std::sync::Mutex::new(()),
         }
     }
 }
@@ -427,6 +505,29 @@ impl Metrics {
         self.bulk_items
             .get_or_create(&BulkLabels {
                 outcome: outcome.to_owned(),
+            })
+            .inc();
+    }
+
+    /// `n` recall hits served labelled `unreviewed` (ADR-0030 d5).
+    pub(crate) fn unreviewed_hits(&self, n: u64) {
+        self.unreviewed_hits.inc_by(n);
+    }
+
+    /// One workarea mode set by a person's key (ADR-0030 d5).
+    pub(crate) fn mode_set(&self, mode: &'static str) {
+        self.mode_changes
+            .get_or_create(&ModeLabels {
+                mode: mode.to_owned(),
+            })
+            .inc();
+    }
+
+    /// One curator act (ADR-0030 d5, d9).
+    pub(crate) fn curation(&self, act: &'static str) {
+        self.curation_acts
+            .get_or_create(&ActLabels {
+                act: act.to_owned(),
             })
             .inc();
     }
@@ -495,6 +596,16 @@ impl Metrics {
                 pipeline: pipeline.to_owned(),
             })
             .observe(seconds);
+    }
+
+    /// One recall hit of `origin_kind`, one of eight closed values.
+    pub(crate) fn recall_hit_origin(&self, origin_kind: &str) {
+        self.quality
+            .origins
+            .get_or_create(&OriginLabels {
+                origin_kind: origin_kind.to_owned(),
+            })
+            .inc();
     }
 
     /// One recall stage's seconds (ADR-0049 d14).
@@ -566,9 +677,38 @@ impl Metrics {
             .observe(seconds);
     }
 
+    /// Read the scan findings from `counts` at every scrape (ADR-0065 d11).
+    /// The first source set stays.
+    pub fn with_scan_counts(&self, counts: ScanCounts) {
+        let _ = self.scan_counts.set(counts);
+    }
+
+    /// Bring the findings counters up to the rule set's counts. One refresh
+    /// at a time, so two scrapes never add one delta twice.
+    fn refresh_scan(&self) {
+        let Some(counts) = self.scan_counts.get() else {
+            return;
+        };
+        let Ok(_one) = self.scan_refresh.lock() else {
+            return;
+        };
+        for (class, rule, action, n) in counts() {
+            let counter = self.scan_findings.get_or_create(&ScanLabels {
+                class: class.to_owned(),
+                rule: rule.to_owned(),
+                action: action.to_owned(),
+            });
+            let seen = counter.get();
+            if n > seen {
+                counter.inc_by(n - seen);
+            }
+        }
+    }
+
     /// The exposition: OpenMetrics text, which Prometheus scrapes.
     #[must_use]
     pub fn encode(&self) -> String {
+        self.refresh_scan();
         let mut out = String::new();
         // Writing into a String cannot fail.
         let _ = prometheus_client::encoding::text::encode(&mut out, &self.registry);

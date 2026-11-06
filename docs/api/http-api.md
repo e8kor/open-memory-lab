@@ -140,7 +140,7 @@ not built, like everything on this page.
 
 **Freezing v1.** [FR-21](../product/roadmap.md) is the freeze act: a recorded v1-stable
 declaration pinning the provider ring at a named revision of [openapi.yaml](openapi.yaml)
-(currently `0.5.8-design`), from which moment the covenant — and this section's definition of
+(currently `0.6.0-design`), from which moment the covenant — and this section's definition of
 additive — is in force.
 
 ## Authentication and authorization
@@ -545,6 +545,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `POST /v2/workareas` | admin (key role) | served |
 | `POST /v2/workareas/{workarea}/reparent` | admin (key role) | designed |
 | `POST /v2/workareas/{workarea}/crew` | admin (key role) | served |
+| `POST /v2/workareas/{workarea}/mode` | a dreamer key held by a human, dreamer on the node; never an agent key ([ADR-0030](../adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d1); *since v0.6.0* | served |
 | `GET /v2/crews` · `GET /v2/crews/{crew}` · `POST /v2/crews` · `POST /v2/crews/{crew}/update` | admin (key role) | served |
 | `POST /v2/workareas/{workarea}/transitions` | dreamer or admin; *since v0.5.2* | served |
 | `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify` | a second, non-proposing dreamer or admin; *since v0.5.2* | served |
@@ -566,6 +567,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `POST /v2/bootstrap/claim` | single-use enrollment token (bootstrap ceremony only) | served |
 | `GET /v2/web/emails` · `POST /v2/web/emails` · `POST /v2/web/emails/remove` | admin (key role); *since v0.5.0* ([Web pages](#web-pages-the-user-page-and-the-admin-page)) | served |
 | `POST /v2/admin/memories/search` · `GET /v2/admin/memories/{artifact_id}` | admin (key role), lead only, every answer journalled as `memory.admin_read`; *since v0.5.0* ([admin read](#admin-read)) | served |
+| `GET /v2/admin/rescan` | admin (key role); the stored versions rescanned by rule, nothing changed or journalled; *since v0.6.0* ([rescan](#rescan)) | served |
 | `GET /v2/search` · `POST /v2/search/default` | admin (key role); the tenant's default search pipeline, journalled as `search.default_set`; *since v0.5.5* ([search settings](#search-settings)) | served |
 | `GET /v2/usage/settings` · `POST /v2/usage/settings` · `GET /v2/usage/events` · `POST /v2/usage/eval` | admin (key role); the tenant's recalls, its query-text setting journalled as `telemetry.settings_set`, and the real-usage replay; *since v0.5.7* ([recall telemetry](#recall-telemetry)) | served |
 
@@ -1070,6 +1072,19 @@ anchor index and scores only them, a broad one joins the indexed columns; the re
 equality and the prefix a range on leakproof operators. The statistics a score uses are the
 unfiltered ones, so a filtered recall is the unfiltered list filtered then cut.
 
+**Origin kind and the chat anchor.** *Planned for v0.6.0 ([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md) d1–d5).* Submit
+and supersede take an optional `origin: {kind}`, one of `repo`, `doc`, `code`, `lake`, `chat`,
+`web`, `manual`; omitted, `manual` is recorded and journalled. It is signed in the submission
+event, immutable, and never inherited. `chat` requires a chat anchor and a chat anchor requires
+`chat`, else `request.validation` naming `/origin/kind`. A chat anchor is
+`{uri: "chat://<harness>/<session>", fragment: "turn=<n>", hash, hasher: "oml-turn/1"}`, the
+session 32 lower-case hex digits; `rev` is refused with it. Every memory item carries `origin`, or
+`null` on a version written before 0.6.0. Recall takes `origin_kinds`, a list of one to seven
+kinds, and `GET /v1/memories` takes it comma-separated or repeated; it combines by AND with the
+other filters inside the candidate statement and leaves out rows without a kind. Creating a
+workarea named `chat` directly under a user root needs a key `held_by: human`; any other key is
+`403 access.verb_ceiling`, `details.reason` `chat_scope_is_human_only`.
+
 **Source check — `POST /v1/memories/{artifact_id}/source-check`.** `{rev, result, hash?, path?,
 fragment?}`, `result` one of `fresh`, `equivalent`, `moved`, `changed`, `removed`; `path` (and
 `fragment`) only with `moved`, where `path` is required. Admits a promoted, anchored served tip
@@ -1192,6 +1207,7 @@ edges touching a node are read, proposed and ratified on the [edges](#edges) fam
 | `POST /v2/workareas` | **admin.** Create a child in `development`: `{parent, name, crew?, prefix?}`, `parent_id` refused naming `parent` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7) — `name` unique in the tenant (`name.taken`), `crew` an existing [crew](#crews)'s id or name; a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the parent and before `name.taken`. A `prefix` registers the node as a vocabulary workarea — tenant-unique and **permanent** (`vocab.prefix_conflict` on collision), and requires `crew` (a vocabulary needs a named curator crew, [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)); `prefix` is a designed field, refused with `request.validation` until vocabulary workareas are built. Refused under a `validated` parent (`workarea.frozen`). *Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d6):* a writer user key may also create, under a parent inside its own user root where its effective access confers `writer`, `parent` defaulting to that root, refused on the parent by the ordinary refusal order; `name` is then unique within the user's root; the `Workarea` object serves `user_root`. |
 | `POST /v2/workareas/{workarea}/reparent` | **admin.** `{new_parent_id, dry_run}` — journalled single-transaction descendant path rewrite; `dry_run: true` returns the paths and grants affected without journalling. Re-parenting into a `validated` destination is refused (`workarea.frozen`). |
 | `POST /v2/workareas/{workarea}/crew` | **admin.** Journalled crew-metadata update: `{crew}` points the workarea at another [crew](#crews) record, by id or name (`workarea.crew_updated`); a `crew` that names no crew record of the tenant answers `access.not_found`, checked after the workarea. Allowed on `validated` areas — freeze covers claims and promotions, not metadata. |
+| `POST /v2/workareas/{workarea}/mode` | **A person's dreamer key.** `{mode}`: `in_progress` puts the node in progress — readers inside recall other authors' held memories, labelled `unreviewed`, and nothing inside reaches a read scoped outside it — or `standard`, which on an in-progress root is its commit, refused with `workarea.held_remaining` while anything in its subtree is held; `in_progress` is refused on `universe`, on a node not `development`, and where an ancestor or descendant is in progress (`workarea.in_progress_refused`). Journalled `workarea.mode_set`. → `200`, the node as the key reads it, with `mode` and `in_progress_root`. *Since v0.6.0* ([ADR-0030](../adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d1, d2, d6). |
 | `POST /v2/workareas/{workarea}/transitions` | Propose a forward status transition `{to: "committed" \| "validated"}`; any other `to` is `request.validation` naming `/to`. Backward does not exist; `validated` is refused while any child is not validated, and on a user root (`workarea.transition_refused`). → `202`, pending, the `Transition`. *Since v0.5.2.* |
 | `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify` | A second, non-proposing dreamer or admin ratifies; journalled with the policy snapshot and `same_user` ([workareas.md](../architecture/workareas.md) transition matrix). → `200`, the ratified `Transition`. *Since v0.5.2.* |
 
@@ -1709,6 +1725,20 @@ role: the CLI's `oml web allow`, `oml web list` and `oml web remove`, and how a 
 admin email gets in. An email is unique in the deployment (`name.taken`, kind `email`); a `user`
 a shared workarea holds, or whose composed key names a key holds, is `name.taken`. Removing an
 email ends its sessions and leaves the user's agent keys working.
+
+### Rescan
+
+*Since v0.6.0 · [ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d13*
+
+`GET /v2/admin/rescan?after_seq=&limit=`, admin key role, scans the versions the tenant already
+stores with the server's rule set, body and anchor, as admission does. Each window reads the
+submissions journalled after `after_seq`, at most `limit` (1 to 1000, default 1000) journal
+events, and answers `{scanner_version, scanned, findings, by_rule, next_after_seq}`. Each finding
+names `artifact_id`, `workarea_id`, `version`, `state`, `class`, `rule`, `action` (`veto` or
+`hold`) and `at` (`/body line 3`), never the text. It changes nothing and journals nothing: a
+version the scan would refuse today stays where it is, for a person to read with
+`oml admin read` and retire. `oml admin rescan` walks every window, sums them by rule, and exits 1
+when any finding vetoes.
 
 ## Bans
 

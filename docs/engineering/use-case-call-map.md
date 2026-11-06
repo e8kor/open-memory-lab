@@ -176,6 +176,19 @@ new call to one of these rows.
 | UC-SM-09 | [Find what is known about a table](../product/use-cases.md#find-what-is-known-about-a-table) | designed (ADR-0062 d22) | `read {query}` with the table's name as words | `read {query, anchor_uri_prefix}`; `read {mine: false, anchor_uri_prefix}` |
 | UC-SM-10 | [Find the columns a reviewed term describes](../product/use-cases.md#find-the-columns-a-reviewed-term-describes) | designed (ADR-0062 d14) | none | `about` in a sync's write; `read {query, about}` (ADR-0051 d7); `oml lake classify` |
 
+### Conversations
+
+Added on 2026-11-05 with the proposed [ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md), planned for v0.6.0; its d14 traces
+each new call to one of these rows.
+
+| UC | Use case | Status | Calls today | Minimal |
+|---|---|---|---|---|
+| UC-CH-01 | [Say what kind of source a memory came from](../product/use-cases.md#say-what-kind-of-source-a-memory-came-from) | designed (ADR-0063 d1, d2) | none | `write {text, origin: {kind}}`; `oml write --origin-kind` |
+| UC-CH-02 | [Find only what a person said, or only what documents say](../product/use-cases.md#find-only-what-a-person-said-or-only-what-documents-say) | designed (ADR-0063 d3) | none | `read {query, origin_kinds}`; `read {origin_kinds}`; `oml read --origin-kind` |
+| UC-CH-03 | [Remember what a person said in a session](../product/use-cases.md#remember-what-a-person-said-in-a-session) | designed (ADR-0063 d4–d7) | the agent writes when asked | `write {text, origin: {kind: chat}, anchor: chat}`, asked by `oml hook stop` |
+| UC-CH-04 | [Open a person's chat memory](../product/use-cases.md#open-a-persons-chat-memory) | designed (ADR-0063 d8) | `oml workareas create` | `oml chat init` over `POST /v2/workareas` |
+| UC-CH-05 | [Be reminded on each prompt](../product/use-cases.md#be-reminded-on-each-prompt) | designed (ADR-0063 d10) | none | `oml hook user-prompt` over `read {query, workarea, match: any, include_unreviewed}` |
+
 ### Sessions and agents
 
 | UC | Use case | Status | Calls today | Minimal |
