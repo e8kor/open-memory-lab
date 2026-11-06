@@ -1,395 +1,83 @@
-<!--
-id: architecture/storage
-tier: engineering
-status: design draft for review · decided, not built
-answers: where the transactional commit point is; how the per-tenant signed hash chain, the outbox protocol and the derived lake interlock; where attachment bytes live
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "where the transactional commit point is; how the per-tenant signed hash chain, the outbox and the derived lake fit together; why journal payloads carry digests and no body text; where held bodies live"
+---
 
 # Storage: commit point, chain, outbox, lake
 
-**Status:** design draft for review · decided, not built
+PostgreSQL is the system of record. The journal's hash chain makes its history tamper-evident. The lake is a copy that nothing reads online. This page explains how those three fit together. Column-level detail is in the [Delta tables](../data/delta-tables.md) and the [event catalog](../data/event-catalog.md). The byte-level chain rules are in the [chain format](../data/chain-format.md). Erasure and copies are in [audit and lineage](audit-and-lineage.md), and the read path that never touches the lake is in [retrieval](retrieval.md).
 
-**Release:** the commit point and the signed chain since v0.1.0; the lake and attachments not scheduled ([releases](../product/releases.md)).
+## The commit point
 
-This page is the single declaration site for the transactional commit point and
-per-tenant hash chain (D1), the derived Delta lakehouse and the outbox protocol
-that feeds it (D2, with the pure-Rust delta-rs writer as D5), and attachment
-storage (D3). The tables named here are
-specified column-by-column in [data/postgres-schema.md](../data/postgres-schema.md)
-and [data/delta-tables.md](../data/delta-tables.md); journal event payload shapes
-are in [data/event-catalog.md](../data/event-catalog.md). Erasure and the
-copy-class inventory are declared in
-[audit-and-lineage.md](audit-and-lineage.md); the reconciler that audits the
-lake against the journal is declared in [reconciliation.md](reconciliation.md);
-the read path that deliberately never touches the lake is declared in
-[retrieval.md](retrieval.md).
+PostgreSQL is the only transactional commit point. One Postgres transaction commits three things atomically:
 
-## The commit point (D1)
-
-*Available since v0.1.0; the durability domain's replication not scheduled · [releases](../product/releases.md)*
-
-PostgreSQL is the system of record and the only transactional commit point.
-One Postgres transaction commits, atomically:
-
-- the signed journal event (append to `journal`),
-- the metadata rows it implies (`memories` and friends — the fold state),
+- the signed journal event, appended to `journal`;
+- the metadata rows the event implies, which are the fold state;
 - a durable `outbox` row for everything the lake must eventually see.
 
-A write is durable **iff that transaction commits**. There is no second
-commit point: the lake, the FTS and vector indexes, and every export are
-derivations of what this transaction made durable. The benefit is that
-"did it happen?" has exactly one answer with one authority; the cost is that
-every write pays Postgres transaction latency plus the replication latency
-below, and the journal table grows without compaction.
+A write is durable if and only if that transaction commits. There is no second commit point. The lake, the full-text and vector indexes, and every export derive from what this transaction made durable. So "did it happen?" has one answer from one authority.
 
-### Durability domain
+The cost: every write pays Postgres transaction latency. The journal table grows without compaction.
 
-The journal's durability claim requires synchronous quorum replication:
-`synchronous_commit = on` or `remote_apply` with quorum synchronous standbys
-(`remote_write` does not survive a standby OS crash and does not carry the claim). Without it, a failover can lose committed-and-acknowledged journal
-events, which would be a silent violation of the append-only promise. The
-production profile therefore treats quorum sync as a requirement of the design,
-not a tuning choice.
+**Durability needs synchronous replication.** Journal durability across a failover requires `synchronous_commit = on` or `remote_apply` with quorum synchronous standbys. Without them, a failover can lose committed events. A single-node install has no standbys, so its durability is one machine's disk.
 
-**Local-profile caveat.** The single-node local profile
-([operations/deployment.md](../operations/deployment.md)) has no standbys, so
-this guarantee is reduced there: durability is one machine's disk. The local
-profile documents this reduction rather than pretending parity.
+## The per-tenant hash chain
 
-### The per-tenant hash chain
+The journal is hash-chained per tenant, with one chain-head row for each tenant. Each event gets a per-tenant sequence number (`seq`), the hash of the previous event (`prev_hash`) and an Ed25519 signature. A transaction-scoped advisory lock on the tenant's chain head serializes this assignment. The lock is held until the transaction commits. So commit order equals `seq` order per tenant, and no observer sees event *n+1* durable while event *n* is in flight. The outbox insert happens inside the same transaction, so the outbox inherits that order.
 
-The journal is hash-chained **per tenant**: one chain-head row per `tenant_id`.
-Chain assignment — the per-tenant `seq`, `prev_hash`, and ed25519 signature —
-is serialized by a transaction-scoped advisory lock
-(`pg_advisory_xact_lock` on the tenant's chain head, held to commit). Because
-the lock is held until the assigning transaction commits, **commit visibility
-order equals `seq` order per tenant**: no observer can see event *n+1* durable
-while event *n* is still in flight. The outbox insert happens inside the same
-serialized transaction, so the outbox inherits the chain's order. The cost is
-that each tenant's writes serialize through one lock — per-tenant write
-throughput is bounded by that serialization — accepted because chains are
-per tenant, so tenants do not contend with each other.
+The cost: each tenant's writes serialize through one lock, so per-tenant write throughput is bounded by it. Tenants do not contend with each other.
 
-Provider-level acts have a chain of their own: a **reserved provider tenant**,
-created at deployment genesis, whose chain carries the events that precede any
-customer tenant — the root operator `key.issued`, each `tenant.created`. Every
-new tenant's chain opens with a genesis event that **references** the
-provider-chain `tenant.created` event that created it (a reference, not a
-second numbering), so the whole deployment folds out of per-tenant chains with
-no global sequence anywhere.
+Provider-level acts have a chain of their own, under a reserved provider tenant. Each new tenant's chain opens with a genesis event that references the provider chain's `tenant.created` event. The deployment therefore folds out of per-tenant chains with no global sequence.
 
-Append-only is enforced mechanically, not by convention: `REVOKE UPDATE,
-DELETE` on `journal` plus a guard trigger. Row-level security scopes every
-table by tenant ([security.md](security.md)).
+OML enforces append-only mechanically. It revokes `UPDATE` and `DELETE` on `journal` and adds a guard trigger.
 
-The byte-level chain mechanics — the enumerated signed envelope fields, RFC 8785
-canonicalization of `signed_bytes`, the hash, the signature, the genesis rule and
-the verification procedure, with computed test vectors — are declared normatively
-in [data/chain-format.md](../data/chain-format.md).
+**What the signature means.** Only the lead loads the signing key. The signature attests the deployment: one signer process at a time, with each takeover journaled as `system.lead_acquired`. The chain proves the deployment's key signed these events in this order. It does not prove which process signed beyond the lead record. It does not protect against an attacker who holds the key ([security](security.md)).
 
-**Signing, stated honestly (D17).** The **lead** loads the deployment signing
-key (Kubernetes Secret/KMS); followers never do
-([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)). What is
-single is chain-head assignment in Postgres — the lead lease keeps the common
-case quiet, but the chain lock is the load-bearing fence. The signature attests
-*the deployment*: one signer process at a time, each takeover journalled
-(`system.lead_acquired`), with the startup fork check run at lead startup
-**and at every failover promotion**. The threat model treats compromise of the
-lead as compromise of the signing key ([security.md](security.md)). The honest
-reading: the chain proves that the deployment's key signed these events in
-this order; it does not prove which process did beyond the journalled lead
-record, and it does not protect against an attacker who holds the key.
+**Fork check.** Before it accepts writes, `oml-server` verifies that the stored chain head matches the last signed head. This detects a failover that lost committed events and would otherwise fork the chain. The server refuses to write onto a forked head.
 
-**Fork check at startup.** Before accepting writes, `oml-server` verifies that
-the stored chain head verifies against the last signed head. This detects the
-failure the synchronous-quorum requirement exists to prevent — a failover that
-lost committed tail events and would otherwise fork the chain — and refuses to
-write onto a forked head.
+## Digest-only journal payloads
 
-### Digest-only journal payloads
+Journal payloads never carry body text. An event references content only by digest: the plaintext digest, which identifies the content, and the ciphertext digest of the stored encrypted object. `oml-server` encrypts the body under the memory's key at admission, so both digests exist when it signs the event. Every later copy is those same ciphertext bytes. The signature covers the digest envelope and not the bodies.
 
-**Journal payloads never carry body plaintext.** A journal or outbox event
-references content only by digest — the **plaintext digest** (the content's
-identity) and the **ciphertext digest** of the stored per-artifact-DEK
-encrypted object. The body is encrypted under the artifact's DEK at admission,
-inside `oml-server`, so both digests exist when the submission event is
-signed; every downstream copy — quarantine, object store, lake — is those
-same ciphertext bytes. The ed25519 signature covers this digest envelope
-(`signed_bytes`), not the bodies. Journalling the ciphertext digest is what
-gives the key-less reconciler a journal-side comparand: store bytes are
-verified against what the signed event says, never store against store
-([reconciliation.md](reconciliation.md)).
+This has three effects.
 
-This is why chain verification survives crypto-shredding: erasure destroys the
-artifact's DEK ([audit-and-lineage.md](audit-and-lineage.md)), which makes the
-body unrecoverable, but the signed bytes of every chain event are untouched —
-the chain still verifies end to end, and the digest still proves which bytes
-the erased event was about. The cost of digest-only payloads is that the
-journal alone cannot reproduce content; replaying history into readable form
-requires the body stores, which is the lake's and object store's job. Identity
-metadata in the chain (writer identity, principal) is minimized but present;
-full erasure of attribution metadata is an open, tracked FR with an exit
-criterion — see the attribution-metadata erasure row in
-[product/roadmap.md](../product/roadmap.md) and the boundary statement in
-[audit-and-lineage.md](audit-and-lineage.md).
+- **Chain verification survives erasure.** Erasing a memory destroys its encryption key. The body becomes unrecoverable, and the signed bytes stay untouched. The chain still verifies end to end.
+- **Comparison needs no keys.** Anyone can check stored bytes against the signed ciphertext digest without decrypting.
+- **The journal alone cannot reproduce content.** Reading history back needs the body stores.
+
+The chain also keeps identity metadata, such as the writer and principal. Erasing attribution is not available.
 
 ## Time
 
-The single authoritative source for a journal event's `at` is the **Postgres
-primary's clock, read inside the committing transaction**. No application clock
-participates: a server replica's clock, a client's clock, and a declared
-`simulated_time` ([simulations.md](simulations.md)) are never what `at` records.
-One clock per deployment means two events' timestamps are comparable without
-asking which machine stamped them.
+The Postgres primary's clock, read inside the committing transaction, supplies every event's `at`. No application clock takes part. One clock per deployment makes timestamps comparable without asking which machine stamped them.
 
-Chain order is `seq`, and only `seq`. Timestamps are informational: a failover
-to a standby with a differing clock, or a clock step on the primary, can make
-`at` regress between consecutive `seq` values without violating any guarantee —
-verification orders by `seq` and never by `at`
-([data/chain-format.md](../data/chain-format.md)). The expectation in every
-profile — standalone, docker, kubernetes
-([ADR-0023](../adr/ADR-0023-install-profiles-and-cluster-mode.md)) — is NTP (or
-the platform's equivalent) on the host that runs Postgres. Without it, chain
-integrity and ordering do not degrade; what degrades is everything compared
-against wall clock — serve expiries, `key.rotated` grace deadlines, read-log
-batch windows, retention and backup horizons — all of which drift with the
-clock, silently.
+Chain order is `seq` and only `seq`. A failover or a clock step can make `at` go backward between consecutive `seq` values without breaking any guarantee. Verification orders by `seq`.
 
-Evidence exports carry this caveat: a bundle's timestamps are the primary's
-clock at commit, informational and possibly non-monotonic across failover;
-order is proven by `seq` alone
-([audit-and-lineage.md](audit-and-lineage.md)).
+Run NTP on the host that runs Postgres. Without it, chain integrity does not degrade, but everything compared with wall-clock time drifts silently: serve expiry, read-log windows, and retention and backup horizons.
 
-## The lake and the outbox protocol (D2, D5)
+## The lake and the outbox
 
-*Not scheduled; outbox rows are written since v0.1.0 · [releases](../product/releases.md)*
+Delta Lake is a derived copy for analysis. It serves no client read. Recall, search and get all answer from Postgres. When the journal and the lake disagree, the journal wins. The benefit is that the lake's write path can be asynchronous and batched without a serving outage. The cost is a second storage system whose only readers are batch jobs. See [the lake](../operations/lake.md) for how to run it.
 
-Delta Lake is the derived body lakehouse. Its purpose is narrowed and named:
-**reconciliation, lineage, metadata analytics, and future journalled
-per-audience exports.** It serves no client read — recall, search, fetch and
-graph reads are all answered from Postgres
-([retrieval.md](retrieval.md)) — and it is never the authority: when journal
-and lake disagree, the journal wins and the lake is repaired
-([reconciliation.md](reconciliation.md)). The benefit of a lake that nothing
-reads online is that its write path can be asynchronous, batchy, and
-repairable without a serving outage; the cost is running a second storage
-system whose only consumers are batch jobs, accepted because the data the lake
-exists to hold — pure memory data, who and when wrote them, what space
-([ADR-0003](../adr/ADR-0003-delta-lake-derived-lakehouse.md)) — wants a
-columnar, versioned substrate the journal's digest-only rows cannot be.
+**What reaches the lake.** No held body ever reaches the lake. `bronze.events` mirrors journal events with digest-only payloads. Silver materialization is enqueued by approval only. Lake bodies are ciphertext. Lake rows carry the artifact id, workarea id, writer, principal, timestamps, both digests and state.
 
-Containment rules, restated from their owning pages because the lake writer
-enforces them: **no held body ever reaches the lake** — `bronze.events` mirrors
-journal events with digest-only payloads, and silver materialization is
-enqueued by promotion only ([admission.md](admission.md)); simulation
-provenance is indelible in lake rows ([simulations.md](simulations.md)).
-Lake bodies are per-artifact-DEK ciphertext; lake rows carry `artifact_id`,
-`workarea_id` (the stable key; path-at-write kept as history), writer identity,
-principal, timestamps, provenance class, plaintext digest **and** ciphertext
-digest (both folded from the submission event, which carries them under the
-signature — see above), and state — everything reconciliation needs without
-holding plaintext.
-Column-level detail: [data/delta-tables.md](../data/delta-tables.md).
+**How the writer drains the outbox.** One `oml-lakewriter` runs at a time under a leader lease. It reads outbox rows in sequence order, in micro-batches.
 
-Exactly one lake-writer deployment (`oml-lakewriter`, singleton with a leader
-lease; split-brain is bounded by Delta conditional put plus the transaction
-conflict below — workload details in
-[operations/deployment.md](../operations/deployment.md)) drains the outbox in
-micro-batches.
+1. It cuts a batch from the stable prefix only. Outbox sequence numbers are assigned at insert, but a row becomes visible when its transaction commits. A smaller number can therefore appear after a larger one. The writer reads only rows older than every transaction still active at scan time. A long-running transaction holds this back and shows up as lag, never as loss.
+2. It groups rows by target Delta table.
+3. For each table, it checks the last transaction version it committed. If the table already holds this batch, it skips the table.
+4. It applies each table's rows in sequence order and commits with an application transaction id that records the batch end.
+5. It advances the frontier in Postgres only after every table committed. The Delta log is the recovery authority. The frontier is a convenience for restart and lag metrics.
 
-### The protocol
+After a crash, the writer rebuilds the same batch from the recorded bounds. It never re-cuts by time or size. Tables that committed skip it, and the rest apply it.
 
-Exactly-once delivery rests on Delta application transaction ids: appId
-`oml-lakewriter`, version = the last applied outbox `seq`, recorded and checked
-**per table**.
+**Retracts keep order.** A retract, such as a demotion or reassignment, is a Delta `MERGE` applied in the same sequence order as materialization. A promotion at sequence 100 and its demotion at 140 end in the demoted state, even in one batch. The cost is head-of-line blocking: a slow materialization delays the retracts behind it.
 
-> The claim that delta-rs exposes application transaction ids with these
-> check-and-record semantics is **to be verified against delta-rs
-> documentation, with a fetch date, at writing time** (D17); as of this draft
-> it is unverified. The exit criterion is the delta-rs exactly-once conformance
-> test FR in [product/roadmap.md](../product/roadmap.md) ("exactly-once,
-> verified by conformance test T-n"). Until that test passes, every
-> "exactly-once" in this section reads as a design commitment, not a property.
+**A failing row is dead-lettered.** After a bounded retry budget, the writer journals a `materialize-skipped` event, moves the row to the `dead_letter` table and moves on. The lake is then knowingly incomplete until repair. A stalled frontier would hide the same problem inside unbounded lag. `oml-lakewriter doctor` reports the count.
 
-1. **Cut a micro-batch — from the stable prefix only.** Outbox `seq` is
-   assigned by the identity sequence at **insert** time, but a row becomes
-   visible only when its inserting transaction **commits**, and transactions
-   of different tenants are deliberately unserialized — so a smaller seq can
-   become visible after a larger one has already been read. The cut therefore
-   never trusts "the rows I can see": the lake writer reads outbox rows in
-   the half-open seq range `(frontier, batch_end]`, where `frontier` is the
-   global frontier (a Postgres column) and `batch_end` is bounded by the
-   **snapshot horizon** — only rows whose inserting transaction is older than
-   every transaction still active at scan time (in PostgreSQL terms, below
-   the oldest active txid of the scan's snapshot) are in the stable prefix,
-   and `batch_end` never exceeds it. Within that stable prefix, `batch_end`
-   is chosen by size/time limits. This is the only point where size and time
-   participate; they never participate in a retry. Because the frontier
-   advances only within the stable prefix (step 5), a late-committing row can
-   never land at or below the frontier: it is simply cut into a later batch.
-   A long-running transaction holds the horizon back; that surfaces as
-   frontier lag (`stale-frontier`,
-   [reconciliation.md](reconciliation.md)), never as loss.
-2. **Group by target table.** Rows in the batch are partitioned by the Delta
-   table each operation touches (`bronze.events`, `silver.claims`, gold
-   tables).
-3. **Per-table idempotence check.** For each table, read that table's last
-   committed transaction version for appId `oml-lakewriter` from the Delta
-   log. If `batch_end ≤` that version, the table has already applied this
-   batch (or a later one): skip it. The check is per table because a crash can
-   leave a multi-table batch half applied.
-4. **Apply and commit per table.** Each table's portion is applied in strict
-   outbox seq order and committed with a transaction action recording appId
-   `oml-lakewriter`, version `batch_end`, and the batch bounds
-   `(frontier, batch_end)`. On S3/MinIO this commit requires conditional put
-   (put-if-absent); a concurrent writer on the same appId fails on the
-   transaction-version conflict — the second fence at failover.
-5. **Advance the global frontier.** Only when **every** table touched by the
-   batch has committed does the lake writer advance the frontier column in
-   Postgres to `batch_end`. The frontier column is a cache for cheap restart
-   and lag metrics (`oml status`); **the Delta log's transaction version is
-   the sole recovery authority.**
-6. **Recover deterministically.** On restart or retry, the writer reads each
-   table's last transaction action, takes the recorded `(frontier, batch_end)`
-   bounds, and reconstructs **the same batch** from the outbox by seq range —
-   never re-cut by time or size. Tables that already committed skip it in
-   step 3; tables that did not, apply it; then the frontier advances. A batch
-   is therefore a stable identity, not an artifact of timing — and because
-   `batch_end` was cut inside the stable prefix (step 1), no row with
-   seq ≤ `batch_end` can commit after the cut, so the reconstructed row set
-   is identical to the first attempt's.
+We have not measured lake writer throughput or Delta commit latency.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant PG as Postgres (outbox + frontier cache)
-    participant LW as oml-lakewriter (singleton)
-    participant B as Delta: bronze.events
-    participant S as Delta: silver.claims
+## Where held bodies live
 
-    LW->>PG: read frontier F#59; cut batch (F, E] by seq
-    Note over PG: E is capped at the snapshot horizon —<br/>no insert below E is still in flight
-    PG-->>LW: outbox rows F+1..E
-    LW->>LW: group rows by target table
-
-    LW->>B: read last txn version (appId oml-lakewriter)
-    B-->>LW: v_b
-    alt E ≤ v_b
-        LW->>LW: skip bronze (already applied)
-    else
-        LW->>B: apply rows in seq order#59; commit txn(appId, version=E, bounds F..E)
-        Note over B: conditional put#59; version conflict fences a second writer
-    end
-
-    LW->>S: read last txn version
-    S-->>LW: v_s
-    alt E ≤ v_s
-        LW->>LW: skip silver
-    else
-        LW->>S: apply in seq order (MERGE for retracts)#59; commit txn(version=E)
-    end
-
-    alt every touched table committed E
-        LW->>PG: advance frontier to E (cache only)
-    else crash / partial failure
-        Note over LW: restart: re-read txn actions,<br/>rebuild the SAME batch from bounds F..E,<br/>apply only to tables behind E
-    end
-```
-
-### Retracts: MERGE in stream order
-
-A retract — demote, erase, simulation-end, reassign — is a Delta `MERGE` on
-`(artifact_id, version)` that sets state, applied **in strict outbox seq order
-in the same single stream as materialization**. There is no separate retract
-lane: if a promotion at seq 100 and its demotion at seq 140 land in one batch,
-the MERGE at 140 is applied after the insert at 100, and the table ends in the
-demoted state. One stream buys ordering for free at the cost of head-of-line
-blocking: a slow materialization delays the retracts behind it, which is part
-of why dead-lettering exists.
-
-### Dead-lettering
-
-A row that keeps failing must not stall the stream forever. After a bounded
-retry budget, the lake writer:
-
-1. journals a `materialize-skipped` event (the skip is itself an attributed,
-   chained fact — see [data/event-catalog.md](../data/event-catalog.md)),
-2. moves the row to the `dead_letter` table,
-3. advances past it.
-
-The reconciler reports dead-lettered rows as a named finding class
-(`dead-lettered`, [reconciliation.md](reconciliation.md)); `oml doctor`
-surfaces the count. Repair is a journalled re-enqueue — never a manual table
-edit. The cost of advancing past a poison row is a lake that is knowingly,
-visibly incomplete until repair; the alternative — a stalled frontier — hides
-the problem inside unbounded lag, so the skip is journalled instead.
-
-### What is unmeasured, said plainly
-
-Lake-writer throughput and Delta commit latency are unmeasured — nothing has
-run — and no figure is asserted until one is measured (D17); the exactly-once
-claim itself awaits FR-3's conformance test
-([roadmap](../product/roadmap.md)).
-
-## Attachments (D3)
-
-*Not scheduled · [releases](../product/releases.md)*
-
-Files, images and PDFs are content-addressed encrypted objects.
-
-**Upload.** Attachments upload through resumable upload sessions: chunked, with
-the session recording the expected digest up front (`upload_sessions` in
-[data/postgres-schema.md](../data/postgres-schema.md)). A retry resumes the
-session or restarts it — the behavior is defined by the session state machine,
-not improvised per client. The session is scoped to the uploading key.
-
-**Naming and binding.** An attachment is named by the SHA-256 of its
-plaintext and bound into the signed submission envelope by that digest. The
-claim and its files are one signed unit: a verdict on the claim is a verdict
-on exactly these bytes, and a reviewer is served every attachment of a claim
-before a verdict counts ([admission.md](admission.md); the serve binding
-ceremony is in the CLI reference).
-
-**Storage and the two digests.** Objects live in an S3-compatible store,
-encrypted under the artifact's DEK: `oml-bodies/<tenant>/<digest>`. The
-binding event (`submission.attach`,
-[data/event-catalog.md](../data/event-catalog.md)) journals **both** digests
-under the signature — the same rule as body submissions — and stored object
-integrity metadata and the lake carry copies of them; when copies disagree,
-the journalled digest is the authority. Who can verify which is a
-key-custody fact ([security.md](security.md)):
-
-- the **ciphertext digest** is verifiable by anything that can read the bytes
-  — in particular the key-less reconciler, which audits object and lake-row
-  integrity without ever being able to decrypt;
-- the **plaintext digest** is verifiable only where DEKs are held, which is
-  the serving path in `oml-server` — verified when a body is decrypted to be
-  served.
-
-So integrity checking is split deliberately: bulk, continuous verification
-runs without keys over ciphertext; end-to-end plaintext verification happens
-exactly where plaintext legitimately exists.
-
-**What review means per type.** Where a deterministic text extractor exists
-for a type, the extracted text is scanned and gated like body text. For opaque
-binaries no extractor covers, the reviewed claim is honestly narrower:
-provenance + digest + scan result — stated per type rather than implying
-content review that did not happen.
-
-## Quarantine placement
-
-Captured bodies — text and attachments alike — are held, before and during
-review, in Postgres or in a quarantine bucket
-(`oml-quarantine/<tenant>/<digest>`) reachable only by service credentials.
-**Never the lake.** The quarantine store is outside every consumer-readable
-zone, outside the outbox stream, and outside bronze; a held body has no path
-to any reader other than its own author (own-work status,
-[admission.md](admission.md)) and the reviewer it is served to. Release to the
-lake is
-exclusively a consequence of promotion, carried by the outbox
-([admission.md](admission.md) owns the lifecycle).
-
-## Decision record
-
-This page declares D1, D2, D3 and D5, registered as ADR-0002, ADR-0003,
-ADR-0004 and ADR-0006 in the [decision register](../adr/index.md).
+OML holds captured bodies in Postgres or in a quarantine bucket, `oml-quarantine/<tenant>/<digest>`, reachable only by service credentials. A held body never goes to the lake. The quarantine store sits outside every consumer-readable zone and outside the outbox stream. A held body has no path to any reader other than its own author and the reviewer it is served to. Approval alone releases a body to the lake, and the outbox carries it ([admission](admission.md)).

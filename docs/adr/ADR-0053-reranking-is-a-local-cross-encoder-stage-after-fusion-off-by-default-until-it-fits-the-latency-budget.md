@@ -9,7 +9,7 @@ answers: where reranking sits in a recall and what the core hands it; which runt
 
 **Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.6
 
-**Release:** introduced in v0.5.6 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.6 ([releases](../changelog.md))
 
 **Amends:** ADR-0049 (d4: a fifth pipeline name, `bm25-rerank`; d6: the answer's `search` gains
 `rerank`, `rerank_reason`, `floor` and `below_floor`, and each hit's `matched` gains `rerank` and
@@ -42,7 +42,7 @@ must not grow, since only the lead runs a model. Each hit keeps its `matched` ex
 **The host the numbers come from.** Every latency below was measured on the 8-vCPU host while
 other sessions' builds and evals ran beside it, a load average of 15 to 29 in the first round and 3 to 8 in the second, after an independent review; each table names its own; the relative order
 of the runtimes and of the depths held across repeated runs, the absolute milliseconds did not,
-and they are reported as measured, not as what an idle host would give (FR-88).
+and they are reported as measured, not as what an idle host would give (#102).
 
 ## Decision
 
@@ -329,25 +329,25 @@ and they are reported as measured, not as what an idle host would give (FR-88).
   `floor`, `below_floor`), [configuration](../operations/configuration.md) (`search.rerank.*`),
   the recall eval's README (data version 2), the benchmark harness's README, and the benchmark
   pages.
-- **Roadmap rows**: FR-88 (the reranker's latency on an idle host and under concurrent recalls,
-  and the default's budget), FR-89 (a floor that empties unanswerable queries without emptying
+- **Issues**: #102 (the reranker's latency on an idle host and under concurrent recalls,
+  and the default's budget), #105 (a floor that empties unanswerable queries without emptying
   answerable ones: a calibrated or trained relevance, measured on eval data version 2 and
-  LongMemEval's abstention questions). ADR-0048's FR-85 (a reranker's CPU cost in candle) is
-  answered for this host by d2 and d4 and stays open until FR-88 closes.
+  LongMemEval's abstention questions). ADR-0048's #102 (a reranker's CPU cost in candle) is
+  answered for this host by d2 and d4 and stays open until #102 closes.
 - **Costs**: up to `depth` rows hydrated per reranked recall; the model's 91 MB in memory once
   per lead, and per running rerank the activations of one batch, at 256 tokens about 150 MB
   at worst (attention scores of 16 × 12 × 256 × 256 floats, a few alive at once), so about
   0.3 GB at the default two slots; the lead's binary 9.6 MB larger; CPU bounded by the slots
   and the pool's threads.
 - **Expected conflicts**: ADR-0050 to ADR-0052 are on other branches and their numbers taken;
-  FR-90 and above are used on other branches.
+  #141 and above are used on other branches.
 
 ## Rejected alternatives
 
 | Alternative | Why not |
 |---|---|
 | **An LLM reranker (listwise, RankGPT or RankZephyr-class)** | A 7B decoder per recall is seconds on 8 vCPU, and a hosted one puts a model provider in the read path, which the constraints exclude. |
-| **ColBERT-style late interaction now (`answerai-colbert-small-v1`)** | It needs each memory's token vectors stored at write time, a second store of the text under row security, and a MaxSim kernel; it may be cheaper per recall than a cross-encoder, and it is the next measurement after FR-88, not this increment. |
+| **ColBERT-style late interaction now (`answerai-colbert-small-v1`)** | It needs each memory's token vectors stored at write time, a second store of the text under row security, and a MaxSim kernel; it may be cheaper per recall than a cross-encoder, and it is the next measurement after #102, not this increment. |
 | **A hosted rerank API** | A provider sees every query and every candidate's text, and the recall waits on a network the deployment does not control. |
 | **`ort` (onnxruntime) as the runtime** | No stable crates.io release, a C++ runtime against ADR-0006, binaries fetched at build time, none for musl (d2). |
 | **`bge-reranker-base` or `mxbai-rerank-xsmall-v1` as the model** | No better than L6 on the eval at five to nine times its time (d4). `jina-reranker-v2` is CC-BY-NC-4.0, so not for a commercially usable install. |
@@ -359,12 +359,12 @@ and they are reported as measured, not as what an idle host would give (FR-88).
 ## Open questions
 
 - Latency on an idle host, and the p95 at 4 and 8 concurrent recalls there, before any default
-  changes (FR-88). The public-set rows ran with a cap of 8, so LoCoMo's shared the host with the
+  changes (#102). The public-set rows ran with a cap of 8, so LoCoMo's shared the host with the
   NFCorpus run; their latency is an upper bound.
 - Whether a smaller head (10) with L6, or L4 at 20, fits ADR-0048 d11's budget on abstract-length
   rows; this host could not say while loaded.
 - Whether a floor can be made useful by calibration on more unanswerable data, or by scoring the
-  floor against the query's own best `bm25` evidence (FR-89).
+  floor against the query's own best `bm25` evidence (#105).
 - Whether reranking `bm25-trigram`'s fused list helps misspellings, which a cross-encoder reads
   as other words.
 - Whether a reranking pipeline should sit on `bm25-postings` (ADR-0052), the default since it

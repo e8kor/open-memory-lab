@@ -9,7 +9,7 @@ answers: how an append-only chain coexists with the right to erasure; what crypt
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0052](ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md)
 
-**Release:** not scheduled ([releases](../product/releases.md#decisions))
+**Release:** not built ([releases](../changelog.md))
 
 ## Context
 
@@ -31,7 +31,7 @@ So the inventory is built into the design from day one — every copy class a bo
 derivatives or its usable key copies can land in is enumerated below with its disposition — and the guarantee is stated
 with its boundary in the same sentence. Everything here is decided, not built; the inventory is a
 commitment about the design, enforced by nothing until the conformance work the
-[roadmap](../product/roadmap.md) tracks exists.
+[open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) tracks exists.
 
 ## Decision
 
@@ -40,7 +40,7 @@ commitment about the design, enforced by nothing until the conformance work the
   ([ADR-0004](ADR-0004-bodies-and-attachments.md) d4). The DEK is per artifact — one key, one
   memory — wrapped by a tenant-scoped KEK held in KMS or a Kubernetes Secret per deployment
   profile. Wrapped DEKs live in `artifact_keys` (the
-  [Postgres schema](../data/postgres-schema.md)); key custody is the
+  [Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)); key custody is the
   [security page](../architecture/security.md)'s subject: only the serving path decrypts, the
   lake-writer's KMS grant is encrypt-only, the reconciler holds no keys.
 
@@ -83,7 +83,7 @@ commitment about the design, enforced by nothing until the conformance work the
   physically gone from derived and backup copies, and unlockable by no surviving key copy, within
   the named retention bounds", and the bounds (VACUUM/checkpoint cadence, backup retention
   window, KEK rotation period) are part of the erasure SLO — all
-  unmeasured until built, tracked as FR-17 on the [roadmap](../product/roadmap.md). Second, the claim
+  unmeasured until built, tracked as #108 on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap). Second, the claim
   spans exactly the copies OML controls; a client that read a body before erasure holds what it
   holds.
 
@@ -92,7 +92,7 @@ commitment about the design, enforced by nothing until the conformance work the
   the metadata tables and the lake after an erase — they are what makes the erase event itself
   auditable, and identity metadata in the chain is minimized at write time for exactly this
   reason ([storage](../architecture/storage.md)). Erasure or pseudonymization of attribution
-  metadata is a tracked FR with an exit criterion on the [roadmap](../product/roadmap.md), not a
+  metadata is a tracked issue with an exit criterion on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap), not a
   property this record claims. Signed identifying metadata must be minimized or individually
   erasable, never assumed non-personal.
 
@@ -111,7 +111,7 @@ commitment about the design, enforced by nothing until the conformance work the
   answer what a memory said.
 - The design owes an erasure SLO with three named bounds (lake VACUUM/checkpoint cadence,
   Postgres backup retention, KEK rotation period) before the erasure story is complete; all are
-  roadmap rows with exit criteria, and until they are measured the honest sentence is "unreadable
+  issues with exit criteria, and until they are measured the honest sentence is "unreadable
   immediately, physically gone — and unlockable from any surviving key copy — within bounds we
   have not yet measured".
 - A genuine loss of audit power is accepted: after an erase, the journal proves a decision was
@@ -123,7 +123,7 @@ commitment about the design, enforced by nothing until the conformance work the
   newer than the backup before readiness, and the KEK rotation/retirement schedule (d4) bounds
   how long the backup bytes themselves hold a usable key copy. Each is design work the
   [security page](../architecture/security.md) owns; none is built, and the end-to-end
-  demonstration rides the [roadmap](../product/roadmap.md)'s FR-1 erasure row, whose exit
+  demonstration rides the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)'s #146 erasure row, whose exit
   criterion already demands unrecoverability from every copy class in this inventory — the
   inventory d4 just widened to include the key-copy class.
 - Multi-subject content erases wholly: the key is per artifact, so an artifact mentioning two

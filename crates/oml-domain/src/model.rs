@@ -168,7 +168,7 @@ pub const DERIVED_CLAIM_KEY_PREFIX: &str = "auto-";
 /// author's key id (its hyphenated lowercase spelling), a zero byte and the
 /// NFC text (ADR-0039 d6). With the author in the digest, two keys that
 /// record one text hold two claims, and a conflict tells a writer only
-/// about its own rows (ADR-0025 d5, FR-31).
+/// about its own rows (ADR-0025 d5, #129).
 #[must_use]
 pub fn derive_claim_key(author_root_key_id: Uuid, text: &str) -> String {
     let mut hasher = Sha256::new();

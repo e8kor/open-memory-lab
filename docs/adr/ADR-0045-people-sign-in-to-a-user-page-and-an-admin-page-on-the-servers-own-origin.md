@@ -9,7 +9,7 @@ answers: why OML now serves a web console after ADR-0015 declined one, and how e
 
 **Status:** accepted design · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20) · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
-**Release:** introduced in v0.5.0 — sign-in, sessions, the email allowlist, the user page with review of the person's own agents' work, and on the admin page review, curation, supersession and the admin read of every memory's text and attribution; demotion is planned for v0.6.0, since it rests on a verb not built ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.0 — sign-in, sessions, the email allowlist, the user page with review of the person's own agents' work, and on the admin page review, curation, supersession and the admin read of every memory's text and attribution; demotion is planned for v0.6.0, since it rests on a verb not built ([releases](../changelog.md))
 
 **Amends:** ADR-0015 (the decline of a web console in its context, its consequences and its rejected alternatives; d2 gains a second human surface), ADR-0010 (d1, d7), ADR-0025 (d3), ADR-0026 (d15: the admin key reads content through the admin read, d21), ADR-0031 (d7), ADR-0042 (d2), ADR-0044 (d6, d9 for the admin read, d11)
 
@@ -76,7 +76,7 @@ The constitution holds over all of it ([ADR-0001](ADR-0001-the-constitution.md))
 not a surface an agent can call (R1), the reviewer key is never in the row's lineage (R2), review
 changes visibility and not ranking (R3), and nothing is deleted (R4).
 
-Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its verb.
+Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
 
 ## Decision
 
@@ -171,7 +171,7 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
       `verified: true`; the profile's public `email`, which may be unset or unverified, is never
       read. A secondary verified address does not sign in, even when it is on the list: one
       address per GitHub account, the one its owner chose as primary, keeps the rule
-      predictable. Whether GitHub enforces the PKCE challenge it is sent is unverified (FR-76).
+      predictable. Whether GitHub enforces the PKCE challenge it is sent is unverified (#119).
     - **Pinning.** The first successful sign-in of an entry records the provider's subject, the
       ID token's `sub` or the GitHub `id`, on the entry, per provider. A later sign-in with the
       same email and another subject is refused, `auth.invalid` with `details.reason:
@@ -301,7 +301,7 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
     - **Keys.** Every key whose `user` is the session's: name, role, `held_by`, credential,
       issuance time, grants, whether a global denial cuts it off, and a connector key's open
       connections. When the key was last used is not shown: nothing records it, and recording it
-      is a write per request whose cost is unmeasured (FR-75). Acts: `issue_key` issues an
+      is a write per request whose cost is unmeasured (#131). Acts: `issue_key` issues an
       agent key naming the session's user, `{name, role}` with role `writer` (with the reader
       grant beside it, the CLI's default, [ADR-0028](ADR-0028-agent-key-issuance.md) d2) or
       `reader`, granted on the user's root and nothing else; its name is
@@ -361,7 +361,7 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
       view is for the keys that use memories, and the admin read is not one of them.
     - **Review**, through the signed-in admin's own `<user>-review` alone (d11).
     - **Curation** and **supersession**, through `<user>-curate` and `<user>-review` (d12).
-    - **Demotion**, planned for v0.6.0 (d12).
+    - **Demotion**, since v0.6.0 (d12).
 
     Reading is not acting on what is read: the admin key reads every memory and still records no
     verdict, writes no memory and is never served a held row for review (d11). Every admin read
@@ -396,7 +396,7 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
       someone other than its author has approved, since a held row is readable by its author
       alone, the text
       prefilled from the source with a line that a curated memory whose text or name repeats its
-      source's can be linked to it (FR-73). The second approval is an ordinary review of the held
+      source's can be linked to it (#144). The second approval is an ordinary review of the held
       universe version by a dreamer key with dreamer access on `universe` whose key and principal
       lie outside its lineage closure, which holds the curator key and the source's author: the
       person's own `<user>-review` qualifies, being neither, which lets a deployment of one
@@ -413,7 +413,7 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
       digests, through `<user>-admin`. It is the per-memory decision trail of the evidence export
       ([ADR-0015](ADR-0015-cli-administration.md) d4) served for one memory, which the export,
       not scheduled, does not wait on.
-    - **Demotion, planned for v0.6.0.** `demote` (`{memory, reason}`) runs the designed
+    - **Demotion, since v0.6.0.** `demote` (`{memory, reason}`) runs the designed
       `POST /v2/memories/{artifact_id}/demote` as `<user>-admin`: journalled, bytes kept (R4). It
       does not ride the admin read: a read adds a route and an event, while a demotion changes
       which version is the tip, what recall serves and what the lineage of every successor
@@ -457,12 +457,12 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
   open, or with the wrong `state`, makes no outbound call (d3). An admitted callback makes at
   most one token call and, for GitHub, two API calls, each under a per-provider cap on concurrent
   calls and a time limit, beyond which the callback answers `limit.rate` with `Retry-After` on
-  the page; the cap and the time limit are stated by the build and unmeasured (FR-76). An
+  the page; the cap and the time limit are stated by the build and unmeasured (#119). An
   attacker who starts flows of their own can make the lead call the providers' token endpoints
   with codes the providers refuse, at the rate the cap admits. No limit keys on a source address:
   behind a proxy it is the proxy's, the rule the connect page follows. A page act is a key's act
   and falls under that key's rate-limit grant attributes when those are built
-  ([FR-8](../product/roadmap.md)); until then a session's acts are bounded only by the request
+  (#133); until then a session's acts are bounded only by the request
   rate the deployment serves, and a person can issue keys in their own root without a count
   limit.
 
@@ -578,7 +578,7 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
     - **(g) Scope.** v0.5.0 is this record and ADR-0044 alone. Guardrails (ADR-0037) move to
       v0.5.1; the workarea lifecycle (ADR-0009), links between memories (ADR-0008, ADR-0021)
       and the workarea brief, which rests on those links, move to v0.5.2
-      ([releases](../product/releases.md)).
+      ([releases](../changelog.md)).
 
 - **d21 — The admin read is two lab routes under the admin key role, and every admin read is
   journalled as `memory.admin_read`.**
@@ -632,19 +632,19 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
   none of them.
 - [cli/reference.md](../cli/reference.md), which owns D14, the [HTTP API](../api/http-api.md),
   [configuration](../operations/configuration.md), [security](../architecture/security.md),
-  [releases](../product/releases.md), [llms.txt](../llms.txt), the
+  [releases](../changelog.md), [llms.txt](../llms.txt), the
   [architecture overview](../architecture/overview.md), [positioning](../product/positioning.md),
-  the [review guide](../review-guide.md), the [critical path](../product/critical-path.md) and the
+  the review guide, the critical path and the
   [home page](../index.md) mark the pages planned and not built. The register's D14 row cites this
   record. The event catalog, the Postgres schema and openapi.yaml change only with the build;
   the designed annex holds the eleven routes now, as it holds every designed operation.
 - ADR-0010 d1 and d7, ADR-0015, ADR-0025 d3, ADR-0026 d15, ADR-0031 d7, ADR-0042 d2 and ADR-0044 d6,
   d9 and d11 keep their text; each Status line points here.
-- The roadmap opens **FR-75**, recording when each key was last used, with its cost measured, and
-  **FR-76**, the pages unverified against the live providers and unmeasured: no sign-in has run,
+- Issue **#131** is open:, recording when each key was last used, with its cost measured, and
+  **#119**, the pages unverified against the live providers and unmeasured: no sign-in has run,
   whether GitHub enforces PKCE is unverified, the provider-call cap and time limit are unmeasured,
   and no penetration test has run. Human review throughput through the admin page joins the
-  unmeasured review throughput of [FR-2](../product/roadmap.md).
+  unmeasured review throughput of #98.
 - The lead's outbound reach grows by Google's and GitHub's token and API hosts. A deployment
   whose egress policy blocks them has the pages and no sign-in, which the d18 doctor line names.
 - A tenant of one person can run every page: the person is an admin, a user, a reviewer and a
@@ -688,3 +688,21 @@ Decided; introduced in v0.5.0 but demotion (d12), planned for v0.6.0 with its ve
 | **Per-address rate limits** | Behind a proxy every request has the proxy's address; the connect page made the same choice. |
 | **A web route or MCP tool for agents to drive the pages** | The pages exist for people; an agent's surface is the three MCP tools and the API under its own key (R1). |
 | **A dashboard, a recall view, graph pictures or an assistant on the pages** | Each is the accretion ADR-0015 warned of; none is a duty a person cannot do without, and each would need its own record. |
+
+## Threat table moved from the security page (2026-11-06)
+
+The [security page](../architecture/security.md) keeps a short table for the web pages. The full controls, as the page stated them before the trim, are kept here.
+
+| Threat | Control | What remains |
+|---|---|---|
+| An agent uses the pages | An `Authorization` header on a web route answers `access.verb_ceiling`. `/v1`, `/v2` and `/mcp` never read `Cookie`. A session key has no value and no connect code. | An agent that drives a person's signed-in browser acts as that person. OML cannot tell them apart. |
+| Session fixation | No session identifier exists before the callback admits. The token is minted then. | None known. |
+| Session cookie theft | The cookie uses the `__Host-` prefix and is `Secure`, `HttpOnly` and `SameSite=Lax`. The server holds only its SHA-256. It expires after a fixed lifetime. Sign-out and any change to the allowlist entry end it. | A stolen cookie acts as the person until it expires. There is no idle timeout. |
+| Cross-site request forgery | `SameSite=Lax` withholds the cookie from cross-site `POST`s. Every `POST` passes the same-origin check and carries a `csrf_token`. Every `GET` is free of effect. | None known. |
+| Login forgery | The callback admits only the `state` sealed in the cookie of the browser that started the flow. | None known. |
+| A moved or recycled email address | Only a verified address from the provider counts. The provider account is pinned at first sign-in, and another account with the same address is `identity_changed`. | Before an entry's first sign-in, whoever controls the address at the provider holds it. |
+| Memory text rendered to a person | OML escapes it and strips control and bidirectional characters. | The text appears as text and still says whatever it says. |
+| Secrets in logs | Logs record the route template, never the query. No cookie, token or email reaches a line. The journal holds an email's digest. | Your reverse proxy's access log must drop the query on `/web/callback/*`. OML cannot check that. |
+| A person outliving their access | Removing an email ends its sessions. | The person's agent keys keep working until an admin cuts each off with a global denial. |
+| Admin authority through the pages | The admin key never reviews. Review runs as the person's reviewer key. The admin key reads content only on two admin read routes, and the journal records each read as `memory.admin_read`. | A tenant's admin can read every person's memories, held ones included. People who need privacy from that admin need their own tenant. |
+

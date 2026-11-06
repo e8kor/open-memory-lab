@@ -76,7 +76,6 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0056 | `feat/claim-formats` | #90 | a claim version names its format the signature covers its source and a | open |
 | adr | 0056 | `main` |  | a claim version names its format the signature covers its source and a | used |
 | adr | 0057 | `main` |  | a memory carries the source anchor its author declares and oml sync ke | used |
-| adr | 0058 | `docs/restructure` |  | a public server runs to stated slos with an error budget | reserved |
 | adr | 0058 | `main` |  | the public server runs to stated slos with an error budget and without | used |
 | adr | 0059 | `main` |  | a memory states when it is true recall hides what has ended and search | used |
 | adr | 0060 | `main` |  | the lake writer drains the outbox it has seals what it materializes an | used |

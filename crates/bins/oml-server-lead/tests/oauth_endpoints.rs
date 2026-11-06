@@ -1056,12 +1056,12 @@ fn collapse(text: &str) -> String {
 }
 
 #[tokio::test]
-async fn the_pages_sentences_match_http_api_md_word_for_word() {
+async fn the_pages_sentences_match_connect_page_md_word_for_word() {
     let doc = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../docs/api/http-api.md"
+        "/../../../docs/reference/connect-page.md"
     ))
-    .expect("docs/api/http-api.md");
+    .expect("docs/reference/connect-page.md");
     let start = doc
         .find("**The authorization page.**")
         .expect("the page's paragraph");

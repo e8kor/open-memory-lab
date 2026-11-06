@@ -9,7 +9,7 @@ answers: who may review in bulk and on which surfaces; why agent keys and MCP ne
 
 **Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.7
 
-**Release:** introduced in v0.5.7 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.7 ([releases](../changelog.md))
 
 **Amends:** ADR-0039 (d9: two served routes, `GET /v2/review/held` and
 `POST /v2/review/verdicts/bulk`; d10: `oml review list`, and `--ids` on `oml review approve` and
@@ -27,7 +27,7 @@ it, and `oml review approve` records one verdict
 ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d10); the admin page runs the same ceremony
 ([ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
 d11). Two calls and a read per item is 1,228 calls for this import, and
-[FR-87](../product/roadmap.md) records the queue itself slowing as it grows: six reviewer keys
+#98 records the queue itself slowing as it grows: six reviewer keys
 approved about 77 rows a second with 5,000 held and 2 to 14 a second with 45,000 held
 (`eval/bench/REPORT.md`, loading at scale; 2026-11-04).
 
@@ -130,7 +130,7 @@ Decided, built on `feat/bulk-review`, and accepted and introduced with release v
   `EXPLAIN (ANALYZE, BUFFERS)` on 45,000 held rows loaded through the write route (2026-11-05,
   PostgreSQL 18, the maintainer's 8-core host): 100.4 ms a call, three sequential scans, a hash
   anti-join and a 45,000-row sort; under several reviewers each call also locks behind the
-  others, which is the 2 to 14 rows a second FR-87 recorded. Migration `0024` adds
+  others, which is the 2 to 14 rows a second #98 recorded. Migration `0024` adds
   `review_queue_order (tenant_id, held_since, memory_id)`, and the rival check runs only for a
   successor (`m.replaces_artifact_id IS NULL OR NOT EXISTS …`), the only row it can refuse. The
   plan then walks the index, reads one `memories` row by its key and stops: 0.17 ms on the same
@@ -141,7 +141,7 @@ Decided, built on `feat/bulk-review`, and accepted and introduced with release v
   branches built (2026-11-05, `review_scale_measurement` in `tests/bulk_review.rs`): `review next`
   p50 3.2 ms and p95 12.8 ms, `next` then a single approve 79.5 items a second; listing 600 items
   0.04 s and approving them through `POST /v2/review/verdicts/bulk`, 200 a request, 7.06 s, 85
-  items a second. Before the change six keys approved 2 to 14 a second at 45,000 held (FR-87).
+  items a second. Before the change six keys approved 2 to 14 a second at 45,000 held (#98).
 
 - **d10 — The admin page lists, selects, confirms and shows each outcome.** `GET
   /web/admin?view=held` renders the listing of d2 through the person's `<user>-review` key with
@@ -185,9 +185,9 @@ Decided, built on `feat/bulk-review`, and accepted and introduced with release v
   other branches hold; it is built at the first start of the new server.
 - The event catalog's `lifecycle.promote` and `lifecycle.supersede` gain `same_user` (d7).
   Consumers that ignore unknown fields are unaffected.
-- [FR-87](../product/roadmap.md) is addressed by d3 and d9: one person judges a backlog in
+- #98 is addressed by d3 and d9: one person judges a backlog in
   requests of 200 instead of a crew of keys one row at a time, and the queue statement no longer
-  sorts the whole queue. Serving one key several claimed rows, FR-87's other option, is not
+  sorts the whole queue. Serving one key several claimed rows, #98's other option, is not
   built.
 - The user page keeps one-at-a-time review; bulk on it waits for a person to ask.
 
@@ -213,7 +213,7 @@ Decided, built on `feat/bulk-review`, and accepted and introduced with release v
 | **A verdict over a server-side filter** ("approve every held row with prefix `adr-`") | It judges rows the reviewer never saw, including rows written after they looked; the request would record a query, not a choice (d3). |
 | **One transaction for the whole batch** | One stale id would undo 199 good verdicts, and the chain head would stay locked for the whole batch against every writer. Per-item commits make partial success the honest answer (d4). |
 | **One verdict event naming many artifacts** | An auditor reading one item's history would have to read a batch; the per-item signature and `served_body_digest` would cover a set, not the item (d4). |
-| **Serving one key several claimed rows** (FR-87's other option) | Claims would pile up under one key while the person reads, hiding rows from every other reviewer; the listing claims nothing and the verdict decides (d2). |
+| **Serving one key several claimed rows** (#98's other option) | Claims would pile up under one key while the person reads, hiding rows from every other reviewer; the listing claims nothing and the verdict decides (d2). |
 | **Bulk for every dreamer key, crews included** | An automated crew approving by the page is the shape R1 exists to stop at the agent; one serve per verdict keeps a crew's review an item at a time (d1). |
 | **A bulk tool on MCP** | R1 and ADR-0045 d7: no agent surface promotes. |
 | **No cap, or a cap of 1,000** | A request of 45,000 ids holds a connection for minutes and a page of 1,000 checkboxes is not read; 200 approves in about the time a page takes to read (d9). |

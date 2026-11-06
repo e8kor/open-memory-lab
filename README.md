@@ -71,15 +71,16 @@ Ask Claude "what does OML know about X?" at any time, or tell it "remember thatâ
 ## Run your own server
 
 With Docker on one machine, `oml quickstart` starts a server, creates a workarea and issues an
-agent key and a reviewer key (its Docker setup has no recorded green run yet). For a host with TLS or for Kubernetes, see
-[self-hosting](docs/guides/self-hosting.md) and [Kubernetes](docs/guides/kubernetes.md); to
+agent key and a reviewer key and checks one save end to end. For a host with TLS or for Kubernetes, see
+[self-hosting](docs/start/run-your-own.md) and [Kubernetes](docs/guides/kubernetes.md); to
 manage keys and workareas, [administering](docs/guides/administering.md).
 
 ## Learn more
 
 - **[Documentation](https://e8kor.github.io/open-memory-lab/)**: guides, concepts, the API and
   every command.
-- **[What works today, and what is planned](docs/product/releases.md)**: the release map.
+- **[Release notes](docs/changelog.md)**: what each release changed.
+- **[FAQ](docs/faq.md)**: install, connect, review and recall questions.
 - **[Troubleshooting](docs/guides/troubleshooting.md)**: when something does not connect.
 
 ## Help, security and contributing

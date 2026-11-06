@@ -81,7 +81,7 @@ pub struct Config {
     /// sign-in, on when both are set (ADR-0045 d17).
     pub web_github: Option<ClientCredentials>,
     /// `brief.max_tokens`: the budget a workarea's brief is cut to, in
-    /// budget tokens; 400 when unset, unmeasured (ADR-0046 d8; FR-77).
+    /// budget tokens; 400 when unset, unmeasured (ADR-0046 d8; #145).
     pub brief_max_tokens: u64,
     /// `search.enabled` and `search.default`: the pipelines served and the
     /// default (ADR-0049 d4), with `search.rerank.depth` and

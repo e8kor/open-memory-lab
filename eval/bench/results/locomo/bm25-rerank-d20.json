@@ -94,5 +94,5 @@
   "p99": 7406.22
  },
  "reference": null,
- "notes": "One dialogue turn per memory, each conversation its own workarea; metrics over categories 1-4, adversarial in per_category; English only. bm25's list reranked by ms-marco-MiniLM-L6-v2 through candle on the CPU at depth 20 (the default became 10 after this run), with a cap of 8 and a 60 s deadline so no rerank was skipped; the host carried a load average of 9 to 29 from other work, and the LoCoMo run shared it with the NFCorpus run, so its latency is an upper bound (ADR-0053 d4, FR-88)."
+ "notes": "One dialogue turn per memory, each conversation its own workarea; metrics over categories 1-4, adversarial in per_category; English only. bm25's list reranked by ms-marco-MiniLM-L6-v2 through candle on the CPU at depth 20 (the default became 10 after this run), with a cap of 8 and a 60 s deadline so no rerank was skipped; the host carried a load average of 9 to 29 from other work, and the LoCoMo run shared it with the NFCorpus run, so its latency is an upper bound (ADR-0053 d4, #102)."
 }

@@ -12,7 +12,7 @@ profile.** Standalone and docker are first-class profiles of their own under
 [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md), which also supersedes the
 every-replica-signs portion of d4 with cluster-mode lead/follower roles (ADR-0023 d13).
 
-**Release:** partly in v0.3.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.3.0; the rest not built ([releases](../changelog.md))
 
 ## Context
 
@@ -64,7 +64,7 @@ is the decision and its reasons. Decided, not built — no chart exists.
   advanced, and either way the batch is retried deterministically, never applied
   twice. The lease is an optimization; correctness never depends on it. Whether
   delta-rs exposes transaction ids exactly as this relies on is unverified —
-  [FR-3](../product/roadmap.md) is the conformance test, and the capability
+  #101 is the conformance test, and the capability
   citation rule is in [ADR-0006](ADR-0006-pure-rust.md).
 
 - **d4 — Deployment identity replaces volume identity.** Every OML pod is
@@ -104,7 +104,7 @@ is the decision and its reasons. Decided, not built — no chart exists.
   ([deployment](../operations/deployment.md)).
 - Resource sizing, ingress, TLS termination and the Postgres scale ceiling are
   deliberately not fixed by this record; the ceiling is
-  [FR-7](../product/roadmap.md).
+  #99.
 
 ## Rejected alternatives
 
@@ -136,5 +136,5 @@ is the decision and its reasons. Decided, not built — no chart exists.
   its own right is a different requirement, decided later in
   [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md), where the drift
   risk this rejection priced is answered by a conformance suite that must pass
-  on all three profiles ([FR-22](../product/roadmap.md)), not by refusing the
+  on all three profiles (#117), not by refusing the
   payload.

@@ -9,7 +9,7 @@ answers: why the Delta lakehouse is derived and never the authority; why one out
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0060](ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md) (proposed)
 
-**Release:** not scheduled ([releases](../product/releases.md#decisions))
+**Release:** not built ([releases](../changelog.md))
 
 Everything this record decides is design — no code exists. The table layouts, the transaction
 protocol column by column, and the maintenance schedule are owned by
@@ -75,8 +75,8 @@ materialization for a tenant forever.
   size, and never different from the first attempt, because nothing can commit into recorded
   bounds after the cut. Whether delta-rs exposes application transaction ids in exactly this shape is cited from
   delta-rs documentation with a fetch date at implementation-spec time, and "exactly-once,
-  verified by conformance test" is the exit criterion of the delta-rs conformance FR on the
-  [roadmap](../product/roadmap.md). Until that row closes, the mechanism is a design assumption,
+  verified by conformance test" is the exit criterion of the delta-rs conformance issue on the
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap). Until that row closes, the mechanism is a design assumption,
   not a demonstrated property of OML's Rust path.
 
 - **d5 — Retract is a MERGE, in the same stream, in strict order.** Demote, erase, simulation-end
@@ -114,9 +114,9 @@ materialization for a tenant forever.
 - Recovery after any crash or failover is designed to be mechanical: read each table's last
   transaction version from the Delta log, reconstruct the batch deterministically, replay; tables
   already committed skip it (d4). No operator judgment is in the loop — a property that holds
-  only once FR-3's conformance test passes, including survival of the transaction identifier
+  only once #101's conformance test passes, including survival of the transaction identifier
   across checkpointing, VACUUM and the Delta protocol's transaction-identifier retention
-  ([FR-16](../product/roadmap.md)); the protocol permits `SetTransaction` expiry, which would
+  (#101); the protocol permits `SetTransaction` expiry, which would
   silently reset recovery to "never applied".
 - Dead-lettering makes incompleteness a first-class, journalled, repairable state rather than a
   stuck queue (d6) — at the price that "the lake has everything" is never assumed, only verified
@@ -126,7 +126,7 @@ materialization for a tenant forever.
   until VACUUM/checkpoint cleanup — a retention bound that is part of the erasure SLO, owned by
   ADR-0005 of this register.
 - The conformance burden is named: exactly-once is a claim with a test, not an adjective — the
-  delta-rs exactly-once conformance FR on the [roadmap](../product/roadmap.md) carries the exit
+  delta-rs exactly-once conformance issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) carries the exit
   criterion, and the capability citation carries a fetch date when written.
 
 ## Rejected alternatives

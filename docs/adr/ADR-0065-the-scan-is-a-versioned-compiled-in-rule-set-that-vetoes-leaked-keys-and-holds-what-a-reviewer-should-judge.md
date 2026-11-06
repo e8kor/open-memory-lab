@@ -162,7 +162,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   addresses out of shared memory needs them on as a journalled tenant setting, which holds every
   finding. That setting is not small (a journalled event, a fold onto the tenant row, a migration,
   and the tenant's flag carried into every scan) and is not built: v0.6.0 ships the rules off for
-  every tenant, tracked as FR-180 on the [roadmap](../product/roadmap.md). `/readyz` and doctor
+  every tenant, tracked as #140 on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap). `/readyz` and doctor
   say they are off.
 
 - **d7 — The scan reads every free-text field a submission keeps, and only those.**
@@ -180,7 +180,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
       beside `/body`, and each finding names the pointer. The port's envelope carries one text
       today; the formats lane widens it.
     - **Not edge labels**: a claim edge's label is a CURIE from a closed vocabulary, validated
-      against it ([ontologies](../architecture/ontologies.md)), never free text.
+      against it ([ontologies](https://github.com/e8kor/open-memory-lab/blob/main/design/ontologies.md)), never free text.
     - **Not yet** a guardrail's `rule` JSON (its strings are globs and host patterns the
       `oml-gr/1` grammar validates) or an attachment's extracted text (no extractor is built).
       Both are Q2.
@@ -272,7 +272,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   each finding, and exits 1 when any finding vetoes, so a script can gate on it. The scanner
   port gains `findings()`, which reports without counting, so a rescan does not inflate the
   admission metric, and `info()`, which `/readyz` reads. One call per window is a scaling limit,
-  tracked as FR-181.
+  tracked as #140.
 
 - **d14 — The veto rules also read the text as copy-paste mangles it.** A token copied from a web
   page, a chat or an editor arrives with a zero-width space, a joiner or a soft hyphen inside
@@ -314,9 +314,9 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
 
 ## Open questions
 
-- **Q1.** The tenant setting that turns `pii.*` on (FR-180): its key, its journalled event,
+- **Q1.** The tenant setting that turns `pii.*` on (#140): its key, its journalled event,
   and whether it may also pick veto.
 - **Q2.** Scanning a guardrail's `rule` strings and an attachment's extracted text, once a
   deterministic extractor exists ([storage](../architecture/storage.md)).
-- **Q3.** A durable trace of a veto outside the chain stays RS-16 on the
-  [roadmap](../product/roadmap.md).
+- **Q3.** A durable trace of a veto outside the chain stays #140 on the
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).

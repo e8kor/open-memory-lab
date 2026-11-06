@@ -38,5 +38,5 @@
   "value": 0.665,
   "url": "https://arxiv.org/abs/2104.08663"
  },
- "notes": "One abstract per memory as '<title>. <text>' (BEIR indexes two fields); k 100, no token budget; English only. bm25's list reranked by ms-marco-MiniLM-L6-v2 through candle on the CPU at depth 20 (the default became 10 after this run), with a cap of 8 and a 60 s deadline so no rerank was skipped; the host carried a load average of 9 to 29 from other work, and the LoCoMo run shared it with the NFCorpus run, so its latency is an upper bound (ADR-0053 d4, FR-88)."
+ "notes": "One abstract per memory as '<title>. <text>' (BEIR indexes two fields); k 100, no token budget; English only. bm25's list reranked by ms-marco-MiniLM-L6-v2 through candle on the CPU at depth 20 (the default became 10 after this run), with a cap of 8 and a 60 s deadline so no rerank was skipped; the host carried a load average of 9 to 29 from other work, and the LoCoMo run shared it with the NFCorpus run, so its latency is an upper bound (ADR-0053 d4, #102)."
 }
