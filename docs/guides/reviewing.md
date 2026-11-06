@@ -2,7 +2,7 @@
 id: guides/reviewing
 tier: engineering
 status: current
-answers: how a person reviews held memories in v0.4.0: what held means and why the reviewer is never the author, getting and storing a reviewer key, taking the next held memory, reading it and its sources, approving and rejecting, what to check, supersessions and steering, crews and review policy, what approval changes, and what a reviewer can never do
+answers: how a person reviews held memories: what held means and why the reviewer is never the author, getting and storing a reviewer key, taking the next held memory, reading it and its sources, approving and rejecting, what to check, supersessions and steering, crews and review policy, what approval changes, and what a reviewer can never do
 -->
 
 # Guide: reviewing memories
@@ -82,10 +82,11 @@ Approve only what you would want another agent to act on:
   a document, an "as of". A claim with no anchor ages without anyone noticing.
 - **No secrets.** No keys, passwords, tokens or personal data. A rejected memory keeps its bytes;
   tell an admin about a secret instead of only rejecting it.
-- **Scanner findings.** The v0.4.0 scanner is a placeholder of two literal rules: a body with a
-  veto marker is refused before it is stored, and one with a hold marker is stored held with a
-  finding. It detects no secrets, and `oml review next` does not print findings. The scan is no
-  substitute for reading.
+- **Scanner findings.** Since v0.6.0 the scan is the `oml-scan/1` rule set
+  ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md)):
+  it vetoes leaked keys before anything is stored and holds what a reviewer should judge, and
+  `oml admin rescan` reports what it finds in memories already stored. It is no substitute for
+  reading.
 
 ## Approving and rejecting
 
