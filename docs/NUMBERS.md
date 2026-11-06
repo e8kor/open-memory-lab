@@ -251,3 +251,4 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0030 | `feat/chat-memory` | #78 | origin kind validate | open |
 | migration | 0031 | `feat/lake-writer` | #75 | lake writer | open |
 | migration | 0033 | `feat/claim-formats` |  | claim formats | reserved |
+| migration | 0034 | `feat/claim-formats` | #90 | claim formats validate | reserved |

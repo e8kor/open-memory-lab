@@ -1962,9 +1962,11 @@ name = "oml-format"
 version = "0.5.8"
 dependencies = [
  "oml-app",
+ "proptest",
  "saphyr-parser",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

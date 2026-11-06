@@ -5889,7 +5889,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 33, "every migration through 0033_claim_formats");
+    assert_eq!(applied, 34, "every migration through 0034_claim_formats_validate");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7334,7 +7334,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 33, "every migration through 0033_claim_formats");
+    assert_eq!(applied, 34, "every migration through 0034_claim_formats_validate");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8210,7 +8210,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 33, "every migration through 0033_claim_formats");
+    assert_eq!(applied, 34, "every migration through 0034_claim_formats_validate");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
