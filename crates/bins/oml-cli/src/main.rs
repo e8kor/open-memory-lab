@@ -232,7 +232,7 @@ struct QuickstartArgs {
 enum SetupCommand {
     /// Install the matching oml plugin through the claude CLI, passing the URL and key
     /// on stdin. Admin and operator keys are refused. Print commands with --print or
-    /// when claude is unavailable. Without --url, use https://memory.doublegate.io.
+    /// when claude is unavailable. Without --url, use <https://memory.doublegate.io>.
     ClaudeCode(SetupClaudeCodeArgs),
 }
 

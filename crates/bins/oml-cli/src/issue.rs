@@ -119,7 +119,7 @@ impl KeyFile {
             .to_owned();
         if shown.contains(['\'', '"', '\n', '\r']) {
             return Err(format!(
-                "refused: --out path {shown:?} contains a quote or newline; choose a plain path \
+                "refused: --out path {shown:?} contains a quote or a newline; choose a plain path \
                  so its read-back command is safe to run; nothing was sent"
             ));
         }
