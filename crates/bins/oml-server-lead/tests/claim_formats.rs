@@ -726,3 +726,26 @@ async fn search_reads_the_derived_search_text_of_a_diagram() {
     );
     w.done().await;
 }
+
+#[tokio::test]
+async fn the_near_copy_keys_of_a_diagram_are_the_keys_of_its_search_text() {
+    let Some(w) = world().await else { return };
+    let id = w.written("keys", json!({ "body": DIAGRAM, "format": MERMAID, "title": "The payment flow from checkout to settlement" })).await;
+    let mut admin = PgConnection::connect(&super_url(&w.rig.db_name))
+        .await
+        .expect("connect");
+    let (held, same): (i64, bool) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM similar_keys s WHERE s.memory_id = m.id), \
+                ARRAY(SELECT s.key FROM similar_keys s WHERE s.memory_id = m.id ORDER BY 1) \
+                  = ARRAY(SELECT k.key FROM oml_similar_keys(m.search_text) k ORDER BY 1) \
+           FROM memories m WHERE m.id = $1",
+    )
+    .bind(Uuid::parse_str(&id).expect("uuid"))
+    .fetch_one(&mut admin)
+    .await
+    .expect("row");
+    assert!(held > 0, "a held diagram holds keys");
+    assert!(same, "the keys are those of the search text, never of the arrow syntax");
+    drop(admin);
+    w.done().await;
+}

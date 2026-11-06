@@ -4417,6 +4417,8 @@ where
         exclude: Option<&str>,
     ) -> Result<Vec<SimilarItem>, AppError> {
         let key = &caller.key;
+        // Both sides are the text search reads, so two sources that say one
+        // thing are one claim (ADR-0056 d4; ADR-0050 d1).
         let written = Fingerprint::of(body);
         let keys: Vec<i64> = written.query_keys().into_iter().map(|(_, k)| k).collect();
         if keys.is_empty() {
@@ -4469,7 +4471,7 @@ where
                     && SIMILAR_KINDS.contains(&m.kind)
                     && !(exclude == Some(m.claim_key.as_str()) && m.workarea_id == workarea)
             })
-            .filter_map(|m| relate(&written, &Fingerprint::of(&m.body)).map(|(r, j)| (r, j, m)))
+            .filter_map(|m| relate(&written, &Fingerprint::of(m.searched())).map(|(r, j)| (r, j, m)))
             .collect();
         named.sort_by(|a, b| {
             a.0.cmp(&b.0)
@@ -4705,7 +4707,14 @@ where
         // commit: a refusal here journals nothing and claims no idempotency
         // record, so the same key may be resent with `hold` (ADR-0050 d1).
         let similar = self
-            .similar_gate(&caller, workarea_id, req.kind, &body, None, req.on_similar)
+            .similar_gate(
+                &caller,
+                workarea_id,
+                req.kind,
+                format.search_text.as_deref().unwrap_or(&body),
+                None,
+                req.on_similar,
+            )
             .await?;
 
         let memory_id = self.ids.new_id();
@@ -5322,6 +5331,7 @@ where
                 "verdict": match verdict { Verdict::Approve => "approve", Verdict::Reject => "reject" },
                 "reason": reason,
                 "served_body_digest": memory.body_digest,
+                "format": memory.format.media_type,
             }),
         )?;
         let verdict_event_id = verdict_event.envelope.event_id;
@@ -6923,7 +6933,7 @@ where
                 &caller,
                 target.workarea_id,
                 kind,
-                &body,
+                format.search_text.as_deref().unwrap_or(&body),
                 Some(&target.claim_key),
                 req.on_similar,
             )
