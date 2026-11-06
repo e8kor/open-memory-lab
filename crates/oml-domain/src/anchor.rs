@@ -514,19 +514,15 @@ fn is_digest(hash: &str) -> bool {
     })
 }
 
-/// Whether a path's file name has a secret's shape, the client's list
-/// (ADR-0047 d3, ADR-0057 d6): `.env*`, `*.pem`, `*.key`, `id_*`,
-/// `*credentials*` and `*secret*`, case-insensitively. The scan vetoes an
-/// anchor naming one, since a written path is never erased (d2).
+/// Whether a path has a secret's shape: the one list `oml-scan` keeps,
+/// which `oml sync` also refuses to read (ADR-0065 d4; ADR-0047 d3,
+/// ADR-0057 d6) — any component named `.env*`, a key-material suffix,
+/// `id_*`, `*credentials*`, `*secret*`, a credential dotfile or a
+/// kubeconfig. The scan vetoes an anchor naming one, since a written path
+/// is never erased (d2).
 #[must_use]
 pub fn secret_shaped(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
-    name.starts_with(".env")
-        || name.ends_with(".pem")
-        || name.ends_with(".key")
-        || name.starts_with("id_")
-        || name.contains("credentials")
-        || name.contains("secret")
+    oml_scan::secret_path(path)
 }
 
 /// What a source check found (ADR-0057 d5, d18).

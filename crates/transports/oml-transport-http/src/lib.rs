@@ -21,6 +21,7 @@
 pub mod error;
 pub mod mcp;
 pub mod oauth;
+mod rescan;
 mod search;
 pub mod time;
 pub mod traffic;
@@ -132,6 +133,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/web/emails/remove"),
     ("POST", "/v2/admin/memories/search"),
     ("GET", "/v2/admin/memories/{artifact_id}"),
+    ("GET", "/v2/admin/rescan"),
     ("GET", "/v2/search"),
     ("POST", "/v2/search/default"),
     ("GET", "/v2/usage/settings"),
@@ -343,6 +345,7 @@ where
             ("POST", "/v2/web/emails/remove") => post(Self::remove_web_email),
             ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
+            ("GET", "/v2/admin/rescan") => get(Self::rescan_route),
             ("GET", "/v2/search") => get(Self::search_settings),
             ("POST", "/v2/search/default") => post(Self::set_search_default),
             ("GET", "/v2/usage/settings") => get(Self::usage_settings),
@@ -466,6 +469,14 @@ where
             // doctor's web line reads it (ADR-0045 d18); their failed
             // exchanges are the metrics listener's (ADR-0054 d1).
             "web": st.web.as_ref().filter(|_| st.app.oauth_issuer().is_some()).map(|w| w.readyz()),
+            // The scanner's rule set, how many rules it loaded and whether
+            // the personal-data rules are on: doctor's scan line reads them
+            // (ADR-0065 d11). Its findings are the metrics listener's.
+            "scan": st.app.scanner_info().map(|i| json!({
+                "version": i.version,
+                "rules": i.rules,
+                "pii": i.pii,
+            })),
             // The served search pipelines and the deployment's default:
             // doctor's search line reads them (ADR-0049 d8).
             "search": {

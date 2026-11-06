@@ -26,6 +26,7 @@ open-memory-lab/
 ├── migrations/                   # sqlx migrations, NNNN_name (postgres-schema.md, Migrations)
 ├── crates/
 │   ├── oml-guardrail/            # leaf: the oml-gr/1 rule grammar, matcher, check and rule cache (ADR-0037 d18 Q10)
+│   ├── oml-scan/                 # leaf: the oml-scan/1 rule set and the secret-shaped path list (ADR-0065)
 │   ├── oml-domain/               # the pure core — every constitution invariant, no I/O
 │   ├── oml-app/                  # port traits + use-cases driving the domain through them
 │   ├── adapters/
@@ -47,7 +48,7 @@ open-memory-lab/
 │       ├── oml-lakewriter/       # outbox read side + lake port — keyless
 │       ├── oml-reconciler/       # read-only ports
 │       ├── oml-indexer/          # embedder port + serving-side read
-│       └── oml-cli/              # thin HTTP client — composes no port trait, no domain crate; links oml-guardrail alone
+│       └── oml-cli/              # thin HTTP client — composes no port trait, no domain crate; links the oml-guardrail and oml-scan leaves alone
 ├── testing/
 │   ├── oml-port-contracts/       # the port-law contract suites (test-strategy.md)
 │   ├── oml-conformance/          # the FR-22 profile-parameterized binary (test-strategy.md)
@@ -83,7 +84,7 @@ graph LR
         LAKE[oml-lake]
         OBJ[oml-objectstore]
         KMS[oml-kms]
-        SCAN[oml-scan-rules]
+        SCAN[oml-scan]
         EMB[oml-embed plugin]
         EXP[oml-export-evidence]
     end
@@ -145,7 +146,9 @@ Three facts the graph encodes, restated as sentences because they are load-beari
   holds the guardrail rule grammar, the matcher, the check and the rule cache's codec, so the
   agent plugin's hooks and the server's admission read a rule the same way; `oml-domain`
   re-exports it (proposed [ADR-0037](../adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
-  d18 Q10, amending ADR-0006 d6 by that leaf).
+  d18 Q10, amending ADR-0006 d6 by that leaf). A second leaf, `oml-scan`, holds the scan's rule
+  set and the secret-shaped path list, so `oml sync`'s refusal to read a file and the server's
+  anchor scan apply one list ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d4).
 
 ## Workspace manifest policy
 

@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from
 tier: engineering
-status: proposed · 2026-11-05
+status: accepted design · 2026-11-06
 answers: what origin.kind is, which values it takes, who declares or derives it, how it is signed, filtered and shown; the chat anchor's grammar and why its session id is pseudonymous; why a turn's text is not stored and when an excerpt is; how the plugin's hooks ask the running agent to extract facts, with which budgets and loop guards, and why the server calls no model; where a person's chat memory lives and who may create it; how the ADR-0030 curator keeps it clean; the opt-in per-turn recall hook, its budgets and labels; how chat memory reaches a team; the end-to-end QA benchmark and its retrieval-only proxy; privacy, telemetry, doctor lines; the rejected alternatives and the open questions
 -->
 
 # ADR-0063 — A chat turn becomes memory only when the agent in it writes the fact, and every memory says what kind of source it came from
 
-**Status:** proposed · 2026-11-05
+**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05
 
-**Release:** planned for v0.6.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.6.0 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0057 (d1, d3, d4) — the anchor's `uri` admits a `chat` scheme with its own
 grammar, `hasher` gains `oml-turn/1`, and the origin filters gain `origin_kinds`. ADR-0038
@@ -134,11 +134,9 @@ a use case, and a capability is a parameter before it is a tool.
   under the fact, prefixed `> `. It is part of the body, so the server's deterministic scanner
   runs over it as over every body, and a finding refuses the write with `submission.scan_veto`;
   crypto-shredding erases it with the body (ADR-0005). What the scanner finds is its rule set's
-  to say: the PoC's rules are two literal markers, and lane `feat/scan` builds `oml-scan/1`'s
-  secret shapes. So nothing here promises that a secret is refused: the skill tells the agent
-  never to quote one, and the excerpt test runs every rule the lead's scanner declares, so it
-  covers `oml-scan/1` once that lands. Off by default because an excerpt is the person's words,
-  kept; it should stay off until the release serves a scanner with secret rules.
+  to say: `oml-scan/1` (ADR-0065) vetoes the secret shapes it declares. So nothing here promises that a secret is refused: the skill tells the agent
+  never to quote one, and the excerpt test runs a case for each rule family of `oml-scan/1`,
+  through a chat excerpt. Off by default because an excerpt is the person's words, kept.
 
 - **d6 — Capture is asked of the running agent at `Stop`, under budgets, and the server calls no
   model.** Three hook verbs, each a no-op unless `OML_CHAT_CAPTURE=1` (or `OML_TURN_RECALL=1` for

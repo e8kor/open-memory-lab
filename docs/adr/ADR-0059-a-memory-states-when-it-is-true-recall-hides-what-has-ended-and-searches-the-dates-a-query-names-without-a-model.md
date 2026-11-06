@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-06
 answers: which part of ADR-0036's valid time this slice builds and in what shape; how an author declares when a memory holds, including a vague period such as a year, and why it is signed and immutable; why a memory whose valid time has ended is hidden from recall by default and how a reader asks for it; how a fact is invalidated without the server deciding it; which date phrases recall reads from a query and how, with no model; how a date window becomes a retriever leg that row security can serve and how it is fused and capped; why a recency boost was tried and rejected; the API on oml_write, oml_read and HTTP; the migration, doctor line, laws and measurements
 -->
 
 # ADR-0059 — A memory states when it is true, recall hides what has ended, and recall searches the dates a query names without a model
 
-**Status:** proposed · 2026-11-05
+**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05
 
-**Release:** not scheduled; built on draft branch `feat/valid-time`
+**Release:** introduced in v0.6.0 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0036 (d1, d2, d4: narrowed and built in part), ADR-0049 (d4: two pipelines;
 d6: `search.window`, `matched.via` `time`), ADR-0039 (d3, d4: arguments on `oml_write` and

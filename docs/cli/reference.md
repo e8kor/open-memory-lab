@@ -497,6 +497,7 @@ query, never the text. The admin key still recalls nothing and records no verdic
 | Verb | Does |
 |---|---|
 | `oml admin read [<memory>] [--query <text>] [--workarea <workarea>] [--state <state>]` | With a memory id, that memory's text, author key, principal and user, `derives_from`, `replaces` and verdicts. Without one, a search over every memory, newest first, `--state` one of `held`, `promoted`, `rejected`, `superseded` or `demoted`; reads every page, and `--json` prints their items as one page. |
+| `oml admin rescan` | Rescans every stored version, but erased ones, with the server's rule set, body and anchor, through `GET /v2/admin/rescan` a window at a time, and prints the findings counted by rule, then each finding's artifact, version, state, rule and place, never the text. Changes and journals nothing. Exits 1 when any finding would be refused today, so a script can gate on it; read each with `oml admin read` and retire it ([ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d13). |
 
 ## `oml write`, `oml read`, `oml events` — memories and the journal
 

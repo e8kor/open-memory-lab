@@ -331,9 +331,9 @@ build took a narrower reading than the proposal.
        `the_lexer_stops_at_the_first_item_and_reads_no_code`,
        `nested_block_comments_and_inner_attributes_before_the_doc_are_skipped`,
        `a_doc_attribute_or_a_path_attribute_is_reported_unsupported`.
-    2. **Extraction:** `extract_set_is_a_pure_function_of_the_file_set_in_any_order`,
-       `the_rust_adapter_at_ad2daa3_yields_9_crates_and_83_modules` (golden, against a fixture of
-       that commit's manifests and each source file's doc block and `mod` declarations),
+    2. **Extraction:** `the_golden_load_is_the_same_in_any_file_order`,
+       `the_rust_adapter_at_aee5b28_yields_9_crates_and_98_modules` (golden, 107 claims, against a
+       fixture of that commit's manifests and each source file's doc block and `mod` declarations),
        `test_modules_examples_benches_and_build_scripts_are_never_read`,
        `an_undeclared_file_is_reported_and_not_extracted`,
        `no_line_outside_a_doc_block_reaches_any_item_text`,
@@ -341,11 +341,11 @@ build took a narrower reading than the proposal.
        `a_module_path_follows_the_lib_name_and_drops_mod_rs`.
     3. **Staleness:** `a_code_edit_below_the_doc_leaves_the_module_claim_unchanged`,
        `adding_a_pub_fn_leaves_the_module_claim_unchanged`,
-       `a_reflowed_module_doc_keeps_its_hash`, `a_changed_word_in_a_module_doc_is_changed`,
+       `a_reflowed_module_doc_keeps_its_hash_and_a_changed_word_does_not`,
        `a_version_bump_or_an_external_dependency_leaves_the_crate_claim_unchanged`,
        `a_new_internal_dependency_changes_both_crate_claims`,
-       `a_line_added_above_the_doc_is_moved_and_writes_nothing`,
-       `a_renamed_module_is_removed_and_new`.
+       `a_line_added_above_the_doc_keeps_the_text_and_hash_and_moves_the_span`,
+       `a_renamed_module_changes_its_key_and_its_text`.
     4. **Retirement:** `the_rust_adapter_never_retires_a_claim_outside_its_namespace`,
        `an_unsupported_or_unreadable_file_retires_none_of_its_claims`.
     5. **Server:** `the_rust_hashers_are_accepted_and_an_unknown_hasher_is_request_validation`.

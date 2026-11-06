@@ -6,11 +6,13 @@
 //! (ADR-0025 d1).
 
 mod pages;
+mod rescan;
 mod search;
 mod sparse;
 mod usage;
 mod web;
 pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
+pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
@@ -1282,6 +1284,13 @@ where
     #[must_use]
     pub fn with_search(self, search: SearchConfig) -> Self {
         Self { search, ..self }
+    }
+
+    /// The scanner's version, rule count and personal-data setting, for
+    /// `/readyz` and doctor's scan line (ADR-0065 d11).
+    #[must_use]
+    pub fn scanner_info(&self) -> Option<crate::ports::ScannerInfo> {
+        self.scanner.info()
     }
 
     /// The deployment's search settings.
@@ -4639,6 +4648,11 @@ where
             false,
         )?;
         self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
+        // The claim key reaches the journal as plaintext, so a veto in it
+        // refuses as one in the body does (ADR-0065 d7).
+        if let Some(claim_key) = req.claim_key.as_deref() {
+            self.scan_veto_only(key.tenant_id, "claim_key", claim_key)?;
+        }
         let origin = recorded_origin(req.origin, req.anchor.as_ref())?;
 
         // Deterministic scan: same call, before the commit transaction. A
@@ -4734,8 +4748,8 @@ where
         // The catalog payload of submission.remember: digest-only, body
         // plaintext never rides the journal (ADR-0002 d1; event-catalog.md).
         // The PoC stores the body inline and unencrypted, so there is no
-        // ciphertext digest, and it pins no scan rule set, so there is no
-        // scanner version (admission.md rule-set registry).
+        // ciphertext digest; the scanner names the rule set its verdict was
+        // taken under, or none (admission.md rule-set registry; ADR-0065 d1).
         let mut payload = json!({
             "artifact_id": memory_id.to_string(),
             "workarea_id": workarea_id.to_string(),
@@ -4755,7 +4769,7 @@ where
             "retirement": false,
             "scan": {
                 "result": if scan_finding.is_some() { "hold" } else { "pass" },
-                "scanner_version": Value::Null,
+                "scanner_version": self.scanner.version(),
                 "finding": scan_finding,
             },
         });
@@ -5097,6 +5111,9 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         require_person_reviewer(key)?;
+        if let Some(reason) = req.reason.as_deref() {
+            self.scan_veto_only(key.tenant_id, "reason", reason)?;
+        }
         let ids_refused = |reason: String| AppError::BulkShape {
             field: "/artifact_ids",
             reason,
@@ -5222,6 +5239,9 @@ where
         recording: Option<VerdictRecording>,
     ) -> Result<VerdictOutcome, AppError> {
         let key = &caller.key;
+        if let Some(reason) = reason {
+            self.scan_veto_only(key.tenant_id, "reason", reason)?;
+        }
         // The head first, then every read R2 and the compare-and-set judge:
         // the row's closure, which a claim edge's proposal widens while the
         // row is held, its rivals and its target. A commit landing after the
@@ -6350,6 +6370,20 @@ where
     /// (ADR-0057 d2): a path whose file name has a secret's shape, and any
     /// finding of the deterministic scanner, hold or veto alike, refuses the
     /// write naming the field, since a written anchor is never erased.
+    /// A field the journal keeps as plaintext beside a body, a claim key or
+    /// a verdict's reason: a veto finding refuses, a hold finding passes,
+    /// since no review follows (ADR-0065 d7).
+    fn scan_veto_only(&self, tenant_id: Uuid, kind: &str, text: &str) -> Result<(), AppError> {
+        match self.scanner.scan(&AdmissionEnvelope {
+            tenant_id,
+            kind,
+            body: text,
+        }) {
+            ScanOutcome::Veto(reason) => Err(AppError::ScanVeto(reason)),
+            ScanOutcome::Pass | ScanOutcome::Hold(_) => Ok(()),
+        }
+    }
+
     fn scan_anchor(&self, tenant_id: Uuid, anchor: Option<&Anchor>) -> Result<(), AppError> {
         let Some(anchor) = anchor else {
             return Ok(());
@@ -6868,7 +6902,7 @@ where
             "retirement": req.retirement,
             "scan": {
                 "result": if scan_finding.is_some() { "hold" } else { "pass" },
-                "scanner_version": Value::Null,
+                "scanner_version": self.scanner.version(),
                 "finding": scan_finding,
             },
         });

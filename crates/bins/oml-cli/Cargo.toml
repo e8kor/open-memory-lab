@@ -24,6 +24,7 @@ ed25519-dalek.workspace = true
 getrandom.workspace = true
 hex.workspace = true
 oml-guardrail.workspace = true
+oml-scan.workspace = true
 rpassword.workspace = true
 serde.workspace = true
 serde_json.workspace = true

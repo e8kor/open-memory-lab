@@ -637,6 +637,51 @@ impl Lab {
         at
     }
 
+    /// Store `body` as `key`'s memory the way a server before `oml-scan/1`
+    /// did, through the lead's own store and signing key with a scanner that
+    /// passes everything: a row the rule set never saw (ADR-0065 d13).
+    async fn seed_unscanned(&self, key: &str, claim_key: &str, body: &str) -> String {
+        struct Unscanned;
+        impl oml_app::ports::Scanner for Unscanned {
+            fn scan(
+                &self,
+                _: &oml_app::ports::AdmissionEnvelope<'_>,
+            ) -> oml_app::ports::ScanOutcome {
+                oml_app::ports::ScanOutcome::Pass
+            }
+        }
+        let app = oml_app::App::new(
+            self.store.clone(),
+            oml_server_lead::LeadSigner::new(self.signing.clone()),
+            oml_server_lead::SystemClock,
+            OsIds,
+            Unscanned,
+        );
+        let receipt = app
+            .submit_memory(
+                key,
+                &oml_app::types::SubmitRequest {
+                    valid_until: None,
+                    on_similar: Default::default(),
+                    origin: None,
+                    valid_from: None,
+                    idempotency_key: format!("seed-{claim_key}"),
+                    claim_key: Some(claim_key.to_owned()),
+                    verb: None,
+                    kind: oml_app::domain::MemoryKind::Memory,
+                    body: body.to_owned(),
+                    workarea: None,
+                    derives_from: Vec::new(),
+                    severity: None,
+                    rule: None,
+                    anchor: None,
+                },
+            )
+            .await
+            .expect("the unscanned row is stored");
+        receipt.receipt.memory_id.to_string()
+    }
+
     /// `oml --json <args>` under the stored admin credentials, or `key`.
     fn json(&self, key: Option<&str>, args: &[&str]) -> (i32, Value, String) {
         oml(&self.server, &self.creds, key, args)
@@ -2925,13 +2970,36 @@ async fn the_hook_output_never_contains_the_key_value() {
     let Some(crew) = Crew::start().await else {
         return;
     };
-    // A stored body that holds the key value, and matches the query.
-    crew.submit(
-        &crew.agent,
-        "memory",
-        "metals-key-note",
-        &format!("Metals desk key {} is in the vault.", crew.agent),
+    // A body that holds the key value is refused today, naming the rule
+    // and never the value (ADR-0065 d3, d8).
+    let (code, refused, log) = crew.lab.json(
+        Some(&crew.agent),
+        &[
+            "write",
+            &format!("Metals desk key {} is in the vault.", crew.agent),
+            "--claim-key",
+            "metals-key-refused",
+            "--kind",
+            "memory",
+        ],
     );
+    assert_ne!(code, 0, "{log}");
+    assert!(
+        log.contains("submission.scan_veto")
+            || refused.to_string().contains("submission.scan_veto"),
+        "{log}"
+    );
+    assert!(!log.contains(&crew.agent), "no key in the refusal: {log}");
+    // A row a server before the rule set stored still holds it, and matches
+    // the query: the hook redacts it where it was stored.
+    let seeded = crew
+        .lab
+        .seed_unscanned(
+            &crew.agent,
+            "metals-key-note",
+            &format!("Metals desk key {} is in the vault.", crew.agent),
+        )
+        .await;
     let stdin = session("startup", "/home/op/src/metals");
 
     let (code, stdout, stderr) = crew.hook(&[], &stdin);
@@ -2945,6 +3013,28 @@ async fn the_hook_output_never_contains_the_key_value() {
         ),
         "the value is redacted where it was stored: {context}"
     );
+
+    // The rescan finds the old row by rule and place, never the value, and
+    // changes nothing: the row is still there for a person to retire
+    // (ADR-0065 d13; ADR-0001 R4).
+    let (code, rescan, log) = crew.lab.json(None, &["admin", "rescan"]);
+    assert_eq!(code, 1, "a veto on a stored row exits 1: {log}");
+    assert_eq!(rescan["scanner_version"], "oml-scan/1", "{log}");
+    let hit = rescan["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .find(|f| f["artifact_id"] == seeded.as_str())
+        .unwrap_or_else(|| panic!("the seeded row is found: {log}"))
+        .clone();
+    assert_eq!(hit["class"], "secret.api_token");
+    assert_eq!(hit["rule"], "oml-key");
+    assert_eq!(hit["action"], "veto");
+    assert_eq!(hit["at"], "/body line 1");
+    assert!(!log.contains(&crew.agent), "no key in the rescan: {log}");
+    let (code, read, log) = crew.lab.json(None, &["admin", "read", &seeded]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(read["state"], "held", "the rescan changed nothing: {log}");
 
     // A refused key is not echoed either.
     let unknown = "oml_refusedkey0123456789abcdefghijklmnopqrstu";
@@ -3012,15 +3102,10 @@ async fn the_hook_refuses_a_key_that_is_not_printable_ascii_and_sends_nothing() 
     let Some(crew) = Crew::start().await else {
         return;
     };
-    // A stored body that ends in the key value, which a key with a trailing
-    // space would still authenticate as (the server trims it) and would no
-    // longer match when the hook redacts.
-    crew.submit(
-        &crew.agent,
-        "memory",
-        "metals-key-tail",
-        &format!("Metals desk key {}.", crew.agent),
-    );
+    // A key with a trailing space would still authenticate as the key (the
+    // server trims it) and would no longer match when the hook redacts, so
+    // the hook sends nothing. (The scan refuses a body carrying a key value,
+    // ADR-0065 d3, so none is stored here.)
     let stdin = session("startup", "/home/op/src/metals");
     crew.lab.take_requests();
 
@@ -3169,14 +3254,34 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
 
     // A claim key in which the key value straddles the 120-character cut:
     // cut first, its first 46 characters would be printed.
+    // The scan refuses such a claim key today (ADR-0065 d7), so the row is
+    // one a server before the rule set stored.
     let claim_key = format!("{}{}-tail", "k".repeat(73), crew.agent);
     assert_eq!(claim_key.chars().count(), 125);
-    crew.submit(
-        &crew.agent,
-        "memory",
-        &claim_key,
-        "Metals lot D: 40 tonnes, Tema, Sunday.",
+    let (code, _, log) = crew.lab.json(
+        Some(&crew.agent),
+        &[
+            "write",
+            "Metals lot D: 40 tonnes, Tema, Sunday.",
+            "--claim-key",
+            &claim_key,
+            "--kind",
+            "memory",
+        ],
     );
+    assert_ne!(
+        code, 0,
+        "a claim key carrying a key value is refused: {log}"
+    );
+    assert!(log.contains("submission.scan_veto"), "{log}");
+    assert!(!log.contains(&crew.agent), "no key in the refusal: {log}");
+    crew.lab
+        .seed_unscanned(
+            &crew.agent,
+            &claim_key,
+            "Metals lot D: 40 tonnes, Tema, Sunday.",
+        )
+        .await;
     let stdin = session("startup", "/home/op/src/metals");
     let (code, stdout, stderr) = crew.hook(&[], &stdin);
     assert_eq!(code, 0, "{stderr}");
@@ -3749,6 +3854,7 @@ async fn doctor_stub_with(
                         "status": "ready",
                         "checks": { "database": "ok" },
                         "oauth_issuer": issuer,
+                        "scan": { "version": "oml-scan/1", "rules": 40, "pii": false },
                     }),
                     "/v2/whoami" => json!({
                         "key_id": "k1",

@@ -1662,9 +1662,65 @@ pub enum ScanOutcome {
     Veto(String),
 }
 
+/// One finding as the rescan reports it (ADR-0065 d13): the class, the
+/// rule, whether it vetoes, and where in the scanned text it fired — never
+/// what it matched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScanFinding {
+    pub class: String,
+    pub rule: String,
+    pub veto: bool,
+    /// The field and line inside the scanned text, `/body line 3`.
+    pub at: String,
+}
+
+/// What a scanner says about itself, for `/readyz` and doctor's scan line
+/// (ADR-0065 d11): its version, how many rules it loaded, and whether the
+/// personal-data rules are on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannerInfo {
+    pub version: &'static str,
+    pub rules: usize,
+    pub pii: bool,
+}
+
 /// The scanner port: deterministic, synchronous, in-process (admission.md).
 pub trait Scanner: Send + Sync {
     fn scan(&self, envelope: &AdmissionEnvelope<'_>) -> ScanOutcome;
+
+    /// The rule-set version every verdict is journalled under, the
+    /// submission event's `scan.scanner_version` (ADR-0065 d1; ADR-0019 d4);
+    /// `None` for a scanner that pins none, as the test doubles do.
+    fn version(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// Every finding in the envelope's text, counting nothing (ADR-0065
+    /// d13). A scanner that reports only its outcome answers one finding
+    /// whose class and rule are its reason.
+    fn findings(&self, envelope: &AdmissionEnvelope<'_>) -> Vec<ScanFinding> {
+        match self.scan(envelope) {
+            ScanOutcome::Pass => Vec::new(),
+            ScanOutcome::Hold(reason) => vec![ScanFinding {
+                class: reason.clone(),
+                rule: reason,
+                veto: false,
+                at: String::new(),
+            }],
+            ScanOutcome::Veto(reason) => vec![ScanFinding {
+                class: reason.clone(),
+                rule: reason,
+                veto: true,
+                at: String::new(),
+            }],
+        }
+    }
+
+    /// The scanner's version, rule count and personal-data setting, or
+    /// `None` for one that pins no rule set.
+    fn info(&self) -> Option<ScannerInfo> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
