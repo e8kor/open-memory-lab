@@ -5795,6 +5795,8 @@ async fn an_admin_key_reading_a_workarea_sees_no_claim_content() {
                 until: None,
                 limit: 10,
                 cursor: None,
+                author: None,
+                tip: None,
             },
         )
         .await

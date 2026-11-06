@@ -15,8 +15,8 @@ issuance since v0.1.0, `oml keys issue-agent` since v0.2.1, crews, names and `om
 v0.3.0; connector keys, `oml keys connect-code` and `oml keys disconnect` since v0.4.0
 ([releases](../product/releases.md))
 
-Administration is the `oml` CLI; there is no web console
-([ADR-0015](../adr/ADR-0015-cli-administration.md)). Every verb below is one request to the
+Administration is the `oml` CLI ([ADR-0015](../adr/ADR-0015-cli-administration.md)); a signed-in
+administrator also has the admin page, below. Every verb below is one request to the
 server's [HTTP API](../api/http-api.md), journalled by the server, and every refusal names its
 rule. The full contract of each verb is the [CLI reference](../cli/reference.md); this page is the
 order and the tasks. The verbs here run in the CLI's own test suites against a real server; this
@@ -220,6 +220,16 @@ pass back. It needs reader access on the workarea, so run it with a reader key, 
 Key, grant, crew, connection and review events appear on no key's tail; they belong to the
 evidence export ([events tail](../api/http-api.md#events-tail)), which is not built. `oml audit
 verify-chain` exists and is refused while the server serves no chain export.
+
+## The admin page
+
+At `/web/admin`, an administrator's session acts through its own keys. **Memories** lists every
+memory of the organisation, newest first, 50 a page, filtered by state, workarea, origin,
+author key or text; each page read is one `memory.admin_read` in the journal, the Atlas view's
+included. **Atlas** draws the same page inside the workareas it sits in, sized by their rows.
+**Workareas** shows the tree with one dropdown a workarea: status changes as your admin key,
+ratified only by a key other than the proposer's; in progress and commit as your reviewer key.
+Apply asks you to confirm first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
 
 ## Rules no admin key bypasses
 

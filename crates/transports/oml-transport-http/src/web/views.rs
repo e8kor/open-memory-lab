@@ -13,15 +13,13 @@ use uuid::Uuid;
 
 use oml_app::app::{AdminMemory, Capacity, OwnKey};
 use oml_app::domain::guardrail::{FrameOptions, render_frame};
-use oml_app::domain::in_progress::WorkareaMode;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::web::{Email, csrf_token};
 use oml_app::domain::{MemoryKind, Role};
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::{
-    AdminState, AppError, Bearer, GuardrailRequest, HIT_KINDS, ListRequest, MemoryRecord,
-    NamedServe, RecallRequest, ServedMemory, SubmitRequest, SubmitVerb, SupersedeRequest, Verdict,
-    VerdictRequest, WebEmailRequest, WebSessionRecord,
+    AppError, Bearer, GuardrailRequest, MemoryRecord, NamedServe, ServedMemory, SubmitRequest,
+    SubmitVerb, SupersedeRequest, Verdict, VerdictRequest, WebEmailRequest, WebSessionRecord,
 };
 use oml_app::types::{BULK_VERDICT_MAX, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest};
 
@@ -52,14 +50,14 @@ impl Fields {
         Self(pairs.into_iter().collect())
     }
 
-    fn get(&self, name: &str) -> Option<&str> {
+    pub(super) fn get(&self, name: &str) -> Option<&str> {
         self.0
             .get(name)
             .map(String::as_str)
             .filter(|v| !v.is_empty())
     }
 
-    fn need(&self, name: &'static str) -> Result<&str, ApiError> {
+    pub(super) fn need(&self, name: &'static str) -> Result<&str, ApiError> {
         self.get(name).ok_or_else(|| {
             ApiError::validation(format!("{name} is required"))
                 .with_details(json!({ "field": name }))
@@ -67,7 +65,7 @@ impl Fields {
     }
 
     /// A field the action does not define is refused (ADR-0045 d6).
-    fn only(&self, allowed: &[&str]) -> Result<(), ApiError> {
+    pub(super) fn only(&self, allowed: &[&str]) -> Result<(), ApiError> {
         for name in self.0.keys() {
             if name != "action" && name != "csrf_token" && !allowed.contains(&name.as_str()) {
                 return Err(
@@ -79,19 +77,19 @@ impl Fields {
         Ok(())
     }
 
-    fn name(&self, field: &'static str) -> Result<Name, ApiError> {
+    pub(super) fn name(&self, field: &'static str) -> Result<Name, ApiError> {
         Name::parse(self.need(field)?).map_err(|e| {
             ApiError::validation(e.to_string()).with_details(json!({ "field": field }))
         })
     }
 
-    fn reference(&self, field: &'static str) -> Result<Reference, ApiError> {
+    pub(super) fn reference(&self, field: &'static str) -> Result<Reference, ApiError> {
         Reference::parse(self.need(field)?).map_err(|e| {
             ApiError::validation(e.to_string()).with_details(json!({ "field": field }))
         })
     }
 
-    fn id(&self, field: &'static str) -> Result<Uuid, ApiError> {
+    pub(super) fn id(&self, field: &'static str) -> Result<Uuid, ApiError> {
         let value = self.need(field)?;
         let value = value.strip_prefix("srv_").unwrap_or(value);
         Uuid::parse_str(value).map_err(|_| {
@@ -170,10 +168,11 @@ fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
     tabs
 }
 
-const ADMIN_TABS: [(&str, &str); 7] = [
+const ADMIN_TABS: [(&str, &str); 8] = [
     ("/web/admin", "People"),
     ("/web/admin?view=queue", "Queue"),
     ("/web/admin?view=memories", "Memories"),
+    ("/web/admin?view=workarea", "Workareas"),
     ("/web/admin?view=review", "Review"),
     ("/web/admin?view=held", "Bulk review"),
     ("/web/admin?view=curate", "Curate"),
@@ -188,7 +187,7 @@ where
     I: IdGen + 'static,
     Sc: Scanner + 'static,
 {
-    async fn caller(
+    pub(super) async fn caller(
         &self,
         session: &WebSessionRecord,
         capacity: Capacity,
@@ -231,7 +230,7 @@ where
             ),
             "workarea" => (
                 "/web?view=workarea",
-                self.workarea_view(&web, session, &csrf).await?,
+                self.workarea_view(&web, session, &csrf, query).await?,
             ),
             "review" => ("/web?view=review", review_start("/web", &csrf)),
             "guardrails" => ("/web?view=guardrails", self.guardrails_view(&web).await?),
@@ -271,7 +270,7 @@ where
         let mut lines = frame.text.lines();
         let header = lines.next().unwrap_or_default();
         let mut body = format!(
-            r#"<p class="label">Guardrails</p><h1>Guardrails</h1><p class="lede">The reviewed rules your agents load at every session start, here and above your workarea. Write and change them through the API or the command line; this page only shows them.</p><p class="dim">{}</p><ul>"#,
+            r#"<h1>Guardrails</h1><p class="desc">Read-only here; change them with the API or the CLI.</p><p class="dim">{}</p><ul>"#,
             text(header)
         );
         for line in lines {
@@ -289,7 +288,7 @@ where
     ) -> Result<String, ApiError> {
         let keys = self.app.web_own_keys(web).await.map_err(app_error)?;
         let mut body = format!(
-            r#"<p class="label">Keys</p><h1>Your keys</h1><p class="lede">Every key that acts for <code>{}</code>: the keys your agents hold, and the one this page acts with. When each key was last used is not recorded.</p><table><tr><th>Key</th><th>Role</th><th>Access</th><th>State</th><th></th></tr>"#,
+            r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p><table><tr><th>Key</th><th>Role</th><th>Access</th><th>State</th><th></th></tr>"#,
             short(session.user.as_str())
         );
         for own in &keys {
@@ -299,7 +298,7 @@ where
         let prefix = format!("{}-", session.user.as_str());
         let _ = write!(
             body,
-            "<h2>Issue a key for an agent</h2><p class=\"lede\">The key reads and writes in your own workarea and nothing else; its value is shown once.</p>{}<h2>Connect Claude on the web or a phone</h2><p class=\"lede\">A connector key holds a connection instead of a value; you enter its connect code once, in Claude.</p>{}",
+            "<h2>Agent key</h2><p class=\"desc\">Your workarea only. The value is shown once.</p>{}<h2>Connector key</h2><p class=\"desc\">For Claude on the web or a phone; its connect code is shown once.</p>{}",
             form(
                 "/web",
                 "issue_key",
@@ -403,17 +402,14 @@ where
             .map_or(DEFAULT_SERVER, |i| i.as_str())
             .to_owned();
         let url_line = if issuer == DEFAULT_SERVER {
-            format!(
-                "The Claude Code plugin and the agent kit connect to <code>{DEFAULT_SERVER}</code> unless told otherwise, which is this server: an agent needs only its key."
-            )
+            "The plugins' default server: an agent needs only its key.".to_owned()
         } else {
             format!(
-                "The Claude Code plugin and the agent kit connect to <code>{DEFAULT_SERVER}</code> unless told otherwise; this server is <code>{}</code>, so give each agent this URL beside its key.",
-                attr(&issuer)
+                "Not the plugins' default (<code>{DEFAULT_SERVER}</code>): give each agent this URL with its key."
             )
         };
         format!(
-            r#"<p class="label">Set up</p><h1>Connect your agents</h1><p class="lede">{url_line}</p><div class="card"><p class="label">Server</p><pre class="mono">{}</pre></div><h2>Claude Code</h2><p>Issue a writer key on the Keys tab, then follow <a href="{GUIDES}/claude-code/">the Claude Code guide</a>: the plugin keeps the key in the system keychain.</p><h2>Claude on the web and on a phone</h2><p>Issue a connector key, then follow <a href="{GUIDES}/claude-ai-and-mobile/">the claude.ai and mobile guide</a> with its connector URL and connect code.</p><h2>Other agent tools</h2><p>Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop: <a href="{GUIDES}/other-harnesses/">the other agent tools guide</a>.</p>"#,
+            r#"<h1>Set up</h1><div class="card"><p class="label">Server</p><pre class="mono">{}</pre></div><p class="desc">{url_line}</p><h2>Claude Code</h2><p>Agent key · <a href="{GUIDES}/claude-code/">guide</a></p><h2>Claude on the web and on a phone</h2><p>Connector key · <a href="{GUIDES}/claude-ai-and-mobile/">guide</a></p><h2>Other agent tools</h2><p>Codex CLI, Cursor, Gemini CLI, VS Code, Claude Desktop · <a href="{GUIDES}/other-harnesses/">guide</a></p>"#,
             attr(&issuer)
         )
     }
@@ -425,11 +421,10 @@ where
         query: &Fields,
     ) -> Result<String, ApiError> {
         let bearer = Bearer::Session(web);
-        let mut body = format!(
-            r#"<p class="label">Memories</p><h1>Your memories</h1><p class="lede">What your agents wrote, in every state, and what your workarea and the shared area serve. A held memory is visible to its own agent until someone other than its author approves it.</p><form class="row" method="get" action="/web"><input type="hidden" name="view" value="memories">{}<button type="submit">Search</button></form>"#,
-            input("q", "search", query.get("q").unwrap_or(""), false)
-        );
         if let Some(id) = query.get("memory") {
+            let mut body = String::from(
+                r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="/web?view=memories">Back to the list</a></p>"#,
+            );
             let id = Uuid::parse_str(id).map_err(|_| {
                 ApiError::validation("memory is not an id").with_details(json!({"field": "memory"}))
             })?;
@@ -437,90 +432,13 @@ where
             body.push_str(&memory_card(&served, &self.frame_for(csrf, &served.memory)));
             return Ok(body);
         }
-        if let Some(q) = query.get("q") {
-            let result = self
-                .app
-                .recall(
-                    bearer,
-                    &RecallRequest {
-                        timings: false,
-                        query: q.to_owned(),
-                        k: 25,
-                        workarea: None,
-                        kinds: HIT_KINDS.to_vec(),
-                        include_text: true,
-                        include_unreviewed: Some(true),
-                        max_tokens: None,
-                        search: None,
-                        match_mode: oml_app::search::MatchMode::Any,
-                        include_expired: false,
-                        now: None,
-                        anchor: oml_app::types::AnchorFilter::default(),
-                    },
-                )
-                .await
-                .map_err(app_error)?;
-            body.push_str("<h2>Found</h2>");
-            let served: Vec<&ServedMemory> = result
-                .steering
-                .iter()
-                .chain(result.hits.iter().map(|h| &h.served))
-                .collect();
-            body.push_str(&memory_table(&served, "/web?view=memories"));
-            return Ok(body);
+        let list = super::memories::ListQuery::parse(query)?;
+        let lede = "Newest first. A held memory is held until someone else reviews it; only its author reads it before then.";
+        if list.atlas {
+            return Ok(super::memories::atlas_view("/web", &list, lede));
         }
-        let own = self
-            .app
-            .list_memories(
-                bearer,
-                &ListRequest {
-                    own: true,
-                    workarea: None,
-                    state: None,
-                    kind: None,
-                    claim_key: None,
-                    since: None,
-                    until: None,
-                    limit: 50,
-                    cursor: None,
-                    anchor: oml_app::types::AnchorFilter::default(),
-                },
-            )
-            .await
-            .map_err(app_error)?;
-        body.push_str("<h2>Your agents' work</h2>");
-        body.push_str(&memory_table(
-            &own.items.iter().collect::<Vec<_>>(),
-            "/web?view=memories",
-        ));
-        let shared = self
-            .app
-            .list_memories(
-                bearer,
-                &ListRequest {
-                    own: false,
-                    workarea: Some(Reference::Name(
-                        Name::parse(oml_app::domain::name::UNIVERSE).expect("a name"),
-                    )),
-                    state: None,
-                    kind: None,
-                    claim_key: None,
-                    since: None,
-                    until: None,
-                    limit: 50,
-                    cursor: None,
-                    anchor: oml_app::types::AnchorFilter::default(),
-                },
-            )
-            .await;
-        if let Ok(shared) = shared {
-            body.push_str("<h2>The shared area</h2><p class=\"lede\">Curated claims, each reviewed by someone else, shown without their author or source.</p>");
-            body.push_str(&memory_table(
-                &shared.items.iter().collect::<Vec<_>>(),
-                "/web?view=memories",
-            ));
-        }
-        Ok(body)
+        let page = self.user_cards(web, &list).await?;
+        Ok(super::memories::list_view("/web", &list, Some(&page), lede))
     }
 
     async fn workarea_view(
@@ -528,6 +446,7 @@ where
         web: &oml_app::app::Caller,
         session: &WebSessionRecord,
         csrf: &str,
+        query: &Fields,
     ) -> Result<String, ApiError> {
         let root = web.key().user.ok_or_else(ApiError::not_found)?;
         let tree = self
@@ -535,49 +454,34 @@ where
             .workarea_tree(Bearer::Session(web), Reference::Id(root), None, 200)
             .await
             .map_err(app_error)?;
+        let nodes: Vec<super::workareas::Node> = tree
+            .items
+            .iter()
+            .map(|node| super::workareas::Node {
+                id: node.workarea.workarea_id,
+                path: node.path.clone(),
+                name: if node.workarea.workarea_id == root {
+                    node.workarea.name.as_str().to_owned()
+                } else {
+                    format!("{}.{}", session.user.as_str(), node.workarea.name.as_str())
+                },
+            })
+            .collect();
+        // Every act here is the person's reviewer key's: a dreamer key a
+        // person holds proposes, ratifies another key's proposal, and sets
+        // the mode (ADR-0009 d3; ADR-0030 d1; ADR-0045 d28).
+        let review = self.caller(session, Capacity::Review).await?;
         let mut body = format!(
-            r#"<p class="label">Workareas</p><h1>Your workarea</h1><p class="lede">Your keys write, read and make workareas under <code>universe.{}</code>, and nowhere else.</p><table><tr><th>Path</th><th>Name to use</th><th>Mode</th></tr>"#,
+            r#"<h1>Workareas</h1><p class="desc">Under <code>universe.{}</code>. Apply asks you to confirm.</p>"#,
             short(session.user.as_str())
         );
-        for node in &tree.items {
-            let qualified = if node.workarea.workarea_id == root {
-                node.workarea.name.as_str().to_owned()
-            } else {
-                format!("{}.{}", session.user.as_str(), node.workarea.name.as_str())
-            };
-            let _ = write!(
-                body,
-                r#"<tr><td class="mono">{}</td><td class="mono">{}</td><td>{}</td></tr>"#,
-                short(&node.path),
-                short(&qualified),
-                if node.workarea.in_progress {
-                    "in progress"
-                } else {
-                    "standard"
-                }
-            );
-        }
-        // A person's reviewer key puts a workarea in progress, where your
-        // agents read each other's unreviewed memories at once, and commits
-        // it once nothing is held (ADR-0030 d1, d6).
-        body.push_str("</table><h2>In progress</h2><p>In a workarea in progress your agents recall each other's memories before review, marked unreviewed, and nothing reaches anyone outside it until you commit it, which needs every memory in it reviewed.</p>");
-        body.push_str(&form(
-            "/web",
-            "workarea_mode",
-            csrf,
-            &format!(
-                "{}{}",
-                input("workarea", "workarea", "", true),
-                select(
-                    "mode",
-                    "mode",
-                    &[("in_progress", "put in progress"), ("standard", "commit")]
-                )
-            ),
-            "Set",
-            true,
-        ));
-        body.push_str("<h2>Make a workarea</h2>");
+        body.push_str(
+            &self
+                .workarea_table("/web", csrf, &review, &review, &nodes, query)
+                .await?,
+        );
+        body.push_str("<details class=\"help\"><summary>?</summary>In progress: your agents recall each other's unreviewed memories inside it, and nothing leaves it until you commit, which needs every memory in it reviewed.</details>");
+        body.push_str("<h2>New workarea</h2>");
         body.push_str(&form(
             "/web",
             "create_workarea",
@@ -667,25 +571,11 @@ where
                     "/web?view=workarea&done=created".to_owned(),
                 ))
             }
-            "workarea_mode" => {
-                fields.only(&["workarea", "mode"])?;
-                let workarea = fields.reference("workarea")?;
-                let mode = fields
-                    .get("mode")
-                    .and_then(WorkareaMode::parse)
-                    .ok_or_else(|| {
-                        ApiError::validation("mode is in_progress or standard")
-                            .with_details(json!({"field": "mode"}))
-                    })?;
+            "workarea_mode" | "workarea_transition" | "workarea_ratify" => {
                 let review = self.caller(session, Capacity::Review).await?;
-                retry_chain(|| {
-                    self.app
-                        .set_workarea_mode(Bearer::Session(&review), workarea.clone(), mode)
-                })
-                .await
-                .map_err(app_error)?;
                 Ok(Outcome::Redirect(
-                    "/web?view=workarea&done=mode+set".to_owned(),
+                    self.workarea_act("/web", action, &review, &review, fields)
+                        .await?,
                 ))
             }
             "review_next" | "verdict" => {
@@ -713,7 +603,7 @@ where
         let body = match &issued.connect_code {
             Some(code) => connect_card(issued.name.as_str(), code),
             None => format!(
-                r#"<p class="label">Key issued</p><h1>{}</h1><p class="lede">Copy the value now: it is shown once and nothing keeps it. Put it where your agent reads its key, then follow <a href="/web?view=setup">Set up</a>.</p><div class="card secret"><p class="label">For your agent</p><pre>OML_URL={}
+                r#"<h1>{}</h1><p class="desc">Shown once: copy it now. Then <a href="/web?view=setup">set up</a> your agent.</p><div class="card secret"><p class="label">For your agent</p><pre>OML_URL={}
 OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 short(issued.name.as_str()),
                 attr(&issuer),
@@ -786,12 +676,13 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             .map_err(app_error)?;
         let mut body = String::from(r#"<p class="label">Review</p><h1>Review</h1>"#);
         match next {
-            None => body.push_str(
-                r#"<p class="lede">Nothing waits for you. A write your own key authored, or that derives from one, is never served to it.</p>"#,
-            ),
+            None => body.push_str(r#"<p class="desc">Nothing waits for you.</p>"#),
             Some(served) => {
                 let serve_id = format!("srv_{}", served.memory.memory_id.simple());
-                body.push_str(&memory_card(&served, &self.frame_for(&csrf, &served.memory)));
+                body.push_str(&memory_card(
+                    &served,
+                    &self.frame_for(&csrf, &served.memory),
+                ));
                 body.push_str(&form(
                     path,
                     "verdict",
@@ -799,7 +690,11 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     &format!(
                         "{}{}{}",
                         hidden("serve_id", &serve_id),
-                        select("verdict", "verdict", &[("approve", "approve"), ("reject", "reject")]),
+                        select(
+                            "verdict",
+                            "verdict",
+                            &[("approve", "approve"), ("reject", "reject")]
+                        ),
                         input("reason", "reason", "", false)
                     ),
                     "Record verdict",
@@ -837,6 +732,11 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 self.admin_memories_view(&admin, query, &csrf).await?,
             ),
             "review" => ("/web/admin?view=review", review_start("/web/admin", &csrf)),
+            "workarea" => (
+                "/web/admin?view=workarea",
+                self.admin_workarea_view(&admin, session, &csrf, query)
+                    .await?,
+            ),
             "held" => (
                 "/web/admin?view=held",
                 self.held_view(session, query, &csrf).await?,
@@ -909,7 +809,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             format!("&amp;cursor={}", attr(&percent_encode(c)))
         });
         let mut body = format!(
-            r#"<p class="label">Bulk review</p><h1>Held for you to review</h1><p class="lede">The memories your reviewer key may judge, oldest first, {HELD_PAGE_DEFAULT} a page. Pick the ones you have read; the next step shows what you picked before anything is recorded. Each picked memory gets its own verdict, as if you had reviewed it alone. A memory your reviewer key wrote, or that derives from one, is never listed.</p><form class="row" method="get" action="/web/admin"><input type="hidden" name="view" value="held">{}{}{}<button type="submit">Filter</button></form><p><a href="/web/admin?view=held{kept}{cursor}&amp;select=all">Select all on this page</a> · <a href="/web/admin?view=held{kept}{cursor}">Clear</a></p>"#,
+            r#"<h1>Bulk review</h1><p class="desc">Oldest first, {HELD_PAGE_DEFAULT} a page. Each pick gets its own verdict; you confirm first.</p><form class="row" method="get" action="/web/admin"><input type="hidden" name="view" value="held">{}{}{}<button type="submit">Filter</button></form><p><a href="/web/admin?view=held{kept}{cursor}&amp;select=all">Select all on this page</a> · <a href="/web/admin?view=held{kept}{cursor}">Clear</a></p>"#,
             input("workarea", "workarea", filters[0].1, false),
             input("author_key", "author key", filters[1].1, false),
             input("claim_key_prefix", "claim key prefix", filters[2].1, false),
@@ -953,7 +853,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 ),
                 input("reason", "reason (required to reject)", "", false)
             ),
-            "Review the picked memories",
+            "Review picks",
             true,
         ));
         if let Some(next) = &page.next_cursor {
@@ -1040,7 +940,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 .await
                 .map_err(app_error)?;
             let mut body = format!(
-                r#"<p class="label">Bulk review</p><h1>{} {} memories?</h1><p class="lede">Each gets its own verdict as your reviewer key, as if you had reviewed it alone. A memory that is no longer held, or that your reviewer key may not judge, is skipped and shown as skipped.</p><table><tr><th>Claim key</th><th>First line</th><th>Artifact</th></tr>"#,
+                r#"<h1>{} {} memories?</h1><p class="desc">One verdict each. Any no longer held is skipped.</p><table><tr><th>Claim key</th><th>First line</th><th>Artifact</th></tr>"#,
                 if verdict == Verdict::Approve {
                     "Approve"
                 } else {
@@ -1111,7 +1011,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
         crate::count_bulk(self.traffic.metrics(), &items);
         let answer = crate::bulk_json(items);
         let mut body = format!(
-            r#"<p class="label">Bulk review</p><h1>Recorded</h1><p class="lede">{} approved, {} rejected, {} skipped.</p><table><tr><th>Artifact</th><th>Outcome</th><th>Detail</th></tr>"#,
+            r#"<h1>Recorded</h1><p class="desc">{} approved, {} rejected, {} skipped.</p><table><tr><th>Artifact</th><th>Outcome</th><th>Detail</th></tr>"#,
             answer["summary"]["approved"],
             answer["summary"]["rejected"],
             answer["summary"]["skipped"]
@@ -1160,7 +1060,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
     ) -> Result<String, ApiError> {
         let entries = self.app.web_all_entries(admin).await.map_err(app_error)?;
         let mut body = String::from(
-            r#"<p class="label">People</p><h1>Who signs in</h1><p class="lede">An address on this list signs in with Google or GitHub as its user. Removing it ends its sessions; the user's agent keys keep working until you cut them off.</p><table><tr><th>Email</th><th>User</th><th>Admin</th><th></th></tr>"#,
+            r#"<h1>People</h1><p class="desc">Removing an address ends its sessions; its agent keys keep working.</p><table><tr><th>Email</th><th>User</th><th>Admin</th><th></th></tr>"#,
         );
         for e in &entries {
             let flip = if e.admin { "no" } else { "yes" };
@@ -1200,7 +1100,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 )
             );
         }
-        body.push_str("</table><h2>Add an address</h2>");
+        body.push_str("</table><h2>Address</h2>");
         body.push_str(&form(
             "/web/admin",
             "allow_email",
@@ -1214,7 +1114,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             "Add",
             true,
         ));
-        body.push_str("<h2>Review and curation</h2><p class=\"lede\">Every person reviews their own workarea from their first sign-in. Grant review elsewhere, or designate a curator who writes into the shared area; each act is a journalled grant.</p>");
+        body.push_str("<h2>Review and curation</h2><details class=\"help\"><summary>?</summary>Each person reviews their own workarea from their first sign-in. Grant review elsewhere, or make someone a curator of the shared area.</details>");
         body.push_str(&form(
             "/web/admin",
             "grant_review",
@@ -1242,10 +1142,55 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
         Ok(body)
     }
 
+    /// The tenant's tree with each workarea's dropdown (ADR-0045 d28): the
+    /// admin key reads the tree as structure (ADR-0026 d15) and proposes
+    /// and ratifies; the mode is the person's reviewer key's.
+    async fn admin_workarea_view(
+        &self,
+        admin: &oml_app::app::Caller,
+        session: &WebSessionRecord,
+        csrf: &str,
+        query: &Fields,
+    ) -> Result<String, ApiError> {
+        let tree = self
+            .app
+            .workarea_tree(
+                Bearer::Session(admin),
+                Reference::Name(Name::parse(oml_app::domain::name::UNIVERSE).expect("a name")),
+                None,
+                200,
+            )
+            .await
+            .map_err(app_error)?;
+        let nodes: Vec<super::workareas::Node> = tree
+            .items
+            .iter()
+            .map(|node| super::workareas::Node {
+                id: node.workarea.workarea_id,
+                path: node.path.clone(),
+                name: node
+                    .path
+                    .strip_prefix("universe.")
+                    .unwrap_or(&node.path)
+                    .to_owned(),
+            })
+            .collect();
+        let review = self.caller(session, Capacity::Review).await?;
+        let mut body = String::from(
+            r#"<h1>Workareas</h1><p class="desc">Apply asks you to confirm.</p><details class="help"><summary>?</summary>Status changes run as your admin key and need a second key to ratify; in progress and commit run as your reviewer key.</details>"#,
+        );
+        body.push_str(
+            &self
+                .workarea_table("/web/admin", csrf, admin, &review, &nodes, query)
+                .await?,
+        );
+        Ok(body)
+    }
+
     async fn queue_view(&self, admin: &oml_app::app::Caller) -> Result<String, ApiError> {
         let rows = self.app.web_queue(admin).await.map_err(app_error)?;
         let mut body = String::from(
-            r#"<p class="label">Queue</p><h1>Waiting for review</h1><p class="lede">Held memories per workarea and the age of the oldest. No content: open a memory under Memories.</p><table><tr><th>Workarea</th><th>Held</th><th>Oldest since</th></tr>"#,
+            r#"<h1>Queue</h1><p class="desc">Held memories per workarea.</p><table><tr><th>Workarea</th><th>Held</th><th>Oldest since</th></tr>"#,
         );
         if rows.is_empty() {
             body.push_str(r#"<tr><td colspan="3" class="dim">Nothing is held.</td></tr>"#);
@@ -1269,29 +1214,10 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
         query: &Fields,
         csrf: &str,
     ) -> Result<String, ApiError> {
-        let mut body = format!(
-            r#"<p class="label">Memories</p><h1>Every memory</h1><p class="lede">An administrator reads every memory of the organisation with who wrote, derived and reviewed it. Every read is recorded in the history.</p><form class="row" method="get" action="/web/admin"><input type="hidden" name="view" value="memories">{}{}{}<button type="submit">Search</button></form>"#,
-            input("q", "search", query.get("q").unwrap_or(""), false),
-            input(
-                "workarea",
-                "workarea",
-                query.get("workarea").unwrap_or(""),
-                false
-            ),
-            select(
-                "state",
-                "state",
-                &[
-                    ("", "any"),
-                    ("held", "held"),
-                    ("promoted", "promoted"),
-                    ("rejected", "rejected"),
-                    ("superseded", "superseded"),
-                    ("demoted", "demoted")
-                ]
-            )
-        );
         if let Some(id) = query.get("memory") {
+            let mut body = String::from(
+                r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="/web/admin?view=memories">Back to the list</a></p>"#,
+            );
             let id = Uuid::parse_str(id).map_err(|_| {
                 ApiError::validation("memory is not an id").with_details(json!({"field": "memory"}))
             })?;
@@ -1325,49 +1251,23 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             ));
             let _ = write!(
                 body,
-                r#"<p><a href="/web/admin?view=curate&amp;memory={}">Curate it into the shared area</a></p>"#,
+                r#"<p><a href="/web/admin?view=curate&amp;memory={}">Curate</a></p>"#,
                 read.memory.memory_id
             );
             return Ok(body);
         }
-        let workarea = match query.get("workarea") {
-            Some(w) => Some(Reference::parse(w).map_err(|e| {
-                ApiError::validation(e.to_string()).with_details(json!({"field": "workarea"}))
-            })?),
-            None => None,
-        };
-        let state = query.get("state").and_then(AdminState::parse);
-        let page = retry_chain(|| {
-            self.app.admin_search(
-                Bearer::Session(admin),
-                query.get("q"),
-                workarea.clone(),
-                state,
-                None,
-                50,
-            )
-        })
-        .await
-        .map_err(app_error)?;
-        body.push_str(
-            "<table><tr><th>State</th><th>Workarea</th><th>Author</th><th>Text</th></tr>",
-        );
-        if page.items.is_empty() {
-            body.push_str(r#"<tr><td colspan="4" class="dim">No memory matches.</td></tr>"#);
+        let list = super::memories::ListQuery::parse(query)?;
+        let lede = "Every memory, newest first. Each page you read is journalled.";
+        if list.atlas {
+            return Ok(super::memories::atlas_view("/web/admin", &list, lede));
         }
-        for m in &page.items {
-            let _ = write!(
-                body,
-                r#"<tr><td>{}</td><td class="mono">{}</td><td class="mono">{}</td><td><a href="/web/admin?view=memories&amp;memory={}">{}</a></td></tr>"#,
-                state_tag(m.state.as_str()),
-                short(&m.workarea_path),
-                author_line(m),
-                m.memory.memory_id,
-                short(&m.memory.body)
-            );
-        }
-        body.push_str("</table>");
-        Ok(body)
+        let page = self.admin_cards(admin, &list).await?;
+        Ok(super::memories::list_view(
+            "/web/admin",
+            &list,
+            Some(&page),
+            lede,
+        ))
     }
 
     async fn curate_view(
@@ -1388,7 +1288,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             prefill = read.memory.body;
         }
         let mut body = String::from(
-            r#"<p class="label">Curate</p><h1>Into the shared area</h1><p class="lede">Curate a memory someone other than its author has approved. The copy is written by your curator key, held until someone outside its lineage approves it, and served to everyone without its author or source. Reword it: a copy whose text or name repeats its source's can be linked to it.</p>"#,
+            r#"<h1>Curate</h1><p class="desc">The copy is held until someone else reviews it, then served without its author.</p><details class="help"><summary>?</summary>Curate only an approved memory. Reword it: a copy repeating its source's text or name can be linked to it.</details>"#,
         );
         body.push_str(&form(
             "/web/admin",
@@ -1425,6 +1325,17 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             }
             "bulk_confirm" | "bulk_verdict" => {
                 return self.bulk_act(token, session, action, fields).await;
+            }
+            "workarea_mode" | "workarea_transition" | "workarea_ratify" => {
+                // Transitions as the admin key, which ADR-0009 admits by
+                // role; the mode as the person's reviewer key, a dreamer
+                // key a person holds (ADR-0030 d1; ADR-0045 d28).
+                let admin = self.caller(session, Capacity::Admin).await?;
+                let review = self.caller(session, Capacity::Review).await?;
+                return Ok(Outcome::Redirect(
+                    self.workarea_act("/web/admin", action, &admin, &review, fields)
+                        .await?,
+                ));
             }
             "curate" => {
                 fields.only(&["source", "text", "claim_key"])?;
@@ -1662,7 +1573,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
     ) -> Result<String, ApiError> {
         let csrf = csrf_token(token);
         let mut body = format!(
-            r#"<p class="label">Remove</p><h1>Remove {}?</h1><p class="lede">The address's sessions end at once. The keys of <code>{}</code>'s agents keep working: cut each off here if the person is leaving.</p>"#,
+            r#"<h1>Remove {}?</h1><p class="desc">Sessions end now. <code>{}</code>'s agent keys keep working; cut them off below.</p>"#,
             short(email.as_str()),
             short(user.as_str())
         );
@@ -1708,21 +1619,14 @@ fn email_field(fields: &Fields) -> Result<Email, ApiError> {
 
 fn review_start(path: &str, csrf: &str) -> String {
     format!(
-        r#"<p class="lede">Review serves the next memory held in the workareas your reviewer key reaches: your own from your first sign-in, and any other an administrator granted. You never review a write your reviewer key authored or that derives from one.</p>{}"#,
-        form(
-            path,
-            "review_next",
-            csrf,
-            "",
-            "Review the next memory",
-            true
-        )
+        r#"<h1>Review</h1><p class="desc">Your own writes are never served to you.</p>{}"#,
+        form(path, "review_next", csrf, "", "Review next", true)
     )
 }
 
 fn connect_card(key: &str, code: &oml_app::types::ConnectCodeIssued) -> String {
     format!(
-        r#"<p class="label">Connect code</p><h1>{}</h1><p class="lede">In Claude, add a custom connector with this URL, then enter the code when the page asks. The code is shown once and works once, until {}.</p><div class="card secret"><p class="label">Connector URL</p><pre>{}</pre><p class="label">Connect code</p><pre>{}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
+        r#"<p class="label">Connect code</p><h1>{}</h1><p class="desc">Shown once; works once, until {}. Add a custom connector in Claude with this URL, then enter the code.</p><div class="card secret"><p class="label">Connector URL</p><pre>{}</pre><p class="label">Connect code</p><pre>{}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
         short(key),
         short(code.expires_at.as_str()),
         attr(&code.connector_url),
@@ -1740,51 +1644,11 @@ fn memory_state(m: &ServedMemory) -> &'static str {
     }
 }
 
-fn memory_table(items: &[&ServedMemory], base: &str) -> String {
-    let mut out =
-        String::from("<table><tr><th>State</th><th>Workarea</th><th>From</th><th>Text</th></tr>");
-    if items.is_empty() {
-        out.push_str(r#"<tr><td colspan="4" class="dim">Nothing yet.</td></tr>"#);
-    }
-    for m in items {
-        let from = if m.anonymous {
-            "the shared area".to_owned()
-        } else {
-            short(&m.memory.author_principal)
-        };
-        let _ = write!(
-            out,
-            r#"<tr><td>{}</td><td class="mono">{}</td><td class="mono">{}</td><td><a href="{base}&amp;memory={}">{}</a></td></tr>"#,
-            state_tag(memory_state(m)),
-            short(m.workarea_path.as_deref().unwrap_or("")),
-            from,
-            m.memory.memory_id,
-            short(&m.memory.body)
-        );
-    }
-    out.push_str("</table>");
-    out
-}
-
 /// An anchor as one line for a reviewer (ADR-0057 d2): the repository, the
 /// commit's first 12 digits, the path and the fragment, or the page; a
 /// dash for none.
 fn anchor_line(anchor: Option<&oml_app::domain::anchor::Anchor>) -> String {
-    use oml_app::domain::anchor::Origin;
-    let Some(a) = anchor else {
-        return "—".to_owned();
-    };
-    let fragment = a
-        .fragment
-        .as_deref()
-        .map_or_else(String::new, |f| format!("#{f}"));
-    match &a.origin {
-        Origin::Repo { repo, rev, path } => short(&format!(
-            "{repo} @ {} {path}{fragment}",
-            &rev[..rev.len().min(12)]
-        )),
-        Origin::Uri { uri, .. } => short(&format!("{uri}{fragment}")),
-    }
+    super::memories::anchor_text(anchor).map_or_else(|| "—".to_owned(), |line| short(&line))
 }
 
 /// A version's valid time as one line for a reviewer, and on a held

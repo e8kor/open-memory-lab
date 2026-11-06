@@ -59,7 +59,28 @@ var(--star);border-color:var(--star);color:#1A1206}\
 solid currentColor}.held{color:var(--star)}.ok{color:var(--ok)}.dim{color:var(--ink-faint)}\
 .error{color:var(--star);font-weight:600}.notice{color:var(--ok)}.signin{max-width:26rem;margin:\
 48px auto}.signin button{width:100%;margin:8px 0}footer{border-top:1px solid var(--rule-soft);\
-padding:18px 0;font:12px var(--mono);color:var(--ink-faint)}.wide{flex:1 1 100%}";
+padding:18px 0;font:12px var(--mono);color:var(--ink-faint)}.wide{flex:1 1 100%}\
+nav.toggle{display:inline-flex;border:1px solid var(--rule);border-radius:999px;overflow:hidden;\
+margin:6px 0 14px}nav.toggle a{padding:6px 16px;font-size:14px;color:var(--ink-dim)}nav.toggle a.on{\
+background:var(--panel);color:var(--ink);box-shadow:inset 0 -2px 0 var(--star)}\
+.card.memory p{margin:6px 0}.card.memory .text{font-size:16px}.title{font-weight:600}\
+p.held{color:var(--star);font-size:14px}.pager{display:flex;gap:16px;margin:18px 0}\
+.atlas{position:relative;height:min(68vh,620px);border:1px solid var(--rule);border-radius:12px;\
+overflow:hidden;background:#04060d}.atlas canvas{display:block;width:100%;height:100%;\
+cursor:grab;touch-action:none}#atlas-labels{position:absolute;inset:0;pointer-events:none;\
+overflow:hidden}.lbl{position:absolute;left:0;top:0;white-space:nowrap;font:600 12px/1.3 \
+var(--sans);color:var(--ink);text-shadow:0 1px 8px #000d}.lbl small{display:block;font:500 \
+10px/1.5 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint)}\
+.atlas-panel{position:absolute;top:12px;right:12px;width:min(320px,86%);max-height:calc(100% - \
+24px);overflow:auto;margin:0;padding:14px 16px;background:rgba(14,18,48,.94);font-size:14px}\
+.atlas-panel p{margin:6px 0}.atlas-panel .x{float:right;padding:2px 9px}.atlas-list{padding-left:\
+22px}.atlas-list li{margin:4px 0}button.linkish{border:0;padding:2px 0;color:var(--ice);\
+font-weight:400;text-align:left}form.act{margin:0}form.act select{min-width:10rem}\
+.confirm{border-color:var(--star)}.crumbs{font-size:14px;margin:0 0 10px;color:var(--ink-dim)}\
+.lbl .badge{margin-left:6px;font:600 10px var(--mono);color:var(--star);border:1px solid \
+var(--star);border-radius:999px;padding:0 6px}details.help{margin:-4px 0 14px;color:var(--ink-dim);\
+font-size:14px;max-width:44em}details.help summary{cursor:pointer;color:var(--ink-faint);\
+width:max-content}.desc{color:var(--ink-faint);font-size:14px;margin:-4px 0 14px}";
 
 const STYLE_DIGEST: [u8; 32] = sha256(STYLESHEET.as_bytes());
 const STYLE_DIGEST_B64: [u8; 44] = base64_32(&STYLE_DIGEST);
@@ -278,7 +299,7 @@ pub fn shell(
 #[must_use]
 pub fn sign_in(providers: &[Provider], refusal: Option<(&str, &str)>) -> String {
     let mut body = String::from(
-        r#"<div class="signin"><p class="label">Sign in</p><h1>Your memory, your agents</h1><p class="lede">Sign in with the account whose email address your administrator put on the list. Open Memory Lab stores no password and sends no mail.</p>"#,
+        r#"<div class="signin"><p class="label">Sign in</p><h1>Your memory, your agents</h1><p class="desc">Use the address your administrator listed. No password is stored.</p>"#,
     );
     if let Some((code, message)) = refusal {
         let _ = write!(

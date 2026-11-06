@@ -10,6 +10,9 @@ class UserPageActBodyAction(StrEnum):
     REVIEW_NEXT = "review_next"
     SIGN_OUT = "sign_out"
     VERDICT = "verdict"
+    WORKAREA_MODE = "workarea_mode"
+    WORKAREA_RATIFY = "workarea_ratify"
+    WORKAREA_TRANSITION = "workarea_transition"
 
     def __str__(self) -> str:
         return str(self.value)

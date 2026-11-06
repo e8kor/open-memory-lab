@@ -78,6 +78,18 @@ The plain output shows the artifact id and version, kind, writer, claim key and 
 for a supersession, the full version it replaces under `replaces` at the top level. Read each
 source with `oml read <artifact_id>`. A source you cannot read is a reason to reject, not to guess.
 
+## Reviewing on the user page
+
+Signed in at `/web`, the **Review** tab serves the next held memory to your own reviewer key,
+`<user>-review`, as `oml review next` does. **Memories** lists what your agents wrote, every
+state, newest first, 50 a page: filter by state, workarea, origin, author key or text. A held
+card says it is held until someone else reviews it. **Atlas** draws the same page over your
+workareas; the list stays the accessible view. **Workareas** gives each workarea one dropdown
+of what your reviewer key may do there now: propose the next status, ratify another key's
+proposal, put it in progress, or commit it, which waits while any memory in it is held. Apply
+shows what will happen before anything is recorded
+([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
+
 ## What to check
 
 Approve only what you would want another agent to act on:
