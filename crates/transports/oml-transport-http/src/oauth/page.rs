@@ -96,6 +96,11 @@ pub(crate) fn page_response(status: StatusCode, html: String) -> Response {
 pub const ONLY_IF_YOURS: &str = "Enter the code only if you opened this page yourself, by adding \
 the connector in Claude, in the last few minutes. If someone sent you this link, close it.";
 
+/// Where the code comes from, with a same-origin link to the account page.
+pub const WHERE_THE_CODE_COMES_FROM: &str = "Get a connect code from your account page: \
+<a href=\"/web\">Connect Claude on the web or a phone</a>. Codes are shown once; use New \
+connect code on the key's row if you lost it.";
+
 /// The one answer to every wrong code (http-api.md, word for word).
 pub const CODE_NOT_VALID: &str =
     "This code is not valid. Check it, or ask your administrator for a new one.";
@@ -148,7 +153,7 @@ pub fn code_form(form: &CodeForm<'_>) -> String {
     }
     let _ = write!(
         body,
-        r#"<p>{ONLY_IF_YOURS}</p><form method="post" action="/oauth/authorize"><input type="hidden" name="handle" value="{}"><label for="connect_code">Connect code</label><input id="connect_code" name="connect_code" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" required autofocus><button type="submit">Continue</button></form>"#,
+        r#"<p>{ONLY_IF_YOURS}</p><p>{WHERE_THE_CODE_COMES_FROM}</p><form method="post" action="/oauth/authorize"><input type="hidden" name="handle" value="{}"><label for="connect_code">Connect code</label><input id="connect_code" name="connect_code" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" required autofocus><button type="submit">Continue</button></form>"#,
         escape(form.handle)
     );
     document(&body)
@@ -511,6 +516,25 @@ mod tests {
             sha256(&long).as_slice(),
             ring::digest::digest(&ring::digest::SHA256, &long).as_ref()
         );
+    }
+
+    #[test]
+    fn the_code_form_says_where_the_code_comes_from_and_links_the_account_page() {
+        let html = code_form(&CodeForm {
+            handle: "h",
+            client_name: "Claude",
+            verified_by: Some("claude.ai"),
+            redirect_host: "claude.ai",
+            attempts_left: 5,
+            wrong_code: false,
+        });
+        assert!(html.contains(
+            "Get a connect code from your account page: \
+             <a href=\"/web\">Connect Claude on the web or a phone</a>."
+        ));
+        assert!(html.contains(
+            "Codes are shown once; use New connect code on the key's row if you lost it."
+        ));
     }
 
     #[test]
