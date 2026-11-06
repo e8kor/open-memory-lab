@@ -2106,7 +2106,7 @@ paths:
               type: object
               required: [action, csrf_token]
               properties:
-                action: { type: string, enum: [issue_key, connect_key, connect_code, cut_off, create_workarea, review_next, verdict, sign_out] }
+                action: { type: string, enum: [issue_key, connect_key, connect_code, cut_off, create_workarea, workarea_mode, workarea_transition, workarea_ratify, review_next, verdict, sign_out] }
                 csrf_token: { type: string }
       responses:
         '200':
@@ -2168,6 +2168,44 @@ paths:
             text/html:
               schema: { type: string }
 
+  /web/data/memories:
+    get:
+      tags: [web]
+      operationId: userPageMemoriesData
+      summary: The user page's page of memories as JSON.
+      description: 'The Memories view''s query (state, workarea, origin, author, q, limit, cursor) and its scope, as <user>-web: the rows the list shows with the card''s fields alone, and the workareas the key may read under the filter with their rows counted by state and their dropdown''s acts. The session cookie alone; an Authorization header is access.verb_ceiling web_is_human_only, no session access.not_found; no-store, nosniff, no CORS (ADR-0045 d25, d30).'
+      security: []
+      responses:
+        '200':
+          description: '{items, next_cursor, workareas, base}.'
+          content:
+            application/json:
+              schema: { type: object }
+        '404':
+          description: access.not_found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /web/admin/data/memories:
+    get:
+      tags: [web]
+      operationId: adminPageMemoriesData
+      summary: The admin page's page of memories as JSON.
+      description: 'As /web/data/memories, as <user>-admin through the admin read: the page is one memory.admin_read; the workareas are the tenant''s tree, counted as structure (ADR-0045 d24, d25, d30).'
+      security: []
+      responses:
+        '200':
+          description: '{items, next_cursor, workareas, base}.'
+          content:
+            application/json:
+              schema: { type: object }
+        '404':
+          description: access.not_found, for a session that is not an admin's.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
   /web/admin:
     get:
       tags: [web]
@@ -2176,7 +2214,7 @@ paths:
       description: 'Any other session answers access.not_found. Views by query: view (people, queue, review, curate, memories), q, memory. The memories view and one memory''s attribution are the admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory''s text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.'
       security: []
       parameters:
-        - { name: view, in: query, required: false, schema: { type: string, enum: [people, queue, review, curate, memories] } }
+        - { name: view, in: query, required: false, schema: { type: string, enum: [people, queue, review, held, curate, memories, workarea] } }
         - { name: q, in: query, required: false, schema: { type: string, maxLength: 512 } }
         - { name: memory, in: query, required: false, schema: { type: string } }
       responses:
@@ -2204,7 +2242,7 @@ paths:
               type: object
               required: [action, csrf_token]
               properties:
-                action: { type: string, enum: [allow_email, remove_email, set_admin, grant_review, grant_curation, review_next, verdict, curate, supersede, cut_off] }
+                action: { type: string, enum: [allow_email, remove_email, set_admin, grant_review, grant_curation, review_next, verdict, bulk_confirm, bulk_verdict, curate, supersede, cut_off, workarea_mode, workarea_transition, workarea_ratify] }
                 csrf_token: { type: string }
       responses:
         '200':

@@ -966,6 +966,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/web/data/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The user page's page of memories as JSON.
+         * @description The Memories view's query (state, workarea, origin, author, q, limit, cursor) and its scope, as <user>-web: the rows the list shows with the card's fields alone, and the workareas the key may read under the filter with their rows counted by state and their dropdown's acts. The session cookie alone; an Authorization header is access.verb_ceiling web_is_human_only, no session access.not_found; no-store, nosniff, no CORS (ADR-0045 d25, d30).
+         */
+        get: operations["userPageMemoriesData"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/admin/data/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The admin page's page of memories as JSON.
+         * @description As /web/data/memories, as <user>-admin through the admin read: the page is one memory.admin_read; the workareas are the tenant's tree, counted as structure (ADR-0045 d24, d25, d30).
+         */
+        get: operations["adminPageMemoriesData"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/web/admin": {
         parameters: {
             query?: never;
@@ -5456,7 +5496,7 @@ export interface operations {
             content: {
                 "application/x-www-form-urlencoded": {
                     /** @enum {string} */
-                    action: "issue_key" | "connect_key" | "connect_code" | "cut_off" | "create_workarea" | "review_next" | "verdict" | "sign_out";
+                    action: "issue_key" | "connect_key" | "connect_code" | "cut_off" | "create_workarea" | "workarea_mode" | "workarea_transition" | "workarea_ratify" | "review_next" | "verdict" | "sign_out";
                     csrf_token: string;
                 };
             };
@@ -5555,10 +5595,68 @@ export interface operations {
             };
         };
     };
+    userPageMemoriesData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description {items, next_cursor, workareas, base}. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description access.not_found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPageMemoriesData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description {items, next_cursor, workareas, base}. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description access.not_found, for a session that is not an admin's. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminPage: {
         parameters: {
             query?: {
-                view?: "people" | "queue" | "review" | "curate" | "memories";
+                view?: "people" | "queue" | "review" | "held" | "curate" | "memories" | "workarea";
                 q?: string;
                 memory?: string;
             };
@@ -5599,7 +5697,7 @@ export interface operations {
             content: {
                 "application/x-www-form-urlencoded": {
                     /** @enum {string} */
-                    action: "allow_email" | "remove_email" | "set_admin" | "grant_review" | "grant_curation" | "review_next" | "verdict" | "curate" | "supersede" | "cut_off";
+                    action: "allow_email" | "remove_email" | "set_admin" | "grant_review" | "grant_curation" | "review_next" | "verdict" | "bulk_confirm" | "bulk_verdict" | "curate" | "supersede" | "cut_off" | "workarea_mode" | "workarea_transition" | "workarea_ratify";
                     csrf_token: string;
                 };
             };

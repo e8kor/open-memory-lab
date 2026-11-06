@@ -5615,6 +5615,12 @@ impl JournalStore for PgStore {
                 .push_bind(origin_kind_strings(&filter.anchor.origin_kinds))
                 .push("::text[])");
         }
+        if let Some(author) = filter.author {
+            sql.push(" AND m.author_key_id = ").push_bind(author);
+        }
+        if let Some(tip) = filter.tip {
+            sql.push(" AND m.is_tip = ").push_bind(tip);
+        }
         if let Some(since) = &filter.since {
             sql.push(" AND m.created_at >= (")
                 .push_bind(since.as_str().to_owned())
@@ -7202,6 +7208,8 @@ impl WebStore for PgStore {
              AND ($3::uuid[] IS NULL OR m.workarea_id = ANY($3)) \
              AND {state} \
              AND ($4::timestamptz IS NULL OR (m.created_at, m.id) < ($4::timestamptz, $5::uuid)) \
+             AND (cardinality($7::text[]) = 0 OR m.origin_kind = ANY($7)) \
+             AND ($8::uuid IS NULL OR m.author_key_id = $8) \
              ORDER BY m.created_at DESC, m.id DESC LIMIT $6"
         );
         let mut tx = self.pool.begin().await.map_err(backend)?;
@@ -7218,6 +7226,8 @@ impl WebStore for PgStore {
             )
             .bind(search.after.as_ref().map(|a| a.artifact_id))
             .bind(i64::try_from(search.limit).unwrap_or(i64::MAX))
+            .bind(origin_kind_strings(&search.origin_kinds))
+            .bind(search.author)
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;
