@@ -58,7 +58,7 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     at start: an unknown tenant, or a key that is not a live admin key there, stops the start.
     A self-hoster who sets none of these keeps an allowlist deployment, byte for byte. The
     quota defaults are the operator's choice of 2026-11-06. Whether they fit real use is
-    unmeasured (FR-182).
+    unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164)).
 
 - **d2 — In open mode, a provider-verified email that no entry holds reaches a terms page, and
   accepting it creates the entry, the root and the keys in the sign-up tenant.** The callback
@@ -280,7 +280,7 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
 - Turning `open` on for the public server is the operator's act. It follows ADR-0058 d5's
   backups and restore rehearsal, and the terms and privacy pages drafted in
   `docs/legal/` on the connector-directory lane.
-- FR-182 opens: whether the default quotas, the per-key rate and the per-address sign-up limit
+- [#164](https://github.com/e8kor/open-memory-lab/issues/164) tracks whether the default quotas, the per-key rate and the per-address sign-up limit
   fit real use is unmeasured.
 
 ## Rejected alternatives
