@@ -195,6 +195,7 @@ A successful replay is not an error: it answers the stored response with header
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
 | `submission.scan_veto` | 422 | The deterministic scan, running in the same call as capture, vetoes the submission (`details.finding` names each finding as `class: rule at field line n` — the class, the rule that fired and where, never the matched text; [ADR-0065](../adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md) d8). The veto is a refusal and journals nothing — the verdict is reproducible from the journalled rule-set pin (a durable veto trace is RS-16). | The scan is rules, not a model: same input, same verdict, reproducible from the journalled rule-set version — and it can veto but never promote (D11; [admission](../architecture/admission.md)). |
+| `submission.format_invalid` | 422 | The source fails its format's adapter: `details.reason` names the rule (`mermaid.directive_refused`, `mermaid.interaction_refused`, `mermaid.styling_refused`, `mermaid.html_label_refused`, `mermaid.unsupported_diagram`, `mermaid.syntax_error`, `mermaid.too_many_nodes`, `mermaid.too_many_relations`, `json.invalid`, `json.duplicate_key`, `yaml.invalid`, `yaml.alias_refused`, `yaml.tag_refused`, `yaml.merge_refused`, `yaml.complex_key`, `yaml.second_document`, `yaml.duplicate_key`, `yaml.empty`, `format.bidi_control`, `format.too_large`, `format.too_deep`, `format.too_many_scalars`), `details.line` and `details.column` where it was found. Nothing is journalled and no row is stored. | The source is the signed text, so it must be a document its format accepts; a refusal names the rule so the writer corrects it in one retry (ADR-0056 d13). |
 | `submission.attachment_missing` | 422 | The submission binds an attachment digest with no completed upload session owned by this key. | The claim and its files are one signed unit; the envelope binds only bytes the service already holds and has digest-verified (D3). |
 | `submission.simulation_id_required` | 422 | `derives_from` touches a simulation row but the submission does not carry that row's `simulation_id`. | Taint propagates and nesting is forbidden: a derivation from a simulation row carries that simulation's id, server-enforced, so one end-act demotes the closure (D10). |
 | `submission.lineage_required` | 422 | A `verb: "learn"` submission arrives with an empty or omitted `derives_from`. | `learn` asserts a derived claim, so its lineage is required, never optional; a derived conclusion whose author cannot or will not name lineage is submitted as `remember` with `kind: derived_fact` ([http-api](http-api.md)). |
@@ -307,7 +308,7 @@ existed.
 
 | Code | HTTP | Fires when | The rule it names |
 |---|---|---|---|
-| `system.internal` | 500 | A defect. `request_id` is the handle for the operator. | — |
+| `system.internal` | 500 | A defect. `request_id` is the handle for the operator. A handler that panicked answers it with `details.reason` `handler_panic`; the panic's text is in the lead's log under `event=handler_panic`, never in the body. | — |
 | `system.unavailable` | 503 | The replica cannot serve safely: Postgres unreachable, or writes are refused because the startup fork check has not verified the stored chain head against the last signed head (`details.reason`); or a tenant's creation lost the lock contest for its FTS partition's DDL, a lock timeout or a deadlock, before any commit, journalling nothing and spending no enrollment token (`details.reason` `partition_lock_timeout`, [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) d11). Also `telemetry_off`: the server records no recall, so it has no event to list or replay ([ADR-0054](../adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md) d2). **Retryable.** | A replica that cannot prove its journal head accepts no writes (D1); `/readyz` reports the same condition to the orchestrator ([deployment](../operations/deployment.md)). |
 
 Review *unavailability* — a workarea whose policy cannot currently be satisfied by any eligible
@@ -327,7 +328,7 @@ is surfaced by `oml status` / `oml doctor`, not by this taxonomy.
 | 410 | `lifecycle.erased` |
 | 413 | `request.payload_too_large` |
 | 415 | `request.unsupported_media` |
-| 422 | `request.workarea_unresolved`, `oauth.connect_refused`, `submission.scan_veto`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
+| 422 | `request.workarea_unresolved`, `oauth.connect_refused`, `submission.scan_veto`, `submission.format_invalid`, `submission.attachment_missing`, `submission.simulation_id_required`, `submission.lineage_required`, `vocab.unknown_curie`, `vocab.inactive_curie`, `upload.digest_mismatch`, `settings.retired_key`, `settings.invalid` |
 | 429 | `limit.rate`, `limit.quota` |
 | 500 | `system.internal` |
 | 503 | `system.unavailable` |

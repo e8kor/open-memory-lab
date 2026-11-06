@@ -402,6 +402,10 @@ naming it in `details.field`:
   hides a claim whose `valid_until` has passed unless `include_expired` is true, reads at
   `now` (the server's clock when omitted), and names in `search.window` the date window it
   read from the query, which the `bm25-postings-time` pipelines search.
+- *Since v0.6.0 ([ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md) d13):* `oml_write` takes `format`, the media type of
+  `text`, and `title`, one line stating the one fact the text shows; every claim item carries both.
+  A format other than `text/plain` and `text/markdown` needs a title, and a recall serves the
+  source as written, never the text search reads. A change of format is a supersession.
 - **get** answers the calling key's own rows in any state and others'
   promoted versions within read access; anything else is
   `access.not_found`, as a nonexistent id is.

@@ -123,6 +123,8 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
                 rule: None,
                 valid_from: None,
                 valid_until: None,
+                format: None,
+                title: None,
             },
         )
         .await

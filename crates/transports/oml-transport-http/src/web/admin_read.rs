@@ -60,6 +60,8 @@ pub(crate) fn admin_memory_json(m: &AdminMemory, full: bool) -> Value {
         "state": m.state.as_str(),
         "workarea_path": m.workarea_path,
         "text": m.memory.body,
+        "format": m.memory.format.media_type,
+        "title": m.memory.format.title,
         "key": m.author.as_ref().and_then(|k| k.name.as_ref()).map(|n| n.as_str()),
         "principal": m.memory.author_principal,
         "user": m.author_user.as_ref().map(|n| n.as_str()),

@@ -70,6 +70,15 @@ class SupersedeRequest:
                 fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
             valid_until (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
                 fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
+            format_ (str | Unset): The media type of body, signed with the successor and fixed for it; nothing is inherited
+                from the target, so a format changes by supersession alone: text/plain (the default), text/markdown,
+                text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. An unknown
+                value is request.validation with details.field format and details.allowed; a source its format refuses is 422
+                submission.format_invalid; kinds other than memory and derived_fact take text/plain or text/markdown only
+                (ADR-0056 d1, d13).
+            title (str | Unset): One line stating the one fact the body shows, NFC, at most 100 characters, signed with the
+                version. Required with a format other than text/plain and text/markdown: request.validation with details.field
+                title otherwise (ADR-0056 d10).
     """
 
     body: str
@@ -86,6 +95,8 @@ class SupersedeRequest:
     on_similar: SupersedeRequestOnSimilar | Unset = UNSET
     valid_from: str | Unset = UNSET
     valid_until: str | Unset = UNSET
+    format_: str | Unset = UNSET
+    title: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         body = self.body
@@ -134,6 +145,10 @@ class SupersedeRequest:
 
         valid_until = self.valid_until
 
+        format_ = self.format_
+
+        title = self.title
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -166,6 +181,10 @@ class SupersedeRequest:
             field_dict["valid_from"] = valid_from
         if valid_until is not UNSET:
             field_dict["valid_until"] = valid_until
+        if format_ is not UNSET:
+            field_dict["format"] = format_
+        if title is not UNSET:
+            field_dict["title"] = title
 
         return field_dict
 
@@ -239,6 +258,10 @@ class SupersedeRequest:
 
         valid_until = d.pop("valid_until", UNSET)
 
+        format_ = d.pop("format", UNSET)
+
+        title = d.pop("title", UNSET)
+
         supersede_request = cls(
             body=body,
             expected_version=expected_version,
@@ -254,6 +277,8 @@ class SupersedeRequest:
             on_similar=on_similar,
             valid_from=valid_from,
             valid_until=valid_until,
+            format_=format_,
+            title=title,
         )
 
         return supersede_request

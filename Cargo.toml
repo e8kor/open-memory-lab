@@ -11,6 +11,7 @@ members = [
     "crates/adapters/oml-fetch",
     "crates/adapters/oml-delta-log",
     "crates/adapters/oml-rerank",
+    "crates/adapters/oml-format",
     "crates/adapters/oml-lake",
     "crates/transports/oml-transport-http",
     "crates/bins/oml-server-lead",
@@ -41,6 +42,8 @@ oml-pg = { path = "crates/adapters/oml-pg" }
 # neither the lead nor the CLI builds delta-rs (ADR-0060 d1).
 oml-lake = { path = "crates/adapters/oml-lake" }
 oml-fetch = { path = "crates/adapters/oml-fetch" }
+# The claim format adapters (ADR-0056 d3): pure, no I/O.
+oml-format = { path = "crates/adapters/oml-format" }
 # The minimal Delta `_delta_log` reader (ADR-0062 d3): linked into the CLI only
 # under its `lake-sync` feature, which the default `oml` never enables.
 oml-delta-log = { path = "crates/adapters/oml-delta-log" }

@@ -207,6 +207,8 @@ impl World {
                     derives_from: Vec::new(),
                     severity: None,
                     rule: None,
+                    format: None,
+                    title: None,
                 },
             )
             .await
@@ -654,6 +656,8 @@ async fn a_curator_cannot_act_outside_an_in_progress_scope() {
                 derives_from: Vec::new(),
                 severity: None,
                 rule: None,
+                format: None,
+                title: None,
             },
         )
         .await
@@ -777,6 +781,8 @@ async fn every_curator_act_is_journalled_under_its_key_and_reversible() {
                 refuse_vocabulary_target: false,
                 severity: None,
                 rule: None,
+                format: None,
+                title: None,
             },
         )
         .await
@@ -1281,6 +1287,8 @@ async fn a_curator_never_flags_a_row_derived_from_its_own_write() {
                 derives_from: vec![own],
                 severity: None,
                 rule: None,
+                format: None,
+                title: None,
             },
         )
         .await

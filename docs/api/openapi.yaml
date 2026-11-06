@@ -2672,6 +2672,7 @@ components:
         - idempotency.in_progress
         - idempotency.digest_mismatch
         - submission.scan_veto
+        - submission.format_invalid
         - submission.attachment_missing
         - submission.simulation_id_required
         - submission.lineage_required
@@ -2747,6 +2748,8 @@ components:
           description: Artifact ids; the declared lineage (omission is undetectable — honesty rule).
         on_similar: { type: string, enum: [hold, refuse], description: "Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. Not part of the request digest. Since v0.5.9." }
         anchor: { $ref: '#/components/schemas/Anchor' }
+        format: { type: string, description: "The media type of body, signed with the version and fixed for it: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. An unknown value is request.validation with details.field format and details.allowed; a source its format refuses is 422 submission.format_invalid; kinds other than memory and derived_fact take text/plain or text/markdown only (ADR-0056 d1, d13)." }
+        title: { type: string, maxLength: 100, description: "One line stating the one fact the body shows, NFC, at most 100 characters, signed with the version. Required with a format other than text/plain and text/markdown: request.validation with details.field title otherwise (ADR-0056 d10)." }
         origin: { $ref: '#/components/schemas/Origin' }
 
     SubmitAccepted:
@@ -2873,6 +2876,8 @@ components:
             - { type: 'null' }
         valid_from: { type: [string, 'null'], description: "When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM, YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2)." }
         valid_until: { type: [string, 'null'], description: "When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (proposed ADR-0059 d2, d4)." }
+        format: { type: string, description: "The media type signed with the version; text/plain for every version written before formats (ADR-0056 d1, d12)." }
+        title: { type: [string, 'null'], description: "The title signed with the version, or null (ADR-0056 d10)." }
         replaces_valid_until: { type: string, description: "On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (proposed ADR-0059 d4)." }
 
     ValidEnd:
@@ -3222,6 +3227,8 @@ components:
         on_similar: { type: string, enum: [hold, refuse], description: "Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9." }
         valid_from: { $ref: '#/components/schemas/ValidEnd', description: "When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the successor, which inherits no valid time from its target; once ratified, a declared valid_from also ends the replaced version there (proposed ADR-0059 d4); only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0059 d2)." }
         valid_until: { $ref: '#/components/schemas/ValidEnd', description: "When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3)." }
+        format: { type: string, description: "The media type of body, signed with the successor and fixed for it; nothing is inherited from the target, so a format changes by supersession alone: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. An unknown value is request.validation with details.field format and details.allowed; a source its format refuses is 422 submission.format_invalid; kinds other than memory and derived_fact take text/plain or text/markdown only (ADR-0056 d1, d13)." }
+        title: { type: string, maxLength: 100, description: "One line stating the one fact the body shows, NFC, at most 100 characters, signed with the version. Required with a format other than text/plain and text/markdown: request.validation with details.field title otherwise (ADR-0056 d10)." }
 
     Anchor:
       type: object

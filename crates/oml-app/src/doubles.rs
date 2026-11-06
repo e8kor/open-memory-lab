@@ -1992,7 +1992,7 @@ impl Retriever for MemStore {
                 })
             })
             .filter_map(|m| {
-                let shared = Fingerprint::of(&m.body)
+                let shared = Fingerprint::of(m.searched())
                     .stored_keys()
                     .iter()
                     .filter(|(_, key)| keys.contains(key))

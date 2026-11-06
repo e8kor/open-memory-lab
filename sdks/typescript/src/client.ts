@@ -53,10 +53,43 @@ export interface WriteInput {
   expected_version?: SupersedeRequest["expected_version"];
   /** The origin the author declares (ADR-0057 d1). */
   anchor?: SubmitRequest["anchor"];
+  /** The media type of `text`, `text/plain` when omitted (ADR-0056 d1). */
+  format?: SubmitRequest["format"];
+  /** One line stating the fact `text` shows; required with a format that is not prose (ADR-0056 d10). */
+  title?: SubmitRequest["title"];
   /** What kind of source the text came from; omitted, recorded `manual` (ADR-0063 d1, d2). */
   origin?: SubmitRequest["origin"];
   retirement?: SupersedeRequest["retirement"];
   reason?: SupersedeRequest["reason"];
+}
+
+/**
+ * The Markdown fence info string of a claim's media type, so a client that renders fenced blocks
+ * can show a claim by its format: `mermaid`, `json`, `yaml`, the `lang` of a code snippet,
+ * `markdown`, and the empty string for plain text and for a media type this SDK does not know
+ * (ADR-0056 d9).
+ */
+export function fenceFor(format?: string | null): string {
+  const [media = "", ...params] = (format ?? "text/plain").split(";");
+  switch (media.trim()) {
+    case "text/markdown":
+      return "markdown";
+    case "text/vnd.oml.mermaid":
+      return "mermaid";
+    case "application/json":
+      return "json";
+    case "application/yaml":
+      return "yaml";
+    case "text/vnd.oml.code": {
+      for (const part of params) {
+        const [name, value] = part.trim().split("=");
+        if (name === "lang" && value) return value.trim();
+      }
+      return "";
+    }
+    default:
+      return "";
+  }
 }
 
 /** `read`'s fetch: one version with its text. */

@@ -155,6 +155,15 @@
           "valid_until": {
             "type": "string",
             "description": "When the claim stops holding: the same forms as valid_from, a period naming its whole span, so valid_until 2015 holds through 31 December 2015 and a day holds through that day. A recall hides a claim whose valid_until has passed unless include_expired is true. To end a fact, supersede it with valid_until set; the server never ends one itself."
+          },
+          "format": {
+            "type": "string",
+            "description": "The media type of text, signed with the claim and fixed for the version: text/plain (the default), text/markdown, text/vnd.oml.mermaid (flowchart, sequenceDiagram, classDiagram, stateDiagram-v2 or erDiagram; no directives, click, style or HTML), application/json, application/yaml, or text/vnd.oml.code; lang=<language>. A non-prose format needs a title. To change a claim's format, supersede it with the new one. Only memory and derived_fact take a format other than text/plain or text/markdown."
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "One line stating the one fact the text shows, at most 100 characters. Required with a format other than text/plain and text/markdown; optional otherwise."
           }
         },
         "required": [

@@ -682,6 +682,15 @@ with `request.workarea_unresolved` (422).
   key with `writer` effective access on the `universe` node — held and reviewed like every write,
   and a [user key](../architecture/roles-and-keys.md#user-keys)'s write there answers
   `submission.universe_refused` in place of step 3's `access.grant_refused`.
+- *Since v0.6.0 ([ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md) d1, d10, d13):* the body may name its `format`, a media type from a
+  closed list (`text/plain`, the default; `text/markdown`; `text/vnd.oml.mermaid`;
+  `application/json`; `application/yaml`; `text/vnd.oml.code; lang=<language>`), and a one-line
+  `title` of at most 100 characters, required with any format that is not prose. Both are signed
+  with the version and fixed for it; a successor states its own, so a format changes only by
+  supersession. An unknown format is `request.validation` with `details.field: format` and
+  `details.allowed`; a source its format refuses is `422 submission.format_invalid` with
+  `details.reason`, `details.line` and `details.column`; kinds other than `memory` and
+  `derived_fact` take prose only. Every claim item carries `format` and `title`.
 - The deterministic scan runs in the same call and can veto (`submission.scan_veto` — a refusal
   that journals nothing, reproducible from the journalled rule-set pin; nothing waits in the
   queue; [admission.md](../architecture/admission.md)). Banned authors and sources are refused at this
@@ -1699,6 +1708,18 @@ the server derives from the session token and compares in constant time (`reques
 `access.verb_ceiling` with `details.reason: web_is_human_only`, and `/v1`, `/v2` and `/mcp` never
 read the `Cookie` header, so a session cookie there is `auth.missing`. A key value or connect code
 issued on the user page is shown once, in the answering page, never in a redirect.
+
+*Since v0.6.0 ([ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md) d9):* where `oauth.issuer` is set, the pages' CSP gains one
+source, `frame-src <issuer>/web/render/`, and a card that shows a Mermaid claim embeds
+`<iframe sandbox="allow-scripts" src="/web/render/<token>">` beside the source, which is always
+shown. The page itself still carries no script. The frame route, `/web/render/{token}`, answers the frame's
+document under its own CSP (`sandbox allow-scripts; default-src 'none'; script-src` the pinned
+bundle and one hashed initialiser; `style-src 'unsafe-inline'`; `img-src`, `font-src`,
+`connect-src` and `form-action` `'none'`; `frame-ancestors <issuer>`), `Cache-Control: no-store`,
+for a token sealed to the session that was shown the card, for 5 minutes, and `access.not_found`
+for any other; the bundle route, `/web/assets/mermaid-<sha256>.js`, serves the bundle, `immutable`. A frame is an
+opaque origin with no cookie, storage or network; a rendering is never signed and journals
+nothing.
 
 ### Admin read
 

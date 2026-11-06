@@ -923,6 +923,16 @@ struct WriteArgs {
     /// (ADR-0057 d1).
     #[arg(long, value_parser = parse_anchor_arg)]
     anchor: Option<serde_json::Value>,
+    /// The media type of the text: text/plain (the default), text/markdown,
+    /// text/vnd.oml.mermaid, application/json, application/yaml or
+    /// "text/vnd.oml.code; lang=<language>". With the text `-`, the text is
+    /// read from standard input (ADR-0056 d13).
+    #[arg(long)]
+    format: Option<String>,
+    /// One line stating the fact the text shows, at most 100 characters;
+    /// required with a format that is not prose (ADR-0056 d10).
+    #[arg(long)]
+    title: Option<String>,
     /// What kind of source the text came from: repo, doc, code, lake,
     /// chat, web or manual; omitted, the server records manual (ADR-0063
     /// d1, d2).
@@ -2231,6 +2241,8 @@ struct Write<'a> {
     severity: Option<&'a str>,
     rule: Option<&'a serde_json::Value>,
     anchor: Option<&'a serde_json::Value>,
+    format: Option<&'a str>,
+    title: Option<&'a str>,
     origin_kind: Option<&'a str>,
 }
 
@@ -2250,6 +2262,8 @@ impl<'a> Write<'a> {
             severity: args.severity.as_deref(),
             rule: args.rule.as_ref(),
             anchor: args.anchor.as_ref(),
+            format: args.format.as_deref(),
+            title: args.title.as_deref(),
             origin_kind: args.origin_kind.as_deref(),
         }
     }
@@ -2291,13 +2305,27 @@ fn parse_rule(text: &str) -> Result<serde_json::Value, String> {
 /// named (ADR-0039 d3, d6).
 fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
-    let mut body = json!({ "body": write.text });
+    // The text `-` is read from standard input, so a diagram or a fragment
+    // is piped in as it is (ADR-0056 d13).
+    let piped;
+    let text = if write.text == "-" {
+        let mut input = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut input)
+            .map_err(|e| CliError::local(format!("reading the text from standard input: {e}")))?;
+        piped = input;
+        piped.as_str()
+    } else {
+        write.text
+    };
+    let mut body = json!({ "body": text });
     for (name, value) in [
         ("claim_key", write.claim_key),
         ("kind", write.kind),
         ("workarea", write.workarea),
         ("reason", write.reason),
         ("severity", write.severity),
+        ("format", write.format),
+        ("title", write.title),
     ] {
         if let Some(value) = value {
             body[name] = json!(value);
@@ -4633,6 +4661,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let scan = scan_doctor(ready.as_ref(), scrape.as_ref());
     let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
+    let handlers = handlers_doctor(scrape.as_ref());
+    let handlers_warn = handlers.iter().any(|line| line.starts_with("warn"));
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
     // stale count and the waiting edges are the sources lines'.
     let sync = oml_cli::sync::doctor::lines(
@@ -4668,6 +4698,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || search_warn
         || review_warn
         || telemetry_warn
+        || handlers_warn
         || scan_warn
         || sync_warn
         || chat_warn
@@ -4717,6 +4748,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "sync": sync,
             "chat": chat,
             "telemetry": telemetry,
+            "handlers": handlers,
             "scan": scan,
             "sources": sources,
             "in_progress": in_progress,
@@ -4819,11 +4851,17 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         for line in &search {
             println!("search      : {line}");
         }
+        if let Some(line) = formats_doctor(ready.as_ref()) {
+            println!("formats     : {line}");
+        }
         if let Some(line) = &review {
             println!("review      : {line}");
         }
         for line in &telemetry {
             println!("telemetry   : {line}");
+        }
+        for line in &handlers {
+            println!("handlers    : {line}");
         }
         for line in &scan {
             println!("scan        : {line}");
@@ -4903,6 +4941,26 @@ fn count_admin_emails(client: &Client) -> Option<(usize, Vec<String>)> {
 /// serves, so the deployment's applies instead. A pipeline whose retriever
 /// the database lacks (`pg_trgm`) never reaches here: the lead refuses to
 /// start, naming it.
+/// The formats doctor line (ADR-0056 d14): the media types the lead serves
+/// and the adapters, with their versions, that derive their search text.
+fn formats_doctor(ready: Option<&(u16, Value)>) -> Option<String> {
+    let (_, body) = ready?;
+    let Some(enabled) = body["formats"]["enabled"].as_array() else {
+        return Some("not reported by /readyz (a server before claim formats)".to_owned());
+    };
+    let adapters: Vec<&str> = body["formats"]["adapters"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    Some(format!(
+        "{} media types enabled; adapters {}",
+        enabled.len(),
+        adapters.join(", ")
+    ))
+}
+
 fn search_doctor(
     ready: Option<&(u16, Value)>,
     settings: Option<&Value>,
@@ -5000,6 +5058,20 @@ const DROPPED_WARN_PERCENT: u64 = 1;
 
 /// The labeller's lag past which doctor warns, in seconds (ADR-0054 d13).
 const LABELLER_LAG_WARN_SECONDS: u64 = 600;
+
+/// The panic guard's doctor line, from the metrics listener alone: handler
+/// panics since start, each a defect the lead's log names by request id.
+fn handlers_doctor(scrape: Option<&Scrape>) -> Vec<String> {
+    let Some(scrape) = scrape else {
+        return vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()];
+    };
+    match scrape.sum("oml_handler_panics_total", &[]) {
+        0 => vec!["no handler panicked since start".to_owned()],
+        n => vec![format!(
+            "warn handler_panic: {n} request(s) hit a handler panic since start and were answered 500 system.internal (details.reason handler_panic); the lead's log names each under event handler_panic with its request id, and every one is a defect to report"
+        )],
+    }
+}
 
 /// The recall telemetry's doctor lines, from the metrics listener alone
 /// (ADR-0054 d13, as accepted): events dropped above 1% of recalls, by
@@ -5512,6 +5584,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_formats_doctor_names_the_media_types_and_the_adapters_with_their_versions() {
+        let ready = (
+            200,
+            json!({ "formats": {
+                "enabled": ["text/plain", "text/vnd.oml.mermaid"],
+                "adapters": ["identity/1", "mermaid/1"],
+            }}),
+        );
+        assert_eq!(
+            formats_doctor(Some(&ready)).as_deref(),
+            Some("2 media types enabled; adapters identity/1, mermaid/1")
+        );
+        assert!(
+            formats_doctor(Some(&(200, json!({}))))
+                .expect("a line")
+                .starts_with("not reported")
+        );
+        assert_eq!(formats_doctor(None), None);
+    }
+
+    #[test]
     fn the_doctor_warns_a_client_that_could_send_rust_hashers_when_the_server_refuses_them() {
         let line = rust_hashers_line(Some("0.6.0"), "0.6.1").unwrap();
         assert!(
@@ -5583,6 +5676,22 @@ mod tests {
             1,
             "no reranker, no line"
         );
+    }
+
+    #[test]
+    fn the_handlers_doctor_warns_on_a_panic_the_guard_answered() {
+        let panicked = Scrape("oml_handler_panics_total 2\n".to_owned());
+        let lines = handlers_doctor(Some(&panicked));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("warn handler_panic: 2 request(s)"),
+            "{lines:?}"
+        );
+        assert_eq!(
+            handlers_doctor(Some(&Scrape("oml_handler_panics_total 0\n".to_owned()))),
+            vec!["no handler panicked since start".to_owned()]
+        );
+        assert!(handlers_doctor(None)[0].contains("OML_METRICS_URL"));
     }
 
     #[test]

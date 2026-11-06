@@ -111,6 +111,10 @@ UTF-8 octet length of the NFC-normalized body — the clear integer the recall b
 immutable, never inherited by a successor, and clear metadata that erasure does not remove
 ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
 d1, d2; since v0.5.8). `submission.learn` carries it the same way.
+`format` is the media type signed with the version and fixed for it, from the closed list of [ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md) d1;
+`title` is the one-line title, present only when the version has one. `plaintext_digest` is the
+digest of the source as stored, whatever its format, so the signature covers both. An event without
+`format` reads as `text/plain` and keeps its digest (since v0.6.0).
 
 ### submission.learn
 

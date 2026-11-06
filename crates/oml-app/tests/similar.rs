@@ -147,6 +147,8 @@ fn submit(idem: &str, body: &str, workarea: Uuid, on_similar: OnSimilar) -> Subm
         anchor: None,
         valid_from: None,
         valid_until: None,
+        format: None,
+        title: None,
     }
 }
 
@@ -364,6 +366,8 @@ async fn a_supersession_never_lists_its_own_claim() {
                 valid_until: None,
                 // The replace outcome: the listed row's version (ADR-0057 d19).
                 expected_version: 1,
+                format: None,
+                title: None,
             },
         )
         .await

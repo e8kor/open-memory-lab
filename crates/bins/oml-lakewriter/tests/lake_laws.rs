@@ -230,6 +230,8 @@ async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec
     let mut ids = Vec::new();
     for i in 0..n {
         let req = SubmitRequest {
+            format: None,
+            title: None,
             on_similar: Default::default(),
             origin: None,
             idempotency_key: format!("{name}-{i}"),

@@ -1066,6 +1066,45 @@ pub struct MemoryRecord {
     /// The version's latest source check, kept only on a promoted version
     /// (ADR-0057 d5, d18); `stale` is computed from it alone.
     pub source_check: Option<Box<SourceCheck>>,
+    /// The version's format, title and derived search text (ADR-0056 d1, d2,
+    /// d4). Boxed: every row carries it, and every fold carries the record.
+    pub format: Box<FormatFields>,
+}
+
+/// What a version says about its format: the media type signed with it, its
+/// title, and the text search reads in place of its source when that
+/// differs (ADR-0056 d1, d4; ADR-0050 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatFields {
+    /// The media type from the closed list, `text/plain` by default.
+    pub media_type: String,
+    /// The one-line title, signed with the version; required of a non-prose
+    /// claim (ADR-0056 d10).
+    pub title: Option<String>,
+    /// The derived search text; `None` when it equals the source.
+    pub search_text: Option<String>,
+    /// The adapter and version that derived it.
+    pub search_text_by: Option<String>,
+}
+
+impl Default for FormatFields {
+    fn default() -> Self {
+        Self {
+            media_type: "text/plain".to_owned(),
+            title: None,
+            search_text: None,
+            search_text_by: None,
+        }
+    }
+}
+
+impl MemoryRecord {
+    /// The text the search stages read: the derived search text, or the
+    /// source when none was derived (ADR-0056 d4).
+    #[must_use]
+    pub fn searched(&self) -> &str {
+        self.format.search_text.as_deref().unwrap_or(&self.body)
+    }
 }
 
 /// A source check as stored on its version: the latest `source.checked`
@@ -1448,6 +1487,11 @@ pub struct SubmitRequest {
     /// The origin the author declares, grammar-checked by the transport
     /// (ADR-0057 d1-d3).
     pub anchor: Option<Anchor>,
+    /// The media type of `body`; `None` is `text/plain` (ADR-0056 d1).
+    pub format: Option<String>,
+    /// One line of at most 100 characters; required of a non-prose claim
+    /// (ADR-0056 d10; ADR-0050 d5).
+    pub title: Option<String>,
     /// `origin.kind` as declared; `None` is recorded `manual` (ADR-0063 d2).
     pub origin: Option<OriginKind>,
 }
@@ -2132,6 +2176,10 @@ pub struct SupersedeRequest {
     pub valid_until: Option<String>,
     /// The successor's own anchor; nothing is inherited (ADR-0057 d2).
     pub anchor: Option<Anchor>,
+    /// The successor's own format and title; nothing is inherited, so a
+    /// format changes by supersession alone (ADR-0056 d2).
+    pub format: Option<String>,
+    pub title: Option<String>,
     /// The successor's own `origin.kind`; `None` is recorded `manual`,
     /// never inherited (ADR-0063 d2).
     pub origin: Option<OriginKind>,
@@ -2531,6 +2579,22 @@ pub enum AppError {
         field: &'static str,
         finding: String,
     },
+    /// The `format` is not on the closed list (request.validation, field
+    /// `format`, details `allowed`; ADR-0056 d13).
+    #[error("format is not one of the accepted values (request.validation)")]
+    FormatUnknown { allowed: Vec<String> },
+    /// A kind that rules read as prose takes only a prose format
+    /// (request.validation, field `format`; ADR-0056 d1).
+    #[error("a {kind:?} claim takes only text/plain or text/markdown (request.validation)")]
+    FormatKindRefused { kind: MemoryKind },
+    /// A title the write may not carry (request.validation, field `title`;
+    /// ADR-0056 d10, ADR-0050 d5).
+    #[error("title: {0} (request.validation)")]
+    TitleInvalid(&'static str),
+    /// The source fails its format's adapter (`submission.format_invalid`,
+    /// 422, nothing journalled; ADR-0056 d13).
+    #[error("{0} (submission.format_invalid)")]
+    FormatInvalid(crate::ports::FormatRefusal),
     /// A source check names a version it may not check: held, unanchored or
     /// superseded, or a body outside its anchor's grammar (request.validation;
     /// ADR-0057 d5).

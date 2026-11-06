@@ -18,6 +18,7 @@
 pub mod admin_read;
 pub mod emails;
 pub mod page;
+pub mod render;
 pub mod views;
 
 use std::collections::HashSet;
@@ -115,6 +116,11 @@ pub struct WebPages {
     exchange: Arc<dyn DynExchange>,
     session_ttl_secs: i64,
     sealer: AeadSealer,
+    /// Seals the frame route's tokens, which open for no other purpose
+    /// (ADR-0056 d9).
+    render_sealer: AeadSealer,
+    /// The sources the frame route draws, held here and never in a token.
+    render_sources: render::Sources,
     counters: [ProviderCounter; 2],
 }
 
@@ -145,6 +151,8 @@ impl WebPages {
             exchange: Arc::new(exchange),
             session_ttl_secs: WEB_SESSION_TTL_SECS,
             sealer: AeadSealer::generate_for(WEB_SIGN_IN_PURPOSE),
+            render_sealer: AeadSealer::generate_for(render::RENDER_PURPOSE),
+            render_sources: render::Sources::default(),
             counters: Default::default(),
         }
     }
@@ -267,9 +275,93 @@ where
         if self.app.oauth_issuer().is_none() || self.web.is_none() {
             return router;
         }
-        WEB_ROUTES.iter().fold(router, |router, &(method, path)| {
+        let router = WEB_ROUTES.iter().fold(router, |router, &(method, path)| {
             router.route(path, Self::web_handler(method, path))
-        })
+        });
+        render::RENDER_ROUTES
+            .iter()
+            .fold(router, |router, &(_, path)| match path {
+                "/web/render/{token}" => router.route(path, get(Self::render_frame)),
+                _ => router.route(path, get(Self::render_asset)),
+            })
+    }
+
+    /// What a page may frame: the render route under the issuer, where the
+    /// pages are served (ADR-0056 d9).
+    pub(crate) fn frame_src(&self) -> Option<String> {
+        self.app
+            .oauth_issuer()
+            .map(|issuer| render::frame_src(issuer.as_str()))
+    }
+
+    /// The iframe a card embeds for a Mermaid claim's source, bound to the
+    /// session by its CSRF token, or nothing where no issuer is set.
+    pub(crate) fn render_iframe(&self, csrf: &str, memory_id: &str, source: &str) -> String {
+        if self.app.oauth_issuer().is_none() {
+            return String::new();
+        }
+        render::iframe(&render::token(
+            &self.pages().render_sealer,
+            &self.pages().render_sources,
+            csrf,
+            memory_id,
+            source,
+            unix_now(),
+        ))
+    }
+
+    // -- GET /web/render/{token}, GET /web/assets/{file} -----------------------
+
+    async fn render_frame(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        Path(token): Path<String>,
+    ) -> Response {
+        let answer = st.render_frame_inner(&headers, &token).await;
+        Self::web_finish(&rid, answer)
+    }
+
+    /// The frame's document for a token this session holds, else
+    /// `access.not_found`: a forged, expired or another session's token
+    /// answers alike (ADR-0056 d9).
+    async fn render_frame_inner(&self, headers: &HeaderMap, token: &str) -> Answer {
+        let mut line = WebLine::default();
+        if let Some(refused) = human_only(headers) {
+            return self.refused(&refused, line);
+        }
+        let session = match self.session_of(headers).await {
+            Ok(Some(found)) => found,
+            Ok(None) => return self.refused(&ApiError::not_found(), line),
+            Err(e) => return self.refused(&e, line),
+        };
+        line.session(&session.1);
+        let csrf = oml_app::domain::web::csrf_token(&session.0);
+        let source = render::open(
+            &self.pages().render_sealer,
+            &self.pages().render_sources,
+            token,
+            &csrf,
+            unix_now(),
+        );
+        match (source, self.app.oauth_issuer()) {
+            (Some(source), Some(issuer)) => Answer {
+                response: render::frame_response(issuer.as_str(), &source),
+                error_code: None,
+                line,
+            },
+            _ => self.refused(&ApiError::not_found(), line),
+        }
+    }
+
+    async fn render_asset(State(_): State<Self>, Path(file): Path<String>) -> Response {
+        if file == format!("mermaid-{}.js", render::BUNDLE_SHA256) {
+            render::bundle_response()
+        } else {
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::NOT_FOUND;
+            response
+        }
     }
 
     fn web_handler(method: &str, path: &str) -> MethodRouter<Self> {
@@ -302,7 +394,12 @@ where
     }
 
     fn page(&self, status: StatusCode, html: String) -> Response {
-        page::page_response(status, html, &self.pages().provider_list())
+        page::page_response(
+            status,
+            html,
+            &self.pages().provider_list(),
+            self.frame_src().as_deref(),
+        )
     }
 
     fn refusal_page(&self, error: &ApiError) -> Response {
@@ -321,7 +418,7 @@ where
     fn sign_in_page(&self, status: StatusCode, refusal: Option<&ApiError>) -> Response {
         let providers = self.pages().provider_list();
         let html = page::sign_in(&providers, refusal.map(|e| (e.code, e.message.as_str())));
-        page::page_response(status, html, &providers)
+        page::page_response(status, html, &providers, self.frame_src().as_deref())
     }
 
     /// The live session the cookie names, or `None`.
@@ -827,7 +924,11 @@ where
         if let Some(cookie) = cookie {
             append_cookie(&mut response, &cookie);
         }
-        page::secure(response, &self.pages().provider_list())
+        page::secure(
+            response,
+            &self.pages().provider_list(),
+            self.frame_src().as_deref(),
+        )
     }
 }
 
@@ -926,4 +1027,11 @@ impl WebLine {
         self.session = true;
         self.tenant_id = Some(session.tenant_id);
     }
+}
+
+/// Seconds since the epoch, for a render token's expiry.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
