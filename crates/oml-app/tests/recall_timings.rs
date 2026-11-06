@@ -90,6 +90,8 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
                 severity: None,
                 rule: None,
                 anchor: None,
+                format: None,
+                title: None,
             },
         )
         .await
