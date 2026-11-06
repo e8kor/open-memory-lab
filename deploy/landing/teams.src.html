@@ -45,15 +45,24 @@
     <p class="caption">Open Memory Lab gives every tool the same approved memory. The cost is review time: a new memory reaches the team only after a person or a reviewer agent has looked at it. A person can approve or reject a listed batch in one act, on the admin page or with <code>oml review list</code>, and each memory still gets its own signed verdict.</p>
   </section>
 
-  <section aria-labelledby="why-h">
-    <h2 id="why-h">Know who wrote it and who checked it</h2>
+  <section aria-labelledby="flow-h">
+    <h2 id="flow-h">From your agents to your apps</h2>
+    <ol class="flow" aria-label="How a memory reaches your app">
+      <li><span class="v-gate">{{GLYPH:agent}}</span><b>Agent writes</b><span class="caption">held on arrival</span></li>
+      <li><span class="v-gate">{{GLYPH:blocked}}</span><b>Scanned</b><span class="caption">a leaked secret is refused</span></li>
+      <li><span class="v-held">{{GLYPH:person}}</span><b>Reviewed</b><span class="caption">by an identity that didn't write it</span></li>
+      <li><span class="v-prom">{{GLYPH:promoted}}</span><b>Approved</b><span class="caption">signed into the history</span></li>
+      <li><span class="v-gate">{{GLYPH:shared}}</span><b>Recalled</b><span class="caption">by your agents and your apps</span></li>
+    </ol>
     <div class="vals">
-      <div><span class="v-held">{{GLYPH:held}}</span><h3>An approval queue</h3><p class="caption">Each memory waits for a person or reviewer agent who didn't write it. The key that wrote it never approves it.</p></div>
-      <div><span class="v-gate">{{GLYPH:blocked}}</span><h3>Secrets refused at the door</h3><p class="caption">A memory holding a private key, a known provider's API token, or a password set in config (<code>DB_PASSWORD=…</code>) is refused before anyone reads it, and a rescan (<code>oml admin rescan</code>) reports any already stored.</p></div>
+      <div><span class="v-prom">{{GLYPH:shared}}</span><h3>Reuse it in production</h3><p class="caption">Your apps' retrieval can recall the same approved memories through the HTTP API or the Python and TypeScript clients, filtered by workarea, kind and repository. Each hit carries its version, author, source anchor and the words it matched.</p></div>
+      <div><span class="v-gate">{{GLYPH:blocked}}</span><h3>Checks before anything is shared</h3><p class="caption">A rule-based scan, <code>oml-scan/1</code>, refuses private keys, known providers' API tokens and passwords set in config (<code>DB_PASSWORD=…</code>), before anyone reads them. Prompt-injection text and hidden Unicode are held for a reviewer to judge. <code>oml admin rescan</code> reports matches already stored.</p></div>
+      <div><span class="v-held">{{GLYPH:held}}</span><h3>Review by someone else</h3><p class="caption">Each memory waits for a person or reviewer agent who didn't write it; the key that wrote it never approves it. A person can approve a listed batch in one act.</p></div>
       <div><span class="v-gate">{{GLYPH:gate}}</span><h3>Team rules, checked</h3><p class="caption">Approved rules such as "never push to the release branch" load at the start of every Claude Code session with the plugin. A rule with a check refuses or asks before a matching tool call.</p></div>
-      <div><span class="v-prom">{{GLYPH:promoted}}</span><h3>Tied to your code</h3><p class="caption">A memory can name the repository, commit and file it came from. Once <code>oml sync</code> finds that file changed, recall marks the memory stale.</p></div>
-      <div><span class="v-gate">{{GLYPH:can}}</span><h3>Access by workarea</h3><p class="caption">Memory is split into workareas, such as one per team or project. Each key reads only the workareas it is granted.</p></div>
-      <div><span class="v-sup">{{GLYPH:superseded}}</span><h3>A signed record of every change</h3><p class="caption">Every write, approval and rejection is signed and chained, so an edit by anyone without the signing key shows. Removing a memory is a recorded step, never a silent delete.</p></div>
+      <div><span class="v-sup">{{GLYPH:superseded}}</span><h3>Lineage on every memory</h3><p class="caption">A correction is a new version that supersedes the old, and every version stays fetchable. Each names its author and, where given, the repository, commit and file it came from; once <code>oml sync</code> finds that file changed, recall marks it stale.</p></div>
+      <div><span class="v-sup">{{GLYPH:superseded}}</span><h3>A signed record of every change</h3><p class="caption">Every write, approval and rejection is signed and chained in an append-only history, so an edit by anyone without the signing key shows.</p></div>
+      <div><span class="v-gate">{{GLYPH:can}}</span><h3>Control over who reads what</h3><p class="caption">Memory is split into workareas, such as one per team or project. A key reads only where it is granted, and a denial always wins. Admins issue keys and grants; their verdicts on content are refused.</p></div>
+      <div><span class="v-prom">{{GLYPH:promoted}}</span><h3>Repeatable answers</h3><p class="caption">The default search is BM25 with no model: the same query over the same approved memories returns the same hits in the same order. Model-based ranking is opt-in.</p></div>
       <div><span class="v-gate">{{GLYPH:shared}}</span><h3>Yours to run</h3><p class="caption">Self-host on your own PostgreSQL 17 or later, and every memory, key and log stays in your infrastructure. On the hosted server, each organization's data is isolated by PostgreSQL row-level security.</p></div>
     </div>
     <div class="row"><a class="btn primary" href="{{CONTACT_URL}}">Ask about access</a><a class="btn" href="{{DOCS_URL}}start/run-your-own/">Run your own</a><a class="btn" href="/#how">How approval works</a></div>
