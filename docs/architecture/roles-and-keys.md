@@ -53,7 +53,7 @@ Approve, sign and delete appear in no column: approval is an effect of review, `
 
 - **A memory you wrote is your own.** You read your own memories in any state. Everyone else sees `promoted` memories only.
 - **An admin key reads workarea structure without grants**: names, ids, parents, statuses, crews, children and edges in its tenant. Never a memory's content.
-- **A global denial on an admin key is refused** (`request.validation`, `details.field: key`).
+- **A global denial on an admin key is refused, `request.validation` with `details.field: key`.**
 - **Only a reader grant reads content, and no admin key can carry one.** An admin key that calls recall gets `access.verb_ceiling`.
 
 A development workarea can let a writer approve its own memories, marked `self_signed` ([workareas](workareas.md)).
