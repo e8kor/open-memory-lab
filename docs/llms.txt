@@ -65,7 +65,7 @@
 - [Journal event catalog](https://e8kor.github.io/open-memory-lab/data/event-catalog/): every event type and payload shape
 - [Journal chain format](https://e8kor.github.io/open-memory-lab/data/chain-format/): the byte-level spec of the signed chain
 - [Lake tables](https://e8kor.github.io/open-memory-lab/data/delta-tables/): every lake table column by column
-- [Benchmarks](https://e8kor.github.io/open-memory-lab/api/benchmarks/): recall quality and latency at scale, generated from committed results
+- [Benchmarks](https://e8kor.github.io/open-memory-lab/benchmarks/): recall quality and latency at scale, generated from committed results
 
 ## Concepts
 

@@ -17,6 +17,9 @@ below fetch them at the tag `v0.6.0`; CI's `install-smoke` job runs both on ever
 | Windows x86_64 | native; Windows on ARM64 runs it under emulation |
 | macOS | none since v0.5.3; build from source (below) |
 
+!!! tip "Install not working?"
+    See [the installer refuses](../guides/troubleshooting.md#the-installer-refuses) and the [FAQ](../faq.md#install-and-connect).
+
 ## The line
 
 **macOS.** Releases after v0.5.2 carry no macOS build while GitHub's macOS runners are unreliable ([paused targets](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md)); on a Mac the installer stops with that message. Build from source: `cargo install --git https://github.com/e8kor/open-memory-lab --tag vX.Y.Z oml-cli`.

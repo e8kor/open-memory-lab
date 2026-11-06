@@ -1,5 +1,5 @@
 <!--
-id: api/benchmarks/scale
+id: benchmarks/scale
 tier: engineering
 status: generated · measured, not a design decision
 answers: how recall latency grows with the rows in a recall's scope, per search pipeline, against the 50 ms line

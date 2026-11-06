@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Generate the benchmark pages of the API docs from the committed results.
 
-    python scripts/gen_bench_pages.py          write docs/api/benchmarks/
+    python scripts/gen_bench_pages.py          write docs/benchmarks/
     python scripts/gen_bench_pages.py --check  exit 1 when a page differs
 
 Reads every `oml-bench/1` JSON file under eval/bench/results/ and, when the
 scale lane has written any, bench/scale/results/. A file under an `archive/`
 directory is an earlier run: its numbers are shown beside the current ones,
 never in place of them. A file under `offline/` is an experiment no served
-path ran (eval/bench/offline/) and is not rendered. Writes docs/api/benchmarks/index.md (the default
+path ran (eval/bench/offline/) and is not rendered. Writes docs/benchmarks/index.md (the default
 pipeline, one headline table per suite, the runs' dates, commits and
 environments), one page per suite, and scale.md when scale results exist.
 The pages are generated; the docs CI fails when they differ from what this
@@ -23,7 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES = [ROOT / "eval" / "bench" / "results", ROOT / "bench" / "scale" / "results"]
-OUT = ROOT / "docs" / "api" / "benchmarks"
+OUT = ROOT / "docs" / "benchmarks"
 DEFAULT_SOURCE = ROOT / "crates" / "bins" / "oml-server-lead" / "src" / "lib.rs"
 SCHEMA = "oml-bench/1"
 SERVED = ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings", "bm25-rerank",
@@ -155,6 +155,12 @@ def bar_chart(rows, title, reference=None, unit=""):
     return "\n".join(out) + "\n"
 
 
+def fold(title, lines, kind="note"):
+    """A collapsed Material admonition: long detail a reader opens on purpose."""
+    body = "\n".join(lines).strip("\n").split("\n")
+    return "\n".join([f'??? {kind} "{title}"', ""] + [("    " + l) if l else "" for l in body]) + "\n"
+
+
 def run_line(docs):
     dates = sorted({d["date"] for d in docs})
     commits = sorted({d["commit"] for d in docs})
@@ -181,34 +187,55 @@ def headline_row(doc):
 
 
 def index_page(current, earlier, has_scale):
-    lines = [header("api/benchmarks", "which search pipeline is the default and what each "
+    default = default_pipeline()
+    lines = [header("benchmarks", "which search pipeline is the default and what each "
                     "pipeline measured on every benchmark suite: quality, latency, the date, "
                     "commit and environment of each run"),
              "# Benchmarks\n", GENERATED,
-             f"**Default search pipeline:** `{default_pipeline()}` (the deployment's "
-             "`search.default` when unset; [configuration](../../operations/configuration.md)). "
-             "How the default is chosen: ADR-0049 d9, and the measurements behind it in "
+             f"The default search pipeline is `{default}` (the deployment's `search.default` "
+             "when unset; [settings](../operations/configuration.md)). It scores within 0.003 nDCG@10 "
+             "of `bm25` on the quality suites and is the one pipeline an index serves under row "
+             "security, so its latency grows slowest with the rows; the pipelines that score "
+             "higher read every readable row's stored lexemes or add a model stage. Choice of "
+             "default: ADR-0049 d9 and "
              "[the benchmark report](https://github.com/e8kor/open-memory-lab/blob/main/eval/bench/REPORT.md).\n",
-             "Every number below went through the served path: memories written over HTTP by "
-             "an agent key, promoted by reviewer keys of other principals, and recalled through "
-             "`oml_read` over `/mcp`, one query at a time. Reference rows are offline and have "
-             "no latency. Latency is the client's wall time per call, in milliseconds.\n",
-             CEILING]
+             "## Results at a glance\n",
+             f"The default pipeline, `{default}`, on each suite. nDCG@10 and S@5 measure "
+             "quality; p95 is the client's wall time per recall.\n",
+             "| suite | memories | queries | nDCG@10 | S@5 | p95 ms | run |",
+             "|---|---:|---:|---:|---:|---:|---|"]
+    for suite in suites_in_order(current):
+        docs = current[suite]
+        any_doc = full_doc(docs)
+        d = docs.get(default)
+        title = SUITE_TITLES.get(suite, suite)
+        dates = ", ".join(sorted({x["date"] for x in docs.values()}))
+        if d:
+            lines.append(f"| [{title}]({suite}.md) | {any_doc['n_docs']:,} | {asked(d)} | "
+                         f"{num(d['metrics'].get('ndcg@10'))} | {num(d['metrics'].get('success@5'))} | "
+                         f"{ms(d['latency_ms'].get('p95'))} | {dates} |")
+        else:
+            lines.append(f"| [{title}]({suite}.md) | {any_doc['n_docs']:,} | "
+                         f"{any_doc['n_queries']:,} | – | – | – | {dates} |")
+    lines.append("")
+    lines.append("## Methodology\n")
+    lines.append("Every number went through the served path: memories written over HTTP by an "
+                 "agent key, promoted by reviewer keys of other principals, and recalled through "
+                 "`oml_read` over `/mcp`, one query at a time. Latency is the client's wall time "
+                 "per call, in milliseconds. Reference rows are offline and have no latency. "
+                 "Every suite page lists all pipelines, the run's commit and host, and its limits.\n")
+    lines.append(fold("The latency ceiling", [CEILING]))
+    lines.append("## Suites\n")
     for suite in suites_in_order(current):
         docs = current[suite]
         any_doc = full_doc(docs)
         title = SUITE_TITLES.get(suite, suite)
-        lines.append(f"## [{title}]({suite}.md)\n")
-        lines.append(f"{any_doc['n_docs']:,} memories, {any_doc['n_queries']:,} queries. "
-                     + run_line(list(docs.values())) + "\n")
-        lines.append("| method | queries | nDCG@10 | S@5 | R@100 | zero | p50 ms | p95 ms |")
-        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
-        for method in method_order(docs):
-            lines.append(headline_row(docs[method]))
-        ref = any_doc.get("reference")
-        if ref and ref.get("metric") == "ndcg@10":
-            lines.append(f"| {ref['source']}, published | | {num(ref['value'])} | | | | | |")
-        lines.append("")
+        lines.append(f"- [{title}]({suite}.md): {any_doc['n_docs']:,} memories, "
+                     f"{any_doc['n_queries']:,} queries, {len(docs)} pipelines.")
+    lines.append("")
+    lines.append(fold("Run details: commits and environments", [
+        f"- **{SUITE_TITLES.get(suite, suite)}**: " + run_line(list(current[suite].values()))
+        for suite in suites_in_order(current)]))
     if has_scale:
         lines.append("## [Latency at scale](scale.md)\n")
         lines.append(f"Latency against the rows in a recall's scope, with the "
@@ -224,13 +251,14 @@ def suite_page(suite, docs, earlier_docs):
     title = SUITE_TITLES.get(suite, suite)
     any_doc = full_doc(docs)
     methods = method_order(docs)
-    lines = [header(f"api/benchmarks/{suite}", f"what each search pipeline measured on "
+    lines = [header(f"benchmarks/{suite}", f"what each search pipeline measured on "
                     f"{title}: quality, per-category results, latency, the reference numbers "
                     "and the limits of the run"),
              f"# {title}\n", GENERATED,
              f"Suite `{suite}`, data `{any_doc['suite_version']}`: {any_doc['n_docs']:,} "
              f"memories, {any_doc['n_queries']:,} queries; a method marked sampled asked a "
-             "seeded subset, named in its row. " + run_line(list(docs.values())) + "\n",
+             "seeded subset, named in its row.\n",
+             fold("Run details", [run_line(list(docs.values()))]),
              "[All suites](index.md)\n", "## Quality\n",
              "| method | queries | " + " | ".join(h for _, h in QUALITY) + " |",
              "|---|---:|" + "---:|" * len(QUALITY)]
@@ -249,13 +277,13 @@ def suite_page(suite, docs, earlier_docs):
                       (f"published {num(ref['value'])}", ref["value"])
                       if ref and ref.get("metric") == "ndcg@10" else None)
     if chart:
-        lines.append(chart)
+        lines.append(fold("Chart: nDCG@10 by pipeline", [chart]))
     cats = sorted({c for d in docs.values() for c in d.get("per_category", {})})
     if cats:
         lines.append("## By category\n")
-        lines.append("nDCG@10 / S@5 for each category, with its query count.\n")
-        lines.append("| category | n | " + " | ".join(methods) + " |")
-        lines.append("|---|---:|" + "---:|" * len(methods))
+        cat = ["nDCG@10 / S@5 for each category, with its query count.\n",
+               "| category | n | " + " | ".join(methods) + " |",
+               "|---|---:|" + "---:|" * len(methods)]
         for c in cats:
             n = next((d["per_category"][c].get("n_queries") for d in docs.values()
                       if c in d.get("per_category", {})), None)
@@ -264,8 +292,8 @@ def suite_page(suite, docs, earlier_docs):
                 row = docs[method].get("per_category", {}).get(c)
                 cells.append("–" if row is None else
                              f"{num(row.get('ndcg@10'), 2)} / {num(row.get('success@5'), 2)}")
-            lines.append(f"| {c} | {n if n is not None else '–'} | " + " | ".join(cells) + " |")
-        lines.append("")
+            cat.append(f"| {c} | {n if n is not None else '–'} | " + " | ".join(cells) + " |")
+        lines.append(fold("Results by category", cat))
     lines.append("## Latency\n")
     lines.append("Client wall time per recall, in milliseconds, nearest-rank percentiles.\n")
     lines.append("| method | p50 | p95 | p99 |")
@@ -279,20 +307,20 @@ def suite_page(suite, docs, earlier_docs):
     chart = bar_chart([(m, docs[m]["latency_ms"].get("p95")) for m in served],
                       f"p95 latency on {title}", None, "ms")
     if chart:
-        lines.append(chart)
+        lines.append(fold("Chart: p95 latency by pipeline", [chart]))
     if earlier_docs:
         lines.append("## Earlier runs\n")
-        lines.append("| run | method | nDCG@10 | S@5 | p50 ms | p95 ms | now nDCG@10 | now p50 ms |")
-        lines.append("|---|---|---:|---:|---:|---:|---:|---:|")
+        er = ["| run | method | nDCG@10 | S@5 | p50 ms | p95 ms | now nDCG@10 | now p50 ms |",
+              "|---|---|---:|---:|---:|---:|---:|---:|"]
         for d in sorted(earlier_docs, key=lambda d: (d["date"], d["commit"], d["method"])):
             now = docs.get(d["method"])
-            lines.append(
+            er.append(
                 f"| {d['date']} `{d['commit']}` | {d['method']} | "
                 f"{num(d['metrics'].get('ndcg@10'))} | {num(d['metrics'].get('success@5'))} | "
                 f"{ms(d['latency_ms'].get('p50'))} | {ms(d['latency_ms'].get('p95'))} | "
                 + (f"{num(now['metrics'].get('ndcg@10'))} | {ms(now['latency_ms'].get('p50'))} |"
                    if now else "– | – |"))
-        lines.append("")
+        lines.append(fold("Earlier runs beside the current one", er))
     lines.append("## Limits of this run\n")
     for note in sorted({d.get("notes", "") for d in docs.values()} - {""}):
         lines.append(f"- {note}")
@@ -311,7 +339,7 @@ def scale_page(current):
             rows = d.get("rows", d["n_docs"])
             points.setdefault(method, []).append((rows, d["latency_ms"]["p50"],
                                                   d["latency_ms"]["p95"], suite))
-    lines = [header("api/benchmarks/scale", "how recall latency grows with the rows in a "
+    lines = [header("benchmarks/scale", "how recall latency grows with the rows in a "
                     "recall's scope, per search pipeline, against the 50 ms line"),
              "# Latency at scale\n", GENERATED,
              "[All suites](index.md)\n",

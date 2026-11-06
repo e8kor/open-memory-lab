@@ -18,6 +18,11 @@ a key from that server the key is the only setting.
 | Running a server | a machine with Docker | [Run your own server](run-your-own.md) |
 | An administrator | an admin key | [First workarea and keys](first-workarea.md) |
 
+!!! tip "Something failed?"
+    Installer refuses or prints "NOT checked": [installer problems](../guides/troubleshooting.md#the-installer-refuses) and the [FAQ](../faq.md#install-and-connect).
+    `oml login` fails: [login problems](../guides/troubleshooting.md#oml-login-fails).
+    Plugin shows no tools: [plugin problems](../guides/troubleshooting.md#the-claude-code-plugin-shows-no-tools-or-does-not-connect).
+
 ## Use a server (about two minutes with a key)
 
 1. Install `oml` (Linux, Windows) with the line on the [install page](install.md).

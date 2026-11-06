@@ -8,7 +8,7 @@ Every memory went in through the HTTP API and was promoted by a reviewer key of 
 principal; every query went out through `oml_read` over `/mcp` with `k` 100 and no token budget
 unless stated. Metrics are ir_measures'. The committed numbers are in
 `results/<suite>/<method>.json` (schema `oml-bench/1`) and render as the API docs' benchmark
-pages (`docs/api/benchmarks/`); the first run (`0ff5c9e`) and the run before the review's fixes
+pages (`docs/benchmarks/`); the first run (`0ff5c9e`) and the run before the review's fixes
 (`4a8f5ba`, `9a6a0d0`) are kept under `results/archive/` and shown beside the current one.
 
 ## Before and after

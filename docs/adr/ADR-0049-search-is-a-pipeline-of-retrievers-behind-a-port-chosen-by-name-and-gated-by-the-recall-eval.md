@@ -310,7 +310,7 @@ reorders results, and steering rows, which precede hits, are never ranked"
        from 615 to 442 ms at 51,830 rows and was unchanged at 5,183, since most queries hold a
        word thousands of rows share: the `LEAKPROOF` step would not make `bm25` fast at that size.
     6. **The default is `bm25`.** Re-measured after the review's fixes (2026-11-05, release build
-       of `d3fdb72`, PostgreSQL 17.9, the generated [benchmark pages](../api/benchmarks/index.md)):
+       of `d3fdb72`, PostgreSQL 17.9, the generated [benchmark pages](../benchmarks/index.md)):
        on the recall eval `bm25` passes its gate, success@5 0.926 and success@1 0.835 at a median
        of 16.3 ms and a p95 of 21.2 ms over 200 rows, and `bm25-trigram` reaches success@5 0.950
        but misses its own partial gate by one query (0.909 against 0.91). On the public sets

@@ -286,7 +286,7 @@ the test double and the real model alike (ADR-0053 d10).
 **Measured.** The recall eval runs every served pipeline through `oml_read` in CI and gates the
 default (ADR-0049 d9); the public benchmarks run the same served path over BEIR SciFact and
 NFCorpus, LoCoMo, and SciFact grown ten times to 51,830 rows. Their generated pages hold every number,
-with the date, commit and host of each run: [benchmarks](../api/benchmarks/index.md). `bm25` was
+with the date, commit and host of each run: [benchmarks](../benchmarks/index.md). `bm25` was
 v0.5.5's default: it passes its gate and ranks best on every external set; `bm25-trigram` matches
 misspellings at many times the latency, needs `pg_trgm`, and is served only where a deployment
 enables it (ADR-0049 d12). Under row security no text or trigram index can serve the serving
