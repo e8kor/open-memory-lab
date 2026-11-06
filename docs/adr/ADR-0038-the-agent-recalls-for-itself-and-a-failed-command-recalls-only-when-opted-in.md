@@ -7,7 +7,7 @@ answers: how an agent gets the memory a turn needs beyond what the session-start
 
 # ADR-0038 — The agent recalls for itself, and a failed command recalls only when the user opted in
 
-**Status:** accepted design · 2026-11-04
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d1, d2: the instructions describe recall and no longer tell the model to call it)
 
 **Release:** introduced in v0.4.0 ([releases](../changelog.md))
 

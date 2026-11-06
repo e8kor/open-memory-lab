@@ -63,7 +63,7 @@ The refusals of the connection flow for claude.ai and phone apps. At `POST /oaut
 | `oauth.refresh_invalid` | 400 | The refresh token is unknown, expired, already rotated (which ends the connection), or issued to another client. |
 | `oauth.origin_refused` | 403 | A `POST /oauth/authorize` came from another origin. It uses no attempt. |
 | `oauth.attach_refused` | 403 | Reserved. This build does not return it. |
-| `oauth.connect_refused` | 422 | The key cannot hold a connection. `details.reason` is `role`, `held_by_service`, `bearer_key`, `revoked`, `expired`, `not_configured`, `connector_key` or `session_key`. |
+| `oauth.connect_refused` | 422 | The key cannot hold a connection. `details.reason` is `role`, `held_by_service`, `bearer_key`, `revoked`, `expired`, `not_configured`, `connector_key`, `session_key` or `not_confined`; the last is a code that lives past ten minutes asked for a key that reaches more than one workarea, the universe or a user root. |
 
 ## `access` — what this key may do
 

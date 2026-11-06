@@ -695,6 +695,12 @@ Requires: admin key role.
 | `key` | path | KeyRef | yes |  |
 | `Idempotency-Key` | header | string | yes | Claims an idempotency record (key_id, workarea, idem_key) before side effects. |
 
+**Request body** (`application/json`)
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `ttl_seconds` | integer | no | How long the code lives, 1 second to 30 days; omitted, the ten-minute default. |
+
 **Responses.** `201` The connect code, shown once.; `404` access.not_found — absent or outside read scope, indistinguishable by design.; `422` A 422-class refusal (submission.scan_veto, upload.digest_mismatch, settings.*, …).; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
 
