@@ -35,6 +35,26 @@ class Migrations(unittest.TestCase):
         later = {"migrations/0003_v.sql": "SET LOCAL lock_timeout='5s';\nALTER TABLE t VALIDATE CONSTRAINT c;"}
         self.assertEqual([], [p for p in self.run_lint(sql, **later) if "0002" in p])
 
+    def test_validate_constraint_in_a_transaction_migration_is_flagged(self):
+        head = "SET LOCAL lock_timeout='5s';\n"
+        add = "ALTER TABLE t ADD CONSTRAINT c CHECK (a > 0) NOT VALID;\n"
+        inside = head + add + "ALTER TABLE t VALIDATE CONSTRAINT c;"
+        self.assertTrue(any("VALIDATE CONSTRAINT" in p and "no-transaction" in p
+                            for p in self.run_lint(inside)))
+        # the same statement in its own no-transaction file is the house way
+        split = {"migrations/0003_v.sql": "-- no-transaction\nSET lock_timeout='5s';\nALTER TABLE t VALIDATE CONSTRAINT c;"}
+        self.assertEqual([], [p for p in self.run_lint(head + add, **split) if "VALIDATE" in p])
+        # a comment that mentions the statement is not the statement
+        said = head + "-- ALTER TABLE t VALIDATE CONSTRAINT c is in 0003\n"
+        self.assertEqual([], [p for p in self.run_lint(said) if "no-transaction" in p])
+        # a reasoned escape clears one, as for the other rules
+        esc = "-- lint:allow validate the table is new and empty\n" + inside
+        self.assertEqual([], [p for p in self.run_lint(esc) if "no-transaction" in p])
+        # an allow-listed old migration is not asked
+        root = tree({"migrations/0001_p.sql": "SET LOCAL lock_timeout='5s';\nALTER TABLE t VALIDATE CONSTRAINT c;",
+                     "scripts/lint_allow/migrations.txt": "0001_p.sql\n"})
+        self.assertEqual([], L.lint_migrations(root, True))
+
     def test_an_index_on_a_partitioned_table_needs_only_and_attach(self):
         head = "SET LOCAL lock_timeout='5s';\n"
         self.assertTrue(any("ON ONLY" in p for p in self.run_lint(head + "CREATE INDEX i ON memories (id);")))
