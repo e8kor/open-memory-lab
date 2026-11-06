@@ -1337,9 +1337,59 @@ impl SubmitVerb {
     }
 }
 
+/// What a write does when the similar check names a row (ADR-0050 d1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OnSimilar {
+    /// Capture the write held and name the rows; the default.
+    #[default]
+    Hold,
+    /// Refuse with `submission.similar_exists` when a row is named,
+    /// journalling nothing and claiming no idempotency record.
+    Refuse,
+}
+
+impl OnSimilar {
+    /// The name requests and the metric use.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hold => "hold",
+            Self::Refuse => "refuse",
+        }
+    }
+}
+
+/// The kinds the similar check names and is run for (ADR-0050 d1).
+pub const SIMILAR_KINDS: [MemoryKind; 3] = [
+    MemoryKind::Memory,
+    MemoryKind::DerivedFact,
+    MemoryKind::Steering,
+];
+
+/// A row the similar check names beside a write (ADR-0050 d1): a claim
+/// item without text, how it relates, and whether the writing key wrote
+/// it. `jaccard_percent` is the word sets' Jaccard similarity in
+/// hundredths, 100 for `same_text`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SimilarItem {
+    pub artifact_id: Uuid,
+    pub claim_key: String,
+    pub version: u32,
+    pub kind: String,
+    pub workarea_id: Uuid,
+    pub state: String,
+    pub relation: String,
+    pub jaccard_percent: u8,
+    pub own: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct SubmitRequest {
     pub idempotency_key: String,
+    /// `hold` captures beside a similar row and names it; `refuse` refuses
+    /// (ADR-0050 d1). Never part of the request digest: it changes nothing
+    /// stored.
+    pub on_similar: OnSimilar,
     /// `None` derives the key from the author and the text; a sent key
     /// starting `auto-` is refused (ADR-0039 d6).
     pub claim_key: Option<String>,
@@ -1379,6 +1429,10 @@ pub struct SubmitReceipt {
     pub state: String,
     pub journal_seq: u64,
     pub body_digest: String,
+    /// The rows the similar check named, as first answered; a record
+    /// stored before the check replays none (ADR-0050 d1).
+    #[serde(default)]
+    pub similar: Vec<SimilarItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -1534,6 +1588,9 @@ pub struct RecallRequest {
     pub search: Option<String>,
     /// `match`: any term (the default) or every term (ADR-0049 d5).
     pub match_mode: MatchMode,
+    /// The answer's per-stage `timings` block, refused unless the
+    /// deployment serves it (`search.timings`; ADR-0049 d14).
+    pub timings: bool,
     /// `include_expired`: serve versions whose valid time has ended, hidden
     /// by default (proposed ADR-0059 d3).
     pub include_expired: bool,
@@ -1666,6 +1723,10 @@ pub struct RecallResult {
     /// The query words whose every form was pruned from the postings read
     /// (`search.pruned`; ADR-0052 d6, d11).
     pub pruned: Vec<String>,
+    /// Each stage's duration, always measured; served in the answer only
+    /// when the request asked and the deployment serves it, and recorded in
+    /// the stage histogram always (ADR-0049 d14).
+    pub timings: crate::search::Timings,
     /// The date window the query named, read by rule `oml-when/1`
     /// (`search.window`; proposed ADR-0059 d6).
     pub window: Option<Window>,
@@ -1992,6 +2053,8 @@ pub struct Whoami {
 #[derive(Debug, Clone)]
 pub struct SupersedeRequest {
     pub idempotency_key: String,
+    /// As a submit's (ADR-0050 d1); a retirement is never checked.
+    pub on_similar: OnSimilar,
     pub target_id: Uuid,
     /// The successor's text as sent; capture normalizes it to NFC. With
     /// `retirement`, why the claim is retired.
@@ -2069,6 +2132,9 @@ pub struct SupersedeReceipt {
     pub replaces: VersionRef,
     pub journal_seq: u64,
     pub body_digest: String,
+    /// As a submit's (ADR-0050 d1).
+    #[serde(default)]
+    pub similar: Vec<SimilarItem>,
 }
 
 /// `POST /v2/edges` with `kind: claim` as the use-case takes it: a labelled edge from
@@ -2481,6 +2547,15 @@ pub enum AppError {
         "a held, promoted or demoted version holds this claim_key in the workarea (audit-and-lineage.md, submission.claim_key_conflict)"
     )]
     ClaimKeyConflict,
+    #[error(
+        "on_similar refuse and {} similar rows the writer may read (ADR-0050 d1, submission.similar_exists)",
+        .0.len()
+    )]
+    SimilarExists(Vec<SimilarItem>),
+    #[error(
+        "timings is refused: this deployment does not serve recall timings (search.timings; ADR-0049 d14, request.validation)"
+    )]
+    TimingsOff,
     #[error("deterministic scan veto: {0} (admission.md — a refusal that journals nothing)")]
     ScanVeto(String),
     #[error(

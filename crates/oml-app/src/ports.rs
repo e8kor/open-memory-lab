@@ -591,6 +591,21 @@ pub trait Retriever: Send + Sync {
         limit: usize,
     ) -> impl Future<Output = Result<Vec<String>, StoreError>> + Send;
 
+    /// The near-copy check's candidates (ADR-0050 d1, d17): the versions
+    /// holding any of `keys` among `scope`'s promoted served tips and the
+    /// held rows of its own keys, by how many keys each holds, then by id
+    /// ascending, at most `limit`. Of the kinds `memory`, `derived_fact` and
+    /// `steering` alone, never a retirement version. It ranks and never
+    /// decides: the core reads each candidate and admits it as recall does
+    /// before it names one.
+    fn similar_candidates(
+        &self,
+        tenant_id: Uuid,
+        scope: &CandidateScope,
+        keys: &[i64],
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send;
+
     /// The tenant's postings health for doctor (ADR-0052 d12), or `None`
     /// from an adapter that keeps no postings.
     fn postings_health(
@@ -1678,6 +1693,21 @@ pub trait RequestObserver: Send + Sync {
     /// (ADR-0054 d1). Telling no one is the default.
     fn recall_answered(&self, pipeline: &'static str, result: &'static str, seconds: f64) {
         let _ = (pipeline, result, seconds);
+    }
+
+    /// A write's similar check named rows of `relation` at best (`none`,
+    /// `same_text` or `near_copy`) under `on_similar` (`hold` or
+    /// `refuse`), in `seconds` (ADR-0050 d1; ADR-0054 d1). Telling no one
+    /// is the default.
+    fn similar_checked(&self, relation: &'static str, on_similar: &'static str, seconds: f64) {
+        let _ = (relation, on_similar, seconds);
+    }
+
+    /// A recall through `pipeline` spent `seconds` in `stage`, one of
+    /// [`crate::search::Stage`]'s names (ADR-0049 d14). Telling no one is
+    /// the default.
+    fn recall_stage(&self, pipeline: &'static str, stage: &'static str, seconds: f64) {
+        let _ = (pipeline, stage, seconds);
     }
 
     /// A verdict `approve` or `reject` committed `waited_seconds` after its

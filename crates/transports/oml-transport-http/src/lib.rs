@@ -64,10 +64,10 @@ use oml_app::types::{
     AnchorFilter, AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal,
     ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
     EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
-    IssuedKey, KeyDetail, ListRequest, MemoryRecord, NamedServe, ProposeBriefEdge,
-    ProposeClaimEdge, RecallRequest, ServedMemory, SourceCheck, SourceCheckRequest, SubmitRequest,
-    SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami, WorkareaInfo,
-    WorkareaRecord,
+    IssuedKey, KeyDetail, ListRequest, MemoryRecord, NamedServe, OnSimilar, ProposeBriefEdge,
+    ProposeClaimEdge, RecallRequest, ServedMemory, SimilarItem, SourceCheck, SourceCheckRequest,
+    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami,
+    WorkareaInfo, WorkareaRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage,
@@ -548,6 +548,7 @@ where
         let workarea = optional_reference("/workarea", req.workarea.as_deref())?;
 
         let app_req = SubmitRequest {
+            on_similar: parse_on_similar(req.on_similar.as_deref())?,
             idempotency_key: idem_key,
             claim_key: req.claim_key,
             verb,
@@ -579,6 +580,7 @@ where
                 "workarea_id": r.workarea_id,
                 "retirement": false,
                 "replaces": Value::Null,
+                "similar": similar_json(&r.similar),
             }),
         );
         if outcome.replayed {
@@ -771,6 +773,7 @@ where
             .recall(
                 acting.bearer(),
                 &RecallRequest {
+                    timings: req.timings.unwrap_or(false),
                     query: req.query.clone(),
                     k,
                     workarea,
@@ -856,6 +859,13 @@ where
         // (retrieval.md token budgets; ADR-0025 d7).
         if let (Some(budget), Some(obj)) = (&result.budget, response.as_object_mut()) {
             obj.insert("budget".to_owned(), budget_json(budget));
+        }
+        // The timings block is present if and only if timings was sent
+        // true, which only a deployment serving them admits (ADR-0049 d14).
+        if req.timings == Some(true)
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("timings".to_owned(), timings_json(&result.timings));
         }
         Ok(json_response(StatusCode::OK, &response))
     }
@@ -1044,6 +1054,7 @@ where
             }
         }
         let app_req = SupersedeRequest {
+            on_similar: parse_on_similar(req.on_similar.as_deref())?,
             idempotency_key: idem_key,
             target_id,
             body: text,
@@ -1081,6 +1092,7 @@ where
                 },
                 "plaintext_digest": r.body_digest,
                 "journal_seq": r.journal_seq,
+                "similar": similar_json(&r.similar),
             }),
         );
         if outcome.replayed {
@@ -2414,6 +2426,54 @@ where
     }
 }
 
+/// openapi.yaml `RecallTimings`: each stage's milliseconds, in the order
+/// the stages ran, and their sum (ADR-0049 d14).
+fn timings_json(timings: &oml_app::search::Timings) -> Value {
+    let ms = |seconds: f64| (seconds * 1_000_000.0).round() / 1000.0;
+    let stages: serde_json::Map<String, Value> = timings
+        .stages
+        .iter()
+        .map(|(stage, seconds)| (stage.as_str().to_owned(), json!(ms(*seconds))))
+        .collect();
+    let total: f64 = timings.stages.iter().map(|(_, s)| s).sum();
+    json!({ "stages_ms": stages, "total_ms": ms(total) })
+}
+
+/// `on_similar` as sent: `hold`, the default, or `refuse` (ADR-0050 d1).
+fn parse_on_similar(sent: Option<&str>) -> Result<OnSimilar, ApiError> {
+    match sent {
+        None | Some("hold") => Ok(OnSimilar::Hold),
+        Some("refuse") => Ok(OnSimilar::Refuse),
+        Some(other) => Err(ApiError::validation(format!(
+            "on_similar must be hold or refuse, not {other:?}"
+        ))
+        .with_details(json!({ "field": "/on_similar" }))),
+    }
+}
+
+/// openapi.yaml `SimilarItem`: a row the similar check named, as a write's
+/// answer and `submission.similar_exists` serve it (ADR-0050 d1).
+pub(crate) fn similar_json(similar: &[SimilarItem]) -> Value {
+    Value::Array(
+        similar
+            .iter()
+            .map(|s| {
+                json!({
+                    "artifact_id": s.artifact_id,
+                    "claim_key": s.claim_key,
+                    "version": s.version,
+                    "kind": s.kind,
+                    "workarea_id": s.workarea_id,
+                    "state": s.state,
+                    "relation": s.relation,
+                    "jaccard": f64::from(s.jaccard_percent) / 100.0,
+                    "own": s.own,
+                })
+            })
+            .collect(),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Request bodies (field spellings per openapi.yaml)
 // ---------------------------------------------------------------------------
@@ -2449,6 +2509,9 @@ struct SubmitBody {
     /// A guardrail's optional `oml-gr/1` rule (proposed ADR-0037 d8, d10).
     #[serde(default)]
     rule: Option<Value>,
+    /// `hold` (the default) or `refuse` (ADR-0050 d1).
+    #[serde(default)]
+    on_similar: Option<String>,
     /// When the memory holds, each end a period or an instant (proposed
     /// ADR-0059 d2).
     #[serde(default)]
@@ -2487,6 +2550,9 @@ struct RecallBody {
     /// What the key's last recall served that helped, and what did not;
     /// checked before the recall runs (ADR-0054 d6).
     feedback: Option<Value>,
+    /// The answer's per-stage `timings`, where the deployment serves them
+    /// (`search.timings`; ADR-0049 d14).
+    timings: Option<bool>,
     /// Serve versions whose valid time has ended (proposed ADR-0059 d3).
     include_expired: Option<bool>,
     /// The recall's now: a period or an instant (proposed ADR-0059 d5).
@@ -2552,6 +2618,9 @@ struct SupersedeBody {
     /// A guardrail successor's optional rule (proposed ADR-0037 d10).
     #[serde(default)]
     rule: Option<Value>,
+    /// `hold` (the default) or `refuse` (ADR-0050 d1).
+    #[serde(default)]
+    on_similar: Option<String>,
     /// The successor's own valid time; it inherits none (proposed
     /// ADR-0059 d2).
     #[serde(default)]

@@ -7,6 +7,7 @@ class RecallSearchPipeline(StrEnum):
     BM25_POSTINGS_TIME = "bm25-postings-time"
     BM25_RERANK = "bm25-rerank"
     BM25_SPARSE = "bm25-sparse"
+    BM25_SPARSE_RRF = "bm25-sparse-rrf"
     BM25_TRIGRAM = "bm25-trigram"
     KEYWORD_ALL = "keyword-all"
     KEYWORD_ANY = "keyword-any"

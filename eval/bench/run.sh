@@ -49,7 +49,7 @@ for ds in "$@"; do
     cp "$STATE/load-$ds.json" "$OUT/"
     # A sparse pipeline reads what the encoder wrote: wait for its queue
     # to drain, and keep how long it took (ADR-0052 d15).
-    case " ${BENCH_PIPELINES:-} " in *" sparse "*|*" bm25-sparse "*)
+    case " ${BENCH_PIPELINES:-} " in *" sparse "*|*" bm25-sparse "*|*" bm25-sparse-rrf "*)
         LOADED=$(( ${LOADED:-0} + $(jq .written "$OUT/load-$ds.json") ))
         eval/bench/wait_sparse.sh "$(cat "$STATE/metrics_url")" "$LOADED" >"$OUT/encode-wait-$ds.txt" || exit 1 ;;
     esac

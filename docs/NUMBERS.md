@@ -68,7 +68,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0047 | `main` |  | project knowledge and a code skeleton follow the development lifecycle | used |
 | adr | 0048 | `main` |  | search improves in stages any word first meaning last each gated on th | used |
 | adr | 0049 | `main` |  | search is a pipeline of retrievers behind a port chosen by name and ga | used |
-| adr | 0050 | `feat/remember` | #41 | remembering checks what is already held replaces instead of repeating  | open |
+| adr | 0050 | `feat/remember-dedup-r2` | #84 | remembering checks what is already held replaces instead of repeating  | open |
 | adr | 0051 | `design/ontology-metadata-r2` | #58 | a memory says what it is about in reviewed terms and recall finds it b | open |
 | adr | 0052 | `main` |  | text search reads integer postings that row security lets an index ser | used |
 | adr | 0053 | `main` |  | reranking is a local cross encoder stage after fusion off by default u | used |
@@ -77,7 +77,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0056 | `design/claim-formats` | #63 | a claim version names its format the signature covers its source and a | open |
 | adr | 0057 | `main` |  | a memory carries the source anchor its author declares and oml sync ke | used |
 | adr | 0058 | `docs/production-requirements` | #71 | the public server runs to stated slos with an error budget and without | open |
-| adr | 0059 | `feat/valid-time-r2` | #83 | a memory states when it is true recall hides what has ended and search | open |
+| adr | 0059 | `main` |  | a memory states when it is true recall hides what has ended and search | used |
 | adr | 0060 | `feat/lake-writer` | #75 | the lake writer drains the outbox it has seals what it materializes an | open |
 | adr | 0061 | `feat/rust-adapter` |     | oml sync reads a rust workspace as one claim per crate and one per mod | open |
 | adr | 0062 | `design/delta-mapping` | #74 | oml sync maps a delta lakes tables into anchored claims from the log a | open |
@@ -165,12 +165,11 @@ is a collision: the branch that reserved later renumbers.
 | fr | 87 | `main` |  | `review next` serves a reviewer key its own claimed row again until it | used |
 | fr | 88 | `main` |  | The reranking pipeline `bm25-rerank` was measured only on a host share | used |
 | fr | 89 | `main` |  | A recall cannot yet answer "nothing relevant" well: the relevance floo | used |
-| fr | 90 | `feat/remember` | #41 | The proposed ADR-0050 d1 names, at each write, up to three memories th | open |
-| fr | 91 | `feat/remember` | #41 | ADR-0050 d1 runs one search on every write; what it adds to a write's  | open |
-| fr | 91 | `feat/remember-dedup` | #72 | ADR-0050 d1 runs one lookup on every write (d17); what it adds to a wr | open |
-| fr | 92 | `feat/remember` | #41 | The advisory warnings of ADR-0050 d6 (too long, several claims, vague, | open |
-| fr | 93 | `feat/remember` | #41 | How many writes repeat a memory already held, and how many stale memor | open |
-| fr | 94 | `feat/remember` | #41 | The batch limit of 20 writes and the capture limit of 5 per session in | open |
+| fr | 90 | `feat/remember-dedup-r2` | #84 | The proposed ADR-0050 d1 names, at each write, up to three memories th | open |
+| fr | 91 | `feat/remember-dedup-r2` | #84 | ADR-0050 d1 runs one lookup on every write (d17); what it adds to a wr | open |
+| fr | 92 | `feat/remember-dedup-r2` | #84 | The advisory warnings of ADR-0050 d6 (too long, several claims, vague, | open |
+| fr | 93 | `feat/remember-dedup-r2` | #84 | How many writes repeat a memory already held, and how many stale memor | open |
+| fr | 94 | `feat/remember-dedup-r2` | #84 | The batch limit of 20 writes and the capture limit of 5 per session in | open |
 | fr | 95 | `design/ontology-metadata-r2` | #58 | The proposed ADR-0051 finds memories by the reviewed terms a query nam | open |
 | fr | 96 | `design/ontology-metadata-r2` | #58 | What a reviewed vocabulary costs a crew is unmeasured: the time to wri | open |
 | fr | 97 | `design/ontology-metadata-r2` | #58 | How often writing agents choose wrong terms, how many memories get non | open |
@@ -195,6 +194,7 @@ is a collision: the branch that reserved later renumbers.
 | fr | 116 | `main` |  | A document sync writes up to 200 items a run for one person to review  | used |
 | fr | 117 | `main` |  | A claim edge whose statement leaves the documents (an `Amends:` line e | used |
 | fr | 118 | `main` |  | The learned sparse leg reads every posting of each query token among t | used |
+| fr | 119 | `feat/remember-dedup-r2` | #84 | Migration 0027 fills the near-copy check's keys of every existing version in one statement per tenant | open |
 | fr | 130 | `feat/rust-adapter` |     | The proposed ADR-0061 loads OML's crates as 92 claims (9 crates, 83 mo | open |
 | fr | 131 | `feat/rust-adapter` |     | A module claim goes stale only when its doc changes (ADR-0061 d8), so  | open |
 | fr | 132 | `feat/rust-adapter` |     | Crate dependencies are stated in each crate claim's text and not as `d | open |
@@ -244,9 +244,9 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0023 | `main` |  | recall telemetry | used |
 | migration | 0024 | `main` |  | review queue order | used |
 | migration | 0025 | `main` |  | source anchors | used |
-| migration | 0026 | `feat/lake-writer` | #75 | lake writer | open |
-| migration | 0026 | `feat/remember-dedup` | #72 | similar keys | open |
-| migration | 0026 | `feat/valid-time-r2` | #83 | valid time | open |
-| migration | 0027 | `feat/in-progress-r2` | #79 | in progress | open |
-| migration | 0030 | `feat/chat-memory` | #78 | origin kind | open |
-| migration | 0031 | `feat/chat-memory` | #78 | origin kind validate | open |
+| migration | 0031 | `feat/lake-writer` | #75 | lake writer | open |
+| migration | 0027 | `feat/remember-dedup-r2` | #84 | similar keys | open |
+| migration | 0026 | `main` |  | valid time | used |
+| migration | 0028 | `feat/in-progress-r2` | #79 | in progress | open |
+| migration | 0029 | `feat/chat-memory` | #78 | origin kind | open |
+| migration | 0030 | `feat/chat-memory` | #78 | origin kind validate | open |

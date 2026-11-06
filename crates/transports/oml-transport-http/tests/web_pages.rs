@@ -1305,6 +1305,7 @@ async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
         .submit_memory(
             value,
             &oml_app::types::SubmitRequest {
+                on_similar: Default::default(),
                 anchor: None,
                 idempotency_key: format!("k-{body}"),
                 claim_key: None,
@@ -1893,6 +1894,7 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
         .recall(
             rig.boot.admin_key.value.as_str(),
             &oml_app::types::RecallRequest {
+                timings: false,
                 anchor: oml_app::types::AnchorFilter::default(),
                 query: "zebra".to_owned(),
                 k: 5,
@@ -1939,6 +1941,7 @@ async fn agent_guardrail(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
         .submit_memory(
             value,
             &oml_app::types::SubmitRequest {
+                on_similar: Default::default(),
                 anchor: None,
                 idempotency_key: format!("g-{body}"),
                 claim_key: None,
@@ -2134,6 +2137,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
                 rule: None,
                 valid_from: Some("2025".to_owned()),
                 valid_until: None,
+                on_similar: Default::default(),
             },
         )
         .await
@@ -2170,6 +2174,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
                 rule: None,
                 valid_from: Some("2026-06-01".to_owned()),
                 valid_until: None,
+                on_similar: Default::default(),
                 anchor: None,
                 expected_version: 1,
             },
