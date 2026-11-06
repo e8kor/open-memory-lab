@@ -32,6 +32,7 @@ open-memory-lab/
 │   │   ├── oml-pg/               # journal-and-metadata store port — sqlx
 │   │   ├── oml-fetch/            # client document fetch port — ureq, pinned to a checked address
 │   │   ├── oml-lake/             # lake materialization port — delta-rs
+│   │   ├── oml-delta-log/        # minimal Delta `_delta_log` reader for the CLI's lake build (ADR-0062 d3) — parquet, no arrow
 │   │   ├── oml-objectstore/      # object store port — object_store (S3, MinIO, file)
 │   │   └── oml-kms/              # KMS port — cloud KMS and the kms-file keyring (RS-12)
 │   ├── transports/
