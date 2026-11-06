@@ -45,6 +45,7 @@ class ErrorCode(StrEnum):
     SIMULATION_TIP_REFUSED = "simulation.tip_refused"
     SUBMISSION_ATTACHMENT_MISSING = "submission.attachment_missing"
     SUBMISSION_CLAIM_KEY_CONFLICT = "submission.claim_key_conflict"
+    SUBMISSION_FORMAT_INVALID = "submission.format_invalid"
     SUBMISSION_LINEAGE_REQUIRED = "submission.lineage_required"
     SUBMISSION_SCAN_VETO = "submission.scan_veto"
     SUBMISSION_SIMULATION_ID_REQUIRED = "submission.simulation_id_required"

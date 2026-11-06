@@ -4358,6 +4358,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         for line in &search {
             println!("search      : {line}");
         }
+        if let Some(line) = formats_doctor(ready.as_ref()) {
+            println!("formats     : {line}");
+        }
         if let Some(line) = &review {
             println!("review      : {line}");
         }
@@ -4433,6 +4436,26 @@ fn count_admin_emails(client: &Client) -> Option<(usize, Vec<String>)> {
 /// serves, so the deployment's applies instead. A pipeline whose retriever
 /// the database lacks (`pg_trgm`) never reaches here: the lead refuses to
 /// start, naming it.
+/// The formats doctor line (ADR-0056 d14): the media types the lead serves
+/// and the adapters, with their versions, that derive their search text.
+fn formats_doctor(ready: Option<&(u16, Value)>) -> Option<String> {
+    let (_, body) = ready?;
+    let Some(enabled) = body["formats"]["enabled"].as_array() else {
+        return Some("not reported by /readyz (a server before claim formats)".to_owned());
+    };
+    let adapters: Vec<&str> = body["formats"]["adapters"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    Some(format!(
+        "{} media types enabled; adapters {}",
+        enabled.len(),
+        adapters.join(", ")
+    ))
+}
+
 fn search_doctor(
     ready: Option<&(u16, Value)>,
     settings: Option<&Value>,
@@ -4938,6 +4961,27 @@ fn verdict(ok: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_formats_doctor_names_the_media_types_and_the_adapters_with_their_versions() {
+        let ready = (
+            200,
+            json!({ "formats": {
+                "enabled": ["text/plain", "text/vnd.oml.mermaid"],
+                "adapters": ["identity/1", "mermaid/1"],
+            }}),
+        );
+        assert_eq!(
+            formats_doctor(Some(&ready)).as_deref(),
+            Some("2 media types enabled; adapters identity/1, mermaid/1")
+        );
+        assert!(
+            formats_doctor(Some(&(200, json!({}))))
+                .expect("a line")
+                .starts_with("not reported")
+        );
+        assert_eq!(formats_doctor(None), None);
+    }
 
     #[test]
     fn the_search_doctor_names_the_reranker_and_warns_on_skips_read_from_the_metrics_listener() {

@@ -2220,7 +2220,7 @@ async fn insert_memory(
         (
             ", anchor_repo, anchor_uri, anchor_rev, anchor_path, anchor_fragment, \
              anchor_hash, anchor_hasher",
-            ", $29, $30, $31, $32, $33, $34, $35",
+            ", $25, $26, $27, $28, $29, $30, $31",
         )
     } else {
         ("", "")
@@ -2230,9 +2230,9 @@ async fn insert_memory(
          created_event_id, created_at, claim_key, author_principal, \
          author_key_id, derives_from, lineage_principals, lineage_key_ids, scan_finding, \
          version, kind, body_bytes, is_tip, promoted_at, retirement, replaces_artifact_id, \
-         severity, rule, format, title, search_text, search_text_by{columns}) \
+         severity, rule{columns}) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, ($8)::timestamptz, $9, $10, $11, $12, $13, $14, \
-         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24, $25, $26, $27, $28{values})"
+         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24{values})"
     );
     let mut insert = sqlx::query(&sql)
         .bind(m.memory_id)
@@ -2258,11 +2258,7 @@ async fn insert_memory(
         .bind(m.retirement)
         .bind(m.replaces)
         .bind(m.guardrail.as_ref().map(|g| g.severity.as_str()))
-        .bind(m.guardrail.as_ref().and_then(|g| g.rule.clone()))
-        .bind(&m.format.media_type)
-        .bind(m.format.title.as_deref())
-        .bind(m.format.search_text.as_deref())
-        .bind(m.format.search_text_by.as_deref());
+        .bind(m.guardrail.as_ref().and_then(|g| g.rule.clone()));
     if let Some(anchor) = anchor {
         insert = insert
             .bind(anchor.repo())
@@ -2280,6 +2276,25 @@ async fn insert_memory(
             .bind(anchor.hash.as_ref().map(|(_, h)| h.as_str()));
     }
     insert.execute(&mut **tx).await.map_err(backend)?;
+    // The format, the title and the derived search text in the same
+    // transaction, only when the version carries any, so a schema before 0033
+    // still takes every prose row without one; the lexemes and the postings
+    // follow the update (ADR-0056 d4).
+    if *m.format != FormatFields::default() {
+        sqlx::query(
+            "UPDATE memories SET format = $3, title = $4, search_text = $5, search_text_by = $6 \
+             WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(m.tenant_id)
+        .bind(m.memory_id)
+        .bind(&m.format.media_type)
+        .bind(m.format.title.as_deref())
+        .bind(m.format.search_text.as_deref())
+        .bind(m.format.search_text_by.as_deref())
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
     // Declared valid time in the same transaction, only when declared, so a
     // schema before 0026 still takes every row that declares none (proposed
     // ADR-0059 d11).

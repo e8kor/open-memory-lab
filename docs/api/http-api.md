@@ -680,6 +680,15 @@ with `request.workarea_unresolved` (422).
   key with `writer` effective access on the `universe` node — held and reviewed like every write,
   and a [user key](../architecture/roles-and-keys.md#user-keys)'s write there answers
   `submission.universe_refused` in place of step 3's `access.grant_refused`.
+- *Since v0.6.0 ([ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md) d1, d10, d13):* the body may name its `format`, a media type from a
+  closed list (`text/plain`, the default; `text/markdown`; `text/vnd.oml.mermaid`;
+  `application/json`; `application/yaml`; `text/vnd.oml.code; lang=<language>`), and a one-line
+  `title` of at most 100 characters, required with any format that is not prose. Both are signed
+  with the version and fixed for it; a successor states its own, so a format changes only by
+  supersession. An unknown format is `request.validation` with `details.field: format` and
+  `details.allowed`; a source its format refuses is `422 submission.format_invalid` with
+  `details.reason`, `details.line` and `details.column`; kinds other than `memory` and
+  `derived_fact` take prose only. Every claim item carries `format` and `title`.
 - The deterministic scan runs in the same call and can veto (`submission.scan_veto` — a refusal
   that journals nothing, reproducible from the journalled rule-set pin; nothing waits in the
   queue; [admission.md](../architecture/admission.md)). Banned authors and sources are refused at this

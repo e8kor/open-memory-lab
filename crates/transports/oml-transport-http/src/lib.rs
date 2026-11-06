@@ -462,6 +462,13 @@ where
             // doctor's web line reads it (ADR-0045 d18); their failed
             // exchanges are the metrics listener's (ADR-0054 d1).
             "web": st.web.as_ref().filter(|_| st.app.oauth_issuer().is_some()).map(|w| w.readyz()),
+            // The claim formats this build serves and the adapters that
+            // derive their search text: doctor's formats line reads them
+            // (ADR-0056 d14).
+            "formats": {
+                "enabled": st.app.formats().allowed(),
+                "adapters": st.app.formats().adapters(),
+            },
             // The served search pipelines and the deployment's default:
             // doctor's search line reads them (ADR-0049 d8).
             "search": {

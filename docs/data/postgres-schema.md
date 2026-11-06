@@ -1810,3 +1810,22 @@ The rules:
   [ADR-0018](../adr/ADR-0018-the-documentation-set.md) d6's convention of naming that gap). The
   sqlx offline query check ([CI and toolchain](../engineering/ci-and-toolchain.md)) covers the
   third surface, queries-versus-migrations, by construction.
+
+### Claim formats (0033)
+
+```sql
+ALTER TABLE memories ADD COLUMN format text NOT NULL DEFAULT 'text/plain', ADD COLUMN title text,
+    ADD COLUMN search_text text, ADD COLUMN search_text_by text;
+-- CHECKs, NOT VALID then VALIDATE: format ~ '^[a-z]+/[a-z0-9.+-]+(; lang=[a-z0-9]+)?$';
+-- title one line of 1 to 100 characters; (search_text IS NULL) = (search_text_by IS NULL)
+-- oml_search_vector_fold, oml_search_postings_fold and oml_search_vocabulary_fold read
+-- coalesce(search_text, claim); the three triggers also fire on an update naming search_text
+```
+
+`format` and `title` are the signed values of the version ([ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md)
+d1, d2, d10); every existing row is `text/plain` with no title. `search_text` is what the format's
+adapter derived for search, with the adapter and version in `search_text_by` (`mermaid/1`), and is
+`NULL` for a prose row, whose lexemes, postings and vocabulary are those of `claim` exactly as
+before. It is plaintext derived from the body and is erased with it ([ADR-0005](../adr/ADR-0005-erasure-by-crypto-shredding.md)
+d4). The lexemes, the postings, the vocabulary, the learned sparse encoder's input and the
+reranker's passage all read `coalesce(search_text, claim)`.

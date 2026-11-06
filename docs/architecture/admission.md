@@ -176,6 +176,19 @@ the reviewed claim is provenance + digest + scan result, stated honestly per typ
 ([storage](storage.md) owns the attachment rules). Scan latency is unmeasured; a rule pass is
 expected to scale with body bytes, and no figure is asserted until one is measured.
 
+A claim in a format other than prose is scanned twice over, never less than prose is
+([ADR-0056](../adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md)
+d6). The adapter accepts the source or refuses it by name (`submission.format_invalid`) before the
+scan; the scan then runs over the source exactly as it does for prose, and over each decoded
+string the adapter hands it, the scalars of a JSON or YAML document after escapes, quoting,
+folding and block scalars are decoded, because a rule that reads only bytes does not see
+`"\u002d-----BEGIN PRIVATE KEY"`. A finding on a decoded string names its key path and never the
+value. A value under a key whose last segment is `password`, `passwd`, `secret`, `token`, `api_key`,
+`apikey`, `private_key`, `client_secret`, `authorization` or `credentials`, or ends `_secret`,
+`_token` or `_key`, is vetoed as `secret.keyed_value` unless it is empty or a placeholder (`<…>`,
+`${…}`, `{{…}}`, `***`, `changeme`, `example`, `redacted`). A format can add a finding and never
+remove one. The title is scanned as free text that reaches the journal.
+
 One scanner lives outside the default set: the **vocab scanner**, selected only where a
 workarea's `vocabulary_policy` (below) names a vocabulary. It checks cited CURIEs against the
 policy's pinned release — the scan verdict records that release id alongside the scanner version

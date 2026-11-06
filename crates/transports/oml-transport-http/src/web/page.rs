@@ -69,24 +69,38 @@ const STYLE_DIGEST_B64: [u8; 44] = base64_32(&STYLE_DIGEST);
 /// configured providers, and no frame may hold a page (ADR-0045 d8).
 #[must_use]
 pub fn content_security_policy(providers: &[Provider]) -> String {
+    content_security_policy_framing(providers, None)
+}
+
+/// [`content_security_policy`] with the one source a page that shows a
+/// Mermaid claim may frame, the render route (ADR-0056 d9): the pages stay
+/// without script, and without a `frame-src` no frame loads at all.
+#[must_use]
+pub fn content_security_policy_framing(providers: &[Provider], frame_src: Option<&str>) -> String {
     let digest = std::str::from_utf8(&STYLE_DIGEST_B64).expect("base64 is ASCII");
     let mut form_action = String::from("'self'");
     for provider in providers {
         form_action.push(' ');
         form_action.push_str(provider.origin());
     }
+    let frame = frame_src.map_or_else(String::new, |src| format!(" frame-src {src};"));
     format!(
-        "default-src 'none'; style-src 'sha256-{digest}'; form-action {form_action}; \
+        "default-src 'none'; style-src 'sha256-{digest}'; form-action {form_action};{frame} \
          frame-ancestors 'none'; base-uri 'none'"
     )
 }
 
 /// The headers every web answer carries, a page or a redirect.
-pub(crate) fn secure(mut response: Response, providers: &[Provider]) -> Response {
+pub(crate) fn secure(
+    mut response: Response,
+    providers: &[Provider],
+    frame_src: Option<&str>,
+) -> Response {
     let headers = response.headers_mut();
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_str(&content_security_policy(providers)).expect("the CSP is ASCII"),
+        HeaderValue::from_str(&content_security_policy_framing(providers, frame_src))
+            .expect("the CSP is ASCII"),
     );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(
@@ -101,14 +115,19 @@ pub(crate) fn secure(mut response: Response, providers: &[Provider]) -> Response
 }
 
 /// A page answer: `text/html` under [`secure`]'s headers.
-pub(crate) fn page_response(status: StatusCode, html: String, providers: &[Provider]) -> Response {
+pub(crate) fn page_response(
+    status: StatusCode,
+    html: String,
+    providers: &[Provider],
+    frame_src: Option<&str>,
+) -> Response {
     let mut response = Response::new(Body::from(html));
     *response.status_mut() = status;
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/html; charset=utf-8"),
     );
-    secure(response, providers)
+    secure(response, providers, frame_src)
 }
 
 /// A short string from a person, an agent, a provider or the store, as a

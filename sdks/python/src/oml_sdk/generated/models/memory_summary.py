@@ -78,6 +78,9 @@ class MemorySummary:
             YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2).
         valid_until (None | str | Unset): When it stops holding, as signed, or the instant a ratified supersession ended
             it at; null when open (proposed ADR-0059 d2, d4).
+        format_ (str | Unset): The media type signed with the version; text/plain for every version written before
+            formats (ADR-0056 d1, d12).
+        title (None | str | Unset): The title signed with the version, or null (ADR-0056 d10).
         replaces_valid_until (str | Unset): On a held successor alone: the instant approving it ends the version it
             replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when
             approving ends nothing (proposed ADR-0059 d4).
@@ -112,6 +115,8 @@ class MemorySummary:
     attachments: list[AttachmentDescriptor] | Unset = UNSET
     valid_from: None | str | Unset = UNSET
     valid_until: None | str | Unset = UNSET
+    format_: str | Unset = UNSET
+    title: None | str | Unset = UNSET
     replaces_valid_until: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -231,6 +236,14 @@ class MemorySummary:
         else:
             valid_until = self.valid_until
 
+        format_ = self.format_
+
+        title: None | str | Unset
+        if isinstance(self.title, Unset):
+            title = UNSET
+        else:
+            title = self.title
+
         replaces_valid_until = self.replaces_valid_until
 
         field_dict: dict[str, Any] = {}
@@ -280,6 +293,10 @@ class MemorySummary:
             field_dict["valid_from"] = valid_from
         if valid_until is not UNSET:
             field_dict["valid_until"] = valid_until
+        if format_ is not UNSET:
+            field_dict["format"] = format_
+        if title is not UNSET:
+            field_dict["title"] = title
         if replaces_valid_until is not UNSET:
             field_dict["replaces_valid_until"] = replaces_valid_until
 
@@ -484,6 +501,17 @@ class MemorySummary:
 
         valid_until = _parse_valid_until(d.pop("valid_until", UNSET))
 
+        format_ = d.pop("format", UNSET)
+
+        def _parse_title(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        title = _parse_title(d.pop("title", UNSET))
+
         replaces_valid_until = d.pop("replaces_valid_until", UNSET)
 
         memory_summary = cls(
@@ -516,6 +544,8 @@ class MemorySummary:
             attachments=attachments,
             valid_from=valid_from,
             valid_until=valid_until,
+            format_=format_,
+            title=title,
             replaces_valid_until=replaces_valid_until,
         )
 

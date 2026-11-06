@@ -9,6 +9,7 @@ import {
   ApiError,
   ConfigError,
   FAMILIES,
+  fenceFor,
   type MemoryPage,
   OmlClient,
   type ReadInput,
@@ -415,4 +416,15 @@ test("every request names the SDK and package.json's version in User-Agent (ADR-
   const { requests, fetcher } = recorder(200, { items: [], next_cursor: null });
   await client(fetcher).read({ limit: 1 });
   assert.equal(requests[0]?.headers.get("user-agent"), USER_AGENT);
+});
+
+test("fenceFor names the Markdown fence of each media type", () => {
+  assert.equal(fenceFor("text/vnd.oml.mermaid"), "mermaid");
+  assert.equal(fenceFor("application/json"), "json");
+  assert.equal(fenceFor("application/yaml"), "yaml");
+  assert.equal(fenceFor("text/vnd.oml.code; lang=rust"), "rust");
+  assert.equal(fenceFor("text/markdown"), "markdown");
+  assert.equal(fenceFor("text/plain"), "");
+  assert.equal(fenceFor(undefined), "");
+  assert.equal(fenceFor("application/x-unknown"), "");
 });

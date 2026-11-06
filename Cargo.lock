@@ -2064,6 +2064,7 @@ dependencies = [
  "hex",
  "http-body",
  "oml-app",
+ "oml-format",
  "prometheus-client",
  "ring",
  "serde",

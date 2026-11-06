@@ -185,6 +185,30 @@ def _start_pair(url: str | None, api_key: str | None) -> tuple[str, str]:
     raise ConfigError("no URL and API key: pass url and api_key, or set OML_URL and OML_API_KEY")
 
 
+def fence_for(format: str | None) -> str:
+    """The Markdown fence info string of a claim's media type, so a client
+    that renders fenced blocks can show a claim by its format: `mermaid`,
+    `json`, `yaml`, the `lang` of a code snippet, `markdown`, and the empty
+    string for plain text and for a media type this SDK does not know
+    (ADR-0056 d9).
+    """
+    media = (format or "text/plain").split(";")[0].strip()
+    if media == "text/markdown":
+        return "markdown"
+    if media == "text/vnd.oml.mermaid":
+        return "mermaid"
+    if media == "application/json":
+        return "json"
+    if media == "application/yaml":
+        return "yaml"
+    if media == "text/vnd.oml.code":
+        for part in (format or "").split(";")[1:]:
+            name, _, value = part.strip().partition("=")
+            if name == "lang" and value:
+                return value.strip()
+    return ""
+
+
 class OmlClient:
     """A client for one OML server under one key.
 
@@ -275,6 +299,8 @@ class OmlClient:
         retirement: bool | None = None,
         reason: str | None = None,
         anchor: Mapping[str, Any] | None = None,
+        format: str | None = None,
+        title: str | None = None,
         idempotency_key: str | None = None,
     ) -> Written[SubmitAccepted]:
         """Write a claim, held on arrival; the fields set choose the route
@@ -287,6 +313,8 @@ class OmlClient:
         With `replaces`, `expected_version` is required: the claim's latest
         version as last read, else `submission.version_conflict` (ADR-0057
         d19). `anchor` is the origin the author declares (ADR-0057 d1).
+        `format` is the media type of `text`, `text/plain` when omitted, and
+        `title` the one line a claim that is not prose requires (ADR-0056).
         """
         if replaces is None:
             for field, value in (
@@ -307,6 +335,8 @@ class OmlClient:
                 workarea=_opt(workarea),
                 derives_from=list(derives_from) if derives_from is not None else UNSET,
                 anchor=Anchor.from_dict(dict(anchor)) if anchor is not None else UNSET,
+                format_=_opt(format),
+                title=_opt(title),
             )
             return self._write(
                 idempotency_key,
@@ -334,6 +364,8 @@ class OmlClient:
             kind=SupersedeRequestKind(kind) if kind is not None else UNSET,
             derives_from=list(derives_from) if derives_from is not None else UNSET,
             reason=_opt(reason),
+            format_=_opt(format),
+            title=_opt(title),
         )
         return self._write(
             idempotency_key,

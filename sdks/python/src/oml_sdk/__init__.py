@@ -4,7 +4,7 @@
 `OmlClient` is the hand-written wrapper over it (docs/engineering/sdks.md).
 """
 
-from .client import OmlClient, Written
+from .client import OmlClient, Written, fence_for
 from .errors import (
     AccessError,
     ApiError,
@@ -53,4 +53,5 @@ __all__ = [
     "VocabError",
     "WorkareaError",
     "Written",
+    "fence_for",
 ]

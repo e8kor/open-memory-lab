@@ -50,6 +50,7 @@ fn test_app(store: &MemStore) -> TestApp {
     app(store)
         .with_observer(Arc::new(ScopeObserver))
         .with_oauth_issuer(Issuer::parse(ISSUER).expect("a public origin"))
+        .with_formats(oml_format::compiled())
 }
 
 /// A tenant whose admin key put `alice@example.com` on the list as `alice`,
@@ -2213,4 +2214,191 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
         page.contains("approving ends version 1 at 2026-06-01T00:00:00.000000Z"),
         "{page}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The frame that draws a Mermaid claim (ADR-0056 d9)
+// ---------------------------------------------------------------------------
+
+const DIAGRAM: &str = "flowchart LR\n  A[Checkout] -->|calls| B[Payments]\n";
+
+async fn agent_writes_diagram(rig: &Rig, value: &str) -> uuid::Uuid {
+    rig.app
+        .submit_memory(
+            value,
+            &oml_app::types::SubmitRequest {
+                anchor: None,
+                idempotency_key: "k-diagram".to_owned(),
+                claim_key: None,
+                verb: Some(oml_app::types::SubmitVerb::Remember),
+                kind: oml_app::domain::MemoryKind::Memory,
+                body: DIAGRAM.to_owned(),
+                workarea: None,
+                derives_from: Vec::new(),
+                severity: None,
+                rule: None,
+                valid_from: None,
+                valid_until: None,
+                format: Some("text/vnd.oml.mermaid".to_owned()),
+                title: Some("The payment flow".to_owned()),
+            },
+        )
+        .await
+        .expect("the agent writes a diagram")
+        .receipt
+        .memory_id
+}
+
+/// A signed-in person whose agent wrote a diagram: the cookie and the id.
+async fn person_with_a_diagram(rig: &Rig) -> (String, uuid::Uuid) {
+    let cookie = signed_in(rig, "sub-1", EMAIL).await;
+    let (_, _, page) = act(
+        rig,
+        &cookie,
+        "/web",
+        &[
+            ("action", "issue_key"),
+            ("name", "laptop"),
+            ("role", "writer"),
+        ],
+    )
+    .await;
+    let memory = agent_writes_diagram(rig, &value_of(&page)).await;
+    (cookie, memory)
+}
+
+fn frame_token(page: &str) -> String {
+    let at = page.find("src=\"/web/render/").expect("an iframe") + "src=\"/web/render/".len();
+    page[at..at + page[at..].find('"').expect("an end")].to_owned()
+}
+
+#[tokio::test]
+async fn the_parent_pages_carry_no_script_and_frame_only_the_render_route() {
+    let rig = rig().await;
+    let (cookie, memory) = person_with_a_diagram(&rig).await;
+    let _ = memory;
+    let (status, headers, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(!page.contains("<script"), "the parent page has no script");
+    assert!(
+        page.contains("<iframe sandbox=\"allow-scripts\" src=\"/web/render/"),
+        "{page}"
+    );
+    assert!(
+        !page.contains("allow-same-origin"),
+        "the frame is an opaque origin"
+    );
+    assert!(
+        page.contains("flowchart LR"),
+        "the source is beside the drawing: {page}"
+    );
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(
+        csp.contains(&format!("frame-src {ISSUER}/web/render/;")),
+        "{csp}"
+    );
+    assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+    assert!(
+        !csp.contains("script-src"),
+        "no page may run a script: {csp}"
+    );
+}
+
+#[tokio::test]
+async fn the_render_frame_answers_under_its_own_policy_with_the_source_escaped() {
+    let rig = rig().await;
+    let (cookie, memory) = person_with_a_diagram(&rig).await;
+    let _ = memory;
+    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    let token = frame_token(&page);
+    let (status, headers, body) = send(
+        &rig.router,
+        get(&format!("/web/render/{token}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert_eq!(csp, oml_transport_http::web::render::frame_policy(ISSUER));
+    for want in [
+        "sandbox allow-scripts;",
+        "default-src 'none'",
+        "connect-src 'none'",
+        "img-src 'none'",
+        "form-action 'none'",
+        "base-uri 'none'",
+        "frame-ancestors https://oml.example.com",
+    ] {
+        assert!(csp.contains(want), "{want} in {csp}");
+    }
+    assert!(!csp.contains("unsafe-eval"), "{csp}");
+    assert!(!csp.contains("allow-same-origin"), "{csp}");
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert!(
+        body.contains("<pre class=\"mermaid\">flowchart LR"),
+        "{body}"
+    );
+    assert!(
+        body.contains("-&gt;") || body.contains("--&gt;") || body.contains("&gt;"),
+        "escaped: {body}"
+    );
+    assert!(
+        body.contains(&oml_transport_http::web::render::bundle_path()),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn a_render_token_is_bound_to_its_session_and_expires() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", false).await;
+    let (cookie, memory) = person_with_a_diagram(&rig).await;
+    let _ = memory;
+    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    let token = frame_token(&page);
+    let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
+    for (who, path) in [
+        (Some(bob.as_str()), format!("/web/render/{token}")),
+        (None, format!("/web/render/{token}")),
+        (Some(cookie.as_str()), format!("/web/render/{}0", token)),
+        (Some(cookie.as_str()), "/web/render/forged".to_owned()),
+    ] {
+        let (status, _, body) = send(&rig.router, get(&path, who)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+        assert!(!body.contains("flowchart"), "{body}");
+    }
+    let (status, headers, body) = send(
+        &rig.router,
+        get(&oml_transport_http::web::render::bundle_path(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers[header::CONTENT_TYPE],
+        "text/javascript; charset=utf-8"
+    );
+    assert!(
+        headers[header::CACHE_CONTROL]
+            .to_str()
+            .unwrap()
+            .contains("immutable")
+    );
+    assert!(!body.is_empty());
+    let (status, _, _) = send(&rig.router, get("/web/assets/mermaid-0000.js", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "no other file is served");
+}
+
+#[tokio::test]
+async fn the_review_card_shows_the_source_the_format_and_what_it_will_be_found_by() {
+    let rig = rig().await;
+    let (cookie, memory) = person_with_a_diagram(&rig).await;
+    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    let _ = memory;
+    assert!(page.contains("flowchart LR"), "the complete source: {page}");
+    assert!(page.contains("text/vnd.oml.mermaid"), "{page}");
+    assert!(page.contains("The payment flow"), "the title: {page}");
+    assert!(
+        page.contains("Checkout (A) calls Payments (B)."),
+        "what it will be found by: {page}"
+    );
+    assert!(page.contains("<iframe sandbox=\"allow-scripts\""), "{page}");
 }

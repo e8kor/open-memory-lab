@@ -1063,7 +1063,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.universe_refused" | "workarea.frozen" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -1108,6 +1108,10 @@ export interface components {
             /** @description Artifact ids; the declared lineage (omission is undetectable — honesty rule). */
             derives_from?: string[];
             anchor?: components["schemas"]["Anchor"];
+            /** @description The media type of body, signed with the version and fixed for it: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. An unknown value is request.validation with details.field format and details.allowed; a source its format refuses is 422 submission.format_invalid; kinds other than memory and derived_fact take text/plain or text/markdown only (ADR-0056 d1, d13). */
+            format?: string;
+            /** @description One line stating the one fact the body shows, NFC, at most 100 characters, signed with the version. Required with a format other than text/plain and text/markdown: request.validation with details.field title otherwise (ADR-0056 d10). */
+            title?: string;
         };
         SubmitAccepted: {
             artifact_id: string;
@@ -1205,6 +1209,10 @@ export interface components {
             valid_from?: string | null;
             /** @description When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (proposed ADR-0059 d2, d4). */
             valid_until?: string | null;
+            /** @description The media type signed with the version; text/plain for every version written before formats (ADR-0056 d1, d12). */
+            format?: string;
+            /** @description The title signed with the version, or null (ADR-0056 d10). */
+            title?: string | null;
             /** @description On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (proposed ADR-0059 d4). */
             replaces_valid_until?: string;
         };
@@ -1520,6 +1528,10 @@ export interface components {
             valid_from?: components["schemas"]["ValidEnd"];
             /** @description When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3). */
             valid_until?: components["schemas"]["ValidEnd"];
+            /** @description The media type of body, signed with the successor and fixed for it; nothing is inherited from the target, so a format changes by supersession alone: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. An unknown value is request.validation with details.field format and details.allowed; a source its format refuses is 422 submission.format_invalid; kinds other than memory and derived_fact take text/plain or text/markdown only (ADR-0056 d1, d13). */
+            format?: string;
+            /** @description One line stating the one fact the body shows, NFC, at most 100 characters, signed with the version. Required with a format other than text/plain and text/markdown: request.validation with details.field title otherwise (ADR-0056 d10). */
+            title?: string;
         };
         /** @description The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event, immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither. Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path or fragment is submission.scan_veto. */
         Anchor: {
