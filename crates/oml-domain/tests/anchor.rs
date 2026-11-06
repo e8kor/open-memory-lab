@@ -261,3 +261,17 @@ fn a_lake_anchor_with_user_information_a_query_a_fragment_or_a_bad_bucket_is_ref
         );
     }
 }
+
+#[test]
+fn the_rust_hashers_are_accepted_and_an_unknown_hasher_is_request_validation() {
+    // ADR-0061 d7: the closed set gains the two hashers of the rust adapter.
+    for hasher in ["oml-md/1", "oml-rustdoc/1", "oml-crate/1"] {
+        let anchor = with("hasher", json!(hasher));
+        let parsed = Anchor::from_json(&anchor, "/anchor").expect(hasher);
+        assert_eq!(parsed.to_json(), anchor);
+    }
+    assert_eq!(
+        refused(&with("hasher", json!("oml-rustdoc+pub/1"))),
+        "/anchor/hasher"
+    );
+}

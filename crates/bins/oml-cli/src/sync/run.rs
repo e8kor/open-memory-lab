@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use super::adapter::{EdgeStatement, Kind};
 use super::api::{ListQuery, Listed, Me, SyncApi};
-use super::hash::HASHER;
+use super::hash::{HASHER, HASHER_CRATE, HASHER_RUSTDOC};
 use super::plan::{Context, EdgeLine, Entry, Outcome, Plan, Scope, SourceItem, diff, edge_lines};
 use super::source::{Git, check_repo, glob_match, is_secret_shaped, repo_of_remote};
 use crate::client::CliError;
@@ -101,6 +101,9 @@ pub struct Extracted {
     /// Files skipped, with why: invalid UTF-8, a claim key another file
     /// also yields.
     pub unreadable: Vec<(String, String)>,
+    /// Files left out on purpose, with why: undeclared or generated. Their
+    /// claims are never retired, and they do not fail the run.
+    pub skipped: Vec<(String, String)>,
     pub warnings: Vec<String>,
 }
 
@@ -113,21 +116,21 @@ pub fn extract(loaded: &Loaded, kind: Kind) -> Extracted {
         items: Vec::new(),
         edges: Vec::new(),
         unreadable: Vec::new(),
+        skipped: Vec::new(),
         warnings: Vec::new(),
     };
     let mut first: HashMap<String, String> = HashMap::new();
-    let mut per_file = Vec::new();
     let excluded = |f: &str| loaded.exclude.iter().any(|g| glob_match(g, f));
-    for (file, bytes) in loaded
+    let accepted: Vec<(String, Vec<u8>)> = loaded
         .files
         .iter()
         .filter(|(f, _)| adapter.accepts(f) && !excluded(f))
-    {
-        match adapter.extract(file, bytes) {
-            Ok(x) => per_file.push((file.clone(), x)),
-            Err(why) => out.unreadable.push((file.clone(), why)),
-        }
-    }
+        .cloned()
+        .collect();
+    let set = adapter.extract_set(&accepted);
+    let per_file = set.files;
+    out.unreadable.extend(set.unreadable);
+    out.skipped.extend(set.skipped);
     // A claim key two items yield is refused with the file that yields it
     // again, so neither write lands on the other's claim.
     let mut bad: HashMap<String, String> = HashMap::new();
@@ -229,8 +232,20 @@ pub fn load(cwd: &Path, opts: &Options) -> Result<Loaded, String> {
     let mut files = Vec::new();
     let mut skipped = Vec::new();
     let excluded = |f: &str| opts.exclude.iter().any(|g| glob_match(g, f));
+    let rust = opts.adapter == Some(Kind::Rust);
+    if rust && opts.pr.is_some() {
+        return Err(
+            "--pr is refused with --adapter rust: a crate's claim names its dependents, which \
+             live in manifests a pull request did not change, so the rust adapter reads the \
+             whole source (ADR-0061 d4)"
+                .into(),
+        );
+    }
     if !opts.retire_all {
-        for file in names.iter().filter(|f| readable_kind(f) && !excluded(f)) {
+        for file in names
+            .iter()
+            .filter(|f| if rust { rust_readable(f) } else { readable_kind(f) } && !excluded(f))
+        {
             if is_secret_shaped(file) {
                 skipped.push((
                     file.clone(),
@@ -283,6 +298,13 @@ pub fn record_exclude(loaded: &Loaded, opts: &Options) -> Result<(), String> {
         &exclude_config(opts, &loaded.path),
         &exclude_value(&opts.exclude),
     )
+}
+
+/// Whether the `rust` adapter reads a file of this name: a manifest, or a
+/// `.rs` file under a `src/` directory (ADR-0061 d1).
+fn rust_readable(path: &str) -> bool {
+    path.rsplit('/').next() == Some("Cargo.toml")
+        || (path.ends_with(".rs") && (path.starts_with("src/") || path.contains("/src/")))
 }
 
 /// Whether any adapter reads a file of this name: markdown or plain text.
@@ -348,6 +370,7 @@ pub fn execute(
             items: Vec::new(),
             edges: Vec::new(),
             unreadable: Vec::new(),
+            skipped: Vec::new(),
             warnings: Vec::new(),
         }
     } else {
@@ -356,6 +379,7 @@ pub fn execute(
     ctx.skip_paths = x
         .unreadable
         .iter()
+        .chain(&x.skipped)
         .chain(&loaded.skipped)
         .map(|(p, _)| p.clone())
         .collect();
@@ -364,7 +388,7 @@ pub fn execute(
         quiet: opts.json,
     };
     p.line(&format!(
-        "source    {} @ {}  {}  adapter {}  hasher {HASHER}",
+        "source    {} @ {}  {}  adapter {}  {}",
         loaded.repo,
         &loaded.commit[..12.min(loaded.commit.len())],
         if loaded.path.is_empty() {
@@ -372,13 +396,14 @@ pub fn execute(
         } else {
             &loaded.path
         },
-        kind.name()
+        kind.name(),
+        hashers_line(kind)
     ));
     p.line(&format!("workarea  {workarea}  key {}", me.name));
     for (file, why) in &x.unreadable {
         p.line(&format!("unreadable {file}: {why}"));
     }
-    for (file, why) in &loaded.skipped {
+    for (file, why) in x.skipped.iter().chain(&loaded.skipped) {
         p.line(&format!("skipped   {file}: {why}"));
     }
     for warning in &x.warnings {
@@ -449,6 +474,10 @@ fn recorded_adapters(ctx: &Context, own: &[Listed], served: &[Listed]) -> BTreeS
             })
         })
         .filter_map(|v| Kind::of_key(&v.claim_key))
+        // The rust adapter's namespace is its own: another adapter's run
+        // never answers for it, and it never answers for another's
+        // (ADR-0061 d10).
+        .filter(|k| *k != Kind::Rust)
         .collect()
 }
 
@@ -473,6 +502,7 @@ fn resolve_adapter(
             .join(", ")
     };
     match loaded.requested {
+        Some(Kind::Rust) => Ok((Kind::Rust, vec![Kind::Rust])),
         Some(k) if recorded.is_empty() || recorded.contains(&k) => Ok((k, vec![k])),
         Some(k) if opts.change_adapter && !opts.check => {
             let mut all: Vec<Kind> = recorded.iter().copied().collect();
@@ -961,13 +991,24 @@ fn edge_summary(edges: &[EdgeLine]) -> String {
     )
 }
 
+/// The hashers an adapter's anchors name, as the run's first line says them.
+fn hashers_line(kind: Kind) -> String {
+    match kind {
+        Kind::Rust => format!("hashers {HASHER_CRATE}, {HASHER_RUSTDOC}"),
+        _ => format!("hasher {HASHER}"),
+    }
+}
+
 fn source_json(loaded: &Loaded, x: &Extracted) -> Value {
     json!({
         "repo": loaded.repo,
         "rev": loaded.commit,
         "path": loaded.path,
         "adapter": x.adapter.name(),
-        "hasher": HASHER,
+        "hasher": match x.adapter {
+            Kind::Rust => format!("{HASHER_CRATE}, {HASHER_RUSTDOC}"),
+            _ => HASHER.to_owned(),
+        },
     })
 }
 
@@ -995,7 +1036,7 @@ fn plan_json(
         "workarea": workarea,
         "items": plan.entries,
         "unreadable": x.unreadable.iter().map(|(f, w)| json!({"path": f, "why": w})).collect::<Vec<_>>(),
-        "skipped": loaded.skipped.iter().map(|(f, w)| json!({"path": f, "why": w})).collect::<Vec<_>>(),
+        "skipped": x.skipped.iter().chain(&loaded.skipped).map(|(f, w)| json!({"path": f, "why": w})).collect::<Vec<_>>(),
         "warnings": x.warnings,
         "edges": edges,
         "summary": summary,

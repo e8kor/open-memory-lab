@@ -51,6 +51,7 @@ oml-pg.workspace = true
 oml-server-lead.workspace = true
 oml-transport-http.workspace = true
 sqlx.workspace = true
+syn.workspace = true
 tokio = { workspace = true, features = ["net"] }
 
 [lints]
