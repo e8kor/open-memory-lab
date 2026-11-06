@@ -556,6 +556,36 @@ Decided, not built: this lane wrote no code and ran no build.
 
     `oml_read` gains one argument; the catalog stays three tools (ADR-0039 d8).
 
+- **d23 — Phase 1 as built, and where it reads d1 to d22 differently (2026-11-06).** The operator
+  asked for the reader, the `delta` adapter, the test lake and staleness first, without catalogs or
+  the ontology. Built: `oml-delta-log` (d2 to d4), `oml sync <lake directory> --adapter delta` in the
+  `lake-sync` build (d3, d6 to d8), the three hashers and the anchor grammar on the server (d5, d7),
+  `testing/lake/` (d3, d19). Where the build reads the design differently, each is stated here so the
+  design and the code agree:
+    - **A local lake only.** `<lake uri>` is a directory or a `file://` URL, found by delimiter
+      listing of the disk; `s3://`, `gs://` and `abfss://` locations are refused by name until v0.6.2.
+      The anchor never carries the directory: a lake read from a copy passes `--uri-base`, and
+      without it the root's own `file://` location is the `uri`, which the operator admitted for a
+      test lake, so the server's grammar accepts `file:///<path>` beside d5's three schemes.
+    - **`https` keeps its trailing slash.** d5's "no trailing `/`" is enforced for `s3`, `gs` and
+      `file`; an `https` page anchor ending in `/` was valid under ADR-0057 d3 and stays valid.
+    - **A column's key without column mapping** is its dotted logical path, mapped and fitted as the
+      stem is; with column mapping it is the leaf's physical name, as d6 says.
+    - **`recreated` is a rollback until phase 2.** A table read at a version below the one a claim
+      was last known at is reported `rollback`, writes nothing and exits 1; d8's `metaData.id`
+      comparison and `--accept-recreated` come with the rest of d8's table in v0.6.2.
+    - **A check per version, not per day.** An unchanged claim records a `fresh` check when the table's
+      version differs from the one its latest check or anchor names, and a table whose version did
+      not move records nothing; d11's `--recheck-after` cadence comes with object storage.
+    - **Own rows only.** The run lists the key's own claims; another key's claim under a lake key is
+      the server's `submission.claim_key_conflict`, reported by the write. `anchor_uri_prefix` on recall
+      and the listing (d22) is not built; the anchor's `rev` is the Delta version and its `hasher`
+      one of d7's three.
+    - **Not yet built, by phase:** `oml-lake.toml`, `--recheck-after`, retirement of a removed table
+      and `doctor` lines (v0.6.2, d10, d20); `oml lake fetch` and the catalog adapters (v0.6.3); the
+      ontology (v0.6.4). `oml-lake`'s release artifact waits on FR-140's size measurement; CI prints
+      the size the lake build adds on each target.
+
 ## Contract sketch
 
 **Anchor** (ADR-0057's schema, changed fields only):
