@@ -13,10 +13,11 @@
 -- Safe on a live database, as 0025 and 0026 are: a lock is waited for at most
 -- 5 s, then the migration fails and is run again in a quieter moment. Adding
 -- a column with a constant default is a catalog change. The checks are added
--- NOT VALID, which takes no scan under the exclusive lock, then validated
--- under SHARE UPDATE EXCLUSIVE, which lets reads and writes run. The
--- triggers are replaced under the lock their creation takes on each
--- partition, which waits on no row.
+-- NOT VALID, which takes no scan under the exclusive lock this transaction
+-- holds until it commits; 0034 validates them, outside any transaction, so
+-- the scans run under SHARE UPDATE EXCLUSIVE, which lets reads and writes
+-- run (review of #90, H2). The triggers are replaced under the lock their
+-- creation takes on each partition, which waits on no row.
 
 SET LOCAL lock_timeout = '5s';
 
@@ -37,10 +38,6 @@ ALTER TABLE memories
 ALTER TABLE memories
     ADD CONSTRAINT memories_search_text_by CHECK (
         (search_text IS NULL) = (search_text_by IS NULL)) NOT VALID;
-
-ALTER TABLE memories VALIDATE CONSTRAINT memories_format_shape;
-ALTER TABLE memories VALIDATE CONSTRAINT memories_title_line;
-ALTER TABLE memories VALIDATE CONSTRAINT memories_search_text_by;
 
 COMMENT ON COLUMN memories.format IS
     'The media type signed with the version, fixed for it (ADR-0056 d1, d2). '

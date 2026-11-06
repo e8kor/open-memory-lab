@@ -1859,12 +1859,12 @@ The rules:
   sqlx offline query check ([CI and toolchain](../engineering/ci-and-toolchain.md)) covers the
   third surface, queries-versus-migrations, by construction.
 
-### Claim formats (0033)
+### Claim formats (0033, 0034)
 
 ```sql
 ALTER TABLE memories ADD COLUMN format text NOT NULL DEFAULT 'text/plain', ADD COLUMN title text,
     ADD COLUMN search_text text, ADD COLUMN search_text_by text;
--- CHECKs, NOT VALID then VALIDATE: format is a media type, with an optional "; lang=<tag>";
+-- CHECKs, NOT VALID in 0033 then VALIDATEd in 0034, a no-transaction migration: format is a media type, with an optional "; lang=<tag>";
 -- title one line of 1 to 100 characters; (search_text IS NULL) = (search_text_by IS NULL)
 -- oml_search_vector_fold, oml_search_postings_fold and oml_search_vocabulary_fold read
 -- coalesce(search_text, claim); the three triggers also fire on an update naming search_text
