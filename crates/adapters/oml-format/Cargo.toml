@@ -14,3 +14,7 @@ serde = { workspace = true, features = ["derive"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tokio.workspace = true

@@ -409,3 +409,128 @@ fn the_caps_hold() {
         "mermaid.too_many_nodes"
     );
 }
+
+// ---------------------------------------------------------------------------
+// review of #90: H1, M1, M2
+// ---------------------------------------------------------------------------
+
+#[test]
+fn an_unterminated_mermaid_label_is_a_syntax_error_never_a_panic() {
+    for source in [
+        "flowchart LR\n  A[\"abc",
+        "flowchart LR\n  A[\"abc\n  B-->C",
+        "flowchart LR\n  A[\"",
+        "flowchart LR\n  A[",
+        "flowchart LR\n  A --> B[\"x",
+    ] {
+        let (reason, line) = refusal(MERMAID, source);
+        assert_eq!(reason, "mermaid.syntax_error", "{source:?}");
+        assert!(line >= 1, "{source:?}");
+    }
+}
+
+#[test]
+fn a_semicolon_inside_a_quoted_mermaid_label_is_label_text() {
+    let text = search_text(MERMAID, "flowchart LR\n  A[\"one; two\"] --> B[\"three\"]");
+    assert!(text.contains("one; two"), "{text}");
+}
+
+#[test]
+fn a_semicolon_chained_html_entity_label_is_refused_by_name_not_by_a_panic() {
+    let (reason, _) = refusal(MERMAID, "flowchart LR\n  A[\"#lt;img src=x#gt;\"] --> B");
+    assert_eq!(reason, "mermaid.html_label_refused");
+}
+
+#[test]
+fn a_mermaid_entity_code_that_decodes_to_markup_is_refused_by_name() {
+    let (reason, _) = refusal(MERMAID, "erDiagram\n A ||--o{ B : \"#lt;x#gt;\"");
+    assert_eq!(reason, "mermaid.html_label_refused");
+    let (reason, _) = refusal(MERMAID, "erDiagram\n A ||--o{ B : \"#60;x#62;\"");
+    assert_eq!(reason, "mermaid.html_label_refused");
+}
+
+#[test]
+fn the_decoded_text_of_a_mermaid_label_is_scanned_so_an_encoded_key_is_caught() {
+    let a = adapter(MERMAID);
+    let parsed = a
+        .validate("sequenceDiagram\n A->>B: AKIA#73;OSFODNN7EXAMPLE")
+        .expect("valid");
+    let views = a.scan_views(&parsed);
+    assert!(
+        views.iter().any(|v| v.text.contains("AKIAIOSFODNN7EXAMPLE")),
+        "{views:?}"
+    );
+    let plain = a
+        .validate("sequenceDiagram\n A->>B: hello")
+        .expect("valid");
+    assert!(a.scan_views(&plain).is_empty(), "no entity, no extra view");
+}
+
+#[test]
+fn a_secret_under_a_secret_named_key_is_vetoed_at_any_depth_in_json_and_yaml() {
+    for (media, source) in [
+        ("application/json", "{\"password\": [\"hunter2-real-secret\"]}"),
+        (
+            "application/json",
+            "{\"password\": {\"value\": \"hunter2-real-secret\"}}",
+        ),
+        (
+            "application/json",
+            "{\"a\": {\"token\": [[{\"x\": \"hunter2-real-secret\"}]]}}",
+        ),
+        ("application/yaml", "password:\n  - hunter2-real-secret\n"),
+        ("application/yaml", "db:\n  secret:\n    inner:\n      k: hunter2-real-secret\n"),
+        ("application/json", "{\"DB_PASSWORD\": \"hunter2-real-secret\"}"),
+    ] {
+        let parsed = adapter(media).validate(source).expect("valid");
+        let veto = parsed.veto.unwrap_or_else(|| panic!("{source:?} was not vetoed"));
+        assert!(veto.starts_with("secret.keyed_value"), "{veto}");
+        assert!(!veto.contains("hunter2"), "never the value: {veto}");
+        assert!(
+            !adapter(media)
+                .search_text(&adapter(media).validate(source).expect("valid"))
+                .contains("hunter2"),
+            "never in the search text: {source:?}"
+        );
+    }
+    let ok = adapter("application/json")
+        .validate("{\"password\": [\"changeme\", \"${X}\"]}")
+        .expect("valid");
+    assert_eq!(ok.veto, None, "placeholders under a nested secret key pass");
+}
+
+mod never_panics {
+    use super::*;
+    use proptest::prelude::*;
+
+    const FRAGMENTS: [&str; 30] = [
+        "flowchart LR", "graph TD", "sequenceDiagram", "classDiagram", "stateDiagram-v2",
+        "erDiagram", "A", "B", "-->", "---", "==>", "-.->", "--x", "|", "\"", "[", "]", "(",
+        "{", ";", "#lt;", "#60;", "&", "\n", " ", "%%", "<", ":", "--", "\\",
+    ];
+
+    fn mermaid_ish() -> impl Strategy<Value = String> {
+        prop_oneof![
+            proptest::collection::vec(proptest::sample::select(FRAGMENTS.to_vec()), 0..40)
+                .prop_map(|v| v.concat()),
+            (
+                proptest::sample::select(vec!["flowchart LR", "graph TD", "stateDiagram-v2",
+                    "classDiagram", "sequenceDiagram", "erDiagram"]),
+                proptest::collection::vec(proptest::sample::select(FRAGMENTS.to_vec()), 0..40),
+            )
+                .prop_map(|(h, v)| format!("{h}\n  {}", v.concat())),
+            "\\PC{0,200}",
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(4000))]
+
+        #[test]
+        fn validate_never_panics_on_any_mermaid_ish_source(source in mermaid_ish()) {
+            let a = adapter(MERMAID);
+            let _ = a.validate(&source);
+            let _ = a.diff(&source, "flowchart LR\n A --> B");
+        }
+    }
+}
