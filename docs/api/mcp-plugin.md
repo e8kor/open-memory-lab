@@ -275,8 +275,10 @@ nothing else.
 | `version` | Its ordinal within the `claim_key` |
 | `kind` | `memory`, `derived_fact`, `steering`, or a vocabulary kind |
 | `state` | `held`, `promoted`, `demoted`, `rejected`, `erased` |
+| `unreviewed` | True exactly when the version is held: the calling key's own, or, inside a workarea a person put in progress, another agent's memory served before review. Read it as a colleague's unchecked draft. *v0.6.0* ([ADR-0030](../adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d3, d4) |
 | `tip` | Whether it is the claim's served tip for the calling key, audience-scoped: for a key in a simulation's audience the overlay tip, which shadows the default tip, and for every other key the default tip ([audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); a superseded version is `promoted` with `tip: false` |
 | `retirement` | True on a retirement version ([http-api](http-api.md#supersede-post-v1memoriesartifact_idsupersede)) |
+| `anchor`, `stale`, `source_checked` | *Since v0.5.8 (ADR-0057 d1, d5):* the version's declared origin or null; `changed` or `removed` from the served version's latest source check, else null, never from a held version; and that check `{rev, at, result, moved_to}` or null. `oml_read` takes `anchor_repo` and `anchor_path_prefix` in recall and listing modes and refuses them in get mode. |
 | `replaces` | `{artifact_id, version}` of the version a supersession replaces; null for version 1, and null when the calling key cannot read the replaced version, under the same test as `derives_from` ([http-api](http-api.md#get-get-v1memoriesartifact_id)) |
 | `workarea` | The workarea node id; null when the calling key holds no role on the node, which only an own row an admin moved there can show ([naming a node](../architecture/roles-and-keys.md#own)) |
 | `workarea_path` | The derived path of that node; null wherever `workarea` is |
@@ -319,8 +321,8 @@ and `idempotency_key` are required:
 
 | Mode | Chosen by | Takes | Refused, each `request.validation` naming it in `details.field` | Rides |
 |---|---|---|---|---|
-| `submit` | no `replaces` | `claim_key`, `kind` (default `memory`), `derives_from`, `workarea` | `retirement`, `reason` | `POST /v1/memories`, journalled `submission.learn` when `derives_from` is non-empty and `submission.remember` otherwise |
-| `supersede` | `replaces` | `kind`, `derives_from`, `workarea`, `retirement`, `reason` | `claim_key` (the new version takes the target's); a `kind` other than `memory`, `derived_fact` or `steering`; a `workarea` not the target's; a target of a vocabulary kind | `POST /v1/memories/{replaces}/supersede`; `retirement: true` is ADR-0025 d11's retire-proposal, `text` stating why |
+| `submit` | no `replaces` | `claim_key`, `kind` (default `memory`), `derives_from`, `workarea`, `anchor` (ADR-0057 d1) | `retirement`, `reason`, `expected_version` | `POST /v1/memories`, journalled `submission.learn` when `derives_from` is non-empty and `submission.remember` otherwise |
+| `supersede` | `replaces` | `expected_version` (required; ADR-0057 d19), `kind`, `derives_from`, `workarea`, `retirement`, `reason`, `anchor` | `claim_key` (the new version takes the target's); a `kind` other than `memory`, `derived_fact` or `steering`; a `workarea` not the target's; a target of a vocabulary kind | `POST /v1/memories/{replaces}/supersede`; `retirement: true` is ADR-0025 d11's retire-proposal, `text` stating why |
 
 ```json
 {
@@ -391,9 +393,15 @@ naming it in `details.field`:
 | Mode | Arguments | Output | Rides |
 |---|---|---|---|
 | `get` | `artifact_id`; designed: `lineage` (`ancestors` \| `descendants`), `depth` | `{mode, items}`, one item with `derives_from` and `attachments` | `GET /v1/memories/{artifact_id}`; the designed lineage read |
-| `recall` | `query`, `workarea`, `k`, `kinds`, `include_unreviewed`, `max_tokens`, `search`, `match` | `{mode, steering, hits, search, budget?}` | `POST /v1/memories/recall` |
+| `recall` | `query`, `workarea`, `k`, `kinds`, `include_unreviewed`, `max_tokens`, `search`, `match`, `include_expired`, `now` | `{mode, steering, hits, search, budget?}` | `POST /v1/memories/recall` |
 | `listing` | `own` (default `true`), `workarea`, `claim_key`, `state`, `kind`, `since`, `until`, `limit`, `cursor` | `{mode, items, next_cursor}` | `GET /v1/memories` |
 
+- *Proposed ([ADR-0059](../adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md)):*
+  `oml_write` takes `valid_from` and `valid_until`, when the claim holds, each a period
+  (`2015`, `2015-03`, `2015-03-14`) or an instant; every claim item carries both. Recall
+  hides a claim whose `valid_until` has passed unless `include_expired` is true, reads at
+  `now` (the server's clock when omitted), and names in `search.window` the date window it
+  read from the query, which the `bm25-postings-time` pipelines search.
 - **get** answers the calling key's own rows in any state and others'
   promoted versions within read access; anything else is
   `access.not_found`, as a nonexistent id is.

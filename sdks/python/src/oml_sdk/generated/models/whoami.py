@@ -8,6 +8,9 @@ from attrs import define as _attrs_define
 from ..models.guardrail_scope import GuardrailScope
 from ..models.role import Role
 from ..models.whoami_held_by import WhoamiHeldBy
+from ..models.whoami_profile_type_1 import WhoamiProfileType1
+from ..models.whoami_profile_type_2_type_1 import WhoamiProfileType2Type1
+from ..models.whoami_profile_type_3_type_1 import WhoamiProfileType3Type1
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -41,6 +44,8 @@ class Whoami:
                 alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted,
                 journalled in key.issued; no request changes it, and any other value is request.validation, details.field
                 /guardrail_scope (ADR-0037 d4; since v0.5.1).
+            profile (None | Unset | WhoamiProfileType1 | WhoamiProfileType2Type1 | WhoamiProfileType3Type1): The key's
+                profile; null for none (ADR-0030 d8).
     """
 
     key_id: str
@@ -54,6 +59,13 @@ class Whoami:
     user: None | WhoamiRef
     grants: list[WhoamiGrant]
     guardrail_scope: GuardrailScope | Unset = UNSET
+    profile: (
+        None
+        | Unset
+        | WhoamiProfileType1
+        | WhoamiProfileType2Type1
+        | WhoamiProfileType3Type1
+    ) = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.whoami_ref import WhoamiRef
@@ -103,6 +115,18 @@ class Whoami:
         if not isinstance(self.guardrail_scope, Unset):
             guardrail_scope = self.guardrail_scope.value
 
+        profile: None | str | Unset
+        if isinstance(self.profile, Unset):
+            profile = UNSET
+        elif (
+            isinstance(self.profile, WhoamiProfileType1)
+            or isinstance(self.profile, WhoamiProfileType2Type1)
+            or isinstance(self.profile, WhoamiProfileType3Type1)
+        ):
+            profile = self.profile.value
+        else:
+            profile = self.profile
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -121,6 +145,8 @@ class Whoami:
         )
         if guardrail_scope is not UNSET:
             field_dict["guardrail_scope"] = guardrail_scope
+        if profile is not UNSET:
+            field_dict["profile"] = profile
 
         return field_dict
 
@@ -220,6 +246,54 @@ class Whoami:
         else:
             guardrail_scope = GuardrailScope(_guardrail_scope)
 
+        def _parse_profile(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | WhoamiProfileType1
+            | WhoamiProfileType2Type1
+            | WhoamiProfileType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                profile_type_1 = WhoamiProfileType1(data)
+
+                return profile_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                profile_type_2_type_1 = WhoamiProfileType2Type1(data)
+
+                return profile_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                profile_type_3_type_1 = WhoamiProfileType3Type1(data)
+
+                return profile_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | WhoamiProfileType1
+                | WhoamiProfileType2Type1
+                | WhoamiProfileType3Type1,
+                data,
+            )
+
+        profile = _parse_profile(d.pop("profile", UNSET))
+
         whoami = cls(
             key_id=key_id,
             name=name,
@@ -232,6 +306,7 @@ class Whoami:
             user=user,
             grants=grants,
             guardrail_scope=guardrail_scope,
+            profile=profile,
         )
 
         return whoami

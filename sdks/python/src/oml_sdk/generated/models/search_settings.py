@@ -9,6 +9,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.postings_health import PostingsHealth
+    from ..models.search_settings_valid_time import SearchSettingsValidTime
 
 
 T = TypeVar("T", bound="SearchSettings")
@@ -26,6 +27,8 @@ class SearchSettings:
         postings (PostingsHealth | Unset): The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present
             on GET /v2/search where the deployment serves bm25-postings or a sparse pipeline; absent from the answer to POST
             /v2/search/default.
+        valid_time (SearchSettingsValidTime | Unset): The tenant's served memories that declare valid_from, and those
+            whose valid_until has passed, which recall hides by default (proposed ADR-0059 d12).
     """
 
     enabled: list[str]
@@ -33,6 +36,7 @@ class SearchSettings:
     tenant_default: None | str
     effective: str
     postings: PostingsHealth | Unset = UNSET
+    valid_time: SearchSettingsValidTime | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         enabled = self.enabled
@@ -48,6 +52,10 @@ class SearchSettings:
         if not isinstance(self.postings, Unset):
             postings = self.postings.to_dict()
 
+        valid_time: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.valid_time, Unset):
+            valid_time = self.valid_time.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -60,12 +68,15 @@ class SearchSettings:
         )
         if postings is not UNSET:
             field_dict["postings"] = postings
+        if valid_time is not UNSET:
+            field_dict["valid_time"] = valid_time
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.postings_health import PostingsHealth
+        from ..models.search_settings_valid_time import SearchSettingsValidTime
 
         d = dict(src_dict)
         enabled = cast(list[str], d.pop("enabled"))
@@ -88,12 +99,20 @@ class SearchSettings:
         else:
             postings = PostingsHealth.from_dict(_postings)
 
+        _valid_time = d.pop("valid_time", UNSET)
+        valid_time: SearchSettingsValidTime | Unset
+        if isinstance(_valid_time, Unset):
+            valid_time = UNSET
+        else:
+            valid_time = SearchSettingsValidTime.from_dict(_valid_time)
+
         search_settings = cls(
             enabled=enabled,
             deployment_default=deployment_default,
             tenant_default=tenant_default,
             effective=effective,
             postings=postings,
+            valid_time=valid_time,
         )
 
         return search_settings

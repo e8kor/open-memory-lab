@@ -132,8 +132,9 @@ On that one key the agent:
    approval;
 5. learns whether a different identity approved them by listing its own work with `state`,
    after which every key that reads the workarea recalls them;
-6. revises or retires a memory with `oml_write` and `replaces`, which is held and approved
-   like any write while recall keeps serving the version it replaces.
+6. revises or retires a memory with `oml_write`, `replaces` and the `expected_version` it read,
+   which is held and approved like any write while recall keeps serving the version it
+   replaces.
 
 The arguments choose the mode, and an argument outside it is refused with
 `request.validation` naming it. Recall takes `max_tokens` to bound its answer: the steering
@@ -162,7 +163,7 @@ conversation. See the
 your `PATH`. One line installs it for you alone and checks the download:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.7/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.5.8/scripts/install/install.sh | sh
 ```
 
 v0.4.0 is the first release to carry the installer. Windows, the inspect-first form and the
@@ -226,6 +227,34 @@ first. The cost is that the error's words go to your server. A per-session file 
 `~/.cache/oml/sessions` remembers which memories the session already has, never their text, and
 the SessionEnd hook deletes it. See the
 [CLI reference](../../docs/cli/reference.md#oml-hook-tool-failure-recall-after-a-failed-command).
+
+## Chat memory (opt-in)
+
+*Planned for v0.6.0 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+
+Run `oml chat init` once with your own key, not an agent's: it opens `chat` under your user
+root, the one place your agents write what you tell them, and prints its id. Put that id in the
+plugin's `chat_workarea` setting, or `OML_CHAT_WORKAREA`, and set `OML_CHAT_CAPTURE=1`. Every
+fifth turn (`OML_CHAT_CAPTURE_EVERY`), and at once after a compaction, the Stop hook asks Claude
+to use the `oml-chat-capture` skill: Claude itself picks out the preferences, decisions and
+corrections those turns settled and writes each as one held memory, with the turn it came from.
+No other model reads the conversation and no transcript leaves your machine. Each fact names its
+turn by a fingerprint keyed with a secret salt kept owner-only in `~/.config/oml/chat-salt` and never
+sent, so the fingerprint cannot be checked against a guessed prompt by anyone without that file. A session asks at most four
+times and for at most 24 facts, and never while a Stop hook is already continuing. The cost is
+the tokens Claude spends on those short continuations (Claude is asked for at most 24 facts, and
+the server does not count them), and the last turns of a session that ends
+between two captures are not kept. `OML_CHAT_EXCERPT=1` lets Claude quote up to 280 characters of
+what you said under a fact.
+
+Set `OML_TURN_RECALL=1` and the UserPromptSubmit hook searches with up to eight words of each
+prompt, in your chat workarea and the key's default workarea, and adds at most six memories,
+each marked `[unreviewed]` when no one has reviewed it yet. It waits at most
+`OML_TURN_RECALL_BUDGET_MS` (300 ms by default, at most 1,000) and adds nothing when the server is
+slower; after three slow answers it stops for the session. The cost is that your prompt's words
+go to your server on every turn, and a short secret typed as plain words, such as a password, is
+not recognised as one and goes with them. Nothing you or Claude writes leaves the chat workarea until you
+review it.
 
 ## Guardrails
 

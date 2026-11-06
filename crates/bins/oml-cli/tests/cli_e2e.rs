@@ -637,6 +637,51 @@ impl Lab {
         at
     }
 
+    /// Store `body` as `key`'s memory the way a server before `oml-scan/1`
+    /// did, through the lead's own store and signing key with a scanner that
+    /// passes everything: a row the rule set never saw (ADR-0065 d13).
+    async fn seed_unscanned(&self, key: &str, claim_key: &str, body: &str) -> String {
+        struct Unscanned;
+        impl oml_app::ports::Scanner for Unscanned {
+            fn scan(
+                &self,
+                _: &oml_app::ports::AdmissionEnvelope<'_>,
+            ) -> oml_app::ports::ScanOutcome {
+                oml_app::ports::ScanOutcome::Pass
+            }
+        }
+        let app = oml_app::App::new(
+            self.store.clone(),
+            oml_server_lead::LeadSigner::new(self.signing.clone()),
+            oml_server_lead::SystemClock,
+            OsIds,
+            Unscanned,
+        );
+        let receipt = app
+            .submit_memory(
+                key,
+                &oml_app::types::SubmitRequest {
+                    valid_until: None,
+                    on_similar: Default::default(),
+                    origin: None,
+                    valid_from: None,
+                    idempotency_key: format!("seed-{claim_key}"),
+                    claim_key: Some(claim_key.to_owned()),
+                    verb: None,
+                    kind: oml_app::domain::MemoryKind::Memory,
+                    body: body.to_owned(),
+                    workarea: None,
+                    derives_from: Vec::new(),
+                    severity: None,
+                    rule: None,
+                    anchor: None,
+                },
+            )
+            .await
+            .expect("the unscanned row is stored");
+        receipt.receipt.memory_id.to_string()
+    }
+
     /// `oml --json <args>` under the stored admin credentials, or `key`.
     fn json(&self, key: Option<&str>, args: &[&str]) -> (i32, Value, String) {
         oml(&self.server, &self.creds, key, args)
@@ -2925,13 +2970,36 @@ async fn the_hook_output_never_contains_the_key_value() {
     let Some(crew) = Crew::start().await else {
         return;
     };
-    // A stored body that holds the key value, and matches the query.
-    crew.submit(
-        &crew.agent,
-        "memory",
-        "metals-key-note",
-        &format!("Metals desk key {} is in the vault.", crew.agent),
+    // A body that holds the key value is refused today, naming the rule
+    // and never the value (ADR-0065 d3, d8).
+    let (code, refused, log) = crew.lab.json(
+        Some(&crew.agent),
+        &[
+            "write",
+            &format!("Metals desk key {} is in the vault.", crew.agent),
+            "--claim-key",
+            "metals-key-refused",
+            "--kind",
+            "memory",
+        ],
     );
+    assert_ne!(code, 0, "{log}");
+    assert!(
+        log.contains("submission.scan_veto")
+            || refused.to_string().contains("submission.scan_veto"),
+        "{log}"
+    );
+    assert!(!log.contains(&crew.agent), "no key in the refusal: {log}");
+    // A row a server before the rule set stored still holds it, and matches
+    // the query: the hook redacts it where it was stored.
+    let seeded = crew
+        .lab
+        .seed_unscanned(
+            &crew.agent,
+            "metals-key-note",
+            &format!("Metals desk key {} is in the vault.", crew.agent),
+        )
+        .await;
     let stdin = session("startup", "/home/op/src/metals");
 
     let (code, stdout, stderr) = crew.hook(&[], &stdin);
@@ -2945,6 +3013,28 @@ async fn the_hook_output_never_contains_the_key_value() {
         ),
         "the value is redacted where it was stored: {context}"
     );
+
+    // The rescan finds the old row by rule and place, never the value, and
+    // changes nothing: the row is still there for a person to retire
+    // (ADR-0065 d13; ADR-0001 R4).
+    let (code, rescan, log) = crew.lab.json(None, &["admin", "rescan"]);
+    assert_eq!(code, 1, "a veto on a stored row exits 1: {log}");
+    assert_eq!(rescan["scanner_version"], "oml-scan/1", "{log}");
+    let hit = rescan["findings"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .find(|f| f["artifact_id"] == seeded.as_str())
+        .unwrap_or_else(|| panic!("the seeded row is found: {log}"))
+        .clone();
+    assert_eq!(hit["class"], "secret.api_token");
+    assert_eq!(hit["rule"], "oml-key");
+    assert_eq!(hit["action"], "veto");
+    assert_eq!(hit["at"], "/body line 1");
+    assert!(!log.contains(&crew.agent), "no key in the rescan: {log}");
+    let (code, read, log) = crew.lab.json(None, &["admin", "read", &seeded]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(read["state"], "held", "the rescan changed nothing: {log}");
 
     // A refused key is not echoed either.
     let unknown = "oml_refusedkey0123456789abcdefghijklmnopqrstu";
@@ -3012,15 +3102,10 @@ async fn the_hook_refuses_a_key_that_is_not_printable_ascii_and_sends_nothing() 
     let Some(crew) = Crew::start().await else {
         return;
     };
-    // A stored body that ends in the key value, which a key with a trailing
-    // space would still authenticate as (the server trims it) and would no
-    // longer match when the hook redacts.
-    crew.submit(
-        &crew.agent,
-        "memory",
-        "metals-key-tail",
-        &format!("Metals desk key {}.", crew.agent),
-    );
+    // A key with a trailing space would still authenticate as the key (the
+    // server trims it) and would no longer match when the hook redacts, so
+    // the hook sends nothing. (The scan refuses a body carrying a key value,
+    // ADR-0065 d3, so none is stored here.)
     let stdin = session("startup", "/home/op/src/metals");
     crew.lab.take_requests();
 
@@ -3169,14 +3254,34 @@ async fn the_hook_redacts_the_key_before_it_cuts_a_claim_key_or_the_workarea_pat
 
     // A claim key in which the key value straddles the 120-character cut:
     // cut first, its first 46 characters would be printed.
+    // The scan refuses such a claim key today (ADR-0065 d7), so the row is
+    // one a server before the rule set stored.
     let claim_key = format!("{}{}-tail", "k".repeat(73), crew.agent);
     assert_eq!(claim_key.chars().count(), 125);
-    crew.submit(
-        &crew.agent,
-        "memory",
-        &claim_key,
-        "Metals lot D: 40 tonnes, Tema, Sunday.",
+    let (code, _, log) = crew.lab.json(
+        Some(&crew.agent),
+        &[
+            "write",
+            "Metals lot D: 40 tonnes, Tema, Sunday.",
+            "--claim-key",
+            &claim_key,
+            "--kind",
+            "memory",
+        ],
     );
+    assert_ne!(
+        code, 0,
+        "a claim key carrying a key value is refused: {log}"
+    );
+    assert!(log.contains("submission.scan_veto"), "{log}");
+    assert!(!log.contains(&crew.agent), "no key in the refusal: {log}");
+    crew.lab
+        .seed_unscanned(
+            &crew.agent,
+            &claim_key,
+            "Metals lot D: 40 tonnes, Tema, Sunday.",
+        )
+        .await;
     let stdin = session("startup", "/home/op/src/metals");
     let (code, stdout, stderr) = crew.hook(&[], &stdin);
     assert_eq!(code, 0, "{stderr}");
@@ -3749,6 +3854,7 @@ async fn doctor_stub_with(
                         "status": "ready",
                         "checks": { "database": "ok" },
                         "oauth_issuer": issuer,
+                        "scan": { "version": "oml-scan/1", "rules": 40, "pii": false },
                     }),
                     "/v2/whoami" => json!({
                         "key_id": "k1",
@@ -3878,9 +3984,17 @@ async fn doctor_with_a_whole_pair_reads_whoami_and_the_events_tail_under_that_so
             "/healthz",
             "/readyz",
             "/v2/whoami",
+            // Whether the server takes origin_kinds (ADR-0063 d13).
+            "/v1/memories",
             "/v2/workareas/w1",
+            "/v2/edges",
             "/v2/events"
         ],
+    );
+    assert!(
+        seen[5..]
+            .iter()
+            .all(|(_, auth)| *auth == bearer("oml_file_key"))
     );
     assert_eq!(seen[0].1, None);
     assert_eq!(seen[1].1, None);
@@ -4883,6 +4997,8 @@ async fn oml_write_chooses_the_submission_or_the_supersession_by_replaces_and_se
             "Retired: the 2026 runbook replaces it.",
             "--replaces",
             STUB_ARTIFACT,
+            "--expected-version",
+            "1",
             "--retirement",
             "--reason",
             "superseded by the runbook",
@@ -4899,6 +5015,7 @@ async fn oml_write_chooses_the_submission_or_the_supersession_by_replaces_and_se
         sent[0].body,
         json!({
             "body": "Retired: the 2026 runbook replaces it.",
+            "expected_version": 1,
             "retirement": true,
             "reason": "superseded by the runbook",
         }),
@@ -4922,11 +5039,18 @@ async fn oml_write_chooses_the_submission_or_the_supersession_by_replaces_and_se
                 "t",
                 "--replaces",
                 STUB_ARTIFACT,
+                "--expected-version",
+                "1",
                 "--claim-key",
                 "k",
             ],
             "--claim-key",
         ),
+        (
+            vec!["write", "t", "--replaces", STUB_ARTIFACT],
+            "--expected-version",
+        ),
+        (vec!["write", "t", "--expected-version", "1"], "--replaces"),
     ] {
         let (code, _, stderr) = stub_text(&server, &dir, &args);
         assert_eq!(code, 2, "{args:?}: {stderr}");
@@ -6331,5 +6455,235 @@ async fn oml_review_list_and_approve_ids_judge_each_listed_item() {
     assert_eq!(crew_doctor["verdict"], "warn", "{crew_doctor}");
     let (_, writer_doctor, _) = lab.json(Some(&loader), &["doctor"]);
     assert!(writer_doctor["review"].is_null(), "{writer_doctor}");
+    lab.stop().await;
+}
+
+/// `oml <args> --json` under `key`, run inside `cwd`, as `oml sync` runs in
+/// a clone.
+fn oml_at(lab: &Lab, key: &str, cwd: &Path, args: &[&str]) -> (i32, Value, String) {
+    let out = oml_command(&lab.server, &lab.creds, Some(key), args)
+        .arg("--json")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("the oml binary runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    (
+        out.status.code().unwrap_or(-1),
+        serde_json::from_str(stdout.trim()).unwrap_or(Value::Null),
+        format!(
+            "stdout: {stdout}\nstderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+fn git_in(dir: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .expect("git runs");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+const SYNC_ADR_1: &str = "# ADR-0001 — One\n\n**Status:** accepted\n\n## Context\n\nWhy one.\n\n## Decision\n\n- **d1 — First.** The first decision.\n- **d2 — Second.** The second decision.\n\n## Rejected alternatives\n\n| Alternative | Why not |\n|---|---|\n| **Nothing** | Something is needed. |\n";
+const SYNC_ADR_2: &str = "# ADR-0002 — Two\n\n**Status:** accepted\n\n**Amends:** ADR-0001 (d2)\n\n## Context\n\nWhy two.\n\n## Decision\n\n- **d1 — Only.** The only decision.\n";
+
+/// `oml sync` end to end (ADR-0057 d6–d11, d14, d18): a scratch clone's
+/// records load as anchored held claims, a person reviews them in bulk, a
+/// second run writes nothing and records each tip fresh, an edit is stale
+/// to `--check` and superseded by the next run, a rename is moved with no
+/// write, and the stated edge is proposed by one dreamer and ratified by
+/// another.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("oml-design");
+    let issue = |name: &str, role: &str, held_by: &str, principal: &str| {
+        lab.issue(
+            name,
+            &[
+                "--role",
+                role,
+                "--held-by",
+                held_by,
+                "--principal",
+                principal,
+                "--grant",
+                &format!("{wa}:{role}"),
+                // A person's dreamer reads the tips it links (ADR-0057 d10).
+                "--grant",
+                &format!("{wa}:reader"),
+            ],
+        )["value"]
+            .as_str()
+            .expect("value")
+            .to_owned()
+    };
+    let sync = issue("design-sync", "writer", "service", "crew/design-sync");
+    let reviewer = issue("eugene-review", "dreamer", "human", "eugene");
+    let ratifier = issue("ana-review", "dreamer", "human", "ana");
+    let clone = lab.dir.join("clone");
+    std::fs::create_dir_all(clone.join("docs/adr")).expect("clone dir");
+    git_in(&clone, &["init", "-q", "-b", "main"]);
+    git_in(
+        &clone,
+        &["remote", "add", "origin", "git@github.com:e8kor/Docs.git"],
+    );
+    std::fs::write(clone.join("docs/adr/ADR-0001-one.md"), SYNC_ADR_1).expect("write");
+    std::fs::write(clone.join("docs/adr/ADR-0002-two.md"), SYNC_ADR_2).expect("write");
+    git_in(&clone, &["add", "."]);
+    git_in(&clone, &["commit", "-q", "-m", "records"]);
+    let run = |key: &str, extra: &[&str]| {
+        let mut args = vec!["sync", "docs/adr", "--workarea", "oml-design"];
+        args.extend_from_slice(extra);
+        oml_at(&lab, key, &clone, &args)
+    };
+    let approve_all = || {
+        let (code, listed, log) = oml_text(
+            &lab.server,
+            &lab.creds,
+            Some(&reviewer),
+            &[
+                "review",
+                "list",
+                "--workarea",
+                "oml-design",
+                "--author-key",
+                "design-sync",
+                "--ids-only",
+                "--all",
+            ],
+        );
+        assert_eq!(code, 0, "review list: {log}");
+        let file = lab.dir.join("ids.txt");
+        std::fs::write(&file, &listed).expect("ids");
+        let (code, verdicts, log) = lab.json(
+            Some(&reviewer),
+            &["review", "approve", "--ids", file.to_str().expect("path")],
+        );
+        assert_eq!(code, 0, "approve: {log}");
+        verdicts["summary"]["approved"].as_u64().expect("approved")
+    };
+
+    // The dry run sends nothing; the run writes the same plan.
+    let (code, dry, log) = run(&sync, &["--dry-run"]);
+    assert_eq!(code, 0, "dry run: {log}");
+    assert_eq!(dry["source"]["repo"], "github.com/e8kor/docs", "{log}");
+    assert_eq!(dry["summary"]["new"], 6, "{log}");
+    assert_eq!(
+        dry["edges"][0],
+        json!({"from": "adr-0002-summary", "label": "amends", "to": "adr-0001-d2", "state": "waiting"})
+    );
+    let (code, first, log) = run(&sync, &[]);
+    assert_eq!(code, 0, "sync: {log}");
+    assert_eq!(
+        first["items"], dry["items"],
+        "the dry run's plan is the run's"
+    );
+    let (code, held, log) = lab.json(Some(&sync), &["read", "--own", "--workarea", "oml-design"]);
+    assert_eq!(code, 0, "{log}");
+    let d1 = held["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|i| i["claim_key"] == "adr-0001-d1")
+        .expect("d1")
+        .clone();
+    assert_eq!(d1["state"], "held");
+    assert_eq!(d1["anchor"]["repo"], "github.com/e8kor/docs");
+    assert_eq!(d1["anchor"]["path"], "docs/adr/ADR-0001-one.md");
+    assert_eq!(d1["anchor"]["fragment"], "d1");
+    assert_eq!(d1["anchor"]["hasher"], "oml-md/1");
+    assert_eq!(approve_all(), 6);
+
+    // A second run at the same commit writes nothing and checks each tip.
+    let (code, again, log) = run(&sync, &[]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(again["summary"]["unchanged"], 6, "{log}");
+    assert_eq!(again["summary"]["writes_this_run"], 0, "{log}");
+    let (code, _, log) = run(&sync, &["--check"]);
+    assert_eq!(code, 0, "check: {log}");
+
+    // An edit is stale until its successor is reviewed.
+    std::fs::write(
+        clone.join("docs/adr/ADR-0001-one.md"),
+        SYNC_ADR_1.replace("The second decision.", "The second decision, revised."),
+    )
+    .expect("write");
+    git_in(&clone, &["commit", "-q", "-am", "edit"]);
+    let (code, check, log) = run(&sync, &["--check"]);
+    assert_eq!(code, 1, "check: {log}");
+    assert!(
+        check["claims"]
+            .as_array()
+            .expect("claims")
+            .iter()
+            .any(|c| c["claim_key"] == "adr-0001-d2" && c["state"] == "stale"),
+        "{log}"
+    );
+    let (code, edited, log) = run(&sync, &[]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(
+        edited["summary"]["changed"], 1,
+        "the decision alone, since the summary's span holds only its headline: {log}"
+    );
+    let (code, served, log) = lab.json(Some(&sync), &["read", "--all", "--workarea", "oml-design"]);
+    assert_eq!(code, 0, "{log}");
+    let d2 = served["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|i| i["claim_key"] == "adr-0001-d2")
+        .expect("d2")
+        .clone();
+    assert_eq!(
+        d2["stale"], "changed",
+        "the served version is marked from the source: {d2}"
+    );
+    assert_eq!(approve_all(), 1);
+    let (code, _, log) = run(&sync, &["--check"]);
+    assert_eq!(code, 0, "check after review: {log}");
+
+    // A renamed record is moved: a source check, no write.
+    git_in(
+        &clone,
+        &[
+            "mv",
+            "docs/adr/ADR-0002-two.md",
+            "docs/adr/ADR-0002-two-renamed.md",
+        ],
+    );
+    git_in(&clone, &["commit", "-q", "-m", "rename"]);
+    let (code, moved, log) = run(&sync, &[]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(moved["summary"]["moved"], 2, "{log}");
+    assert_eq!(moved["summary"]["writes_this_run"], 0, "{log}");
+
+    // The edge: proposed by one person's dreamer key, ratified by another's.
+    let (code, proposed, log) = run(&reviewer, &["--edges"]);
+    assert_eq!(code, 0, "edges: {log}");
+    assert_eq!(proposed["edges"][0]["state"], "pending", "{log}");
+    let (code, _, log) = run(&reviewer, &["--edges", "--ratify"]);
+    assert_eq!(code, 0, "{log}");
+    let (code, ratified, log) = run(&ratifier, &["--edges", "--ratify"]);
+    assert_eq!(code, 0, "ratify: {log}");
+    assert_eq!(ratified["edges"][0]["state"], "ratified", "{log}");
     lab.stop().await;
 }

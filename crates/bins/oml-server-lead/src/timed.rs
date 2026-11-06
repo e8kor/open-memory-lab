@@ -94,6 +94,19 @@ impl<J: Retriever> Retriever for Timed<J> {
             self.inner.suggest(tenant_id, scope, words, limit),
         )
     }
+
+    fn similar_candidates(
+        &self,
+        tenant_id: Uuid,
+        scope: &CandidateScope,
+        keys: &[i64],
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send {
+        timed(
+            "similar_candidates",
+            self.inner.similar_candidates(tenant_id, scope, keys, limit),
+        )
+    }
 }
 
 impl<J: JournalStore> JournalStore for Timed<J> {
@@ -307,6 +320,45 @@ impl<J: JournalStore> JournalStore for Timed<J> {
             "claim_key_state",
             self.inner
                 .claim_key_state(tenant_id, workarea_id, claim_key),
+        )
+    }
+
+    fn held_count(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed("held_count", self.inner.held_count(tenant_id, nodes))
+    }
+
+    fn stale_count(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed(
+            "stale_count",
+            self.inner.stale_count(tenant_id, workarea_id),
+        )
+    }
+
+    fn claim_latest_readable(
+        &self,
+        tenant_id: Uuid,
+        workarea_id: Uuid,
+        claim_key: &str,
+        own_key_ids: &[Uuid],
+        reads_promoted: bool,
+    ) -> impl Future<Output = Result<Option<u32>, StoreError>> + Send {
+        timed(
+            "claim_latest_readable",
+            self.inner.claim_latest_readable(
+                tenant_id,
+                workarea_id,
+                claim_key,
+                own_key_ids,
+                reads_promoted,
+            ),
         )
     }
 

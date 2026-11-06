@@ -1,13 +1,17 @@
 //! Application-layer records and use-case request/response shapes.
 
 use oml_domain::access::{Covers, Grant, KeyDenial};
+use oml_domain::anchor::{Anchor, CheckResult};
 use oml_domain::budget::Budget;
 use oml_domain::claim_edges::{EdgeField, LabelRefusal};
 use oml_domain::guardrail::{GuardrailScope, Severity};
+use oml_domain::in_progress::{CuratorRefusal, InProgressReason, KeyProfile};
 use oml_domain::name::{Name, NamedKind, Naming, Reference};
 use oml_domain::oauth::{
     ConnectionState, KeyState, RefreshDecision, RefreshRow, Refusal, Token, TokenKind,
 };
+use oml_domain::origin::OriginKind;
+use oml_domain::valid_time::{ValidTime, ValidTimeError, Window};
 use oml_domain::vocab_edges::{CycleRefused, EdgeState};
 use oml_domain::web::{Email, GitHubEmail, Provider, SignInRefusal, UserTooLong};
 use oml_domain::{
@@ -116,6 +120,9 @@ pub struct KeyRecord {
     /// `ancestors` (postgres-schema.md `api_keys.guardrail_scope`; proposed
     /// ADR-0037 d4).
     pub guardrail_scope: GuardrailScope,
+    /// The key's profile, fixed at issuance: `curator` narrows inside an
+    /// in-progress scope and never widens (ADR-0030 d8); `None` otherwise.
+    pub profile: Option<KeyProfile>,
 }
 
 /// A connect code as `connection.code_issued` mints it, for the commit's
@@ -757,6 +764,9 @@ pub struct WorkareaRecord {
     /// every user root included (ADR-0044 d5). Fixed at creation, since no
     /// node crosses a user root's boundary (d1).
     pub namespace: Option<Uuid>,
+    /// Whether a person's key put the node in progress (ADR-0030 d1):
+    /// `workareas.mode`, written by `workarea.mode_set` alone.
+    pub in_progress: bool,
 }
 
 impl WorkareaRecord {
@@ -895,6 +905,9 @@ pub struct CreatedWorkarea {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkareaInfo {
     pub workarea: WorkareaRecord,
+    /// The node's in-progress root, itself for a root, `None` outside every
+    /// in-progress subtree (ADR-0030 d13).
+    pub in_progress_root: Option<WorkareaRecord>,
     pub path: String,
     /// The crew record the workarea names, read from the store; `None` when
     /// it names none (ADR-0026 d8).
@@ -918,6 +931,10 @@ pub struct WorkareaInfo {
     /// The node's brief as this key may read it; empty for an admin key,
     /// which reads no claim content (ADR-0046 d9).
     pub brief: Brief,
+    /// The promoted served tips on the node whose source changed or went
+    /// away since they were reviewed; 0 for an admin key, which reads no
+    /// claim (ADR-0057 d17).
+    pub stale_versions: u64,
 }
 
 /// One node of a workarea tree read, with its derived path and the crew
@@ -1035,6 +1052,91 @@ pub struct MemoryRecord {
     /// ADR-0037 d10). Boxed: few rows carry it, and every fold carries the
     /// record.
     pub guardrail: Option<Box<GuardrailFields>>,
+    /// When the version says it holds, declared by its author and signed;
+    /// open on both sides when it declares none (proposed ADR-0059 d2).
+    /// Boxed: most rows declare none, and every fold carries the record.
+    pub valid: Box<ValidTime>,
+    /// The version's anchor as its author declared it, signed in its
+    /// submission event and immutable (ADR-0057 d1, d2). Boxed: most rows
+    /// carry none.
+    pub anchor: Option<Box<Anchor>>,
+    /// The version's `origin.kind`, signed in its submission event and
+    /// immutable; `None` on versions written before ADR-0063 (d1, d2).
+    pub origin_kind: Option<OriginKind>,
+    /// The version's latest source check, kept only on a promoted version
+    /// (ADR-0057 d5, d18); `stale` is computed from it alone.
+    pub source_check: Option<Box<SourceCheck>>,
+}
+
+/// A source check as stored on its version: the latest `source.checked`
+/// folded onto the row (ADR-0057 d5, d18).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceCheck {
+    pub rev: String,
+    pub result: CheckResult,
+    pub hash: Option<String>,
+    /// `(path, fragment)` where a `moved` check found the span.
+    pub moved_to: Option<(String, Option<String>)>,
+    pub at: EventTime,
+}
+
+impl SourceCheck {
+    /// The `stale` mark: `changed` or `removed`, else none (ADR-0057 d5).
+    #[must_use]
+    pub const fn stale(&self) -> Option<&'static str> {
+        self.result.stale()
+    }
+}
+
+/// The origin filters of a recall or a listing (ADR-0057 d4): either one
+/// leaves out unanchored rows; both combine by AND.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnchorFilter {
+    pub repo: Option<String>,
+    pub path_prefix: Option<String>,
+    /// `origin_kinds`: a row passes when its kind is one of them; a row
+    /// without a kind never passes a set filter (ADR-0063 d3).
+    pub origin_kinds: Vec<OriginKind>,
+}
+
+impl AnchorFilter {
+    /// Whether neither filter is set.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.repo.is_none() && self.path_prefix.is_none() && self.origin_kinds.is_empty()
+    }
+
+    /// Whether the anchor filters, `repo` and `path_prefix`, are unset.
+    #[must_use]
+    pub const fn anchor_is_empty(&self) -> bool {
+        self.repo.is_none() && self.path_prefix.is_none()
+    }
+
+    /// Whether a row with `anchor` and `kind` passes every origin filter.
+    #[must_use]
+    pub fn admits_row(&self, anchor: Option<&Anchor>, kind: Option<OriginKind>) -> bool {
+        (self.origin_kinds.is_empty() || kind.is_some_and(|k| self.origin_kinds.contains(&k)))
+            && self.admits(anchor)
+    }
+
+    /// Whether a row with `anchor` passes: an unanchored row passes only
+    /// an empty filter.
+    #[must_use]
+    pub fn admits(&self, anchor: Option<&Anchor>) -> bool {
+        if self.anchor_is_empty() {
+            return true;
+        }
+        let Some(anchor) = anchor else {
+            return false;
+        };
+        self.repo
+            .as_deref()
+            .is_none_or(|r| anchor.repo() == Some(r))
+            && self
+                .path_prefix
+                .as_deref()
+                .is_none_or(|p| anchor.path().is_some_and(|path| path.starts_with(p)))
+    }
 }
 
 /// A guardrail version's severity and its optional `oml-gr/1` rule, the
@@ -1075,6 +1177,10 @@ pub struct VersionRef {
 pub struct ServedMemory {
     pub memory: MemoryRecord,
     pub replaces: Option<VersionRef>,
+    /// On a held successor, the end approving it gives the version it
+    /// replaces, so a reviewer sees it before the verdict; `None` otherwise
+    /// (proposed ADR-0059 d4).
+    pub replaces_valid_until: Option<oml_domain::valid_time::ValidEnd>,
     /// The `parent_id` names from the root to the row's workarea, joined
     /// with `.` (ADR-0025 d14); `None` for a node the tenant does not hold.
     pub workarea_path: Option<String>,
@@ -1211,6 +1317,8 @@ pub struct IssueKeyRequest {
     /// The key's guardrail scope; `None` takes the issuance default,
     /// `ancestors`, and journals it (proposed ADR-0037 d4).
     pub guardrail_scope: Option<GuardrailScope>,
+    /// `profile: "curator"` (ADR-0030 d8); `None` for every other key.
+    pub profile: Option<KeyProfile>,
 }
 
 /// One requested grant: a role over the subtree of `node`, less the
@@ -1261,9 +1369,59 @@ impl SubmitVerb {
     }
 }
 
+/// What a write does when the similar check names a row (ADR-0050 d1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OnSimilar {
+    /// Capture the write held and name the rows; the default.
+    #[default]
+    Hold,
+    /// Refuse with `submission.similar_exists` when a row is named,
+    /// journalling nothing and claiming no idempotency record.
+    Refuse,
+}
+
+impl OnSimilar {
+    /// The name requests and the metric use.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hold => "hold",
+            Self::Refuse => "refuse",
+        }
+    }
+}
+
+/// The kinds the similar check names and is run for (ADR-0050 d1).
+pub const SIMILAR_KINDS: [MemoryKind; 3] = [
+    MemoryKind::Memory,
+    MemoryKind::DerivedFact,
+    MemoryKind::Steering,
+];
+
+/// A row the similar check names beside a write (ADR-0050 d1): a claim
+/// item without text, how it relates, and whether the writing key wrote
+/// it. `jaccard_percent` is the word sets' Jaccard similarity in
+/// hundredths, 100 for `same_text`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SimilarItem {
+    pub artifact_id: Uuid,
+    pub claim_key: String,
+    pub version: u32,
+    pub kind: String,
+    pub workarea_id: Uuid,
+    pub state: String,
+    pub relation: String,
+    pub jaccard_percent: u8,
+    pub own: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct SubmitRequest {
     pub idempotency_key: String,
+    /// `hold` captures beside a similar row and names it; `refuse` refuses
+    /// (ADR-0050 d1). Never part of the request digest: it changes nothing
+    /// stored.
+    pub on_similar: OnSimilar,
     /// `None` derives the key from the author and the text; a sent key
     /// starting `auto-` is refused (ADR-0039 d6).
     pub claim_key: Option<String>,
@@ -1283,6 +1441,15 @@ pub struct SubmitRequest {
     /// A guardrail's optional `oml-gr/1` rule, refused on every other kind
     /// (proposed ADR-0037 d8, d10).
     pub rule: Option<Value>,
+    /// `valid_from` and `valid_until` as sent; parsed and checked against
+    /// the kind by the capture (proposed ADR-0059 d2).
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
+    /// The origin the author declares, grammar-checked by the transport
+    /// (ADR-0057 d1-d3).
+    pub anchor: Option<Anchor>,
+    /// `origin.kind` as declared; `None` is recorded `manual` (ADR-0063 d2).
+    pub origin: Option<OriginKind>,
 }
 
 /// The stored idempotent response: a replayed submit returns this byte for
@@ -1296,6 +1463,10 @@ pub struct SubmitReceipt {
     pub state: String,
     pub journal_seq: u64,
     pub body_digest: String,
+    /// The rows the similar check named, as first answered; a record
+    /// stored before the check replays none (ADR-0050 d1).
+    #[serde(default)]
+    pub similar: Vec<SimilarItem>,
 }
 
 #[derive(Debug, Clone)]
@@ -1441,7 +1612,7 @@ pub struct RecallRequest {
     /// `include_unreviewed`: the calling key's own held rows join the
     /// ranked hits, flagged by state (retrieval.md, own held rows in recall;
     /// ADR-0025 d4, ADR-0039 d4).
-    pub include_unreviewed: bool,
+    pub include_unreviewed: Option<bool>,
     /// The budget in budget tokens under counter `oml-tc/1`; `None` is no
     /// budget (retrieval.md token budgets; ADR-0025 d7).
     pub max_tokens: Option<u64>,
@@ -1451,6 +1622,18 @@ pub struct RecallRequest {
     pub search: Option<String>,
     /// `match`: any term (the default) or every term (ADR-0049 d5).
     pub match_mode: MatchMode,
+    /// The answer's per-stage `timings` block, refused unless the
+    /// deployment serves it (`search.timings`; ADR-0049 d14).
+    pub timings: bool,
+    /// `include_expired`: serve versions whose valid time has ended, hidden
+    /// by default (proposed ADR-0059 d3).
+    pub include_expired: bool,
+    /// `now`, as sent: the instant the expiry, the query's relative dates
+    /// are read at; `None` is the lead's clock
+    /// (proposed ADR-0059 d5).
+    pub now: Option<String>,
+    /// `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4).
+    pub anchor: AnchorFilter,
 }
 
 /// One recall hit: the row as the calling key is served it, and the store's
@@ -1574,6 +1757,13 @@ pub struct RecallResult {
     /// The query words whose every form was pruned from the postings read
     /// (`search.pruned`; ADR-0052 d6, d11).
     pub pruned: Vec<String>,
+    /// Each stage's duration, always measured; served in the answer only
+    /// when the request asked and the deployment serves it, and recorded in
+    /// the stage histogram always (ADR-0049 d14).
+    pub timings: crate::search::Timings,
+    /// The date window the query named, read by rule `oml-when/1`
+    /// (`search.window`; proposed ADR-0059 d6).
+    pub window: Option<Window>,
 }
 
 /// The guardrail read (proposed ADR-0037 d5): the scope node is the key's
@@ -1662,7 +1852,12 @@ pub enum ListingScope {
     /// The scoped listing: the promoted served tips on exactly these nodes,
     /// subtree(scope) ∩ reader effective access as the use-case computes
     /// it; an empty set lists nothing (ADR-0025 d1, d13).
-    Tips { nodes: Vec<Uuid> },
+    ///
+    /// Inside an in-progress scope, the held versions of every author on
+    /// the `held` nodes too, never a retirement version, of kind `memory` or
+    /// `derived_fact`: the served nodes inside the scope's root (ADR-0030
+    /// d3); empty elsewhere.
+    Tips { nodes: Vec<Uuid>, held: Vec<Uuid> },
 }
 
 /// A listing's predicates, re-applied on every page: a cursor carries a
@@ -1680,6 +1875,8 @@ pub struct ListingFilter {
     pub since: Option<EventTime>,
     /// `created_at` before this instant.
     pub until: Option<EventTime>,
+    /// The origin filters (ADR-0057 d4).
+    pub anchor: AnchorFilter,
 }
 
 /// Where a listing page resumes: the `created_at` and id of the last row
@@ -1750,8 +1947,12 @@ pub struct ClaimEdgeSelection {
     /// Both endpoint versions lie in these workareas, every node where
     /// reader is effective for the key...
     pub readable_nodes: Vec<Uuid>,
-    /// ...and each is promoted or authored by this key.
+    /// ...and each is promoted or authored by this key...
     pub reader_key_id: Uuid,
+    /// ...or held, a memory or derived fact and never a retirement version,
+    /// on one of these nodes: the served nodes inside the read's
+    /// in-progress root (ADR-0030 d3); empty outside one.
+    pub held_nodes: Vec<Uuid>,
 }
 
 /// Where a claim-edge page resumes: the `created_at` and id of the last
@@ -1805,6 +2006,8 @@ pub struct ListRequest {
     pub limit: usize,
     /// The opaque cursor of the previous page.
     pub cursor: Option<String>,
+    /// `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4).
+    pub anchor: AnchorFilter,
 }
 
 /// One listing page: summaries as the calling key is served them, and the
@@ -1893,6 +2096,8 @@ pub struct Whoami {
 #[derive(Debug, Clone)]
 pub struct SupersedeRequest {
     pub idempotency_key: String,
+    /// As a submit's (ADR-0050 d1); a retirement is never checked.
+    pub on_similar: OnSimilar,
     pub target_id: Uuid,
     /// The successor's text as sent; capture normalizes it to NFC. With
     /// `retirement`, why the claim is retired.
@@ -1921,6 +2126,42 @@ pub struct SupersedeRequest {
     /// A guardrail successor's optional rule, refused on every other kind and
     /// on a retirement (proposed ADR-0037 d10).
     pub rule: Option<Value>,
+    /// The successor's own valid time as sent; it inherits none (proposed
+    /// ADR-0059 d2, d4).
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
+    /// The successor's own anchor; nothing is inherited (ADR-0057 d2).
+    pub anchor: Option<Anchor>,
+    /// The successor's own `origin.kind`; `None` is recorded `manual`,
+    /// never inherited (ADR-0063 d2).
+    pub origin: Option<OriginKind>,
+    /// The claim's latest live version as the caller last read it; any
+    /// other is [`AppError::VersionConflict`] (ADR-0057 d19).
+    pub expected_version: u32,
+}
+
+/// `POST /v1/memories/{artifact_id}/source-check` (ADR-0057 d5, d18).
+#[derive(Debug, Clone)]
+pub struct SourceCheckRequest {
+    pub idempotency_key: String,
+    pub memory_id: Uuid,
+    pub rev: String,
+    pub result: CheckResult,
+    pub hash: Option<String>,
+    pub path: Option<String>,
+    pub fragment: Option<String>,
+}
+
+/// A recorded source check: the version's new mark and the event's seq.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceCheckReceipt {
+    pub memory_id: Uuid,
+    pub rev: String,
+    pub result: String,
+    pub moved_path: Option<String>,
+    pub moved_fragment: Option<String>,
+    pub at: String,
+    pub journal_seq: u64,
 }
 
 /// The stored idempotent response of a supersession: a replay returns this
@@ -1937,6 +2178,9 @@ pub struct SupersedeReceipt {
     pub replaces: VersionRef,
     pub journal_seq: u64,
     pub body_digest: String,
+    /// As a submit's (ADR-0050 d1).
+    #[serde(default)]
+    pub similar: Vec<SimilarItem>,
 }
 
 /// `POST /v2/edges` with `kind: claim` as the use-case takes it: a labelled edge from
@@ -2275,6 +2519,23 @@ pub enum AppError {
         "the supersede target is not the current promoted tip (http-api.md submission.tip_conflict)"
     )]
     TipConflict { current_tip: Option<VersionRef> },
+    /// A supersession's `expected_version` is not the claim's latest live
+    /// version (errors.md `submission.version_conflict`; ADR-0057 d19).
+    #[error(
+        "the claim's latest version is {current}, not the expected_version sent (submission.version_conflict)"
+    )]
+    VersionConflict { current: u32 },
+    /// A scan finding in an anchor's `field` vetoes the write (ADR-0057 d2).
+    #[error("the scan vetoed {field}: {finding} (submission.scan_veto)")]
+    AnchorScanVeto {
+        field: &'static str,
+        finding: String,
+    },
+    /// A source check names a version it may not check: held, unanchored or
+    /// superseded, or a body outside its anchor's grammar (request.validation;
+    /// ADR-0057 d5).
+    #[error("{field}: {reason} (request.validation)")]
+    SourceCheckInvalid { field: String, reason: String },
     /// The `workarea` as the request spelled it.
     #[error(
         "workarea names {workarea}, not the target's workarea: a supersession is captured in its target's (http-api.md supersede, request.validation)"
@@ -2332,6 +2593,15 @@ pub enum AppError {
         "a held, promoted or demoted version holds this claim_key in the workarea (audit-and-lineage.md, submission.claim_key_conflict)"
     )]
     ClaimKeyConflict,
+    #[error(
+        "on_similar refuse and {} similar rows the writer may read (ADR-0050 d1, submission.similar_exists)",
+        .0.len()
+    )]
+    SimilarExists(Vec<SimilarItem>),
+    #[error(
+        "timings is refused: this deployment does not serve recall timings (search.timings; ADR-0049 d14, request.validation)"
+    )]
+    TimingsOff,
     #[error("deterministic scan veto: {0} (admission.md — a refusal that journals nothing)")]
     ScanVeto(String),
     #[error(
@@ -2343,6 +2613,16 @@ pub enum AppError {
         "{field} is a guardrail's field, refused on any other kind and on a retirement (proposed ADR-0037 d10, request.validation)"
     )]
     GuardrailFieldRefused { field: &'static str },
+    /// A valid end in no accepted form, an empty interval, or valid time on
+    /// a kind or a retirement that takes none (proposed ADR-0059 d2,
+    /// request.validation).
+    #[error("{0} (proposed ADR-0059 d2, request.validation)")]
+    ValidTime(ValidTimeError),
+    /// `now` in no accepted form (proposed ADR-0059 d5, request.validation).
+    #[error(
+        "now must be YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset (proposed ADR-0059 d5, request.validation)"
+    )]
+    NowUnparsable,
     #[error(
         "oml_write does not supersede a guardrail: a guardrail is written and superseded on the HTTP API only (proposed ADR-0037 d10, request.validation)"
     )]
@@ -2370,6 +2650,46 @@ pub enum AppError {
     /// errors.md `access.verb_ceiling`, reason `bulk_review_is_human_only`).
     #[error("bulk review is a person's act: a {} key held by {} is refused (ADR-0055 d1, access.verb_ceiling)", .role.as_str(), .held_by.as_str())]
     BulkReviewHumanOnly { role: Role, held_by: HeldBy },
+    /// `origin` outside its grammar, or out of step with the anchor
+    /// (ADR-0063 d1, d2; request.validation, `details.field`).
+    #[error("{field}: {reason} (ADR-0063, request.validation)")]
+    OriginInvalid { field: String, reason: String },
+    /// A person's chat workarea, `chat` directly under a user root, is
+    /// created only by a key held by a human (ADR-0063 d8;
+    /// `access.verb_ceiling`, reason `chat_scope_is_human_only`).
+    #[error("the chat workarea is a person's to open: a key held by {} is refused (ADR-0063 d8, access.verb_ceiling)", .held_by.as_str())]
+    ChatScopeHumanOnly { held_by: HeldBy },
+    /// Only a person's key sets a workarea's mode (ADR-0030 d1; errors.md
+    /// `access.verb_ceiling`, reason `mode_is_human_only`).
+    #[error("a workarea's mode is set by a person's key: a {} key held by {} is refused (ADR-0030 d1, access.verb_ceiling)", .role.as_str(), .held_by.as_str())]
+    ModeHumanOnly { role: Role, held_by: HeldBy },
+    /// A curator key asked for a verb or a scope it never reaches (ADR-0030
+    /// d9; errors.md `access.verb_ceiling`, reason `curator_narrow_only` or
+    /// `curator_outside_in_progress`).
+    #[error("a curator key narrows inside an in-progress scope only: {verb} is refused ({}, ADR-0030 d9, access.verb_ceiling)", .refusal.as_str())]
+    Curator {
+        verb: &'static str,
+        refusal: CuratorRefusal,
+    },
+    /// A profile the key's role or attestation does not admit (ADR-0030
+    /// d8; request.validation, field `/profile`).
+    #[error(
+        "profile {profile} needs a dreamer key held by an agent (ADR-0030 d8, request.validation, field /profile)"
+    )]
+    ProfileMismatch { profile: &'static str },
+    /// An act refused by an in-progress subtree's rules (ADR-0030 d1, d6, d7;
+    /// errors.md `workarea.in_progress_refused`).
+    #[error("workarea {workarea_id}: {reason} (ADR-0030, workarea.in_progress_refused)")]
+    InProgressRefused {
+        workarea_id: Uuid,
+        reason: InProgressReason,
+    },
+    /// The commit of an in-progress root while a version in its subtree is
+    /// held (ADR-0030 d6; errors.md `workarea.held_remaining`).
+    #[error(
+        "workarea {workarea_id} still holds unreviewed memories in its subtree, so its commit waits on review (ADR-0030 d6, workarea.held_remaining)"
+    )]
+    HeldRemaining { workarea_id: Uuid },
     /// A bulk verdict's `artifact_ids` or a listing's `limit` outside what
     /// ADR-0055 d2 and d3 admit (request.validation, `details.field`).
     #[error("{reason} (ADR-0055, request.validation, field {field})")]

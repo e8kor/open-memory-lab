@@ -19,7 +19,7 @@ use crate::telemetry::{
     Label, REPLAY_DEADLINE_SECS, REPLAY_QUERIES_MAX, RETENTION_DAYS, ReplayReport, ReplayScores,
     StoredEvent, TelemetryItem, score_query,
 };
-use crate::types::{AppError, Bearer, RecallRequest};
+use crate::types::{AnchorFilter, AppError, Bearer, RecallRequest};
 
 /// What `GET /v2/usage/settings` answers (ADR-0054 d3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -317,15 +317,19 @@ where
                     continue;
                 };
                 let req = RecallRequest {
+                    timings: false,
                     query: q.query_text.clone(),
                     k: REPLAY_K,
                     workarea: Some(q.scope_workarea_id.into()),
                     kinds: Vec::new(),
                     include_text: false,
-                    include_unreviewed: false,
+                    include_unreviewed: Some(false),
                     max_tokens: None,
                     search: Some(pipeline.as_str().to_owned()),
                     match_mode: MatchMode::Any,
+                    include_expired: false,
+                    now: None,
+                    anchor: AnchorFilter::default(),
                 };
                 // A scope the key no longer reads answers nothing, which
                 // the replay scores as a miss.

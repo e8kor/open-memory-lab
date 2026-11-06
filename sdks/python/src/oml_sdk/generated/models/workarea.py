@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.workarea_mode import WorkareaMode
 from ..models.workarea_status import WorkareaStatus
 from ..types import UNSET, Unset
 
@@ -30,6 +31,9 @@ class Workarea:
         crew (Crew | None | Unset): The crew record the workarea names, or null.
         user_root (bool | Unset): Whether the node is a user root, universe.<user>, which only the issuance of the first
             key naming its user creates (ADR-0044 d1, d11).
+        mode (WorkareaMode | Unset): in_progress when a person's key put the node in progress: readers inside recall
+            unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1,
+            d2).
         created_at (datetime.datetime | Unset):
     """
 
@@ -40,6 +44,7 @@ class Workarea:
     status: WorkareaStatus
     crew: Crew | None | Unset = UNSET
     user_root: bool | Unset = UNSET
+    mode: WorkareaMode | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -67,6 +72,10 @@ class Workarea:
 
         user_root = self.user_root
 
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode.value
+
         created_at: str | Unset = UNSET
         if not isinstance(self.created_at, Unset):
             created_at = self.created_at.isoformat()
@@ -86,6 +95,8 @@ class Workarea:
             field_dict["crew"] = crew
         if user_root is not UNSET:
             field_dict["user_root"] = user_root
+        if mode is not UNSET:
+            field_dict["mode"] = mode
         if created_at is not UNSET:
             field_dict["created_at"] = created_at
 
@@ -130,6 +141,13 @@ class Workarea:
 
         user_root = d.pop("user_root", UNSET)
 
+        _mode = d.pop("mode", UNSET)
+        mode: WorkareaMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = WorkareaMode(_mode)
+
         _created_at = d.pop("created_at", UNSET)
         created_at: datetime.datetime | Unset
         if isinstance(_created_at, Unset):
@@ -145,6 +163,7 @@ class Workarea:
             status=status,
             crew=crew,
             user_root=user_root,
+            mode=mode,
             created_at=created_at,
         )
 

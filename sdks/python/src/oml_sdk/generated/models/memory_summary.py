@@ -11,11 +11,15 @@ from ..models.memory_summary_kind import MemorySummaryKind
 from ..models.memory_summary_provenance import MemorySummaryProvenance
 from ..models.memory_summary_severity import MemorySummarySeverity
 from ..models.memory_summary_state import MemorySummaryState
+from ..models.stale import Stale
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.anchor import Anchor
     from ..models.attachment_descriptor import AttachmentDescriptor
     from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
+    from ..models.origin import Origin
+    from ..models.source_checked import SourceChecked
 
 
 T = TypeVar("T", bound="MemorySummary")
@@ -37,6 +41,8 @@ class MemorySummary:
         workarea_path (None | str): Derived at read time; grants bind to node ids. Null wherever workarea_id is.
         kind (MemorySummaryKind):
         state (MemorySummaryState):
+        unreviewed (bool): True exactly when the served version is held: the caller's own held version, or, inside a
+            workarea a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4).
         tokens (int): Budget tokens of the body (counter oml-tc/1): ceil(UTF-8 bytes of the NFC body / 4); not any
             model's count (docs/architecture/retrieval.md, Token budgets).
         retirement (bool): True on a retirement version; a claim whose served tip is one is a retired claim, which
@@ -50,6 +56,11 @@ class MemorySummary:
             d13).
         created_at (datetime.datetime):
         promoted_at (datetime.datetime | None):
+        anchor (Anchor | None): The version's anchor, as its author declared it, or null (ADR-0057 d1, d2).
+        stale (None | Stale): changed or removed from the served version's latest source check; null otherwise, and
+            always null on a held version (ADR-0057 d5).
+        source_checked (None | SourceChecked): The version's latest source check, or null; always null on a held version
+            (ADR-0057 d5).
         severity (MemorySummarySeverity | Unset): On kind guardrail alone, except a retirement version (ADR-0037 d2).
         rule (Any | Unset): On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8).
         load_warning (str | Unset): On a held guardrail alone: every reader of it is told that every key reading its
@@ -66,6 +77,15 @@ class MemorySummary:
             own rows in any state, promoted rows within its reader effective access (ADR-0025 d3); the lineage read shows
             the full closure, elided where unreadable.
         attachments (list[AttachmentDescriptor] | Unset):
+        origin (None | Origin | Unset): What kind of source the version's text came from, as signed; null on versions
+            written before ADR-0063 (d1-d3).
+        valid_from (None | str | Unset): When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM,
+            YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2).
+        valid_until (None | str | Unset): When it stops holding, as signed, or the instant a ratified supersession ended
+            it at; null when open (proposed ADR-0059 d2, d4).
+        replaces_valid_until (str | Unset): On a held successor alone: the instant approving it ends the version it
+            replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when
+            approving ends nothing (proposed ADR-0059 d4).
     """
 
     artifact_id: str
@@ -76,11 +96,15 @@ class MemorySummary:
     workarea_path: None | str
     kind: MemorySummaryKind
     state: MemorySummaryState
+    unreviewed: bool
     tokens: int
     replaces: MemorySummaryReplacesType0 | None
     held_expires_at: datetime.datetime | None
     created_at: datetime.datetime
     promoted_at: datetime.datetime | None
+    anchor: Anchor | None
+    stale: None | Stale
+    source_checked: None | SourceChecked
     retirement: bool = False
     severity: MemorySummarySeverity | Unset = UNSET
     rule: Any | Unset = UNSET
@@ -92,10 +116,17 @@ class MemorySummary:
     plaintext_digest: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     attachments: list[AttachmentDescriptor] | Unset = UNSET
+    origin: None | Origin | Unset = UNSET
+    valid_from: None | str | Unset = UNSET
+    valid_until: None | str | Unset = UNSET
+    replaces_valid_until: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.anchor import Anchor
         from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
+        from ..models.origin import Origin
+        from ..models.source_checked import SourceChecked
 
         artifact_id = self.artifact_id
 
@@ -114,6 +145,8 @@ class MemorySummary:
         kind = self.kind.value
 
         state = self.state.value
+
+        unreviewed = self.unreviewed
 
         tokens = self.tokens
 
@@ -138,6 +171,24 @@ class MemorySummary:
             promoted_at = self.promoted_at.isoformat()
         else:
             promoted_at = self.promoted_at
+
+        anchor: dict[str, Any] | None
+        if isinstance(self.anchor, Anchor):
+            anchor = self.anchor.to_dict()
+        else:
+            anchor = self.anchor
+
+        stale: None | str
+        if isinstance(self.stale, Stale):
+            stale = self.stale.value
+        else:
+            stale = self.stale
+
+        source_checked: dict[str, Any] | None
+        if isinstance(self.source_checked, SourceChecked):
+            source_checked = self.source_checked.to_dict()
+        else:
+            source_checked = self.source_checked
 
         severity: str | Unset = UNSET
         if not isinstance(self.severity, Unset):
@@ -178,6 +229,28 @@ class MemorySummary:
                 attachments_item = attachments_item_data.to_dict()
                 attachments.append(attachments_item)
 
+        origin: dict[str, Any] | None | Unset
+        if isinstance(self.origin, Unset):
+            origin = UNSET
+        elif isinstance(self.origin, Origin):
+            origin = self.origin.to_dict()
+        else:
+            origin = self.origin
+
+        valid_from: None | str | Unset
+        if isinstance(self.valid_from, Unset):
+            valid_from = UNSET
+        else:
+            valid_from = self.valid_from
+
+        valid_until: None | str | Unset
+        if isinstance(self.valid_until, Unset):
+            valid_until = UNSET
+        else:
+            valid_until = self.valid_until
+
+        replaces_valid_until = self.replaces_valid_until
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -190,12 +263,16 @@ class MemorySummary:
                 "workarea_path": workarea_path,
                 "kind": kind,
                 "state": state,
+                "unreviewed": unreviewed,
                 "tokens": tokens,
                 "retirement": retirement,
                 "replaces": replaces,
                 "held_expires_at": held_expires_at,
                 "created_at": created_at,
                 "promoted_at": promoted_at,
+                "anchor": anchor,
+                "stale": stale,
+                "source_checked": source_checked,
             }
         )
         if severity is not UNSET:
@@ -218,13 +295,24 @@ class MemorySummary:
             field_dict["derives_from"] = derives_from
         if attachments is not UNSET:
             field_dict["attachments"] = attachments
+        if origin is not UNSET:
+            field_dict["origin"] = origin
+        if valid_from is not UNSET:
+            field_dict["valid_from"] = valid_from
+        if valid_until is not UNSET:
+            field_dict["valid_until"] = valid_until
+        if replaces_valid_until is not UNSET:
+            field_dict["replaces_valid_until"] = replaces_valid_until
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.anchor import Anchor
         from ..models.attachment_descriptor import AttachmentDescriptor
         from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
+        from ..models.origin import Origin
+        from ..models.source_checked import SourceChecked
 
         d = dict(src_dict)
         artifact_id = d.pop("artifact_id")
@@ -252,6 +340,8 @@ class MemorySummary:
         kind = MemorySummaryKind(d.pop("kind"))
 
         state = MemorySummaryState(d.pop("state"))
+
+        unreviewed = d.pop("unreviewed")
 
         tokens = d.pop("tokens")
 
@@ -304,6 +394,51 @@ class MemorySummary:
 
         promoted_at = _parse_promoted_at(d.pop("promoted_at"))
 
+        def _parse_anchor(data: object) -> Anchor | None:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                anchor_type_0 = Anchor.from_dict(data)
+
+                return anchor_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(Anchor | None, data)
+
+        anchor = _parse_anchor(d.pop("anchor"))
+
+        def _parse_stale(data: object) -> None | Stale:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                stale_type_0 = Stale(data)
+
+                return stale_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Stale, data)
+
+        stale = _parse_stale(d.pop("stale"))
+
+        def _parse_source_checked(data: object) -> None | SourceChecked:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                source_checked_type_0 = SourceChecked.from_dict(data)
+
+                return source_checked_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | SourceChecked, data)
+
+        source_checked = _parse_source_checked(d.pop("source_checked"))
+
         _severity = d.pop("severity", UNSET)
         severity: MemorySummarySeverity | Unset
         if isinstance(_severity, Unset):
@@ -355,6 +490,43 @@ class MemorySummary:
 
                 attachments.append(attachments_item)
 
+        def _parse_origin(data: object) -> None | Origin | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                origin_type_0 = Origin.from_dict(data)
+
+                return origin_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Origin | Unset, data)
+
+        origin = _parse_origin(d.pop("origin", UNSET))
+
+        def _parse_valid_from(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        valid_from = _parse_valid_from(d.pop("valid_from", UNSET))
+
+        def _parse_valid_until(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        valid_until = _parse_valid_until(d.pop("valid_until", UNSET))
+
+        replaces_valid_until = d.pop("replaces_valid_until", UNSET)
+
         memory_summary = cls(
             artifact_id=artifact_id,
             claim_key=claim_key,
@@ -364,12 +536,16 @@ class MemorySummary:
             workarea_path=workarea_path,
             kind=kind,
             state=state,
+            unreviewed=unreviewed,
             tokens=tokens,
             retirement=retirement,
             replaces=replaces,
             held_expires_at=held_expires_at,
             created_at=created_at,
             promoted_at=promoted_at,
+            anchor=anchor,
+            stale=stale,
+            source_checked=source_checked,
             severity=severity,
             rule=rule,
             load_warning=load_warning,
@@ -380,6 +556,10 @@ class MemorySummary:
             plaintext_digest=plaintext_digest,
             derives_from=derives_from,
             attachments=attachments,
+            origin=origin,
+            valid_from=valid_from,
+            valid_until=valid_until,
+            replaces_valid_until=replaces_valid_until,
         )
 
         memory_summary.additional_properties = d

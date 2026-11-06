@@ -6,13 +6,16 @@
 //! `oml-guardrail`, so its hooks read a guardrail rule as the server does
 //! (proposed ADR-0037 d18 Q10).
 
+pub mod chat;
 pub mod client;
 pub mod creds;
 pub mod discovery;
+pub mod events;
 pub mod guardrails;
 pub mod hook;
 pub mod issue;
 pub mod owner_only;
 pub mod quickstart;
 pub mod setup;
+pub mod sync;
 pub mod verify;

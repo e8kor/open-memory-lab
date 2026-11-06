@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.workarea_mode import WorkareaMode
 from ..models.workarea_status import WorkareaStatus
 from ..models.workarea_view_my_effective_verbs_item import (
     WorkareaViewMyEffectiveVerbsItem,
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from ..models.crew import Crew
     from ..models.review_policy import ReviewPolicy
     from ..models.transition import Transition
+    from ..models.whoami_ref import WhoamiRef
     from ..models.workarea_view_children_item import WorkareaViewChildrenItem
     from ..models.workarea_view_edges_item import WorkareaViewEdgesItem
 
@@ -37,6 +39,9 @@ class WorkareaView:
             path (str): Derived ltree path, the names from universe joined with "."; never the grant target, and never
                 accepted as a reference.
             status (WorkareaStatus):
+            stale_versions (int): The promoted served tips on this node whose latest source check found the source changed
+                or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's
+                default workarea.
             children (list[WorkareaViewChildrenItem]): The readable immediate children, ordered by path_leaf ascending in
                 byte order, then id; a child's path_leaf is its name.
             edges (list[WorkareaViewEdgesItem]): The workarea edges touching the node whose other endpoint the key can read,
@@ -55,7 +60,12 @@ class WorkareaView:
             crew (Crew | None | Unset): The crew record the workarea names, or null.
             user_root (bool | Unset): Whether the node is a user root, universe.<user>, which only the issuance of the first
                 key naming its user creates (ADR-0044 d1, d11).
+            mode (WorkareaMode | Unset): in_progress when a person's key put the node in progress: readers inside recall
+                unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1,
+                d2).
             created_at (datetime.datetime | Unset):
+            in_progress_root (None | Unset | WhoamiRef): The in-progress workarea this node lies inside, itself for a root,
+                by id and name; null outside every in-progress subtree (ADR-0030 d13).
     """
 
     id: str
@@ -63,6 +73,7 @@ class WorkareaView:
     parent_id: None | str
     path: str
     status: WorkareaStatus
+    stale_versions: int
     children: list[WorkareaViewChildrenItem]
     edges: list[WorkareaViewEdgesItem]
     my_effective_verbs: list[WorkareaViewMyEffectiveVerbsItem]
@@ -72,11 +83,14 @@ class WorkareaView:
     brief: Brief
     crew: Crew | None | Unset = UNSET
     user_root: bool | Unset = UNSET
+    mode: WorkareaMode | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
+    in_progress_root: None | Unset | WhoamiRef = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.crew import Crew
+        from ..models.whoami_ref import WhoamiRef
 
         id = self.id
 
@@ -88,6 +102,8 @@ class WorkareaView:
         path = self.path
 
         status = self.status.value
+
+        stale_versions = self.stale_versions
 
         children = []
         for children_item_data in self.children:
@@ -125,9 +141,21 @@ class WorkareaView:
 
         user_root = self.user_root
 
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode.value
+
         created_at: str | Unset = UNSET
         if not isinstance(self.created_at, Unset):
             created_at = self.created_at.isoformat()
+
+        in_progress_root: dict[str, Any] | None | Unset
+        if isinstance(self.in_progress_root, Unset):
+            in_progress_root = UNSET
+        elif isinstance(self.in_progress_root, WhoamiRef):
+            in_progress_root = self.in_progress_root.to_dict()
+        else:
+            in_progress_root = self.in_progress_root
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -138,6 +166,7 @@ class WorkareaView:
                 "parent_id": parent_id,
                 "path": path,
                 "status": status,
+                "stale_versions": stale_versions,
                 "children": children,
                 "edges": edges,
                 "my_effective_verbs": my_effective_verbs,
@@ -151,8 +180,12 @@ class WorkareaView:
             field_dict["crew"] = crew
         if user_root is not UNSET:
             field_dict["user_root"] = user_root
+        if mode is not UNSET:
+            field_dict["mode"] = mode
         if created_at is not UNSET:
             field_dict["created_at"] = created_at
+        if in_progress_root is not UNSET:
+            field_dict["in_progress_root"] = in_progress_root
 
         return field_dict
 
@@ -162,6 +195,7 @@ class WorkareaView:
         from ..models.crew import Crew
         from ..models.review_policy import ReviewPolicy
         from ..models.transition import Transition
+        from ..models.whoami_ref import WhoamiRef
         from ..models.workarea_view_children_item import WorkareaViewChildrenItem
         from ..models.workarea_view_edges_item import WorkareaViewEdgesItem
 
@@ -180,6 +214,8 @@ class WorkareaView:
         path = d.pop("path")
 
         status = WorkareaStatus(d.pop("status"))
+
+        stale_versions = d.pop("stale_versions")
 
         children = []
         _children = d.pop("children")
@@ -238,6 +274,13 @@ class WorkareaView:
 
         user_root = d.pop("user_root", UNSET)
 
+        _mode = d.pop("mode", UNSET)
+        mode: WorkareaMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = WorkareaMode(_mode)
+
         _created_at = d.pop("created_at", UNSET)
         created_at: datetime.datetime | Unset
         if isinstance(_created_at, Unset):
@@ -245,12 +288,30 @@ class WorkareaView:
         else:
             created_at = datetime.datetime.fromisoformat(_created_at)
 
+        def _parse_in_progress_root(data: object) -> None | Unset | WhoamiRef:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                in_progress_root_type_0 = WhoamiRef.from_dict(data)
+
+                return in_progress_root_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | WhoamiRef, data)
+
+        in_progress_root = _parse_in_progress_root(d.pop("in_progress_root", UNSET))
+
         workarea_view = cls(
             id=id,
             name=name,
             parent_id=parent_id,
             path=path,
             status=status,
+            stale_versions=stale_versions,
             children=children,
             edges=edges,
             my_effective_verbs=my_effective_verbs,
@@ -260,7 +321,9 @@ class WorkareaView:
             brief=brief,
             crew=crew,
             user_root=user_root,
+            mode=mode,
             created_at=created_at,
+            in_progress_root=in_progress_root,
         )
 
         workarea_view.additional_properties = d

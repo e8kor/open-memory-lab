@@ -1156,6 +1156,13 @@ CREATE TABLE artifact_keys (
 );
 ```
 
+As built by migration 0031 (ADR-0060 d6), the lake writer creates the row when it first
+materializes a version, with `created_at` and the check that `wrapped_dek` is NULL exactly
+when `destroyed_at` is set, and on `lifecycle.erase` nulls the key. Its sibling,
+`lake_dead_letter (tenant_id, outbox_seq, lake_table, reason, at, repaired_at)`, records an
+outbox row a lake table skipped (ADR-0060 d14). Both have row security and no serving-role
+grant.
+
 The erase transaction journals the erase event, sets `wrapped_dek` to NULL and `destroyed_at`, and
 removes plaintext-derived index rows (FTS, embeddings) in the same commit. Ciphertext copies
 elsewhere (lake parquet versions, object-store versions, Postgres backups) become unreadable, not
@@ -1449,6 +1456,54 @@ would rank by rows the key cannot read. Frequent words are pruned from the posti
 rescored for the candidates the others reach; when every word is pruned the `bm25` scan answers
 (`search.access: "scan"`); [retrieval](../architecture/retrieval.md) has the rule and its
 constants.
+
+### similar keys (ADR-0050)
+
+*Introduced in v0.5.9, built in `migrations/0027_similar_keys.sql`
+([ADR-0050](../adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found.md) d1, d17).*
+
+The write-time similar check compares a write with the rows its key may read by integer keys, never
+by a text operator, so the read is an index condition under row security as the postings' is.
+
+```sql
+-- a text's words: ASCII letters lower-cased by translate (no collation decides a case), split at
+-- every ASCII character that is not a letter or digit; oml_domain::similar::words is held equal
+CREATE FUNCTION oml_similar_words(t text) RETURNS text[] IMMUTABLE ...;
+-- band 0: the same_text key, oml_token_id('x:' || words joined by spaces); bands 1-10: the ids of
+-- 'b<j>:' || the six minima of band j of a 60-permutation MinHash over the distinct words' ids;
+-- no key for a text with no word; Fingerprint::stored_keys is held equal by a law
+CREATE FUNCTION oml_similar_keys(t text) RETURNS TABLE (band smallint, key bigint) IMMUTABLE ...;
+-- 0 held, 1 a served tip, NULL otherwise (replaced, demoted, rejected, erased, a retirement
+-- version, a kind other than memory, derived_fact, steering)
+CREATE FUNCTION oml_similar_state(status text, is_tip boolean, retirement boolean, kind text) ...;
+CREATE TABLE similar_keys (
+    tenant_id     uuid     NOT NULL,   -- the partition key and the policy's column
+    memory_id     uuid     NOT NULL,
+    workarea_id   uuid     NOT NULL,   -- copied at write
+    author_key_id uuid     NOT NULL,   -- the own held rows' filter
+    key           bigint   NOT NULL,
+    band          smallint NOT NULL CHECK (band BETWEEN 0 AND 10),
+    state         smallint NOT NULL CHECK (state IN (0, 1))
+) PARTITION BY LIST (tenant_id);       -- similar_keys_t_<tenant id, 32 hex>, fenced as postings'
+CREATE INDEX similar_keys_key ON similar_keys (key, workarea_id)
+    INCLUDE (state, author_key_id, memory_id, tenant_id);
+CREATE INDEX similar_keys_memory ON similar_keys (memory_id);
+```
+
+- **Written by a trigger.** `memories_similar_keys` writes a version's keys when it is inserted
+  held, sets their state at promotion, and deletes them when the version leaves both states or is
+  deleted; a changed claim, workarea, kind or author gives the keys back and takes new ones. The
+  table holds only what the check may name. Computing the keys costs about 0.3 ms a text in SQL.
+- **The read.** oml-pg's `SIMILAR_CANDIDATES`: the write's keys, `state = 1` on the scope's nodes
+  or `state = 0` with the calling key as author on its readable nodes, grouped by version and
+  ordered by keys held, then id, at most 32. The core reads each candidate's row, admits it as
+  recall does, and verifies the relation exactly before naming it.
+- **Fill and repair.** 0027 fills every existing tenant under its row security;
+  `oml_similar_keys_refill(t)`, owner only, rebuilds one tenant's keys in a transaction whose
+  `oml.tenant_id` is that tenant, under its chain lock. `oml doctor` names a missing partition,
+  versions without keys and keys of the wrong state (`/v2/search`'s `postings.similar_*`). A lead
+  starting on 0027 creates the partition of a tenant an older lead created.
+- **No statistics on the parent**, as `search_postings` (FR-45).
 
 ### learned sparse postings and their queue (ADR-0052 d14, d15)
 
@@ -1759,6 +1814,43 @@ against 0.17 ms at 45,000 held
 ([ADR-0055](../adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md)
 d9).
 
+
+### Origin kind (0029, 0030)
+
+```sql
+ALTER TABLE memories ADD COLUMN origin_kind text;  -- repo, doc, code, lake, chat, web, manual
+CREATE INDEX memories_origin_kind ON memories (tenant_id, origin_kind)
+    WHERE origin_kind IS NOT NULL AND origin_kind <> 'manual';
+```
+
+`origin_kind` holds the kind the version's submission event signed, written at capture and never
+updated; a check keeps it to the closed set. Versions written before 0029 hold `NULL` and are never
+backfilled, so every kind filter leaves them out. The filter is one more predicate of the origin
+filters, in the candidate statement before ranking's cut. 0029 adds the column and the check
+`NOT VALID` in one transaction; 0030 runs outside any transaction, validating the check under SHARE
+UPDATE EXCLUSIVE and building the empty partial index, so reads and writes go on during the scan ([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md) d1-d3). The number
+0029 follows 0026 to 0028, which the other v0.6.0 lanes use.
+
+### Source anchors and source checks (0025)
+
+```sql
+ALTER TABLE memories ADD COLUMN anchor_repo text, … anchor_hasher text,
+                     ADD COLUMN source_check_rev text, … source_check_at text;
+CREATE INDEX memories_anchor ON memories (tenant_id, anchor_repo, anchor_path text_pattern_ops)
+    WHERE anchor_repo IS NOT NULL;
+```
+
+Seven nullable `anchor_*` columns hold a version's anchor as its submission event signed it:
+written at capture, never updated, and kept by erasure as clear metadata. Six `source_check_*`
+columns hold the version's latest `source.checked`, set only on a promoted row; `stale` is read
+from them alone, so a served version is never marked from a held one. Checks keep the shape: one
+of `anchor_repo` and `anchor_uri`, a path exactly with a repository, `anchor_hash` with
+`anchor_hasher`, a closed set of results, and a moved path only on `moved`. The origin filters
+read the partial index under the same row security as every read of `memories`: the listing
+names them in its statement; a filtered recall reads its lists whole and keeps the admitted rows
+in order before the cut, so it never under-returns
+([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+d1–d5, d18; FR-115 measures what reading the lists whole costs).
 ## Migrations
 
 The schema reaches a database only as **sqlx migrations**: plain-SQL files under `migrations/`,

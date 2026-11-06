@@ -4,19 +4,22 @@
 resolver = "2"
 members = [
     "crates/oml-guardrail",
+    "crates/oml-scan",
     "crates/oml-domain",
     "crates/oml-app",
     "crates/adapters/oml-pg",
     "crates/adapters/oml-fetch",
     "crates/adapters/oml-rerank",
+    "crates/adapters/oml-lake",
     "crates/transports/oml-transport-http",
     "crates/bins/oml-server-lead",
     "crates/bins/oml-cli",
+    "crates/bins/oml-lakewriter",
     "testing/oml-port-contracts",
 ]
 
 [workspace.package]
-version = "0.5.7"
+version = "0.5.8"
 edition = "2024"
 # MSRV = pinned stable minus two minor releases (ci-and-toolchain.md MSRV window)
 rust-version = "1.97"
@@ -26,17 +29,29 @@ license = "Apache-2.0"
 oml-app = { path = "crates/oml-app" }
 oml-domain = { path = "crates/oml-domain" }
 oml-guardrail = { path = "crates/oml-guardrail" }
+oml-scan = { path = "crates/oml-scan" }
 oml-port-contracts = { path = "testing/oml-port-contracts" }
 # Dev-dependency surface only: the oml-cli end-to-end test composes the real
 # lead in-process; the CLI binary itself depends on no server crate.
 oml-server-lead = { path = "crates/bins/oml-server-lead", default-features = false }
 oml-transport-http = { path = "crates/transports/oml-transport-http" }
 oml-pg = { path = "crates/adapters/oml-pg" }
+# The lake adapter (ADR-0003, ADR-0060): only oml-lakewriter depends on it, so
+# neither the lead nor the CLI builds delta-rs (ADR-0060 d1).
+oml-lake = { path = "crates/adapters/oml-lake" }
 oml-fetch = { path = "crates/adapters/oml-fetch" }
 # Without its `model` feature unless a member asks for it (the lead does,
 # by its `rerank` feature), so no graph builds candle by inheritance.
 oml-rerank = { path = "crates/adapters/oml-rerank", default-features = false }
 axum = "0.8"
+# delta-rs, the whole lake interface (ADR-0006 d2), with DataFusion for
+# MERGE and the operator's named queries (ADR-0060 d11). Its 1.x core
+# hard-enables the rustls feature, which reaches aws-lc through reqwest
+# 0.12: the one C library in the graph, confined to oml-lakewriter
+# (ADR-0060 d17). Only oml-lake names it.
+deltalake = { version = "1.1.2", default-features = false, features = ["datafusion", "rustls"] }
+url = "2.5"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 # The local cross-encoder of the reranking stage (ADR-0053 d2): candle runs
 # the model on the CPU in pure Rust (ADR-0006), and tokenizers reads the
 # model's own tokenizer.json with its pure-Rust regex backend, never the
@@ -100,6 +115,9 @@ tracing-subscriber = "0.3"
 ed25519-dalek = "2.2"
 hex = "0.4"
 proptest = "1.6"
+# The deterministic scan's rule set (ADR-0065 d1): linear-time matching, no
+# backtracking, pure Rust; already in the graph through tokenizers.
+regex = "1.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
@@ -160,4 +178,14 @@ opt-level = 3
 [profile.dev.package.candle-transformers]
 opt-level = 3
 [profile.dev.package.tokenizers]
+opt-level = 3
+# The scan's matcher (ADR-0065 d9): its tests scan the documentation set as
+# the false-positive corpus, a minute long unoptimised.
+[profile.dev.package.regex-automata]
+opt-level = 3
+[profile.dev.package.regex-syntax]
+opt-level = 3
+[profile.dev.package.aho-corasick]
+opt-level = 3
+[profile.dev.package.memchr]
 opt-level = 3

@@ -1,0 +1,85 @@
+name: Weekly dependency pass
+
+# Once a week: cargo deny, cargo audit, npm audit for the JavaScript that ships, and the
+# scanner's rule tests. The findings go to one issue, opened or updated in place. The job
+# reports and never fails main.
+
+on:
+  schedule:
+    # Wednesday 04:23 UTC, which is Tuesday evening in Pacific time, outside 06:00-09:00 PT.
+    - cron: "23 4 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: weekly-deps
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  pass:
+    name: dependency pass
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-audit
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run the checks
+        shell: bash
+        run: |
+          mkdir -p .tmp/weekly
+          run() { # name, command...
+            local n="$1"; shift
+            if "$@" > ".tmp/weekly/$n.log" 2>&1; then echo "ok" > ".tmp/weekly/$n.status"; else echo "findings" > ".tmp/weekly/$n.status"; fi
+          }
+          run cargo-deny cargo deny check
+          run cargo-audit cargo audit
+          # Rules are compiled in; this picks up every test of the scanner by name.
+          run scanner-rules cargo test --locked -p oml-domain -p oml-app -p oml-guardrail scan
+          for lock in $(git ls-files '*package-lock.json' | grep -v node_modules); do
+            d="$(dirname "$lock")"
+            run "npm-audit-$(echo "$d" | tr '/' '-')" bash -c "cd '$d' && npm audit --omit=dev"
+          done
+      - name: Open or update the issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="Weekly dependency pass"
+          body=".tmp/weekly/body.md"
+          bad=0
+          {
+            echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} ($(date -u +%F))"
+            echo
+            for s in .tmp/weekly/*.status; do
+              n="$(basename "$s" .status)"
+              if [ "$(cat "$s")" = findings ]; then
+                bad=1
+                echo "### $n: findings"
+                echo '```'
+                tail -n 60 ".tmp/weekly/$n.log"
+                echo '```'
+              else
+                echo "### $n: ok"
+              fi
+            done
+          } > "$body"
+          num="$(gh issue list --state open --search "\"$title\" in:title" --json number,title --jq "[.[] | select(.title==\"$title\")][0].number // empty")"
+          if [ -n "$num" ]; then
+            gh issue edit "$num" --body-file "$body"
+            [ "$bad" = 0 ] && gh issue comment "$num" --body "Latest pass: no findings." || true
+          elif [ "$bad" = 1 ]; then
+            gh issue create --title "$title" --body-file "$body"
+          fi
+          cat "$body" >> "$GITHUB_STEP_SUMMARY"

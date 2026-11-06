@@ -17,6 +17,9 @@ pub mod event_types {
     pub const TENANT_CREATED: &str = "tenant.created";
     /// New workarea node under an existing parent.
     pub const WORKAREA_CREATE: &str = "workarea.create";
+    /// A person's key set a workarea's mode; `standard` on an in-progress
+    /// root is its commit (ADR-0030 d1, d6).
+    pub const WORKAREA_MODE_SET: &str = "workarea.mode_set";
     /// A workarea now names another crew record (ADR-0026 d8).
     pub const WORKAREA_CREW_UPDATED: &str = "workarea.crew_updated";
     /// A forward ladder step proposed by a dreamer or admin; pending until
@@ -64,6 +67,10 @@ pub mod event_types {
     pub const LIFECYCLE_PROMOTE: &str = "lifecycle.promote";
     /// A promoted supersession takes the tip from the version it replaces.
     pub const LIFECYCLE_SUPERSEDE: &str = "lifecycle.supersede";
+    /// A statement that a promoted version's anchored span was compared
+    /// with its source at a commit; it changes no text and no anchor and
+    /// moves nothing through review (ADR-0057 d5, d18).
+    pub const SOURCE_CHECKED: &str = "source.checked";
     /// Crypto-shredding erasure (vector 3 of chain-format.md).
     pub const LIFECYCLE_ERASE: &str = "lifecycle.erase";
     /// Deployment signing-key rotation, first event the new key signs.

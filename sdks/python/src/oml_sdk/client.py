@@ -36,12 +36,15 @@ from .generated.api.review import post_verdict, review_next
 from .generated.api.workareas import get_workarea
 from .generated.client import Client
 from .generated.models import (
+    Anchor,
     EventsPage,
     ListMemoriesKind,
     ListMemoriesState,
     Memory,
     MemoryPage,
     MemorySummary,
+    Origin,
+    OriginKind,
     RecallRequest,
     RecallRequestKindsItem,
     RecallRequestMatch,
@@ -88,6 +91,9 @@ READ_RECALL = (
     "max_tokens",
     "search",
     "match",
+    "anchor_repo",
+    "anchor_path_prefix",
+    "origin_kinds",
 )
 READ_LISTING = (
     "own",
@@ -99,6 +105,9 @@ READ_LISTING = (
     "until",
     "limit",
     "cursor",
+    "anchor_repo",
+    "anchor_path_prefix",
+    "origin_kinds",
 )
 
 
@@ -266,8 +275,11 @@ class OmlClient:
         derives_from: Sequence[str] | None = None,
         workarea: str | None = None,
         replaces: str | None = None,
+        expected_version: int | None = None,
         retirement: bool | None = None,
         reason: str | None = None,
+        anchor: Mapping[str, Any] | None = None,
+        origin_kind: str | None = None,
         idempotency_key: str | None = None,
     ) -> Written[SubmitAccepted]:
         """Write a claim, held on arrival; the fields set choose the route
@@ -277,9 +289,18 @@ class OmlClient:
         or with `retirement=True` a proposal to retire it, `text` saying why.
         `retirement` or `reason` without `replaces`, and `claim_key` with it,
         raise `request.validation` naming the field before anything is sent.
+        With `replaces`, `expected_version` is required: the claim's latest
+        version as last read, else `submission.version_conflict` (ADR-0057
+        d19). `anchor` is the origin the author declares (ADR-0057 d1), and
+        `origin_kind` what kind of source the text came from, recorded
+        `manual` when omitted (ADR-0063 d1, d2).
         """
         if replaces is None:
-            for field, value in (("retirement", retirement), ("reason", reason)):
+            for field, value in (
+                ("retirement", retirement),
+                ("reason", reason),
+                ("expected_version", expected_version),
+            ):
                 if value is not None:
                     raise _invalid(
                         field,
@@ -292,6 +313,8 @@ class OmlClient:
                 kind=SubmitRequestKind(kind) if kind is not None else UNSET,
                 workarea=_opt(workarea),
                 derives_from=list(derives_from) if derives_from is not None else UNSET,
+                anchor=Anchor.from_dict(dict(anchor)) if anchor is not None else UNSET,
+                origin=Origin(kind=OriginKind(origin_kind)) if origin_kind is not None else UNSET,
             )
             return self._write(
                 idempotency_key,
@@ -304,8 +327,17 @@ class OmlClient:
                 "claim_key",
                 "claim_key is refused with replaces: the new version takes its target's claim_key",
             )
+        if expected_version is None:
+            raise _invalid(
+                "expected_version",
+                "expected_version is required with replaces: the claim's latest version as you "
+                "last read it, so a supersession never replaces a version it did not see",
+            )
         successor = SupersedeRequest(
             body=text,
+            expected_version=expected_version,
+            anchor=Anchor.from_dict(dict(anchor)) if anchor is not None else UNSET,
+            origin=Origin(kind=OriginKind(origin_kind)) if origin_kind is not None else UNSET,
             workarea=_opt(workarea),
             retirement=_opt(retirement),
             kind=SupersedeRequestKind(kind) if kind is not None else UNSET,
@@ -340,6 +372,9 @@ class OmlClient:
         until: datetime.datetime | None = None,
         limit: int | None = None,
         cursor: str | None = None,
+        anchor_repo: str | None = None,
+        anchor_path_prefix: str | None = None,
+        origin_kinds: Sequence[str] | None = None,
     ) -> Memory | RecallResponse | MemoryPage:
         """Read in `oml_read`'s three modes (ADR-0039 d4). `artifact_id`
         fetches one version with its text, a `Memory`. `query` recalls over
@@ -370,6 +405,11 @@ class OmlClient:
             "limit": limit,
             "cursor": cursor,
         }
+        origin = {
+            "anchor_repo": anchor_repo,
+            "anchor_path_prefix": anchor_path_prefix,
+            "origin_kinds": origin_kinds,
+        }
         if artifact_id is not None:
             if query is not None:
                 raise _invalid(
@@ -377,7 +417,7 @@ class OmlClient:
                     "query is refused with artifact_id: artifact_id fetches one version and "
                     "query recalls, so pass one",
                 )
-            _outside_mode(recall | listing, (), "get")
+            _outside_mode(recall | listing | origin, (), "get")
             return self._send(
                 lambda: get_memory.sync_detailed(artifact_id, client=self._api)
             ).parsed
@@ -395,12 +435,17 @@ class OmlClient:
                 max_tokens=_opt(max_tokens),
                 search=RecallRequestSearch(search) if search is not None else UNSET,
                 match=RecallRequestMatch(match) if match is not None else UNSET,
+                anchor_repo=_opt(anchor_repo),
+                anchor_path_prefix=_opt(anchor_path_prefix),
+                origin_kinds=[OriginKind(k) for k in origin_kinds]
+                if origin_kinds is not None
+                else UNSET,
             )
             return self._send(
                 lambda: recall_memories.sync_detailed(client=self._api, body=request)
             ).parsed
         _outside_mode(recall, READ_LISTING, "listing")
-        return self._listing(workarea=workarea, **listing)
+        return self._listing(workarea=workarea, **listing, **origin)
 
     def _listing(
         self,
@@ -414,6 +459,9 @@ class OmlClient:
         until: datetime.datetime | None = None,
         limit: int | None = None,
         cursor: str | None = None,
+        anchor_repo: str | None = None,
+        anchor_path_prefix: str | None = None,
+        origin_kinds: Sequence[str] | None = None,
     ) -> MemoryPage:
         """One page of `GET /v1/memories`, `own` defaulting to true as
         `oml_read`'s listing does (ADR-0039 d4)."""
@@ -429,6 +477,11 @@ class OmlClient:
                 until=_opt(until),
                 limit=_opt(limit),
                 cursor=_opt(cursor),
+                anchor_repo=_opt(anchor_repo),
+                anchor_path_prefix=_opt(anchor_path_prefix),
+                origin_kinds=[OriginKind(k) for k in origin_kinds]
+                if origin_kinds is not None
+                else UNSET,
             )
         ).parsed
 

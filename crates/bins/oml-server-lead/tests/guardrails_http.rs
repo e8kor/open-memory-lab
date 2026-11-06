@@ -346,7 +346,7 @@ async fn oml_write_refuses_kind_guardrail_and_a_guardrail_target() {
         &router,
         &t.writer,
         "oml_write",
-        json!({"text": "Run the tests twice.", "replaces": target, "idempotency_key": "w-2"}),
+        json!({ "expected_version": 1,"text": "Run the tests twice.", "replaces": target, "idempotency_key": "w-2"}),
     )
     .await;
     assert_eq!(

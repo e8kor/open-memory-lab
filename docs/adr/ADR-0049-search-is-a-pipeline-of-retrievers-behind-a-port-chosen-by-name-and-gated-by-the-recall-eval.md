@@ -2,15 +2,16 @@
 id: adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval
 tier: engineering
 status: proposed
-answers: how search plugs into the hexagonal core; which port a retriever implements, what the core hands it and what it may never decide; where fusion, the budget cut, steering and held rows live; what a named pipeline is and which ones v0.5.5 serves; how a deployment, a tenant and a request each choose one, and what is refused; what a recall answers about the pipeline, the matched words and a fallback; the laws every adapter passes; how the recall eval gates a pipeline before it may be the default, and what it measured; which API changes break v0.5.0 callers and how to migrate; the doctor lines, the request log field and the metric; the increments after this one; and how this record relates to ADR-0048
+answers: how search plugs into the hexagonal core; which port a retriever implements, what the core hands it and what it may never decide; where fusion, the budget cut, steering and held rows live; what a named pipeline is and which ones v0.5.5 serves; how a deployment, a tenant and a request each choose one, and what is refused; what a recall answers about the pipeline, the matched words and a fallback; the laws every adapter passes; how the recall eval gates a pipeline before it may be the default, and what it measured; which API changes break v0.5.0 callers and how to migrate; the doctor lines, the request log field and the metric; the increments after this one; the per-retriever cap before fusion (d13); and how this record relates to ADR-0048
 -->
 
 # ADR-0049 — Search is a pipeline of retrievers behind a port, chosen by name and gated by the recall eval
 
 **Status:** proposed · 2026-11-04
 
-**Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); later
-increments not assigned ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); d13,
+each retriever's list capped before fusion, introduced in v0.5.8 with ADR-0057 d22; d14 proposed
+for v0.5.9; later increments not assigned ([releases](../product/releases.md#decisions))
 
 **Amends:** [ADR-0048](ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md) (proposed): ADR-0048 stays the record of *what*
 search becomes and *when*, stage by stage; this record is *how* each stage plugs in. ADR-0048
@@ -366,6 +367,48 @@ reorders results, and steering rows, which precede hits, are never ranked"
        security can use; that is its own record. This item's columns and statement are the
        lexical leg until then.
 
+- **d13 — Each retriever's list is capped in the core before fusion.** *Added 2026-11-05 with
+  [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md)
+  for v0.5.8, after Hindsight's per-arm cap (`hindsight_api/engine/search/fusion.py:8-26`).* The
+  depth d3 reads a list to (`k` for `Single`, at least 50 for `Rrf`, at least 100 for `Cc`, at
+  least the rerank depth for a reranking pipeline) is a cap the core enforces, not a request the
+  adapter honours: `run_pipeline` keeps each list's first `depth` candidates, in the adapter's
+  order, before `fuse` reads it, so no retriever, however many rows it returns, contributes more
+  candidates to the fused pool than any other, and a future arm (a graph or temporal leg) cannot
+  flood what the reranker reads. The law
+  `no_retriever_contributes_more_candidates_than_its_cap` runs the core over a retriever that
+  returns more than it was asked for. The cost is nothing on today's adapters, which already
+  stop at the depth; the cap is the guard for the next one.
+
+
+- **d14 — Every recall measures its stages, records them by pipeline and stage, and serves them
+  on request where an operator allows** (added 2026-11-05, v0.5.9; adopted from basic-memory's
+  per-stage search trace, `repository/search_trace.py`, which records `fts_ms`, `fusion_ms` and
+  the ranks before and after reranking). A recall times its stages, each a value of
+  `search::Stage`, a closed set: `scope` (the ancestry, the readable nodes, the steering in force
+  and the pipeline's choice), `retrieve_<retriever>` per list (the sparse query's encoding counted
+  in `retrieve_sparse`, a `match: all` fallback's second attempt summed into the first),
+  `fuse`, `rerank` (the reranker's scoring, only for a reranking pipeline), `suggest`
+  (`did_you_mean`'s read, only when it runs), `hydrate` (every read of rows by id and their
+  serving) and `cut` (the `k` cut, the floor and the budget cut). Each recall records them in
+  `oml_recall_stage_duration_seconds{pipeline, stage}`, on ADR-0042 d12's bounds: a pipeline
+  observes only its own stages, so the default `bm25-postings` creates five series sets, about
+  95 series, and no label carries a tenant, a key or a query (ADR-0042 d11, d12; ADR-0054 d1's
+  budget). A request sending `timings: true` receives `timings: {stages_ms, total_ms}` in the
+  answer, in the order the stages ran, when the deployment sets `search.timings`; otherwise it
+  is refused with `request.validation` naming `/timings`, never silently answered without. It is
+  served to any key that may recall when the deployment sets it: a tenant `admin` or `operator`
+  key holds no recall role (`admissible_grant_roles`), so restricting the block to an admin key
+  would remove it from every caller, and the switch stays the operator's alone; a narrower
+  holder is the maintainer's to name. It is
+  off by default, and for an operator diagnosing latency, because a stage's time over rows a key
+  cannot read (a scan's, a postings read's) says something about how many there are. No stage's
+  time enters a ranking. Laws: `a_recall_measures_each_stage_it_ran_in_order`,
+  `timings_are_refused_where_the_deployment_does_not_serve_them`, in `oml-app`'s
+  `recall_timings` suite. Rejected: timings in every answer (a side channel by default, and
+  tokens an agent does not use); timings on the request log line (a line per recall stays one
+  line; the histogram serves the aggregate); per-candidate ranks before and after reranking as
+  basic-memory keeps (each hit already carries `rank_before`, ADR-0053 d7).
 
 ## Consequences
 

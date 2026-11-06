@@ -1392,7 +1392,7 @@ async fn full_happy_path_over_http() {
         &format!("/v1/memories/{artifact}/supersede"),
         Call::auth(&reader)
             .idem("sup-0")
-            .body(json!({"body": "revised"})),
+            .body(json!({ "expected_version": 1,"body": "revised"})),
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -1405,13 +1405,14 @@ async fn full_happy_path_over_http() {
         &format!("/v1/memories/{artifact}/supersede"),
         Call::auth(&writer)
             .idem("sup-x")
-            .body(json!({"body": "revised", "claim_key": "elsewhere"})),
+            .body(json!({ "expected_version": 1,"body": "revised", "claim_key": "elsewhere"})),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_envelope(&body, "request.validation");
 
     let supersede_call = Call::auth(&writer).idem("sup-1").body(json!({
+        "expected_version": 1,
         "body": "Supplier Accra Metals revised the quote to 408 USD/t.",
         "reason": "supplier issued a revised quote",
     }));
@@ -1538,7 +1539,7 @@ async fn full_happy_path_over_http() {
         &format!("/v1/memories/{artifact}/supersede"),
         Call::auth(&writer)
             .idem("sup-2")
-            .body(json!({"body": "again"})),
+            .body(json!({ "expected_version": 2,"body": "again"})),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -2362,6 +2363,7 @@ async fn get_v2_keys_by_name_answers_the_key() {
             "connections": [],
             // Sent none, the issuance default (proposed ADR-0037 d4).
             "guardrail_scope": "ancestors",
+            "profile": null,
         })
     );
     let (status, _, by_id) = read(key_id.clone(), admin.clone()).await;
@@ -2748,6 +2750,7 @@ async fn post_v2_workareas_crew_points_a_workarea_at_a_crew_record_by_name() {
             "status": "development",
             "crew": record,
             "user_root": false,
+            "mode": "standard",
         })
     );
     let (status, _, view) = send(
@@ -2797,6 +2800,7 @@ async fn an_admin_keys_workarea_read_lists_every_child_with_my_effective_verbs_e
                 "status": "committed",
                 "crew": null,
                 "user_root": false,
+                "mode": "standard",
                 "children": [
                     { "id": metals, "path_leaf": "metals-crew", "status": "development" },
                     { "id": redline, "path_leaf": "redline", "status": "development" },
@@ -2804,6 +2808,8 @@ async fn an_admin_keys_workarea_read_lists_every_child_with_my_effective_verbs_e
                 "edges": [],
                 "my_effective_verbs": [],
                 "permission_epoch": view["permission_epoch"],
+                "stale_versions": 0,
+                "in_progress_root": null,
                 "policy": { "k": 1, "required_roles": ["dreamer"] },
                 "pending_transitions": [],
                 "brief": empty_brief(),
@@ -4499,10 +4505,12 @@ async fn own_held_steering_and_retirement_rows_never_enter_recall() {
         router,
         "POST",
         &format!("/v1/memories/{target}/supersede"),
-        Call::auth(&agent).idem("ret-1").body(json!({
-            "body": "retired: the canary lapsed",
-            "retirement": true,
-        })),
+        Call::auth(&agent)
+            .idem("ret-1")
+            .body(json!({ "expected_version": 1,
+                "body": "retired: the canary lapsed",
+                "retirement": true,
+            })),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{retirement}");
@@ -4615,7 +4623,7 @@ async fn a_held_successor_appears_with_replaces_while_its_target_stays_a_hit() {
         &format!("/v1/memories/{target}/supersede"),
         Call::auth(&agent)
             .idem("sup-1")
-            .body(json!({ "body": "the canary quote is 409 USD/t" })),
+            .body(json!({ "expected_version": 1, "body": "the canary quote is 409 USD/t" })),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
@@ -5131,7 +5139,7 @@ async fn responses_carry_real_version_kind_tokens_and_workarea_path() {
         &format!("/v1/memories/{}/supersede", first.as_str().expect("id")),
         Call::auth(&agent)
             .idem("sup-1")
-            .body(json!({"body": revised})),
+            .body(json!({ "expected_version": 1,"body": revised})),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
@@ -5277,6 +5285,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
             "status": "development",
             "crew": crew_record,
             "user_root": false,
+            "mode": "standard",
             "children": [{ "id": quarter, "path_leaf": "q1-2027", "status": "development" }],
             "edges": [],
             "my_effective_verbs": [
@@ -5284,6 +5293,8 @@ async fn crew_given_at_create_is_persisted_and_returned() {
                 "remember", "learn", "attach", "supersede",
             ],
             "permission_epoch": view["permission_epoch"],
+            "stale_versions": 0,
+            "in_progress_root": null,
             "policy": { "k": 1, "required_roles": ["dreamer"] },
             "pending_transitions": [],
             "brief": empty_brief(),
@@ -5435,6 +5446,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "status": "development",
                     "crew": null,
                     "user_root": false,
+                    "mode": "standard",
                 },
                 {
                     "id": metals["id"],
@@ -5444,6 +5456,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "status": "development",
                     "crew": crew,
                     "user_root": false,
+                    "mode": "standard",
                 },
                 {
                     "id": q1["id"],
@@ -5453,6 +5466,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "status": "development",
                     "crew": null,
                     "user_root": false,
+                    "mode": "standard",
                 },
                 {
                     "id": q2["id"],
@@ -5462,6 +5476,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "status": "development",
                     "crew": null,
                     "user_root": false,
+                    "mode": "standard",
                 },
                 {
                     "id": review["id"],
@@ -5471,6 +5486,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "status": "development",
                     "crew": null,
                     "user_root": false,
+                    "mode": "standard",
                 },
             ],
             "next_cursor": null,
@@ -6154,7 +6170,7 @@ async fn a_listing_without_own_returns_promoted_tips_in_scope_only() {
         &format!("/v1/memories/{replaced}/supersede"),
         Call::auth(&writer)
             .idem("sup-1")
-            .body(json!({ "body": "Lead time is eight weeks." })),
+            .body(json!({ "expected_version": 1, "body": "Lead time is eight weeks." })),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
@@ -6478,7 +6494,7 @@ async fn claim_key_filter_lists_one_claims_versions() {
         &format!("/v1/memories/{first}/supersede"),
         Call::auth(&writer)
             .idem("sup-1")
-            .body(json!({ "body": "Accra Metals revised the quote to 408 USD/t." })),
+            .body(json!({ "expected_version": 1, "body": "Accra Metals revised the quote to 408 USD/t." })),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
@@ -6643,9 +6659,9 @@ async fn the_review_serve_of_a_supersession_carries_the_replaced_version() {
         router,
         "POST",
         &format!("/v1/memories/{first}/supersede"),
-        Call::auth(&writer)
-            .idem("sup-1")
-            .body(json!({"body": "Accra Metals revised the quote to 408 USD/t."})),
+        Call::auth(&writer).idem("sup-1").body(
+            json!({ "expected_version": 1,"body": "Accra Metals revised the quote to 408 USD/t."}),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{successor}");
@@ -6699,10 +6715,12 @@ async fn a_ratified_retirement_over_http_leaves_recall_and_journals_lifecycle_su
         router,
         "POST",
         &format!("/v1/memories/{first}/supersede"),
-        Call::auth(&writer).idem("ret-1").body(json!({
-            "body": "Superseded by the 2026 canary runbook; stop serving.",
-            "retirement": true,
-        })),
+        Call::auth(&writer)
+            .idem("ret-1")
+            .body(json!({ "expected_version": 1,
+                "body": "Superseded by the 2026 canary runbook; stop serving.",
+                "retirement": true,
+            })),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
@@ -6768,14 +6786,17 @@ async fn an_approval_whose_target_lost_the_tip_is_tip_conflict_and_journals_noth
         .to_owned();
 
     let first = promoted_over_http(router, &writer, &dreamer, "quote", "412 USD/t").await;
-    let propose = |key: &str, idem: &str, body: &str| {
-        let call = Call::auth(key).idem(idem).body(json!({ "body": body }));
+    // Each proposer names the version it can read (ADR-0057 d19).
+    let propose = |key: &str, idem: &str, body: &str, expected: u64| {
+        let call = Call::auth(key)
+            .idem(idem)
+            .body(json!({ "expected_version": expected, "body": body }));
         let path = format!("/v1/memories/{first}/supersede");
         async move { send(router, "POST", &path, call).await }
     };
-    let (status, _, revision) = propose(&writer, "sup-w", "408 USD/t").await;
+    let (status, _, revision) = propose(&writer, "sup-w", "408 USD/t", 1).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{revision}");
-    let (status, _, edit) = propose(&editor, "sup-e", "409 USD/t").await;
+    let (status, _, edit) = propose(&editor, "sup-e", "409 USD/t", 1).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{edit}");
     assert_eq!(
         edit["version"], 3,
@@ -6913,6 +6934,7 @@ async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_worka
             "grants": whoami_grants(&issued),
             // Sent none, the issuance default (proposed ADR-0037 d4, d5).
             "guardrail_scope": "ancestors",
+            "profile": null,
         })
     );
 
@@ -7231,8 +7253,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        56,
-        "the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the six OAuth operations and the six web routes"
+        59,
+        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan (ADR-0065 d13), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the six OAuth operations and the six web routes"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -7369,10 +7391,12 @@ async fn a_designed_field_sent_to_a_served_operation_answers_its_v0_3_0_code() {
         router,
         "POST",
         &supersede,
-        Call::auth(&writer).idem("sim-3").body(json!({
-            "body": "a simulated revision",
-            "simulation_id": "00000000-0000-4000-8000-000000000001",
-        })),
+        Call::auth(&writer)
+            .idem("sim-3")
+            .body(json!({ "expected_version": 1,
+                "body": "a simulated revision",
+                "simulation_id": "00000000-0000-4000-8000-000000000001",
+            })),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
@@ -7385,7 +7409,7 @@ async fn a_designed_field_sent_to_a_served_operation_answers_its_v0_3_0_code() {
         &supersede,
         Call::auth(&writer)
             .idem("sim-4")
-            .body(json!({ "body": "a real revision" })),
+            .body(json!({ "expected_version": 1, "body": "a real revision" })),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{revised}");

@@ -8,11 +8,14 @@ from attrs import field as _attrs_field
 
 from ..models.severity import Severity
 from ..models.submit_request_kind import SubmitRequestKind
+from ..models.submit_request_on_similar import SubmitRequestOnSimilar
 from ..models.submit_request_verb import SubmitRequestVerb
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.anchor import Anchor
     from ..models.guardrail_rule import GuardrailRule
+    from ..models.origin import Origin
 
 
 T = TypeVar("T", bound="SubmitRequest")
@@ -40,6 +43,10 @@ class SubmitRequest:
                 request.validation, details.field /claim_key (ADR-0039 d6).
             kind (SubmitRequestKind | Unset): guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1).
                 Default: SubmitRequestKind.MEMORY.
+            valid_from (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
+                fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
+            valid_until (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
+                fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
             severity (Severity | Unset): A guardrail's severity: never and must bind, should is the reviewed default, and it
                 orders the set first; required on kind guardrail except a retirement, refused on every other kind
                 (request.validation, details.field /severity; ADR-0037 d2, d10; since v0.5.1).
@@ -53,16 +60,34 @@ class SubmitRequest:
                 namespace (ADR-0044 d5). A derived path, a value of three or more labels or one whose first label is universe,
                 is neither, and is refused (request.validation).
             derives_from (list[str] | Unset): Artifact ids; the declared lineage (omission is undetectable — honesty rule).
+            on_similar (SubmitRequestOnSimilar | Unset): Omitted, hold. What the write does when the similar check names a
+                row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the
+                rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims
+                no idempotency record. Not part of the request digest. Since v0.5.9.
+            anchor (Anchor | Unset): The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event,
+                immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-
+                shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither.
+                Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path
+                or fragment is submission.scan_veto.
+            origin (Origin | Unset): What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission
+                event, immutable per version, never inherited by a successor. Omitted on a write, it is recorded manual. chat
+                requires a chat anchor and a chat anchor requires chat; either mismatch is request.validation naming
+                /origin/kind.
     """
 
     body: str
     verb: SubmitRequestVerb | Unset = UNSET
     claim_key: str | Unset = UNSET
     kind: SubmitRequestKind | Unset = SubmitRequestKind.MEMORY
+    valid_from: str | Unset = UNSET
+    valid_until: str | Unset = UNSET
     severity: Severity | Unset = UNSET
     rule: GuardrailRule | Unset = UNSET
     workarea: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
+    on_similar: SubmitRequestOnSimilar | Unset = UNSET
+    anchor: Anchor | Unset = UNSET
+    origin: Origin | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -77,6 +102,10 @@ class SubmitRequest:
         kind: str | Unset = UNSET
         if not isinstance(self.kind, Unset):
             kind = self.kind.value
+
+        valid_from = self.valid_from
+
+        valid_until = self.valid_until
 
         severity: str | Unset = UNSET
         if not isinstance(self.severity, Unset):
@@ -96,6 +125,18 @@ class SubmitRequest:
         if not isinstance(self.derives_from, Unset):
             derives_from = self.derives_from
 
+        on_similar: str | Unset = UNSET
+        if not isinstance(self.on_similar, Unset):
+            on_similar = self.on_similar.value
+
+        anchor: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.anchor, Unset):
+            anchor = self.anchor.to_dict()
+
+        origin: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.origin, Unset):
+            origin = self.origin.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -109,6 +150,10 @@ class SubmitRequest:
             field_dict["claim_key"] = claim_key
         if kind is not UNSET:
             field_dict["kind"] = kind
+        if valid_from is not UNSET:
+            field_dict["valid_from"] = valid_from
+        if valid_until is not UNSET:
+            field_dict["valid_until"] = valid_until
         if severity is not UNSET:
             field_dict["severity"] = severity
         if rule is not UNSET:
@@ -117,12 +162,20 @@ class SubmitRequest:
             field_dict["workarea"] = workarea
         if derives_from is not UNSET:
             field_dict["derives_from"] = derives_from
+        if on_similar is not UNSET:
+            field_dict["on_similar"] = on_similar
+        if anchor is not UNSET:
+            field_dict["anchor"] = anchor
+        if origin is not UNSET:
+            field_dict["origin"] = origin
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.anchor import Anchor
         from ..models.guardrail_rule import GuardrailRule
+        from ..models.origin import Origin
 
         d = dict(src_dict)
         body = d.pop("body")
@@ -142,6 +195,10 @@ class SubmitRequest:
             kind = UNSET
         else:
             kind = SubmitRequestKind(_kind)
+
+        valid_from = d.pop("valid_from", UNSET)
+
+        valid_until = d.pop("valid_until", UNSET)
 
         _severity = d.pop("severity", UNSET)
         severity: Severity | Unset
@@ -166,15 +223,41 @@ class SubmitRequest:
 
         derives_from = cast(list[str], d.pop("derives_from", UNSET))
 
+        _on_similar = d.pop("on_similar", UNSET)
+        on_similar: SubmitRequestOnSimilar | Unset
+        if isinstance(_on_similar, Unset):
+            on_similar = UNSET
+        else:
+            on_similar = SubmitRequestOnSimilar(_on_similar)
+
+        _anchor = d.pop("anchor", UNSET)
+        anchor: Anchor | Unset
+        if isinstance(_anchor, Unset):
+            anchor = UNSET
+        else:
+            anchor = Anchor.from_dict(_anchor)
+
+        _origin = d.pop("origin", UNSET)
+        origin: Origin | Unset
+        if isinstance(_origin, Unset):
+            origin = UNSET
+        else:
+            origin = Origin.from_dict(_origin)
+
         submit_request = cls(
             body=body,
             verb=verb,
             claim_key=claim_key,
             kind=kind,
+            valid_from=valid_from,
+            valid_until=valid_until,
             severity=severity,
             rule=rule,
             workarea=workarea,
             derives_from=derives_from,
+            on_similar=on_similar,
+            anchor=anchor,
+            origin=origin,
         )
 
         submit_request.additional_properties = d

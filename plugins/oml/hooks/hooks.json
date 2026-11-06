@@ -1,5 +1,5 @@
 {
-  "description": "Start every session from what Open Memory Lab holds for this agent's key, load its reviewed guardrails and check each matching tool call against them, and, when opted in, recall what it holds about a failed command.",
+  "description": "Start every session from what Open Memory Lab holds for this agent's key, load its reviewed guardrails and check each matching tool call against them, when opted in recall what it holds about a failed command, and when opted in ask the agent to write what a conversation established and recall on each prompt.",
   "hooks": {
     "SessionStart": [
       {
@@ -68,6 +68,39 @@
             "type": "command",
             "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook session-end || exit 0",
             "timeout": 1
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook user-prompt || exit 0",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook stop || exit 0",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook pre-compact || exit 0",
+            "timeout": 2
           }
         ]
       }

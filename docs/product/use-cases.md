@@ -716,6 +716,95 @@ How it works: [ontologies](../architecture/ontologies.md).
   the standing instructions, and an agent that moves to another area reads that area's brief
   with `oml_workarea`. The brief is kept short by a size limit the server sets.
 
+## Sources
+
+Every use case here is **designed** and **planned for v0.5.8** ([ADR-0057](../adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), proposed).
+
+### Say where a memory came from
+
+- **Who:** an agent, a developer. **UC-SM-01.**
+- **Goal:** record with a memory the repository, commit, file and part of it that it was read
+  from, so a reviewer can check it against the source and a reader can find it again.
+- **How it plays out:** an agent with a terminal runs `oml anchor docs/adr/ADR-0047-….md#d3` and
+  passes the result with its write; a phone agent names the repository, commit and file it
+  cites. The reviewer sees the origin beside the text. Nobody checks it but the reviewer.
+
+### Find what is known about a file or folder
+
+- **Who:** an agent, a developer. **UC-SM-02.**
+- **Goal:** list or search only the memories that came from one repository, or from one folder or
+  file of it.
+- **How it plays out:** the agent asks for the memories from `docs/adr/` of this repository, or
+  searches among them; memories with no stated origin are left out.
+
+### See that a memory's source changed
+
+- **Who:** an agent, a developer, CI. **UC-SM-03.**
+- **Goal:** know when the document a memory came from has changed since it was read.
+- **How it plays out:** once a sync or a CI check has compared the memory with the newer
+  document, every search result from it is marked as stale until a corrected version is
+  approved; a change that only reformats the source leaves it unmarked. In a checkout, `oml sync --check` lists every
+  memory a commit made stale and fails a CI step until they are answered.
+
+### Load a repository's documents and keep them in step
+
+- **Who:** a developer, an operator. **UC-SM-04.**
+- **Goal:** turn a folder of markdown, such as decision records or a wiki kept in git, into
+  memories, one per decision or section, and keep them matching the documents as they change.
+- **How it plays out:** `oml sync docs/adr --workarea project-design --dry-run` shows what it
+  would write; the run writes it in batches one person reviews at a time. After the documents
+  change, the same command replaces what changed and proposes retiring what was removed, and
+  writes nothing when nothing changed.
+
+### Link the decisions documents say amend each other
+
+- **Who:** a person reviewing. **UC-SM-05.**
+- **Goal:** turn "this record amends that decision" lines into reviewed links between memories.
+- **How it plays out:** after the memories are approved, one person proposes the links the
+  documents state and a second confirms them; a link is read like any other.
+
+
+## Conversations
+
+Every use case here is **designed** and **planned for v0.6.0** ([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md), proposed).
+
+### Say what kind of source a memory came from
+
+- **Who:** an agent, a developer. **UC-CH-01.**
+- **Goal:** record whether a memory came from a conversation, a document, code, a lake table, a
+  web page, a repository's history, or no source at all.
+- **How it plays out:** the agent names the kind with its write; `oml sync` names `doc` for
+  every document it loads. The kind is kept with the memory and shown on every hit.
+
+### Find only what a person said, or only what documents say
+
+- **Who:** an agent, a developer. **UC-CH-02.**
+- **Goal:** search or list only memories of one or more kinds.
+- **How it plays out:** the agent asks for what OML holds about the person's editor among chat
+  memories only; memories from before kinds existed are left out.
+
+### Remember what a person said in a session
+
+- **Who:** a person working with an agent. **UC-CH-03.**
+- **Goal:** keep the preferences, decisions and corrections a conversation settled, without
+  keeping the conversation.
+- **How it plays out:** every few turns the agent is asked to write the facts the last turns
+  settled, each naming the turn it came from; the person reviews them later, in bulk.
+
+### Open a person's chat memory
+
+- **Who:** a person. **UC-CH-04.**
+- **Goal:** give their agents one place to write what the person tells them, which only the
+  person can create.
+- **How it plays out:** the person runs `oml chat init` once with their own key and gives the
+  printed id to the plugin.
+
+### Be reminded on each prompt
+
+- **Who:** a person working with an agent. **UC-CH-05.**
+- **Goal:** have relevant memories next to each prompt without asking.
+- **How it plays out:** with per-turn recall switched on, each prompt brings at most six short
+  memories, each marked when unreviewed, or nothing when the server is slow.
 ## Files and deliverables
 
 Every use case here is **designed**: deliverables and storage are parked, and files on a memory

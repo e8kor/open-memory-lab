@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remembering well — mockups</title>
+<meta name="description" content="Design mockups for the proposed ADR-0050: remembering checks what is already held, replaces instead of repeating, and says how the memory will be found.">
+<meta name="theme-color" content="#0A0D22">
+<style>
+:root {
+  --ground: #0A0D22; --ground-alt: #0E1230; --panel: #111638; --term: #070918;
+  --ink: #EFE9DA; --ink-dim: #B7B4C6; --ink-faint: #8C8FA8;
+  --rule: #262C52; --rule-soft: #1A1F42;
+  --ice: #9FC6E6; --star: #F6A83E; --ok: #7FD1AE; --bad: #E58A8A;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+a { color: var(--ice); text-decoration: none; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+.label { font: 12px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); }
+code, .mono { font-family: var(--mono); }
+code { font-size: .9em; background: var(--rule-soft); padding: 1px 6px; border-radius: 5px; overflow-wrap: anywhere; }
+header.top { border-bottom: 1px solid var(--rule-soft); }
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 60px; padding: 8px 0; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 600; }
+.brand svg { width: 28px; height: 28px; flex: none; }
+.pill { font: 11px var(--mono); color: var(--ink-faint); border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px; }
+.hero { padding: 40px 0 16px; }
+h1 { font-size: clamp(28px, 4.2vw, 44px); line-height: 1.1; letter-spacing: -.02em; margin: 10px 0 14px; font-weight: 650; }
+h1 em { font-style: normal; color: var(--star); }
+.lede { color: var(--ink-dim); max-width: 46em; margin: 0 0 12px; }
+.toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
+.toc a { display: inline-block; font: 13px var(--mono); color: var(--ink-dim); border: 1px solid var(--rule); border-radius: 999px; padding: 3px 11px; }
+section { border-top: 1px solid var(--rule-soft); padding: 44px 0; }
+h2 { font-size: clamp(22px, 3vw, 30px); line-height: 1.2; margin: 8px 0 10px; font-weight: 620; }
+h3 { font-size: 17px; margin: 0 0 8px; }
+.sub { color: var(--ink-dim); max-width: 46em; margin: 0 0 24px; }
+.cite { font: 12px var(--mono); color: var(--ink-faint); }
+
+/* diagram */
+.fig { background: var(--ground-alt); border: 1px solid var(--rule); border-radius: 14px; padding: 16px; }
+.fig svg { width: 100%; height: auto; display: block; }
+.fig .tall { display: none; }
+@media (max-width: 760px) { .fig .wide { display: none; } .fig .tall { display: block; max-width: 380px; margin: 0 auto; } }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font: 12px var(--mono); color: var(--ink-faint); }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+
+/* terminal */
+.term { background: var(--term); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; min-width: 0; }
+.term .tb { display: flex; justify-content: space-between; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--rule-soft); font: 12px var(--mono); color: var(--ink-faint); flex-wrap: wrap; }
+.term pre { margin: 0; padding: 14px 16px 16px; font: 13px/1.65 var(--mono); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.c { color: var(--ink-faint); } .p { color: var(--star); } .o { color: var(--ok); } .h { color: var(--star); } .i { color: var(--ice); } .b { color: var(--bad); }
+.you { color: var(--ink); font-weight: 600; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+
+/* pull request mock */
+.pr { border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; background: var(--ground-alt); }
+.pr .head { padding: 12px 16px; border-bottom: 1px solid var(--rule-soft); display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
+.pr .head b { font-weight: 600; }
+.pr .cols { display: grid; grid-template-columns: 1fr 1fr; }
+@media (max-width: 860px) { .pr .cols { grid-template-columns: 1fr; } }
+.pr .col { padding: 14px 16px; min-width: 0; }
+.pr .col + .col { border-left: 1px solid var(--rule-soft); }
+@media (max-width: 860px) { .pr .col + .col { border-left: 0; border-top: 1px solid var(--rule-soft); } }
+.diff { font: 12.5px/1.6 var(--mono); background: var(--term); border: 1px solid var(--rule-soft); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+.diff .add { color: var(--ok); } .diff .del { color: var(--bad); } .diff .ctx { color: var(--ink-faint); }
+.fact { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; margin: 0 0 10px; background: var(--panel); }
+.fact .meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font: 12px var(--mono); color: var(--ink-faint); margin-bottom: 6px; }
+.fact p { margin: 0 0 8px; font-size: 14.5px; }
+.fact .old { color: var(--ink-faint); text-decoration: line-through; }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { font: 600 13px var(--sans); border-radius: 7px; padding: 5px 12px; border: 1px solid var(--rule); color: var(--ink); background: transparent; }
+.btn.ok { background: var(--ok); border-color: var(--ok); color: #0B1A13; }
+.btn.star { background: var(--star); border-color: var(--star); color: #1A1206; }
+.tag { display: inline-block; font: 12px var(--mono); padding: 0 8px; border-radius: 999px; border: 1px solid currentColor; line-height: 1.6; }
+.t-add { color: var(--ok); } .t-upd { color: var(--ice); } .t-stale { color: var(--star); } .t-ret { color: var(--bad); } .t-dim { color: var(--ink-faint); }
+
+/* search */
+.filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.chip { font: 12px var(--mono); border: 1px solid var(--rule); border-radius: 999px; padding: 2px 10px; color: var(--ink-dim); background: var(--panel); }
+.chip b { color: var(--ice); font-weight: 400; }
+.hit { display: grid; grid-template-columns: 36px 1fr; gap: 10px; border-top: 1px solid var(--rule-soft); padding: 12px 0; }
+.hit .n { font: 13px var(--mono); color: var(--ink-faint); }
+.hit p { margin: 0 0 6px; }
+.why { display: flex; flex-wrap: wrap; gap: 6px; font: 12px var(--mono); }
+.why span { border-radius: 6px; padding: 0 7px; background: var(--rule-soft); color: var(--ink-dim); }
+.why .kw { color: var(--ice); } .why .se { color: var(--ok); } .why .an { color: var(--star); }
+
+/* user page mock (ADR-0045 chrome) */
+.page { border: 1px solid var(--rule); border-radius: 14px; overflow: hidden; background: var(--ground); }
+.page .ph { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--rule-soft); }
+.page .ph .b2 { font-weight: 600; } .page .ph .b2 b { color: var(--star); font-weight: 600; }
+.page .who { font: 12px var(--mono); color: var(--ink-faint); }
+.page main { padding: 18px; }
+nav.tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--rule-soft); margin: 0 0 18px; }
+nav.tabs a { padding: 8px 12px; color: var(--ink-dim); font-size: 14px; border-bottom: 2px solid transparent; }
+nav.tabs a.on { color: var(--ink); border-bottom-color: var(--star); }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0 0 18px; }
+@media (max-width: 640px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+.stat { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; background: var(--ground-alt); }
+.stat .v { font: 600 22px var(--mono); }
+table.t { width: 100%; border-collapse: collapse; font-size: 14px; }
+table.t th { text-align: left; font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); padding: 8px 10px; border-bottom: 1px solid var(--rule); }
+table.t td { padding: 9px 10px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  table.t thead { display: none; }
+  table.t tr { display: block; border: 1px solid var(--rule-soft); border-radius: 10px; margin: 0 0 10px; padding: 6px 4px; }
+  table.t td { display: flex; gap: 10px; border: 0; padding: 4px 8px; }
+  table.t td::before { content: attr(data-l); flex: 0 0 7.5em; font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); padding-top: 2px; }
+}
+.note { font-size: 13px; color: var(--ink-faint); margin: 10px 0 0; }
+footer { border-top: 1px solid var(--rule-soft); padding: 24px 0 40px; color: var(--ink-faint); font: 12px var(--mono); }
+
+/* search mockups */
+.chart svg.one { max-width: 420px; }
+.stages { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.st { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; border: 1px solid var(--rule); border-radius: 12px; padding: 12px 14px; background: var(--ground-alt); }
+.st .sn { font: 600 18px var(--mono); }
+.st.go { border-color: var(--ok); } .st.go .sn { color: var(--ok); }
+.st.wait .sn { color: var(--star); }
+.st.no { opacity: .85; } .st.no .sn { color: var(--bad); }
+.st .g { margin: 4px 0 0; font: 12.5px/1.5 var(--mono); color: var(--ink-faint); }
+/* remember mockups */
+.tag { white-space: nowrap; }
+.bars { margin: 0 0 18px; }
+.bars h3 { font-size: 15px; margin: 0 0 6px; }
+.bars svg { width: 100%; max-width: 420px; height: auto; display: block; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; font: 12.5px/1.5 var(--mono); margin: 0 0 10px; }
+.kv dt { color: var(--ink-faint); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+.terms { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 10px; }
+.terms span { font: 12px var(--mono); padding: 0 7px; border-radius: 6px; background: var(--rule-soft); color: var(--ink-dim); }
+.terms .k { color: var(--ice); } .terms .t { color: var(--star); }
+.warn { font: 12px var(--mono); color: var(--star); margin: 0 0 8px; }
+.near { font-size: 14px; }
+.near .meta { margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap bar">
+  <span class="brand"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M55.29 26.19 A24 24 0 1 1 41.76 10.07" fill="none" stroke="#9FC6E6" stroke-width="6.4" stroke-linecap="round"/><circle cx="28.4" cy="35.4" r="11" fill="#F6A83E"/><circle cx="50.39" cy="16.57" r="5.6" fill="#EFE9DA"/></svg>Open Memory Lab <span class="pill">design mockups</span></span>
+  <span class="pill">ADR-0050 · proposed 2026-11-04</span>
+</div></header>
+
+<main class="wrap">
+<div class="hero">
+  <p class="label">Design artefact, not a built feature</p>
+  <h1>Remember once, <em>replace</em> what changed, and know how it will be found</h1>
+  <p class="lede">Today a write is checked for secrets and nothing else. A fact OML already holds becomes a second claim, a changed value sits beside the old one, and the writer cannot see which words will find it. ADR-0050 checks each write against what the writer may already read, lets a subject's next version replace the last, and answers with the terms it indexed.</p>
+  <p class="note">Memory texts come from the remember eval (<code>eval/remember/</code>, version 1, synthetic). The chart's numbers are its offline run of 2026-11-04 and are upper bounds. Every response field, page layout and identifier on this page is illustrative.</p>
+  <ul class="toc">
+    <li><a href="#session">Claude Code</a></li><li><a href="#indexed">Indexed terms</a></li><li><a href="#review">Reviewer</a></li><li><a href="#mine">My memories</a></li><li><a href="#eval">Eval</a></li><li><a href="#build">Build</a></li>
+  </ul>
+</div>
+
+<section id="session">
+  <p class="label">ADR-0050 d1, d2, d10 · illustrative</p>
+  <h2>A write that finds the old fact, and replaces it</h2>
+  <p class="sub">The agent asks OML to refuse if something similar exists. OML names the old deploy window, which the agent may read; the agent reads it and proposes the new window as its next version. Nothing changes for anyone until another identity approves.</p>
+  <div class="term">
+    <div class="tb"><span>claude · ~/src/tallyline-api</span><span>mockup</span></div>
+<pre><span class="you">› Deploys moved to Mon, Wed and Thu 09:00–11:00 from June 1st. Remember that.</span>
+
+<span class="p">●</span> oml_write <span class="c">{"text":"From 2026-06-01 production deploys run Monday, Wednesday and
+  Thursday between 09:00 and 11:00 CET; outside that window a deploy needs the on-call
+  lead's approval.","title":"Production deploy window from 2026-06-01",
+  "keywords":["deploy window","release schedule","change window"],
+  "claim_key":"deploy-window","on_similar":"refuse","idempotency_key":"s41/t3/1"}</span>
+  <span class="b">submission.similar_exists</span> <span class="c">· 409 · retryable false · nothing journalled</span>
+  similar  <span class="i">7d1e…</span> v1 promoted tip · <span class="c">claim_key auto-3f9a1c0e7b2d4a68</span>
+           shares <span class="h">12 of 19</span> words: production · deploys · tuesday… · window · on-call · approval
+
+<span class="p">●</span> oml_read <span class="c">{"artifact_id":"7d1e…"}</span>
+  "Production deploys run only on Tuesday and Thursday between 10:00 and 12:00 CET;
+   outside that window a deploy needs the on-call lead's approval."
+
+<span class="p">●</span> oml_write <span class="c">{"replaces":"7d1e…","text":"From 2026-06-01 production deploys run …",
+  "title":"Production deploy window from 2026-06-01","keywords":[…],
+  "sources":["session:s41"],"review_by":"2027-02-01","idempotency_key":"s41/t3/2"}</span>
+  <span class="o">held</span> · mode supersede · claim_key auto-3f9a1c0e7b2d4a68 · <span class="o">v2 replaces v1</span>
+  review   waits for 1 verdict by another identity
+  similar  none · warnings none
+
+<span class="you">Answer.</span> Proposed as the new version of the deploy-window memory; the old window
+stays what others see until a reviewer approves. I will check it with oml_read state "promoted".</pre>
+  </div>
+  <p class="note">Had the old claim been written under <code>claim_key: "deploy-window"</code>, the first call alone would have proposed the replacement, answered <code>upserted: true</code> (d2).</p>
+</section>
+
+<section id="indexed">
+  <p class="label">ADR-0050 d5 · illustrative</p>
+  <h2>The answer says how the memory will be found</h2>
+  <p class="sub"><code>indexed</code> lists the terms the row is indexed under, by field, from the writer's own text. An agent that expected <code>postgres</code> and sees only <code>postgresql</code> adds the keyword before review.</p>
+  <div class="two">
+    <div class="term">
+      <div class="tb"><span>oml_write answer, abridged</span><span>mockup</span></div>
+<pre>"indexed": {
+  "title": [<span class="h">"production"</span>, <span class="h">"deploy"</span>,
+            <span class="h">"window"</span>, "2026-06-01"],
+  "text": ["2026-06-01", "production",
+           "deploy", "monday", "wednesday",
+           "thursday", "09:00", "11:00",
+           "cet", "window", "on-call",
+           "lead", "approval"],
+  "keywords": [<span class="i">"deploy window"</span>,
+               <span class="i">"release schedule"</span>,
+               <span class="i">"change window"</span>],
+  "identifiers": {}
+},
+"warnings": [],
+"review_by": "2027-02-01"</pre>
+    </div>
+    <div class="fact">
+      <div class="meta"><span class="tag t-upd">another write</span><span>kind memory</span><span>held</span></div>
+      <p>The invoice list filters live in <code>useInvoiceFilters.ts</code> and persist to the URL query string.</p>
+      <p class="label" style="margin:10px 0 2px">indexed · identifiers</p>
+      <div class="terms"><span class="t">useinvoicefilters.ts</span><span>use</span><span>invoice</span><span>filters</span><span>ts</span></div>
+      <p class="label" style="margin:10px 0 2px">warnings</p>
+      <p class="warn">quality.no_source · no source, lineage, path or date — the reviewer sees this too</p>
+      <p class="note" style="margin:0">Identifier parts appear once ADR-0048 S2 serves its normaliser. Warnings never veto and never change rank.</p>
+    </div>
+  </div>
+</section>
+
+<section id="review">
+  <p class="label">ADR-0050 d11 · ADR-0045 review page · illustrative</p>
+  <h2>The reviewer sees the near-duplicates beside the held row</h2>
+  <p class="sub">Recomputed at serve time over what this reviewer may read, with what the author was shown and the scan's warnings. Approval is unchanged; a reject can name the memory repeated.</p>
+  <div class="pr">
+    <div class="head"><b>Review · alice-review</b><span class="mono t-dim">alice.tallyline · 3 held</span><span class="tag t-upd">supersession v2 → v1</span></div>
+    <div class="cols">
+      <div class="col">
+        <p class="label" style="margin:0 0 8px">Held · written by alice-agent</p>
+        <div class="fact">
+          <div class="meta"><span>Production deploy window from 2026-06-01</span><span class="tag t-dim">review by 2027-02-01</span></div>
+          <p class="old">Production deploys run only on Tuesday and Thursday between 10:00 and 12:00 CET; outside that window a deploy needs the on-call lead's approval.</p>
+          <p>From 2026-06-01 production deploys run Monday, Wednesday and Thursday between 09:00 and 11:00 CET; outside that window a deploy needs the on-call lead's approval.</p>
+          <dl class="kv"><dt>keywords</dt><dd>deploy window · release schedule · change window</dd><dt>sources</dt><dd>session:s41</dd><dt>author saw</dt><dd>7d1e… (the version replaced)</dd><dt>warnings</dt><dd>none</dd></dl>
+          <div class="acts"><span class="btn ok">Approve</span><span class="btn">Reject…</span><span class="btn">Reject as duplicate of…</span></div>
+        </div>
+      </div>
+      <div class="col">
+        <p class="label" style="margin:0 0 8px">Similar, that you may read</p>
+        <div class="fact near">
+          <div class="meta"><span class="tag t-stale">held</span><span>alice-agent-2 · 2 hours ago</span><span>shares 11 of 19</span></div>
+          <p>Production deploys are allowed Monday, Wednesday and Thursday from 09:00 to 11:00 CET since June.</p>
+          <p class="note" style="margin:0">Another agent's held write of the same change: approve one, reject the other as its duplicate.</p>
+        </div>
+        <div class="fact near">
+          <div class="meta"><span class="tag t-add">promoted</span><span>shares 6 of 19</span></div>
+          <p>The on-call rotation changes every Monday at 09:00 CET and is managed in PagerDuty schedule tally-primary.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="mine">
+  <p class="label">ADR-0050 d3, d7, d11 · ADR-0045 d9 user page · illustrative</p>
+  <h2>My memories, with stale and review-by markers</h2>
+  <div class="page">
+    <div class="ph"><span class="b2">Open <b>Memory</b> Lab</span><span class="who">alice · alice-web</span></div>
+    <main>
+      <nav class="tabs"><a>Keys</a><a>Set up</a><a class="on">Memories</a><a>Review</a><a>Workarea</a></nav>
+      <div class="stats">
+        <div class="stat"><div class="label">held</div><div class="v">1</div></div>
+        <div class="stat"><div class="label">stale</div><div class="v" style="color:var(--star)">2</div></div>
+        <div class="stat"><div class="label">withdrawn</div><div class="v">1</div></div>
+        <div class="stat"><div class="label">rejected as duplicate</div><div class="v">1</div></div>
+      </div>
+      <div class="filters"><span class="chip on">workarea <b>alice.tallyline</b></span><span class="chip">state <b>any</b></span><span class="chip">fresh <b>any</b></span><span class="chip">+ filter</span></div>
+      <table class="t">
+        <thead><tr><th>Memory</th><th>State</th><th>Review by</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td data-l="Memory"><div><b>Production deploy window from 2026-06-01</b><br><span class="t-dim">v2 of deploy window</span></div></td><td data-l="State"><span class="tag t-stale">held</span></td><td data-l="Review by" class="mono">2027-02-01</td><td data-l="Note"><div>replaces v1 when approved</div></td></tr>
+          <tr><td data-l="Memory"><div><b>PostgreSQL 15.6 on Cloud SQL</b><br><span class="t-dim">primary cluster, one replica</span></div></td><td data-l="State"><span class="tag t-add">promoted</span></td><td data-l="Review by" class="mono t-stale">2026-10-01</td><td data-l="Note"><div><span class="tag t-stale">stale</span> served marked; confirm or replace</div></td></tr>
+          <tr><td data-l="Memory"><div><b>API rate limit 600 per minute</b></div></td><td data-l="State"><span class="tag t-add">promoted</span></td><td data-l="Review by" class="mono t-stale">2026-09-15</td><td data-l="Note"><div><span class="tag t-stale">stale</span> served marked</div></td></tr>
+          <tr><td data-l="Memory"><div><b>Invoice numbers never have gaps</b></div></td><td data-l="State"><span class="tag t-add">promoted</span></td><td data-l="Review by" class="mono t-dim">—</td><td data-l="Note"><div>no date: holds until replaced</div></td></tr>
+          <tr><td data-l="Memory"><div><b>Deploy window draft</b><br><span class="t-dim">revised before review</span></div></td><td data-l="State"><span class="tag t-dim">withdrawn</span></td><td data-l="Review by" class="mono t-dim">—</td><td data-l="Note"><div>kept, never promotes</div></td></tr>
+          <tr><td data-l="Memory"><div><b>Money stored as integer cents</b></div></td><td data-l="State"><span class="tag t-ret">rejected</span></td><td data-l="Review by" class="mono t-dim">—</td><td data-l="Note"><div>duplicate of <a class="mono">a91c…</a></div></td></tr>
+        </tbody>
+      </table>
+      <p class="note">Stale is a mark, never a deletion: a stale memory is still recalled, with <code>stale: true</code>, until someone confirms, replaces or retires it. Reading it never moves its date.</p>
+    </main>
+  </div>
+</section>
+
+<section id="eval">
+  <p class="label">ADR-0050 d16 · remember eval v1, offline, synthetic</p>
+  <h2>The remember eval</h2>
+  <p class="sub">40 seed memories, 24 writes (8 repeats, 8 changed values, 8 new), 24 paraphrased queries and 8 “latest” queries. One model wrote all of it, so these are upper bounds and an order; version 2, from real writes and independent queries, is the gate.</p>
+  <div class="fig chart">
+<div class="bars"><h3>Writes that leave two live claims on one subject <span class="cite">lower is better</span></h3><svg viewBox="0 0 340 70" role="img" aria-label="Writes that leave two live claims on one subject: today: nothing checked 0.67, d1: similar hint, shares ≥ 0.4 0.00"><g font-family="ui-monospace, Menlo, monospace"><text x="0" y="14" fill="#B7B4C6" font-size="12">today: nothing checked</text><g><title>today: nothing checked: 0.67 (remember eval v1, offline, synthetic)</title><rect x="0" y="19" width="187.6" height="10" rx="2" fill="#6B6F8A"/><text x="193.6" y="28.5" fill="#EFE9DA" font-size="12">0.67</text></g><text x="0" y="49" fill="#B7B4C6" font-size="12">d1: similar hint, shares ≥ 0.4</text><g><title>d1: similar hint, shares ≥ 0.4: 0.00 (remember eval v1, offline, synthetic)</title><rect x="0" y="54" width="2.0" height="10" rx="2" fill="#9FC6E6"/><text x="8.0" y="63.5" fill="#EFE9DA" font-size="12">0.00</text></g></g></svg></div>
+<div class="bars"><h3>A fresh write in the top 5 for a paraphrase <span class="cite">higher is better</span></h3><svg viewBox="0 0 340 105" role="img" aria-label="A fresh write in the top 5 for a paraphrase: today: every word must match 0.00, any word, text only 0.67, + title and keywords (d5) 0.88"><g font-family="ui-monospace, Menlo, monospace"><text x="0" y="14" fill="#B7B4C6" font-size="12">today: every word must match</text><g><title>today: every word must match: 0.00 (remember eval v1, offline, synthetic)</title><rect x="0" y="19" width="2.0" height="10" rx="2" fill="#6B6F8A"/><text x="8.0" y="28.5" fill="#EFE9DA" font-size="12">0.00</text></g><text x="0" y="49" fill="#B7B4C6" font-size="12">any word, text only</text><g><title>any word, text only: 0.67 (remember eval v1, offline, synthetic)</title><rect x="0" y="54" width="187.6" height="10" rx="2" fill="#9FC6E6"/><text x="193.6" y="63.5" fill="#EFE9DA" font-size="12">0.67</text></g><text x="0" y="84" fill="#B7B4C6" font-size="12">+ title and keywords (d5)</text><g><title>+ title and keywords (d5): 0.88 (remember eval v1, offline, synthetic)</title><rect x="0" y="89" width="246.4" height="10" rx="2" fill="#9FC6E6"/><text x="252.4" y="98.5" fill="#EFE9DA" font-size="12">0.88</text></g></g></svg></div>
+<div class="bars"><h3>“Latest” queries that rank the replaced value first <span class="cite">lower is better</span></h3><svg viewBox="0 0 340 70" role="img" aria-label="“Latest” queries that rank the replaced value first: today: two live claims 0.62, one claim, tip served (d2–d4) 0.00"><g font-family="ui-monospace, Menlo, monospace"><text x="0" y="14" fill="#B7B4C6" font-size="12">today: two live claims</text><g><title>today: two live claims: 0.62 (remember eval v1, offline, synthetic)</title><rect x="0" y="19" width="173.6" height="10" rx="2" fill="#6B6F8A"/><text x="179.6" y="28.5" fill="#EFE9DA" font-size="12">0.62</text></g><text x="0" y="49" fill="#B7B4C6" font-size="12">one claim, tip served (d2–d4)</text><g><title>one claim, tip served (d2–d4): 0.00 (remember eval v1, offline, synthetic)</title><rect x="0" y="54" width="2.0" height="10" rx="2" fill="#9FC6E6"/><text x="8.0" y="63.5" fill="#EFE9DA" font-size="12">0.00</text></g></g></svg></div>
+    <div class="legend"><span><i style="background:#6B6F8A"></i>today</span><span><i style="background:#9FC6E6"></i>with ADR-0050 (offline model)</span></div>
+  </div>
+  <table class="t" style="margin-top:14px">
+    <thead><tr><th>Measure</th><th>Today</th><th>With ADR-0050</th><th>Gate on v2</th></tr></thead>
+    <tbody>
+      <tr><td data-l="Measure">Two live claims per subject</td><td data-l="Today" class="mono">0.67</td><td data-l="ADR-0050" class="mono">0.00</td><td data-l="Gate">hint recall ≥ 0.90, false alarm ≤ 0.20</td></tr>
+      <tr><td data-l="Measure">Paraphrase success@5</td><td data-l="Today" class="mono">0.00</td><td data-l="ADR-0050" class="mono">0.67 → 0.88</td><td data-l="Gate">title + keywords ≥ +0.10</td></tr>
+      <tr><td data-l="Measure">Replaced value ranked first</td><td data-l="Today" class="mono">0.62</td><td data-l="ADR-0050" class="mono">0.00</td><td data-l="Gate">0</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="build">
+  <p class="label">ADR-0050 d14</p>
+  <h2>The build, in increments</h2>
+  <ol class="stages">
+    <li class="st go"><span class="sn">W1</span><div><b>The claim:</b> upsert by <code>claim_key</code>, revise or withdraw one's own held version, history on request, reject as duplicate.<p class="g">no search dependency · gate: stale first 0 on a live lead · v0.5.3 proposed</p></div></li>
+    <li class="st go"><span class="sn">W2</span><div><b>Findability:</b> title, keywords, validity, sources, <code>indexed</code> in every answer.<p class="g">after ADR-0048 S1 · gate: +0.10 paraphrase success@5 · v0.5.3 proposed</p></div></li>
+    <li class="st go"><span class="sn">W3</span><div><b>The similar check</b> at write and at review; <code>on_similar</code>; the skill.<p class="g">after ADR-0048 S1 · gate: hint recall ≥ 0.90, precision ≥ 0.80 for refuse · v0.5.3 proposed</p></div></li>
+    <li class="st wait"><span class="sn">W4</span><div><b>Advisory warnings</b> in the scan.<p class="g">gate: false warnings ≤ 0.10 · not assigned</p></div></li>
+    <li class="st wait"><span class="sn">W5</span><div><b>Freshness:</b> <code>review_by</code>, stale marks, <code>confirm</code>.<p class="g">structural tests · not assigned</p></div></li>
+    <li class="st wait"><span class="sn">W6</span><div><b>Batch</b> of 20 and capture by the agent at a task's end.<p class="g">gate: within-batch hints at d1's recall · not assigned</p></div></li>
+    <li class="st wait"><span class="sn">W7</span><div><b>Links</b> proposed with the write, ratified with it.<p class="g">after ADR-0046's claim edges · not assigned</p></div></li>
+  </ol>
+  <div class="fig" style="margin-top:16px">
+    <p class="label" style="margin:0 0 8px">What holds at every increment</p>
+    <p style="margin:0;color:var(--ink-dim);font-size:15px">The check reads only what the writer may read. No write replaces a reviewed fact without a second identity. Nothing is ranked by time or by review, and stale memories are marked, never hidden or deleted. Three MCP tools stay three.</p>
+  </div>
+</section>
+</main>
+<footer><div class="wrap">Open Memory Lab · design mockups for proposed ADR-0050 · 2026-11-04 · eval numbers offline and synthetic; fields, pages and identifiers illustrative</div></footer>
+</body>
+</html>

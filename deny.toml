@@ -12,7 +12,17 @@ version = 2
 # directly; a transitive one is reported and triaged, not auto-failed.
 unmaintained = "workspace"
 yanked = "deny"
-ignore = []
+ignore = [
+    # operator-approved 2026-11-05 for oml-lakewriter (ADR-0060): quick-xml
+    # 0.39.4 is reached only through object_store's cloud clients (azure and
+    # s3 XML responses), which the lake writer does not use: its storage is a
+    # local path (ADR-0060 d15). Quadratic start-tag attribute check.
+    # Revisit when object_store or deltalake moves to a fixed quick-xml.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml via object_store cloud clients only; the lake writer reads a local path (ADR-0060 d15)" },
+    # operator-approved 2026-11-05 for oml-lakewriter (ADR-0060): same crate
+    # and reason; unbounded NsReader namespace allocation.
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml via object_store cloud clients only; the lake writer reads a local path (ADR-0060 d15)" },
+]
 
 [licenses]
 version = 2
@@ -30,6 +40,25 @@ allow = [
     "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
+# Per-crate exceptions, each scoped to the one crate that needs it.
+exceptions = [
+    # operator-approved 2026-11-05 for oml-lakewriter (ADR-0060): MPL-2.0 is
+    # file-level copyleft; option-ext is a tiny helper reached through the
+    # lake writer's dependencies and linked unmodified.
+    { allow = ["MPL-2.0"], crate = "option-ext" },
+    # operator-approved 2026-11-05 for oml-lakewriter (ADR-0060): the LLVM
+    # exception only widens Apache-2.0; ar_archive_writer is reached through
+    # the lake writer's dependencies.
+    { allow = ["Apache-2.0 WITH LLVM-exception"], crate = "ar_archive_writer" },
+    # operator-approved 2026-11-05 for oml-lakewriter (ADR-0060): bzip2-1.0.6
+    # is a permissive BSD-style licence; libbz2-rs-sys is the pure-Rust bzip2
+    # port the lake's compression codecs use.
+    { allow = ["bzip2-1.0.6"], crate = "libbz2-rs-sys" },
+    # operator-approved 2026-11-05 for oml-lakewriter (ADR-0060): CC0-1.0 is a
+    # public-domain dedication with no copyleft term; tiny-keccak is reached
+    # through the lake writer's dependencies.
+    { allow = ["CC0-1.0"], crate = "tiny-keccak" },
+]
 
 [bans]
 # One adapter crate per infrastructure dependency (ADR-0019 d2): a duplicate

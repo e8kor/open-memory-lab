@@ -24,11 +24,13 @@ ed25519-dalek.workspace = true
 getrandom.workspace = true
 hex.workspace = true
 oml-guardrail.workspace = true
+oml-scan.workspace = true
 rpassword.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 toml.workspace = true
+unicode-normalization.workspace = true
 ureq.workspace = true
 uuid.workspace = true
 

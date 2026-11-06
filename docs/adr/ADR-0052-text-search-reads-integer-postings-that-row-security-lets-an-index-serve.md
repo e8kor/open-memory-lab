@@ -9,7 +9,7 @@ answers: why no text index serves a recall under row security and what does; the
 
 **Status:** accepted design · 2026-11-05 · proposed and accepted on 2026-11-05 with release v0.5.6
 
-**Release:** introduced in v0.5.6; kind 2, `sparse` and `bm25-sparse` (d13 to d17) introduced in v0.5.7 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.6; kind 2, `sparse` and `bm25-sparse` (d13 to d17) introduced in v0.5.7; since v0.5.8 each list `bm25-sparse` fuses is capped at its depth before fusion (ADR-0049 d13); d13's served `bm25-sparse-rrf` baseline proposed for v0.5.9 ([releases](../product/releases.md#decisions))
 
 **Amends:** ADR-0049 (proposed, on `feat/search-v2`): d4 (the pipeline table gains `bm25-postings`,
 later `sparse` and `bm25-sparse`), d6 (the answer's `search` gains `access` and `pruned`; each hit's
@@ -357,6 +357,26 @@ it for v0.5.7 on 2026-11-05. d13 to d17 record how; they replace d9's fusion for
   0.730 / 0.353 / 0.552 nDCG@10); per-tenant weights (a weight tuned on a tenant's own rows would
   need its own labels, which no tenant has); z-score normalisation (it needs a list's variance,
   undefined for one candidate, and the experiment measured min-max).
+
+    **Served, 2026-11-05** (added with ADR-0050 r2's lane): the offline comparison was confirmed
+    through the served path. `bm25-sparse-rrf` is an opt-in pipeline fusing the same two lists by
+    reciprocal rank at k 60, read 100 deep as `bm25-sparse` reads them, so the two differ in their
+    fusion alone. Both asked through `oml_read` against one lead, in one run, at `k` 100
+    (`eval/bench/`, commit `a1ad0c9`, PostgreSQL 18, a shared 8 vCPU host at load 8 to 12),
+    nDCG@10:
+
+    | set | `bm25-sparse` (CC 0.3 / 0.7) | `bm25-sparse-rrf` (k 60) | offline CC / RRF |
+    |---|---:|---:|---:|
+    | synthetic (recall eval, 121 queries) | **0.909** | 0.894 | 0.912 / 0.897 |
+    | SciFact (300) | 0.730 | **0.731** | 0.730 / 0.727 |
+    | NFCorpus (323) | **0.350** | 0.344 | 0.353 / 0.346 |
+    | LoCoMo, categories 1–4 (1,535) | **0.550** | 0.534 | 0.552 / 0.535 |
+
+    CC leads on three of four sets by 0.006 to 0.016 and trails on SciFact by 0.001, inside the
+    run-to-run spread a fresh load's tie order gives; R@100 is within 0.007 everywhere. Convex
+    combination stays `bm25-sparse`'s fusion and the default is unchanged; `bm25-sparse-rrf` stays
+    served for comparison, as `keyword-all` is. Latency is not compared: both were measured on a
+    host other work loaded. The results are `eval/bench/results/*/bm25-sparse-rrf.json`.
 
 - **d14 — The encoder: `doc-v3-distill` in candle, pinned by digest, Apache-2.0.** The model is
   `opensearch-project/opensearch-neural-sparse-encoding-doc-v3-distill` at revision

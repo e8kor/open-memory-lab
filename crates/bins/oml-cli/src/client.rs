@@ -143,6 +143,19 @@ impl Client {
         }
     }
 
+    /// PUT a JSON body under the key; returns (status, parsed body).
+    ///
+    /// # Errors
+    ///
+    /// The server refused, or could not be reached.
+    pub fn put(&self, path: &str, body: &Value) -> Result<(u16, Value), CliError> {
+        let request = self
+            .agent
+            .put(&format!("{}{path}", self.server))
+            .set("Authorization", &self.bearer()?);
+        finish(request.send_json(body.clone()))
+    }
+
     /// POST a JSON body; returns (status, parsed body).
     pub fn post(
         &self,
@@ -202,6 +215,38 @@ impl Client {
             .set("Authorization", &self.bearer()?)
             .set("Idempotency-Key", idempotency_key);
         finish(request.send_json(body.clone()))
+    }
+
+    /// [`Client::post_keyed`], retried under the same key while the server
+    /// answers 429 or 503 with `Retry-After`, at most `attempts` times, so a
+    /// long run waits as the server asks instead of failing (ADR-0057 d6).
+    pub fn post_keyed_honouring_retry_after(
+        &self,
+        path: &str,
+        body: &Value,
+        idempotency_key: &str,
+        attempts: u32,
+    ) -> Result<(u16, Value), CliError> {
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let result = self
+                .agent
+                .post(&format!("{}{path}", self.server))
+                .set("Authorization", &self.bearer()?)
+                .set("Idempotency-Key", idempotency_key)
+                .send_json(body.clone());
+            if let Err(ureq::Error::Status(429 | 503, response)) = &result
+                && attempt < attempts
+                && let Some(wait) = response
+                    .header("Retry-After")
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+            {
+                std::thread::sleep(Duration::from_secs(wait.clamp(1, 60)));
+                continue;
+            }
+            return finish(result);
+        }
     }
 }
 
