@@ -7,12 +7,14 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.connect_code import ConnectCode
 from ...models.error_envelope import ErrorEnvelope
+from ...models.mint_connect_code_body import MintConnectCodeBody
 from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     key: str,
     *,
+    body: MintConnectCodeBody | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -36,6 +38,11 @@ def _get_kwargs(
             key=quote(str(key), safe=""),
         ),
     }
+
+    if not isinstance(body, Unset):
+        _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
 
     _kwargs["headers"] = headers
     return _kwargs
@@ -79,6 +86,7 @@ def sync_detailed(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    body: MintConnectCodeBody | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -93,7 +101,8 @@ def sync_detailed(
     journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's
     earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route
     keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the
-    oauth.connect_code_ttl setting.
+    oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea
+    (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -102,6 +111,7 @@ def sync_detailed(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
+        body (MintConnectCodeBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -113,6 +123,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         key=key,
+        body=body,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -130,6 +141,7 @@ def sync(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    body: MintConnectCodeBody | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -144,7 +156,8 @@ def sync(
     journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's
     earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route
     keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the
-    oauth.connect_code_ttl setting.
+    oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea
+    (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -153,6 +166,7 @@ def sync(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
+        body (MintConnectCodeBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,6 +179,7 @@ def sync(
     return sync_detailed(
         key=key,
         client=client,
+        body=body,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -176,6 +191,7 @@ async def asyncio_detailed(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    body: MintConnectCodeBody | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -190,7 +206,8 @@ async def asyncio_detailed(
     journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's
     earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route
     keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the
-    oauth.connect_code_ttl setting.
+    oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea
+    (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -199,6 +216,7 @@ async def asyncio_detailed(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
+        body (MintConnectCodeBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -210,6 +228,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         key=key,
+        body=body,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -225,6 +244,7 @@ async def asyncio(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    body: MintConnectCodeBody | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -239,7 +259,8 @@ async def asyncio(
     journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's
     earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route
     keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the
-    oauth.connect_code_ttl setting.
+    oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea
+    (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -248,6 +269,7 @@ async def asyncio(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
+        body (MintConnectCodeBody | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -261,6 +283,7 @@ async def asyncio(
         await asyncio_detailed(
             key=key,
             client=client,
+            body=body,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,
             traceparent=traceparent,

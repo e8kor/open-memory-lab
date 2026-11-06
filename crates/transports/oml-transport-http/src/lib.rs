@@ -2168,10 +2168,21 @@ where
             .list_connections(&token, Reference::Id(detail.key.key_id))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
-            StatusCode::OK,
-            &key_json(&detail, &connections),
-        ))
+        // The key's live connect code, named but never shown (ADR-0067 d3).
+        let live_code = st
+            .app
+            .live_connect_code(&token, Reference::Id(detail.key.key_id))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let mut view = key_json(&detail, &connections);
+        view["live_connect_code"] = live_code.map_or(Value::Null, |c| {
+            json!({
+                "code_id": c.code_id.to_string(),
+                "expires_at": c.expires_at.as_str(),
+                "extended": c.extended,
+            })
+        });
+        Ok(json_response(StatusCode::OK, &view))
     }
 
     async fn mint_connect_code(
@@ -2179,28 +2190,40 @@ where
         rid: Rid,
         Path(key_id): Path<String>,
         headers: HeaderMap,
+        body: Bytes,
     ) -> Response {
         finish(
             &rid,
-            Self::mint_connect_code_inner(&st, &key_id, &headers).await,
+            Self::mint_connect_code_inner(&st, &key_id, &headers, &body).await,
         )
     }
 
     /// `POST /v2/keys/{key}/connect-codes`: a fresh connect code for a
     /// connector key, by id or name, shown once; its commit voids the key's
-    /// earlier codes (http-api.md keys; ADR-0031 d7, d8).
+    /// earlier codes (http-api.md keys; ADR-0031 d7, d8). An optional body
+    /// `{"ttl_seconds": n}` asks for a lifetime past the ten-minute default,
+    /// for a key confined to one workarea (ADR-0067 d3).
     async fn mint_connect_code_inner(
         st: &Self,
         key_id: &str,
         headers: &HeaderMap,
+        body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let token = bearer(headers)?;
         let _idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
-        let code = retry_chain(|| st.app.mint_connect_code(&token, key.clone()))
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let req: ConnectCodeBody = if body.is_empty() {
+            ConnectCodeBody::default()
+        } else {
+            parse_json(headers, body)?
+        };
+        let code = retry_chain(|| {
+            st.app
+                .mint_connect_code_with_ttl(&token, key.clone(), req.ttl_seconds)
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::CREATED,
             &connect_code_json(&code),
@@ -2916,6 +2939,15 @@ struct KeyIssueBody {
     /// `curator`, or omitted for a key with no profile (ADR-0030 d8).
     #[serde(default)]
     profile: Option<String>,
+}
+
+/// The body of `POST /v2/keys/{key}/connect-codes`, closed; absent, the code
+/// lives the ten-minute default (ADR-0067 d3).
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct ConnectCodeBody {
+    #[serde(default)]
+    ttl_seconds: Option<i64>,
 }
 
 /// The revoke body of `POST /v2/keys/{key}/connections/{connection_id}/revoke`,

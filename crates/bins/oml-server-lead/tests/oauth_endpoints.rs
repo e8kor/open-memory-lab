@@ -1349,3 +1349,134 @@ async fn no_log_line_of_a_full_flow_carries_a_code_token_verifier_handle_or_thei
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// A reviewer's connect code (ADR-0067 d3)
+// ---------------------------------------------------------------------------
+
+/// `POST /v2/keys/{key}/connect-codes` takes `ttl_seconds`: a lifetime past
+/// the default is minted for a key confined to one workarea and refused
+/// `not_confined` for one that reaches the universe, a lifetime outside 1 to
+/// 2,592,000 seconds is `request.validation` naming `/ttl_seconds`, and
+/// `GET /v2/keys/{key}` names the live code as extended without showing it.
+#[tokio::test]
+async fn a_reviewer_code_is_minted_for_a_confined_key_and_named_on_the_key() {
+    let rig = rig(Some(ISSUER));
+    let boot = rig
+        .app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: Name::parse("acme").expect("a name"),
+            admin_key_name: Name::parse("root-admin").expect("a name"),
+            admin_principal: "alice-admin".to_owned(),
+        })
+        .await
+        .expect("bootstrap");
+    let admin = boot.admin_key.value.clone();
+    let demo = rig
+        .app
+        .create_workarea(
+            &admin,
+            &Name::parse("demo").expect("a name"),
+            Some(boot.root_workarea_id.into()),
+            None,
+        )
+        .await
+        .expect("a workarea")
+        .workarea
+        .workarea_id;
+    let connector = |name: &str, node| IssueKeyRequest {
+        profile: None,
+        role: Role::Writer,
+        name: Name::parse(name).expect("a name"),
+        principal: format!("crew/{name}"),
+        held_by: Some(HeldBy::Agent),
+        default_workarea: None,
+        crew: None,
+        grants: vec![GrantRequest {
+            node,
+            role: Role::Writer,
+            deny: Vec::new(),
+            covers: Covers::Subtree,
+        }],
+        connect_code: true,
+        user: None,
+        guardrail_scope: None,
+    };
+    rig.app
+        .issue_key(&admin, &connector("reviewer", demo.into()))
+        .await
+        .expect("a confined connector key");
+    rig.app
+        .issue_key(&admin, &connector("wide", boot.root_workarea_id.into()))
+        .await
+        .expect("a connector key on the universe");
+
+    let post = |key: &str, body: &str| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/v2/keys/{key}/connect-codes"))
+            .header(header::AUTHORIZATION, format!("Bearer {admin}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", "reviewer-code")
+            .body(Body::from(body.to_owned()))
+            .expect("request builds")
+    };
+
+    let (status, _, body) = send(&rig.router, post("reviewer", r#"{"ttl_seconds": 604800}"#)).await;
+    assert_eq!(status, StatusCode::CREATED, "{}", json_of(&body));
+    let minted = json_of(&body);
+    assert!(minted["code"].is_string(), "{minted}");
+
+    let (status, _, body) = send(&rig.router, post("wide", r#"{"ttl_seconds": 604800}"#)).await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        json_of(&body)
+    );
+    let refused = json_of(&body);
+    assert_eq!(
+        refused["error"]["code"], "oauth.connect_refused",
+        "{refused}"
+    );
+    assert_eq!(
+        refused["error"]["details"]["reason"], "not_confined",
+        "{refused}"
+    );
+
+    for body in [r#"{"ttl_seconds": 0}"#, r#"{"ttl_seconds": 2592001}"#] {
+        let (status, _, answer) = send(&rig.router, post("reviewer", body)).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{body}: {}",
+            json_of(&answer)
+        );
+        let refused = json_of(&answer);
+        assert_eq!(refused["error"]["code"], "request.validation", "{refused}");
+        assert_eq!(
+            refused["error"]["details"]["field"], "/ttl_seconds",
+            "{refused}"
+        );
+    }
+
+    let shown = Request::builder()
+        .method("GET")
+        .uri("/v2/keys/reviewer")
+        .header(header::AUTHORIZATION, format!("Bearer {admin}"))
+        .body(Body::empty())
+        .expect("request builds");
+    let (status, _, body) = send(&rig.router, shown).await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    let key = json_of(&body);
+    assert_eq!(
+        key["live_connect_code"]["code_id"], minted["code_id"],
+        "{key}"
+    );
+    assert_eq!(key["live_connect_code"]["extended"], true, "{key}");
+    assert!(
+        !key.to_string()
+            .contains(minted["code"].as_str().expect("code")),
+        "the key's view never carries the code"
+    );
+}

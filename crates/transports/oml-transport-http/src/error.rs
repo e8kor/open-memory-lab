@@ -7,7 +7,9 @@ use axum::response::Response;
 use serde_json::{Value, json};
 
 use oml_app::domain::VerdictError;
-use oml_app::domain::oauth::{AuthorizationCodeInvalid, ClientInvalid, Refusal, Validation};
+use oml_app::domain::oauth::{
+    AuthorizationCodeInvalid, ClientInvalid, ConnectRefused, Refusal, Validation,
+};
 use oml_app::ports::StoreError;
 use oml_app::types::AppError;
 
@@ -361,6 +363,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "search {name:?} is not served here; served: {served}"
         ))
         .with_details(json!({ "field": "/search", "served": served.split(", ").collect::<Vec<_>>() })),
+        AppError::ConnectCodeLifetime { seconds, max } => ApiError::validation(format!(
+            "ttl_seconds {seconds} is outside 1 to {max}, the span a connect code may live"
+        ))
+        .with_details(json!({ "field": "/ttl_seconds", "max": max })),
         AppError::BudgetWithoutBodies => ApiError::validation(
             "max_tokens is refused with include_text false: a budget counts text that would not be sent",
         ),
@@ -934,7 +940,18 @@ fn oauth_refusal(refusal: Refusal) -> ApiError {
         Refusal::ClientInvalid(reason) => reason.details_reason(),
         _ => None,
     };
-    let error = ApiError::new(status, refusal.code(), rule, refusal.to_string());
+    // A refused connection names its reason in the sentence as well as in
+    // `details.reason`, since a terminal prints the sentence (ADR-0067 d3).
+    let message = match refusal {
+        Refusal::ConnectRefused(ConnectRefused::NotConfined) => format!(
+            "{refusal} (reason: not_confined; a code that outlives ten minutes is minted only \
+             for a key whose grants sit on one workarea other than the universe and that names \
+             no user root)"
+        ),
+        Refusal::ConnectRefused(why) => format!("{refusal} (reason: {})", why.as_str()),
+        _ => refusal.to_string(),
+    };
+    let error = ApiError::new(status, refusal.code(), rule, message);
     match reason {
         Some(reason) => error.with_details(json!({ "reason": reason })),
         None => error,
