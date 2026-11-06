@@ -263,6 +263,49 @@ const NEXT_STEP: &str = "next: add a custom connector with exactly the URL above
      the code only to the person who will connect, for a page they reached by adding the \
      connector themselves";
 
+/// The longest `--ttl` the server takes, 30 days, in seconds (ADR-0067 d3).
+const TTL_MAX_SECS: i64 = 30 * 24 * 3600;
+
+/// `--ttl 90s`, `45m`, `12h` or `7d` as seconds: one whole number and a unit,
+/// from one second to 30 days, the span the server admits for a connect code
+/// (ADR-0067 d3). Anything else is a usage error naming what is allowed.
+///
+/// # Errors
+///
+/// The reason the text is not a lifetime.
+pub fn parse_ttl(text: &str) -> Result<i64, String> {
+    let usage = || {
+        format!(
+            "--ttl {text:?} is not a lifetime: write a whole number and s, m, h or d, \
+             from 1s to 30d, such as 90s, 45m, 12h or 7d"
+        )
+    };
+    let Some((at, unit)) = text.char_indices().last() else {
+        return Err(usage());
+    };
+    let digits = &text[..at];
+    let per_unit: i64 = match unit {
+        's' => 1,
+        'm' => 60,
+        'h' => 3600,
+        'd' => 86_400,
+        _ => return Err(usage()),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(usage());
+    }
+    let seconds = digits
+        .parse::<i64>()
+        .ok()
+        .and_then(|n| n.checked_mul(per_unit))
+        .ok_or_else(usage)?;
+    if (1..=TTL_MAX_SECS).contains(&seconds) {
+        Ok(seconds)
+    } else {
+        Err(usage())
+    }
+}
+
 /// What `oml keys connect-code <key>` prints for the `201` of
 /// `POST /v2/keys/{key}/connect-codes` (cli/reference.md; ADR-0031 d7, d8):
 /// as [`connect_code_printed`], the connector URL and the code on stdout and
@@ -320,9 +363,35 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        KeyFile, configure_line, connect_code_printed, minted_code_printed, setup_line,
+        KeyFile, configure_line, connect_code_printed, minted_code_printed, parse_ttl, setup_line,
         with_reader_beside_writers,
     };
+
+    /// ADR-0067 d3: `--ttl` is a whole number and one unit, 1 second to 30
+    /// days, and nothing else becomes a lifetime.
+    #[test]
+    fn a_ttl_is_a_whole_number_and_a_unit_from_one_second_to_thirty_days() {
+        assert_eq!(parse_ttl("90s"), Ok(90));
+        assert_eq!(parse_ttl("45m"), Ok(2_700));
+        assert_eq!(parse_ttl("12h"), Ok(43_200));
+        assert_eq!(parse_ttl("7d"), Ok(604_800));
+        assert_eq!(parse_ttl("30d"), Ok(2_592_000));
+        for refused in [
+            "",
+            "d",
+            "0s",
+            "31d",
+            "721h",
+            "1.5h",
+            "-1h",
+            "10",
+            "10w",
+            "7 d",
+            "99999999999999999999d",
+        ] {
+            assert!(parse_ttl(refused).is_err(), "{refused:?} is not a lifetime");
+        }
+    }
 
     /// ADR-0044 d4 with ADR-0028 d2: a writer grant on a node alone brings a
     /// reader grant on that node alone, and a subtree writer grant a subtree

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ..models.connection import Connection
     from ..models.denial import Denial
     from ..models.grant import Grant
+    from ..models.key_live_connect_code_type_1 import KeyLiveConnectCodeType1
     from ..models.whoami_ref import WhoamiRef
 
 
@@ -61,6 +62,9 @@ class Key:
             /guardrail_scope (ADR-0037 d4; since v0.5.1).
         profile (KeyProfileType1 | KeyProfileType2Type1 | KeyProfileType3Type1 | None | Unset): The key's profile as
             key.issued journals it; null for none (ADR-0030 d8).
+        live_connect_code (KeyLiveConnectCodeType1 | None | Unset): The key's one connect code that can still open a
+            connection, named and never shown: its id, its expiry, and whether it outlives the ten-minute default (a
+            reviewer code, ADR-0067 d3). Null when none is live and for a bearer key.
         connections (list[Connection] | Unset): A connector key's open and revoked connections in creation order, at
             most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key
             (ADR-0031 d11).
@@ -86,10 +90,12 @@ class Key:
     profile: (
         KeyProfileType1 | KeyProfileType2Type1 | KeyProfileType3Type1 | None | Unset
     ) = UNSET
+    live_connect_code: KeyLiveConnectCodeType1 | None | Unset = UNSET
     connections: list[Connection] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.key_live_connect_code_type_1 import KeyLiveConnectCodeType1
         from ..models.whoami_ref import WhoamiRef
 
         key_id = self.key_id
@@ -187,6 +193,14 @@ class Key:
         else:
             profile = self.profile
 
+        live_connect_code: dict[str, Any] | None | Unset
+        if isinstance(self.live_connect_code, Unset):
+            live_connect_code = UNSET
+        elif isinstance(self.live_connect_code, KeyLiveConnectCodeType1):
+            live_connect_code = self.live_connect_code.to_dict()
+        else:
+            live_connect_code = self.live_connect_code
+
         connections: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.connections, Unset):
             connections = []
@@ -231,6 +245,8 @@ class Key:
             field_dict["guardrail_scope"] = guardrail_scope
         if profile is not UNSET:
             field_dict["profile"] = profile
+        if live_connect_code is not UNSET:
+            field_dict["live_connect_code"] = live_connect_code
         if connections is not UNSET:
             field_dict["connections"] = connections
 
@@ -241,6 +257,7 @@ class Key:
         from ..models.connection import Connection
         from ..models.denial import Denial
         from ..models.grant import Grant
+        from ..models.key_live_connect_code_type_1 import KeyLiveConnectCodeType1
         from ..models.whoami_ref import WhoamiRef
 
         d = dict(src_dict)
@@ -443,6 +460,25 @@ class Key:
 
         profile = _parse_profile(d.pop("profile", UNSET))
 
+        def _parse_live_connect_code(
+            data: object,
+        ) -> KeyLiveConnectCodeType1 | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                live_connect_code_type_1 = KeyLiveConnectCodeType1.from_dict(data)
+
+                return live_connect_code_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(KeyLiveConnectCodeType1 | None | Unset, data)
+
+        live_connect_code = _parse_live_connect_code(d.pop("live_connect_code", UNSET))
+
         _connections = d.pop("connections", UNSET)
         connections: list[Connection] | Unset = UNSET
         if _connections is not UNSET:
@@ -471,6 +507,7 @@ class Key:
             credential=credential,
             guardrail_scope=guardrail_scope,
             profile=profile,
+            live_connect_code=live_connect_code,
             connections=connections,
         )
 
