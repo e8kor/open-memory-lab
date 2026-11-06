@@ -74,6 +74,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0054 | `main` |  | recall is measured by what readers do next and only other readers use  | used |
 | adr | 0055 | `main` |  | a person reviews a listed set of held items in one act each item judge | used |
 | adr | 0056 | `feat/claim-formats` | #90 | a claim version names its format the signature covers its source and a | open |
+| adr | 0056 | `main` |  | a claim version names its format the signature covers its source and a | used |
 | adr | 0057 | `main` |  | a memory carries the source anchor its author declares and oml sync ke | used |
 | adr | 0058 | `docs/restructure` |  | a public server runs to stated slos with an error budget | reserved |
 | adr | 0058 | `main` |  | the public server runs to stated slos with an error budget and without | used |
@@ -85,6 +86,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0064 | `feat/implicit-capture` | #97 | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
 | adr | 0065 | `main` |  | the scan is a versioned compiled in rule set that vetoes leaked keys a | used |
 | adr | 0066 | `docs/restructure` |  | open work is tracked as github issues and the roadmap FR numbers and design draft status lines are retired | reserved |
+| adr | 0067 | `feat/connector-directory` |  | a directory reviewer reaches a demo workarea through a connect code that lives longer, and the tools and instructions describe instead of command | reserved |
 | fr | 1 | `main` |  | Erasure destroys body and attachment bytes by destroying their keys; a | used |
 | fr | 2 | `main` |  | Review throughput is unmeasured. The design's gate is only as useful a | used |
 | fr | 3 | `main` |  | The lake mirror claims exactly-once application of every event across  | used |
@@ -183,10 +185,15 @@ is a collision: the branch that reserved later renumbers.
 | fr | 107 | `main` |  | Usage counts one credit per principal per version per day, so one pers | used |
 | fr | 108 | `main` |  | The real-usage eval set is rolling: its query text lives 30 days, so n | used |
 | fr | 109 | `feat/claim-formats` | #90 | A Mermaid claim is validated by OML's own parser of a subset (ADR-0056 | open |
+| fr | 109 | `main` |  | A Mermaid claim is validated by OML's own parser of a subset (ADR-0056 | used |
 | fr | 110 | `feat/claim-formats` | #90 | The pinned Mermaid bundle adds to the server binary and to the first r | open |
+| fr | 110 | `main` |  | The pinned Mermaid bundle adds to the server binary and to the first r | used |
 | fr | 111 | `feat/claim-formats` | #90 | A write in a non-prose format parses its source and stores a search te | open |
+| fr | 111 | `main` |  | A write in a non-prose format parses its source and stores a search te | used |
 | fr | 112 | `feat/claim-formats` | #90 | Whether diagram and fragment claims help an agent is unmeasured: the r | open |
-| fr | 113 | `feat/claim-formats` | #90 | The per-format thresholds of `quality.many_claims` (12 relations in a  | open |
+| fr | 112 | `main` |  | Whether diagram and fragment claims help an agent is unmeasured: the r | used |
+| fr | 113 | `feat/claim-formats` | #90 | The per-format thresholds of `quality.many_claims` (12 relations in a | open |
+| fr | 113 | `main` |  | The per-format thresholds of `quality.many_claims` (12 relations in a  | used |
 | fr | 114 | `main` |  | The proposed ADR-0057 d5 marks a memory `stale` only once `oml sync` o | used |
 | fr | 115 | `main` |  | The origin filters `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4 | used |
 | fr | 116 | `main` |  | A document sync writes up to 200 items a run for one person to review  | used |
@@ -249,6 +256,9 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0030 | `main` |  | origin kind validate | used |
 | migration | 0031 | `main` |  | lake writer | used |
 | migration | 0032 | `feat/claim-formats` | #90 | claim formats | reserved |
+| migration | 0032 | `main` |  | claim formats | used |
 | migration | 0033 | `feat/claim-formats` | #90 | claim formats validate | reserved |
+| migration | 0033 | `main` |  | claim formats validate | used |
 | migration | 0034 | `feat/claim-formats` | #90 | similar keys search text | reserved |
+| migration | 0034 | `main` |  | similar keys search text | used |
 | migration | 0036 | `feat/implicit-capture` |  | code parent | reserved |
