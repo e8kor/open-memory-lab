@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Memory Lab for you</title>
+<meta name="description" content="Stop re-explaining your work to AI. Your projects, preferences and decisions, remembered across Claude Code, claude.ai, your phone and your other AI tools. You approve what it keeps.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="{{GROUND_DARK}}" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="{{GROUND_LIGHT}}" media="(prefers-color-scheme: light)">
+<link rel="canonical" href="https://memory.doublegate.io/personal">
+<meta property="og:title" content="Open Memory Lab for you">
+<meta property="og:description" content="Stop re-explaining your work to AI. You approve what it keeps.">
+<meta property="og:url" content="https://memory.doublegate.io/personal">
+<link rel="icon" type="image/svg+xml" href="{{FAVICON}}">
+<style>
+{{STYLE}}
+</style>
+</head>
+<body>
+{{HEADER}}
+
+<main class="site">
+  <div class="hero">
+    <div class="hero-copy">
+      <h1>Stop re-explaining your work to AI.</h1>
+      <p class="lede">Your projects, preferences and decisions, remembered across Claude Code, claude.ai, your phone and your other AI tools. You approve what it keeps.</p>
+      <div class="row"><a class="btn primary" href="/#start">Get started</a></div>
+      <p class="caption">The hosted server is by invitation; the software is free to run yourself.</p>
+    </div>
+    <div class="stack" role="img" aria-label="Three memories as your page lists them: two promoted, written from Claude Code and claude.ai; one held, waiting for your review.">
+      <ul class="mlist" aria-hidden="true">
+        <li class="mrow"><span class="top"><span class="chip is-promoted">{{GLYPH:promoted}}promoted</span><span class="tx">This repo's tests run with cargo nextest, never cargo test.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-code</span> agent</span><span class="vb"><ol><li><i class="superseded"></i></li><li aria-current="true"><i class="promoted"></i></li></ol>v2 · tip</span><span>you approved</span></span></li>
+        <li class="mrow"><span class="top"><span class="chip is-promoted">{{GLYPH:promoted}}promoted</span><span class="tx">Write docs in British English, sentence-case headings.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">claude-ai</span> agent</span><span class="vb"><ol><li aria-current="true"><i class="promoted"></i></li></ol>v1 · tip</span><span>you approved</span></span></li>
+        <li class="mrow"><span class="top"><span class="chip is-held">{{GLYPH:held}}held</span><span class="tx">The garden project moved from Notion to a plain Markdown folder.</span></span><span class="sub"><span class="actor">{{GLYPH:agent}}<span class="who">phone</span> agent</span><span class="vb"><ol><li aria-current="true"><i class="held"></i></li></ol>v1</span><span>waits for you</span></span></li>
+      </ul>
+    </div>
+  </div>
+
+  <section aria-labelledby="why-h">
+    <h2 id="why-h">What you get</h2>
+    <div class="vals">
+      <div><span class="v-prom">{{GLYPH:promoted}}</span><h3>One memory, every tool</h3><p class="caption">What Claude Code learns, claude.ai and Codex recall.</p></div>
+      <div><span class="v-gate">{{GLYPH:agent}}</span><h3>Connect in minutes</h3><p class="caption">Claude Code takes your key in one command. claude.ai and your phone take a connect code from your page.</p></div>
+      <div><span class="v-held">{{GLYPH:person}}</span><h3>You review what is kept</h3><p class="caption">What your agents save waits as <code>held</code> until you approve it from your page.</p></div>
+    </div>
+    <div class="row"><a class="btn primary" href="/#start">Get started</a></div>
+  </section>
+</main>
+
+{{FOOTER}}
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Memory Lab for teams</title>
+<meta name="description" content="Organizational memory for AI agents. Nothing becomes shared knowledge until someone other than its author approves it, with the source, reviewer and history on every entry.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="{{GROUND_DARK}}" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="{{GROUND_LIGHT}}" media="(prefers-color-scheme: light)">
+<link rel="canonical" href="https://memory.doublegate.io/teams">
+<meta property="og:title" content="Open Memory Lab for teams">
+<meta property="og:description" content="Organizational memory for AI agents, approved by someone other than its author.">
+<meta property="og:url" content="https://memory.doublegate.io/teams">
+<link rel="icon" type="image/svg+xml" href="{{FAVICON}}">
+<style>
+{{STYLE}}
+</style>
+</head>
+<body>
+{{HEADER}}
+
+<main class="site">
+  <div class="hero">
+    <div class="hero-copy">
+      <h1>Organizational memory for AI agents.</h1>
+      <p class="lede">Every agent and teammate draws on one knowledge base. Nothing becomes shared knowledge until someone other than its author approves it, with the source, reviewer and history on every entry.</p>
+      <div class="row"><a class="btn primary" href="https://e8kor.github.io/open-memory-lab/start/run-your-own/">Run your own</a><a class="btn" href="https://github.com/e8kor/open-memory-lab/discussions">Request access</a></div>
+      <p class="caption">Apache-2.0 on PostgreSQL. The hosted server is by invitation.</p>
+    </div>
+    <article class="card proof queue" aria-label="The review queue, as the admin page shows it">
+      <div class="bar2"><h2 class="h3">Held for you</h2><span class="meta">3 held · 2 picked</span></div>
+      <ul class="qlist">
+        <li class="qitem"><span class="box" aria-hidden="true"></span><span class="stack"><span class="head"><span class="chip is-held">{{GLYPH:held}}held</span><span class="actor">{{GLYPH:agent}}<span class="who">crew/scout</span> agent</span><span class="end">→ platform</span></span><span class="text">The CLI splits a bulk verdict into requests of 200.</span></span></li>
+        <li class="qitem on"><span class="box" aria-hidden="true">{{GLYPH:can}}</span><span class="stack"><span class="head"><span class="chip is-held">{{GLYPH:held}}held</span><span class="actor">{{GLYPH:agent}}<span class="who">crew/writer</span> agent</span><span class="end">→ ops</span></span><span class="text">The ops runbook names the backup window in its first line.</span></span></li>
+        <li class="qitem on"><span class="box" aria-hidden="true">{{GLYPH:can}}</span><span class="stack"><span class="head"><span class="chip is-held">{{GLYPH:held}}held</span><span class="actor">{{GLYPH:person}}<span class="who">ana</span> person</span><span class="end">→ platform</span></span><span class="text">Workareas carry a name beside their id.</span></span></li>
+      </ul>
+      <p class="consequence">Approving shows these to every key that reads <code>acme.platform</code> or <code>acme.ops</code>.</p>
+      <div class="row" aria-hidden="true"><span class="btn primary">Approve 2…</span><span class="btn">Reject 2…</span></div>
+    </article>
+  </div>
+
+  <section aria-labelledby="why-h">
+    <h2 id="why-h">What a team gets</h2>
+    <div class="vals">
+      <div><span class="v-held">{{GLYPH:held}}</span><h3>A review queue</h3><p class="caption">Agent writes wait as <code>held</code>. A person or a reviewer crew approves them; the author never can.</p></div>
+      <div><span class="v-gate">{{GLYPH:gate}}</span><h3>Access by workarea</h3><p class="caption">Workareas mirror your teams and crews. A key reads only the workareas its grant covers.</p></div>
+      <div><span class="v-sup">{{GLYPH:superseded}}</span><h3>A signed history</h3><p class="caption">Every write, verdict and removal is a signed, hash-chained journal entry. Nothing is deleted silently.</p></div>
+      <div><span class="v-gate">{{GLYPH:can}}</span><h3>Yours to run</h3><p class="caption">Self-host it on PostgreSQL, or ask for a place on the hosted server.</p></div>
+    </div>
+    <div class="row"><a class="btn primary" href="https://e8kor.github.io/open-memory-lab/start/run-your-own/">Run your own</a><a class="btn" href="https://github.com/e8kor/open-memory-lab/discussions">Request access</a></div>
+  </section>
+</main>
+
+{{FOOTER}}
+</body>
+</html>

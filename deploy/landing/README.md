@@ -1,14 +1,20 @@
 # Landing page
 
-`index.html` is the public landing page of the maintainer's server, `https://memory.doublegate.io/`.
-It is one self-contained file: inline CSS, the OML mark inline, no external assets and no
-tracking. It is generated: edit `index.src.html` and run `python scripts/gen_design_tokens.py`,
-which fills in the design tokens, the wordmark, the glyphs, the review-gate diagram and the
-display font (ADR-0069). Deploying it is a copy to `/srv/data/www/memory/`, an operator step. Caddy serves `index.html`, `privacy.html` and `terms.html` for `/`, `/privacy` and `/terms` alone and passes every other path to the lead.
+`index.html` is the public landing page of the maintainer's server, `https://memory.doublegate.io/`;
+`teams.html` and `personal.html` are its two audience pages. Each is one self-contained file:
+inline CSS, the OML mark inline, no external assets and no tracking. They are generated: edit
+`index.src.html`, `teams.src.html`, `personal.src.html` or the shared `landing.src.css` and run
+`python scripts/gen_design_tokens.py`, which fills in the design tokens, the header and footer,
+the wordmark, the glyphs, the review-gate diagram, the display font, and the workspace version
+from `Cargo.toml` for the footer and the install command (ADR-0069).
+
+`privacy.html` and `terms.html` are drafts. Until the operator publishes them, the footers do not
+link them: `gen_design_tokens.py --legal-links` adds the Privacy and Terms links, and
+`LEGAL_LINKS` in the script is the default that `--check` compares against. Deploying it is a copy to `/srv/data/www/memory/`, an operator step. Caddy serves `index.html`, `teams.html`, `personal.html`, `privacy.html` and `terms.html` for `/`, `/teams`, `/personal`, `/privacy` and `/terms` alone and passes every other path to the lead.
 
 ```caddyfile
 memory.doublegate.io {
-	@landing path / /privacy /terms
+	@landing path / /teams /personal /privacy /terms
 	handle @landing {
 		root * /srv/data/www/memory
 		try_files {path}.html /index.html

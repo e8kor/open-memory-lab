@@ -4,6 +4,7 @@
     python scripts/gen_design_tokens.py            # write the outputs
     python scripts/gen_design_tokens.py --check    # exit 1 if any output differs
     python scripts/gen_design_tokens.py --css      # print the tokens as CSS (the landing page)
+    python scripts/gen_design_tokens.py --legal-links   # the landing footers link Privacy and Terms
 
 Sources, copied unchanged from the design system: design/tokens.json, design/glyphs/*.svg,
 design/assets/* (the marks), design/fonts/*, design/diagrams/*.svg.
@@ -14,7 +15,8 @@ Outputs:
   docs/stylesheets/oml.css                                   Material's palette on the tokens
   docs/assets/brand/*, docs/assets/fonts/*                   the docs site's copies
   design/assets/review-gate-{dark,light}.svg                 the README's diagram, per theme
-  deploy/landing/index.html                                  the landing page, from index.src.html
+  deploy/landing/{index,teams,personal}.html                 the landing pages, from *.src.html
+                                                             and landing.src.css
 
 Standard library only.
 """
@@ -25,6 +27,7 @@ import base64
 import json
 import re
 import sys
+import tomllib
 import urllib.parse
 from pathlib import Path
 
@@ -42,6 +45,14 @@ DOCS_BRAND = (
     "readme-hero-light.svg", "social-preview.svg", "social-preview.png",
 )
 # The glyphs the web pages draw inline: the states and markers, and the actors.
+# The landing pages: published path, header label (None: not in the nav), source.
+LANDING = ROOT / "deploy/landing"
+LANDING_PAGES = (("index", None), ("teams", "Teams"), ("personal", "Personal"))
+DOCS_URL = "https://e8kor.github.io/open-memory-lab/"
+GITHUB_URL = "https://github.com/e8kor/open-memory-lab"
+# The footers link /privacy and /terms only with --legal-links: both are drafts until the
+# operator publishes them (deploy/landing/README.md).
+LEGAL_LINKS = False
 WEB_GLYPHS = (
     "held", "promoted", "superseded", "retired", "rejected", "unreviewed", "in-progress",
     "stale", "self-signed", "pending", "same-user", "gate", "agent", "person", "can", "blocked",
@@ -281,34 +292,70 @@ def inline_diagram(src: Path, cls: str) -> str:
     return svg.replace(' xmlns="http://www.w3.org/2000/svg"', "").strip()
 
 
-def landing(t: dict) -> str:
+def workspace_version() -> str:
+    """The version the release ships, from the workspace manifest, so the footer and the
+    install command name the release this tree builds."""
+    return tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["version"]
+
+
+def landing_header(page: str) -> str:
+    current = ' aria-current="page"'
+    nav = "".join(f'<a href="/{name}"{current if name == page else ""}>{label}</a>'
+                  for name, label in LANDING_PAGES if label)
+    nav += f'<a href="{DOCS_URL}">Docs</a><a href="{GITHUB_URL}">GitHub</a>'
+    return ('<header class="top">\n'
+            f'  <a class="brand" href="/" aria-label="Open Memory Lab home">{inline_mark("oml-wordmark-dark.svg", "wm")}{inline_mark("oml-mark.svg", "mk")}</a>\n'
+            f'  <nav aria-label="Main">{nav}</nav>\n'
+            '  <span class="end"><a class="btn sm" href="/web">Sign in</a></span>\n'
+            '</header>')
+
+
+def landing_footer(version: str, legal: bool) -> str:
+    links = (f'<a href="{DOCS_URL}">Docs</a><a href="{GITHUB_URL}">GitHub</a>'
+             f'<a href="{GITHUB_URL}/blob/main/LICENSE">Licence</a>')
+    if legal:
+        links += '<a href="/privacy">Privacy</a><a href="/terms">Terms</a>'
+    return ('<footer>\n'
+            f'  <span>Open Memory Lab · Apache-2.0 · memory.doublegate.io v{version}</span>\n'
+            f'  <nav aria-label="Footer">{links}</nav>\n'
+            '</footer>')
+
+
+def landing(t: dict, legal: bool = LEGAL_LINKS) -> dict[Path, str]:
+    """Each landing page from its source, the shared stylesheet, the header and the footer."""
     ground = next(tok["value"] for tok in t["color"]["tokens"] if tok["name"] == "ground")
     newsreader = next(f for f in t["type"]["fonts"] if f["family"] == "Newsreader")
     b64 = base64.b64encode((DESIGN / "fonts" / Path(newsreader["file"]).name).read_bytes()).decode()
     font = (f'@font-face{{font-family:"Newsreader";src:url(data:font/woff2;base64,{b64}) format("woff2");'
             f'font-weight:{newsreader["weight"]};font-style:normal;font-display:swap}}')
     fav = (DESIGN / "assets/favicon.svg").read_text().strip()
-    subs = {
-        "{{TOKENS}}": tokens_css(t).strip(),
-        "{{FONTS}}": font,
-        "{{GROUND_DARK}}": ground["dark"],
-        "{{GROUND_LIGHT}}": ground["light"],
-        "{{FAVICON}}": "data:image/svg+xml," + urllib.parse.quote(fav, safe=" =:/\".,-"),
-        "{{WORDMARK}}": inline_mark("oml-wordmark-dark.svg", "wm"),
-        "{{MARK}}": inline_mark("oml-mark.svg", "mk"),
-        "{{GATE_WIDE}}": inline_diagram(DESIGN / "diagrams/review-gate.svg", "v-wide"),
-        "{{GATE_TALL}}": inline_diagram(DESIGN / "diagrams/review-gate-tall.svg", "v-tall"),
-    }
-    html = (ROOT / "deploy/landing/index.src.html").read_text()
-    html = re.sub(r"\{\{GLYPH:([\w-]+)\}\}", lambda m: inline_glyph(m.group(1)), html)
-    for k, v in subs.items():
-        html = html.replace(k, v)
-    left = re.findall(r"\{\{[A-Z_:]+\}\}", html)
-    assert not left, f"unfilled placeholders in the landing page: {left}"
-    return f"<!-- {HEAD} Source: deploy/landing/index.src.html. -->\n" + html
+    version = workspace_version()
+    style = (LANDING / "landing.src.css").read_text().strip()
+    style = style.replace("{{TOKENS}}", tokens_css(t).strip()).replace("{{FONTS}}", font)
+    out = {}
+    for page, _ in LANDING_PAGES:
+        subs = {
+            "{{STYLE}}": style,
+            "{{HEADER}}": landing_header(page),
+            "{{FOOTER}}": landing_footer(version, legal),
+            "{{VERSION}}": version,
+            "{{GROUND_DARK}}": ground["dark"],
+            "{{GROUND_LIGHT}}": ground["light"],
+            "{{FAVICON}}": "data:image/svg+xml," + urllib.parse.quote(fav, safe=" =:/\".,-"),
+            "{{GATE_WIDE}}": inline_diagram(DESIGN / "diagrams/review-gate.svg", "v-wide"),
+            "{{GATE_TALL}}": inline_diagram(DESIGN / "diagrams/review-gate-tall.svg", "v-tall"),
+        }
+        html = (LANDING / f"{page}.src.html").read_text()
+        for k, v in subs.items():
+            html = html.replace(k, v)
+        html = re.sub(r"\{\{GLYPH:([\w-]+)\}\}", lambda m: inline_glyph(m.group(1)), html)
+        left = re.findall(r"\{\{[A-Z_:]+\}\}", html)
+        assert not left, f"unfilled placeholders in deploy/landing/{page}.src.html: {left}"
+        out[LANDING / f"{page}.html"] = f"<!-- {HEAD} Source: deploy/landing/{page}.src.html. -->\n" + html
+    return out
 
 
-def outputs() -> dict[Path, bytes]:
+def outputs(legal: bool = LEGAL_LINKS) -> dict[Path, bytes]:
     t = tokens()
     out: dict[Path, bytes] = {
         WEB / "tokens.css": tokens_css(t).encode(),
@@ -317,7 +364,7 @@ def outputs() -> dict[Path, bytes]:
     }
     for theme in THEMES:
         out[DESIGN / "assets" / f"review-gate-{theme}.svg"] = diagram(DESIGN / "diagrams/review-gate.svg", t, theme).encode()
-    out[ROOT / "deploy/landing/index.html"] = landing(t).encode()
+    out |= {path: html.encode() for path, html in landing(t, legal).items()}
     for name in DOCS_BRAND:
         out[DOCS / "assets/brand" / name] = (DESIGN / "assets" / name).read_bytes()
     for f in sorted((DESIGN / "fonts").iterdir()):
@@ -329,12 +376,14 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="fail if any output differs from what it would be")
     ap.add_argument("--css", action="store_true", help="print the tokens as CSS custom properties")
+    ap.add_argument("--legal-links", action="store_true", default=LEGAL_LINKS,
+                    help="link /privacy and /terms from the landing footers (off while they are drafts)")
     args = ap.parse_args(argv)
     if args.css:
         sys.stdout.write(tokens_css(tokens()))
         return 0
     stale = []
-    for path, data in outputs().items():
+    for path, data in outputs(args.legal_links).items():
         rel = path.relative_to(ROOT)
         if args.check:
             if not path.exists() or path.read_bytes() != data:
