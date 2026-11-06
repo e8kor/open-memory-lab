@@ -44,7 +44,7 @@ server:
     note: The matching secret. Set both or neither. The web pages need `oauth.issuer` and at least one provider.
   signup.mode:
     default: "`allowlist`: the sign-in allowlist, unchanged"
-    note: "`open` lets a person whose provider-verified email no entry holds create an account after accepting the terms: a drawn user, a private root, `<user>-web` and `<user>-review` (ADR-0068 d1). `open` requires `oauth.issuer` and every `signup.*` setting except `per_ip_per_hour`. A missing one, a tenant id that does not parse, or an issuer that is not a live admin key of that tenant stops the process at start, naming the setting."
+    note: "`open` lets a person whose provider-verified email no entry holds create an account after accepting the terms: a drawn user, a private root, `<user>-web` and `<user>-review` (ADR-0068 d1). `open` requires `oauth.issuer`, a sign-in provider (`web.google.*` or `web.github.*`) and every `signup.*` setting except `per_ip_per_hour`. A missing one, a tenant id that does not parse, or an issuer that is not a live admin key of that tenant stops the process at start, naming the setting."
   signup.tenant:
     default: unset
     note: The tenant id sign-ups land in. Every person of that tenant is under the `quota.*` limits.

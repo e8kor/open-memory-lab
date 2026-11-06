@@ -85,7 +85,8 @@ where
 {
     /// A person's own sign-up (ADR-0068 d2), after the terms page: in open
     /// mode, for a provider-verified identity no entry holds, with the
-    /// current terms version accepted. A drawn user, the entry under
+    /// current terms version accepted; an address an entry holds is refused
+    /// whatever its tenant or flag. A drawn user, the entry under
     /// `signup.issuer` journalled as `web.signed_up` with the email's
     /// digest, the provider subject pinned. The caller then issues the
     /// session keys and opens a session.
@@ -107,14 +108,16 @@ where
         let tenant_id = policy.tenant_id;
         let email_hash = identity.email.digest();
         if let Some(entry) = self.journal.web_entry_by_email(&email_hash).await? {
-            // Someone holds the address: a disabled entry stays refused,
-            // and a live one signs in rather than signing up again.
-            if entry.disabled_at.is_some() {
-                return Err(AppError::WebSignIn(
-                    oml_domain::web::SignInRefusal::Disabled,
-                ));
-            }
-            return Ok(entry);
+            // Someone holds the address, so this is not a sign-up: a
+            // disabled entry stays refused, and a live one signs in through
+            // the callback, which pins the provider subject (ADR-0045 d4).
+            // Opening a session here would skip that pin for the holder of
+            // a cookie issued before the entry existed (ADR-0068 d2).
+            return Err(AppError::WebSignIn(if entry.disabled_at.is_some() {
+                oml_domain::web::SignInRefusal::Disabled
+            } else {
+                oml_domain::web::SignInRefusal::StateMismatch
+            }));
         }
         let issuer = self.signup_issuer(policy).await?;
         let mut user = None;
@@ -325,13 +328,38 @@ where
         Ok(())
     }
 
-    /// `disable_user` (ADR-0068 d8): `web.user_disabled`, which disables
+    /// `disable_user` (ADR-0068 d8): for a non-admin person the tenant
+    /// holds, `web.user_disabled`, which disables
     /// every entry of the user and ends their sessions, then one
     /// `key.denied` on `universe` for each live bearer and connector key of
     /// the root. Session keys are reached only from sessions, which ended.
     pub async fn web_disable_user(&self, admin: &Caller, user: &Name) -> Result<usize, AppError> {
         require_role(&admin.key, Role::Admin, "web_users")?;
         let tenant_id = admin.key.tenant_id;
+        // Only a person the tenant holds, and never an admin: a name no
+        // entry holds, or an admin's, journals nothing (ADR-0068 d8).
+        let mut held = false;
+        let mut after = None;
+        loop {
+            let page = self
+                .journal
+                .web_entries(tenant_id, after.as_ref(), 500)
+                .await?;
+            let Some(last) = page.last() else { break };
+            after = Some(last.email.digest());
+            for e in page.iter().filter(|e| &e.user == user) {
+                if e.admin {
+                    return Err(AppError::NotFound);
+                }
+                held = true;
+            }
+            if page.len() < 500 {
+                break;
+            }
+        }
+        if !held {
+            return Err(AppError::NotFound);
+        }
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
