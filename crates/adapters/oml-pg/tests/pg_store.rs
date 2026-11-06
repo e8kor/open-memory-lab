@@ -2562,10 +2562,12 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             }
             // 0014 adds user_root and namespace_root_id, folded as false and
             // null for every workarea it finds (ADR-0044 d12); 0028 adds
-            // mode, standard for every workarea it finds (ADR-0030 d14).
+            // mode, standard for every workarea it finds (ADR-0030 d14); 0036
+            // adds children_agent, false for every workarea it finds
+            // (ADR-0064 d3).
             (true, "workareas") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'user_root' \
-                 - 'namespace_root_id' - 'mode') || jsonb_build_object('name', t.prior_name)"
+                 - 'namespace_root_id' - 'mode' - 'children_agent') || jsonb_build_object('name', t.prior_name)"
             }
             // 0012 adds credential, folded as bearer for every key it finds
             // (ADR-0031 d7); 0014 adds user_root_id, null for every key it
@@ -5887,7 +5889,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 32, "every migration through 0036_code_parent");
+    assert_eq!(applied, 36, "every migration through 0036_code_parent");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7331,7 +7333,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 32, "every migration through 0036_code_parent");
+    assert_eq!(applied, 36, "every migration through 0036_code_parent");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8206,7 +8208,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 32, "every migration through 0036_code_parent");
+    assert_eq!(applied, 36, "every migration through 0036_code_parent");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
