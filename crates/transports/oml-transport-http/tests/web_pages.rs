@@ -2798,6 +2798,7 @@ async fn the_json_route_answers_exactly_the_lists_rows() {
                             "text",
                             "claim_key",
                             "author",
+                            "author_kind",
                             "anchor",
                             "format",
                             "valid"
@@ -2909,81 +2910,86 @@ async fn every_admin_page_of_memories_is_one_admin_read_event() {
 }
 
 #[tokio::test]
-async fn the_atlas_view_allows_two_same_origin_scripts_and_no_inline_script() {
+async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
     let rig = rig().await;
     let (cookie, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
-    agent_writes(&rig, &agent, "drawn as a point").await;
+    agent_writes(&rig, &agent, "drawn as a region").await;
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web",
+        &[("action", "create_workarea"), ("name", "proj")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    agent_writes_in(&rig, &agent, "inside the child", "alice.proj").await;
     let (status, headers, page) = send(
         &rig.router,
-        get("/web?view=memories&display=atlas&state=held", Some(&cookie)),
+        get("/web?view=memories&display=atlas", Some(&cookie)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
     let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
-    let directive = |name: &str| {
-        csp.split("; ")
-            .find(|d| d.starts_with(&format!("{name} ")))
-            .unwrap_or_else(|| panic!("no {name} in {csp}"))
-            .to_owned()
-    };
-    let script = directive("script-src");
-    let sources: Vec<&str> = script.split(' ').skip(1).collect();
-    assert_eq!(sources.len(), 2, "{script}");
-    for source in &sources {
-        assert!(
-            source.starts_with(&format!("{ISSUER}/web/assets/")) && source.ends_with(".js"),
-            "a script from the page's own origin only: {source}"
-        );
-    }
+    assert!(
+        !csp.contains("script-src") && !csp.contains("connect-src"),
+        "{csp}"
+    );
     assert!(
         !csp.contains("unsafe-inline") && !csp.contains("unsafe-eval"),
         "{csp}"
     );
-    assert!(!csp.contains("'nonce-"), "{csp}");
-    assert_eq!(
-        directive("connect-src"),
-        format!("connect-src {ISSUER}/web/data/memories")
-    );
     assert!(csp.starts_with("default-src 'none'"), "{csp}");
-    assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
-    // Every script element names one of the two files; none is inline.
-    let scripts: Vec<&str> = page
-        .match_indices("<script")
-        .map(|(i, _)| &page[i..])
-        .collect();
-    assert_eq!(scripts.len(), 2, "{page}");
-    for (tag, source) in scripts.iter().zip(&sources) {
-        let path = source.trim_start_matches(ISSUER);
-        assert!(
-            tag.starts_with(&format!("<script src=\"{path}\"></script>")),
-            "{tag:.80}"
-        );
-        let (status, headers, body) = send(&rig.router, get(path, None)).await;
-        assert_eq!(status, StatusCode::OK, "{path}");
-        assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
-        assert!(
-            headers[header::CONTENT_TYPE]
-                .to_str()
-                .unwrap()
-                .starts_with("text/javascript")
-        );
-        let digest = ring::digest::digest(&ring::digest::SHA256, body.as_bytes());
-        assert!(
-            path.contains(&hex::encode(digest.as_ref())),
-            "the file is the one its name says: {path}"
-        );
-    }
-    // The text fallback and the way back to the list are on the page.
-    assert!(page.contains("<noscript>"), "{page}");
-    assert!(page.contains("id=\"atlas-list\""), "{page}");
-    assert!(page.contains("aria-hidden=\"true\""), "{page}");
-    // The list view, and every other view, still runs no script.
-    for path in ["/web?view=memories", "/web", "/web?view=workarea"] {
-        let (_, headers, page) = send(&rig.router, get(path, Some(&cookie))).await;
-        let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
-        assert!(!csp.contains("script-src"), "{path}: {csp}");
-        assert!(!page.contains("<script"), "{path}");
-    }
+    assert!(!page.contains("<script"), "the Atlas runs no script");
+    // The map is SVG on the page, each region a plain link that zooms to it,
+    // named in full in its title and label, and the table twin beside it.
+    assert!(page.contains("<svg class=\"tm wide\""), "{page}");
+    assert!(page.contains("<svg class=\"tm narrow\""), "{page}");
+    let proj = rig
+        .store
+        .workarea_children(
+            rig.boot.tenant_id,
+            key_named(&rig, "alice-web").await.user.unwrap(),
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|w| w.name.as_str() == "proj")
+        .unwrap()
+        .workarea_id;
+    assert!(
+        page.contains(&format!(
+            "<a href=\"/web?view=memories&amp;display=atlas&amp;workarea={proj}\" aria-label=\"proj, 1 readable: 1 held\"><title>proj, 1 readable: 1 held</title>"
+        )),
+        "{page}"
+    );
+    assert!(page.contains("id=\"atlas-table\""), "{page}");
+    assert!(page.contains("<td class=\"num\">1</td>"), "{page}");
+    assert!(page.contains("aria-label=\"Breadcrumb\""), "{page}");
+    // The vendored scripts are gone with the script.
+    let (status, _, _) = send(
+        &rig.router,
+        get(
+            "/web/assets/three-218b9f9420af1ee2b773fa066cee0eeb52f7ac76ca2fa11b11b732c1ba0a6e39.min.js",
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // A region zooms the Atlas, and the panel's dropdown is the
+    // Workareas view's.
+    let (_, _, zoomed) = send(
+        &rig.router,
+        get(
+            &format!("/web?view=memories&display=atlas&workarea={proj}"),
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert!(
+        zoomed.contains("<span aria-current=\"page\">proj</span>"),
+        "{zoomed}"
+    );
+    assert!(zoomed.contains("<select name=\"op\""), "{zoomed}");
     // The list links to the Atlas of the same page, filters kept.
     let (_, _, list) = send(
         &rig.router,
@@ -3306,7 +3312,7 @@ fn playwright() -> Option<std::process::Command> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_atlas_page_runs_its_scripts_from_the_same_origin_in_chromium() {
+async fn the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium() {
     let Some(mut command) = playwright() else {
         println!("did not run: no Playwright (uv run --with playwright)");
         return;
@@ -3419,62 +3425,37 @@ async fn the_atlas_page_runs_its_scripts_from_the_same_origin_in_chromium() {
         return;
     }
     assert_eq!(report["foreign"], json!([]), "no request left the origin");
-    let requests: Vec<&str> = report["requests"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(Value::as_str)
-        .collect();
-    for path in [
-        oml_transport_http::web::memories::three_path(),
-        oml_transport_http::web::memories::atlas_path(),
-        "/web/data/memories?view=memories&display=atlas".to_owned(),
-        "/web/admin/data/memories?view=memories&display=atlas".to_owned(),
-    ] {
-        assert!(
-            requests.contains(&format!("{ISSUER}{path}").as_str()),
-            "{path} was loaded from the page's own origin: {requests:?}"
-        );
-    }
     for who in ["person", "admin"] {
-        let cards = report[format!("{who}_list_cards")].as_u64().unwrap();
-        assert!(cards >= 8, "{who}: {report}");
-        assert!(
-            ["drawn", "no-webgl"].contains(&report[format!("{who}_atlas")].as_str().unwrap()),
-            "the script ran and read the page: {report}"
-        );
-        assert_eq!(
-            report[format!("{who}_atlas_items")].as_u64(),
-            Some(cards),
-            "the Atlas draws the list's page"
-        );
-        assert_eq!(report[format!("{who}_atlas_list")].as_u64(), Some(cards));
-        let regions = report[format!("{who}_regions_drawn")].as_u64().unwrap();
-        assert!(regions >= 3, "the workareas are drawn: {report}");
-        assert_eq!(
-            report[format!("{who}_regions_listed")].as_u64(),
-            Some(regions),
-            "the text list holds every region the drawing does"
-        );
-        assert_eq!(
-            report[format!("{who}_inline_ran")],
-            json!(false),
-            "{report}"
-        );
-        assert!(report[format!("{who}_workarea_selects")].as_u64().unwrap() >= 1);
+        for theme in ["dark", "light"] {
+            for width in [1280, 375] {
+                let tag = format!("{who}-{theme}-{width}");
+                let at = |k: &str| report[format!("{tag}_{k}")].clone();
+                assert!(at("cards").as_u64().unwrap() >= 8, "{tag}: {report}");
+                assert_eq!(at("folded"), json!(true), "{tag}: compact by default");
+                assert_eq!(at("scripts"), json!(0), "{tag}: the Atlas runs no script");
+                assert!(at("regions").as_u64().unwrap() >= 1, "{tag}: {report}");
+                assert!(
+                    at("rows").as_u64().unwrap() >= at("regions").as_u64().unwrap(),
+                    "{tag}: the table twin holds every drawn region"
+                );
+                assert_eq!(
+                    at("hscroll"),
+                    json!(false),
+                    "{tag}: no page scroll sideways"
+                );
+                assert!(
+                    at("zoomed_url")
+                        .as_str()
+                        .is_some_and(|u| u.starts_with(ISSUER) && u.contains("workarea=")),
+                    "{tag}: a region zooms by a plain link: {report}"
+                );
+            }
+        }
+        assert!(report[format!("{who}-dark-1280_selects")].as_u64().unwrap() >= 1);
     }
-    println!(
-        "words: {} {}",
-        report["person_words"], report["admin_words"]
-    );
     for line in report["console"].as_array().unwrap() {
         let line = line.as_str().unwrap();
-        assert!(
-            !line.contains("Content Security Policy")
-                || line.contains("inline event handler")
-                || line.contains("'data:,x'"),
-            "a policy refusal other than the injected markup's: {line}"
-        );
+        assert!(!line.contains("Content Security Policy"), "{line}");
         assert!(!line.starts_with("pageerror"), "{line}");
     }
 }
@@ -3597,6 +3578,23 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
         &rig,
         &format!("/web/data/memories?view=memories&workarea={bob_root}"),
         &alice,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // The page draws what the route counts: no region of bob's.
+    let (_, _, atlas) = send(
+        &rig.router,
+        get("/web?view=memories&display=atlas", Some(&alice)),
+    )
+    .await;
+    assert!(!atlas.contains("bob"), "{atlas}");
+    assert!(atlas.contains("aria-label=\"proj, 1 readable"), "{atlas}");
+    let (status, _, _) = send(
+        &rig.router,
+        get(
+            &format!("/web?view=memories&display=atlas&workarea={bob_root}"),
+            Some(&alice),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
