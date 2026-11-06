@@ -582,3 +582,288 @@ fn the_lexer_reads_the_same_inner_docs_as_syn_on_every_source_file() {
         assert_eq!(read, expected, "{}", path.display());
     }
 }
+
+// Malformed and hostile input (PR 88 review): the lexer never panics, never
+// lets code into a claim, and a file or doc over its cap is skipped by name.
+
+#[test]
+fn an_unterminated_block_doc_ending_in_a_multibyte_character_does_not_panic() {
+    assert_eq!(leading_docs("/*! 日").unwrap(), None);
+    assert_eq!(leading_docs("/*!é").unwrap(), None);
+}
+
+#[test]
+fn an_unterminated_inner_attribute_ending_in_a_multibyte_character_does_not_panic() {
+    assert_eq!(leading_docs("#![é").unwrap(), None);
+    assert_eq!(leading_docs("//! kept\n#![日").unwrap(), None);
+}
+
+#[test]
+fn an_unterminated_block_doc_is_no_doc_and_never_carries_the_code_after_it() {
+    let src = "/*! d\nfn evil(){}\n";
+    assert_eq!(leading_docs(src).unwrap(), None);
+    let x = extract(&[
+        ("crates/a/Cargo.toml", "[package]\nname = \"oml-a\"\n"),
+        ("crates/a/src/lib.rs", "//! A root.\npub mod m;\n"),
+        ("crates/a/src/m.rs", src),
+    ]);
+    assert!(
+        items(&x).iter().all(|i| !i.text.contains("evil")),
+        "{:?}",
+        items(&x)
+    );
+    assert!(!items(&x).iter().any(|i| i.claim_key == "rust/mod/oml_a::m"));
+    let warned: Vec<&String> = x
+        .files
+        .iter()
+        .flat_map(|(_, e)| &e.warnings)
+        .filter(|w| w.contains("unterminated"))
+        .collect();
+    assert_eq!(warned.len(), 1, "{x:?}");
+}
+
+/// A small deterministic generator, so the property test needs no crate.
+struct Xorshift(u64);
+
+impl Xorshift {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+}
+
+#[test]
+fn over_random_input_the_lexer_never_panics_and_no_code_reaches_a_doc() {
+    // Heads are what may precede the first item; the code marker follows,
+    // and the tail holds no `*/`, so nothing after the marker can close a
+    // block that opened before it.
+    let heads = [
+        "//! d\n",
+        "//!é\n",
+        "/*! d */\n",
+        "/*! d\n",
+        "/*! 日",
+        "/* c */\n",
+        "// c\n",
+        "#![allow(x)]\n",
+        "#![é",
+        "#![doc",
+        "\r\n",
+        " ",
+        "/*",
+        "/*!",
+        "\u{feff}",
+        "#!/bin/x\n",
+    ];
+    let tails = [
+        "fn a() {}\n",
+        "//! late\n",
+        "/*! late\n",
+        "é",
+        "\"",
+        "#![",
+        "\n",
+    ];
+    let mut rng = Xorshift(0x9e37_79b9_7f4a_7c15);
+    for _ in 0..30_000 {
+        let mut src = String::new();
+        for _ in 0..rng.below(6) {
+            src.push_str(heads[rng.below(heads.len())]);
+        }
+        src.push_str("fn CODE_MARKER() {}\n");
+        for _ in 0..rng.below(4) {
+            src.push_str(tails[rng.below(tails.len())]);
+        }
+        if let Ok(Some(d)) = leading_docs(&src) {
+            let text = d.lines.join("\n");
+            assert!(!text.contains("CODE_MARKER"), "{src:?} gave {text:?}");
+            assert!(!text.contains("late"), "{src:?} gave {text:?}");
+        }
+    }
+    // And over any bytes at all: no panic.
+    let alphabet = [
+        "/", "*", "!", "#", "[", "]", "\"", "\\", "\n", "\r", " ", "é", "日", "'", "r", "b", "doc",
+        "=", "//!", "/*!", "*/", "#![",
+    ];
+    for _ in 0..30_000 {
+        let mut src = String::new();
+        for _ in 0..rng.below(24) {
+            src.push_str(alphabet[rng.below(alphabet.len())]);
+        }
+        let _ = leading_docs(&src);
+        let _ = extract(&[
+            ("c/Cargo.toml", "[package]\nname = \"c\"\n"),
+            ("c/src/lib.rs", &src),
+        ]);
+    }
+}
+
+#[test]
+fn a_source_file_over_the_size_cap_is_skipped_by_name_and_the_others_are_read() {
+    let big = format!("//! Big.\n//! {}\n", "x".repeat(1_048_576));
+    let x = extract(&[
+        ("crates/a/Cargo.toml", "[package]\nname = \"oml-a\"\n"),
+        ("crates/a/src/lib.rs", "//! A root.\npub mod m;\npub mod n;\n"),
+        ("crates/a/src/m.rs", &big),
+        ("crates/a/src/n.rs", "//! N.\n"),
+    ]);
+    assert!(
+        x.skipped
+            .iter()
+            .any(|(p, why)| p == "crates/a/src/m.rs" && why.starts_with("too large")),
+        "{:?}",
+        x.skipped
+    );
+    assert!(x.unreadable.is_empty(), "{:?}", x.unreadable);
+    assert!(items(&x).iter().any(|i| i.claim_key == "rust/mod/oml_a::n"));
+    assert!(!items(&x).iter().any(|i| i.claim_key == "rust/mod/oml_a::m"));
+}
+
+#[test]
+fn a_doc_block_over_its_cap_is_skipped_by_name_and_writes_no_claim() {
+    let doc = format!("//! {}\n", "y".repeat(70_000));
+    let x = extract(&[
+        ("crates/a/Cargo.toml", "[package]\nname = \"oml-a\"\n"),
+        ("crates/a/src/lib.rs", "//! A root.\npub mod m;\n"),
+        ("crates/a/src/m.rs", &doc),
+    ]);
+    assert!(
+        x.skipped
+            .iter()
+            .any(|(p, why)| p == "crates/a/src/m.rs" && why.starts_with("too large")),
+        "{:?}",
+        x.skipped
+    );
+    assert!(!items(&x).iter().any(|i| i.claim_key == "rust/mod/oml_a::m"));
+    assert!(x.unreadable.is_empty());
+}
+
+#[test]
+fn a_manifest_over_the_size_cap_is_unreadable_by_name() {
+    let manifest = format!("[package]\nname = \"oml-a\"\n# {}\n", "z".repeat(262_144));
+    let x = extract(&[
+        ("crates/a/Cargo.toml", &manifest),
+        ("crates/a/src/lib.rs", "//! A root.\n"),
+    ]);
+    assert!(
+        x.unreadable
+            .iter()
+            .any(|(p, why)| p == "crates/a/Cargo.toml" && why.contains("too large")),
+        "{:?}",
+        x.unreadable
+    );
+    assert!(items(&x).is_empty());
+}
+
+// Workspaces (PR 88 review, M1, M2).
+
+const WS_ROOT: &str = "[workspace]\nmembers = [\"crates/*\", \"tools/x\"]\nexclude = [\"crates/old\"]\n\n[workspace.dependencies]\nfoo = { package = \"oml-b\", path = \"crates/b\" }\n";
+
+fn member(name: &str, extra: &str) -> String {
+    format!("[package]\nname = \"{name}\"\n{extra}")
+}
+
+#[test]
+fn only_the_packages_a_workspace_lists_are_crates() {
+    let (a, b, old, tool, ex) = (
+        member("oml-a", ""),
+        member("oml-b", ""),
+        member("oml-old", ""),
+        member("oml-x", ""),
+        member("oml-example", ""),
+    );
+    let x = extract(&[
+        ("Cargo.toml", WS_ROOT),
+        ("crates/a/Cargo.toml", &a),
+        ("crates/a/src/lib.rs", "//! A.\n"),
+        ("crates/b/Cargo.toml", &b),
+        ("crates/b/src/lib.rs", "//! B.\n"),
+        ("crates/old/Cargo.toml", &old),
+        ("crates/old/src/lib.rs", "//! Old.\n"),
+        ("tools/x/Cargo.toml", &tool),
+        ("tools/x/src/lib.rs", "//! X.\n"),
+        ("examples/e/Cargo.toml", &ex),
+        ("examples/e/src/lib.rs", "//! E.\n"),
+    ]);
+    let mut keys: Vec<&str> = items(&x).iter().map(|i| i.claim_key.as_str()).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        ["rust/crate/oml-a", "rust/crate/oml-b", "rust/crate/oml-x"]
+    );
+    for gone in ["crates/old/Cargo.toml", "examples/e/Cargo.toml"] {
+        assert!(
+            x.skipped
+                .iter()
+                .any(|(p, why)| p == gone && why.starts_with("not a workspace member")),
+            "{gone}: {:?}",
+            x.skipped
+        );
+    }
+}
+
+#[test]
+fn a_path_dependency_inside_the_workspace_is_a_member_without_being_listed() {
+    let root = "[workspace]\nmembers = [\"crates/a\"]\n";
+    let a = member(
+        "oml-a",
+        "\n[dependencies]\nhelper = { path = \"../helper\" }\n",
+    );
+    let h = member("helper", "");
+    let x = extract(&[
+        ("Cargo.toml", root),
+        ("crates/a/Cargo.toml", &a),
+        ("crates/a/src/lib.rs", "//! A.\n"),
+        ("crates/helper/Cargo.toml", &h),
+        ("crates/helper/src/lib.rs", "//! H.\n"),
+    ]);
+    assert!(items(&x).iter().any(|i| i.claim_key == "rust/crate/helper"));
+}
+
+#[test]
+fn a_dependency_renamed_through_the_workspace_table_names_its_real_package() {
+    let a = member("oml-a", "\n[dependencies]\nfoo.workspace = true\n");
+    let b = member("oml-b", "");
+    let x = extract(&[
+        ("Cargo.toml", WS_ROOT),
+        ("crates/a/Cargo.toml", &a),
+        ("crates/a/src/lib.rs", "//! A.\n"),
+        ("crates/b/Cargo.toml", &b),
+        ("crates/b/src/lib.rs", "//! B.\n"),
+    ]);
+    let text = &get(&x, "rust/crate/oml-a").text;
+    assert!(
+        text.contains("Depends on (in this workspace): oml-b."),
+        "{text}"
+    );
+    assert!(
+        get(&x, "rust/crate/oml-b")
+            .text
+            .contains("Depended on by (in this workspace): oml-a.")
+    );
+}
+
+#[test]
+fn a_dependency_renamed_with_package_names_its_real_package() {
+    let a = member(
+        "oml-a",
+        "\n[dependencies]\nbee = { package = \"oml-b\", path = \"../b\" }\n",
+    );
+    let b = member("oml-b", "");
+    let x = extract(&[
+        ("crates/a/Cargo.toml", &a),
+        ("crates/a/src/lib.rs", "//! A.\n"),
+        ("crates/b/Cargo.toml", &b),
+        ("crates/b/src/lib.rs", "//! B.\n"),
+    ]);
+    assert!(
+        get(&x, "rust/crate/oml-a")
+            .text
+            .contains("Depends on (in this workspace): oml-b.")
+    );
+}

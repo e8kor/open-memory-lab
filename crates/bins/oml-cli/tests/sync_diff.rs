@@ -1829,3 +1829,34 @@ fn an_unsupported_or_unreadable_file_retires_none_of_its_claims() {
     let report = run(&fake, &gone, &rust_opts());
     assert_eq!(report.json["summary"]["removed"], 1, "{}", report.json);
 }
+
+#[test]
+fn an_adr_or_headings_run_over_a_workarea_holding_only_rust_claims_never_touches_them() {
+    for kind in [Kind::Headings, Kind::Adr] {
+        let fake = Fake::new();
+        run(&fake, &rust_loaded(RS_M, &rev(1)), &rust_opts());
+        fake.promote_all();
+        let mut docs = loaded(&[("docs/guide.md", GUIDE_V1)], kind, &rev(2));
+        docs.path = String::new();
+        docs.scope = Scope::Prefix(String::new());
+        let report = try_run(
+            &fake,
+            &docs,
+            &Options {
+                source: ".".into(),
+                ..opts()
+            },
+        )
+        .unwrap_or_else(|e| panic!("{kind:?}: a rust-only workarea must not refuse: {e}"));
+        assert_eq!(report.json["summary"]["removed"], 0, "{}", report.json);
+        let keys: Vec<String> = fake
+            .writes()
+            .iter()
+            .map(|(_, b)| b["claim_key"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        assert!(
+            keys.iter().all(|k| !k.starts_with("rust/")),
+            "{kind:?} wrote {keys:?}"
+        );
+    }
+}
