@@ -16,6 +16,8 @@
 //! `sign_out` answers the app's `not_built` refusal.
 
 pub mod admin_read;
+#[rustfmt::skip]
+mod brand;
 pub mod emails;
 pub mod page;
 pub mod render;
