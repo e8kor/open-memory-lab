@@ -11580,10 +11580,146 @@ where
     trigram_finds_a_misspelled_words_memory(&new_store().await).await;
     did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope(&new_store().await)
         .await;
+    similar_candidates_are_the_scopes_served_tips_and_own_held_rows_holding_a_key(
+        &new_store().await,
+    )
+    .await;
     the_time_leg_never_returns_a_row_outside_the_scope(&new_store().await).await;
     an_expired_memory_is_outside_every_retrievers_scope(&new_store().await).await;
     the_time_leg_reads_only_the_text_lists_rows_however_many_the_window_holds(&new_store().await)
         .await;
+}
+
+/// The similar check's candidates (ADR-0050 d1, d17): of the versions
+/// holding one of the keys, the promoted served tips on the scope's nodes
+/// and the held rows of its own keys on theirs, of the kinds memory,
+/// derived fact and steering; never another key's held row, a replaced,
+/// rejected or retirement version, or a row outside the nodes; by keys
+/// held, then id; at most the limit.
+pub async fn similar_candidates_are_the_scopes_served_tips_and_own_held_rows_holding_a_key<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::similar::Fingerprint;
+    const TEXT: &str = "Production deploys run only on Tuesday and Thursday between 10:00 \
+                        and 12:00 CET; outside that window a deploy needs the lead's approval.";
+    let mut rig = ChainRig::new(45);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig_tenant(45);
+    let [wa, elsewhere] = [0xB450_u128, 0xB451].map(Uuid::from_u128);
+    let [own, other] = [0xD450_u128, 0xD451].map(Uuid::from_u128);
+    let row = |wa: Uuid, id: u128, author: Uuid, kind: MemoryKind, body: &str| MemoryRecord {
+        kind,
+        ..held_memory(tenant, wa, Uuid::from_u128(id), "wanda", author, body)
+    };
+    let tip = row(wa, 0xC450, own, MemoryKind::Memory, TEXT);
+    let steering = row(
+        wa,
+        0xC451,
+        other,
+        MemoryKind::Steering,
+        &format!("Note: {TEXT}"),
+    );
+    let held = row(wa, 0xC452, own, MemoryKind::DerivedFact, TEXT);
+    let theirs = row(wa, 0xC453, other, MemoryKind::Memory, TEXT);
+    let rejected = row(wa, 0xC454, own, MemoryKind::Memory, TEXT);
+    let away = row(elsewhere, 0xC455, own, MemoryKind::Memory, TEXT);
+    let replaced = row(wa, 0xC456, own, MemoryKind::Memory, TEXT);
+    let retired = row(
+        wa,
+        0xC458,
+        own,
+        MemoryKind::Memory,
+        "the canary lapsed in May",
+    );
+    let unrelated = row(wa, 0xC45A, own, MemoryKind::Memory, "zebra quartz");
+    for m in [&tip, &steering, &away, &replaced, &retired, &unrelated] {
+        hold_and_promote(&mut rig, store, m.clone()).await;
+    }
+    for m in [&held, &theirs, &rejected] {
+        hold(&mut rig, store, m.clone()).await.expect("hold");
+    }
+    reject(&mut rig, store, rejected.memory_id)
+        .await
+        .expect("reject");
+    supersede(
+        &mut rig,
+        store,
+        &replaced,
+        Uuid::from_u128(0xC457),
+        "The deploy window moved to Monday mornings.",
+        false,
+    )
+    .await;
+    supersede(
+        &mut rig,
+        store,
+        &retired,
+        Uuid::from_u128(0xC459),
+        TEXT,
+        true,
+    )
+    .await;
+
+    let keys: Vec<i64> = Fingerprint::of(TEXT)
+        .query_keys()
+        .into_iter()
+        .map(|(_, k)| k)
+        .collect();
+    let scope = |nodes: Vec<Uuid>, keys_: Vec<Uuid>| CandidateScope {
+        promoted_nodes: nodes.clone(),
+        kinds: vec![
+            MemoryKind::Memory,
+            MemoryKind::DerivedFact,
+            MemoryKind::Steering,
+        ],
+        own_held: Some(OwnHeldScope {
+            any_author: false,
+            author_key_ids: keys_,
+            nodes,
+        }),
+        expired_at: None,
+        anchor: Default::default(),
+    };
+    let candidates = |scope: CandidateScope, keys: Vec<i64>, limit: usize| async move {
+        store
+            .similar_candidates(tenant, &scope, &keys, limit)
+            .await
+            .expect("similar candidates")
+    };
+    assert_eq!(
+        candidates(scope(vec![wa], vec![own]), keys.clone(), 10).await,
+        vec![tip.memory_id, held.memory_id, steering.memory_id],
+        "the same text's two rows first, by id, then the near copy, which holds fewer keys"
+    );
+    assert_eq!(
+        candidates(scope(vec![wa], vec![other]), keys.clone(), 10).await,
+        vec![tip.memory_id, theirs.memory_id, steering.memory_id],
+        "each key set reads its own held rows alone"
+    );
+    assert_eq!(
+        candidates(scope(vec![elsewhere], vec![own]), keys.clone(), 10).await,
+        vec![away.memory_id],
+        "exactly the scope's nodes"
+    );
+    assert_eq!(
+        candidates(scope(vec![wa], vec![own]), keys.clone(), 1).await,
+        vec![tip.memory_id],
+        "the limit keeps the prefix of the order"
+    );
+    assert!(
+        candidates(scope(vec![wa], vec![own]), Vec::new(), 10)
+            .await
+            .is_empty(),
+        "no key, no candidate"
+    );
+    assert!(
+        candidates(scope(Vec::new(), Vec::new()), keys, 10)
+            .await
+            .is_empty(),
+        "an empty scope, no candidate"
+    );
 }
 
 // ---------------------------------------------------------------------------

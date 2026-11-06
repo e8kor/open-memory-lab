@@ -59,6 +59,10 @@ use oml_domain::oauth::{
     decide_refresh, open_request, refresh_token_digest, select_redirect, token_kind,
     validate_document, validate_registration,
 };
+use oml_domain::similar::{
+    Fingerprint, MAX_CANDIDATES as SIMILAR_MAX_CANDIDATES, MAX_LISTED as SIMILAR_MAX_LISTED,
+    Relation, relate,
+};
 use oml_domain::vocab::{Curie, OmlLabel};
 use oml_domain::vocab_edges::{EdgeState, TermEdge, check_acyclic, edge_transition};
 use oml_domain::{
@@ -90,14 +94,14 @@ use crate::types::{
     GuardrailFields, GuardrailRequest, GuardrailSet, GuardrailVerdict, HIT_KINDS, IssueKeyRequest,
     IssuedKey, IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter,
     ListingPosition, ListingScope, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
-    OAuthClientRecord, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge,
-    RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient,
-    RerankOutcome, ServedGuardrail, ServedMemory, SourceCheck, SourceCheckReceipt,
-    SourceCheckRequest, SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb, SupersedeOutcome,
-    SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow, TokenPair,
-    TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows, Verdict,
-    VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
-    WorkareaStatusView,
+    OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge,
+    ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
+    RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem,
+    SourceCheck, SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt,
+    SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
+    TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
+    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
+    WorkareaInfo, WorkareaRecord, WorkareaStatusView,
 };
 use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, HELD_PAGE_MAX, HeldFilter, HeldItem,
@@ -105,8 +109,8 @@ use crate::types::{
 };
 
 use crate::search::{
-    Access, CC_DEPTH, CandidateScope, DID_YOU_MEAN_BELOW, FUSION_DEPTH, Fused, Fusion, MatchMode,
-    OwnHeldScope, Pipeline, RetrievalQuery, RetrieverKind, SearchConfig, TIME_DEPTH, apply_floor,
+    Access, CandidateScope, DID_YOU_MEAN_BELOW, Fused, MatchMode, OwnHeldScope, Pipeline,
+    RetrievalQuery, RetrieverKind, SearchConfig, Stage, TIME_DEPTH, Timings, apply_floor,
     fuse_capped, order_time_list, pipeline_access, pruned_words, query_terms, rerank_order,
 };
 use oml_domain::valid_time::{ValidTime, Window, parse_now, parse_window, ratified_end};
@@ -843,6 +847,27 @@ fn term_curie(kind: MemoryKind, claim_key: &str) -> Result<Curie, AppError> {
         return Err(refused());
     }
     Curie::parse(claim_key).map_err(|_| refused())
+}
+
+/// The nodes a recall at a scope searches for hits: the readable ones and,
+/// inside a user root, `universe` where the key reads it (ADR-0044 d10).
+fn with_universe(
+    caller: &Caller,
+    readable: &[Uuid],
+    scope_ancestry: &[WorkareaRecord],
+) -> Vec<Uuid> {
+    // A scope inside a user root also searches `universe`'s own claims
+    // where the key reads that node, ranked with the scope's own; own held
+    // rows never include them (ADR-0044 d10).
+    let mut hit_nodes = readable.to_vec();
+    if scope_ancestry.iter().any(|w| w.user_root)
+        && let Some(universe) = scope_ancestry.last().map(|w| w.workarea_id)
+        && caller.effective(&[universe]).contains(&Role::Reader)
+        && !hit_nodes.contains(&universe)
+    {
+        hit_nodes.push(universe);
+    }
+    hit_nodes
 }
 
 /// A recall's `query_digest`: SHA-256 over the RFC 8785 JSON of an object
@@ -4293,6 +4318,177 @@ where
         Ok(MemoryPage { items, next_cursor })
     }
 
+    /// The rows of a stored `similar` list the caller can still read: a
+    /// replay answers what was first answered, less any row since demoted,
+    /// erased or made unreadable by a revoked grant (ADR-0050 d1, R3).
+    async fn still_readable(
+        &self,
+        caller: &Caller,
+        similar: Vec<SimilarItem>,
+    ) -> Result<Vec<SimilarItem>, AppError> {
+        if similar.is_empty() {
+            return Ok(similar);
+        }
+        let ids: Vec<Uuid> = similar.iter().map(|s| s.artifact_id).collect();
+        let rows = self.journal.memories(caller.key.tenant_id, &ids).await?;
+        let mut kept = Vec::with_capacity(similar.len());
+        for item in similar {
+            if let Some(m) = rows.iter().find(|m| m.memory_id == item.artifact_id)
+                && self.readable(caller, m).await?
+            {
+                kept.push(item);
+            }
+        }
+        Ok(kept)
+    }
+
+    async fn replayed_supersede(
+        &self,
+        caller: &Caller,
+        mut receipt: SupersedeReceipt,
+    ) -> Result<SupersedeReceipt, AppError> {
+        receipt.similar = self
+            .still_readable(caller, std::mem::take(&mut receipt.similar))
+            .await?;
+        Ok(receipt)
+    }
+
+    /// The similar check (ADR-0050 d1, d17): the rows `caller` may read in
+    /// `workarea`'s recall scope — the served tips recall would read there,
+    /// `universe`'s included inside a user root, and its own held rows —
+    /// that hold `body`'s words in the same order (`same_text`) or a word
+    /// set at Jaccard 0.9 or more (`near_copy`), at most three, `same_text`
+    /// first, then by similarity, then by id. A version of `exclude`, the
+    /// claim a supersession replaces, is never named. Another key's held row
+    /// never reaches the candidates, and every candidate is read and
+    /// admitted by recall's rule before it is compared, so a row the caller
+    /// cannot read is never named (R3).
+    async fn similar_to(
+        &self,
+        caller: &Caller,
+        workarea: Uuid,
+        body: &str,
+        exclude: Option<&str>,
+    ) -> Result<Vec<SimilarItem>, AppError> {
+        let key = &caller.key;
+        let written = Fingerprint::of(body);
+        let keys: Vec<i64> = written.query_keys().into_iter().map(|(_, k)| k).collect();
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let scope_ancestry = self
+            .journal
+            .workarea_ancestry(key.tenant_id, workarea)
+            .await?
+            .unwrap_or_default();
+        let readable = self.nodes_with(caller, workarea, Role::Reader).await?;
+        let hit_nodes = with_universe(caller, &readable, &scope_ancestry);
+        let scope = CandidateScope {
+            promoted_nodes: hit_nodes.clone(),
+            kinds: SIMILAR_KINDS.to_vec(),
+            own_held: Some(OwnHeldScope {
+                author_key_ids: vec![key.key_id],
+                nodes: readable.clone(),
+                any_author: false,
+            }),
+            // A copy is a copy even once its valid time has ended
+            // (ADR-0050 d1; proposed ADR-0059 d3).
+            expired_at: None,
+            // The check reads every origin: a copy is a copy wherever it
+            // came from (ADR-0050 d1).
+            anchor: Default::default(),
+        };
+        let ids = self
+            .journal
+            .similar_candidates(key.tenant_id, &scope, &keys, SIMILAR_MAX_CANDIDATES)
+            .await?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut named: Vec<(Relation, f64, MemoryRecord)> = self
+            .journal
+            .memories(key.tenant_id, &ids)
+            .await?
+            .into_iter()
+            .filter(|m| {
+                let admitted = match m.status {
+                    MemoryStatus::Promoted => m.is_tip && hit_nodes.contains(&m.workarea_id),
+                    MemoryStatus::Held => {
+                        m.author_key_id == key.key_id && readable.contains(&m.workarea_id)
+                    }
+                    _ => false,
+                };
+                admitted
+                    && !m.retirement
+                    && SIMILAR_KINDS.contains(&m.kind)
+                    && !(exclude == Some(m.claim_key.as_str()) && m.workarea_id == workarea)
+            })
+            .filter_map(|m| relate(&written, &Fingerprint::of(&m.body)).map(|(r, j)| (r, j, m)))
+            .collect();
+        named.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(b.1.total_cmp(&a.1))
+                .then(a.2.memory_id.cmp(&b.2.memory_id))
+        });
+        named.truncate(SIMILAR_MAX_LISTED);
+        Ok(named
+            .into_iter()
+            .map(|(relation, jaccard, m)| SimilarItem {
+                artifact_id: m.memory_id,
+                claim_key: m.claim_key,
+                version: m.version,
+                kind: m.kind.as_str().to_owned(),
+                workarea_id: m.workarea_id,
+                state: m.status.as_str().to_owned(),
+                relation: relation.as_str().to_owned(),
+                // Hundredths, rounded down, so 0.899 never reads as 0.90.
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "a ratio in [0, 1] times 100"
+                )]
+                jaccard_percent: (jaccard * 100.0).floor() as u8,
+                own: m.author_key_id == key.key_id,
+            })
+            .collect())
+    }
+
+    /// Runs the similar check for a write of `kind` and applies
+    /// `on_similar`: the named rows, or [`AppError::SimilarExists`] when
+    /// asked to refuse and a row is named. Kinds the check does not cover
+    /// are not checked (ADR-0050 d1).
+    async fn similar_gate(
+        &self,
+        caller: &Caller,
+        workarea: Uuid,
+        kind: MemoryKind,
+        body: &str,
+        exclude: Option<&str>,
+        on_similar: OnSimilar,
+    ) -> Result<Vec<SimilarItem>, AppError> {
+        if !SIMILAR_KINDS.contains(&kind) {
+            return Ok(Vec::new());
+        }
+        let started = std::time::Instant::now();
+        let similar = self.similar_to(caller, workarea, body, exclude).await?;
+        let relation = similar.first().map_or("none", |s| {
+            if s.relation == Relation::SameText.as_str() {
+                Relation::SameText.as_str()
+            } else {
+                Relation::NearCopy.as_str()
+            }
+        });
+        self.observer.similar_checked(
+            relation,
+            on_similar.as_str(),
+            started.elapsed().as_secs_f64(),
+        );
+        if on_similar == OnSimilar::Refuse && !similar.is_empty() {
+            return Err(AppError::SimilarExists(similar));
+        }
+        Ok(similar)
+    }
+
     /// Submit a memory: writer on the resolved node, which must exist, by
     /// the refusal order (ADR-0025 d1); every `derives_from` target readable
     /// (ADR-0025 d3); the claim text normalized to NFC before the digest,
@@ -4365,8 +4561,11 @@ where
             if record.request_digest != request_digest {
                 return Err(AppError::IdempotencyDigestMismatch);
             }
-            let receipt: SubmitReceipt = serde_json::from_value(record.response)
+            let mut receipt: SubmitReceipt = serde_json::from_value(record.response)
                 .map_err(|e| AppError::StoredResponse(e.to_string()))?;
+            receipt.similar = self
+                .still_readable(&caller, std::mem::take(&mut receipt.similar))
+                .await?;
             return Ok(SubmitOutcome {
                 receipt,
                 replayed: true,
@@ -4446,6 +4645,13 @@ where
         {
             return Err(AppError::ClaimKeyConflict);
         }
+
+        // The similar check, after every other refusal and before the
+        // commit: a refusal here journals nothing and claims no idempotency
+        // record, so the same key may be resent with `hold` (ADR-0050 d1).
+        let similar = self
+            .similar_gate(&caller, workarea_id, req.kind, &body, None, req.on_similar)
+            .await?;
 
         let memory_id = self.ids.new_id();
         let body_digest = sha256_digest_string(body.as_bytes());
@@ -4528,6 +4734,7 @@ where
             state: MemoryStatus::Held.as_str().to_owned(),
             journal_seq: seq,
             body_digest,
+            similar,
         };
         let idempotency = Some(IdempotencyPut {
             scope,
@@ -5288,6 +5495,10 @@ where
         if unreviewed > 0 {
             self.observer.unreviewed_hits(unreviewed);
         }
+        for (stage, seconds) in &result.timings.stages {
+            self.observer
+                .recall_stage(result.pipeline.as_str(), stage.as_str(), *seconds);
+        }
         if let Some(telemetry) = &self.telemetry {
             telemetry.offer(TelemetryItem::Recall(Box::new(RecallEvent {
                 tenant_id: caller.key.tenant_id,
@@ -5322,6 +5533,13 @@ where
     ) -> Result<RecallResult, AppError> {
         let key = &caller.key;
         require_admissible(key, Role::Reader, "recall")?;
+        // Timings are served only where the deployment serves them, and a
+        // request for them elsewhere is refused by name (ADR-0049 d14).
+        if req.timings && !self.search.timings() {
+            return Err(AppError::TimingsOff);
+        }
+        let mut timings = Timings::default();
+        let lap = std::time::Instant::now();
         let scope = self.target_workarea(key, req.workarea.as_ref()).await?;
         self.require_access(caller, scope, Role::Reader, "recall")
             .await?;
@@ -5420,6 +5638,7 @@ where
         let pipeline = self
             .pipeline_for(key.tenant_id, req.search.as_deref())
             .await?;
+        timings.lap(Stage::Scope, lap);
         let ran = self
             .run_pipeline(
                 key.tenant_id,
@@ -5428,8 +5647,10 @@ where
                 &query,
                 window.as_ref(),
                 req,
+                &mut timings,
             )
             .await?;
+        let mut lap = std::time::Instant::now();
         let (mut candidates, terms, fallback) = (ran.fused, ran.terms, ran.fallback);
         self.observer
             .search(pipeline.as_str(), fallback, ran.access.as_str());
@@ -5477,6 +5698,7 @@ where
                     .filter(|m| admits(m))
                     .map(|m| (m.memory_id, m)),
             );
+            lap = timings.lap(Stage::Hydrate, lap);
             let tail = candidates.split_off(depth);
             let head: Vec<_> = candidates
                 .into_iter()
@@ -5487,6 +5709,7 @@ where
                 .filter_map(|c| rows.get(&c.memory_id).map(|m| m.body.clone()))
                 .collect();
             let scored = reranker.score(query.clone(), passages).await;
+            lap = timings.lap(Stage::Rerank, lap);
             let scored = match scored {
                 // A score that is not a finite relevance in [0, 1] would sort
                 // first or serialise as null: the list is refused whole.
@@ -5524,6 +5747,9 @@ where
         // scored, then the budget cut over the counts `body_bytes` gives
         // without any body read; steering is never cut and spent first
         // (ADR-0025 d7; ADR-0053 d6).
+        if pipeline.reranks() {
+            lap = timings.lap(Stage::Rerank, lap);
+        }
         candidates.truncate(req.k);
         let floor = match rerank {
             RerankOutcome::Applied => self.search.rerank().floor,
@@ -5539,6 +5765,7 @@ where
                 .filter(|id| !rows.contains_key(id))
                 .collect();
             if !unread.is_empty() {
+                lap = timings.lap(Stage::Cut, lap);
                 rows.extend(
                     self.journal
                         .memories(key.tenant_id, &unread)
@@ -5546,6 +5773,7 @@ where
                         .into_iter()
                         .map(|m| (m.memory_id, m)),
                 );
+                lap = timings.lap(Stage::Hydrate, lap);
             }
             candidates.retain(|c| rows.get(&c.memory_id).is_some_and(admits));
             (candidates, below_floor) = apply_floor(candidates, floor);
@@ -5557,6 +5785,7 @@ where
         // alone, under any pipeline but v0.5.0's (ADR-0049 d6, d12).
         // An answer the floor thinned matched its words; its rows were
         // withheld, so it offers no spellings (ADR-0053 d6).
+        lap = timings.lap(Stage::Cut, lap);
         let did_you_mean = if pipeline.suggests()
             && below_floor == 0
             && candidates.len() < DID_YOU_MEAN_BELOW.min(req.k)
@@ -5576,6 +5805,7 @@ where
         } else {
             Vec::new()
         };
+        lap = timings.lap(Stage::Suggest, lap);
 
         let steering_counts: Vec<u64> = steering
             .iter()
@@ -5589,6 +5819,7 @@ where
         if let Some(budget) = &budget {
             candidates.truncate(budget.hits_served);
         }
+        lap = timings.lap(Stage::Cut, lap);
         let ids: Vec<Uuid> = candidates
             .iter()
             .map(|c| c.memory_id)
@@ -5629,6 +5860,7 @@ where
                 });
             }
         }
+        timings.lap(Stage::Hydrate, lap);
         Ok(RecallResult {
             recall_id: self.ids.new_id(),
             scope_workarea_id: scope,
@@ -5646,6 +5878,7 @@ where
             below_floor,
             access: ran.access,
             pruned: ran.pruned,
+            timings,
             window,
         })
     }
@@ -5889,6 +6122,7 @@ where
     /// with every term; when that leaves nothing, the any-term lists are
     /// served and `fallback` says so (d5). The hits come back in the total
     /// order of hits, uncut.
+    #[allow(clippy::too_many_arguments)]
     async fn run_pipeline(
         &self,
         tenant_id: Uuid,
@@ -5897,12 +6131,10 @@ where
         query: &str,
         window: Option<&Window>,
         req: &RecallRequest,
+        timings: &mut Timings,
     ) -> Result<PipelineRun, AppError> {
-        let depth = match pipeline.fusion() {
-            Fusion::Single => req.k,
-            Fusion::Rrf { .. } => req.k.max(FUSION_DEPTH),
-            Fusion::Cc { .. } => req.k.max(CC_DEPTH),
-        };
+        let depth = pipeline.depth(req.k);
+        let encoding = std::time::Instant::now();
         // A sparse pipeline reads the query's tokens, weighted by the
         // model's shipped idf, with no model run (ADR-0052 d14, d16).
         let sparse = if pipeline.needs_sparse() {
@@ -5911,7 +6143,9 @@ where
                     "{pipeline} reads learned sparse postings and no sparse encoder is loaded"
                 )))
             })?;
-            encoder.encode_query(query)
+            let encoded = encoder.encode_query(query);
+            timings.lap(Stage::Retrieve(RetrieverKind::Sparse), encoding);
+            encoded
         } else {
             Vec::new()
         };
@@ -5930,6 +6164,7 @@ where
         for (attempt, mode) in modes.into_iter().enumerate() {
             let mut lists = Vec::with_capacity(pipeline.retrievers().len());
             for &kind in pipeline.retrievers() {
+                let started = std::time::Instant::now();
                 // The time leg reads only when the query names a window, and
                 // then its own depth; the core orders it by the text list
                 // and caps it (proposed ADR-0059 d7).
@@ -5969,6 +6204,7 @@ where
                             }
                         }
                     };
+                    timings.lap(Stage::Retrieve(kind), started);
                     lists.push((kind, list));
                     continue;
                 }
@@ -5988,13 +6224,17 @@ where
                         },
                     )
                     .await?;
+                timings.lap(Stage::Retrieve(kind), started);
                 lists.push((kind, list));
             }
             let terms = query_terms(&lists);
             let access = pipeline_access(&lists);
             let pruned = pruned_words(&lists);
+            let started = std::time::Instant::now();
+            let fused = fuse_capped(lists, pipeline.fusion(), depth);
+            timings.lap(Stage::Fuse, started);
             let run = PipelineRun {
-                fused: fuse_capped(lists, pipeline.fusion(), depth),
+                fused,
                 terms,
                 fallback: attempt > 0,
                 access,
@@ -6303,7 +6543,7 @@ where
         let request_digest = supersede_request_digest(req)?;
         if let Some(receipt) = self.recorded(&scope, &request_digest).await? {
             return Ok(SupersedeOutcome {
-                receipt,
+                receipt: self.replayed_supersede(&caller, receipt).await?,
                 replayed: true,
             });
         }
@@ -6386,7 +6626,7 @@ where
             // it answers any replay (http-api.md idempotency).
             if let Some(receipt) = self.recorded(&scope, &request_digest).await? {
                 return Ok(SupersedeOutcome {
-                    receipt,
+                    receipt: self.replayed_supersede(&caller, receipt).await?,
                     replayed: true,
                 });
             }
@@ -6485,6 +6725,23 @@ where
                 ))
             })?;
 
+        // The similar check, as a submit's, never naming a version of the
+        // claim this replaces; a retirement states why and is not checked
+        // (ADR-0050 d1).
+        let similar = if req.retirement {
+            Vec::new()
+        } else {
+            self.similar_gate(
+                &caller,
+                target.workarea_id,
+                kind,
+                &body,
+                Some(&target.claim_key),
+                req.on_similar,
+            )
+            .await?
+        };
+
         let successor_id = self.ids.new_id();
         let body_digest = sha256_digest_string(body.as_bytes());
         let body_bytes = body.len() as u64;
@@ -6573,6 +6830,7 @@ where
             replaces,
             journal_seq: event.envelope.seq,
             body_digest,
+            similar,
         };
         let idempotency = Some(IdempotencyPut {
             scope: scope.clone(),
@@ -6602,7 +6860,7 @@ where
                 .await?
                 .ok_or(AppError::Store(StoreError::IdempotencyRecorded))?;
             return Ok(SupersedeOutcome {
-                receipt,
+                receipt: self.replayed_supersede(&caller, receipt).await?,
                 replayed: true,
             });
         }

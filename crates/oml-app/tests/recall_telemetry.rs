@@ -109,6 +109,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
         .submit_memory(
             writer.as_str(),
             &SubmitRequest {
+                on_similar: Default::default(),
                 anchor: None,
                 idempotency_key: "i-1".to_owned(),
                 claim_key: None,
@@ -126,6 +127,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
         .await
         .expect("submit");
     let req = RecallRequest {
+        timings: false,
         anchor: oml_app::types::AnchorFilter::default(),
         query: "deploy fridays".to_owned(),
         k: 8,

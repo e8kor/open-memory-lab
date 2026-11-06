@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.recall_budget import RecallBudget
     from ..models.recall_response_hits_item import RecallResponseHitsItem
     from ..models.recall_search import RecallSearch
+    from ..models.recall_timings import RecallTimings
 
 
 T = TypeVar("T", bound="RecallResponse")
@@ -29,6 +30,8 @@ class RecallResponse:
         hits (list[RecallResponseHitsItem]):
         query_digest (str): SHA-256 of plaintext unless a field says ciphertext.
         search (RecallSearch): What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7).
+        timings (RecallTimings | Unset): Each stage's milliseconds, in the order the stages ran, and their sum (ADR-0049
+            d14). Present only when the request sent timings true, which a deployment serves only with search.timings on.
         budget (RecallBudget | Unset): How the max_tokens cut was applied (docs/architecture/retrieval.md, Token
             budgets). The example is steering [120] and hits [300, 250, 90] under max_tokens 500: one hit is served, and the
             90-token hit is not, because the cut is a strict rank prefix. Example: {'max_tokens': 500, 'counter': 'oml-
@@ -41,6 +44,7 @@ class RecallResponse:
     hits: list[RecallResponseHitsItem]
     query_digest: str
     search: RecallSearch
+    timings: RecallTimings | Unset = UNSET
     budget: RecallBudget | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -61,6 +65,10 @@ class RecallResponse:
 
         search = self.search.to_dict()
 
+        timings: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.timings, Unset):
+            timings = self.timings.to_dict()
+
         budget: dict[str, Any] | Unset = UNSET
         if not isinstance(self.budget, Unset):
             budget = self.budget.to_dict()
@@ -76,6 +84,8 @@ class RecallResponse:
                 "search": search,
             }
         )
+        if timings is not UNSET:
+            field_dict["timings"] = timings
         if budget is not UNSET:
             field_dict["budget"] = budget
 
@@ -87,6 +97,7 @@ class RecallResponse:
         from ..models.recall_budget import RecallBudget
         from ..models.recall_response_hits_item import RecallResponseHitsItem
         from ..models.recall_search import RecallSearch
+        from ..models.recall_timings import RecallTimings
 
         d = dict(src_dict)
         recall_id = UUID(d.pop("recall_id"))
@@ -109,6 +120,13 @@ class RecallResponse:
 
         search = RecallSearch.from_dict(d.pop("search"))
 
+        _timings = d.pop("timings", UNSET)
+        timings: RecallTimings | Unset
+        if isinstance(_timings, Unset):
+            timings = UNSET
+        else:
+            timings = RecallTimings.from_dict(_timings)
+
         _budget = d.pop("budget", UNSET)
         budget: RecallBudget | Unset
         if isinstance(_budget, Unset):
@@ -122,6 +140,7 @@ class RecallResponse:
             hits=hits,
             query_digest=query_digest,
             search=search,
+            timings=timings,
             budget=budget,
         )
 

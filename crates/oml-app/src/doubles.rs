@@ -5,6 +5,7 @@
 //! The doubles are deterministic — fixed clock, counting id generator — so
 //! every test chain is reproducible byte for byte.
 
+use oml_domain::similar::Fingerprint;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,9 +46,9 @@ use crate::types::{
     CrewRecord, DenialRecord, DocumentCaching, GrantRecord, HIT_KINDS, HeldFilter, HeldRow,
     KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
     MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, ProviderAnswer,
-    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow,
-    TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry,
-    WebSessionRecord, WorkareaRecord, WorkareaRef,
+    ProviderFailure, QueueDepth, RefreshFacts, RefreshOutcome, SIMILAR_KINDS, SourceCheck,
+    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
+    WebEntry, WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
 use oml_domain::web::Provider;
 
@@ -209,6 +210,9 @@ pub struct MemStore {
     refuse_next: Arc<Mutex<Option<(&'static str, StoreError)>>>,
     /// The next idempotency lookup answers no record, then reads normally.
     miss_next_lookup: Arc<AtomicBool>,
+    /// `similar_candidates` ignores its scope (a store that regressed), so
+    /// a test proves the core admits by recall's rule on its own.
+    widen_similar: Arc<AtomicBool>,
     /// How many names `resolve_name` has looked up, across every handle.
     name_lookups: Arc<AtomicU64>,
     /// How many ancestries `workarea_ancestry` has read, across every
@@ -356,6 +360,14 @@ impl MemStore {
     /// any handle after that commit.
     pub fn miss_next_idempotency_lookup(&self) {
         self.miss_next_lookup.store(true, Ordering::SeqCst);
+    }
+
+    /// Makes `similar_candidates` ignore its scope and name every version of
+    /// the tenant that shares a key, as a store whose scope predicate
+    /// regressed would: the core's own admission is then the only filter
+    /// between the writer and a row it may not read (ADR-0050 d1).
+    pub fn widen_similar_candidates(&self) {
+        self.widen_similar.store(true, Ordering::SeqCst);
     }
 
     /// Sets a stored row's status, journalling nothing: the demoted or
@@ -1944,6 +1956,52 @@ impl Retriever for MemStore {
         _limit: usize,
     ) -> Result<Vec<String>, StoreError> {
         Ok(Vec::new())
+    }
+
+    /// The near-copy check's candidates, keyed as migration 0027 keys them
+    /// (ADR-0050 d17): each version's keys computed from its text on the
+    /// read, under the same scope predicates as [`Self::retrieve`].
+    async fn similar_candidates(
+        &self,
+        tenant_id: Uuid,
+        scope: &CandidateScope,
+        keys: &[i64],
+        limit: usize,
+    ) -> Result<Vec<Uuid>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut found: Vec<(usize, Uuid)> = state
+            .memories
+            .values()
+            .filter(|m| {
+                if self.widen_similar.load(Ordering::SeqCst) {
+                    return true;
+                }
+                if m.retirement || !SIMILAR_KINDS.contains(&m.kind) {
+                    return false;
+                }
+                if served_tip(m) && scope.promoted_nodes.contains(&m.workarea_id) {
+                    return true;
+                }
+                scope.own_held.as_ref().is_some_and(|own| {
+                    m.status == MemoryStatus::Held
+                        && own.author_key_ids.contains(&m.author_key_id)
+                        && own.nodes.contains(&m.workarea_id)
+                })
+            })
+            .filter_map(|m| {
+                let shared = Fingerprint::of(&m.body)
+                    .stored_keys()
+                    .iter()
+                    .filter(|(_, key)| keys.contains(key))
+                    .count();
+                (shared > 0).then_some((shared, m.memory_id))
+            })
+            .collect();
+        found.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        Ok(found.into_iter().take(limit).map(|(_, id)| id).collect())
     }
 
     async fn valid_time_counts(

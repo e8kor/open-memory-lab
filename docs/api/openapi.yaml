@@ -2638,6 +2638,7 @@ components:
         - submission.tip_conflict
         - submission.version_conflict
         - submission.claim_key_conflict
+        - submission.similar_exists
         - submission.universe_refused
         - workarea.frozen
         - workarea.in_progress_refused
@@ -2704,6 +2705,7 @@ components:
           type: array
           items: { type: string }
           description: Artifact ids; the declared lineage (omission is undetectable — honesty rule).
+        on_similar: { type: string, enum: [hold, refuse], description: "Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. Not part of the request digest. Since v0.5.9." }
         anchor: { $ref: '#/components/schemas/Anchor' }
 
     SubmitAccepted:
@@ -2729,6 +2731,39 @@ components:
             result: { type: string }
             scanner_version: { type: string }
         journal_seq: { type: integer }
+        similar:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/SimilarItem' }
+          description: "The rows the similar check named, as first answered: a replay serves the list of the write it replays (ADR-0050 d1). Since v0.5.9."
+
+    SimilarItem:
+      type: object
+      additionalProperties: false
+      description: "A row the key may read that holds the same words in the same order (same_text) or a word set at Jaccard 0.9 or more (near_copy), found by integer keys and verified exactly, with no model (ADR-0050 d1, d17). Ordered same_text first, then by jaccard, then by artifact_id. To replace it, write with replaces set to artifact_id."
+      required: [artifact_id, claim_key, version, kind, workarea_id, state, relation, jaccard, own]
+      properties:
+        artifact_id: { type: string }
+        claim_key: { type: string }
+        version: { type: integer }
+        kind: { type: string, enum: [memory, derived_fact, steering] }
+        workarea_id: { type: string }
+        state: { type: string, enum: [held, promoted], description: held only for the calling key's own rows. }
+        relation: { type: string, enum: [same_text, near_copy] }
+        jaccard: { type: number, minimum: 0.9, maximum: 1, description: "The two word sets' Jaccard similarity, rounded down to hundredths; 1 for same_text." }
+        own: { type: boolean, description: The calling key wrote it. }
+
+    RecallTimings:
+      type: object
+      additionalProperties: false
+      description: "Each stage's milliseconds, in the order the stages ran, and their sum (ADR-0049 d14). Present only when the request sent timings true, which a deployment serves only with search.timings on."
+      required: [stages_ms, total_ms]
+      properties:
+        stages_ms:
+          type: object
+          description: "Keys from the closed set scope, retrieve_keyword_all, retrieve_keyword_any, retrieve_bm25, retrieve_trigram, retrieve_bm25_postings, retrieve_sparse, fuse, rerank, suggest, hydrate, cut; a stage that did not run is absent."
+          additionalProperties: { type: number, minimum: 0 }
+        total_ms: { type: number, minimum: 0 }
 
     AttachmentDescriptor:
       type: object
@@ -2853,11 +2888,11 @@ components:
             docs/architecture/retrieval.md, Token budgets.
         search:
           type: string
-          enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse, bm25-postings-time]
+          enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse, bm25-sparse-rrf, bm25-postings-time]
           description: >-
             The search pipeline, among those the deployment serves (search.enabled); omitted, the
             tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and
-            bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-postings-time, bm25-postings fused with the memories whose valid time overlaps a date the query names, proposed ADR-0059 d7). A name the deployment does not
+            bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-sparse-rrf, the same two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13; bm25-postings-time, bm25-postings fused with the memories whose valid time overlaps a date the query names, ADR-0059 d7). A name the deployment does not
             serve is request.validation with details.field /search and details.served.
         match:
           type: string
@@ -2867,6 +2902,7 @@ components:
             all keeps only rows holding every query word; when none does, the any-word hits are
             served and search.fallback is any_term (ADR-0049 d5).
         feedback: { $ref: '#/components/schemas/Feedback' }
+        timings: { type: boolean, description: "Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d14). Since v0.5.9." }
         include_expired: { type: boolean, default: false, description: 'true also serves memories whose valid_until has passed, which recall hides by default; get and the listings always serve them (proposed ADR-0059 d3).' }
         now: { $ref: '#/components/schemas/ValidEnd', description: "The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired and anchors the query's relative dates (last week, three days ago) (proposed ADR-0059 d5)." }
 
@@ -2890,6 +2926,7 @@ components:
       type: object
       required: [recall_id, steering, hits, query_digest, search]
       properties:
+        timings: { $ref: '#/components/schemas/RecallTimings' }
         recall_id: { type: string, format: uuid, description: 'The recall''s id: the feedback member of a later read names it (ADR-0054 d6).' }
         steering:
           type: array
@@ -2940,7 +2977,7 @@ components:
       description: What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7).
       required: [pipeline, match, terms, fallback, did_you_mean, access, pruned, rerank, rerank_reason, floor, below_floor]
       properties:
-        pipeline: { type: string, enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse, bm25-postings-time] }
+        pipeline: { type: string, enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse, bm25-sparse-rrf, bm25-postings-time] }
         match: { type: string, enum: [any, all] }
         terms: { type: array, items: { type: string } }
         fallback: { type: [string, 'null'], description: 'any_term when match all found no row with every word and the any-word hits were served; null otherwise.' }
@@ -3134,6 +3171,7 @@ components:
         reason: { type: string }
         severity: { $ref: '#/components/schemas/Severity' }
         rule: { $ref: '#/components/schemas/GuardrailRule' }
+        on_similar: { type: string, enum: [hold, refuse], description: "Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9." }
         valid_from: { $ref: '#/components/schemas/ValidEnd', description: "When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the successor, which inherits no valid time from its target; once ratified, a declared valid_from also ends the replaced version there (proposed ADR-0059 d4); only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0059 d2)." }
         valid_until: { $ref: '#/components/schemas/ValidEnd', description: "When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3)." }
 

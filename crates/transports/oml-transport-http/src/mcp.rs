@@ -162,6 +162,8 @@ struct WriteArgs {
     expected_version: Option<Value>,
     retirement: Option<bool>,
     reason: Option<String>,
+    /// `hold` or `refuse` (ADR-0050 d1).
+    on_similar: Option<String>,
     /// When the memory holds (proposed ADR-0059 d2, d9).
     valid_from: Option<String>,
     valid_until: Option<String>,
@@ -560,6 +562,7 @@ where
                 ("derives_from", args.derives_from.map(Value::from)),
                 ("retirement", args.retirement.map(Value::from)),
                 ("reason", args.reason.map(Value::from)),
+                ("on_similar", args.on_similar.map(Value::from)),
                 ("valid_from", args.valid_from.map(Value::from)),
                 ("valid_until", args.valid_until.map(Value::from)),
                 ("expected_version", args.expected_version),
@@ -599,6 +602,7 @@ where
                 ("kind", args.kind.map(Value::from)),
                 ("workarea", args.workarea.map(Value::from)),
                 ("derives_from", args.derives_from.map(Value::from)),
+                ("on_similar", args.on_similar.map(Value::from)),
                 ("valid_from", args.valid_from.map(Value::from)),
                 ("valid_until", args.valid_until.map(Value::from)),
                 ("anchor", args.anchor),
@@ -629,6 +633,7 @@ where
             "workarea": receipt["workarea_id"],
             "retirement": receipt["retirement"],
             "replaces": receipt["replaces"],
+            "similar": receipt["similar"],
             "idempotent_replay": replayed,
         }))
     }

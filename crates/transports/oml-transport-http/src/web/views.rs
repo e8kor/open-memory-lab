@@ -439,6 +439,7 @@ where
                 .recall(
                     bearer,
                     &RecallRequest {
+                        timings: false,
                         query: q.to_owned(),
                         k: 25,
                         workarea: None,
@@ -1427,6 +1428,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     format!("{source}\n{text_value}").as_bytes(),
                 );
                 let req = SubmitRequest {
+                    on_similar: Default::default(),
                     idempotency_key: format!("web-curate-{}", &digest.to_prefixed()[7..39]),
                     claim_key: fields.get("claim_key").map(ToOwned::to_owned),
                     verb: Some(SubmitVerb::Learn),
@@ -1485,6 +1487,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 let digest =
                     oml_app::domain::Sha256Hash::digest(format!("{target}\n{body}").as_bytes());
                 let req = SupersedeRequest {
+                    on_similar: Default::default(),
                     idempotency_key: format!("web-supersede-{}", &digest.to_prefixed()[7..39]),
                     target_id: target,
                     body,

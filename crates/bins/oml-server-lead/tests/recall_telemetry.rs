@@ -296,6 +296,7 @@ impl World {
             .submit_memory(
                 &t.writer,
                 &SubmitRequest {
+                    on_similar: Default::default(),
                     anchor: None,
                     idempotency_key: fresh_id().to_string(),
                     claim_key: None,
@@ -1157,6 +1158,7 @@ async fn the_event_writes_cost_on_a_recalls_p95() {
     let mut on_ms = Vec::with_capacity(rounds);
     let mut off_ms = Vec::with_capacity(rounds);
     let req = |i: usize| oml_app::types::RecallRequest {
+        timings: false,
         anchor: oml_app::types::AnchorFilter::default(),
         query: format!("deploy service {}", i % 17),
         k: 8,

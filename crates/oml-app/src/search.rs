@@ -172,6 +172,11 @@ pub enum Pipeline {
     /// `bm25-sparse`: `bm25-postings` and `sparse` fused by convex
     /// combination, 0.3 and 0.7 (ADR-0052 d13, d16).
     Bm25Sparse,
+    /// `bm25-sparse-rrf`: the same two lists fused by reciprocal rank,
+    /// k 60, read as deep as `bm25-sparse` reads them, so the two differ in
+    /// their fusion alone: the served baseline ADR-0052 d13 measures convex
+    /// combination against.
+    Bm25SparseRrf,
     /// `bm25-postings-time`: `bm25-postings` and the `time` leg fused by
     /// reciprocal rank (proposed ADR-0059 d7).
     Bm25PostingsTime,
@@ -179,7 +184,7 @@ pub enum Pipeline {
 
 impl Pipeline {
     /// Every pipeline this build knows, in the order the docs list them.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::KeywordAll,
         Self::KeywordAny,
         Self::Bm25,
@@ -188,6 +193,7 @@ impl Pipeline {
         Self::Bm25Rerank,
         Self::Sparse,
         Self::Bm25Sparse,
+        Self::Bm25SparseRrf,
         Self::Bm25PostingsTime,
     ];
 
@@ -203,6 +209,7 @@ impl Pipeline {
             Self::Bm25Rerank => "bm25-rerank",
             Self::Sparse => "sparse",
             Self::Bm25Sparse => "bm25-sparse",
+            Self::Bm25SparseRrf => "bm25-sparse-rrf",
             Self::Bm25PostingsTime => "bm25-postings-time",
         }
     }
@@ -224,7 +231,9 @@ impl Pipeline {
             Self::Bm25Trigram => &[RetrieverKind::Bm25, RetrieverKind::Trigram],
             Self::Bm25Postings => &[RetrieverKind::Bm25Postings],
             Self::Sparse => &[RetrieverKind::Sparse],
-            Self::Bm25Sparse => &[RetrieverKind::Bm25Postings, RetrieverKind::Sparse],
+            Self::Bm25Sparse | Self::Bm25SparseRrf => {
+                &[RetrieverKind::Bm25Postings, RetrieverKind::Sparse]
+            }
             Self::Bm25PostingsTime => &[RetrieverKind::Bm25Postings, RetrieverKind::Time],
         }
     }
@@ -239,10 +248,25 @@ impl Pipeline {
             | Self::Bm25Postings
             | Self::Bm25Rerank
             | Self::Sparse => Fusion::Single,
-            Self::Bm25Trigram | Self::Bm25PostingsTime => Fusion::Rrf { k: RRF_K },
+            Self::Bm25Trigram | Self::Bm25SparseRrf | Self::Bm25PostingsTime => {
+                Fusion::Rrf { k: RRF_K }
+            }
             Self::Bm25Sparse => Fusion::Cc {
                 weights: &CC_BM25_SPARSE,
             },
+        }
+    }
+
+    /// How deep each of the pipeline's lists is read before fusion, for a
+    /// request of `k`: `k` for one list, [`FUSION_DEPTH`] for reciprocal
+    /// rank, [`CC_DEPTH`] for a convex combination and for
+    /// `bm25-sparse-rrf`, which reads as `bm25-sparse` does.
+    #[must_use]
+    pub fn depth(self, k: usize) -> usize {
+        match (self, self.fusion()) {
+            (_, Fusion::Single) => k,
+            (Self::Bm25SparseRrf, _) | (_, Fusion::Cc { .. }) => k.max(CC_DEPTH),
+            (_, Fusion::Rrf { .. }) => k.max(FUSION_DEPTH),
         }
     }
 
@@ -277,6 +301,92 @@ impl fmt::Display for Pipeline {
     }
 }
 
+/// A stage of a recall, as its timing trace and the stage histogram name it
+/// (ADR-0049 d14): a closed set, so the metric's labels stay bounded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Stage {
+    /// The scope: the ancestry, the readable nodes and the steering in force.
+    Scope,
+    /// One retriever's list, the sparse query's encoding included, every
+    /// attempt of a `match: all` fallback summed.
+    Retrieve(RetrieverKind),
+    /// The lists fused into one.
+    Fuse,
+    /// The reranker's scoring of the head, when the pipeline reranks.
+    Rerank,
+    /// The spellings read for a thin answer.
+    Suggest,
+    /// The rows read by id and served: the reranked head's, the floor's and
+    /// the hits'.
+    Hydrate,
+    /// The `k` cut, the relevance floor and the budget cut.
+    Cut,
+}
+
+impl Stage {
+    /// Every stage name, the label set of `oml_recall_stage_duration_seconds`.
+    pub const NAMES: [&'static str; 13] = [
+        "scope",
+        "retrieve_keyword_all",
+        "retrieve_keyword_any",
+        "retrieve_bm25",
+        "retrieve_trigram",
+        "retrieve_bm25_postings",
+        "retrieve_sparse",
+        "retrieve_time",
+        "fuse",
+        "rerank",
+        "suggest",
+        "hydrate",
+        "cut",
+    ];
+
+    /// The stage's name, as the metric and the trace spell it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Scope => "scope",
+            Self::Retrieve(RetrieverKind::KeywordAll) => "retrieve_keyword_all",
+            Self::Retrieve(RetrieverKind::KeywordAny) => "retrieve_keyword_any",
+            Self::Retrieve(RetrieverKind::Bm25) => "retrieve_bm25",
+            Self::Retrieve(RetrieverKind::Trigram) => "retrieve_trigram",
+            Self::Retrieve(RetrieverKind::Bm25Postings) => "retrieve_bm25_postings",
+            Self::Retrieve(RetrieverKind::Sparse) => "retrieve_sparse",
+            Self::Retrieve(RetrieverKind::Time) => "retrieve_time",
+            Self::Fuse => "fuse",
+            Self::Rerank => "rerank",
+            Self::Suggest => "suggest",
+            Self::Hydrate => "hydrate",
+            Self::Cut => "cut",
+        }
+    }
+}
+
+/// A recall's per-stage durations, in seconds, in the order the stages ran
+/// (ADR-0049 d14). A stage that did not run is absent; a stage that ran
+/// twice, as a retriever's list under a fallback, is summed.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Timings {
+    pub stages: Vec<(Stage, f64)>,
+}
+
+impl Timings {
+    /// Adds `seconds` to `stage`.
+    pub fn add(&mut self, stage: Stage, seconds: f64) {
+        match self.stages.iter_mut().find(|(s, _)| *s == stage) {
+            Some((_, total)) => *total += seconds,
+            None => self.stages.push((stage, seconds)),
+        }
+    }
+
+    /// Adds the time since `started` to `stage`, and returns now.
+    pub fn lap(&mut self, stage: Stage, started: std::time::Instant) -> std::time::Instant {
+        let now = std::time::Instant::now();
+        self.add(stage, now.duration_since(started).as_secs_f64());
+        now
+    }
+}
+
 /// `match`: whether every query term must match (ADR-0049 d5).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum MatchMode {
@@ -296,6 +406,7 @@ pub struct SearchConfig {
     enabled: Vec<Pipeline>,
     default: Pipeline,
     rerank: RerankPolicy,
+    timings: bool,
 }
 
 /// How a reranking pipeline uses the reranker (configuration.md
@@ -402,6 +513,7 @@ impl SearchConfig {
             enabled: set,
             default,
             rerank: RerankPolicy::default(),
+            timings: false,
         })
     }
 
@@ -418,6 +530,20 @@ impl SearchConfig {
     #[must_use]
     pub fn rerank(&self) -> RerankPolicy {
         self.rerank
+    }
+
+    /// The configuration with recall timings served on request or not
+    /// (`search.timings`; ADR-0049 d14).
+    #[must_use]
+    pub fn with_timings(self, timings: bool) -> Self {
+        Self { timings, ..self }
+    }
+
+    /// Whether a recall may ask for its per-stage `timings` block. The
+    /// stage histogram is recorded either way (ADR-0049 d14).
+    #[must_use]
+    pub fn timings(&self) -> bool {
+        self.timings
     }
 
     /// Whether any served pipeline reranks, so the composition must load a
@@ -526,6 +652,7 @@ impl Default for SearchConfig {
             enabled: vec![Pipeline::KeywordAll, Pipeline::KeywordAny],
             default: Pipeline::KeywordAny,
             rerank: RerankPolicy::default(),
+            timings: false,
         }
     }
 }
@@ -584,6 +711,13 @@ pub struct PostingsHealth {
     pub sparse_parked: u64,
     /// Whether the tenant's sparse queue is on.
     pub sparse_enabled: bool,
+    /// Whether the tenant's `similar_keys` partition exists (ADR-0050 d17).
+    pub similar_partition: bool,
+    /// Held versions and served tips with words and no similar keys.
+    pub similar_unfilled: u64,
+    /// Versions whose similar keys hold another state than theirs, or
+    /// that should hold none.
+    pub similar_drift: u64,
 }
 
 /// The tenant's valid time for doctor (proposed ADR-0059 d12): its served

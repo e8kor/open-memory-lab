@@ -317,6 +317,7 @@ where
                     continue;
                 };
                 let req = RecallRequest {
+                    timings: false,
                     query: q.query_text.clone(),
                     k: REPLAY_K,
                     workarea: Some(q.scope_workarea_id.into()),

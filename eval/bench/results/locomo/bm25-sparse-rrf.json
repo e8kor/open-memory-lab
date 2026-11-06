@@ -1,0 +1,102 @@
+{
+ "schema": "oml-bench/1",
+ "suite": "locomo",
+ "suite_version": "locomo10.json sha256:79fa87e90f040813",
+ "kind": "recall",
+ "method": "bm25-sparse-rrf",
+ "date": "2026-11-05",
+ "commit": "a1ad0c9",
+ "environment": {
+  "host": "8 vCPU / 15 GB, shared, load 8-12",
+  "postgres": "18",
+  "build": "release"
+ },
+ "n_queries": 1535,
+ "n_docs": 5882,
+ "sampled": null,
+ "metrics": {
+  "ndcg@10": 0.534,
+  "recall@10": 0.6598,
+  "recall@20": 0.7238,
+  "recall@100": 0.8782,
+  "mrr@10": 0.5218,
+  "success@1": 0.4235,
+  "success@5": 0.6495,
+  "zero_result_rate": 0.0
+ },
+ "per_category": {
+  "adversarial": {
+   "ndcg@10": 0.4473,
+   "recall@10": 0.6177,
+   "recall@20": 0.6984,
+   "recall@100": 0.9036,
+   "mrr@10": 0.3967,
+   "success@1": 0.2915,
+   "success@5": 0.5135,
+   "zero_result_rate": 0.0,
+   "n_queries": 446
+  },
+  "multi-hop": {
+   "ndcg@10": 0.3166,
+   "recall@10": 0.3898,
+   "recall@20": 0.4732,
+   "recall@100": 0.7276,
+   "mrr@10": 0.384,
+   "success@1": 0.2624,
+   "success@5": 0.5496,
+   "zero_result_rate": 0.0,
+   "n_queries": 282
+  },
+  "open-domain": {
+   "ndcg@10": 0.2746,
+   "recall@10": 0.3495,
+   "recall@20": 0.4114,
+   "recall@100": 0.6689,
+   "mrr@10": 0.3088,
+   "success@1": 0.2174,
+   "success@5": 0.413,
+   "zero_result_rate": 0.0,
+   "n_queries": 92
+  },
+  "single-hop": {
+   "ndcg@10": 0.5976,
+   "recall@10": 0.7475,
+   "recall@20": 0.809,
+   "recall@100": 0.9336,
+   "mrr@10": 0.5576,
+   "success@1": 0.459,
+   "success@5": 0.6778,
+   "zero_result_rate": 0.0,
+   "n_queries": 841
+  },
+  "temporal": {
+   "ndcg@10": 0.6329,
+   "recall@10": 0.7565,
+   "recall@20": 0.8104,
+   "recall@100": 0.9253,
+   "mrr@10": 0.6104,
+   "success@1": 0.5312,
+   "success@5": 0.7312,
+   "zero_result_rate": 0.0,
+   "n_queries": 320
+  },
+  "all-categories": {
+   "ndcg@10": 0.5145,
+   "recall@10": 0.6503,
+   "recall@20": 0.7181,
+   "recall@100": 0.8839,
+   "mrr@10": 0.4936,
+   "success@1": 0.3937,
+   "success@5": 0.6189,
+   "zero_result_rate": 0.0,
+   "n_queries": 1981
+  }
+ },
+ "latency_ms": {
+  "p50": 45.44,
+  "p95": 72.18,
+  "p99": 120.25
+ },
+ "reference": null,
+ "notes": "One dialogue turn per memory, each conversation its own workarea; metrics over categories 1-4, adversarial in per_category; English only."
+}

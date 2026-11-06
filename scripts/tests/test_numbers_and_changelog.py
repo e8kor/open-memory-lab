@@ -74,6 +74,29 @@ class Numbers(unittest.TestCase):
         sh(c, "git", "add", "-A"); sh(c, "git", "commit", "-qm", "a")
         self.assertTrue(any("assigned to elsewhere" in p for p in CN.check(c, "origin/main", "mine")))
 
+    def _clash(self):
+        c = repo()
+        put(c, "docs/adr/ADR-0002-mine.md", "x")
+        R.main(["adr", "--branch", "mine", "--title", "a", "--root", str(c)])
+        text = (c / "docs/NUMBERS.md").read_text().replace("| adr | 0003 |", "| adr | 0002 |")
+        (c / "docs/NUMBERS.md").write_text(text)
+        sh(c, "git", "add", "-A"); sh(c, "git", "commit", "-qm", "a")
+        return c
+
+    def test_a_branch_with_an_open_pull_request_holds_its_numbers(self):
+        c = self._clash()
+        self.assertTrue(any("also introduced on other/x" in p for p in CN.check(c, "origin/main", "mine", prs={"other/x": 1, "mine": 2})))
+
+    def test_a_branch_whose_pull_request_is_closed_holds_no_numbers(self):
+        c = self._clash()
+        self.assertFalse(any("also introduced" in p for p in CN.check(c, "origin/main", "mine", prs={"mine": 2})))
+
+    def test_a_branch_merged_into_main_holds_no_numbers(self):
+        c = self._clash()
+        sh(c, "git", "fetch", "-q", "origin")
+        sh(c, "git", "update-ref", "refs/remotes/origin/main", "refs/remotes/origin/other/x")
+        self.assertFalse(any("also introduced on other/x" in p for p in CN.check(c, "origin/main", "mine", prs={"other/x": 1, "mine": 2})))
+
 
 class Changelog(unittest.TestCase):
     def test_assemble_inserts_above_the_newest_section_and_deletes_the_fragments(self):

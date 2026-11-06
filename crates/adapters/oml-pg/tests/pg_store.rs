@@ -7485,6 +7485,48 @@ async fn oml_token_id_in_sql_equals_the_adapters() {
     drop_dbs(&created).await;
 }
 
+/// `oml_similar_keys` and `oml_similar_words` in SQL and
+/// `oml_domain::similar` give every text the same words and keys, so a
+/// write's keys meet the stored ones (ADR-0050 d17).
+#[tokio::test]
+async fn similar_keys_computed_in_sql_equal_the_cores() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let texts = [
+        "",
+        "--- !!!",
+        "ok",
+        "Port 8080, not 8081.",
+        "Production deploys run only on Tuesday and Thursday between 10:00 and 12:00 CET; \
+         outside that window a deploy needs the on-call lead's approval.",
+        "Use `pnpm`, not NPM: v0.5.7 — ok? Grüße aus Köln, 東京 and naïve café.",
+        "UPPER lower MiXeD\ttabs\nnew lines  and \u{a0}no-break spaces",
+        "x'y back\\slash under_score dash-ed dot.ted",
+        "yes yes yes yes yes yes yes yes yes yes yes",
+    ];
+    for text in texts {
+        let words: Vec<String> = sqlx::query_scalar("SELECT oml_similar_words($1)")
+            .bind(text)
+            .fetch_one(store.pool())
+            .await
+            .expect("oml_similar_words");
+        assert_eq!(words, oml_app::domain::similar::words(text), "{text:?}");
+        let mut sql: Vec<(i16, i64)> = sqlx::query_as("SELECT band, key FROM oml_similar_keys($1)")
+            .bind(text)
+            .fetch_all(store.pool())
+            .await
+            .expect("oml_similar_keys");
+        sql.sort_unstable();
+        let mut core = oml_app::domain::similar::Fingerprint::of(text).stored_keys();
+        core.sort_unstable();
+        assert_eq!(sql, core, "{text:?}");
+    }
+    drop_dbs(&created).await;
+}
+
 /// What the postings and counts of `tenant` hold, read as the owner under
 /// the tenant's row security: per memory, its postings' (state, count); per
 /// (workarea, memory kind, token), the count row; per (workarea, memory
@@ -7853,6 +7895,173 @@ async fn an_erased_version_leaves_no_posting_and_no_count() {
         memories.contains_key(&Uuid::from_u128(0xB11)),
         "the other versions keep theirs"
     );
+    drop_dbs(&created).await;
+}
+
+/// The memories of `tenant` that hold similar keys, with how many, read as
+/// the owner under the tenant's row security.
+async fn similar_keys_of(store: &PgStore, tenant: Uuid) -> BTreeMap<Uuid, i64> {
+    let mut owner = owner_conn(store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let rows: Vec<(Uuid, i64)> = sqlx::query_as(
+        "SELECT memory_id, count(*) FROM similar_keys WHERE tenant_id = $1 GROUP BY memory_id",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("similar keys");
+    rows.into_iter().collect()
+}
+
+/// A replaced, retired, rejected, demoted or erased version, and a deleted
+/// row, holds no similar key, and the keys the check reads never outlive the
+/// text they were made from; doctor finds neither a gap nor a drift
+/// afterwards (ADR-0050 d17, R4; ADR-0005 d4). A demotion or an erase that
+/// leaves `is_tip` set is covered as much as one that clears it.
+#[tokio::test]
+async fn a_demoted_retired_or_erased_version_leaves_no_similar_key() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(574);
+    rig.seed_chain(&store, 0).await;
+    let (replaced, retired, demoted, rejected, served) = lifecycle_rows(&mut rig, &store).await;
+    let tenant = rig.tenant_id;
+    let before = similar_keys_of(&store, tenant).await;
+    for (what, id) in [
+        ("replaced", replaced),
+        ("retired", retired),
+        ("demoted", demoted),
+        ("rejected", rejected),
+        ("retirement version", Uuid::from_u128(0xB12)),
+    ] {
+        assert!(!before.contains_key(&id), "the {what} version holds no key");
+    }
+    for (what, id) in [
+        ("served tip", served),
+        ("successor", Uuid::from_u128(0xB11)),
+        ("held", Uuid::from_u128(0xB07)),
+        ("derived fact", Uuid::from_u128(0xB05)),
+        ("steering", Uuid::from_u128(0xB06)),
+    ] {
+        assert!(before.contains_key(&id), "the {what} version holds keys");
+    }
+    // A demotion and an erase that leave is_tip set.
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE memories SET status = 'demoted' WHERE tenant_id = $1 AND id = $2",
+        served,
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE memories SET status = 'erased' WHERE tenant_id = $1 AND id = $2",
+        Uuid::from_u128(0xB05),
+    )
+    .await;
+    // A held row erased by deletion.
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM review_queue WHERE tenant_id = $1 AND memory_id = $2",
+        Uuid::from_u128(0xB07),
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM memories WHERE tenant_id = $1 AND id = $2",
+        Uuid::from_u128(0xB07),
+    )
+    .await;
+    let after = similar_keys_of(&store, tenant).await;
+    for id in [served, Uuid::from_u128(0xB05), Uuid::from_u128(0xB07)] {
+        assert!(!after.contains_key(&id), "{id}: no key is left");
+    }
+    assert_eq!(
+        after.keys().copied().collect::<Vec<_>>(),
+        vec![Uuid::from_u128(0xB06), Uuid::from_u128(0xB11)],
+        "the other versions keep theirs"
+    );
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("PostgreSQL keeps keys");
+    assert_eq!(
+        (health.similar_unfilled, health.similar_drift),
+        (0, 0),
+        "{health:?}"
+    );
+    drop_dbs(&created).await;
+}
+
+/// Doctor's similar-key health names a version with no key and a key in the
+/// wrong state, from the sample it reads, and reads clean again after the
+/// owner's refill (ADR-0050 d15, d17).
+#[tokio::test]
+async fn the_similar_health_names_a_missing_key_and_a_wrong_state_until_a_refill() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(575);
+    rig.seed_chain(&store, 0).await;
+    let (_, _, _, _, served) = lifecycle_rows(&mut rig, &store).await;
+    let tenant = rig.tenant_id;
+    let health = || async {
+        let h = store
+            .postings_health(tenant)
+            .await
+            .expect("health")
+            .expect("PostgreSQL keeps keys");
+        (h.similar_partition, h.similar_unfilled, h.similar_drift)
+    };
+    assert_eq!(health().await, (true, 0, 0));
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM similar_keys WHERE tenant_id = $1 AND memory_id = $2",
+        served,
+    )
+    .await;
+    assert_eq!(
+        health().await,
+        (true, 1, 0),
+        "a served version without keys"
+    );
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE similar_keys SET state = 0 WHERE tenant_id = $1 AND memory_id = $2",
+        Uuid::from_u128(0xB11),
+    )
+    .await;
+    assert_eq!(health().await, (true, 1, 1), "keys in another state");
+    let mut owner = owner_conn(&store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query("SELECT oml_similar_keys_refill($1)")
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await
+        .expect("refill");
+    tx.commit().await.expect("commit");
+    assert_eq!(health().await, (true, 0, 0), "a refill repairs both");
     drop_dbs(&created).await;
 }
 

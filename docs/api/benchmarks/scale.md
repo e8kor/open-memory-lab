@@ -51,6 +51,9 @@ Each point is one suite's run: the rows in the recall's scope (for LoCoMo, all c
 | bm25-sparse | 3,633 | beir-nfcorpus | 48.5 | 65.9 | no |
 | bm25-sparse | 5,183 | beir-scifact | 52.6 | 83.7 | no |
 | bm25-sparse | 5,882 | locomo | 23.5 | 32.6 | yes |
+| bm25-sparse-rrf | 3,633 | beir-nfcorpus | 34.4 | 58.7 | no |
+| bm25-sparse-rrf | 5,183 | beir-scifact | 50.5 | 89.6 | no |
+| bm25-sparse-rrf | 5,882 | locomo | 45.4 | 72.2 | no |
 | bm25-k10 | 5,183 | beir-scifact | 70.5 | 98.5 | no |
 | bm25-k10 | 51,830 | beir-scifact-x10 | 572 | 804 | no |
 | bm25-rerank-d20 | 3,633 | beir-nfcorpus | 5,247 | 15,467 | no |
