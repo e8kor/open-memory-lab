@@ -633,7 +633,7 @@ paths:
       tags: [workareas]
       operationId: setWorkareaMode
       summary: A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
-      description: 'Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool reaches it.'
+      description: 'children: agent marks a code parent and children: none unmarks it, by the same predicate, journalled workarea.mode_set (ADR-0064 d3). Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool reaches it.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -3371,9 +3371,11 @@ components:
     WorkareaModeSet:
       type: object
       additionalProperties: false
-      required: [mode]
+      minProperties: 1
+      maxProperties: 1
       properties:
         mode: { type: string, enum: [in_progress, standard], description: "in_progress puts the node in progress; standard on an in-progress root is its commit (ADR-0030 d1, d6)." }
+        children: { type: string, enum: [agent, none], description: "agent marks the node a code parent: agent writer keys then create in-progress children under it and nowhere else; none unmarks it, and children already created keep their mode. Send exactly one of mode and children (ADR-0064 d3)." }
 
     Workarea:
       type: object
@@ -3391,6 +3393,7 @@ components:
             - { type: 'null' }
         user_root: { type: boolean, description: "Whether the node is a user root, universe.<user>, which only the issuance of the first key naming its user creates (ADR-0044 d1, d11)." }
         mode: { type: string, enum: [standard, in_progress], description: "in_progress when a person's key put the node in progress: readers inside recall unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1, d2)." }
+        children: { type: string, enum: [agent, none], description: "agent when a person's key marked the node a code parent (ADR-0064 d3)." }
         created_at: { type: string, format: date-time }
 
     WorkareaView:
@@ -3559,6 +3562,7 @@ components:
         parent: { $ref: '#/components/schemas/WorkareaRef', description: "The parent. Omitted, a user key's own root; every other key sends it (request.workarea_unresolved otherwise). A writer user key creates under a parent inside its root where its effective access confers writer (ADR-0044 d6)." }
         name: { $ref: '#/components/schemas/Name' }
         crew: { $ref: '#/components/schemas/CrewRef' }
+        mode: { type: string, enum: [in_progress], description: "in_progress, from a writer user key under a code parent only: the child is development and in progress from its first instant. Anywhere else the field is refused request.validation naming /mode (ADR-0064 d3)." }
 
     WorkareaPage:
       type: object

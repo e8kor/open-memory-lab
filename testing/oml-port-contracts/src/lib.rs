@@ -557,6 +557,7 @@ pub fn workarea_record(
 ) -> WorkareaRecord {
     WorkareaRecord {
         in_progress: false,
+        children_agent: false,
         workarea_id,
         tenant_id,
         parent_id,

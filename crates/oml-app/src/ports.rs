@@ -203,6 +203,13 @@ pub enum MetadataFold {
         in_progress: bool,
         held_free: Vec<Uuid>,
     },
+    /// `workarea.mode_set` with `children: agent` or none: the node is, or
+    /// is no longer, a code parent (ADR-0064 d3); the store refuses a node
+    /// it does not hold.
+    CodeParentSet {
+        workarea_id: Uuid,
+        children_agent: bool,
+    },
     /// `system.names_assigned`: each listed row of the commit's tenant, and
     /// the tenant itself, takes the name the event assigns, every workarea's
     /// path derives from those names, and each crew record is created and

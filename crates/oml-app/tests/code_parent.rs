@@ -299,7 +299,7 @@ async fn a_code_parent_is_standard_and_its_children_may_each_be_in_progress() {
     assert!(!unmarked.children_agent);
     let kept = w
         .app
-        .workarea_info(&w.person.value, Some(by_name("pat.code.repo-a")))
+        .workarea_info(&w.agent.value, Some(by_name("pat.repo-a")))
         .await
         .expect("child");
     assert!(kept.workarea.in_progress, "children keep their mode");

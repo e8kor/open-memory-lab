@@ -767,6 +767,10 @@ pub struct WorkareaRecord {
     /// Whether a person's key put the node in progress (ADR-0030 d1):
     /// `workareas.mode`, written by `workarea.mode_set` alone.
     pub in_progress: bool,
+    /// Whether a person's key marked the node a code parent, so that agent
+    /// writer keys create in-progress children under it (ADR-0064 d3):
+    /// `workareas.children_agent`, written by `workarea.mode_set` alone.
+    pub children_agent: bool,
 }
 
 impl WorkareaRecord {
@@ -2677,6 +2681,12 @@ pub enum AppError {
         "profile {profile} needs a dreamer key held by an agent (ADR-0030 d8, request.validation, field /profile)"
     )]
     ProfileMismatch { profile: &'static str },
+    /// A create body named `mode` where only an in-progress child under a
+    /// code parent admits it (ADR-0064 d3; request.validation, field `/mode`).
+    #[error(
+        "a create body names `mode` only for an in-progress child under a code parent (ADR-0064 d3, request.validation, field /mode)"
+    )]
+    ModeNotAllowedHere,
     /// An act refused by an in-progress subtree's rules (ADR-0030 d1, d6, d7;
     /// errors.md `workarea.in_progress_refused`).
     #[error("workarea {workarea_id}: {reason} (ADR-0030, workarea.in_progress_refused)")]
