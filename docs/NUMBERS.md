@@ -50,7 +50,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0026 | `main` |  | names are keys | used |
 | adr | 0028 | `main` |  | agent key issuance | used |
 | adr | 0029 | `main` |  | session start hook | used |
-| adr | 0030 | `feat/in-progress-r2` | #79 | an in progress workarea serves unreviewed memories inside it and nothi | open |
+| adr | 0030 | `feat/in-progress-r2-r2` | #86 | an in progress workarea serves unreviewed memories inside it and nothi | open |
 | adr | 0031 | `main` |  | oauth connections by connect code | used |
 | adr | 0033 | `main` |  | interim helm chart | used |
 | adr | 0034 | `main` |  | the lead serves as a role that owns nothing | used |
@@ -68,7 +68,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0047 | `main` |  | project knowledge and a code skeleton follow the development lifecycle | used |
 | adr | 0048 | `main` |  | search improves in stages any word first meaning last each gated on th | used |
 | adr | 0049 | `main` |  | search is a pipeline of retrievers behind a port chosen by name and ga | used |
-| adr | 0050 | `feat/remember` | #41 | remembering checks what is already held replaces instead of repeating  | open |
+| adr | 0050 | `feat/remember-dedup-r2` | #84 | remembering checks what is already held replaces instead of repeating  | open |
 | adr | 0051 | `design/ontology-metadata-r2` | #58 | a memory says what it is about in reviewed terms and recall finds it b | open |
 | adr | 0052 | `main` |  | text search reads integer postings that row security lets an index ser | used |
 | adr | 0053 | `main` |  | reranking is a local cross encoder stage after fusion off by default u | used |
@@ -77,14 +77,13 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0056 | `design/claim-formats` | #63 | a claim version names its format the signature covers its source and a | open |
 | adr | 0057 | `main` |  | a memory carries the source anchor its author declares and oml sync ke | used |
 | adr | 0058 | `docs/production-requirements` | #71 | the public server runs to stated slos with an error budget and without | open |
-| adr | 0059 | `feat/valid-time-r2` | #83 | a memory states when it is true recall hides what has ended and search | open |
 | adr | 0059 | `main` |  | a memory states when it is true recall hides what has ended and search | used |
-| adr | 0060 | `feat/lake-writer` | #75 | the lake writer drains the outbox it has seals what it materializes an | open |
+| adr | 0060 | `feat/lake-writer-r2` | #93 | the lake writer drains the outbox it has seals what it materializes an | open |
 | adr | 0061 | `design/rust-adapter` | #70 | oml sync reads a rust workspace as one claim per crate and one per mod | open |
 | adr | 0062 | `design/delta-mapping` | #74 | oml sync maps a delta lakes tables into anchored claims from the log a | open |
-| adr | 0063 | `feat/chat-memory` | #78 | a chat turn becomes memory only when the agent in it writes the fact a | open |
+| adr | 0063 | `feat/chat-memory-r2` | #88 | a chat turn becomes memory only when the agent in it writes the fact a | open |
 | adr | 0064 | `design/implicit-code-capture` | #80 | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
-| adr | 0065 | `feat/content-scanner` | #81 | the scan is a versioned compiled in rule set that vetoes leaked keys a | open |
+| adr | 0065 | `feat/content-scanner-r2` | #92 | the scan is a versioned compiled in rule set that vetoes leaked keys a | open |
 | fr | 1 | `main` |  | Erasure destroys body and attachment bytes by destroying their keys; a | used |
 | fr | 2 | `main` |  | Review throughput is unmeasured. The design's gate is only as useful a | used |
 | fr | 3 | `main` |  | The lake mirror claims exactly-once application of every event across  | used |
@@ -166,12 +165,11 @@ is a collision: the branch that reserved later renumbers.
 | fr | 87 | `main` |  | `review next` serves a reviewer key its own claimed row again until it | used |
 | fr | 88 | `main` |  | The reranking pipeline `bm25-rerank` was measured only on a host share | used |
 | fr | 89 | `main` |  | A recall cannot yet answer "nothing relevant" well: the relevance floo | used |
-| fr | 90 | `feat/remember` | #41 | The proposed ADR-0050 d1 names, at each write, up to three memories th | open |
-| fr | 91 | `feat/remember` | #41 | ADR-0050 d1 runs one search on every write; what it adds to a write's  | open |
-| fr | 91 | `feat/remember-dedup` | #72 | ADR-0050 d1 runs one lookup on every write (d17); what it adds to a wr | open |
-| fr | 92 | `feat/remember` | #41 | The advisory warnings of ADR-0050 d6 (too long, several claims, vague, | open |
-| fr | 93 | `feat/remember` | #41 | How many writes repeat a memory already held, and how many stale memor | open |
-| fr | 94 | `feat/remember` | #41 | The batch limit of 20 writes and the capture limit of 5 per session in | open |
+| fr | 90 | `feat/remember-dedup-r2` | #84 | The proposed ADR-0050 d1 names, at each write, up to three memories th | open |
+| fr | 91 | `feat/remember-dedup-r2` | #84 | ADR-0050 d1 runs one lookup on every write (d17); what it adds to a wr | open |
+| fr | 92 | `feat/remember-dedup-r2` | #84 | The advisory warnings of ADR-0050 d6 (too long, several claims, vague, | open |
+| fr | 93 | `feat/remember-dedup-r2` | #84 | How many writes repeat a memory already held, and how many stale memor | open |
+| fr | 94 | `feat/remember-dedup-r2` | #84 | The batch limit of 20 writes and the capture limit of 5 per session in | open |
 | fr | 95 | `design/ontology-metadata-r2` | #58 | The proposed ADR-0051 finds memories by the reviewed terms a query nam | open |
 | fr | 96 | `design/ontology-metadata-r2` | #58 | What a reviewed vocabulary costs a crew is unmeasured: the time to wri | open |
 | fr | 97 | `design/ontology-metadata-r2` | #58 | How often writing agents choose wrong terms, how many memories get non | open |
@@ -196,7 +194,7 @@ is a collision: the branch that reserved later renumbers.
 | fr | 116 | `main` |  | A document sync writes up to 200 items a run for one person to review  | used |
 | fr | 117 | `main` |  | A claim edge whose statement leaves the documents (an `Amends:` line e | used |
 | fr | 118 | `main` |  | The learned sparse leg reads every posting of each query token among t | used |
-| fr | 119 | `feat/remember-dedup` | #72 | Migration 0026 fills the near-copy check's keys of every existing vers | open |
+| fr | 119 | `feat/remember-dedup-r2` | #84 | Migration 0027 fills the near-copy check's keys of every existing version in one statement per tenant | open |
 | fr | 130 | `design/rust-adapter` | #70 | The proposed ADR-0061 loads OML's crates as 92 claims (9 crates, 83 mo | open |
 | fr | 131 | `design/rust-adapter` | #70 | A module claim goes stale only when its doc changes (ADR-0061 d8), so  | open |
 | fr | 132 | `design/rust-adapter` | #70 | Crate dependencies are stated in each crate claim's text and not as `d | open |
@@ -209,11 +207,11 @@ is a collision: the branch that reserved later renumbers.
 | fr | 145 | `design/delta-mapping` | #74 | A table copied to a new location reads `removed` there and `new` here  | open |
 | fr | 146 | `design/delta-mapping` | #74 | A lake sync records source checks one request each through ADR-0057's  | open |
 | fr | 147 | `design/delta-mapping` | #74 | ADR-0062 d1 moves ADR-0020 d7's row reading to the client, which strea | open |
-| fr | 160 | `feat/chat-memory` | #78 | Whether the agent's own extraction of chat facts answers more LongMemE | open |
-| fr | 161 | `feat/chat-memory` | #78 | The turns of a session that ends between two captures are not captured | open |
-| fr | 162 | `feat/chat-memory` | #78 | Per-turn recall's relevance is unlabelled: at least 30 labelled inject | open |
-| fr | 163 | `feat/chat-memory` | #78 | One person's chat on two machines produces two pseudonymous sessions t | open |
-| fr | 164 | `feat/chat-memory` | #78 | The chat benchmark's QA numbers wait for an API key in the environment | open |
+| fr | 160 | `feat/chat-memory-r2` | #88 | Whether the agent's own extraction of chat facts answers more LongMemE | open |
+| fr | 161 | `feat/chat-memory-r2` | #88 | The turns of a session that ends between two captures are not captured | open |
+| fr | 162 | `feat/chat-memory-r2` | #88 | Per-turn recall's relevance is unlabelled: at least 30 labelled inject | open |
+| fr | 163 | `feat/chat-memory-r2` | #88 | One person's chat on two machines produces two pseudonymous sessions t | open |
+| fr | 164 | `feat/chat-memory-r2` | #88 | The chat benchmark's QA numbers wait for an API key in the environment | open |
 | fr | 170 | `design/implicit-code-capture` | #80 | The pre-tool hook chooses an anchor's file from the paths a fact names | open |
 | fr | 171 | `design/implicit-code-capture` | #80 | A fact's span is the indentation block of the one definition line its  | open |
 | fr | 172 | `design/implicit-code-capture` | #80 | Every latency budget of ADR-0064 d22 is chosen: 100 ms for a git hook  | open |
@@ -221,8 +219,8 @@ is a collision: the branch that reserved later renumbers.
 | fr | 174 | `design/implicit-code-capture` | #80 | A chat fact about code carries its turn in `origin.turn`, stored and s | open |
 | fr | 175 | `design/implicit-code-capture` | #80 | Each repository a person opts into adds one workarea under their code  | open |
 | fr | 176 | `design/implicit-code-capture` | #80 | A hook manager that rewrites `core.hooksPath` on install silently remo | open |
-| fr | 180 | `feat/content-scanner` | #81 | The personal-data rules (`pii.email`, `pii.phone`) are compiled in and | open |
-| fr | 181 | `feat/content-scanner` | #81 | `GET /v2/admin/rescan` reads one window of at most 1,000 journal event | open |
+| fr | 180 | `feat/content-scanner-r2` | #92 | The personal-data rules (`pii.email`, `pii.phone`) are compiled in and | open |
+| fr | 181 | `feat/content-scanner-r2` | #92 | `GET /v2/admin/rescan` reads one window of at most 1,000 journal event | open |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
@@ -246,10 +244,9 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0023 | `main` |  | recall telemetry | used |
 | migration | 0024 | `main` |  | review queue order | used |
 | migration | 0025 | `main` |  | source anchors | used |
-| migration | 0026 | `feat/remember-dedup` | #72 | similar keys | open |
-| migration | 0026 | `feat/valid-time-r2` | #83 | valid time | open |
+| migration | 0031 | `feat/lake-writer-r2` | #93 | lake writer | open |
+| migration | 0027 | `feat/remember-dedup-r2` | #84 | similar keys | open |
 | migration | 0026 | `main` |  | valid time | used |
-| migration | 0027 | `feat/in-progress-r2` | #79 | in progress | open |
-| migration | 0030 | `feat/chat-memory` | #78 | origin kind | open |
-| migration | 0031 | `feat/chat-memory` | #78 | origin kind validate | open |
-| migration | 0032 | `feat/lake-writer` | #75 | lake writer | reserved |
+| migration | 0028 | `feat/in-progress-r2-r2` | #86 | in progress | open |
+| migration | 0029 | `feat/chat-memory-r2` | #88 | origin kind | open |
+| migration | 0030 | `feat/chat-memory-r2` | #88 | origin kind validate | open |

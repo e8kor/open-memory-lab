@@ -14,7 +14,7 @@
   "tools": [
     {
       "name": "oml_write",
-      "description": "Store a claim, a claim derived from others, a new version of one, or a proposal to retire one. Held on arrival: scanned same-call, then reviewed by an identity that did not write it, visible to others only after ratification. Without replaces it is a submission on POST /v1/memories, journalled learn when derives_from is non-empty and remember otherwise; with replaces it supersedes that version on POST /v1/memories/{artifact_id}/supersede. A field outside the chosen mode is refused with request.validation naming it in details.field, never dropped.",
+      "description": "Store a claim, a claim derived from others, a new version of one, or a proposal to retire one. Held on arrival: scanned same-call, then reviewed by an identity that did not write it, visible to others only after ratification. Without replaces it is a submission on POST /v1/memories, journalled learn when derives_from is non-empty and remember otherwise; with replaces it supersedes that version on POST /v1/memories/{artifact_id}/supersede. A field outside the chosen mode is refused with request.validation naming it in details.field, never dropped. The answer's similar names up to three memories you may read that hold the same text or a near copy, each with relation, jaccard, version and own.",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false,
@@ -59,7 +59,7 @@
           "anchor": {
             "type": "object",
             "additionalProperties": false,
-            "description": "Where the memory came from, as you read it: {repo, rev, path, fragment?, hash?, hasher?} for a file in a git repository (repo like github.com/owner/name, rev the full commit id, path relative, fragment a heading slug, a decision handle such as d3, or a line span such as L10-L42), or {uri, rev?, fragment?} for a web page. The reviewer sees it beside the text; it is signed with the version and never changes. A successor declares its own; nothing is inherited.",
+            "description": "Where the memory came from, as you read it: {repo, rev, path, fragment?, hash?, hasher?} for a file in a git repository (repo like github.com/owner/name, rev the full commit id, path relative, fragment a heading slug, a decision handle such as d3, or a line span such as L10-L42), or {uri, rev?, fragment?} for a web page. The reviewer sees it beside the text; it is signed with the version and never changes. A successor declares its own; nothing is inherited. A chat fact names its turn: {uri: chat://<harness>/<session>, fragment: turn=<n>, hash, hasher: oml-turn/1}, exactly as the capture request gives it.",
             "properties": {
               "repo": {
                 "type": "string",
@@ -87,7 +87,8 @@
               "hasher": {
                 "type": "string",
                 "enum": [
-                  "oml-md/1"
+                  "oml-md/1",
+                  "oml-turn/1"
                 ]
               }
             }
@@ -113,6 +114,37 @@
           "reason": {
             "type": "string",
             "description": "With replaces, the reason for the change. Refused without replaces."
+          },
+          "origin": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind"
+            ],
+            "description": "What kind of source the text came from: repo (a commit, pull request or issue), doc (a document), code, lake (a lake table), chat (what a person said in this conversation; requires a chat anchor), web (a fetched page), or manual (no source; the default when omitted). Signed with the version; a successor declares its own.",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "repo",
+                  "doc",
+                  "code",
+                  "lake",
+                  "chat",
+                  "web",
+                  "manual"
+                ]
+              }
+            }
+          },
+          "on_similar": {
+            "type": "string",
+            "enum": [
+              "hold",
+              "refuse"
+            ],
+            "default": "hold",
+            "description": "What the write does when a memory you may read already holds the same text or a near copy (90% of its words). hold writes and lists them in similar; refuse writes nothing and answers submission.similar_exists with details.similar, so you can read them and choose: write nothing, replace one with replaces, or resend with hold. Retirements are never checked."
           },
           "valid_from": {
             "type": "string",
@@ -182,8 +214,7 @@
           },
           "include_unreviewed": {
             "type": "boolean",
-            "default": false,
-            "description": "Recall, default false. True: the calling key's own held rows that match (kind memory or derived_fact, never steering or retirement versions) join the hits, ranked in the same order and flagged state held; they count against k and max_tokens."
+            "description": "Recall. True: the calling key's own held rows that match (kind memory or derived_fact, never steering or retirement versions) join the hits, ranked in the same order and flagged state held and unreviewed true; they count against k and max_tokens. Inside a workarea a person put in progress, other agents' held memories join too and absent means true; elsewhere absent means false."
           },
           "max_tokens": {
             "type": "integer",
@@ -202,9 +233,10 @@
               "bm25-rerank",
               "sparse",
               "bm25-sparse",
+              "bm25-sparse-rrf",
               "bm25-postings-time"
             ],
-            "description": "Recall: the search pipeline, among those the server serves (configuration search.enabled); omitted, the tenant's default, else the deployment's. keyword-all needs every word exactly; keyword-any takes any word; bm25 adds identifier parts, stems and rarity weights; bm25-trigram fuses bm25 with trigram similarity for misspellings and fragments; bm25-postings ranks as bm25 from an index, leaving out words frequent among the memories the key reads (named in search.pruned) and still scoring them; bm25-rerank reorders bm25's best candidates with a local cross-encoder, each hit's matched.rerank its relevance, and where the server sets a relevance floor it answers no hit when nothing passes, saying how many it withheld in search.below_floor; sparse ranks by a learned sparse model's token weights, matching related words the memory does not say, and bm25-sparse fuses it with bm25-postings, each hit's matched.tokens naming the tokens that scored it and matched.expanded the ones the model added. bm25-postings-time adds the memories whose declared valid time overlaps a date the query names (in 2015, last week, since March 2025, read by rule and shown in search.window), ranked by reciprocal rank beside bm25-postings. A name the server does not serve is refused with request.validation naming /search; the answer's search.pipeline names the one that ran."
+            "description": "Recall: the search pipeline, among those the server serves (configuration search.enabled); omitted, the tenant's default, else the deployment's. keyword-all needs every word exactly; keyword-any takes any word; bm25 adds identifier parts, stems and rarity weights; bm25-trigram fuses bm25 with trigram similarity for misspellings and fragments; bm25-postings ranks as bm25 from an index, leaving out words frequent among the memories the key reads (named in search.pruned) and still scoring them; bm25-rerank reorders bm25's best candidates with a local cross-encoder, each hit's matched.rerank its relevance, and where the server sets a relevance floor it answers no hit when nothing passes, saying how many it withheld in search.below_floor; sparse ranks by a learned sparse model's token weights, matching related words the memory does not say, and bm25-sparse fuses it with bm25-postings (bm25-sparse-rrf fuses the same two lists by reciprocal rank, a baseline), each hit's matched.tokens naming the tokens that scored it and matched.expanded the ones the model added. bm25-postings-time adds the memories whose declared valid time overlaps a date the query names (in 2015, last week, since March 2025, read by rule and shown in search.window), ranked by reciprocal rank beside bm25-postings. A name the server does not serve is refused with request.validation naming /search; the answer's search.pipeline names the one that ran."
           },
           "match": {
             "type": "string",
@@ -306,6 +338,25 @@
               }
             },
             "description": "Any mode. Which hits of this key's last recall answered its question and which did not, at most 20 ids, each a hit that recall served; checked before the read runs, refused by field, and never changes what this read answers. Recall improves for the next reader from it."
+          },
+          "origin_kinds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "repo",
+                "doc",
+                "code",
+                "lake",
+                "chat",
+                "web",
+                "manual"
+              ]
+            },
+            "description": "Recall and listing: only claims whose origin kind is one of these, such as [\"chat\"] for what a person said or [\"doc\"] for what documents say; claims written before origin kinds existed are left out. Refused in get mode."
           }
         },
         "required": [],

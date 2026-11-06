@@ -115,6 +115,11 @@ enum Command {
         #[command(subcommand)]
         command: DenyCommand,
     },
+    /// A person's chat memory (ADR-0063).
+    Chat {
+        #[command(subcommand)]
+        command: ChatCommand,
+    },
     /// Workarea tree verbs.
     Workareas {
         #[command(subcommand)]
@@ -275,7 +280,31 @@ enum GuardrailsCommand {
 }
 
 #[derive(Subcommand)]
+enum ChatCommand {
+    /// Open your chat workarea, `chat` under your user root, with a key a
+    /// person holds; agents are refused (access.verb_ceiling,
+    /// chat_scope_is_human_only). Prints the OML_CHAT_WORKAREA value the
+    /// plugin's capture and per-turn recall read (ADR-0063 d8).
+    Init {
+        /// The parent, by id or name; omitted, your key's user root.
+        #[arg(long)]
+        parent: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum HookCommand {
+    /// Count the turn and record its hash for chat capture, and with
+    /// OML_TURN_RECALL=1 inject what the prompt recalls within its budget;
+    /// always exits 0 (ADR-0063 d6, d10).
+    UserPrompt,
+    /// With OML_CHAT_CAPTURE=1, when a capture is due, ask the agent to
+    /// write the facts the uncaptured turns established; always exits 0
+    /// (ADR-0063 d6).
+    Stop,
+    /// Record that the session compacted, so the next Stop asks at once;
+    /// prints nothing and never blocks (ADR-0063 d6).
+    PreCompact,
     /// Print the SessionStart context from the plugin's url and api_key
     /// options, else OML_URL and OML_API_KEY — steering, this key's recent
     /// submissions, the matching memories — or nothing; always exits 0
@@ -409,6 +438,11 @@ struct KeysIssueArgs {
     /// (proposed ADR-0037 d4).
     #[arg(long, value_parser = ["workarea", "ancestors"])]
     guardrail_scope: Option<String>,
+    /// The key's profile: `curator`, a dreamer key held by an agent that
+    /// narrows inside an in-progress workarea and never promotes
+    /// (ADR-0030 d8).
+    #[arg(long, value_parser = ["curator"])]
+    profile: Option<String>,
 }
 
 #[derive(Args)]
@@ -496,6 +530,17 @@ enum WorkareasCommand {
     Show {
         /// The workarea's id or name.
         workarea: String,
+    },
+    /// Put a workarea in progress, or commit it back to standard: a
+    /// person's dreamer key only. Inside an in-progress workarea readers
+    /// recall unreviewed memories, labelled; nothing leaves until the
+    /// commit, refused while anything is held (ADR-0030 d1, d6).
+    Mode {
+        /// The workarea, by id or name.
+        workarea: String,
+        /// `in_progress`, or `standard` to commit.
+        #[arg(value_parser = ["in_progress", "standard"])]
+        mode: String,
     },
     /// The crew record a workarea names (admin key role).
     Crew {
@@ -620,6 +665,11 @@ enum AdminCommand {
         #[arg(long)]
         state: Option<String>,
     },
+    /// Rescan every stored version with the server's rule set and report
+    /// what it would refuse or hold, by rule and place, never the text
+    /// (ADR-0065 d13). Changes nothing: a version it would refuse stays,
+    /// for a person to retire.
+    Rescan,
 }
 
 #[derive(Subcommand)]
@@ -865,6 +915,11 @@ struct WriteArgs {
     /// (ADR-0057 d1).
     #[arg(long, value_parser = parse_anchor_arg)]
     anchor: Option<serde_json::Value>,
+    /// What kind of source the text came from: repo, doc, code, lake,
+    /// chat, web or manual; omitted, the server records manual (ADR-0063
+    /// d1, d2).
+    #[arg(long = "origin-kind", value_parser = ORIGIN_KINDS)]
+    origin_kind: Option<String>,
     /// Propose retiring the --replaces claim; the text says why.
     #[arg(long, requires = "replaces")]
     retirement: bool,
@@ -939,7 +994,14 @@ struct ReadArgs {
     /// prefix, such as docs/adr/ (ADR-0057 d4).
     #[arg(long = "anchor-path-prefix", conflicts_with = "artifact_id")]
     anchor_path_prefix: Option<String>,
+    /// Recall or list only memories of this origin kind; repeat for
+    /// several, such as --origin-kind chat --origin-kind doc (ADR-0063 d3).
+    #[arg(long = "origin-kind", value_parser = ORIGIN_KINDS, conflicts_with = "artifact_id")]
+    origin_kinds: Vec<String>,
 }
+
+/// The closed set of `origin.kind` (ADR-0063 d1).
+const ORIGIN_KINDS: [&str; 7] = ["repo", "doc", "code", "lake", "chat", "web", "manual"];
 
 #[derive(Args)]
 struct EventsArgs {
@@ -1270,6 +1332,28 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 "nothing was recalled",
                 |var, stdin| hook::tool_failure(var, stdin),
             ),
+            HookCommand::UserPrompt => run_hook(
+                "user-prompt",
+                std::time::Duration::from_millis(oml_cli::chat::BUDGET_MAX_MS + 1000),
+                "nothing was recalled",
+                |var, stdin| {
+                    oml_cli::events::dispatch(oml_cli::events::Event::UserPromptSubmit, var, stdin)
+                },
+            ),
+            HookCommand::Stop => run_hook(
+                "stop",
+                hook::SESSION_END_DEADLINE,
+                "nothing was captured",
+                |var, stdin| oml_cli::events::dispatch(oml_cli::events::Event::Stop, var, stdin),
+            ),
+            HookCommand::PreCompact => run_hook(
+                "pre-compact",
+                hook::SESSION_END_DEADLINE,
+                "the compaction was not recorded",
+                |var, stdin| {
+                    oml_cli::events::dispatch(oml_cli::events::Event::PreCompact, var, stdin)
+                },
+            ),
             HookCommand::SessionEnd => run_hook(
                 "session-end",
                 hook::SESSION_END_DEADLINE,
@@ -1383,6 +1467,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             }
             if let Some(l) = &args.label {
                 body["label"] = json!(l);
+            }
+            if let Some(profile) = &args.profile {
+                body["profile"] = json!(profile);
             }
             if let Some(scope) = &args.guardrail_scope {
                 body["guardrail_scope"] = json!(scope);
@@ -1580,6 +1667,10 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
 
+        Command::Chat {
+            command: ChatCommand::Init { parent },
+        } => run_chat_init(cli, &stored, parent.as_deref()),
+
         Command::Workareas {
             command: WorkareasCommand::Status { command },
         } => run_workarea_status(cli, &stored, command),
@@ -1606,6 +1697,14 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    path    : {}", field(&response, "path"));
                 println!("    parent  : {}", field(&response, "parent_id"));
                 println!("    status  : {}", field(&response, "status"));
+                // ADR-0030 d13: the mode, and the root a node inside lies under.
+                println!("    mode    : {}", field(&response, "mode"));
+                if let Some(root) = response["in_progress_root"].as_object() {
+                    println!(
+                        "    inside  : {} (in progress; unreviewed memories are recalled here)",
+                        root.get("name").and_then(Value::as_str).unwrap_or("?")
+                    );
+                }
                 println!("    crew    : {}", crew_line(&response["crew"]));
                 for c in response["children"].as_array().into_iter().flatten() {
                     println!(
@@ -1629,6 +1728,34 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                         verbs.join(", ")
                     }
                 );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Workareas {
+            command: WorkareasCommand::Mode { workarea, mode },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.post(
+                &format!("/v2/workareas/{}/mode", segment(workarea)?),
+                &json!({ "mode": mode }),
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "workarea {} ({}) is {}",
+                    field(&response, "name"),
+                    field(&response, "id"),
+                    field(&response, "mode"),
+                );
+                if mode == "in_progress" {
+                    println!(
+                        "readers inside now recall unreviewed memories; commit with: oml workareas mode {} standard",
+                        field(&response, "name")
+                    );
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -1797,6 +1924,109 @@ fn run_hook(
     ExitCode::SUCCESS
 }
 
+/// `oml chat init`: creates `chat` under the key's user root, or under
+/// `parent`, and prints the value the plugin reads; an existing one is
+/// named, not an error. Then asks for ADR-0030's in-progress mode where the
+/// server serves it (ADR-0063 d8).
+fn run_chat_init(
+    cli: &Cli,
+    stored: &Credentials,
+    parent: Option<&str>,
+) -> Result<ExitCode, CliError> {
+    let client = resolve(cli, stored)?;
+    let mut body = json!({ "name": oml_cli::chat::CHAT_WORKAREA });
+    if let Some(parent) = parent {
+        body["parent"] = json!(parent);
+    }
+    let created = match client.post("/v2/workareas", &body, &write_opts()) {
+        Ok((_, response)) => response,
+        Err(CliError::Refused { code, .. }) if code == "name.taken" => {
+            // The name is reserved for a person's key (d8), but an existing
+            // `chat` is adopted only where a person's chat workarea sits:
+            // directly under this key's user root, never elsewhere.
+            let (_, existing) = client.get(&format!(
+                "/v2/workareas/{}",
+                segment(oml_cli::chat::CHAT_WORKAREA)?
+            ))?;
+            let me = client.whoami()?;
+            let user = me["user"]["name"].as_str().unwrap_or_default();
+            let path = existing["path"].as_str().unwrap_or_default();
+            if let Err(why) = oml_cli::chat::adopt(path, user) {
+                return Err(CliError::local(format!("oml chat init: {why}")));
+            }
+            println!(
+                "your chat workarea {path} already exists; set OML_CHAT_WORKAREA={}",
+                field(&existing, "id")
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+        Err(e) => return Err(e),
+    };
+    let id = field(&created, "id").to_owned();
+    let mode = client.put(
+        &format!("/v2/workareas/{id}/mode"),
+        &json!({ "mode": "in_progress" }),
+    );
+    if cli.json {
+        print_json(&json!({ "workarea": created, "in_progress": mode.is_ok() }));
+        return Ok(ExitCode::SUCCESS);
+    }
+    println!(
+        "created {} ({}), held facts stay inside it until you review them",
+        field(&created, "path"),
+        id
+    );
+    match mode {
+        Ok(_) => {
+            println!("in progress: your agents read each other's chat facts, labelled unreviewed")
+        }
+        Err(e) => println!(
+            "not in progress ({}): each agent key reads only its own chat facts until the server serves ADR-0030's mode",
+            one_line_error(&e)
+        ),
+    }
+    println!();
+    println!("Set these where the plugin runs (or the plugin's chat_workarea option):");
+    println!("  OML_CHAT_WORKAREA={id}");
+    println!("  OML_CHAT_CAPTURE=1      # ask the agent to write chat facts at Stop");
+    println!("  OML_TURN_RECALL=1       # optional: recall on every prompt");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The chat lines only the server answers (ADR-0063 d13): whether it takes
+/// `origin_kinds`, and whether the named chat workarea resolves and is the
+/// key's user's own.
+fn chat_doctor(client: &Client, me: Option<&Value>) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Err(CliError::Refused {
+        status, envelope, ..
+    }) = client.get("/v1/memories?own=true&limit=1&origin_kinds=manual")
+    {
+        out.extend(oml_cli::chat::origin_probe_line(status, &envelope));
+    }
+    let var = |name: &str| std::env::var(name).ok();
+    if let Some(named) = oml_cli::chat::chat_workarea(&var) {
+        let user = me.and_then(|m| m["user"]["name"].as_str());
+        match segment(&named).and_then(|s| client.get(&format!("/v2/workareas/{s}"))) {
+            Ok((_, node)) => out.extend(oml_cli::chat::chat_scope_line(node["path"].as_str(), user)),
+            Err(_) => out.push(format!(
+                "warn chat: {} names {named}, which this key cannot resolve; run oml chat init and use the id it prints",
+                oml_cli::chat::WORKAREA_VAR
+            )),
+        }
+    }
+    out
+}
+
+fn one_line_error(e: &CliError) -> String {
+    match e {
+        CliError::Refused { code, .. } => code.clone(),
+        CliError::Local(why) => why.lines().next().unwrap_or("").to_owned(),
+        #[allow(unreachable_patterns)]
+        _ => "refused".to_owned(),
+    }
+}
+
 fn write_opts() -> CallOpts {
     CallOpts {
         auth: true,
@@ -1930,6 +2160,7 @@ struct Write<'a> {
     severity: Option<&'a str>,
     rule: Option<&'a serde_json::Value>,
     anchor: Option<&'a serde_json::Value>,
+    origin_kind: Option<&'a str>,
 }
 
 impl<'a> Write<'a> {
@@ -1948,6 +2179,7 @@ impl<'a> Write<'a> {
             severity: args.severity.as_deref(),
             rule: args.rule.as_ref(),
             anchor: args.anchor.as_ref(),
+            origin_kind: args.origin_kind.as_deref(),
         }
     }
 }
@@ -2005,6 +2237,9 @@ fn run_write(cli: &Cli, stored: &Credentials, write: &Write<'_>) -> Result<ExitC
     }
     if let Some(anchor) = write.anchor {
         body["anchor"] = anchor.clone();
+    }
+    if let Some(kind) = write.origin_kind {
+        body["origin"] = json!({ "kind": kind });
     }
     if let Some(expected) = write.expected_version {
         body["expected_version"] = json!(expected);
@@ -2085,6 +2320,9 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
         if let Some(prefix) = &args.anchor_path_prefix {
             body["anchor_path_prefix"] = json!(prefix);
         }
+        if !args.origin_kinds.is_empty() {
+            body["origin_kinds"] = json!(args.origin_kinds);
+        }
         let read = CallOpts {
             auth: true,
             idempotency: false, // read-shaped POST (http-api.md idempotency)
@@ -2107,6 +2345,9 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
             if let Some(value) = value {
                 params.push((name, value.clone()));
             }
+        }
+        if !args.origin_kinds.is_empty() {
+            params.push(("origin_kinds", args.origin_kinds.join(",")));
         }
         client
             .get(&format!("/v1/memories?{}", query_string(&params)))?
@@ -3015,18 +3256,94 @@ fn run_crews(
 /// `oml admin read` (cli/reference.md `oml admin`; ADR-0045 d21): one
 /// memory by id, or every page of a search, each answer journalled by the
 /// server as `memory.admin_read`.
+/// `oml admin rescan`: every window of the journal, summed by rule, each
+/// finding listed by artifact, version, state and place (ADR-0065 d13).
+/// Exits 1 when any stored version would be refused, so a script notices.
+fn run_rescan(cli: &Cli, client: &Client) -> Result<ExitCode, CliError> {
+    let mut after = 0_u64;
+    let mut scanned = 0_u64;
+    let mut version;
+    let mut findings: Vec<Value> = Vec::new();
+    let mut by_rule: std::collections::BTreeMap<(String, String, String), u64> =
+        std::collections::BTreeMap::new();
+    loop {
+        let (_, page) = client.get(&format!("/v2/admin/rescan?after_seq={after}"))?;
+        version = page["scanner_version"].clone();
+        scanned += page["scanned"].as_u64().unwrap_or(0);
+        findings.extend(page["findings"].as_array().cloned().unwrap_or_default());
+        for r in page["by_rule"].as_array().into_iter().flatten() {
+            *by_rule
+                .entry((
+                    field(r, "class").to_owned(),
+                    field(r, "rule").to_owned(),
+                    field(r, "action").to_owned(),
+                ))
+                .or_default() += r["count"].as_u64().unwrap_or(0);
+        }
+        match page["next_after_seq"].as_u64() {
+            Some(next) if next > after => after = next,
+            _ => break,
+        }
+    }
+    let vetoes = findings.iter().filter(|f| f["action"] == "veto").count();
+    if cli.json {
+        print_json(&json!({
+            "scanner_version": version,
+            "scanned": scanned,
+            "by_rule": by_rule.iter().map(|((class, rule, action), count)| json!({
+                "class": class, "rule": rule, "action": action, "count": count,
+            })).collect::<Vec<_>>(),
+            "findings": findings,
+        }));
+    } else {
+        println!(
+            "rescan      : {scanned} stored version(s) under {}, {} finding(s)",
+            version.as_str().unwrap_or("no pinned rule set"),
+            findings.len()
+        );
+        for ((class, rule, action), count) in &by_rule {
+            println!("  {action:<4} {class}: {rule} ×{count}");
+        }
+        for f in &findings {
+            println!(
+                "  {}  v{}  {}  {}  {}: {} at {}",
+                field(f, "artifact_id"),
+                f["version"],
+                field(f, "state"),
+                field(f, "action"),
+                field(f, "class"),
+                field(f, "rule"),
+                field(f, "at")
+            );
+        }
+        if vetoes > 0 {
+            println!(
+                "next        : {vetoes} finding(s) the scan would refuse today; nothing was changed. Read each with oml admin read <artifact_id> and retire or demote it"
+            );
+        }
+    }
+    Ok(if vetoes > 0 {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
 fn run_admin(
     cli: &Cli,
     stored: &Credentials,
     command: &AdminCommand,
 ) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
-    let AdminCommand::Read {
-        memory,
-        query,
-        workarea,
-        state,
-    } = command;
+    let (memory, query, workarea, state) = match command {
+        AdminCommand::Rescan => return run_rescan(cli, &client),
+        AdminCommand::Read {
+            memory,
+            query,
+            workarea,
+            state,
+        } => (memory, query, workarea, state),
+    };
     let line = |m: &Value| {
         format!(
             "{}  {}  {}  {}  {}",
@@ -4073,6 +4390,43 @@ fn review_doctor(me: Option<&Value>) -> Option<String> {
     })
 }
 
+/// The in-progress lines (ADR-0030 d14): whether the default workarea lies
+/// inside an in-progress workarea, so recall serves unreviewed memories
+/// there; for a person's dreamer key, that it may set the mode and how many
+/// held items it can see blocking the commit; for a curator key, that it
+/// acts only inside one.
+fn in_progress_doctor(
+    me: Option<&Value>,
+    default_node: Option<&Value>,
+    held_blocking: Option<usize>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    let Some(me) = me else {
+        return lines;
+    };
+    let root = default_node.and_then(|n| n["in_progress_root"]["name"].as_str());
+    match root {
+        Some(root) => lines.push(format!(
+            "ok in progress: the default workarea lies inside {root}, so recall there also serves memories still waiting for review, labelled unreviewed, and nothing leaves until a person commits it (ADR-0030 d3, d6)"
+        )),
+        None if me["profile"] == "curator" => lines.push(
+            "warn curator: the default workarea is not in progress, and a curator key acts only inside an in-progress workarea (access.verb_ceiling, curator_outside_in_progress; ADR-0030 d9)".to_owned(),
+        ),
+        None => {}
+    }
+    if me["role"] == "dreamer" && me["held_by"] == "human" && me["profile"].is_null() {
+        lines.push("ok mode: this key may put a workarea in progress and commit it (oml workareas mode <workarea> in_progress|standard; ADR-0030 d1)".to_owned());
+        if let (Some(root), Some(n)) = (root, held_blocking)
+            && n > 0
+        {
+            lines.push(format!(
+                "warn commit: {n} held item(s) this key can review block the commit of {root}: oml review list --workarea {root} (workarea.held_remaining; ADR-0030 d6)"
+            ));
+        }
+    }
+    lines
+}
+
 /// `oml doctor` checks the pair alone (ADR-0039 d15): which source set the
 /// URL and which set the key, never the key; `/healthz` and `/readyz` at
 /// the first source's URL, keyless, so a URL alone is enough to probe; and
@@ -4106,6 +4460,10 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut default_node: Option<Value> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
+    // The chat workarea's path and whether the server takes origin_kinds
+    // (ADR-0063 d13).
+    let mut chat_server: Vec<String> = Vec::new();
+    let mut held_blocking: Option<usize> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -4113,6 +4471,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         if let Some(key) = source.as_ref().and_then(|s| s.key) {
             let client = Client::new(url.clone(), Some(key.clone()));
             me = Some(client.whoami());
+            chat_server = chat_doctor(&client, me.as_ref().and_then(|m| m.as_ref().ok()));
             if let Some(Ok(v)) = &me
                 && v["user"].is_object()
             {
@@ -4132,6 +4491,19 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     .get(&format!("/v2/workareas/{segment}"))
                     .ok()
                     .map(|(_, n)| n);
+                // What a person's reviewer key sees held under the
+                // in-progress root, one page (ADR-0030 d14).
+                if v["role"] == "dreamer"
+                    && v["held_by"] == "human"
+                    && let Some(root) = default_node
+                        .as_ref()
+                        .and_then(|n| n["in_progress_root"]["id"].as_str())
+                {
+                    held_blocking = client
+                        .get(&format!("/v2/review/held?workarea={root}&limit=200"))
+                        .ok()
+                        .and_then(|(_, page)| page["items"].as_array().map(Vec::len));
+                }
                 // The claim edges there waiting for a second key, one page
                 // (ADR-0057 d17; ADR-0046 d4).
                 waiting_edges = client
@@ -4180,7 +4552,15 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let search = search_doctor(ready.as_ref(), search_settings.as_ref(), scrape.as_ref());
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
     let review = review_doctor(me.as_ref().and_then(|m| m.as_ref().ok()));
+    let in_progress = in_progress_doctor(
+        me.as_ref().and_then(|m| m.as_ref().ok()),
+        default_node.as_ref(),
+        held_blocking,
+    );
+    let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
     let telemetry = telemetry_doctor(scrape.as_ref());
+    let scan = scan_doctor(ready.as_ref(), scrape.as_ref());
+    let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
     // stale count and the waiting edges are the sources lines'.
@@ -4189,6 +4569,10 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         &std::env::current_dir().unwrap_or_default(),
     );
     let sync_warn = sync.iter().any(|line| line.starts_with("warn"));
+    // The chat hooks' local state (ADR-0063 d13).
+    let mut chat = oml_cli::chat::doctor_lines(&|name: &str| std::env::var(name).ok());
+    chat.extend(chat_server);
+    let chat_warn = chat.iter().any(|line| line.starts_with("warn"));
     let sources = sources_doctor(
         server_version(ready.as_ref()).as_deref(),
         default_node.as_ref(),
@@ -4213,8 +4597,11 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || search_warn
         || review_warn
         || telemetry_warn
+        || scan_warn
         || sync_warn
+        || chat_warn
         || sources_warn
+        || in_progress_warn
     {
         "warn"
     } else {
@@ -4257,8 +4644,11 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "search": search,
             "review": review,
             "sync": sync,
+            "chat": chat,
             "telemetry": telemetry,
+            "scan": scan,
             "sources": sources,
+            "in_progress": in_progress,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
             "verdict": outcome,
@@ -4364,11 +4754,20 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         for line in &telemetry {
             println!("telemetry   : {line}");
         }
+        for line in &scan {
+            println!("scan        : {line}");
+        }
         for line in &sync {
             println!("sync        : {line}");
         }
+        for line in &chat {
+            println!("chat        : {line}");
+        }
         for line in &sources {
             println!("sources     : {line}");
+        }
+        for line in &in_progress {
+            println!("in progress : {line}");
         }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         match (&ready, server_version(ready.as_ref())) {
@@ -4593,6 +4992,70 @@ fn telemetry_doctor(scrape: Option<&Scrape>) -> Vec<String> {
     lines
 }
 
+/// The scan doctor lines (ADR-0065 d11): the rule set `/readyz` names, how
+/// many rules it loaded and whether the personal-data rules are on; and,
+/// where `OML_METRICS_URL` names the metrics listener, the findings since
+/// start by action and the rules that fired most. Counts only: no finding
+/// carries what it matched.
+fn scan_doctor(ready: Option<&(u16, Value)>, scrape: Option<&Scrape>) -> Vec<String> {
+    let Some((_, body)) = ready else {
+        return vec!["not probed (no URL)".to_owned()];
+    };
+    let scan = &body["scan"];
+    let Some(version) = scan["version"].as_str() else {
+        return vec![
+            "warn scan_ruleset: the server names no rule set; one before v0.6.0 scans for two test markers only"
+                .to_owned(),
+        ];
+    };
+    let rules = scan["rules"].as_u64().unwrap_or(0);
+    let mut lines = vec![format!(
+        "{version}, {rules} rules loaded, personal-data rules {}",
+        if scan["pii"] == true {
+            "on (hold)"
+        } else {
+            "off"
+        }
+    )];
+    if rules == 0 {
+        lines.push(format!(
+            "warn scan_rules: {version} loaded no rules, so every write passes unscanned; this build is defective"
+        ));
+    }
+    match scrape {
+        None => lines.push(
+            "findings not read: set OML_METRICS_URL to the lead's metrics listener".to_owned(),
+        ),
+        Some(scrape) => {
+            let vetoes = scrape.sum("oml_scan_findings_total", &[("action", "veto")]);
+            let holds = scrape.sum("oml_scan_findings_total", &[("action", "hold")]);
+            let mut top: Vec<(String, u64)> = scrape
+                .samples("oml_scan_findings_total", &[])
+                .filter_map(|(set, n)| {
+                    let rule = set
+                        .split(',')
+                        .find_map(|pair| pair.strip_prefix("rule=\""))?
+                        .trim_end_matches('"');
+                    Some((rule.to_owned(), n))
+                })
+                .collect();
+            top.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            let named = top
+                .iter()
+                .take(3)
+                .map(|(rule, n)| format!("{rule} ×{n}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(if named.is_empty() {
+                "findings since start: none".to_owned()
+            } else {
+                format!("findings since start: {vetoes} refused, {holds} held; most: {named}")
+            });
+        }
+    }
+    lines
+}
+
 /// The learned sparse doctor lines (ADR-0052 d15, d16), where a served
 /// pipeline reads kind 2: the encoder `/readyz` names, or a warning that
 /// none is loaded; and, read by an admin key, the tenant's versions still
@@ -4601,7 +5064,7 @@ fn sparse_doctor(body: &Value, enabled: &[&str], settings: Option<&Value>) -> Ve
     let sparse: Vec<&str> = enabled
         .iter()
         .copied()
-        .filter(|p| matches!(*p, "sparse" | "bm25-sparse"))
+        .filter(|p| matches!(*p, "sparse" | "bm25-sparse" | "bm25-sparse-rrf"))
         .collect();
     let h = settings.map(|s| &s["postings"]).filter(|h| h.is_object());
     let n = |field: &str| h.and_then(|h| h[field].as_u64()).unwrap_or(0);
@@ -4791,7 +5254,25 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
             n("terms_checked")
         ));
     }
+    // The similar check's keys (ADR-0050 d15, d17); a server before 0026
+    // sends none of these fields, and none is read as a fault.
+    let similar_refill = "as the owner, in a transaction with oml.tenant_id set to the tenant, SELECT oml_similar_keys_refill('<tenant id>') rebuilds them (postgres-schema.md, similar keys)";
+    if h["similar_partition"] == Value::Bool(false) {
+        lines.push(
+            "warn similar: this tenant has no similar keys partition, so every memory write for it fails, as a lead before 0027 leaves a tenant it creates; restart the lead, whose start creates and fills it (ADR-0050 d17)".to_owned(),
+        );
+    }
+    if n("similar_unfilled") > 0 || n("similar_drift") > 0 {
+        lines.push(format!(
+            "warn similar: the similar keys disagree with the versions: {} without keys, {} with keys of another state; the write-time check misses or names the wrong rows until rebuilt: {similar_refill}, and report it",
+            n("similar_unfilled"),
+            n("similar_drift")
+        ));
+    }
     let faulty = h["partition"] != Value::Bool(true)
+        || h["similar_partition"] == Value::Bool(false)
+        || n("similar_unfilled") > 0
+        || n("similar_drift") > 0
         || n("unfilled") > 0
         || n("served_behind") > 0
         || n("workarea_drift") > 0
@@ -5034,6 +5515,41 @@ mod tests {
             vec!["on: 7 recall events written since start, none dropped past 1%".to_owned()]
         );
         assert!(telemetry_doctor(None)[0].contains("OML_METRICS_URL"));
+    }
+
+    #[test]
+    fn the_scan_doctor_names_the_rule_set_the_pii_setting_and_the_findings_by_rule() {
+        let ready = (
+            200,
+            json!({"scan": {"version": "oml-scan/1", "rules": 41, "pii": false}}),
+        );
+        let scrape = Scrape(
+            "oml_scan_findings_total{class=\"secret.api_token\",rule=\"github-token\",action=\"veto\"} 3\n\
+             oml_scan_findings_total{class=\"injection.override\",rule=\"ignore-instructions\",action=\"hold\"} 5\n"
+                .to_owned(),
+        );
+        assert_eq!(
+            scan_doctor(Some(&ready), Some(&scrape)),
+            vec![
+                "oml-scan/1, 41 rules loaded, personal-data rules off".to_owned(),
+                "findings since start: 3 refused, 5 held; most: ignore-instructions ×5, github-token ×3"
+                    .to_owned(),
+            ]
+        );
+        assert!(scan_doctor(Some(&ready), None)[1].contains("OML_METRICS_URL"));
+        let none = (
+            200,
+            json!({"scan": {"version": "oml-scan/1", "rules": 0, "pii": true}}),
+        );
+        let lines = scan_doctor(Some(&none), Some(&Scrape(String::new())));
+        assert!(
+            lines[0].ends_with("personal-data rules on (hold)"),
+            "{lines:?}"
+        );
+        assert!(lines[1].starts_with("warn scan_rules:"), "{lines:?}");
+        assert_eq!(lines[2], "findings since start: none");
+        let old = (200, json!({"status": "ok"}));
+        assert!(scan_doctor(Some(&old), None)[0].starts_with("warn scan_ruleset:"));
     }
 
     #[test]

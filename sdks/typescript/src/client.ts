@@ -53,6 +53,8 @@ export interface WriteInput {
   expected_version?: SupersedeRequest["expected_version"];
   /** The origin the author declares (ADR-0057 d1). */
   anchor?: SubmitRequest["anchor"];
+  /** What kind of source the text came from; omitted, recorded `manual` (ADR-0063 d1, d2). */
+  origin?: SubmitRequest["origin"];
   retirement?: SupersedeRequest["retirement"];
   reason?: SupersedeRequest["reason"];
 }
@@ -119,6 +121,7 @@ const READ_RECALL: readonly string[] = [
   "match",
   "anchor_repo",
   "anchor_path_prefix",
+  "origin_kinds",
 ];
 const READ_LISTING: readonly string[] = [
   "own",
@@ -132,6 +135,7 @@ const READ_LISTING: readonly string[] = [
   "cursor",
   "anchor_repo",
   "anchor_path_prefix",
+  "origin_kinds",
 ];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

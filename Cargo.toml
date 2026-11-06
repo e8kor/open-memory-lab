@@ -4,6 +4,7 @@
 resolver = "2"
 members = [
     "crates/oml-guardrail",
+    "crates/oml-scan",
     "crates/oml-domain",
     "crates/oml-app",
     "crates/adapters/oml-pg",
@@ -28,6 +29,7 @@ license = "Apache-2.0"
 oml-app = { path = "crates/oml-app" }
 oml-domain = { path = "crates/oml-domain" }
 oml-guardrail = { path = "crates/oml-guardrail" }
+oml-scan = { path = "crates/oml-scan" }
 oml-port-contracts = { path = "testing/oml-port-contracts" }
 # Dev-dependency surface only: the oml-cli end-to-end test composes the real
 # lead in-process; the CLI binary itself depends on no server crate.
@@ -113,6 +115,9 @@ tracing-subscriber = "0.3"
 ed25519-dalek = "2.2"
 hex = "0.4"
 proptest = "1.6"
+# The deterministic scan's rule set (ADR-0065 d1): linear-time matching, no
+# backtracking, pure Rust; already in the graph through tokenizers.
+regex = "1.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
@@ -173,4 +178,14 @@ opt-level = 3
 [profile.dev.package.candle-transformers]
 opt-level = 3
 [profile.dev.package.tokenizers]
+opt-level = 3
+# The scan's matcher (ADR-0065 d9): its tests scan the documentation set as
+# the false-positive corpus, a minute long unoptimised.
+[profile.dev.package.regex-automata]
+opt-level = 3
+[profile.dev.package.regex-syntax]
+opt-level = 3
+[profile.dev.package.aho-corasick]
+opt-level = 3
+[profile.dev.package.memchr]
 opt-level = 3

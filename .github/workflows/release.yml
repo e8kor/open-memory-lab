@@ -114,6 +114,7 @@ jobs:
           name="oml-cli-${VERSION}-${TARGET}"
           mkdir -p "dist/$name"
           cp "$bin" README.md LICENSE "dist/$name/"
+          cp -r LICENSES "dist/$name/"
           if [ -n "$exe" ]; then
             (cd dist && 7z a -tzip "$name.zip" "$name" >/dev/null)
           else
@@ -154,6 +155,7 @@ jobs:
           name="oml-server-lead-${VERSION}-${TARGET}"
           mkdir -p "dist/$name"
           cp "target/$TARGET/release/oml-server-lead" README.md LICENSE "dist/$name/"
+          cp -r LICENSES "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           rm -rf "dist/$name"
       - uses: actions/upload-artifact@v4

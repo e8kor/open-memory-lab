@@ -196,6 +196,7 @@ async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec
         .workarea
         .workarea_id;
     let issue = |role: Role, principal: &str, key: &str| IssueKeyRequest {
+        profile: None,
         role,
         name: Name::parse(key).expect("name"),
         principal: principal.to_owned(),
@@ -229,6 +230,8 @@ async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec
     let mut ids = Vec::new();
     for i in 0..n {
         let req = SubmitRequest {
+            on_similar: Default::default(),
+            origin: None,
             idempotency_key: format!("{name}-{i}"),
             claim_key: Some(format!("claim-{i}")),
             verb: None,

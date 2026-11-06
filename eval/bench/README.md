@@ -19,6 +19,7 @@ data through [ir_datasets](https://ir-datasets.com/) (MIT), rather than from cod
 |---|---|
 | `adapters.py` | one adapter per dataset: `load(cache, seed, limit)` returns memories, queries and qrels; also the published BM25 numbers used as a sanity check |
 | `bench.py` | `workareas`, `load`, `run` and `report`; reuses `eval/recall/run.py`'s HTTP client |
+| `chat.py` | chat memory end to end (ADR-0063 d12): LongMemEval (S) and LoCoMo turns written as held chat memories with chat anchors, then `run`, a retrieval proxy with no model (turn recall@5/10/50 of the evidence turns, session recall@k for LongMemEval), and `qa`, answers from a fixed answering model graded by a fixed judge with LongMemEval's published judge prompts, which needs `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` and exits 2 naming it otherwise |
 | `boot.sh` | boots a lead against a throwaway database, creates the workareas and the keys, and serves until stopped |
 | `run.sh` | boot, load, run every pipeline and print the tables, in one command; the nightly workflow runs it |
 | `reference.py` | ranks the same memories offline with [bm25s](https://github.com/xhluca/bm25s) (MIT), to split a gap to a published number between the mapping and the served implementation |

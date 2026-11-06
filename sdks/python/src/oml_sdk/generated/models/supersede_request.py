@@ -7,11 +7,13 @@ from attrs import define as _attrs_define
 
 from ..models.severity import Severity
 from ..models.supersede_request_kind import SupersedeRequestKind
+from ..models.supersede_request_on_similar import SupersedeRequestOnSimilar
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.anchor import Anchor
     from ..models.guardrail_rule import GuardrailRule
+    from ..models.origin import Origin
 
 
 T = TypeVar("T", bound="SupersedeRequest")
@@ -34,6 +36,10 @@ class SupersedeRequest:
                 shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither.
                 Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path
                 or fragment is submission.scan_veto.
+            origin (Origin | Unset): What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission
+                event, immutable per version, never inherited by a successor. Omitted on a write, it is recorded manual. chat
+                requires a chat anchor and a chat anchor requires chat; either mismatch is request.validation naming
+                /origin/kind.
             workarea (str | Unset): A workarea, by its node id, its name or its qualified name. Resolved server-side before
                 any check that reads state; an unknown name answers exactly what an unknown id answers. A user key resolves a
                 bare name in its own user root's namespace, plus universe and its root's name; every other key in the shared
@@ -55,6 +61,11 @@ class SupersedeRequest:
                 an effect, deny or ask, never allow; should takes ask only. Refused on every other kind and on a retirement
                 (request.validation, details.field /rule); a rule outside the grammar, or over 160 bytes, is vetoed as
                 submission.scan_veto with guardrail.rule_unparsable or guardrail.too_long (ADR-0037 d8, d10; since v0.5.1).
+            on_similar (SupersedeRequestOnSimilar | Unset): Omitted, hold. What the write does when the similar check names
+                a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the
+                rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims
+                no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the
+                request digest. Since v0.5.9.
             valid_from (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
                 fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
             valid_until (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six
@@ -64,6 +75,7 @@ class SupersedeRequest:
     body: str
     expected_version: int
     anchor: Anchor | Unset = UNSET
+    origin: Origin | Unset = UNSET
     workarea: str | Unset = UNSET
     retirement: bool | Unset = False
     kind: SupersedeRequestKind | Unset = UNSET
@@ -71,6 +83,7 @@ class SupersedeRequest:
     reason: str | Unset = UNSET
     severity: Severity | Unset = UNSET
     rule: GuardrailRule | Unset = UNSET
+    on_similar: SupersedeRequestOnSimilar | Unset = UNSET
     valid_from: str | Unset = UNSET
     valid_until: str | Unset = UNSET
 
@@ -82,6 +95,10 @@ class SupersedeRequest:
         anchor: dict[str, Any] | Unset = UNSET
         if not isinstance(self.anchor, Unset):
             anchor = self.anchor.to_dict()
+
+        origin: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.origin, Unset):
+            origin = self.origin.to_dict()
 
         workarea: str | Unset
         if isinstance(self.workarea, Unset):
@@ -109,6 +126,10 @@ class SupersedeRequest:
         if not isinstance(self.rule, Unset):
             rule = self.rule.to_dict()
 
+        on_similar: str | Unset = UNSET
+        if not isinstance(self.on_similar, Unset):
+            on_similar = self.on_similar.value
+
         valid_from = self.valid_from
 
         valid_until = self.valid_until
@@ -123,6 +144,8 @@ class SupersedeRequest:
         )
         if anchor is not UNSET:
             field_dict["anchor"] = anchor
+        if origin is not UNSET:
+            field_dict["origin"] = origin
         if workarea is not UNSET:
             field_dict["workarea"] = workarea
         if retirement is not UNSET:
@@ -137,6 +160,8 @@ class SupersedeRequest:
             field_dict["severity"] = severity
         if rule is not UNSET:
             field_dict["rule"] = rule
+        if on_similar is not UNSET:
+            field_dict["on_similar"] = on_similar
         if valid_from is not UNSET:
             field_dict["valid_from"] = valid_from
         if valid_until is not UNSET:
@@ -148,6 +173,7 @@ class SupersedeRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.anchor import Anchor
         from ..models.guardrail_rule import GuardrailRule
+        from ..models.origin import Origin
 
         d = dict(src_dict)
         body = d.pop("body")
@@ -160,6 +186,13 @@ class SupersedeRequest:
             anchor = UNSET
         else:
             anchor = Anchor.from_dict(_anchor)
+
+        _origin = d.pop("origin", UNSET)
+        origin: Origin | Unset
+        if isinstance(_origin, Unset):
+            origin = UNSET
+        else:
+            origin = Origin.from_dict(_origin)
 
         def _parse_workarea(data: object) -> str | Unset:
             if isinstance(data, Unset):
@@ -195,6 +228,13 @@ class SupersedeRequest:
         else:
             rule = GuardrailRule.from_dict(_rule)
 
+        _on_similar = d.pop("on_similar", UNSET)
+        on_similar: SupersedeRequestOnSimilar | Unset
+        if isinstance(_on_similar, Unset):
+            on_similar = UNSET
+        else:
+            on_similar = SupersedeRequestOnSimilar(_on_similar)
+
         valid_from = d.pop("valid_from", UNSET)
 
         valid_until = d.pop("valid_until", UNSET)
@@ -203,6 +243,7 @@ class SupersedeRequest:
             body=body,
             expected_version=expected_version,
             anchor=anchor,
+            origin=origin,
             workarea=workarea,
             retirement=retirement,
             kind=kind,
@@ -210,6 +251,7 @@ class SupersedeRequest:
             reason=reason,
             severity=severity,
             rule=rule,
+            on_similar=on_similar,
             valid_from=valid_from,
             valid_until=valid_until,
         )

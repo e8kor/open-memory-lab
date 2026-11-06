@@ -458,6 +458,7 @@ pub fn held_memory(
         guardrail: None,
         valid: Default::default(),
         anchor: None,
+        origin_kind: None,
         source_check: None,
     }
 }
@@ -555,6 +556,7 @@ pub fn workarea_record(
     workarea_name: &str,
 ) -> WorkareaRecord {
     WorkareaRecord {
+        in_progress: false,
         workarea_id,
         tenant_id,
         parent_id,
@@ -588,6 +590,7 @@ pub fn crew_record(tenant_id: Uuid, crew_id: Uuid, crew_name: &str) -> CrewRecor
 #[must_use]
 pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<Uuid>) -> KeyRecord {
     KeyRecord {
+        profile: None,
         key_id,
         tenant_id,
         role,
@@ -974,6 +977,7 @@ pub trait KeywordAllReads: Retriever {
             promoted_nodes: Vec::new(),
             kinds: kinds.to_vec(),
             own_held: Some(OwnHeldScope {
+                any_author: false,
                 author_key_ids: author_key_ids.to_vec(),
                 nodes: readable.to_vec(),
             }),
@@ -1486,6 +1490,157 @@ pub async fn recall_own_held_never_returns_another_keys_row_whatever_the_query<S
     assert_eq!(first, all[..1], "k keeps the prefix of the order");
 }
 
+/// Inside an in-progress scope the core hands the retrievers every author's
+/// held rows on the served nodes (ADR-0030 d3): each retriever the store
+/// serves reads exactly the held memories and derived facts on the nodes
+/// named, of any author, never a node outside them, never a rejected,
+/// steering or retirement version, and never another tenant's row, row
+/// security beneath it (P-R3-BOUNDARY at the store).
+pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(46);
+    rig.seed_chain(store, 0).await;
+    let mut other_tenant = ChainRig::new(47);
+    other_tenant.seed_chain(store, 0).await;
+    let [inside, outside] = [0xB460_u128, 0xB461].map(Uuid::from_u128);
+    let [ann, bob] = [0xD460_u128, 0xD461].map(Uuid::from_u128);
+    let row = |tenant: u64, wa: Uuid, id: u128, author: Uuid, kind: MemoryKind, body: &str| {
+        MemoryRecord {
+            kind,
+            ..held_memory(
+                rig_tenant(tenant),
+                wa,
+                Uuid::from_u128(id),
+                "wanda",
+                author,
+                body,
+            )
+        }
+    };
+    let anns = row(
+        46,
+        inside,
+        0xC460,
+        ann,
+        MemoryKind::Memory,
+        "the canary drains",
+    );
+    let bobs = row(
+        46,
+        inside,
+        0xC461,
+        bob,
+        MemoryKind::DerivedFact,
+        "canary weights logged",
+    );
+    let steering = row(
+        46,
+        inside,
+        0xC462,
+        bob,
+        MemoryKind::Steering,
+        "canary steering",
+    );
+    let away = row(
+        46,
+        outside,
+        0xC463,
+        bob,
+        MemoryKind::Memory,
+        "the canary outside",
+    );
+    let rejected = row(
+        46,
+        inside,
+        0xC464,
+        bob,
+        MemoryKind::Memory,
+        "the canary rejected",
+    );
+    let foreign = row(
+        47,
+        inside,
+        0xC465,
+        bob,
+        MemoryKind::Memory,
+        "the canary foreign",
+    );
+    for memory in [&anns, &bobs, &steering, &away] {
+        hold(&mut rig, store, memory.clone()).await.expect("hold");
+    }
+    hold(&mut rig, store, rejected.clone()).await.expect("hold");
+    reject(&mut rig, store, rejected.memory_id)
+        .await
+        .expect("reject");
+    hold(&mut other_tenant, store, foreign).await.expect("hold");
+
+    let scope = |nodes: Vec<Uuid>| CandidateScope {
+        expired_at: None,
+        anchor: oml_app::types::AnchorFilter::default(),
+        promoted_nodes: Vec::new(),
+        kinds: vec![
+            MemoryKind::Memory,
+            MemoryKind::DerivedFact,
+            MemoryKind::Steering,
+        ],
+        own_held: Some(OwnHeldScope {
+            author_key_ids: Vec::new(),
+            nodes,
+            any_author: true,
+        }),
+    };
+    for kind in store.retrievers() {
+        // The time leg reads only a query's date window; its own laws hold it.
+        if kind == RetrieverKind::Sparse || kind == RetrieverKind::Time {
+            continue;
+        }
+        let read = |nodes: Vec<Uuid>| {
+            let scope = scope(nodes);
+            async move {
+                let mut ids: Vec<Uuid> = store
+                    .retrieve(
+                        rig_tenant(46),
+                        kind,
+                        &scope,
+                        RetrievalQuery {
+                            window: None,
+                            within: &[],
+                            query: "canary",
+                            match_mode: MatchMode::Any,
+                            k: 20,
+                            sparse: &[],
+                        },
+                    )
+                    .await
+                    .expect("retrieve")
+                    .candidates
+                    .iter()
+                    .map(|c| c.memory_id)
+                    .collect();
+                ids.sort();
+                ids
+            }
+        };
+        let mut expected = vec![anns.memory_id, bobs.memory_id];
+        expected.sort();
+        assert_eq!(
+            read(vec![inside]).await,
+            expected,
+            "{kind:?}: every author's held memory and derived fact on the node"
+        );
+        assert_eq!(
+            read(vec![outside]).await,
+            vec![away.memory_id],
+            "{kind:?}: exactly the nodes named"
+        );
+        assert!(
+            read(Vec::new()).await.is_empty(),
+            "{kind:?}: no node, no row"
+        );
+    }
+}
+
 /// The set-wise read returns the rows named, in the order named; an id no
 /// row of this tenant has is absent, not an error (ADR-0024 d4, ADR-0025
 /// d7).
@@ -1787,6 +1942,7 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
     let mut rig = ChainRig::new(7);
     rig.seed_chain(store, 0).await;
     let record = KeyRecord {
+        profile: None,
         key_id: Uuid::from_u128(0xD9),
         tenant_id: rig.tenant_id,
         role: oml_app::domain::Role::Writer,
@@ -4357,7 +4513,12 @@ pub async fn a_tips_listing_holds_only_the_promoted_tips_on_its_nodes<S: Journal
                 .expect("list"),
         )
     };
-    let tips = |nodes: Vec<Uuid>| listing(ListingScope::Tips { nodes });
+    let tips = |nodes: Vec<Uuid>| {
+        listing(ListingScope::Tips {
+            nodes,
+            held: Vec::new(),
+        })
+    };
 
     assert_eq!(list(tips(vec![wa])).await, vec![tip.memory_id]);
     assert_eq!(
@@ -6043,6 +6204,7 @@ pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_fil
     let select = |artifact_id: Option<Uuid>, within: Option<Vec<Uuid>>| ClaimEdgeSelection {
         artifact_id,
         within,
+        held_nodes: Vec::new(),
         readable_nodes: vec![root, side],
         reader_key_id: world.proposer.key_id,
     };
@@ -6176,6 +6338,7 @@ pub async fn a_claim_edges_page_holds_only_edges_whose_endpoints_are_promoted_or
     let select = |nodes: Vec<Uuid>, reader: Uuid, within: Option<Vec<Uuid>>| ClaimEdgeSelection {
         artifact_id: None,
         within,
+        held_nodes: Vec::new(),
         readable_nodes: nodes,
         reader_key_id: reader,
     };
@@ -6909,6 +7072,10 @@ where
     .await;
     Box::pin(recall_own_held_never_returns_another_keys_row_whatever_the_query(&new_store().await))
         .await;
+    Box::pin(held_rows_of_every_author_are_read_on_the_named_nodes_alone(
+        &new_store().await,
+    ))
+    .await;
     Box::pin(memories_reads_the_named_rows_in_the_order_named(
         &new_store().await,
     ))
@@ -9664,6 +9831,7 @@ fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
         promoted_nodes: vec![wa],
         kinds: HIT_KINDS.to_vec(),
         own_held: own.map(|key| OwnHeldScope {
+            any_author: false,
             author_key_ids: vec![key],
             nodes: vec![wa],
         }),
@@ -11413,10 +11581,146 @@ where
     trigram_finds_a_misspelled_words_memory(&new_store().await).await;
     did_you_mean_draws_only_on_the_words_of_promoted_served_tips_in_the_scope(&new_store().await)
         .await;
+    similar_candidates_are_the_scopes_served_tips_and_own_held_rows_holding_a_key(
+        &new_store().await,
+    )
+    .await;
     the_time_leg_never_returns_a_row_outside_the_scope(&new_store().await).await;
     an_expired_memory_is_outside_every_retrievers_scope(&new_store().await).await;
     the_time_leg_reads_only_the_text_lists_rows_however_many_the_window_holds(&new_store().await)
         .await;
+}
+
+/// The similar check's candidates (ADR-0050 d1, d17): of the versions
+/// holding one of the keys, the promoted served tips on the scope's nodes
+/// and the held rows of its own keys on theirs, of the kinds memory,
+/// derived fact and steering; never another key's held row, a replaced,
+/// rejected or retirement version, or a row outside the nodes; by keys
+/// held, then id; at most the limit.
+pub async fn similar_candidates_are_the_scopes_served_tips_and_own_held_rows_holding_a_key<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::similar::Fingerprint;
+    const TEXT: &str = "Production deploys run only on Tuesday and Thursday between 10:00 \
+                        and 12:00 CET; outside that window a deploy needs the lead's approval.";
+    let mut rig = ChainRig::new(45);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig_tenant(45);
+    let [wa, elsewhere] = [0xB450_u128, 0xB451].map(Uuid::from_u128);
+    let [own, other] = [0xD450_u128, 0xD451].map(Uuid::from_u128);
+    let row = |wa: Uuid, id: u128, author: Uuid, kind: MemoryKind, body: &str| MemoryRecord {
+        kind,
+        ..held_memory(tenant, wa, Uuid::from_u128(id), "wanda", author, body)
+    };
+    let tip = row(wa, 0xC450, own, MemoryKind::Memory, TEXT);
+    let steering = row(
+        wa,
+        0xC451,
+        other,
+        MemoryKind::Steering,
+        &format!("Note: {TEXT}"),
+    );
+    let held = row(wa, 0xC452, own, MemoryKind::DerivedFact, TEXT);
+    let theirs = row(wa, 0xC453, other, MemoryKind::Memory, TEXT);
+    let rejected = row(wa, 0xC454, own, MemoryKind::Memory, TEXT);
+    let away = row(elsewhere, 0xC455, own, MemoryKind::Memory, TEXT);
+    let replaced = row(wa, 0xC456, own, MemoryKind::Memory, TEXT);
+    let retired = row(
+        wa,
+        0xC458,
+        own,
+        MemoryKind::Memory,
+        "the canary lapsed in May",
+    );
+    let unrelated = row(wa, 0xC45A, own, MemoryKind::Memory, "zebra quartz");
+    for m in [&tip, &steering, &away, &replaced, &retired, &unrelated] {
+        hold_and_promote(&mut rig, store, m.clone()).await;
+    }
+    for m in [&held, &theirs, &rejected] {
+        hold(&mut rig, store, m.clone()).await.expect("hold");
+    }
+    reject(&mut rig, store, rejected.memory_id)
+        .await
+        .expect("reject");
+    supersede(
+        &mut rig,
+        store,
+        &replaced,
+        Uuid::from_u128(0xC457),
+        "The deploy window moved to Monday mornings.",
+        false,
+    )
+    .await;
+    supersede(
+        &mut rig,
+        store,
+        &retired,
+        Uuid::from_u128(0xC459),
+        TEXT,
+        true,
+    )
+    .await;
+
+    let keys: Vec<i64> = Fingerprint::of(TEXT)
+        .query_keys()
+        .into_iter()
+        .map(|(_, k)| k)
+        .collect();
+    let scope = |nodes: Vec<Uuid>, keys_: Vec<Uuid>| CandidateScope {
+        promoted_nodes: nodes.clone(),
+        kinds: vec![
+            MemoryKind::Memory,
+            MemoryKind::DerivedFact,
+            MemoryKind::Steering,
+        ],
+        own_held: Some(OwnHeldScope {
+            any_author: false,
+            author_key_ids: keys_,
+            nodes,
+        }),
+        expired_at: None,
+        anchor: Default::default(),
+    };
+    let candidates = |scope: CandidateScope, keys: Vec<i64>, limit: usize| async move {
+        store
+            .similar_candidates(tenant, &scope, &keys, limit)
+            .await
+            .expect("similar candidates")
+    };
+    assert_eq!(
+        candidates(scope(vec![wa], vec![own]), keys.clone(), 10).await,
+        vec![tip.memory_id, held.memory_id, steering.memory_id],
+        "the same text's two rows first, by id, then the near copy, which holds fewer keys"
+    );
+    assert_eq!(
+        candidates(scope(vec![wa], vec![other]), keys.clone(), 10).await,
+        vec![tip.memory_id, theirs.memory_id, steering.memory_id],
+        "each key set reads its own held rows alone"
+    );
+    assert_eq!(
+        candidates(scope(vec![elsewhere], vec![own]), keys.clone(), 10).await,
+        vec![away.memory_id],
+        "exactly the scope's nodes"
+    );
+    assert_eq!(
+        candidates(scope(vec![wa], vec![own]), keys.clone(), 1).await,
+        vec![tip.memory_id],
+        "the limit keeps the prefix of the order"
+    );
+    assert!(
+        candidates(scope(vec![wa], vec![own]), Vec::new(), 10)
+            .await
+            .is_empty(),
+        "no key, no candidate"
+    );
+    assert!(
+        candidates(scope(Vec::new(), Vec::new()), keys, 10)
+            .await
+            .is_empty(),
+        "an empty scope, no candidate"
+    );
 }
 
 // ---------------------------------------------------------------------------

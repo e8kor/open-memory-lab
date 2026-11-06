@@ -1,4 +1,4 @@
--- 0032_lake_writer — the lake writer's two tables in Postgres: the keys that
+-- 0031_lake_writer — the lake writer's two tables in Postgres: the keys that
 -- seal the bodies it materializes, and the outbox rows it could not
 -- materialize (ADR-0003 d6, ADR-0005 d1, d2, ADR-0060 d6, d14).
 -- Forward-only (docs/data/postgres-schema.md "Migrations"): no earlier file
