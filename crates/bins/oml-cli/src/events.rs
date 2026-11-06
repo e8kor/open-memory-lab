@@ -2,8 +2,8 @@
 //!
 //! `oml hook <event>` reads the event's JSON from stdin once, runs every
 //! handler registered for that event in [`HANDLERS`] order, and merges what
-//! they answer into the one document the harness reads: the first block
-//! decision wins, and every context is joined under one
+//! they answer into the one document the harness reads: every block reason
+//! is joined into one, and every context is joined under one
 //! `additionalContext`. Any harness with command hooks calls the same verb
 //! with the same JSON, so the Claude Code plugin's `hooks.json` is a thin
 //! wrapper with no logic of its own. A new handler is one row of
@@ -74,6 +74,11 @@ pub const HANDLERS: &[Registered] = &[
         handler: crate::chat::on_stop,
     },
     Registered {
+        event: Event::Stop,
+        name: "capture",
+        handler: crate::capture::agent::on_stop,
+    },
+    Registered {
         event: Event::PreCompact,
         name: "chat",
         handler: crate::chat::on_pre_compact,
@@ -100,22 +105,22 @@ pub fn dispatch(
         ))
     })?;
     let mut contexts: Vec<String> = Vec::new();
-    let mut block: Option<String> = None;
+    // One reason carries every handler's request, so Stop asks once
+    // (ADR-0064 d11).
+    let mut blocks: Vec<String> = Vec::new();
     let mut reason: Quiet = None;
     for registered in HANDLERS.iter().filter(|r| r.event == event) {
         match (registered.handler)(var, &object) {
             Ok(Reply::Nothing) | Err(None) => {}
             Ok(Reply::Context(text)) => contexts.push(text),
-            Ok(Reply::Block(why)) => {
-                block.get_or_insert(why);
-            }
+            Ok(Reply::Block(why)) => blocks.push(why),
             Err(Some(why)) => {
                 reason.get_or_insert(why);
             }
         }
     }
-    if let Some(why) = block {
-        return Ok(json!({ "decision": "block", "reason": why }).to_string());
+    if !blocks.is_empty() {
+        return Ok(json!({ "decision": "block", "reason": blocks.join("\n\n") }).to_string());
     }
     if contexts.is_empty() {
         return Err(reason);

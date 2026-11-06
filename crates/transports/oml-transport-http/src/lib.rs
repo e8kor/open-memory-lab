@@ -2462,11 +2462,7 @@ where
                         .with_details(json!({ "field": "/children" })));
                     }
                 };
-                retry_chain(|| {
-                    st.app
-                        .set_code_parent(token.as_str(), workarea.clone(), on)
-                })
-                .await
+                retry_chain(|| st.app.set_code_parent(token.as_str(), workarea.clone(), on)).await
             }
             _ => {
                 return Err(ApiError::validation(

@@ -235,6 +235,40 @@ enum SetupCommand {
     /// `https://memory.doublegate.io`; with --print, or with no claude on
     /// PATH, print the commands instead (ADR-0041 d7, ADR-0043 d4).
     ClaudeCode(SetupClaudeCodeArgs),
+    /// Map this git clone to its repository workarea and choose how its
+    /// knowledge is captured: git hooks, agent hooks, both or neither; the
+    /// first run in an account also marks `<user>.code` and issues the
+    /// sync key (ADR-0064 d1, d2).
+    Repo(SetupRepoArgs),
+}
+
+#[derive(Args)]
+struct SetupRepoArgs {
+    /// agent | git | both | off; omitted, both, printing why.
+    #[arg(long, value_parser = ["agent", "git", "both", "off"])]
+    mode: Option<String>,
+    /// Your user root's name; remembered in the clone after the first run.
+    #[arg(long)]
+    user: Option<String>,
+    /// The repository as `owner/name`, for a clone with no `origin` remote.
+    #[arg(long)]
+    repo: Option<String>,
+    /// Write this clone's settings and hooks only; the workarea, the mark
+    /// and the sync key already exist, as when another clone set them up.
+    #[arg(long)]
+    local: bool,
+    /// The sync key's owner-only file; omitted,
+    /// `$XDG_CONFIG_HOME/oml/keys/<user>-code-sync.key`.
+    #[arg(long)]
+    sync_key_file: Option<PathBuf>,
+    /// Your reviewer key, a dreamer key held by you, which marks the code
+    /// parent when the CLI's own key is not one.
+    #[arg(long)]
+    reviewer_key_file: Option<PathBuf>,
+    /// Capture to the maintainer's public server, whose admins read every
+    /// memory and where nothing written can be erased (ADR-0064 d17).
+    #[arg(long)]
+    allow_public_server: bool,
 }
 
 #[derive(Args)]
@@ -326,6 +360,20 @@ enum HookCommand {
     /// and warns, and a failure exits 2, which blocks the call (proposed
     /// ADR-0037 d8, d9).
     PreToolUse,
+    /// Record the paths an edit or a read touched in the clone's session
+    /// cache, with no request; prints nothing and always exits 0 (ADR-0064
+    /// d13).
+    PostToolUse,
+    /// A git hook of a clone mapped by `oml setup repo`: queues what the
+    /// event changed and starts a detached sync; opens no connection and
+    /// always exits 0 (ADR-0064 d6).
+    Git {
+        /// post-commit, post-checkout, post-merge, post-rewrite or pre-push.
+        event: String,
+        /// The arguments git passes the hook.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -784,11 +832,29 @@ struct CrewsUpdateArgs {
 )]
 struct SyncArgs {
     /// A file or directory inside a git clone, read at --rev.
-    source: String,
+    #[arg(required_unless_present = "flush")]
+    source: Option<String>,
     /// The workarea to keep in step, by id or name; with --pr the parent of
     /// the draft's `<workarea>-pr-<n>`.
+    #[arg(long, required_unless_present = "flush")]
+    workarea: Option<String>,
+    /// Run the queue the clone's git hooks and Stop hook filled, under the
+    /// clone's sync key: one job at a time, offline it leaves the queue and
+    /// exits 0 (ADR-0064 d8).
+    #[arg(long, conflicts_with_all = ["source", "workarea"])]
+    flush: bool,
+    /// With --flush, the detached form a hook starts: no output but the log.
+    #[arg(long, requires = "flush")]
+    background: bool,
+    /// Refuse unless every commit the workarea's claims of the source were
+    /// read at is an ancestor of --rev, so a rebase or a forced pull writes
+    /// nothing (ADR-0064 d8).
     #[arg(long)]
-    workarea: String,
+    ff_only: bool,
+    /// Only these paths' claims are listed and diffed, repeatable (ADR-0064
+    /// d8).
+    #[arg(long = "paths")]
+    paths: Vec<String>,
     /// adr, headings or lines; omitted, adr for ADR-NNNN-*.md files and
     /// headings otherwise (ADR-0057 d7, d21).
     #[arg(long)]
@@ -1040,6 +1106,12 @@ enum ReviewCommand {
         #[arg(long)]
         ids: Option<String>,
     },
+    /// A person's bulk act at a merge or a release (ADR-0064 d18): writes
+    /// the workarea's held set to a file; run again after editing each line
+    /// to `approve`, `reject <reason>` or `leave`, it submits the verdicts
+    /// and, only when nothing is held, commits the workarea and marks it in
+    /// progress again.
+    Commit(ReviewCommitArgs),
     /// Verdict: reject, with the reason. Omitted, the serve is the one
     /// item this key has claimed (ADR-0039 d10); with --ids, every listed
     /// id, each its own verdict with the one reason (ADR-0055 d8, d11).
@@ -1054,6 +1126,15 @@ enum ReviewCommand {
         #[arg(long)]
         ids: Option<String>,
     },
+}
+
+#[derive(Args)]
+struct ReviewCommitArgs {
+    /// The repository workarea, by id or name.
+    workarea: String,
+    /// The decision file; omitted, `oml-review-<workarea>.txt` here.
+    #[arg(long)]
+    file: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -1301,13 +1382,57 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 "no guardrails were loaded",
                 |var, stdin| oml_cli::guardrails::guardrails(var, stdin),
             ),
+            HookCommand::PostToolUse => run_hook(
+                "post-tool-use",
+                std::time::Duration::from_secs(2),
+                "the path was not recorded",
+                oml_cli::capture::agent::post_tool_use,
+            ),
+            HookCommand::Git { event, args } => {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let event = event.clone();
+                let args = args.clone();
+                // A hook never fails a git operation: the work runs on a
+                // thread the process does not wait for past its deadline.
+                let (done, finished) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    oml_cli::capture::hooks::run(&event, &args, &mut std::io::stdin().lock(), &cwd);
+                    let _ = done.send(());
+                });
+                let _ = finished.recv_timeout(std::time::Duration::from_secs(5));
+                ExitCode::SUCCESS
+            }
             HookCommand::PreToolUse => {
                 use std::io::Write as _;
                 let var = |name: &str| std::env::var(name).ok();
-                match oml_cli::guardrails::pre_tool_use(&var, &mut std::io::stdin().lock()) {
+                let mut raw = String::new();
+                let _ = std::io::Read::read_to_string(&mut std::io::stdin().lock(), &mut raw);
+                // The anchor fill is one handler of the one pre-tool verb,
+                // and fails open (ADR-0064 d11, d15).
+                let fill = serde_json::from_str::<serde_json::Value>(&raw)
+                    .ok()
+                    .and_then(|v| v.as_object().cloned())
+                    .and_then(|o| oml_cli::capture::agent::fill_anchor(&var, &o));
+                match oml_cli::guardrails::pre_tool_use(&var, &mut raw.as_bytes()) {
                     Ok(document) => {
-                        if !document.is_empty() {
-                            let _ = writeln!(std::io::stdout(), "{document}");
+                        // A guardrail's decision stands alone; otherwise the
+                        // fill, carrying a warning the guardrails check gave.
+                        let out = match (document.is_empty(), fill) {
+                            (true, fill) => fill.unwrap_or_default(),
+                            (false, Some(fill)) if !document.contains("permissionDecision") => {
+                                let mut f: serde_json::Value =
+                                    serde_json::from_str(&fill).unwrap_or_default();
+                                if let Ok(d) = serde_json::from_str::<serde_json::Value>(&document)
+                                    && let Some(m) = d.get("systemMessage")
+                                {
+                                    f["systemMessage"] = m.clone();
+                                }
+                                f.to_string()
+                            }
+                            (false, _) => document,
+                        };
+                        if !out.is_empty() {
+                            let _ = writeln!(std::io::stdout(), "{out}");
                         }
                         ExitCode::SUCCESS
                     }
@@ -1828,8 +1953,59 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Setup {
             command: SetupCommand::ClaudeCode(args),
         } => run_setup_claude_code(cli, &stored, args),
+        Command::Setup {
+            command: SetupCommand::Repo(args),
+        } => run_setup_repo(cli, &stored, args),
         Command::Hook { .. } => unreachable!("the hook ran before the credentials were loaded"),
     }
+}
+
+/// `oml setup repo` (ADR-0064): the clone's mode, workarea, sources and
+/// hooks, and on the first run the per-person server steps.
+fn run_setup_repo(
+    cli: &Cli,
+    stored: &Credentials,
+    args: &SetupRepoArgs,
+) -> Result<ExitCode, CliError> {
+    use oml_cli::capture::{Mode, setup};
+    let cwd = std::env::current_dir()
+        .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
+    let mode = args.mode.as_deref().and_then(Mode::parse);
+    let client = if args.local || mode == Some(Mode::Off) {
+        None
+    } else {
+        Some(resolve(cli, stored)?)
+    };
+    let url = cli
+        .start
+        .flag_url
+        .clone()
+        .or_else(|| cli.start.env_url.clone())
+        .or_else(|| stored.url.clone())
+        .filter(|_| !args.local || cli.start.flag_url.is_some() || cli.start.env_url.is_some());
+    let lines = setup::run(
+        &setup::Args {
+            mode,
+            user: args.user.clone(),
+            repo: args.repo.clone(),
+            local: args.local,
+            sync_key_file: args.sync_key_file.clone(),
+            reviewer_key_file: args.reviewer_key_file.clone(),
+            allow_public_server: args.allow_public_server,
+            url: client.as_ref().map(|c| c.server().to_owned()).or(url),
+        },
+        &cwd,
+        client.as_ref(),
+    )
+    .map_err(CliError::Local)?;
+    if cli.json {
+        print_json(&setup::json_of(&lines));
+    } else {
+        for line in &lines {
+            println!("{line}");
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `oml guardrails show` and `oml guardrails export`: one `GET
@@ -2078,6 +2254,13 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
 /// at --rev, and runs the plan through the HTTP API (ADR-0057 d6-d11).
 fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode, CliError> {
     use oml_cli::sync::{adapter::Kind, api::HttpApi, run, source};
+    if args.flush {
+        let cwd = std::env::current_dir()
+            .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
+        return oml_cli::capture::job::flush(&cwd)
+            .map(ExitCode::from)
+            .map_err(CliError::Local);
+    }
     let client = resolve(cli, stored)?;
     let cwd = std::env::current_dir()
         .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
@@ -2100,8 +2283,8 @@ fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode
         }
     }
     let opts = run::Options {
-        source: args.source.clone(),
-        workarea: args.workarea.clone(),
+        source: args.source.clone().unwrap_or_default(),
+        workarea: args.workarea.clone().unwrap_or_default(),
         adapter: args
             .adapter
             .as_deref()
@@ -2120,6 +2303,8 @@ fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode
         edges: args.edges,
         ratify: args.ratify,
         allow_rollback: args.allow_rollback,
+        ff_only: args.ff_only,
+        paths: args.paths.clone(),
         change_adapter: args.change_adapter,
         exclude: args.exclude.clone(),
         change_exclude: args.change_exclude,
@@ -2630,6 +2815,7 @@ fn run_review(
 ) -> Result<ExitCode, CliError> {
     match command {
         ReviewCommand::Next => run_review_next(cli, stored),
+        ReviewCommand::Commit(args) => run_review_commit(cli, stored, args),
         ReviewCommand::List(args) => run_review_list(cli, stored, args),
         ReviewCommand::Approve {
             ids: Some(ids),
@@ -2648,6 +2834,91 @@ fn run_review(
             serve_id, reason, ..
         } => run_verdict(cli, stored, "reject", serve_id.as_deref(), Some(reason)),
     }
+}
+
+/// Every held item of `workarea`, all pages.
+fn held_items(client: &Client, workarea: &str) -> Result<Vec<serde_json::Value>, CliError> {
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut query = format!("limit=200&workarea={}", encode(workarea));
+        if let Some(c) = &cursor {
+            query.push_str(&format!("&cursor={}", encode(c)));
+        }
+        let (_, page) = client.get(&format!("/v2/review/held?{query}"))?;
+        items.extend(page["items"].as_array().cloned().unwrap_or_default());
+        match page["next_cursor"].as_str() {
+            Some(next) => cursor = Some(next.to_owned()),
+            None => return Ok(items),
+        }
+    }
+}
+
+/// `oml review commit` (ADR-0064 d18).
+fn run_review_commit(
+    cli: &Cli,
+    stored: &Credentials,
+    args: &ReviewCommitArgs,
+) -> Result<ExitCode, CliError> {
+    use oml_cli::capture::review::{Decision, parse, render};
+    let client = resolve(cli, stored)?;
+    let file = args
+        .file
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(format!("oml-review-{}.txt", args.workarea)));
+    let items = held_items(&client, &args.workarea)?;
+    if !file.exists() {
+        if !items.is_empty() {
+            std::fs::write(&file, render(&items, &args.workarea))
+                .map_err(|e| CliError::local(format!("cannot write {}: {e}", file.display())))?;
+            println!(
+                "{} held item(s) written to {}: edit each line to approve, reject <reason> or leave, then run this command again",
+                items.len(),
+                file.display()
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+    } else {
+        let text = std::fs::read_to_string(&file)
+            .map_err(|e| CliError::local(format!("cannot read {}: {e}", file.display())))?;
+        let decisions = parse(&text).map_err(CliError::Local)?;
+        let approve: Vec<String> = decisions
+            .iter()
+            .filter(|(_, d)| *d == Decision::Approve)
+            .map(|(id, _)| id.clone())
+            .collect();
+        if !approve.is_empty() {
+            run_bulk(cli, stored, "approve", &approve.join(","), None)?;
+        }
+        let mut reasons: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for (id, d) in &decisions {
+            if let Decision::Reject(reason) = d {
+                reasons.entry(reason.clone()).or_default().push(id.clone());
+            }
+        }
+        for (reason, ids) in reasons {
+            run_bulk(cli, stored, "reject", &ids.join(","), Some(&reason))?;
+        }
+        let _ = std::fs::rename(&file, file.with_extension("done"));
+    }
+    let held = held_items(&client, &args.workarea)?;
+    if !held.is_empty() {
+        println!(
+            "{} item(s) are still held, so the workarea is not committed; edit {} and run this command again",
+            held.len(),
+            file.display()
+        );
+        return Ok(ExitCode::from(1));
+    }
+    let path = format!("/v2/workareas/{}/mode", segment(&args.workarea)?);
+    client.post(&path, &json!({"mode": "standard"}), &write_opts())?;
+    client.post(&path, &json!({"mode": "in_progress"}), &write_opts())?;
+    println!(
+        "{} committed: its approved facts now reach reads outside it; it is in progress again, so the next iteration's writes stay inside",
+        args.workarea
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `oml review next`: one `POST /v2/review/next`, which claims the item it
@@ -4569,6 +4840,10 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         &std::env::current_dir().unwrap_or_default(),
     );
     let sync_warn = sync.iter().any(|line| line.starts_with("warn"));
+    // The implicit-capture failures a mapped clone's own files answer
+    // (ADR-0064 d23).
+    let capture = oml_cli::capture::doctor_lines(&std::env::current_dir().unwrap_or_default());
+    let capture_warn = capture.iter().any(|line| line.starts_with("warn"));
     // The chat hooks' local state (ADR-0063 d13).
     let mut chat = oml_cli::chat::doctor_lines(&|name: &str| std::env::var(name).ok());
     chat.extend(chat_server);
@@ -4599,6 +4874,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || telemetry_warn
         || scan_warn
         || sync_warn
+        || capture_warn
         || chat_warn
         || sources_warn
         || in_progress_warn
@@ -4644,6 +4920,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "search": search,
             "review": review,
             "sync": sync,
+            "capture": capture,
             "chat": chat,
             "telemetry": telemetry,
             "scan": scan,
@@ -4759,6 +5036,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &sync {
             println!("sync        : {line}");
+        }
+        for line in &capture {
+            println!("capture     : {line}");
         }
         for line in &chat {
             println!("chat        : {line}");

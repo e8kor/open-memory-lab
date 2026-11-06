@@ -805,6 +805,40 @@ Every use case here is **designed** and **planned for v0.6.0** ([ADR-0063](../ad
 - **Goal:** have relevant memories next to each prompt without asking.
 - **How it plays out:** with per-turn recall switched on, each prompt brings at most six short
   memories, each marked when unreviewed, or nothing when the server is slow.
+## Code capture
+
+Every use case here is **designed** and **planned for v0.6.1** ([ADR-0064](../adr/ADR-0064-a-repositorys-knowledge-is-captured-implicitly-by-git-hooks-and-agent-hooks-each-opted-into-per-clone-and-a-person-promotes-it-in-one-bulk-act.md)).
+
+### Let my agents keep each repository's knowledge in a workarea of its own
+
+- **Who:** a person working with agents. **UC-CC-01.**
+- **Goal:** one workarea per repository that the person's agents create themselves, and nowhere else.
+- **How it plays out:** the person marks `<user>.code` once with their own key; an agent's key then creates in-progress children under it and is refused everywhere else.
+
+### Keep a repository's documents and crates in step on every commit, whoever commits
+
+- **Who:** a person. **UC-CC-02.**
+- **Goal:** every commit, by a person or an agent, updates the claims its changed files state, with no step to remember.
+- **How it plays out:** `oml setup repo` installs git hooks that never fail a git operation; a background sync follows each commit.
+
+### Say where an agent's fact about code came from without the agent writing it
+
+- **Who:** an agent. **UC-CC-03.**
+- **Goal:** a fact about a file carries the file, the span and the commit it was read at.
+- **How it plays out:** the agent writes the sentence; the pre-tool hook adds the anchor when exactly one file qualifies, and adds none when two do.
+
+### Find out that a fact I wrote no longer matches the code I just changed
+
+- **Who:** an agent. **UC-CC-04.**
+- **Goal:** a changed span prompts a confirmation, an update or a retirement, once.
+- **How it plays out:** at Stop the agent is asked to answer for the claims whose span changed; each answer is a held version a person reviews.
+
+### Approve a repository's held knowledge in one sitting at a merge or release
+
+- **Who:** a person. **UC-CC-05.**
+- **Goal:** one act that judges everything held, commits the workarea and starts the next iteration.
+- **How it plays out:** `oml review commit` writes the held set to a file, submits the edited verdicts, and commits only when nothing is held.
+
 ## Files and deliverables
 
 Every use case here is **designed**: deliverables and storage are parked, and files on a memory

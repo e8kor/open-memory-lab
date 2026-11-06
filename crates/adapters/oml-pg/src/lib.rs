@@ -2076,8 +2076,7 @@ fn hit_kinds(kinds: &[MemoryKind]) -> Vec<&'static str> {
 
 /// The workarea columns every workarea read selects (unqualified: the
 /// recursive walks select them from their CTE).
-const WORKAREA_COLUMNS: &str =
-    "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id, mode, children_agent";
+const WORKAREA_COLUMNS: &str = "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id, mode, children_agent";
 
 /// A workarea row as the port's record. A row with no name yet predates
 /// names and is served to no one: the lead names every such row before it

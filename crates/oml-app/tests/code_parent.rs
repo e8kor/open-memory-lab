@@ -26,7 +26,10 @@ fn by_name(value: &str) -> Reference {
 
 fn fresh_key_name() -> Name {
     static ISSUED: AtomicU64 = AtomicU64::new(0);
-    name(&format!("cp-key-{}", ISSUED.fetch_add(1, Ordering::Relaxed)))
+    name(&format!(
+        "cp-key-{}",
+        ISSUED.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 struct World {
@@ -39,7 +42,13 @@ struct World {
     agent: IssuedKey,
 }
 
-async fn issue(app: &TestApp, admin: &str, role: Role, held_by: HeldBy, principal: &str) -> IssuedKey {
+async fn issue(
+    app: &TestApp,
+    admin: &str,
+    role: Role,
+    held_by: HeldBy,
+    principal: &str,
+) -> IssuedKey {
     let node = by_name("pat");
     let grants = if role == Role::Dreamer {
         vec![GrantRequest {
@@ -143,7 +152,11 @@ async fn only_a_human_reviewer_key_marks_a_code_parent() {
         .expect("the person marks it");
     assert!(marked.children_agent);
     assert!(!marked.in_progress, "a code parent is itself standard");
-    let events = w.store.events_range(w.boot.tenant_id, 1, 1000).await.expect("journal");
+    let events = w
+        .store
+        .events_range(w.boot.tenant_id, 1, 1000)
+        .await
+        .expect("journal");
     let marks: Vec<_> = events
         .iter()
         .filter(|e| e.envelope.event_type == event_types::WORKAREA_MODE_SET)
@@ -185,7 +198,11 @@ async fn a_writer_creates_an_in_progress_child_only_under_a_code_parent() {
         .await
         .expect("an in-progress child under the code parent");
     assert!(child.workarea.in_progress);
-    let events = w.store.events_range(w.boot.tenant_id, 1, 1000).await.expect("journal");
+    let events = w
+        .store
+        .events_range(w.boot.tenant_id, 1, 1000)
+        .await
+        .expect("journal");
     let create = events
         .iter()
         .find(|e| {
@@ -220,7 +237,13 @@ async fn mode_in_a_create_body_elsewhere_is_request_validation() {
     // A grandchild is not a child of the mark either.
     let child = w
         .app
-        .create_workarea_in(&w.agent.value, &name("plain"), Some(code.clone()), None, None)
+        .create_workarea_in(
+            &w.agent.value,
+            &name("plain"),
+            Some(code.clone()),
+            None,
+            None,
+        )
         .await
         .expect("a plain child");
     let err = w

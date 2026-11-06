@@ -584,6 +584,20 @@ e8kor
     └── oml-code            the rust adapter, from v0.5.9
 ```
 
+## `oml setup repo`, `oml hook git` and `oml review commit` — implicit code capture
+
+*Available since v0.6.1 · [ADR-0064](../adr/ADR-0064-a-repositorys-knowledge-is-captured-implicitly-by-git-hooks-and-agent-hooks-each-opted-into-per-clone-and-a-person-promotes-it-in-one-bulk-act.md)*
+
+| Command | Does |
+|---|---|
+| `oml setup repo [--mode agent\|git\|both\|off] [--user <root>] [--repo <owner/name>] [--local] [--sync-key-file <file>] [--reviewer-key-file <file>] [--allow-public-server]` | Run once per clone. Records `oml.mode`, `oml.workarea`, `oml.syncKeyFile`, `oml.server` and `oml.source` in the clone's `.git/config`, never in a committed file; with no `--mode` it takes `both` and prints why. The first run in an account also creates `<user>.code`, marks it a code parent under your reviewer key (`--reviewer-key-file` when the CLI's own key is not a person's dreamer key), issues the sync key `<user>-code-sync` to an owner-only file and creates the repository workarea `<last segment>-<6 hex of SHA-256 of the repository>`, in progress from its first instant. `--local` writes this clone's settings and hooks only. `off` removes the hooks and every `oml.*` key and leaves memories and the workarea. The maintainer's public server is refused without `--allow-public-server`. |
+| `oml hook git <event>` | The five git hooks (`post-commit`, `post-checkout`, `post-merge`, `post-rewrite`, `pre-push`) call it with `\|\| true`, so a missing `oml`, a crash or a timeout returns 0 to git. It reads the clone's config and `.git/oml/`, queues the changed paths of each source and starts a detached `oml sync --flush --background`; it opens no connection. A commit off the sync branch is checked, not synced. `pre-push` prints the cached check of the pushed range and never blocks. |
+| `oml sync --flush` | Runs the queue under the sync key and the lock on `.git/oml/sync.lock`; offline it leaves the queue and exits 0. Each run is `oml sync <source> --ff-only --paths <changed path> …`, which refuses a commit that is not a fast-forward of every revision the workarea's claims were read at, and never passes `--allow-rollback`. |
+| `oml hook post-tool-use` | Records the clone-relative path of each edited or read file in the session cache; sends and prints nothing. A path outside the clone, ignored by git, secret-shaped or under a default exclude is not recorded. |
+| `oml hook pre-tool-use` (the anchor fill) | On `oml_write` in a clone whose mode includes `agent`: for a call with no anchor, chooses the one file the text names, else the one edited, else the one read since the previous write, and anchors nothing when two qualify. A definition line the text names once gives the line span of its indentation block and its `oml-md/1` hash; otherwise the anchor names the file with no hash. Fills `origin.kind` (`code`, or `doc` for markdown) and the clone's workarea. Refuses once a text holding three consecutive lines of the file or a fenced block, once a repeated anchor, and the session's sixth anchored write. |
+| `oml hook stop` | Also lists, once, the agent's own claims whose span changed under a touched path, for a confirmation, update or retirement by `oml_write` with `replaces`; starts a sync when `HEAD` moved and no git hook handled it. |
+| `oml review commit <workarea> [--file <f>]` | Writes the held set to a file; run again after editing each line to `approve`, `reject <reason>` or `leave`, it submits the verdicts and, only when nothing is held, commits the workarea and marks it in progress again. |
+
 ## `oml review` — the review ceremony
 
 *Available since v0.1.0; a verdict without `<serve_id>` since v0.4.0 · [releases](../product/releases.md)*

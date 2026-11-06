@@ -3778,8 +3778,11 @@ where
             None,
         )
         .await?;
-        self.observer
-            .mode_set(if children_agent { "code_parent" } else { "standard" });
+        self.observer.mode_set(if children_agent {
+            "code_parent"
+        } else {
+            "standard"
+        });
         Ok(WorkareaRecord {
             children_agent,
             ..node

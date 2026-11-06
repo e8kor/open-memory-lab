@@ -160,6 +160,20 @@ pub fn session_start(
         compacted: session.source.as_deref() == Some("compact"),
         redact: &redact,
     });
+    // A clone mapped for agent capture adds its repository workarea's
+    // recall and fills the session cache (ADR-0064 d12); a failure costs
+    // that section alone.
+    let context = match crate::capture::agent::session_start_section(
+        var,
+        client.server(),
+        &key,
+        session.cwd.as_deref(),
+        session.session_id.as_deref(),
+        &redact,
+    ) {
+        Some(section) => format!("{context}\n\n{section}"),
+        None => context,
+    };
     // Every stored field was redacted before it was cut; this pass catches
     // anything else the context carries.
     let document = json!({
