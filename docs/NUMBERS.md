@@ -86,7 +86,9 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0065 | `main` |  | the scan is a versioned compiled in rule set that vetoes leaked keys a | used |
 | adr | 0066 | `docs/restructure` |  | open work is tracked as github issues and the roadmap FR numbers and design draft status lines are retired | reserved |
 | adr | 0067 | `feat/connector-directory` |  | a directory reviewer reaches a demo workarea through a connect code that lives longer, and the tools and instructions describe instead of command | reserved |
+| adr | 0067 | `main` |  | a directory reviewer reaches a demo workarea through a connect code th | used |
 | adr | 0068 | `feat/open-signup` |  | anyone signs in and gets a private root under quotas when the operator opens sign-up | reserved |
+| adr | 0069 | `feat/design-system` |  | OML's design system is the source of truth for every surface | reserved |
 | fr | 1 | `main` |  | Erasure destroys body and attachment bytes by destroying their keys; a | used |
 | fr | 2 | `main` |  | Review throughput is unmeasured. The design's gate is only as useful a | used |
 | fr | 3 | `main` |  | The lake mirror claims exactly-once application of every event across  | used |
@@ -192,6 +194,7 @@ is a collision: the branch that reserved later renumbers.
 | fr | 111 | `main` |  | A write in a non-prose format parses its source and stores a search te | used |
 | fr | 112 | `feat/claim-formats` | #90 | Whether diagram and fragment claims help an agent is unmeasured: the r | open |
 | fr | 112 | `main` |  | Whether diagram and fragment claims help an agent is unmeasured: the r | used |
+| fr | 113 | `feat/claim-formats` | #90 | The per-format thresholds of `quality.many_claims` (12 relations in a | open |
 | fr | 113 | `main` |  | The per-format thresholds of `quality.many_claims` (12 relations in a  | used |
 | fr | 114 | `main` |  | The proposed ADR-0057 d5 marks a memory `stale` only once `oml sync` o | used |
 | fr | 115 | `main` |  | The origin filters `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4 | used |

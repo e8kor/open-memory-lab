@@ -163,8 +163,8 @@ def brand_rs(t: dict) -> str:
 
 
 def mask_url(name: str) -> str:
-    svg = glyph_svg(name).replace("currentColor", "#000")
-    return 'url("data:image/svg+xml,' + urllib.parse.quote(svg, safe=" =:/\".,-") + '")'
+    svg = glyph_svg(name).replace("currentColor", "#000").replace('"', "'")
+    return 'url("data:image/svg+xml,' + urllib.parse.quote(svg, safe=" =:/'.,-") + '")'
 
 
 def docs_css(t: dict) -> str:
@@ -217,8 +217,9 @@ letter-spacing:0;color:var(--ink)}}
 .md-typeset a:hover{{color:var(--ice);text-decoration-thickness:var(--stroke-strong)}}
 .md-header,.md-tabs{{background:var(--ground);color:var(--ink);border-bottom:1px solid var(--rule)}}
 .md-tabs__link--active,.md-tabs__item--active .md-tabs__link{{color:var(--ink);box-shadow:inset 0 calc(-1 * var(--stroke-strong)) 0 var(--star)}}
-.md-header__topic:first-child{{font:var(--t-display-weight) var(--t-heading-size)/var(--t-heading-line) var(--font-display)}}
+.md-header__topic:first-child{{font-family:var(--font-display);font-weight:var(--t-display-weight);font-size:var(--t-heading-size)}}
 .md-header__button.md-logo img,.md-header__button.md-logo svg{{height:var(--space-6)}}
+[data-md-color-scheme="default"] .md-logo img{{content:url("../assets/brand/oml-mark-light.svg")}}
 .md-search__form{{background:var(--panel);border:1px solid var(--control-border);border-radius:var(--radius-md)}}
 .md-nav__link--active,.md-nav__item .md-nav__link--active{{color:var(--ink);font-weight:var(--t-button-weight)}}
 .md-nav__link:hover,.md-nav__link:focus{{color:var(--ice)}}

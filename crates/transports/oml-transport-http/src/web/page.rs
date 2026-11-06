@@ -29,6 +29,9 @@ use crate::oauth::page::{base64_32, client_string, escape, sha256};
 /// followed by the hand-written `web.css`, which uses only `var(--…)`.
 pub const STYLESHEET: &str = concat!(include_str!("tokens.css"), include_str!("web.css"));
 
+// The stylesheet is long enough that hashing it runs past the compiler's
+// const-evaluation lint; the work is bounded by the file's size.
+#[allow(long_running_const_eval)]
 const STYLE_DIGEST: [u8; 32] = sha256(STYLESHEET.as_bytes());
 const STYLE_DIGEST_B64: [u8; 44] = base64_32(&STYLE_DIGEST);
 

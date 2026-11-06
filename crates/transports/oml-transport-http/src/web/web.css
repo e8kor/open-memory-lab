@@ -1,6 +1,7 @@
 /* The web pages' stylesheet (ADR-0069 d3): only var(--…) from tokens.css, which
    scripts/gen_design_tokens.py writes from design/tokens.json. Literals are 0, 1px hairlines,
-   percentages, ratios and the 600px header breakpoint. Classes follow the design system's
+   percentages, ratios, the 600px header breakpoint, the 480px container breakpoint (bp-card) and
+   a few control widths kept from the earlier sheet. Classes follow the design system's
    components: BrandHeader (header.top), SectionHeader (.oml-section-head), StateChip
    (.oml-chip), Button (button, .primary), the card, the table and the form controls. */
 *{box-sizing:border-box}
@@ -145,3 +146,76 @@ footer{border-top:1px solid var(--rule-soft);padding:var(--space-6) 0;font:var(-
 @media print{header.top{position:static}}
 .label .oml-chip{text-transform:none;letter-spacing:0}
 button,.oml-chip{white-space:nowrap}
+
+/* Memories as compact rows (the design system's .oml-mrow, Round 3): one <details> per memory,
+   about 80px at 1280; it opens into the provenance timeline and the Details facts. No script. */
+.oml-mlist{list-style:none;margin:0 0 var(--space-4);padding:0;display:flex;flex-direction:column;gap:var(--space-2);max-width:var(--card-max)}
+.oml-mrow{background:var(--ground-alt);border:1px solid var(--rule);border-radius:var(--radius-md);width:100%;container-type:inline-size}
+.oml-mrow[open]{border-color:var(--control-border)}
+.oml-mrow>summary{list-style:none;cursor:pointer;display:flex;flex-direction:column;gap:var(--space-2);padding:var(--space-3) var(--space-4);min-height:var(--target-min)}
+.oml-mrow>summary::-webkit-details-marker{display:none}
+.oml-mrow>summary:hover{background:var(--panel)}
+.oml-mrow .top{display:flex;align-items:flex-start;gap:var(--space-3)}
+.oml-mrow .top .oml-chip{margin-top:var(--space-0\.5)}
+.oml-mrow .tx{flex:1;min-width:0;margin:0;font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body);color:var(--ink);overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;line-clamp:1;overflow-wrap:anywhere}
+.oml-mrow.quiet .tx{color:var(--ink-dim)}
+.oml-mrow[open] .tx{-webkit-line-clamp:unset;line-clamp:unset;display:block;max-width:var(--measure)}
+.oml-mrow .sub{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1) var(--space-4);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-mrow .vb{display:inline-flex;align-items:center;gap:var(--space-1);font:var(--t-state-weight) var(--t-state-size)/var(--t-state-line) var(--font-mono);color:var(--ink-dim)}
+.oml-mrow .vb ol{display:inline-flex;gap:var(--space-0\.5);list-style:none;margin:0;padding:0}
+.oml-mrow .vb ol i{display:block;width:var(--space-4);height:var(--bar-h);border-radius:var(--radius-sm)}
+.oml-mrow .vb .promoted{background:var(--promoted)}
+.oml-mrow .vb .superseded{background:var(--superseded)}
+.oml-mrow .vb .held{box-shadow:inset 0 0 0 var(--stroke-strong) var(--held)}
+.oml-mrow .vb .unreviewed{box-shadow:inset 0 0 0 var(--stroke-strong) var(--unreviewed)}
+.oml-mrow .vb .rejected{background:var(--rejected)}
+.oml-mrow .vb .retired{box-shadow:inset 0 0 0 var(--stroke-strong) var(--retired)}
+.oml-mrow .vb li[aria-current] i{outline:var(--stroke) solid var(--ink);outline-offset:1px}
+.oml-mrow .more{margin-left:auto;display:inline-flex;align-items:center;gap:var(--space-1);color:var(--ice)}
+.oml-mrow .more::after{content:"";width:var(--space-2);height:var(--space-2);border-right:var(--stroke-strong) solid currentColor;border-bottom:var(--stroke-strong) solid currentColor;transform:translateY(-25%) rotate(45deg)}
+.oml-mrow[open] .more::after{transform:translateY(25%) rotate(225deg)}
+.oml-mrow>.body{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-1) var(--space-4) var(--space-4)}
+@container (max-width:479px){.oml-mrow>summary{padding:var(--space-3)}.oml-mrow>.body{padding:var(--space-1) var(--space-3) var(--space-3)}.oml-mrow .tx{-webkit-line-clamp:2;line-clamp:2}.oml-mrow .oml-spark svg{display:none}.oml-mrow .more .w{display:none}}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ActorTag, ProvenanceTimeline, Details facts, Sparkline */
+.oml-actor{display:inline-flex;align-items:center;gap:var(--space-1);color:var(--ink-dim);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);white-space:nowrap}
+.oml-actor .kind{color:var(--ink-faint)}
+.oml-actor .who{font-family:var(--font-mono);color:var(--ink);font-variant-ligatures:none}
+.oml-timeline-wrap{container-type:inline-size}
+.oml-timeline{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-timeline li{position:relative;display:flex;flex-direction:column;gap:0;padding-top:calc(var(--glyph-lg) + var(--space-2));min-width:0;padding-right:var(--space-2)}
+.oml-timeline li>.glyph{position:absolute;top:0;left:0;width:var(--glyph-lg);height:var(--glyph-lg)}
+.oml-timeline li::before{content:"";position:absolute;top:calc(var(--glyph-lg) / 2);left:var(--glyph-lg);right:0;border-top:var(--stroke-strong) solid var(--edge)}
+.oml-timeline li:last-child::before{display:none}
+.oml-timeline li.wait::before,.oml-timeline li:has(+li.wait)::before{border-top-style:dashed;border-top-color:var(--control-border)}
+.oml-timeline .step{color:var(--ink);font-weight:var(--t-button-weight)}
+.oml-timeline .wait .step{color:var(--ink-dim);font-weight:var(--t-caption-weight)}
+.oml-timeline .who{font-family:var(--font-mono);font-variant-ligatures:none;overflow-wrap:anywhere}
+.oml-timeline .ne{color:var(--ink);font-family:var(--font-mono)}
+@container (max-width:479px){.oml-timeline{grid-template-columns:minmax(0,1fr);gap:var(--space-2)}.oml-timeline li{padding:0 0 0 calc(var(--glyph-lg) + var(--space-2))}.oml-timeline li::before{top:calc(var(--glyph-lg) + var(--space-0\.5));bottom:calc(-1 * var(--space-2));left:calc(var(--glyph-lg) / 2 - 1px);right:auto;border-top:0;border-left:var(--stroke-strong) solid var(--edge)}.oml-timeline li.wait::before,.oml-timeline li:has(+li.wait)::before{border-left-style:dashed;border-left-color:var(--control-border)}}
+.oml-facts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:var(--space-1) var(--space-3);margin:var(--space-2) 0 0;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body)}
+.oml-facts dt{color:var(--ink-faint)}
+.oml-facts dd{margin:0;color:var(--ink-dim);overflow-wrap:anywhere}
+.oml-facts .id{font-family:var(--font-mono);font-size:var(--t-meta-size);font-variant-ligatures:none}
+details.oml-more>summary{cursor:pointer;min-height:var(--target-min);display:inline-flex;align-items:center;font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ice)}
+.oml-spark{display:inline-flex;align-items:center;gap:var(--space-2);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim);font-variant-numeric:tabular-nums}
+.oml-spark svg{width:calc(var(--spark-w) * .6);height:calc(var(--spark-h) * .67);flex:none;overflow:visible}
+.oml-spark .area{fill:var(--chart-1);opacity:.14}.oml-spark .base{stroke:var(--rule);stroke-width:1px}
+.oml-spark .ln{fill:none;stroke:var(--chart-1);stroke-width:var(--stroke-strong);stroke-linejoin:round;stroke-linecap:round}
+.oml-spark .dot{fill:var(--chart-1);stroke:var(--ground-alt);stroke-width:var(--stroke-strong)}
+.oml-spark b{color:var(--ink);font-weight:var(--t-button-weight)}
+/* a glyph's colour without a style attribute: c-<state> on the glyph or its parent */
+.c-held{color:var(--held)}.c-promoted{color:var(--promoted)}.c-superseded{color:var(--superseded)}.c-retired{color:var(--retired)}
+.c-rejected{color:var(--rejected)}.c-unreviewed{color:var(--unreviewed)}.c-dim{color:var(--ink-dim)}.c-faint{color:var(--ink-faint)}
+/* One column and a rail (Round 3): from 1100px (bp-rail) the rail sits beside the column; below
+   it the rail comes first, as a strip, so the summary is read before the list. */
+.oml-main{display:grid;gap:var(--space-6);grid-template-columns:minmax(0,1fr)}
+.oml-main>.col{min-width:0}
+.oml-rail-side{order:-1;min-width:0}
+@media (min-width:1100px){.oml-main{grid-template-columns:minmax(0,var(--card-max)) var(--rail-w);justify-content:space-between}.oml-rail-side{order:0;position:sticky;top:calc(var(--header-h) + var(--space-6));align-self:start}}
+.oml-panel{background:var(--ground-alt);border:1px solid var(--rule);border-radius:var(--radius-md);padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-3)}
+.oml-lifebar{display:flex;gap:var(--space-0\.5);height:var(--bar-h)}.oml-lifebar i{display:block;border-radius:var(--radius-sm);min-width:var(--space-1)}
+.oml-lifebar .promoted{background:var(--promoted)}.oml-lifebar .held{background:var(--held)}.oml-lifebar .superseded{background:var(--superseded)}.oml-lifebar .rejected{background:var(--rejected)}.oml-lifebar .retired{background:var(--retired)}.oml-lifebar .unreviewed{background:var(--unreviewed)}
+.oml-legend{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-3);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.oml-legend li{display:inline-flex;align-items:center;gap:var(--space-1)}.oml-legend b{color:var(--ink);font-variant-numeric:tabular-nums}
