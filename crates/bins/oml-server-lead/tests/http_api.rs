@@ -2751,6 +2751,7 @@ async fn post_v2_workareas_crew_points_a_workarea_at_a_crew_record_by_name() {
             "crew": record,
             "user_root": false,
             "mode": "standard",
+            "children": "none",
         })
     );
     let (status, _, view) = send(
@@ -5447,6 +5448,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "crew": null,
                     "user_root": false,
                     "mode": "standard",
+                    "children": "none",
                 },
                 {
                     "id": metals["id"],
@@ -5457,6 +5459,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "crew": crew,
                     "user_root": false,
                     "mode": "standard",
+                    "children": "none",
                 },
                 {
                     "id": q1["id"],
@@ -5467,6 +5470,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "crew": null,
                     "user_root": false,
                     "mode": "standard",
+                    "children": "none",
                 },
                 {
                     "id": q2["id"],
@@ -5477,6 +5481,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "crew": null,
                     "user_root": false,
                     "mode": "standard",
+                    "children": "none",
                 },
                 {
                     "id": review["id"],
@@ -5487,6 +5492,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "crew": null,
                     "user_root": false,
                     "mode": "standard",
+                    "children": "none",
                 },
             ],
             "next_cursor": null,
