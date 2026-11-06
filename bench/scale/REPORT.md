@@ -162,3 +162,28 @@ About 104 kind 2 postings per version; at 100,000 memories the kind 2 heap is 1,
 served index 985 MiB. The 100,000 point reuses the 10,000 point's encodings (`--reuse`: each
 version takes one of 9,189 encoded texts by its text's digest), so it measures the read, not the
 ranking. The sparse leg misses ADR-0052 d9's 50 ms bar at 100,000 readable rows: FR-118.
+
+## The similar check (ADR-0050 d17), 2026-11-05
+
+`similar.py` at 10k, 100k and 1M memories per tenant, PostgreSQL 18 on the build host (8 vCPU,
+15 GB), while another lane's benchmark and its sparse encoder ran on the same host (load average
+8 to 12), so the times are a busy host's. Each write's keys through `oml_pg::SIMILAR_CANDIDATES` as
+the serving role under row security, then the read of its candidates' rows by id: the two
+statements the lead runs per write. Half the 330 writes are a loaded memory with one word added,
+half new texts. ms, warm:
+
+| scale | lookup p50 / p95 | with the rows p50 / p95 | universe scope, with the rows p50 / p95 | candidates p50 (max 32) | keys (MiB, with indexes) | 0027's fill |
+|---|---:|---:|---:|---:|---:|---:|
+| 10k | 0.41 / 0.62 | 0.82 / 1.25 | 0.89 / 1.49 | 1 | 21 | 3.6 s |
+| 100k | 0.53 / 1.04 | 0.90 / 1.82 | 1.19 / 2.28 | 2 | 213 | 38 s |
+| 1M | 1.69 / 10.7 | 2.95 / 15.7 | 7.34 / 24.8 | 8 | 2,124 | 1,147 s |
+
+The check this replaces, one any-word recall per write (case g of the baseline), cost 128 ms p50
+and 180 ms p95 at 1M; this one costs 2.95 and 15.7. The plan is an index-only scan of
+`similar_keys_key` under the policy at every scale. The generator templates its memories from
+200 seeds, so its texts share far more words than real ones: at 1M a universe-scope write meets the
+32-candidate cap every time, which real text should rarely do. The keys take about twice the
+memories heap (2,124 MiB against 985 at 1M). The trigger adds 0.4 ms p50 to a held insert at 10k,
+2.1 at 100k and 6.2 at 1M (10.8 to 17.0), and nothing measurable to a promotion. 0027's fill holds
+the trigger's lock on `memories` for its whole run, 19 minutes at 1M on this host, so writes wait
+that long during the upgrade, as 0021's fill does (FR-103).

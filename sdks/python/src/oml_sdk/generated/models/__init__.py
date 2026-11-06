@@ -115,7 +115,11 @@ from .key_held_by_type_2_type_1 import KeyHeldByType2Type1
 from .key_held_by_type_3_type_1 import KeyHeldByType3Type1
 from .key_issue_request import KeyIssueRequest
 from .key_issue_request_held_by import KeyIssueRequestHeldBy
+from .key_issue_request_profile import KeyIssueRequestProfile
 from .key_issued import KeyIssued
+from .key_profile_type_1 import KeyProfileType1
+from .key_profile_type_2_type_1 import KeyProfileType2Type1
+from .key_profile_type_3_type_1 import KeyProfileType3Type1
 from .list_edges_kind import ListEdgesKind
 from .list_memories_kind import ListMemoriesKind
 from .list_memories_state import ListMemoriesState
@@ -163,6 +167,8 @@ from .recall_search_access import RecallSearchAccess
 from .recall_search_match import RecallSearchMatch
 from .recall_search_pipeline import RecallSearchPipeline
 from .recall_search_window_type_0 import RecallSearchWindowType0
+from .recall_timings import RecallTimings
+from .recall_timings_stages_ms import RecallTimingsStagesMs
 from .remove_web_email_body import RemoveWebEmailBody
 from .remove_web_email_response_200 import RemoveWebEmailResponse200
 from .replay_report import ReplayReport
@@ -183,6 +189,10 @@ from .served_guardrail_verdicts_item_held_by import ServedGuardrailVerdictsItemH
 from .set_search_default_body import SetSearchDefaultBody
 from .set_usage_settings_body import SetUsageSettingsBody
 from .severity import Severity
+from .similar_item import SimilarItem
+from .similar_item_kind import SimilarItemKind
+from .similar_item_relation import SimilarItemRelation
+from .similar_item_state import SimilarItemState
 from .source_check_request import SourceCheckRequest
 from .source_check_request_result import SourceCheckRequestResult
 from .source_check_result import SourceCheckResult
@@ -195,9 +205,11 @@ from .submit_accepted_replaces_type_0 import SubmitAcceptedReplacesType0
 from .submit_accepted_scan import SubmitAcceptedScan
 from .submit_request import SubmitRequest
 from .submit_request_kind import SubmitRequestKind
+from .submit_request_on_similar import SubmitRequestOnSimilar
 from .submit_request_verb import SubmitRequestVerb
 from .supersede_request import SupersedeRequest
 from .supersede_request_kind import SupersedeRequestKind
+from .supersede_request_on_similar import SupersedeRequestOnSimilar
 from .token_request import TokenRequest
 from .token_request_grant_type import TokenRequestGrantType
 from .token_request_scope import TokenRequestScope
@@ -230,11 +242,17 @@ from .whoami_grant import WhoamiGrant
 from .whoami_grant_covers import WhoamiGrantCovers
 from .whoami_grant_role import WhoamiGrantRole
 from .whoami_held_by import WhoamiHeldBy
+from .whoami_profile_type_1 import WhoamiProfileType1
+from .whoami_profile_type_2_type_1 import WhoamiProfileType2Type1
+from .whoami_profile_type_3_type_1 import WhoamiProfileType3Type1
 from .whoami_ref import WhoamiRef
 from .whoami_workarea import WhoamiWorkarea
 from .workarea import Workarea
 from .workarea_create import WorkareaCreate
 from .workarea_crew_update import WorkareaCrewUpdate
+from .workarea_mode import WorkareaMode
+from .workarea_mode_set import WorkareaModeSet
+from .workarea_mode_set_mode import WorkareaModeSetMode
 from .workarea_page import WorkareaPage
 from .workarea_status import WorkareaStatus
 from .workarea_view import WorkareaView
@@ -341,7 +359,11 @@ __all__ = (
     "KeyHeldByType3Type1",
     "KeyIssueRequest",
     "KeyIssueRequestHeldBy",
+    "KeyIssueRequestProfile",
     "KeyIssued",
+    "KeyProfileType1",
+    "KeyProfileType2Type1",
+    "KeyProfileType3Type1",
     "ListEdgesKind",
     "ListMemoriesKind",
     "ListMemoriesState",
@@ -385,6 +407,8 @@ __all__ = (
     "RecallSearchMatch",
     "RecallSearchPipeline",
     "RecallSearchWindowType0",
+    "RecallTimings",
+    "RecallTimingsStagesMs",
     "RemoveWebEmailBody",
     "RemoveWebEmailResponse200",
     "ReplayReport",
@@ -405,6 +429,10 @@ __all__ = (
     "SetSearchDefaultBody",
     "SetUsageSettingsBody",
     "Severity",
+    "SimilarItem",
+    "SimilarItemKind",
+    "SimilarItemRelation",
+    "SimilarItemState",
     "SourceCheckRequest",
     "SourceCheckRequestResult",
     "SourceCheckResult",
@@ -417,9 +445,11 @@ __all__ = (
     "SubmitAcceptedScan",
     "SubmitRequest",
     "SubmitRequestKind",
+    "SubmitRequestOnSimilar",
     "SubmitRequestVerb",
     "SupersedeRequest",
     "SupersedeRequestKind",
+    "SupersedeRequestOnSimilar",
     "TokenRequest",
     "TokenRequestGrantType",
     "TokenRequestScope",
@@ -452,11 +482,17 @@ __all__ = (
     "WhoamiGrantCovers",
     "WhoamiGrantRole",
     "WhoamiHeldBy",
+    "WhoamiProfileType1",
+    "WhoamiProfileType2Type1",
+    "WhoamiProfileType3Type1",
     "WhoamiRef",
     "WhoamiWorkarea",
     "Workarea",
     "WorkareaCreate",
     "WorkareaCrewUpdate",
+    "WorkareaMode",
+    "WorkareaModeSet",
+    "WorkareaModeSetMode",
     "WorkareaPage",
     "WorkareaStatus",
     "WorkareaView",

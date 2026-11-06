@@ -16,6 +16,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.similar_item import SimilarItem
     from ..models.submit_accepted_replaces_type_0 import SubmitAcceptedReplacesType0
     from ..models.submit_accepted_scan import SubmitAcceptedScan
 
@@ -41,6 +42,8 @@ class SubmitAccepted:
         plaintext_digest (str | Unset): SHA-256 of plaintext unless a field says ciphertext.
         scan (SubmitAcceptedScan | Unset):
         journal_seq (int | Unset):
+        similar (list[SimilarItem] | Unset): The rows the similar check named, as first answered: a replay serves the
+            list of the write it replays (ADR-0050 d1). Since v0.5.9.
     """
 
     artifact_id: str
@@ -53,6 +56,7 @@ class SubmitAccepted:
     plaintext_digest: str | Unset = UNSET
     scan: SubmitAcceptedScan | Unset = UNSET
     journal_seq: int | Unset = UNSET
+    similar: list[SimilarItem] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -84,6 +88,13 @@ class SubmitAccepted:
 
         journal_seq = self.journal_seq
 
+        similar: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.similar, Unset):
+            similar = []
+            for similar_item_data in self.similar:
+                similar_item = similar_item_data.to_dict()
+                similar.append(similar_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -103,11 +114,14 @@ class SubmitAccepted:
             field_dict["scan"] = scan
         if journal_seq is not UNSET:
             field_dict["journal_seq"] = journal_seq
+        if similar is not UNSET:
+            field_dict["similar"] = similar
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.similar_item import SimilarItem
         from ..models.submit_accepted_replaces_type_0 import SubmitAcceptedReplacesType0
         from ..models.submit_accepted_scan import SubmitAcceptedScan
 
@@ -152,6 +166,15 @@ class SubmitAccepted:
 
         journal_seq = d.pop("journal_seq", UNSET)
 
+        _similar = d.pop("similar", UNSET)
+        similar: list[SimilarItem] | Unset = UNSET
+        if _similar is not UNSET:
+            similar = []
+            for similar_item_data in _similar:
+                similar_item = SimilarItem.from_dict(similar_item_data)
+
+                similar.append(similar_item)
+
         submit_accepted = cls(
             artifact_id=artifact_id,
             claim_key=claim_key,
@@ -163,6 +186,7 @@ class SubmitAccepted:
             plaintext_digest=plaintext_digest,
             scan=scan,
             journal_seq=journal_seq,
+            similar=similar,
         )
 
         submit_accepted.additional_properties = d

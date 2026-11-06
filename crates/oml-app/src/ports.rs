@@ -39,6 +39,10 @@ use crate::search::{
 /// surfaces to a concurrent writer (ADR-0002: one chain head, one assigner).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
+    /// An in-progress commit found a held version on its subtree inside
+    /// the committing transaction; the commit wrote nothing (ADR-0030 d6).
+    #[error("a version in the committed subtree is still held")]
+    HeldRemaining,
     #[error("chain head moved: expected seq {expected_seq}, commit carries seq {found_seq}")]
     SeqConflict { expected_seq: u64, found_seq: u64 },
     #[error("prev_hash does not match the stored head at seq {seq}")]
@@ -187,6 +191,17 @@ pub enum MetadataFold {
     WorkareaCrewUpdated {
         workarea_id: Uuid,
         crew_id: Uuid,
+    },
+    /// `workarea.mode_set`: the node's `mode` is now `in_progress` or
+    /// `standard` (ADR-0030 d1); the store refuses a node it does not hold.
+    ///
+    /// `held_free`, on a commit, names the subtree's nodes: the store refuses
+    /// the commit with [`StoreError::HeldRemaining`] when any version on
+    /// them is held, tested in the committing transaction (d6).
+    WorkareaModeSet {
+        workarea_id: Uuid,
+        in_progress: bool,
+        held_free: Vec<Uuid>,
     },
     /// `system.names_assigned`: each listed row of the commit's tenant, and
     /// the tenant itself, takes the name the event assigns, every workarea's
@@ -591,6 +606,21 @@ pub trait Retriever: Send + Sync {
         limit: usize,
     ) -> impl Future<Output = Result<Vec<String>, StoreError>> + Send;
 
+    /// The near-copy check's candidates (ADR-0050 d1, d17): the versions
+    /// holding any of `keys` among `scope`'s promoted served tips and the
+    /// held rows of its own keys, by how many keys each holds, then by id
+    /// ascending, at most `limit`. Of the kinds `memory`, `derived_fact` and
+    /// `steering` alone, never a retirement version. It ranks and never
+    /// decides: the core reads each candidate and admits it as recall does
+    /// before it names one.
+    fn similar_candidates(
+        &self,
+        tenant_id: Uuid,
+        scope: &CandidateScope,
+        keys: &[i64],
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send;
+
     /// The tenant's postings health for doctor (ADR-0052 d12), or `None`
     /// from an adapter that keeps no postings.
     fn postings_health(
@@ -840,6 +870,15 @@ pub trait JournalStore: Retriever + Send + Sync {
         workarea_id: Uuid,
         claim_key: &str,
     ) -> impl Future<Output = Result<ClaimKeyState, StoreError>> + Send;
+
+    /// How many versions on `nodes` are in state `held`, dead-lettered ones
+    /// included: the commit's precondition and doctor's count (ADR-0030 d6,
+    /// d14).
+    fn held_count(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
 
     /// How many promoted served tips on `workarea_id` itself read `stale`:
     /// their latest source check found the source `changed` or `removed`
@@ -1680,11 +1719,42 @@ pub trait RequestObserver: Send + Sync {
         let _ = (pipeline, result, seconds);
     }
 
+    /// A write's similar check named rows of `relation` at best (`none`,
+    /// `same_text` or `near_copy`) under `on_similar` (`hold` or
+    /// `refuse`), in `seconds` (ADR-0050 d1; ADR-0054 d1). Telling no one
+    /// is the default.
+    fn similar_checked(&self, relation: &'static str, on_similar: &'static str, seconds: f64) {
+        let _ = (relation, on_similar, seconds);
+    }
+
+    /// A recall through `pipeline` spent `seconds` in `stage`, one of
+    /// [`crate::search::Stage`]'s names (ADR-0049 d14). Telling no one is
+    /// the default.
+    fn recall_stage(&self, pipeline: &'static str, stage: &'static str, seconds: f64) {
+        let _ = (pipeline, stage, seconds);
+    }
+
     /// A verdict `approve` or `reject` committed `waited_seconds` after its
     /// memory was submitted (ADR-0054 d1, d12). Telling no one is the
     /// default.
     fn verdict(&self, verdict: &'static str, waited_seconds: f64) {
         let _ = (verdict, waited_seconds);
+    }
+
+    /// A recall served `n` hits labelled `unreviewed` (ADR-0030 d5).
+    fn unreviewed_hits(&self, n: u64) {
+        let _ = n;
+    }
+
+    /// A person's key set a workarea's mode (ADR-0030 d5).
+    fn mode_set(&self, mode: &'static str) {
+        let _ = mode;
+    }
+
+    /// A curator key committed an act: `reject`, `retire`, `flag` or
+    /// `write` (ADR-0030 d5, d9).
+    fn curation(&self, act: &'static str) {
+        let _ = act;
     }
 }
 

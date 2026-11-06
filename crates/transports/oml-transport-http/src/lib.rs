@@ -50,6 +50,7 @@ use oml_app::domain::access::Covers;
 use oml_app::domain::anchor::{self as anchor_grammar, Anchor, CheckResult};
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
 use oml_app::domain::guardrail::{GuardrailScope, Severity};
+use oml_app::domain::in_progress::{KeyProfile, WorkareaMode};
 use oml_app::domain::jcs::MAX_CHAIN_INTEGER;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::oauth::ConnectionState;
@@ -64,10 +65,10 @@ use oml_app::types::{
     AnchorFilter, AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal,
     ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
     EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
-    IssuedKey, KeyDetail, ListRequest, MemoryRecord, NamedServe, ProposeBriefEdge,
-    ProposeClaimEdge, RecallRequest, ServedMemory, SourceCheck, SourceCheckRequest, SubmitRequest,
-    SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami, WorkareaInfo,
-    WorkareaRecord,
+    IssuedKey, KeyDetail, ListRequest, MemoryRecord, NamedServe, OnSimilar, ProposeBriefEdge,
+    ProposeClaimEdge, RecallRequest, ServedMemory, SimilarItem, SourceCheck, SourceCheckRequest,
+    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami,
+    WorkareaInfo, WorkareaRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage,
@@ -114,6 +115,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/workareas/{workarea}"),
     ("GET", "/v2/workareas/{workarea}/tree"),
     ("POST", "/v2/workareas/{workarea}/crew"),
+    ("POST", "/v2/workareas/{workarea}/mode"),
     ("POST", "/v2/workareas/{workarea}/transitions"),
     (
         "POST",
@@ -325,6 +327,7 @@ where
             ("GET", "/v2/workareas/{workarea}") => get(Self::get_workarea),
             ("GET", "/v2/workareas/{workarea}/tree") => get(Self::workarea_tree),
             ("POST", "/v2/workareas/{workarea}/crew") => post(Self::set_workarea_crew),
+            ("POST", "/v2/workareas/{workarea}/mode") => post(Self::set_workarea_mode),
             ("POST", "/v2/workareas/{workarea}/transitions") => post(Self::propose_transition),
             ("POST", "/v2/workareas/{workarea}/transitions/{transition_id}/ratify") => {
                 post(Self::ratify_transition)
@@ -555,6 +558,7 @@ where
         let workarea = optional_reference("/workarea", req.workarea.as_deref())?;
 
         let app_req = SubmitRequest {
+            on_similar: parse_on_similar(req.on_similar.as_deref())?,
             idempotency_key: idem_key,
             claim_key: req.claim_key,
             verb,
@@ -588,6 +592,7 @@ where
                 "workarea_id": r.workarea_id,
                 "retirement": false,
                 "replaces": Value::Null,
+                "similar": similar_json(&r.similar),
             }),
         );
         if outcome.replayed {
@@ -780,12 +785,15 @@ where
             .recall(
                 acting.bearer(),
                 &RecallRequest {
+                    timings: req.timings.unwrap_or(false),
                     query: req.query.clone(),
                     k,
                     workarea,
                     kinds,
                     include_text,
-                    include_unreviewed: req.include_unreviewed.unwrap_or(false),
+                    // Absent, the scope decides: true inside an in-progress
+                    // subtree, false elsewhere (ADR-0030 d4).
+                    include_unreviewed: req.include_unreviewed,
                     max_tokens: req.max_tokens,
                     search: req.search.clone(),
                     match_mode,
@@ -865,6 +873,13 @@ where
         // (retrieval.md token budgets; ADR-0025 d7).
         if let (Some(budget), Some(obj)) = (&result.budget, response.as_object_mut()) {
             obj.insert("budget".to_owned(), budget_json(budget));
+        }
+        // The timings block is present if and only if timings was sent
+        // true, which only a deployment serving them admits (ADR-0049 d14).
+        if req.timings == Some(true)
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("timings".to_owned(), timings_json(&result.timings));
         }
         Ok(json_response(StatusCode::OK, &response))
     }
@@ -1053,6 +1068,7 @@ where
             }
         }
         let app_req = SupersedeRequest {
+            on_similar: parse_on_similar(req.on_similar.as_deref())?,
             idempotency_key: idem_key,
             target_id,
             body: text,
@@ -1092,6 +1108,7 @@ where
                 },
                 "plaintext_digest": r.body_digest,
                 "journal_seq": r.journal_seq,
+                "similar": similar_json(&r.similar),
             }),
         );
         if outcome.replayed {
@@ -1462,6 +1479,7 @@ where
             connect_code: req.connect_code,
             user,
             guardrail_scope: parse_guardrail_scope(req.guardrail_scope.as_deref())?,
+            profile: parse_profile(req.profile.as_deref())?,
         };
         let issued = retry_chain(|| st.app.issue_key(&token, &issue))
             .await
@@ -2376,6 +2394,56 @@ where
         Ok(json_response(StatusCode::OK, &crew_json(&updated)))
     }
 
+    async fn set_workarea_mode(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(workarea_id): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::set_workarea_mode_inner(&st, &workarea_id, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/workareas/{workarea}/mode`: a person's dreamer key sets the
+    /// workarea's mode, `in_progress` or `standard`; `standard` on an
+    /// in-progress root is its commit, refused while anything in its subtree
+    /// is held; journalled `workarea.mode_set` (ADR-0030 d1, d6, d13). The
+    /// answer is the node as the key's read serves it.
+    async fn set_workarea_mode_inner(
+        st: &Self,
+        workarea_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let token = bearer(headers)?;
+        let _idem = idempotency_key(headers)?;
+        let workarea = reference("workarea", workarea_id)?;
+        let req: WorkareaModeBody = parse_json(headers, body)?;
+        let mode = WorkareaMode::parse(&req.mode).ok_or_else(|| {
+            ApiError::validation(format!(
+                "mode must be in_progress or standard, not {:?}",
+                req.mode
+            ))
+            .with_details(json!({ "field": "/mode" }))
+        })?;
+        let updated = retry_chain(|| {
+            st.app
+                .set_workarea_mode(token.as_str(), workarea.clone(), mode)
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let info = st
+            .app
+            .workarea_info(token.as_str(), Some(Reference::Id(updated.workarea_id)))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::OK, &workarea_view_json(&info)))
+    }
+
     async fn set_workarea_crew(
         State(st): State<Self>,
         rid: Rid,
@@ -2425,6 +2493,54 @@ where
     }
 }
 
+/// openapi.yaml `RecallTimings`: each stage's milliseconds, in the order
+/// the stages ran, and their sum (ADR-0049 d14).
+fn timings_json(timings: &oml_app::search::Timings) -> Value {
+    let ms = |seconds: f64| (seconds * 1_000_000.0).round() / 1000.0;
+    let stages: serde_json::Map<String, Value> = timings
+        .stages
+        .iter()
+        .map(|(stage, seconds)| (stage.as_str().to_owned(), json!(ms(*seconds))))
+        .collect();
+    let total: f64 = timings.stages.iter().map(|(_, s)| s).sum();
+    json!({ "stages_ms": stages, "total_ms": ms(total) })
+}
+
+/// `on_similar` as sent: `hold`, the default, or `refuse` (ADR-0050 d1).
+fn parse_on_similar(sent: Option<&str>) -> Result<OnSimilar, ApiError> {
+    match sent {
+        None | Some("hold") => Ok(OnSimilar::Hold),
+        Some("refuse") => Ok(OnSimilar::Refuse),
+        Some(other) => Err(ApiError::validation(format!(
+            "on_similar must be hold or refuse, not {other:?}"
+        ))
+        .with_details(json!({ "field": "/on_similar" }))),
+    }
+}
+
+/// openapi.yaml `SimilarItem`: a row the similar check named, as a write's
+/// answer and `submission.similar_exists` serve it (ADR-0050 d1).
+pub(crate) fn similar_json(similar: &[SimilarItem]) -> Value {
+    Value::Array(
+        similar
+            .iter()
+            .map(|s| {
+                json!({
+                    "artifact_id": s.artifact_id,
+                    "claim_key": s.claim_key,
+                    "version": s.version,
+                    "kind": s.kind,
+                    "workarea_id": s.workarea_id,
+                    "state": s.state,
+                    "relation": s.relation,
+                    "jaccard": f64::from(s.jaccard_percent) / 100.0,
+                    "own": s.own,
+                })
+            })
+            .collect(),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Request bodies (field spellings per openapi.yaml)
 // ---------------------------------------------------------------------------
@@ -2460,6 +2576,9 @@ struct SubmitBody {
     /// A guardrail's optional `oml-gr/1` rule (proposed ADR-0037 d8, d10).
     #[serde(default)]
     rule: Option<Value>,
+    /// `hold` (the default) or `refuse` (ADR-0050 d1).
+    #[serde(default)]
+    on_similar: Option<String>,
     /// When the memory holds, each end a period or an instant (proposed
     /// ADR-0059 d2).
     #[serde(default)]
@@ -2505,6 +2624,9 @@ struct RecallBody {
     /// What the key's last recall served that helped, and what did not;
     /// checked before the recall runs (ADR-0054 d6).
     feedback: Option<Value>,
+    /// The answer's per-stage `timings`, where the deployment serves them
+    /// (`search.timings`; ADR-0049 d14).
+    timings: Option<bool>,
     /// Serve versions whose valid time has ended (proposed ADR-0059 d3).
     include_expired: Option<bool>,
     /// The recall's now: a period or an instant (proposed ADR-0059 d5).
@@ -2570,6 +2692,9 @@ struct SupersedeBody {
     /// A guardrail successor's optional rule (proposed ADR-0037 d10).
     #[serde(default)]
     rule: Option<Value>,
+    /// `hold` (the default) or `refuse` (ADR-0050 d1).
+    #[serde(default)]
+    on_similar: Option<String>,
     /// The successor's own valid time; it inherits none (proposed
     /// ADR-0059 d2).
     #[serde(default)]
@@ -2768,6 +2893,9 @@ struct KeyIssueBody {
     /// ADR-0037 d4).
     #[serde(default)]
     guardrail_scope: Option<String>,
+    /// `curator`, or omitted for a key with no profile (ADR-0030 d8).
+    #[serde(default)]
+    profile: Option<String>,
 }
 
 /// The revoke body of `POST /v2/keys/{key}/connections/{connection_id}/revoke`,
@@ -2813,6 +2941,13 @@ struct WorkareaCreateBody {
 #[serde(deny_unknown_fields)]
 struct WorkareaCrewBody {
     crew: String,
+}
+
+/// openapi.yaml `WorkareaModeSet`, closed (ADR-0030 d1).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkareaModeBody {
+    mode: String,
 }
 
 /// openapi.yaml `CrewCreate`, closed (ADR-0026 d8).
@@ -3308,6 +3443,7 @@ fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord]) -> Value {
         "default_workarea_id": key.default_workarea,
         "held_by": detail.held_by.map(HeldBy::as_str),
         "guardrail_scope": detail.guardrail_scope.as_str(),
+        "profile": key.profile.map(KeyProfile::as_str),
         "expiry": Value::Null,
         "revoked_at": key.revoked_at.as_ref().map(|at| at.as_str()),
         "rotated_from": Value::Null,
@@ -3352,6 +3488,8 @@ fn whoami_json(whoami: &Whoami) -> Value {
         // The scope the key's issuance set (proposed ADR-0037 d5, as
         // ADR-0039 d15 reserved).
         "guardrail_scope": key.guardrail_scope.as_str(),
+        // The key's profile, null for none (ADR-0030 d8).
+        "profile": key.profile.map(KeyProfile::as_str),
     })
 }
 
@@ -3543,6 +3681,18 @@ fn parse_severity(severity: Option<&str>) -> Result<Option<Severity>, ApiError> 
 
 /// A key's `guardrail_scope`, `workarea` or `ancestors`; any other word,
 /// `off` included, is refused naming the field (proposed ADR-0037 d4).
+/// A key's `profile`: `curator` or omitted (ADR-0030 d8).
+fn parse_profile(profile: Option<&str>) -> Result<Option<KeyProfile>, ApiError> {
+    profile
+        .map(|word| {
+            KeyProfile::parse(word).ok_or_else(|| {
+                ApiError::validation(format!("profile must be curator, not {word:?}"))
+                    .with_details(json!({ "field": "/profile" }))
+            })
+        })
+        .transpose()
+}
+
 fn parse_guardrail_scope(scope: Option<&str>) -> Result<Option<GuardrailScope>, ApiError> {
     scope
         .map(|word| {
@@ -3668,6 +3818,8 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         "workarea_path": served.workarea_path,
         "kind": m.kind.as_str(),
         "state": m.status.as_str(),
+        // Exactly when the served version is held (ADR-0030 d4).
+        "unreviewed": m.status == MemoryStatus::Held,
         // A universe claim names no author outside its authoring key set
         // (ADR-0044 d9).
         "principal": if served.anonymous {
@@ -3847,6 +3999,8 @@ fn workarea_json(workarea: &WorkareaRecord, path: &str, crew: Option<&CrewRecord
         "status": workarea.status.as_str(),
         "crew": crew.map(crew_json),
         "user_root": workarea.user_root,
+        // A person's key puts a workarea in progress (ADR-0030 d1, d13).
+        "mode": if workarea.in_progress { "in_progress" } else { "standard" },
     })
 }
 
@@ -3878,6 +4032,15 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
         );
         obj.insert("permission_epoch".to_owned(), json!(info.permission_epoch));
         obj.insert("stale_versions".to_owned(), json!(info.stale_versions));
+        // The node's in-progress root, itself for a root, null outside
+        // (ADR-0030 d13).
+        obj.insert(
+            "in_progress_root".to_owned(),
+            info.in_progress_root.as_ref().map_or(
+                Value::Null,
+                |r| json!({ "id": r.workarea_id, "name": r.name.as_str() }),
+            ),
+        );
         obj.insert("policy".to_owned(), info.policy.clone());
         obj.insert(
             "pending_transitions".to_owned(),

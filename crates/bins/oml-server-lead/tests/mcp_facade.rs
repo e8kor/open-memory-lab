@@ -1079,6 +1079,7 @@ async fn oml_read_get_returns_the_authors_held_row_to_its_author_and_not_found_t
             "tip",
             "title",
             "tokens",
+            "unreviewed",
             "valid_from",
             "valid_until",
             "version",
@@ -1188,6 +1189,7 @@ async fn oml_write_with_replaces_enters_admission_held_and_leaves_the_tip_until_
             "retirement": false,
             "replaces": {"artifact_id": v1, "version": 1},
             "workarea": crew.to_string(),
+            "similar": [],
             "idempotent_replay": false,
         })
     );
@@ -1531,6 +1533,7 @@ async fn oml_write_without_replaces_submits_and_journals_learn_when_derives_from
             "workarea": crew.to_string(),
             "retirement": false,
             "replaces": null,
+            "similar": [],
             "idempotent_replay": false,
         })
     );
@@ -1633,6 +1636,7 @@ async fn oml_write_with_replaces_supersedes_that_version() {
             "workarea": crew.to_string(),
             "retirement": false,
             "replaces": {"artifact_id": v1, "version": 1},
+            "similar": [],
             "idempotent_replay": false,
         })
     );
@@ -2428,6 +2432,7 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
             "tip",
             "title",
             "tokens",
+            "unreviewed",
             "valid_from",
             "valid_until",
             "version",
@@ -2699,7 +2704,9 @@ async fn oml_read_recall_takes_include_unreviewed_and_max_tokens_as_it_declares_
         .expect("oml_read is served");
     let properties = &recall["inputSchema"]["properties"];
     assert_eq!(properties["include_unreviewed"]["type"], "boolean");
-    assert_eq!(properties["include_unreviewed"]["default"], false);
+    // No default: absent means true inside an in-progress workarea and
+    // false elsewhere (ADR-0030 d4).
+    assert_eq!(properties["include_unreviewed"]["default"], Value::Null);
     assert_eq!(properties["max_tokens"]["type"], "integer");
     assert_eq!(properties["max_tokens"]["minimum"], 1);
     assert_eq!(properties["max_tokens"]["maximum"], MAX_TOKENS);
@@ -2839,6 +2846,7 @@ async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
         "tip",
         "title",
         "tokens",
+        "unreviewed",
         "valid_from",
         "valid_until",
         "version",
@@ -3407,6 +3415,7 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
         "tip",
         "title",
         "tokens",
+        "unreviewed",
         "valid_from",
         "valid_until",
         "version",

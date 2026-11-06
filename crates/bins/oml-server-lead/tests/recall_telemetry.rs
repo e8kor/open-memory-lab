@@ -185,6 +185,7 @@ async fn issue(
     app.issue_key(
         &boot.admin_key.value,
         &IssueKeyRequest {
+            profile: None,
             role,
             name: Name::parse(name).expect("a name"),
             principal: format!("crew/{name}"),
@@ -295,6 +296,7 @@ impl World {
             .submit_memory(
                 &t.writer,
                 &SubmitRequest {
+                    on_similar: Default::default(),
                     anchor: None,
                     idempotency_key: fresh_id().to_string(),
                     claim_key: None,
@@ -1158,13 +1160,14 @@ async fn the_event_writes_cost_on_a_recalls_p95() {
     let mut on_ms = Vec::with_capacity(rounds);
     let mut off_ms = Vec::with_capacity(rounds);
     let req = |i: usize| oml_app::types::RecallRequest {
+        timings: false,
         anchor: oml_app::types::AnchorFilter::default(),
         query: format!("deploy service {}", i % 17),
         k: 8,
         workarea: None,
         kinds: Vec::new(),
         include_text: true,
-        include_unreviewed: false,
+        include_unreviewed: Some(false),
         max_tokens: None,
         search: None,
         match_mode: oml_app::search::MatchMode::Any,

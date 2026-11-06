@@ -577,6 +577,7 @@ async fn issue_connector(rig: &Rig) -> String {
         .issue_key(
             &boot.admin_key.value,
             &IssueKeyRequest {
+                profile: None,
                 role: Role::Writer,
                 name: Name::parse("claude-mobile").expect("a name"),
                 principal: "crew/claude-mobile".to_owned(),

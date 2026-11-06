@@ -48,6 +48,7 @@ class ErrorCode(StrEnum):
     SUBMISSION_FORMAT_INVALID = "submission.format_invalid"
     SUBMISSION_LINEAGE_REQUIRED = "submission.lineage_required"
     SUBMISSION_SCAN_VETO = "submission.scan_veto"
+    SUBMISSION_SIMILAR_EXISTS = "submission.similar_exists"
     SUBMISSION_SIMULATION_ID_REQUIRED = "submission.simulation_id_required"
     SUBMISSION_TIP_CONFLICT = "submission.tip_conflict"
     SUBMISSION_UNIVERSE_REFUSED = "submission.universe_refused"
@@ -61,6 +62,8 @@ class ErrorCode(StrEnum):
     VOCAB_PREFIX_CONFLICT = "vocab.prefix_conflict"
     VOCAB_UNKNOWN_CURIE = "vocab.unknown_curie"
     WORKAREA_FROZEN = "workarea.frozen"
+    WORKAREA_HELD_REMAINING = "workarea.held_remaining"
+    WORKAREA_IN_PROGRESS_REFUSED = "workarea.in_progress_refused"
     WORKAREA_TRANSITION_REFUSED = "workarea.transition_refused"
 
     def __str__(self) -> str:

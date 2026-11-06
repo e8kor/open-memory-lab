@@ -17,6 +17,9 @@ pub mod event_types {
     pub const TENANT_CREATED: &str = "tenant.created";
     /// New workarea node under an existing parent.
     pub const WORKAREA_CREATE: &str = "workarea.create";
+    /// A person's key set a workarea's mode; `standard` on an in-progress
+    /// root is its commit (ADR-0030 d1, d6).
+    pub const WORKAREA_MODE_SET: &str = "workarea.mode_set";
     /// A workarea now names another crew record (ADR-0026 d8).
     pub const WORKAREA_CREW_UPDATED: &str = "workarea.crew_updated";
     /// A forward ladder step proposed by a dreamer or admin; pending until

@@ -107,6 +107,7 @@ async fn key(app: &TestApp, boot: &BootstrapResult, name: &str, connector: bool)
     app.issue_key(
         &boot.admin_key.value,
         &IssueKeyRequest {
+            profile: None,
             role: Role::Writer,
             name: Name::parse(name).expect("a name"),
             principal: format!("crew/{name}"),

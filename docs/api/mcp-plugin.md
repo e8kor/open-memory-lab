@@ -275,6 +275,7 @@ nothing else.
 | `version` | Its ordinal within the `claim_key` |
 | `kind` | `memory`, `derived_fact`, `steering`, or a vocabulary kind |
 | `state` | `held`, `promoted`, `demoted`, `rejected`, `erased` |
+| `unreviewed` | True exactly when the version is held: the calling key's own, or, inside a workarea a person put in progress, another agent's memory served before review. Read it as a colleague's unchecked draft. *v0.6.0* ([ADR-0030](../adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d3, d4) |
 | `tip` | Whether it is the claim's served tip for the calling key, audience-scoped: for a key in a simulation's audience the overlay tip, which shadows the default tip, and for every other key the default tip ([audit and lineage](../architecture/audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); a superseded version is `promoted` with `tip: false` |
 | `retirement` | True on a retirement version ([http-api](http-api.md#supersede-post-v1memoriesartifact_idsupersede)) |
 | `anchor`, `stale`, `source_checked` | *Since v0.5.8 (ADR-0057 d1, d5):* the version's declared origin or null; `changed` or `removed` from the served version's latest source check, else null, never from a held version; and that check `{rev, at, result, moved_to}` or null. `oml_read` takes `anchor_repo` and `anchor_path_prefix` in recall and listing modes and refuses them in get mode. |

@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use oml_app::app::{AdminMemory, Capacity, OwnKey};
 use oml_app::domain::guardrail::{FrameOptions, render_frame};
+use oml_app::domain::in_progress::WorkareaMode;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::web::{Email, csrf_token};
 use oml_app::domain::{MemoryKind, Role};
@@ -442,12 +443,13 @@ where
                 .recall(
                     bearer,
                     &RecallRequest {
+                        timings: false,
                         query: q.to_owned(),
                         k: 25,
                         workarea: None,
                         kinds: HIT_KINDS.to_vec(),
                         include_text: true,
-                        include_unreviewed: true,
+                        include_unreviewed: Some(true),
                         max_tokens: None,
                         search: None,
                         match_mode: oml_app::search::MatchMode::Any,
@@ -534,7 +536,7 @@ where
             .await
             .map_err(app_error)?;
         let mut body = format!(
-            r#"<p class="label">Workareas</p><h1>Your workarea</h1><p class="lede">Your keys write, read and make workareas under <code>universe.{}</code>, and nowhere else.</p><table><tr><th>Path</th><th>Name to use</th></tr>"#,
+            r#"<p class="label">Workareas</p><h1>Your workarea</h1><p class="lede">Your keys write, read and make workareas under <code>universe.{}</code>, and nowhere else.</p><table><tr><th>Path</th><th>Name to use</th><th>Mode</th></tr>"#,
             short(session.user.as_str())
         );
         for node in &tree.items {
@@ -545,12 +547,37 @@ where
             };
             let _ = write!(
                 body,
-                r#"<tr><td class="mono">{}</td><td class="mono">{}</td></tr>"#,
+                r#"<tr><td class="mono">{}</td><td class="mono">{}</td><td>{}</td></tr>"#,
                 short(&node.path),
-                short(&qualified)
+                short(&qualified),
+                if node.workarea.in_progress {
+                    "in progress"
+                } else {
+                    "standard"
+                }
             );
         }
-        body.push_str("</table><h2>Make a workarea</h2>");
+        // A person's reviewer key puts a workarea in progress, where your
+        // agents read each other's unreviewed memories at once, and commits
+        // it once nothing is held (ADR-0030 d1, d6).
+        body.push_str("</table><h2>In progress</h2><p>In a workarea in progress your agents recall each other's memories before review, marked unreviewed, and nothing reaches anyone outside it until you commit it, which needs every memory in it reviewed.</p>");
+        body.push_str(&form(
+            "/web",
+            "workarea_mode",
+            csrf,
+            &format!(
+                "{}{}",
+                input("workarea", "workarea", "", true),
+                select(
+                    "mode",
+                    "mode",
+                    &[("in_progress", "put in progress"), ("standard", "commit")]
+                )
+            ),
+            "Set",
+            true,
+        ));
+        body.push_str("<h2>Make a workarea</h2>");
         body.push_str(&form(
             "/web",
             "create_workarea",
@@ -638,6 +665,27 @@ where
                 .map_err(app_error)?;
                 Ok(Outcome::Redirect(
                     "/web?view=workarea&done=created".to_owned(),
+                ))
+            }
+            "workarea_mode" => {
+                fields.only(&["workarea", "mode"])?;
+                let workarea = fields.reference("workarea")?;
+                let mode = fields
+                    .get("mode")
+                    .and_then(WorkareaMode::parse)
+                    .ok_or_else(|| {
+                        ApiError::validation("mode is in_progress or standard")
+                            .with_details(json!({"field": "mode"}))
+                    })?;
+                let review = self.caller(session, Capacity::Review).await?;
+                retry_chain(|| {
+                    self.app
+                        .set_workarea_mode(Bearer::Session(&review), workarea.clone(), mode)
+                })
+                .await
+                .map_err(app_error)?;
+                Ok(Outcome::Redirect(
+                    "/web?view=workarea&done=mode+set".to_owned(),
                 ))
             }
             "review_next" | "verdict" => {
@@ -1387,6 +1435,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     format!("{source}\n{text_value}").as_bytes(),
                 );
                 let req = SubmitRequest {
+                    on_similar: Default::default(),
                     idempotency_key: format!("web-curate-{}", &digest.to_prefixed()[7..39]),
                     claim_key: fields.get("claim_key").map(ToOwned::to_owned),
                     verb: Some(SubmitVerb::Learn),
@@ -1447,6 +1496,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 let digest =
                     oml_app::domain::Sha256Hash::digest(format!("{target}\n{body}").as_bytes());
                 let req = SupersedeRequest {
+                    on_similar: Default::default(),
                     idempotency_key: format!("web-supersede-{}", &digest.to_prefixed()[7..39]),
                     target_id: target,
                     body,

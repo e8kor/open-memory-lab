@@ -14,7 +14,7 @@
   "tools": [
     {
       "name": "oml_write",
-      "description": "Store a claim, a claim derived from others, a new version of one, or a proposal to retire one. Held on arrival: scanned same-call, then reviewed by an identity that did not write it, visible to others only after ratification. Without replaces it is a submission on POST /v1/memories, journalled learn when derives_from is non-empty and remember otherwise; with replaces it supersedes that version on POST /v1/memories/{artifact_id}/supersede. A field outside the chosen mode is refused with request.validation naming it in details.field, never dropped.",
+      "description": "Store a claim, a claim derived from others, a new version of one, or a proposal to retire one. Held on arrival: scanned same-call, then reviewed by an identity that did not write it, visible to others only after ratification. Without replaces it is a submission on POST /v1/memories, journalled learn when derives_from is non-empty and remember otherwise; with replaces it supersedes that version on POST /v1/memories/{artifact_id}/supersede. A field outside the chosen mode is refused with request.validation naming it in details.field, never dropped. The answer's similar names up to three memories you may read that hold the same text or a near copy, each with relation, jaccard, version and own.",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false,
@@ -114,6 +114,15 @@
             "type": "string",
             "description": "With replaces, the reason for the change. Refused without replaces."
           },
+          "on_similar": {
+            "type": "string",
+            "enum": [
+              "hold",
+              "refuse"
+            ],
+            "default": "hold",
+            "description": "What the write does when a memory you may read already holds the same text or a near copy (90% of its words). hold writes and lists them in similar; refuse writes nothing and answers submission.similar_exists with details.similar, so you can read them and choose: write nothing, replace one with replaces, or resend with hold. Retirements are never checked."
+          },
           "valid_from": {
             "type": "string",
             "description": "When the claim holds in the world, as its author declares it: YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset; a period names its first instant, so 2015 begins 1 January 2015; a period is read in UTC. Signed with the claim and never changed; a new version states its own. Only memory and derived_fact take it."
@@ -191,8 +200,7 @@
           },
           "include_unreviewed": {
             "type": "boolean",
-            "default": false,
-            "description": "Recall, default false. True: the calling key's own held rows that match (kind memory or derived_fact, never steering or retirement versions) join the hits, ranked in the same order and flagged state held; they count against k and max_tokens."
+            "description": "Recall. True: the calling key's own held rows that match (kind memory or derived_fact, never steering or retirement versions) join the hits, ranked in the same order and flagged state held and unreviewed true; they count against k and max_tokens. Inside a workarea a person put in progress, other agents' held memories join too and absent means true; elsewhere absent means false."
           },
           "max_tokens": {
             "type": "integer",
@@ -211,9 +219,10 @@
               "bm25-rerank",
               "sparse",
               "bm25-sparse",
+              "bm25-sparse-rrf",
               "bm25-postings-time"
             ],
-            "description": "Recall: the search pipeline, among those the server serves (configuration search.enabled); omitted, the tenant's default, else the deployment's. keyword-all needs every word exactly; keyword-any takes any word; bm25 adds identifier parts, stems and rarity weights; bm25-trigram fuses bm25 with trigram similarity for misspellings and fragments; bm25-postings ranks as bm25 from an index, leaving out words frequent among the memories the key reads (named in search.pruned) and still scoring them; bm25-rerank reorders bm25's best candidates with a local cross-encoder, each hit's matched.rerank its relevance, and where the server sets a relevance floor it answers no hit when nothing passes, saying how many it withheld in search.below_floor; sparse ranks by a learned sparse model's token weights, matching related words the memory does not say, and bm25-sparse fuses it with bm25-postings, each hit's matched.tokens naming the tokens that scored it and matched.expanded the ones the model added. bm25-postings-time adds the memories whose declared valid time overlaps a date the query names (in 2015, last week, since March 2025, read by rule and shown in search.window), ranked by reciprocal rank beside bm25-postings. A name the server does not serve is refused with request.validation naming /search; the answer's search.pipeline names the one that ran."
+            "description": "Recall: the search pipeline, among those the server serves (configuration search.enabled); omitted, the tenant's default, else the deployment's. keyword-all needs every word exactly; keyword-any takes any word; bm25 adds identifier parts, stems and rarity weights; bm25-trigram fuses bm25 with trigram similarity for misspellings and fragments; bm25-postings ranks as bm25 from an index, leaving out words frequent among the memories the key reads (named in search.pruned) and still scoring them; bm25-rerank reorders bm25's best candidates with a local cross-encoder, each hit's matched.rerank its relevance, and where the server sets a relevance floor it answers no hit when nothing passes, saying how many it withheld in search.below_floor; sparse ranks by a learned sparse model's token weights, matching related words the memory does not say, and bm25-sparse fuses it with bm25-postings (bm25-sparse-rrf fuses the same two lists by reciprocal rank, a baseline), each hit's matched.tokens naming the tokens that scored it and matched.expanded the ones the model added. bm25-postings-time adds the memories whose declared valid time overlaps a date the query names (in 2015, last week, since March 2025, read by rule and shown in search.window), ranked by reciprocal rank beside bm25-postings. A name the server does not serve is refused with request.validation naming /search; the answer's search.pipeline names the one that ran."
           },
           "match": {
             "type": "string",

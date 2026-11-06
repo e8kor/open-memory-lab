@@ -1450,6 +1450,54 @@ rescored for the candidates the others reach; when every word is pruned the `bm2
 (`search.access: "scan"`); [retrieval](../architecture/retrieval.md) has the rule and its
 constants.
 
+### similar keys (ADR-0050)
+
+*Introduced in v0.5.9, built in `migrations/0027_similar_keys.sql`
+([ADR-0050](../adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found.md) d1, d17).*
+
+The write-time similar check compares a write with the rows its key may read by integer keys, never
+by a text operator, so the read is an index condition under row security as the postings' is.
+
+```sql
+-- a text's words: ASCII letters lower-cased by translate (no collation decides a case), split at
+-- every ASCII character that is not a letter or digit; oml_domain::similar::words is held equal
+CREATE FUNCTION oml_similar_words(t text) RETURNS text[] IMMUTABLE ...;
+-- band 0: the same_text key, oml_token_id('x:' || words joined by spaces); bands 1-10: the ids of
+-- 'b<j>:' || the six minima of band j of a 60-permutation MinHash over the distinct words' ids;
+-- no key for a text with no word; Fingerprint::stored_keys is held equal by a law
+CREATE FUNCTION oml_similar_keys(t text) RETURNS TABLE (band smallint, key bigint) IMMUTABLE ...;
+-- 0 held, 1 a served tip, NULL otherwise (replaced, demoted, rejected, erased, a retirement
+-- version, a kind other than memory, derived_fact, steering)
+CREATE FUNCTION oml_similar_state(status text, is_tip boolean, retirement boolean, kind text) ...;
+CREATE TABLE similar_keys (
+    tenant_id     uuid     NOT NULL,   -- the partition key and the policy's column
+    memory_id     uuid     NOT NULL,
+    workarea_id   uuid     NOT NULL,   -- copied at write
+    author_key_id uuid     NOT NULL,   -- the own held rows' filter
+    key           bigint   NOT NULL,
+    band          smallint NOT NULL CHECK (band BETWEEN 0 AND 10),
+    state         smallint NOT NULL CHECK (state IN (0, 1))
+) PARTITION BY LIST (tenant_id);       -- similar_keys_t_<tenant id, 32 hex>, fenced as postings'
+CREATE INDEX similar_keys_key ON similar_keys (key, workarea_id)
+    INCLUDE (state, author_key_id, memory_id, tenant_id);
+CREATE INDEX similar_keys_memory ON similar_keys (memory_id);
+```
+
+- **Written by a trigger.** `memories_similar_keys` writes a version's keys when it is inserted
+  held, sets their state at promotion, and deletes them when the version leaves both states or is
+  deleted; a changed claim, workarea, kind or author gives the keys back and takes new ones. The
+  table holds only what the check may name. Computing the keys costs about 0.3 ms a text in SQL.
+- **The read.** oml-pg's `SIMILAR_CANDIDATES`: the write's keys, `state = 1` on the scope's nodes
+  or `state = 0` with the calling key as author on its readable nodes, grouped by version and
+  ordered by keys held, then id, at most 32. The core reads each candidate's row, admits it as
+  recall does, and verifies the relation exactly before naming it.
+- **Fill and repair.** 0027 fills every existing tenant under its row security;
+  `oml_similar_keys_refill(t)`, owner only, rebuilds one tenant's keys in a transaction whose
+  `oml.tenant_id` is that tenant, under its chain lock. `oml doctor` names a missing partition,
+  versions without keys and keys of the wrong state (`/v2/search`'s `postings.similar_*`). A lead
+  starting on 0027 creates the partition of a tenant an older lead created.
+- **No statistics on the parent**, as `search_postings` (FR-45).
+
 ### learned sparse postings and their queue (ADR-0052 d14, d15)
 
 *Introduced in v0.5.7, built in `migrations/0022_search_sparse_queue.sql`.*

@@ -440,6 +440,8 @@ const KEY_SEARCH_DEFAULT: &str = "search.default";
 const KEY_RERANK_MODEL: &str = "search.rerank.model";
 const KEY_RERANK_MODEL_DIR: &str = "search.rerank.model_dir";
 const KEY_RERANK_FETCH: &str = "search.rerank.fetch";
+/// Whether a recall may ask for its per-stage timings (ADR-0049 d14).
+const KEY_SEARCH_TIMINGS: &str = "search.timings";
 const KEY_RERANK_DEPTH: &str = "search.rerank.depth";
 const KEY_RERANK_FLOOR: &str = "search.rerank.floor";
 const KEY_RERANK_MAX_CONCURRENT: &str = "search.rerank.max_concurrent";
@@ -777,9 +779,19 @@ impl Config {
                 usize::try_from(n).unwrap_or(usize::MAX)
             }),
         };
+        let timings = match lookup(KEY_SEARCH_TIMINGS).as_deref().map(str::trim) {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(other) => {
+                return Err(ConfigError::Invalid(format!(
+                    "{KEY_SEARCH_TIMINGS} {other:?} is not true or false (configuration.md)"
+                )));
+            }
+        };
         let search = SearchConfig::new(&enabled, default)
             .map_err(|e| ConfigError::Invalid(e.to_string()))?
-            .with_rerank(policy);
+            .with_rerank(policy)
+            .with_timings(timings);
         Ok(Self {
             postgres_url,
             postgres_owner_url,
@@ -1786,6 +1798,7 @@ mod tests {
                 &[("OML_SEARCH__RERANK__TIMEOUT_MS", "0")][..],
                 "search.rerank.timeout_ms",
             ),
+            (&[("OML_SEARCH__TIMINGS", "yes")][..], "search.timings"),
         ] {
             let err = load(extra).expect_err("refused");
             assert!(err.to_string().contains(says), "{err}");
@@ -1918,7 +1931,11 @@ mod tests {
                 .expect("nothing to load")
                 .is_none()
         );
-        for pipeline in [Pipeline::Sparse, Pipeline::Bm25Sparse] {
+        for pipeline in [
+            Pipeline::Sparse,
+            Pipeline::Bm25Sparse,
+            Pipeline::Bm25SparseRrf,
+        ] {
             let sparse =
                 SearchConfig::new(&[Pipeline::Bm25Postings, pipeline], Pipeline::Bm25Postings)
                     .unwrap();
