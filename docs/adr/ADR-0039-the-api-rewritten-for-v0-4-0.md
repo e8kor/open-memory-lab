@@ -9,7 +9,7 @@ answers: why the agent and HTTP surfaces are rewritten for v0.4.0 while OML is p
 
 **Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d5: each tool also carries a `title`), [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)
 
-**Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.4.0 ([releases](../changelog.md))
 
 **Amends:** ADR-0014 (d2), ADR-0022 (d2, d4, d6), ADR-0025 (d4, d12, d13), ADR-0028 (d1), ADR-0029 (d2, d6, d8)
 
@@ -32,9 +32,9 @@ which documents `bootstrap claim --token-stdin` where the build takes `--token <
 `OML_CLI_KEY` and stores five fields (`main.rs:35-38`, `creds.rs:14-25`), while the plugin, the
 hook and the agent kit read `OML_URL` and `OML_API_KEY`.
 
-The v1 covenant binds only from FR-21's v1-stable declaration
+The v1 covenant binds only from #150's v1-stable declaration
 ([HTTP API](../api/http-api.md#versioning-and-deprecation)). Against a rewrite, v0.3.0 is live on
-`oml.doublegate.io`, and a renamed tool breaks users' permission rules for
+a public server, and a renamed tool breaks users' permission rules for
 `mcp__plugin_oml_oml__<tool>` ([ADR-0029](ADR-0029-session-start-hook.md) d8). This record pays
 those costs once, before the freeze. Decided, not built.
 
@@ -44,11 +44,11 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
 
 ## Decision
 
-- **d1 — While FR-21 is open, the contract may be rewritten, and every rewrite carries its
+- **d1 — While #150 is open, the contract may be rewritten, and every rewrite carries its
   mapping, its breaking-change list and its migration in the same release.** A rename or removal
   is allowed when the release (a) maps every removed capability to its successor, as d10 does,
   (b) lists every break in the changelog with its migration, and (c) states its alias window
-  (d12). A removal without a successor needs its own record. FR-21 stays open, and d10's table
+  (d12). A removal without a successor needs its own record. #150 stays open, and d10's table
   is the test a reviewer runs for "without loss"; every early adopter migrates once.
 
 - **d2 — The served MCP catalog is three tools: `oml_write`, `oml_read` and `oml_workarea`.**
@@ -121,7 +121,7 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
   `claim_key` starting `auto-` is refused, and the response names the key. The rule lives on
   `POST /v1/memories`, so the CLI stops deriving `cli-` keys; a supersession derives none. With
   the author's id in the digest, `submission.claim_key_conflict` tells a writer only about its
-  own rows, not whether a row it cannot read holds a guessed text (ADR-0025 d5, FR-31); two
+  own rows, not whether a row it cannot read holds a guessed text (ADR-0025 d5, #129); two
   agents recording one fact leave two claims for the reviewer.
 
 - **d7 — One spelling per concept in requests on every surface; responses keep their field
@@ -251,7 +251,7 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
     | `remember` with `derives_from` journalled `submission.learn` | journal readers | none; an explicit HTTP `verb` keeps the old event |
     | Generated SDK modules renamed; the 49 unrouted operations gone | SDK users | the wrapper's `write` and `read`; the removed calls never reached a route |
     | CLI verbs, flags and variables renamed; `--token` removed | scripts, the README, shell profiles | the new names; `oml login <url>` once; `--token-stdin` |
-    | `oml.doublegate.io` on v0.3.0 | the maintainer's deployment | upgrade server, CLI and plugin together, configure the plugin ([ADR-0040](ADR-0040-plugin-setup-in-claude-code.md)), replace the permission rules, record the upgrade with its date |
+    | a server on v0.3.0 | its operator | upgrade server, CLI and plugin together, configure the plugin ([ADR-0040](ADR-0040-plugin-setup-in-claude-code.md)), replace the permission rules, record the upgrade with its date |
 
     Keys, grants, stored memories, the journal and the schema do not change.
 
@@ -330,15 +330,14 @@ subagent. Each rebases onto this record's build, d14's steps, rather than ahead 
   (`0.5.0-design` unless it says otherwise).
 - **The serve binding is not fixed here.** `serve_id` is built from the memory's id
   (`lib.rs:669-673`) and binds the reviewer only through the claimed queue row, on which d10's
-  default rests, not a serve record ([review](../api/http-api.md#review)); that is FR-66.
-- **Opened:** FR-65 (the rewrite as v0.4.0, the aliases removed in v0.5.0) and FR-66 (the serve
-  binding) on the [roadmap](../product/roadmap.md), marked proposed.
+  default rests, not a serve record ([review](../api/http-api.md#review)); that is #130.
+- **Opened:** #130 (the serve binding).
 
 ## Rejected alternatives
 
 | Alternative | Why not |
 |---|---|
-| **Layering on every route, tool and field** (the delivery plan) | Four names for one read for good, unremovable from `/v1` after FR-21; the broken rules it avoids are paid once by d12 and d13. |
+| **Layering on every route, tool and field** (the delivery plan) | Four names for one read for good, unremovable from `/v1` after #150; the broken rules it avoids are paid once by d12 and d13. |
 | **One `x-oml-built` marker per operation in one openapi.yaml** | The generators would still emit the 49 unrouted operations. |
 | **Delete the 45 designed operations** | They are decided design cited from accepted records (ADR-0010, ADR-0011, ADR-0020, ADR-0021). |
 | **One MCP tool for everything, or three write tools** | Reads and writes differ in what Claude Code runs without asking (d5); the three writes are one endpoint and one supersede path. |

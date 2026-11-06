@@ -159,7 +159,7 @@ const NAMES_RULE: &str = "ADR-0026 d11";
 const ADMIN_DENIAL_LIFT_REASON: &str = "adr-0026-d15";
 
 /// `oauth.connect_code_ttl`'s shipped default, 10 minutes, in seconds
-/// (configuration.md; ADR-0031 d8). FR-22: until journalled settings are
+/// (configuration.md; ADR-0031 d8). #117: until journalled settings are
 /// built, this code constant is the lifetime of every connect code this
 /// build mints, as [`CURSOR_TTL_SECS`](crate::cursor::CURSOR_TTL_SECS) is a
 /// cursor's.
@@ -172,12 +172,12 @@ pub const CONNECT_CODE_TTL_MAX_SECS: i64 = 30 * 24 * 3600;
 
 /// `oauth.access_token_ttl`'s shipped default, 1 hour, in seconds: the
 /// lifetime of every access token this build mints until settings are
-/// built (configuration.md; FR-22; ADR-0031 d10).
+/// built (configuration.md; #117; ADR-0031 d10).
 pub const ACCESS_TOKEN_TTL_SECS: i64 = 3_600;
 
 /// `oauth.refresh_token_ttl`'s shipped default, 30 days, in seconds: the
 /// lifetime of every refresh token this build mints until settings are
-/// built (configuration.md; FR-22; ADR-0031 d10).
+/// built (configuration.md; #117; ADR-0031 d10).
 pub const REFRESH_TOKEN_TTL_SECS: i64 = 30 * 86_400;
 
 /// An authorization code lives 60 seconds from Connect, a design constant
@@ -201,7 +201,7 @@ pub struct App<J, S, C, I, Sc> {
     /// nothing (ADR-0042 d2, d14).
     observer: Arc<dyn RequestObserver>,
     /// `brief.max_tokens`: the budget a workarea's brief is cut to
-    /// (ADR-0046 d8; FR-77).
+    /// (ADR-0046 d8; #145).
     brief_max_tokens: u64,
     /// The pipelines this deployment serves and its default (ADR-0049 d4).
     search: SearchConfig,
@@ -1332,7 +1332,7 @@ where
     }
 
     /// The app whose workarea briefs are cut to `max_tokens`, the
-    /// deployment's `brief.max_tokens` (ADR-0046 d8; FR-77).
+    /// deployment's `brief.max_tokens` (ADR-0046 d8; #145).
     #[must_use]
     pub fn with_brief_max_tokens(self, max_tokens: u64) -> Self {
         Self {
@@ -1748,7 +1748,7 @@ where
     /// per served row, against ADR-0024 d4 ("never N+1"); recall reads the
     /// path once per workarea ([`Self::served_in`]). Only the rows
     /// themselves hydrate set-wise (`JournalStore::memories`). Measured at
-    /// `k` 100 in ADR-0049 d12; elsewhere unmeasured (FR-7, FR-25).
+    /// `k` 100 in ADR-0049 d12; elsewhere unmeasured (#99, #150).
     ///
     /// A version in `universe` is served to every key outside its authoring
     /// key set without its source: no principal, no `derives_from`, its
@@ -4673,7 +4673,6 @@ where
             }
             return Err(refusal);
         }
-
         // An omitted claim_key is derived from the author and the text; the
         // `auto-` prefix is the server's alone (ADR-0039 d6). The author id
         // is the key's own id while rotation is unbuilt; once it is, d6 names
@@ -4715,24 +4714,6 @@ where
                 replayed: true,
             });
         }
-
-        // An account writes within its memories, bytes and monthly writes;
-        // nothing is journalled past them. After the replay, so a retry of
-        // a write that landed at the limit answers its record. This check
-        // spares the signature; the commit's ceiling is the one that holds
-        // (ADR-0068 d5; ADR-0071 d3).
-        self.require_charge(
-            key,
-            &[
-                (oml_domain::signup::Quota::Memories, 1),
-                (
-                    oml_domain::signup::Quota::TextBytes,
-                    nfc(&req.body).len() as u64,
-                ),
-                (oml_domain::signup::Quota::WritesPerMonth, 1),
-            ],
-        )
-        .await?;
 
         // The head first, then the node's status, the ancestors' closures,
         // which a claim edge's proposal widens, and the claim_key read: a
@@ -4822,6 +4803,27 @@ where
         {
             return Err(AppError::ClaimKeyConflict);
         }
+
+        // A person of the sign-up tenant writes at most their memories
+        // quota, and an account within its bytes and monthly writes;
+        // nothing is journalled past them. The check follows the
+        // idempotency replay and the live claim_key refusal, so a retry
+        // gets its stored receipt and a write under a live claim is the
+        // conflict it was; a new version goes through `supersede`, which
+        // adds no memory. This check spares the signature; the commit's
+        // ceiling is the one that holds (ADR-0068 d5; ADR-0071 d3).
+        self.require_charge(
+            key,
+            &[
+                (oml_domain::signup::Quota::Memories, 1),
+                (
+                    oml_domain::signup::Quota::TextBytes,
+                    nfc(&req.body).len() as u64,
+                ),
+                (oml_domain::signup::Quota::WritesPerMonth, 1),
+            ],
+        )
+        .await?;
 
         // The similar check, after every other refusal and before the
         // commit: a refusal here journals nothing and claims no idempotency
@@ -5057,7 +5059,7 @@ where
             None => {
                 // The default rests on the claimed queue row (review_queue's
                 // held_by_key), not on a serve record: the serve binding
-                // stays FR-66 (ADR-0039 Consequences, "The serve binding is
+                // stays #130 (ADR-0039 Consequences, "The serve binding is
                 // not fixed here").
                 let claimed = self
                     .journal
@@ -8062,8 +8064,8 @@ where
         // and a page is one bounded store read whatever the tenant holds.
         // The cost left is the scope itself: every reader node of the key,
         // one subtree read per reader grant, bound into the query as an
-        // array that grows with the tenant's workareas, unmeasured (FR-7,
-        // FR-25).
+        // array that grows with the tenant's workareas, unmeasured (#99,
+        // #150).
         let readable_nodes = self.nodes_holding(&caller, Role::Reader).await?;
         // A scoped read: at `workarea`, else the key's default workarea, an
         // edge with an endpoint inside an in-progress subtree the scope is

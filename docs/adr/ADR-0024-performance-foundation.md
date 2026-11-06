@@ -2,18 +2,18 @@
 id: adr/ADR-0024-performance-foundation
 tier: engineering
 status: accepted design
-answers: what the performance foundation commits before any measurement exists, and why every quantity resolves to FR-25's harness rather than a stated number
+answers: what the performance foundation commits before any measurement exists, and why every quantity resolves to #150's harness rather than a stated number
 -->
 
 # ADR-0024 — The performance foundation
 
 **Status:** accepted design · 2026-10-29
 
-**Release:** not scheduled ([releases](../product/releases.md#decisions))
+**Release:** not built ([releases](../changelog.md))
 
 Everything this record decides is design — no code exists and no measurement of OML exists.
-Per the [roadmap](../product/roadmap.md) rules, no OML performance number appears here or
-anywhere else; every quantity this record cares about resolves to [FR-25](../product/roadmap.md),
+Per the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) rules, no OML performance number appears here or
+anywhere else; every quantity this record cares about resolves to #150,
 whose exit criterion produces the numbers. Third-party figures appear below as cited context
 only, and are never restated as properties of OML.
 
@@ -41,7 +41,7 @@ standby latency and material at 10 ms
 follows: lock-held time ≈ one round trip (begin + lock + chain-head read) + microseconds of
 hash and sign + one round trip (the insert) + the quorum-apply commit, so per-tenant
 single-submit throughput is on the order of the reciprocal of commit latency. That is
-arithmetic over cited context, not an OML number — [FR-18](../product/roadmap.md) and FR-25
+arithmetic over cited context, not an OML number — #99 and #150
 produce the real figures.
 
 Two consequences frame every decision below. First, nothing OML optimizes in its own code
@@ -79,17 +79,17 @@ latency budget.
 - **d3 — The DEK serving cache is a declared design object, because the alternative is a KMS
   fan-out on every recall.** Without a cache, a recall with k hits pays k per-artifact DEK
   unwraps, each a network call to KMS whose latency has no published figure (AWS documents no
-  latency for Decrypt/GenerateDataKey — unverified, measured by FR-25's harness; AWS's own
+  latency for Decrypt/GenerateDataKey — unverified, measured by #150's harness; AWS's own
   mitigation guidance is bounded data-key caching,
   [AWS Security Blog](https://aws.amazon.com/blogs/security/caching-kms-data-keys-in-multi-thread-environments-per-tenant-encryption-for-event-driven-systems-at-scale/)).
   The cache therefore exists, and its design tension is stated plainly: it holds **plaintext
   keys of erase-eligible artifacts**. It is a named copy class in the erasure inventory
   (declared in [retrieval](../architecture/retrieval.md), inventoried in
   [audit and lineage](../architecture/audit-and-lineage.md)); erase purges it synchronously;
-  its TTL joins [FR-17](../product/roadmap.md)'s composed erasure bound. The open
+  its TTL joins #108's composed erasure bound. The open
   sub-decision — cache unwrapped per-artifact DEKs, or cache an unwrapped per-tenant KEK and
   unwrap DEKs locally — carries different KMS-call profiles, blast radii and erasure
-  reasoning, and is recorded as [RS-14](../product/roadmap.md); neither option is free.
+  reasoning, and is recorded as #154; neither option is free.
 
 - **d4 — Statement discipline: prepared statements on every hot query, hydration in one or
   two statements, fusion in one pass.** sqlx's automatic per-connection statement cache
@@ -98,10 +98,10 @@ latency budget.
   bodies — is one or two prepared statements fetched set-wise, **never N+1 per hit**; fusion
   of FTS and vector candidates is computed in one pass (in SQL or in-process over two
   candidate lists), never a third query round; server-side token-budget truncation
-  ([FR-11](../product/roadmap.md)) doubles as a performance feature by bounding decrypt and
+  (#106) doubles as a performance feature by bounding decrypt and
   wire bytes. Pooling: v1 uses the in-process sqlx pool per process, no external pooler; pool
   sizing becomes a [deployment](../operations/deployment.md)-page value once
-  [FR-25](../product/roadmap.md)'s rig sizes it. If a pooler ever enters, it
+  #150's rig sizes it. If a pooler ever enters, it
   runs in transaction mode only — transaction-scoped `pg_advisory_xact_lock` and `SET LOCAL`
   are verified compatible with transaction pooling (the lock releases at commit, exactly when
   the backend may be reassigned; it is session-level advisory locks that are incompatible —
@@ -112,24 +112,24 @@ latency budget.
   carries if that day comes.
 
 - **d5 — Batch submit is the per-tenant throughput feature, not a convenience.**
-  [FR-12](../product/roadmap.md)'s batch endpoint signs and inserts N events under **one**
+  #122's batch endpoint signs and inserts N events under **one**
   lock acquisition and **one** quorum commit, amortizing the entire structural floor of d1.
   The single-submit per-tenant ceiling (≈ one commit latency per event, the Context
   arithmetic) is accepted and documented, not fought. Aggregate multi-tenant throughput is a
   different quantity: tenants do not share locks, and Postgres group commit amortizes flushes
-  across concurrently committing tenants — [FR-7](../product/roadmap.md) measures that
+  across concurrently committing tenants — #99 measures that
   scaling.
 
 - **d6 — Attachment IO streams end to end.** Client → encrypt stream → object store, with
   digests computed over the stream; no full-body buffering anywhere on the path. The
   Postgres-versus-bucket size threshold is pinned where
   [ADR-0004](ADR-0004-bodies-and-attachments.md)'s open points resolve
-  ([FR-15](../product/roadmap.md)).
+  (#147).
 
-- **d7 — Latency budgets are per-ring targets tied to FR-25, and the quorum floor is outside
+- **d7 — Latency budgets are per-ring targets tied to #150, and the quorum floor is outside
   them.** Per the roadmap rules, no number for an unmeasured quantity appears in any page:
   the targets for submit, get, recall, supersede and attachment IO are declared in
-  [FR-25](../product/roadmap.md), whose exit criterion produces measured p50/p95/p99 against
+  #150, whose exit criterion produces measured p50/p95/p99 against
   them, published with date, hardware and settings. The quorum-synchronous commit is
   explicitly excluded from "optimizable": [commitments](../product/commitments.md) §2's
   availability-for-integrity trade is senior to any budget, so no target may be met by
@@ -143,7 +143,7 @@ latency budget.
   whole read path ([ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md) d13), and its hot
   path is recall and get, only.** The topology itself — profiles, lease, election, failover — is
   [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md)'s and is not respecified here;
-  failover measurement is [FR-24](../product/roadmap.md). What this record decides is the hot
+  failover measurement is #117. What this record decides is the hot
   path over that topology:
     - **No follower composition contains the signer port** — `oml-server-follower` composes
       KMS serving decrypt but not the signing key, a composition fact in the C7 pattern
@@ -155,7 +155,7 @@ latency budget.
       topology into every client, and a streamed attachment upload cannot replay a consumed
       body — the provider ring's dumb-client premise
       ([ADR-0022](ADR-0022-two-ring-api.md)) argues against topology-aware clients. The hop
-      cost is measured, not asserted (FR-25 scenario 9); clients may point at the lead
+      cost is measured, not asserted (#150 scenario 9); clients may point at the lead
       directly as an optimization, never as a protocol requirement.
     - **Follower read routing:** own-held reads — and any submit-then-get sequence — route to
       the lead and the primary, buying read-your-writes where an agent's loop visibly breaks
@@ -168,7 +168,7 @@ latency budget.
       synchronous write inside a follower's read path; the enlarged unanchored tail this
       buffering creates is stated where [commitments](../product/commitments.md) §2 states
       the read-log bound, and the split's remaining open shape is
-      [RS-13](../product/roadmap.md).
+      #154.
     - **The single-lead ingest ceiling is a named revisit trigger.** A single lead caps
       admission prep (scan, digests, encryption, KMS wrap) at one node's cores and its KMS
       request concurrency — and since per-core crypto is GB/s-class (Context), the realistic
@@ -179,22 +179,22 @@ latency budget.
 
 ## Consequences
 
-- **FR-25 is this record's measurement harness**, and nothing here is a number until it runs.
+- **#150 is this record's measurement harness**, and nothing here is a number until it runs.
   The harness has three layers, each published with date, hardware and settings per the
   roadmap rules:
     - *Criterion micro-benchmarks:* ed25519 sign/verify; SHA-256 and AES-256-GCM at 1 KB,
       64 KB, 1 MB and 16 MB; canonical envelope serialization; scan-rule pass per KB (feeds
-      [FR-15](../product/roadmap.md)).
+      #147).
     - *Commit-path integration bench:* lock-held time and end-to-end commit latency across
       `synchronous_commit ∈ {on, remote_apply}` × injected standby round-trip times (the EDB
-      methodology, run on OML's own shape — produces [FR-18](../product/roadmap.md)'s
+      methodology, run on OML's own shape — produces #99's
       numbers); separately, the measured KMS GenerateDataKey/Decrypt latency distribution in
       the target region, since no published figure exists.
     - *Load-rig macro scenarios*, a Rust rig driving the real server: (1) single-tenant
       sustained submit — the serialization ceiling; (2) 1/10/100 tenants concurrent submit —
-      group-commit amortization ([FR-7](../product/roadmap.md)); (3) batch submit versus N
+      group-commit amortization (#99); (3) batch submit versus N
       single submits — the d5 lever quantified; (4) recall p50/p95/p99 at stated corpus sizes
-      and index-versus-RAM ratios, filtered and unfiltered ([FR-4](../product/roadmap.md) —
+      and index-versus-RAM ratios, filtered and unfiltered (#102 —
       EDB's pgvector report found HNSW throughput varying 5–7x across its tested memory
       range, [EDB pgvector benchmarks 2026](https://www.enterprisedb.com/sites/default/files/2026-06/pgvector_vs_VectorChord_benchmarks.pdf),
       which makes RAM ratio a required axis); (5) hydration with cold versus warm DEK cache —
@@ -205,7 +205,7 @@ latency budget.
       (10) standby serving conformance — after a `remote_apply` commit, an HNSW and a
       tsvector query on the sync standby return the new promoted row, plus the honest
       negative case on an async replica; (11) lead failover window and fork-check duration
-      (joins [FR-24](../product/roadmap.md)).
+      (joins #117).
 - **Clients must reuse connections.** Agents are long-lived clients, and connection
   keep-alive/reuse is the real HTTP-layer performance property — both rings' API pages carry
   it as a client requirement; hyper serves HTTP/2 and the defaults stand until the rig says

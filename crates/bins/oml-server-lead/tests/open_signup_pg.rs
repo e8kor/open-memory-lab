@@ -402,6 +402,40 @@ async fn remember(rig: &Rig, key: &str, claim_key: &str, text: &str) -> (StatusC
     (status, body)
 }
 
+/// A remember under the caller's own idempotency key, so the same call can
+/// be sent again.
+async fn remember_keyed(
+    rig: &Rig,
+    key: &str,
+    idem: &str,
+    claim_key: &str,
+    text: &str,
+) -> (StatusCode, HeaderMap, Value) {
+    let request = Request::post("/v1/memories")
+        .header(header::AUTHORIZATION, format!("Bearer {key}"))
+        .header("idempotency-key", idem)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"verb": "remember", "claim_key": claim_key, "kind": "memory", "body": text})
+                .to_string(),
+        ))
+        .expect("a request");
+    json(rig, request).await
+}
+
+/// The sign-up POST of a pending cookie: its status, headers and body.
+async fn post_sign_up(rig: &Rig, pending: &str) -> (StatusCode, HeaderMap, String) {
+    send(
+        &rig.router,
+        form(
+            "/web/sign-up",
+            Some(&format!("{SIGN_UP_COOKIE}={pending}")),
+            &format!("accept_terms=yes&terms_version={TERMS}"),
+        ),
+    )
+    .await
+}
+
 /// The person approves the item their reviewer key is served on `/web`.
 async fn approve_next(rig: &Rig, cookie: &str) {
     let (status, _, html) = send(
@@ -601,6 +635,72 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
     assert_eq!(status, StatusCode::OK, "{hits}");
     assert!(hits.to_string().contains("Zanzibar"), "{hits}");
 
+    // Ada's agent then writes two more memories that nobody approves: one
+    // held in her root, and one held in a workarea of her own that she
+    // puts in progress, where she can recall what is unreviewed (ADR-0030).
+    let held_text = "The Kilimanjaro budget is held for review and no other person may see it.";
+    let (status, held) = remember(&rig, &ada_key, "kilimanjaro-budget", held_text).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{held}");
+    let ada_user = rig_user(&rig, 21).await;
+    let scratch = format!("{ada_user}.scratch");
+    for body in [
+        "action=create_workarea&name=scratch".to_owned(),
+        format!("action=workarea_mode&workarea={scratch}&mode=in_progress"),
+    ] {
+        let (status, _, html) = send(
+            &rig.router,
+            form(
+                "/web",
+                Some(&ada),
+                &format!("{body}&csrf_token={}", csrf(&ada)),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{body}: {html}");
+    }
+    let (status, in_progress) =
+        {
+            let (status, _, body) = json(
+            &rig,
+            api(
+                "POST",
+                "/v1/memories",
+                &ada_key,
+                Some(json!({"verb": "remember", "claim_key": "tanganyika-draft", "kind": "memory",
+                    "workarea": scratch,
+                    "body": "The Tanganyika draft stays in progress until Ada commits it."})),
+            ),
+        )
+        .await;
+            (status, body)
+        };
+    assert_eq!(status, StatusCode::ACCEPTED, "{in_progress}");
+    // Positive controls: Ada's reviewer key is served a held memory, and
+    // her agent recalls the in-progress one inside its workarea.
+    let (status, _, html) = send(
+        &rig.router,
+        form(
+            "/web",
+            Some(&ada),
+            &format!("action=review_next&csrf_token={}", csrf(&ada)),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains(r#"name="serve_id""#), "{html}");
+    let (status, _, hits) = json(
+        &rig,
+        api(
+            "POST",
+            "/v1/memories/recall",
+            &ada_key,
+            Some(json!({"query": "Tanganyika draft", "workarea": scratch})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{hits}");
+    assert!(hits.to_string().contains("Tanganyika"), "{hits}");
+
     // HTTP: Bob recalls nothing of it, and its id is absent.
     let (status, _, hits) = json(
         &rig,
@@ -623,7 +723,6 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
     let (_, _, listing) = json(&rig, api("GET", "/v1/memories", &bob_key, None)).await;
     assert!(!listing.to_string().contains("Zanzibar"), "{listing}");
     // The tree shows Bob no node of Ada's root.
-    let ada_user = rig_user(&rig, 21).await;
     let (_, _, tree) = json(
         &rig,
         api("GET", "/v2/workareas/universe/tree", &bob_key, None),
@@ -662,6 +761,46 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
         assert!(!html.contains("Zanzibar"), "{path}: {html}");
         assert!(!html.contains(&ada_user), "{path}: {html}");
     }
+    // The held rows of Ada's root and of her in-progress workarea are in no
+    // queue, listing, event tail or recall of Bob's (ADR-0068 d3).
+    let (status, _, html) = send(
+        &rig.router,
+        form(
+            "/web",
+            Some(&bob),
+            &format!("action=review_next&csrf_token={}", csrf(&bob)),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{html}");
+    assert!(
+        !html.contains(r#"name="serve_id""#),
+        "nothing to serve: {html}"
+    );
+    for secret in ["Kilimanjaro", "Tanganyika"] {
+        assert!(!html.contains(secret), "{html}");
+        for path in ["/web?view=review", "/web?view=curate", "/web?view=memories"] {
+            let (_, _, html) = send(&rig.router, page(path, Some(&bob))).await;
+            assert!(!html.contains(secret), "{path}: {html}");
+        }
+        for path in ["/v2/review/held", "/v2/events", "/v1/memories"] {
+            let (_, _, body) = json(&rig, api("GET", path, &bob_key, None)).await;
+            assert!(!body.to_string().contains(secret), "{path}: {body}");
+        }
+        for query in [secret, "budget held for review", "draft stays in progress"] {
+            let (_, _, hits) = json(
+                &rig,
+                api(
+                    "POST",
+                    "/v1/memories/recall",
+                    &bob_key,
+                    Some(json!({"query": query})),
+                ),
+            )
+            .await;
+            assert!(!hits.to_string().contains(secret), "{query}: {hits}");
+        }
+    }
     let (_, _, status_json) = json(&rig, page("/web/start/status", Some(&bob))).await;
     assert_eq!(status_json["first_memory"], Value::Null, "{status_json}");
     let (_, _, export) = json(&rig, page("/web/start/export", Some(&bob))).await;
@@ -677,10 +816,120 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
     );
     assert!(export.to_string().contains("Zanzibar"), "{export}");
     let (_, _, ada_status) = json(&rig, page("/web/start/status", Some(&ada))).await;
+    // Her newer, still held writes are what the page shows now.
     assert_eq!(
         ada_status,
-        json!({"connected": true, "first_memory": "promoted"})
+        json!({"connected": true, "first_memory": "held"})
     );
+    drop_db(&rig.db).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sign_up_post_for_an_address_an_entry_holds_never_opens_a_session() {
+    let Some(rig) = rig(Some(|p| p)).await else {
+        return;
+    };
+    // An attacker's provider account 99 has the victim's address verified,
+    // and while the address is unlisted it reaches the terms page.
+    let (status, headers, body) = callback(&rig, 99, "victim@example.com").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let stale = set_cookie(&headers, SIGN_UP_COOKIE).expect("the sign-up cookie");
+    // The victim signs up first, with account 41, and the address is pinned to it.
+    sign_up(&rig, 41, "victim@example.com").await;
+    let sessions_before = events(&rig).await.len();
+    // The attacker's post is refused: no session, no cookie, no new event.
+    let (status, headers, body) = post_sign_up(&rig, &stale).await;
+    assert_ne!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(body.contains("auth."), "{body}");
+    assert_eq!(
+        set_cookie(&headers, SIGN_UP_COOKIE).as_deref(),
+        Some(""),
+        "the spent cookie is cleared: {headers:?}"
+    );
+    assert!(
+        set_cookie(&headers, SESSION_COOKIE).is_none(),
+        "{headers:?}"
+    );
+    assert_eq!(events(&rig).await.len(), sessions_before);
+    // Through the normal path the other subject is refused by the pin.
+    let (status, headers, body) = callback(&rig, 99, "victim@example.com").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(set_cookie(&headers, SESSION_COOKIE).is_none());
+    // An admin allowlisting the address after a cookie was issued gets no
+    // session for the cookie's holder either, whatever the entry's flag.
+    let (status, headers, body) = callback(&rig, 77, "late@example.com").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let late = set_cookie(&headers, SIGN_UP_COOKIE).expect("the sign-up cookie");
+    let (status, _, body) = send(
+        &rig.router,
+        Request::post("/v2/web/emails")
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", rig.boot.admin_key.value),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", "late")
+            .body(Body::from(
+                json!({"email": "late@example.com", "user": "late", "admin": true}).to_string(),
+            ))
+            .expect("a request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, headers, body) = post_sign_up(&rig, &late).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert!(
+        set_cookie(&headers, SESSION_COOKIE).is_none(),
+        "{headers:?}"
+    );
+    drop_db(&rig.db).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn at_the_memories_quota_a_replay_returns_its_receipt_and_a_new_version_is_admitted() {
+    let Some(rig) = rig(Some(|mut p| {
+        p.quotas.memories = 1;
+        p
+    }))
+    .await
+    else {
+        return;
+    };
+    let ada = sign_up(&rig, 61, "ada@example.com").await;
+    let key = claude_code_key(&rig, &ada).await;
+    let (status, _, first) = remember_keyed(&rig, &key, "retry-1", "one", "The first fact.").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{first}");
+    // The person is at 1 of 1. The same call again is the stored receipt.
+    let (status, headers, again) =
+        remember_keyed(&rig, &key, "retry-1", "one", "The first fact.").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{again}");
+    assert_eq!(headers["idempotency-replay"], "true");
+    assert_eq!(again["artifact_id"], first["artifact_id"], "{again}");
+    // A different write is past the quota.
+    let (status, _, body) = remember_keyed(&rig, &key, "new-1", "two", "The second fact.").await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(body["error"]["code"], "limit.quota");
+    // A write under the live claim key is the conflict it always was.
+    let (status, _, body) = remember_keyed(&rig, &key, "new-2", "one", "Another text.").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    // A new version of the memory adds no memory: after the person approves
+    // the first, the agent supersedes it at the quota.
+    approve_next(&rig, &ada).await;
+    let artifact = first["artifact_id"].as_str().expect("an id");
+    let (status, _, body) = json(
+        &rig,
+        Request::post(format!("/v1/memories/{artifact}/supersede"))
+            .header(header::AUTHORIZATION, format!("Bearer {key}"))
+            .header("idempotency-key", "sup-1")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"expected_version": 1, "body": "The first fact, revised."}).to_string(),
+            ))
+            .expect("a request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     drop_db(&rig.db).await;
 }
 
@@ -945,6 +1194,41 @@ async fn deletion_is_a_journalled_request_the_admin_closes_by_disabling_the_pers
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_admin_disables_only_a_person_who_signed_up_and_never_an_admin_or_a_stranger() {
+    let Some(rig) = rig(Some(|p| p)).await else {
+        return;
+    };
+    let ada = sign_up(&rig, 81, "ada@example.com").await;
+    let op = operator_session(&rig).await;
+    let disable = |user: &str| {
+        form(
+            "/web/admin/users",
+            Some(&op),
+            &format!("action=disable_user&csrf_token={}&user={user}", csrf(&op)),
+        )
+    };
+    // A name no entry holds, and the admin's own entry, are refused and journal nothing.
+    for user in ["unknownperson", "op"] {
+        let (status, _, html) = send(&rig.router, disable(user)).await;
+        assert_ne!(status, StatusCode::SEE_OTHER, "{user}: {html}");
+    }
+    assert!(
+        !events(&rig)
+            .await
+            .iter()
+            .any(|(t, _)| t == "web.user_disabled"),
+        "nothing was disabled"
+    );
+    // The person who signed up is disabled, and their session ends.
+    let ada_user = rig_user(&rig, 81).await;
+    let (status, _, html) = send(&rig.router, disable(&ada_user)).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{html}");
+    let (_, _, html) = send(&rig.router, page("/web/start", Some(&ada))).await;
+    assert!(html.contains("Sign in with GitHub"), "{html}");
+    drop_db(&rig.db).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sign_ups_from_one_address_are_limited_per_hour() {
     let Some(rig) = rig(Some(|mut p| {
         p.per_ip_per_hour = 1;
@@ -1089,6 +1373,19 @@ fn open_mode_without_its_settings_stops_the_start() {
         ("OML_SIGNUP__PRIVACY_URL", "https://example.com/p"),
         ("OML_QUOTA__MEMORIES", "50"),
     ];
+    // Open sign-up with no sign-in provider would serve no pages and no
+    // quotas: the start stops, naming the web settings (ADR-0068 d1).
+    let error = base(&full).unwrap_err().to_string();
+    assert!(
+        error.contains("web.google") && error.contains("web.github"),
+        "{error}"
+    );
+    let mut with_provider = full.to_vec();
+    with_provider.extend([
+        ("OML_WEB__GITHUB__CLIENT_ID", "github-client"),
+        ("OML_WEB__GITHUB__CLIENT_SECRET", "github-secret"),
+    ]);
+    let full = with_provider;
     let open = base(&full).expect("open").signup.expect("a policy");
     assert_eq!(open.quotas.memories, 50);
     assert_eq!(open.quotas.keys, 5);

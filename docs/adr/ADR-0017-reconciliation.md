@@ -9,11 +9,11 @@ answers: why reconciliation is an incremental journalled fold from the journal a
 
 **Status:** accepted design · 2026-10-29
 
-**Release:** not scheduled ([releases](../product/releases.md#decisions))
+**Release:** not built ([releases](../changelog.md))
 
 Everything this record decides is design — no code exists. The comparison procedure, the finding
 schema and the repair flows are owned by
-[architecture/reconciliation.md](../architecture/reconciliation.md); this record decides and gives
+[architecture/reconciliation.md](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md); this record decides and gives
 the reasons. Its ground is [ADR-0002](ADR-0002-postgresql-system-of-record.md) (the journal is the
 system of record and the only fold source) and
 [ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md) (the lake is derived, outbox-fed, with a
@@ -105,7 +105,7 @@ guards grows.
   tail for free; a chain break surfaces as a reconciler failure, not only at `oml-server`'s
   startup fork check (ADR-0002 d7).
 - Repair convergence, reconciler throughput and the right N for the halt rule are unmeasured —
-  design commitments with exit criteria tracked on the [roadmap](../product/roadmap.md), not
+  design commitments with exit criteria tracked on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap), not
   properties of a running system.
 
 ## Rejected alternatives

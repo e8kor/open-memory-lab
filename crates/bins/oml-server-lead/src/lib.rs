@@ -81,7 +81,7 @@ pub struct Config {
     /// sign-in, on when both are set (ADR-0045 d17).
     pub web_github: Option<ClientCredentials>,
     /// `brief.max_tokens`: the budget a workarea's brief is cut to, in
-    /// budget tokens; 400 when unset, unmeasured (ADR-0046 d8; FR-77).
+    /// budget tokens; 400 when unset, unmeasured (ADR-0046 d8; #145).
     pub brief_max_tokens: u64,
     /// `signup.*` and `quota.*`: open sign-up, its tenant, issuer and
     /// terms, and the per-person limits; `None` in allowlist mode
@@ -780,6 +780,14 @@ impl Config {
         };
         let signup = signup_policy(&lookup, oauth_issuer.is_some())?;
         let quota_profiles = quota_profiles(&lookup)?;
+        // Open sign-up reaches people through a provider's sign-in; with
+        // none the pages are off and the policy would silently never apply
+        // (ADR-0068 d1).
+        if signup.is_some() && web_google.is_none() && web_github.is_none() {
+            return Err(ConfigError::Invalid(format!(
+                "{KEY_SIGNUP_MODE} is open and neither {KEY_WEB_GOOGLE_CLIENT_ID} nor {KEY_WEB_GITHUB_CLIENT_ID} is set: sign-up needs a provider (ADR-0068 d1)"
+            )));
+        }
         // A TOML array in the file, comma-separated in the environment; an
         // unknown name, an empty set or a default outside it stops the start
         // (configuration.md search.*; ADR-0049 d4).

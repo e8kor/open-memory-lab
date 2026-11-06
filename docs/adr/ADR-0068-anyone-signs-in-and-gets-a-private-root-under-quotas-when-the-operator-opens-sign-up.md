@@ -53,10 +53,15 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     | `signup.per_ip_per_hour` | 5 | sign-ups admitted from one client address in a rolling hour (d9) |
     | `quota.memories`, `quota.keys`, `quota.connections`, `quota.requests_per_minute` | 1000, 5, 5, 120 | the per-person defaults of d6 |
 
+    `open` without a sign-in provider (`web.google.*` or `web.github.*`) stops the start too, since
+    the pages that carry sign-up would be off.
+
     `open` without one of the required values stops the process at start, naming the setting,
     as a provider without `oauth.issuer` does (ADR-0045 d17). The tenant and the key are checked
     at start: an unknown tenant, or a key that is not a live admin key there, stops the start.
-    A self-hoster who sets none of these keeps an allowlist deployment, byte for byte. The
+    A self-hoster who sets none of these keeps an allowlist deployment: the same sign-in, no quotas and no
+    rate limits. The pages gain a Start tab, and the landing route sends an allowlisted person who has no
+    agent key to `/web/start`. The
     quota defaults are the operator's choice of 2026-11-06. Whether they fit real use is
     unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164)).
 
@@ -86,6 +91,13 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     three times, and then refused `name.taken`. The cost is a name a person does not choose.
     Choosing one is a later decision, since a chosen name is a namespace claim another person
     can collide with.
+
+    The sign-up never takes an address an entry holds, in any tenant and with any flag. An entry
+    created after the cookie was issued, by another sign-up or by an admin, makes the `POST`
+    answer `auth.invalid` (`state_mismatch`) and clear the cookie, and the person signs in
+    through the callback, which pins the provider subject (ADR-0045 d4). The `POST` opens no
+    session for an existing entry, so a cookie issued for an address while it was unlisted
+    cannot be replayed into the session of whoever holds the address afterwards.
 
     A refused or abandoned terms page writes nothing. A sign-up never sets `admin`. An admin
     entry still comes only from the CLI or the admin page.
@@ -134,6 +146,17 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     | `keys` | the root's live bearer and connector keys; session keys are not counted | each key issued for the user (`issue_key`, `connect_key`, `/web/start`) |
     | `connections` | open OAuth connections of the root's connector keys | a token exchange that opens a connection on a key with none open; a replacement replaces |
     | `requests_per_minute` | requests one key of the root makes in a fixed UTC minute | every authenticated request of that key, on HTTP and MCP |
+
+    The `memories` check runs after the idempotency lookup and after the live `claim_key`
+    refusal, and before the commit. A retry of a write that succeeded is its stored receipt, never
+    `limit.quota`. A `remember` under a claim key that is live in the workarea is the
+    `submission.claim_key_conflict` it always was, not a quota refusal. A new version is made by
+    `supersede`, which extends the chain of an existing memory and adds none, so it is not metered:
+    the meter counts distinct `(workarea, claim_key)` chains, and a supersede, a rejection or a
+    retirement leaves that count where it was. A person at the limit can still revise and retire
+    what they hold. Quotas are read before the write commits and are not held across it, so
+    concurrent writes at `limit - 1` can each pass: the memories count is exact to within the
+    requests in flight, at most the person's keys times `requests_per_minute`.
 
     Attachments are refused on every write, so no attachment quota exists. One joins with
     attachments. Past a quota the act is refused `429 limit.quota` with
@@ -204,7 +227,9 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
   which fails closed, and `oml doctor` says so: `warn signup: open with no
   server.trusted_proxies; every sign-up shares one address limit`. Past
   `signup.per_ip_per_hour` the page answers `429 limit.rate` with `Retry-After` and journals
-  nothing. Counters live in the process. A sign-in of an existing entry is never counted, since
+  nothing. Counters live in the process. A client is an IPv4 address or the /64 of an IPv6 address, since
+  a host holds a whole /64 and a per-address bucket would not bound it; an IPv4-mapped IPv6
+  address counts as its IPv4 one. A sign-in of an existing entry is never counted, since
   only a new account is the thing abused.
 
 - **d10 — `/web/start` is the first page after a sign-up: three steps, one hashed script for copy

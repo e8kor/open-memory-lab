@@ -8,7 +8,7 @@ conversation. Install it beside, not instead of, the agent plugin `oml`; an agen
 
 ## Install
 
-*Available since v0.2.1 · [releases](https://e8kor.github.io/open-memory-lab/product/releases/)*
+*Available since v0.2.1 · [releases](https://e8kor.github.io/open-memory-lab/changelog/)*
 
 ```text
 /plugin marketplace add e8kor/open-memory-lab

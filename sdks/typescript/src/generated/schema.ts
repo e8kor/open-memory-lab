@@ -447,7 +447,7 @@ export interface paths {
         put?: never;
         /**
          * Verdict against a valid serve; the journalled verdict records the served digests.
-         * @description Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row's workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (FR-66; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item.
+         * @description Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row's workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item.
          */
         post: operations["postVerdict"];
         delete?: never;
@@ -1021,7 +1021,7 @@ export interface paths {
         put?: never;
         /**
          * One act of the admin page, named by action, run as the capacity it needs.
-         * @description Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as <user>-curate; demote, planned for v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
+         * @description Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
          */
         post: operations["adminPageAct"];
         delete?: never;
@@ -1390,7 +1390,7 @@ export interface components {
         SubmitAccepted: {
             artifact_id: string;
             claim_key: string;
-            /** @description The ordinal within the claim_key; for a successor, 1 + the greatest version of the claim_key in any state, so it counts versions the key may not read — a stated residual, FR-31 (docs/architecture/audit-and-lineage.md). */
+            /** @description The ordinal within the claim_key; for a successor, 1 + the greatest version of the claim_key in any state, so it counts versions the key may not read — a stated residual, #129 (docs/architecture/audit-and-lineage.md). */
             version: number;
             /** @constant */
             state: "held";

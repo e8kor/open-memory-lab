@@ -9,7 +9,7 @@ answers: what the four constitutional rules R1–R4 commit, and what the one bou
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
 
-**Release:** partly in v0.1.0; the rest planned for v0.6.0 ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.1.0 and v0.6.0; the rest not built ([releases](../changelog.md))
 
 ## Context
 
@@ -73,7 +73,7 @@ held to, not a property of running software.
 - R2's cost is liveness: review is a dependency, and the system fails closed when no eligible
   reviewer exists — a held item waits or expires under its workarea's review policy
   ([admission](../architecture/admission.md)). Review throughput is unmeasured; the
-  [roadmap](../product/roadmap.md) carries the review-throughput FR.
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) carries the review-throughput issue.
 - d6 is a standing documentation obligation: a page claiming lineage-based guarantees without
   the undeclared-derivation caveat is a defect under
   [ADR-0018](ADR-0018-the-documentation-set.md).

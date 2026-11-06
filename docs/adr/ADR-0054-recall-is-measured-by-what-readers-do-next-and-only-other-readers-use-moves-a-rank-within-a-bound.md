@@ -11,7 +11,7 @@ answers: which recall and remember health figures reach Prometheus and Grafana, 
 below, is accepted; the ranking half, d7 to d10, stays proposed until open question 6 is decided.
 
 **Release:** the measurement half, introduced in v0.5.7; the ranking half, not assigned
-([releases](../product/releases.md#decisions))
+([releases](../changelog.md))
 
 **Amends:** ADR-0049 (proposed): d3 (fusion gains a convex combination beside reciprocal rank),
 d4 (the pipeline table gains `bm25-postings-usage`), d6 (each hit's `matched` gains `usage`, and
@@ -40,7 +40,7 @@ this section governs.
 
 1. *A frozen eval set* (question 1): an admin may confirm an eval set that is kept beyond 30 days,
    opt-in per tenant and journalled. *Not built in v0.5.7*: the confirmed set's table, its
-   retention setting and its erase path are a later step (FR-108); until then d11's set is
+   retention setting and its erase path are a later step (#110); until then d11's set is
    rolling.
 2. *Partition count* (question 2): **by tenant alone**, as `memories` is; no partition by time.
    Settled first as weekly partitions and changed on review the same day, for this reason: a
@@ -52,12 +52,12 @@ this section governs.
    partitions are created once, with the tenant, on the owner path ADR-0034 d11 already holds;
    the serving role deletes rows older than 30 days in bounded batches, each its own
    transaction, by a `(tenant_id, created_at)` index; and every read filters the same bound.
-   The cost: the retention is paid in row deletions and vacuum, which FR-104 measures.
+   The cost: the retention is paid in row deletions and vacuum, which #110 measures.
 3. *An offline annotator* (question 3): deferred. No model grades a tenant's queries in v0.5.7.
 4. *Usage with the reranker* (question 4): measured later, with the ranking half.
 5. *The starting constants* (question 5): placeholders, set by d10's replay. The measurement
    half's own constants (d5's windows, the caps below, the 30 days) are starting values too, and
-   FR-105 measures the windows.
+   #110 measures the windows.
 
 **Amended on acceptance.**
 
@@ -75,7 +75,7 @@ this section governs.
   submit to verdict, whose count by `verdict` is the rejection rate; ADR-0050's
   `oml_remember_similar_total` and `oml_remember_warnings_total` arrive with its similar check.
   The rejection rate is global: a per-tenant label would put `tenant_id` on a series, which
-  ADR-0042 d12 forbids until FR-7, so the per-key and per-tenant figures are PostgreSQL's.
+  ADR-0042 d12 forbids until #99, so the per-key and per-tenant figures are PostgreSQL's.
   `oml_keys_rejection_share`, `GET /v2/usage/report` and `oml usage report` are *not built*;
   the admin reads events with `GET /v2/usage/events`. All the families together add at most 300
   series to a lead, inside the 400 budget. Counts move off `/readyz` with them: the skipped
@@ -162,7 +162,7 @@ this section governs.
   call `oml_read` in every mode and `oml_workarea` with real arguments;
   the admin check, the insert's opt-in rule and the feedback's key check were each shown red
   by hand against a broken clause before the change was kept. The event write's cost on a
-  recall was measured as negligible on a debug build (FR-104 stays open for the scale lane). Doctor
+  recall was measured as negligible on a debug build (#110 stays open for the scale lane). Doctor
   reads the telemetry's health from the metrics listener: events dropped above 1% of recalls,
   the queue's depth above half its bound, rows past the 30 days not yet purged, and the labeller's lag above 10 minutes.
 
@@ -195,7 +195,7 @@ the author's alone ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d4). R
 deletion (d4). ADR-0049 d2: the core computes the candidate scope, and a row outside it never
 changes a candidate's score; ADR-0052 d5 keeps every statistic to the readable rows by counting
 per workarea and summing over the readable ones. ADR-0042 d12: metric labels never carry a name,
-a principal or an address, and no `tenant_id` until FR-7. ADR-0039 d8: a new agent capability is
+a principal or an address, and no `tenant_id` until #99. ADR-0039 d8: a new agent capability is
 a parameter, a resource or a hook before it is a tool, and every call traces to a documented use
 case. The constitution's limit holds here too: what the service cannot see (two principals one
 person controls) it cannot exclude (ADR-0001 d6).
@@ -287,7 +287,7 @@ Decided, not built.
     **The fence.** Each table is list-partitioned by `tenant_id` with `ENABLE` and `FORCE ROW LEVEL
     SECURITY` and the `tenant_isolation` policy, created by the owner in ADR-0034 d11's partition
     step; the three event tables are further range-partitioned by UTC day. Statistics on
-    `query_text` and `principal` are off (`SET STATISTICS 0`, FR-45's rule), so `pg_stats` holds
+    `query_text` and `principal` are off (`SET STATISTICS 0`, #134's rule), so `pg_stats` holds
     no tenant's query words. The serving role holds `INSERT` and `SELECT` on the event tables,
     `DELETE` on them only for d2's fallback purge, and `SELECT`, `INSERT` and `UPDATE` on
     `usage_state`; it owns none of them (ADR-0034 d2, d3).
@@ -327,7 +327,7 @@ Decided, not built.
     it (`oml_recall_events_total{outcome}`); the recall's answer and latency are unchanged. The
     cost, stated: a crash loses at most the queue, and telemetry may undercount under load. The
     added cost on the recall is one allocation and a channel send, budgeted at 50 µs p99,
-    unmeasured (FR-104). No outbox row is written, since a recall commits nothing.
+    unmeasured (#110). No outbox row is written, since a recall commits nothing.
 
 - **d3 — The query text is stored only where the tenant opts in.** `telemetry.query_text` is a
   tenant setting, `off` by default, set by a tenant admin with `POST /v2/usage/settings` or `oml
@@ -379,7 +379,7 @@ Decided, not built.
     once. A key's labels past 1,000 a day are stored but not credited
     (`oml_usage_credits_total{outcome="rate_limited"}`). The windows are starting values, chosen
     by the operator's reading of how an agent works; whether they capture what a reader did is
-    d11's first measurement (FR-105). The honest limit: an agent that recalls and then reads the
+    d11's first measurement (#110). The honest limit: an agent that recalls and then reads the
     text the answer already carried (recall returns text unless `include_text: false`) leaves no
     trace at all, which is why d6 exists.
 
@@ -511,7 +511,7 @@ Decided, not built.
        recalls show, which is why it is opt-in, disclosed, and capped at 10%.
     3. **Fairness and the loop.** The share of top-5 impressions going to memories promoted in
        the last 14 days falls by at most 10% relative under the usage pipeline in the replay;
-       the leg's added p95 is at most 5 ms at 1,000,000 memories (FR-104).
+       the leg's added p95 is at most 5 ms at 1,000,000 memories (#110).
     A counterfactual estimate from the logged rankings alone (inverse propensity scoring) is not
     the gate: the served rankings are deterministic, so most alternative rankings have no logged
     probability, and the estimate would rest on the position model alone. Interleaving supplies
@@ -593,10 +593,10 @@ Decided, not built.
   telemetry rotate`), the use-case call map (d6's use case), the plugin's skill (send feedback
   on the next read), ADR-0005's inventory, ADR-0049's and ADR-0052's pipeline tables, and the
   Helm chart (the CronJob and the dashboard).
-- **Roadmap rows opened**: FR-104 (the event write's cost on a recall, the tables' size and the
+- **Issues opened**: #110 (the event write's cost on a recall, the tables' size and the
   usage leg's p95 at 1,000,000 memories and 100 recalls a second, measured on the scale lane);
-  FR-105 (whether d5's windows capture what a reader did, measured on the first opted-in
-  tenant); FR-106 (the usage pipeline's default, by d10's three measurements); FR-107 (usage
+  #110 (whether d5's windows capture what a reader did, measured on the first opted-in
+  tenant); #110 (the usage pipeline's default, by d10's three measurements); #110 (usage
   colluded by principals one person controls, which the service cannot see).
 - **Costs**: four tables per tenant and about 31 day partitions each for the three event tables,
   so the catalog grows with tenants × days (open question 2); a background writer and labeller in
@@ -605,11 +605,11 @@ Decided, not built.
 - **What stays**: the read log's design and its sentence; `bm25-postings` as the default;
   ADR-0042's labels and 30 days; the three tools.
 - **Numbering**: ADR-0050 to ADR-0053 are taken on `main` or branches, so this record is ADR-0054;
-  its migration is 0023, the next after ADR-0052's 0021 and 0022; its roadmap rows follow FR-103.
+  its migration is 0023, the next after ADR-0052's 0021 and 0022; its issues follow #103.
 
 ### Cost at 1,000,000 memories and 100 recalls a second
 
-Estimated, not measured; FR-104 measures each line.
+Estimated, not measured; #110 measures each line.
 
 | Item | Estimate | From |
 |---|---|---|
@@ -651,7 +651,7 @@ remains open and holds the ranking half.
 2. **Partition count.** Daily partitions per tenant per event table are 93 tables a tenant;
    with thousands of tenants the catalog grows. Weekly partitions with the serving role's batch
    delete for the tail, or one partition set for all small tenants, are the alternatives;
-   decided on FR-104's numbers.
+   decided on #110's numbers.
 3. **An offline annotator.** Whether a model may grade an opted-in tenant's labelled queries
    offline, inside the deployment, to densify d11's labels, and under which consent.
 4. **Usage with the reranker.** Whether usage is fused after the reranker as a third leg, and
@@ -670,7 +670,7 @@ remains open and holds the ranking half.
   `bm25-postings`'s committed results to the last digit, with an empty `usage_state`.
 - **Telemetry under load**: the scale lane at 100 recalls a second for 10 minutes with the
   writer on and off; the recall's p50 and p99 differ by at most the 50 µs budget; drops counted;
-  table and index size per million events recorded (FR-104).
+  table and index size per million events recorded (#110).
 - **Labeller**: a scripted agent session (recall, get, derive, requery, feedback) against a
   throwaway lead; each expected label present once, nothing labelled from another key's actions.
 - **Gaming**: one principal with ten keys crediting one version a hundred times a day moves its

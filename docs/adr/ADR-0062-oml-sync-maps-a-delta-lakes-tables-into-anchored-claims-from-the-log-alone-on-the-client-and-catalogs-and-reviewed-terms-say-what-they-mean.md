@@ -35,8 +35,8 @@ edges, proposed); [ADR-0055](https://github.com/e8kor/open-memory-lab/blob/main/
 (bulk review).
 
 **Numbering.** ADR-0058 to ADR-0060 are left to lanes in flight on 2026-11-05 and ADR-0061 is the
-Rust adapter's, so this record takes 0062; its roadmap rows take FR-140 to FR-147 and its use
-cases UC-SM-07 to UC-SM-10, after ADR-0061's FR-133 and UC-SM-06. Either is renumbered at merge
+Rust adapter's, so this record takes 0062; its open work is #161 and its use
+cases UC-SM-07 to UC-SM-10, after ADR-0061's #160 and UC-SM-06. Either is renumbered at merge
 if a gap is not taken.
 
 ## Context
@@ -140,7 +140,7 @@ Decided, not built: this lane wrote no code and ran no build.
       CI key does for schemas. The costs: every row crosses the client's network once in
       plaintext under TLS, as any write does; a ten-million-row import is a long-running client
       process that resumes by chunk index (ADR-0020 d6's chunking, now on the upload side); and its
-      throughput is unmeasured (FR-147).
+      throughput is unmeasured (#161).
 
 - **d2 — The `delta` adapter reads a table's log at one version and only four actions; it never
   opens a data file.** `oml sync <lake uri> --workarea <w> --adapter delta` reads, for each table
@@ -176,7 +176,7 @@ Decided, not built: this lane wrote no code and ran no build.
   constraints, each a reason:
     - **Size and targets.** `object_store`, `reqwest`, `tokio` and `parquet` add an async runtime
       and three cloud clients to a 6 MB binary that agents install, and most agents never read a
-      lake; the added size is unmeasured, and the lake build ships only once FR-140 has measured it
+      lake; the added size is unmeasured, and the lake build ships only once #161 has measured it
       on all three targets. Parquet's `zstd` codec compiles C through `zstd-sys`, of the same
       class as ring's C that the musl lane already builds; if it does not build there, a
       `zstd`-compressed checkpoint is reported `unsupported` naming the codec, never misread.
@@ -285,7 +285,7 @@ Decided, not built: this lane wrote no code and ran no build.
     and read as `changed` after a retirement. A version below the anchored `rev` is ADR-0057
     d20's rollback signature, and `recreated` is its lake form. `moved` (ADR-0057 d18) is not used
     for lakes in this record: a table copied to a new location is `removed` there and `new` here,
-    and pairing by `metaData.id` is FR-145.
+    and pairing by `metaData.id` is #161.
 
 - **d9 — Purpose, owner, grain and freshness come from a closed list of table properties, and every
   other property is never read.** The table claim reads `metaData.description` as its purpose,
@@ -324,7 +324,7 @@ Decided, not built: this lane wrote no code and ran no build.
   stale mark still comes from the source alone. The cost: `source_checked.rev` may trail the
   table's newest version by a day while nothing it states changed. The client already batches:
   #68's sync sends source checks at most 4 in flight, 600 checks in 9.5 s. A server route that
-  takes a batch stays FR-146, to be built before a 2,000-table lake (*accepted at the
+  takes a batch stays #161, to be built before a 2,000-table lake (*accepted at the
   recommendation, 2026-11-05*).
 
 - **d12 — A schema claim, and a table claim with no stated meaning, may be approved by a key that
@@ -443,7 +443,7 @@ Decided, not built: this lane wrote no code and ran no build.
   there are stated meanings; afterwards, review follows schema and meaning changes, not data.**
     - **Claims.** Two per table (table and schema, more for tables over 666 columns) plus one per
       described or rule-named column: `4,000 + D` for `D` described columns. `D` is the lake's
-      own number and unmeasured (FR-142); a lake where one column in ten of a 30-column average is
+      own number and unmeasured (#161); a lake where one column in ten of a 30-column average is
       described has `D = 6,000`, an illustration, not a measurement.
     - **Review.** Schema claims, and table claims with nothing stated, go to the CI key once it
       exists (d12) and otherwise to a person: 20 bulk requests of 200 (ADR-0057 d9). Every table
@@ -455,12 +455,12 @@ Decided, not built: this lane wrote no code and ran no build.
       checkpoint, and one `GET` per commit since it, bounded by the writer's checkpoint interval.
       An unchanged table costs one listing (d11). At 2,000 tables a first load is in the tens of
       thousands of requests and a day's resyncs about 2,000 listings per run; the time and money
-      are unmeasured (FR-143).
+      are unmeasured (#161).
     - **Requests to OML.** One `POST` per written claim and one source check per changed or
       day-old claim (d11), each honouring `Retry-After`.
     - **Afterwards.** Appends, deletes and compactions cost nothing but checks; a schema change
       costs one mechanical review, a rename or a comment one human review, and a description or
-      property change one human review. How often a real lake does each is unmeasured (FR-142).
+      property change one human review. How often a real lake does each is unmeasured (#161).
 
 - **d19 — A generated test lake in the repository is the golden fixture and the eval's corpus.**
   `testing/lake/` holds the generator (d3, its own cargo workspace on `deltalake`, never built by
@@ -486,7 +486,7 @@ Decided, not built: this lane wrote no code and ran no build.
     recorded"), what a column means ("what is `discount`"), a renamed column ("where did order
     amount go"), and which columns hold personal data (by `about: pii:`). It runs on the recall
     eval's harness (ADR-0054) against the promoted fixture, and its results are published with the
-    phase that ships them; no target is set before a measurement (FR-144).
+    phase that ships them; no target is set before a measurement (#161).
 
 - **d20 — Every new failure has a doctor line.** `oml doctor` names: a CLI without the lake build
   when the clone's `oml-lake.toml` exists; a server that does not accept the `s3` or `gs` schemes,
@@ -501,7 +501,7 @@ Decided, not built: this lane wrote no code and ran no build.
 - **d21 — The build, in four phases on v0.6.x, each closed by named tests.** v0.6.0 stays ADR-0030's.
     1. **v0.6.1 — the reader, the test lake and the server's grammar.** Server: d5's schemes,
        `rev`, `col=`, d7's hashers and `oml-catalog/1`; `anchor_uri_prefix` on recall, the listing and `oml_read`
-       (d22). CLI lake build on all three targets, size measured (FR-140); `--adapter delta` over
+       (d22). CLI lake build on all three targets, size measured (#161); `--adapter delta` over
        a local lake with `--uri-base`; the test lake and its oracle. Tests:
        `the_reader_matches_the_delta_rs_oracle_at_every_fixture_version`,
        `no_object_outside_delta_log_is_ever_opened`,
@@ -590,7 +590,7 @@ Decided, not built: this lane wrote no code and ran no build.
       one of d7's three.
     - **Not yet built, by phase:** `oml-lake.toml`, `--recheck-after`, retirement of a removed table
       and `doctor` lines (v0.6.2, d10, d20); `oml lake fetch` and the catalog adapters (v0.6.3); the
-      ontology (v0.6.4). `oml-lake`'s release artifact waits on FR-140's size measurement; CI prints
+      ontology (v0.6.4). `oml-lake`'s release artifact waits on #161's size measurement; CI prints
       the size the lake build adds on each target.
 
 ## Contract sketch
@@ -663,12 +663,12 @@ plan      … new, 0 changed, 0 removed; 1 unsupported, 1 unreadable, 1 recreate
   async runtime and three cloud clients, size unmeasured. Review: about 4,000 mechanical claims
   and every stated meaning at 2,000 tables, one human review per rename, comment or description
   change afterwards. Bucket names and table paths are kept for good.
-- **Roadmap rows.** FR-140 (the lake build's size and build on the three targets), FR-141 (the
-  reader's coverage of real-world logs: Spark-, Databricks- and delta-rs-written tables), FR-142
-  (described-column counts and schema-change rates of a real lake, which set the review burden),
-  FR-143 (object-storage requests, time and cost of a 2,000-table sync), FR-144 (the lake eval's
-  results), FR-145 (a table moved to a new location paired by `metaData.id`), FR-146 (a batched
-  source-check route), FR-147 (the throughput of ADR-0020's row import streamed from the client).
+- **Open work.** #161 (the lake build's size and build on the three targets, the reader's
+  coverage of real-world logs: Spark-, Databricks- and delta-rs-written tables, described-column
+  counts and schema-change rates of a real lake, which set the review burden, object-storage
+  requests, time and cost of a 2,000-table sync, the lake eval's results, a table moved to a new
+  location paired by `metaData.id`, a batched source-check route, the throughput of ADR-0020's
+  row import streamed from the client).
 - **Use cases.** UC-SM-07 to UC-SM-10, added to the [use cases](../product/use-cases.md#sources)
   and the [call map](../engineering/use-case-call-map.md#sources).
 - **Pages to change at the build.** openapi.yaml's `Anchor`, recall and listing; mcp-tools.json's
@@ -686,7 +686,7 @@ plan      … new, 0 changed, 0 removed; 1 unsupported, 1 unreadable, 1 recreate
 | 1 | ADR-0020's row import and the server's lake access | Decided: the client reads and streams the rows; the server never touches a client lake and only receives (d1 amends ADR-0020 d7). |
 | 2 | The lake build's form (d3) | Decided: a second `oml` artifact built with `lake-sync`, released as `oml-lake`; the default CLI is unchanged. |
 | 3 | Workarea and crew names (d17) | Accepted at the recommendation, 2026-11-05: `lake`, `lake-<domain>`, `lake-catalog-<catalog>`, `lake-glossary`, `lake-privacy`, `lake-ontology`. |
-| 4 | Source checks at scale (d11) | Accepted at the recommendation, 2026-11-05: daily re-checks through the client's batching (#68: at most 4 in flight, 600 checks in 9.5 s), and a server batch route (FR-146) before a 2,000-table lake. |
+| 4 | Source checks at scale (d11) | Accepted at the recommendation, 2026-11-05: daily re-checks through the client's batching (#68: at most 4 in flight, 600 checks in 9.5 s), and a server batch route (#161) before a 2,000-table lake. |
 | 5 | Catalog owners (d13) | Decided: groups only, never a person's username. |
 | 6 | The `oml.` table properties (d9) | Accepted at the recommendation, 2026-11-05: `oml.owner`, `oml.grain`, `oml.freshness`. |
 | 7 | Samples (d15) | Decided: not built; a rejected alternative, revisited only on a concrete need. |

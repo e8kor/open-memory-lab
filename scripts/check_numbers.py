@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail when this branch introduces an ADR, FR or migration number that docs/NUMBERS.md
+"""Fail when this branch introduces an ADR or migration number that docs/NUMBERS.md
 assigns to another branch, does not list, or that another remote branch also introduces.
 
     python scripts/check_numbers.py [--base origin/main] [--branch NAME]

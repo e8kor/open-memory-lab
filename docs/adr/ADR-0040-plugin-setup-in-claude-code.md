@@ -9,7 +9,7 @@ answers: how a user points the oml plugin at a server and gives it a key inside 
 
 **Status:** accepted design · 2026-11-04 · amended by [ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)
 
-**Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.4.0 ([releases](../changelog.md))
 
 **Amends:** ADR-0028 (d1), ADR-0029 (d4)
 
@@ -161,7 +161,7 @@ maintainer's. Decided, not built.
 - **Pages that change at build:** [mcp-plugin.md](../api/mcp-plugin.md), [the CLI
   reference](../cli/reference.md) for the hook and `issue-agent`, the plugin README and the
   `oml-admin` skill.
-- **Migration for v0.3.0 users**, `oml.doublegate.io` among them: `claude plugin update
+- **Migration for v0.3.0 users:** `claude plugin update
   oml@open-memory-lab` (auto-update is off by default for a third-party marketplace), then one of
   d4's two paths. The exported variables can then leave the shell profile.
 - **Directory blockers this clears.** The MCP `url` is no longer `${OML_URL:-http://…}`, and the
@@ -188,7 +188,7 @@ maintainer's. Decided, not built.
     - **README disclosure** of the hook's two requests, the directory name it sends as the query,
       and the configured server. **Unverified:** whether `privacyPolicyUrl` or
       `termsOfServiceUrl` is required under the Anthropic Software Directory Policy.
-- **Opened:** FR-67 on the [roadmap](../product/roadmap.md), marked proposed.
+- **Opened:** #118 on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap), marked proposed.
 
 ## Rejected alternatives
 

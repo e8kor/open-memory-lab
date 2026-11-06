@@ -9,7 +9,7 @@ answers: how bodies and attachments are content-addressed, encrypted per artifac
 
 **Status:** accepted design · 2026-10-29
 
-**Release:** not scheduled ([releases](../product/releases.md#decisions))
+**Release:** not built ([releases](../changelog.md))
 
 ## Context
 
@@ -70,7 +70,7 @@ flowchart LR
   digest and the ordered list of attachment digests, so the artifact identity commits to every
   attachment: the same words about a different file are a different claim. The envelope contract
   is specified in the [storage architecture](../architecture/storage.md) and the
-  [Postgres schema](../data/postgres-schema.md). Its versioning discipline is additive: a later
+  [Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations). Its versioning discipline is additive: a later
   envelope version may add optional fields, never remove, rename or retype one, so earlier ids
   stay valid.
 
@@ -83,7 +83,7 @@ flowchart LR
   bound sits outside the journal, is addressable by no one but its uploader, and expires; "no
   silent deletion" governs admitted content — what a signed event names — and no event names an
   upload. Session shape, part limits and expiry values are unbuilt and undecided at this level;
-  the `upload_sessions` table is sketched in the [Postgres schema](../data/postgres-schema.md).
+  the `upload_sessions` table is sketched in the [Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations).
 
 - **d4 — Stored objects are ciphertext in an S3-compatible object store, encrypted per artifact,
   with both digests recorded.** The object is named by the SHA-256 of its plaintext
@@ -93,7 +93,7 @@ flowchart LR
   which is the only path that decrypts. The cost of this split is honest: an end-to-end
   plaintext-integrity check exists only where keys exist, and the reconciler's digest-mismatch
   finding — part of the closed finding vocabulary on the
-  [reconciliation page](../architecture/reconciliation.md) — speaks about ciphertext.
+  [reconciliation page](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md) — speaks about ciphertext.
   The original file is kept, deliberately: the evidence a reviewer signed must stay re-openable
   later, and the object store is the durable home for a regulator's PDF or a screenshot.
 
@@ -118,7 +118,7 @@ flowchart LR
   bytes with replacement characters and embedding the result as text manufactures mojibake that a
   scanner then "reads" as if it were content. This rule closes that class by construction. Which
   extractors exist, and what they cost, is unmeasured and unbuilt; extractor choice per type is
-  design work tracked on the [roadmap](../product/roadmap.md).
+  design work tracked on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 
 ## Consequences
 
@@ -135,10 +135,10 @@ flowchart LR
   of ciphertext-only integrity findings outside the serving path.
 - A reviewer must be served every attachment before a counting verdict (d5), so attachment count
   and size directly price review. Review throughput is unmeasured — the
-  [roadmap](../product/roadmap.md) carries it as an FR.
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) carries it as an issue.
 - Everything here is decided, not built. Upload-session limits, admitted media types, extractor
   choices and the serve-binding expiry are open at the level named in each decision, and each
-  open point lives as a roadmap row, not as silence.
+  open point lives as a issue, not as silence.
 
 ## Rejected alternatives
 

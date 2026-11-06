@@ -1433,8 +1433,9 @@ mod tests {
             Err(None),
             "off for the session"
         );
+        // A request would wait out the 100 ms budget, so under it none was sent; 50 ms failed on a loaded runner.
         assert!(
-            started.elapsed() < Duration::from_millis(50),
+            started.elapsed() < Duration::from_millis(90),
             "no request sent"
         );
     }

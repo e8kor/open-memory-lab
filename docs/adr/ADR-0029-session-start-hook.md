@@ -9,7 +9,7 @@ answers: how the oml agent plugin starts every Claude Code session from what OML
 
 **Status:** accepted design · 2026-10-31 · amended by [ADR-0038](ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) (d6, d7), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0040](ADR-0040-plugin-setup-in-claude-code.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)
 
-**Release:** introduced in v0.2.2 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.2.2 ([releases](../changelog.md))
 
 ## Context
 
@@ -106,7 +106,7 @@ accepts it.
     so a memory is a hit only when it names every word of the directory's name; a generic name
     such as `src` matches generic memories, and a worktree named after its branch matches only the
     memories that name the branch. How well the directory name recalls is unmeasured, under
-    [FR-4](../product/roadmap.md).
+    #102.
 
 - **d4 — The hook authenticates with `OML_URL` and `OML_API_KEY` alone, the agent's own plugin
   key, and prints no key value.** These are the two variables the plugin's MCP entry reads, so the
@@ -257,7 +257,7 @@ accepts it.
 - Unverified: the tests run the verb against the real lead in process, not inside Claude Code.
   `claude plugin validate` checks the hook file's shape; that Claude Code runs the command and
   adds the context to a session is the hooks reference's statement, not a check in this
-  repository. The [roadmap](../product/roadmap.md) tracks it as FR-33, which closes on a recorded
+  repository. The [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) tracks it as #114, which closes on a recorded
   session, on a named Claude Code version, that includes a run after a compaction.
 - Process: the record registers at its three points (this file, a [register](index.md) row and a
   `mkdocs.yml` nav entry); `llms.txt` names it; one [changelog](../changelog.md) entry records the

@@ -130,5 +130,5 @@
   "p99": 270.99
  },
  "reference": null,
- "notes": "One model wrote corpus, queries and labels; success counts grade 2, nDCG gains 2^g-1, k 10 under a 2,000-token budget, so recall@100 is not measured. Of 22 unanswerable queries, kept out of these metrics, 0.000 were answered with no hit. bm25-rerank at its defaults (ms-marco-MiniLM-L6-v2, depth 10, 256 tokens, 2 threads, a 1 s deadline, floor off); no rerank was skipped; the host's load average was 3.3 to 4.0 from other work, and another reviewer may have been running tests beside it (ADR-0053 d4, FR-88)."
+ "notes": "One model wrote corpus, queries and labels; success counts grade 2, nDCG gains 2^g-1, k 10 under a 2,000-token budget, so recall@100 is not measured. Of 22 unanswerable queries, kept out of these metrics, 0.000 were answered with no hit. bm25-rerank at its defaults (ms-marco-MiniLM-L6-v2, depth 10, 256 tokens, 2 threads, a 1 s deadline, floor off); no rerank was skipped; the host's load average was 3.3 to 4.0 from other work, and another reviewer may have been running tests beside it (ADR-0053 d4, #102)."
 }

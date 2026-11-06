@@ -74,6 +74,9 @@ function poll(){fetch('/web/start/status',{credentials:'same-origin',cache:'no-s
 if(j.first_memory!=='promoted')setTimeout(poll,5000)}}).catch(function(){setTimeout(poll,10000)})}\
 setTimeout(poll,5000)})();";
 
+// The stylesheet is long enough that hashing it runs past the compiler's
+// const-evaluation lint; the work is bounded by the file's size.
+#[allow(long_running_const_eval)]
 const STYLE_DIGEST: [u8; 44] = base64_32(&sha256(STYLESHEET.as_bytes()));
 const SCRIPT_DIGEST: [u8; 44] = base64_32(&sha256(START_SCRIPT.as_bytes()));
 
@@ -272,16 +275,32 @@ impl PendingSignUp {
 }
 
 /// Sign-ups per client address in a rolling hour (ADR-0068 d9): the
-/// process's own count, one bucket per address, and one shared bucket
-/// where the address is unknown.
+/// process's own count, one bucket per client, and one shared bucket where
+/// the address is unknown. A client is an IPv4 address or an IPv6 /64, the
+/// smallest network a host can hold whole, so one host cannot draw a new
+/// bucket from its own prefix; an IPv4-mapped IPv6 address is its IPv4 one.
 #[derive(Debug, Default)]
 pub struct SignupLimiter(std::sync::Mutex<HashMap<Option<IpAddr>, VecDeque<i64>>>);
+
+/// The bucket of a client address: IPv4 by itself, IPv6 by its /64.
+fn client_bucket(addr: Option<IpAddr>) -> Option<IpAddr> {
+    addr.map(|a| match a.to_canonical() {
+        IpAddr::V6(v6) => {
+            let high = u128::from(v6) & (u128::MAX << 64);
+            IpAddr::V6(high.into())
+        }
+        v4 => v4,
+    })
+}
 
 impl SignupLimiter {
     /// Takes one slot for `addr` at `now`, or the seconds until one frees.
     pub fn take(&self, addr: Option<IpAddr>, now: i64, per_hour: u64) -> Result<(), u64> {
         let mut map = self.0.lock().expect("signup limiter lock");
-        let slots = map.entry(addr).or_default();
+        // A bucket whose newest slot has aged out is dropped, so the map
+        // holds only the clients seen in the last hour.
+        map.retain(|_, slots| slots.back().is_some_and(|t| now - t < 3600));
+        let slots = map.entry(client_bucket(addr)).or_default();
         while slots.front().is_some_and(|t| now - t >= 3600) {
             slots.pop_front();
         }
@@ -291,6 +310,11 @@ impl SignupLimiter {
         }
         slots.push_back(now);
         Ok(())
+    }
+
+    #[cfg(test)]
+    fn buckets(&self) -> usize {
+        self.0.lock().expect("signup limiter lock").len()
     }
 }
 
@@ -487,7 +511,16 @@ where
         let accepted = fields.get("terms_version").cloned().unwrap_or_default();
         let entry = match retry_chain(|| self.app.web_sign_up(&pending.identity, &accepted)).await {
             Ok(entry) => entry,
-            Err(e) => return Self::start_refused(&app_error(e), line),
+            Err(e) => {
+                // An entry exists now: the cookie is spent, and the person
+                // signs in through the callback (ADR-0068 d2).
+                let spent = matches!(e, AppError::WebSignIn(_));
+                let mut answer = Self::start_refused(&app_error(e), line);
+                if spent {
+                    append_cookie(&mut answer.response, &clear_cookie(SIGN_UP_COOKIE));
+                }
+                return answer;
+            }
         };
         if let Err(e) = retry_chain(|| self.app.web_ensure_keys(&entry)).await {
             return Self::start_refused(&app_error(e), line);
@@ -1399,6 +1432,42 @@ mod tests {
             limiter.take(ip, 4600, 5).is_ok(),
             "an hour later a slot frees"
         );
+    }
+
+    #[test]
+    fn addresses_of_one_ipv6_slash_64_share_a_bucket_and_an_ipv4_address_keeps_its_own() {
+        let limiter = SignupLimiter::default();
+        let a: Option<IpAddr> = Some("2001:db8:1:2::1".parse().unwrap());
+        let same_64: Option<IpAddr> = Some("2001:db8:1:2:ffff:ffff:ffff:ffff".parse().unwrap());
+        let other_64: Option<IpAddr> = Some("2001:db8:1:3::1".parse().unwrap());
+        assert!(limiter.take(a, 1000, 1).is_ok());
+        assert!(
+            limiter.take(same_64, 1000, 1).is_err(),
+            "a second host of the /64 is the same client"
+        );
+        assert!(limiter.take(other_64, 1000, 1).is_ok());
+        // An IPv4 address and the same address mapped into IPv6 are one client.
+        let v4: Option<IpAddr> = Some("203.0.113.9".parse().unwrap());
+        let mapped: Option<IpAddr> = Some("::ffff:203.0.113.9".parse().unwrap());
+        assert!(limiter.take(v4, 1000, 1).is_ok());
+        assert!(limiter.take(mapped, 1000, 1).is_err());
+        assert!(
+            limiter
+                .take(Some("203.0.113.10".parse().unwrap()), 1000, 1)
+                .is_ok(),
+            "IPv4 is bucketed by the address itself"
+        );
+    }
+
+    #[test]
+    fn a_bucket_whose_slots_have_all_expired_is_dropped() {
+        let limiter = SignupLimiter::default();
+        for n in 0..50u8 {
+            let ip: Option<IpAddr> = Some(format!("198.51.100.{n}").parse().unwrap());
+            assert!(limiter.take(ip, 1000, 5).is_ok());
+        }
+        assert!(limiter.take(None, 5000, 5).is_ok());
+        assert_eq!(limiter.buckets(), 1, "only the live bucket remains");
     }
 
     #[test]
