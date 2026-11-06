@@ -632,7 +632,11 @@ fn tips_of(ctx: &Context, served: &[Listed]) -> HashMap<String, String> {
 
 /// Sends each source check and each write this run carries, in order,
 /// recording refusals on the entry (ADR-0057 d8, d9).
-fn write_plan(api: &dyn SyncApi, plan: &mut Plan, workarea: &str) -> Result<(), CliError> {
+pub(crate) fn write_plan(
+    api: &dyn SyncApi,
+    plan: &mut Plan,
+    workarea: &str,
+) -> Result<(), CliError> {
     // Every source check first, in one batch the API may send concurrently;
     // an entry whose check was refused writes nothing.
     let checked: Vec<usize> = (0..plan.entries.len())
@@ -683,7 +687,7 @@ fn write_plan(api: &dyn SyncApi, plan: &mut Plan, workarea: &str) -> Result<(), 
 }
 
 /// The source checks of `entries[i]` for each `i`, in one batch.
-fn send_checks(
+pub(crate) fn send_checks(
     api: &dyn SyncApi,
     entries: &[Entry],
     which: &[usize],
@@ -886,17 +890,20 @@ impl Printer<'_> {
     }
 }
 
-fn where_of(e: &Entry) -> String {
+pub(crate) fn where_of(e: &Entry) -> String {
     match &e.anchor {
-        Some(a) => match &a.fragment {
-            Some(f) => format!("{}#{f}", a.path),
-            None => a.path.clone(),
-        },
+        Some(a) => {
+            let place = a.path.as_deref().or(a.uri.as_deref()).unwrap_or(&e.path);
+            match &a.fragment {
+                Some(f) => format!("{place}#{f}"),
+                None => place.to_owned(),
+            }
+        }
         None => e.path.clone(),
     }
 }
 
-fn entry_line(e: &Entry) -> String {
+pub(crate) fn entry_line(e: &Entry) -> String {
     let mut line = format!(
         "{:<9} {:<20} {}",
         e.outcome.as_str(),

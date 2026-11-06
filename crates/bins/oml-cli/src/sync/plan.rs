@@ -68,9 +68,15 @@ impl Outcome {
 /// An anchor a run sends (ADR-0057 d1, d3).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Anchor {
-    pub repo: String,
+    /// A repository anchor's `repo` and `path`, or a `uri` anchor's `uri`
+    /// (a lake table, ADR-0062 d5): never both.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
     pub rev: String,
-    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fragment: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -231,22 +237,22 @@ pub struct SourceItem {
 
 /// A claim of the workarea as the listings show it.
 #[derive(Clone, Debug)]
-struct Claim {
-    key: String,
-    tip: Option<Listed>,
-    held: bool,
+pub(crate) struct Claim {
+    pub(crate) key: String,
+    pub(crate) tip: Option<Listed>,
+    pub(crate) held: bool,
     /// Promoted versions older than the tip: (version, anchor hash).
     older: Vec<(u64, String)>,
     /// The greatest version among held and promoted (d19).
-    latest_live: u64,
+    pub(crate) latest_live: u64,
     /// The latest version in any state, for a claim with no tip.
     latest: Option<Listed>,
     /// Whether a version is demoted.
-    demoted: bool,
+    pub(crate) demoted: bool,
 }
 
 impl Claim {
-    fn of(key: &str, versions: &[Listed]) -> Self {
+    pub(crate) fn of(key: &str, versions: &[Listed]) -> Self {
         let tip = versions
             .iter()
             .find(|v| v.tip && v.state == "promoted")
@@ -305,7 +311,7 @@ impl Claim {
         self.anchored_in(&ctx.repo) && self.location().is_some_and(|(p, _)| ctx.in_source(&p))
     }
 
-    fn live_tip(&self) -> Option<&Listed> {
+    pub(crate) fn live_tip(&self) -> Option<&Listed> {
         self.tip.as_ref().filter(|t| !t.retirement)
     }
 }
@@ -521,9 +527,10 @@ pub fn diff(ctx: &Context, items: &[SourceItem], own: &[Listed], served: &[Liste
             continue;
         };
         let anchor = Anchor {
-            repo: ctx.repo.clone(),
+            repo: Some(ctx.repo.clone()),
+            uri: None,
             rev: ctx.rev.clone(),
-            path: path.clone(),
+            path: Some(path.clone()),
             fragment: fragment.clone(),
             hash: None,
             hasher: None,
@@ -608,9 +615,10 @@ fn pending(claim: &Claim, path: &str) -> Entry {
 
 fn anchor_of(ctx: &Context, si: &SourceItem) -> Anchor {
     Anchor {
-        repo: ctx.repo.clone(),
+        repo: Some(ctx.repo.clone()),
+        uri: None,
         rev: ctx.rev.clone(),
-        path: si.path.clone(),
+        path: Some(si.path.clone()),
         fragment: si.item.fragment.clone(),
         hash: Some(si.item.hash.clone()),
         hasher: Some(HASHER.to_owned()),

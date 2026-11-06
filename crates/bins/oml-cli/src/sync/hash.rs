@@ -24,9 +24,16 @@ pub fn sha256(bytes: &[u8]) -> String {
 /// to one space, trimmed, SHA-256 (ADR-0057 d7).
 #[must_use]
 pub fn md_hash(span: &str) -> String {
+    sha256(md_normal(span).as_bytes())
+}
+
+/// The text `oml-md/1` hashes: NFC, line endings to LF, every run of
+/// whitespace to one space, trimmed. The lake hashers normalise a
+/// description and a comment the same way (ADR-0062 d7).
+#[must_use]
+pub fn md_normal(span: &str) -> String {
     let normal = nfc(&span.replace("\r\n", "\n").replace('\r', "\n"));
-    let collapsed = normal.split_whitespace().collect::<Vec<_>>().join(" ");
-    sha256(collapsed.as_bytes())
+    normal.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The digest the server answers as `plaintext_digest` for `text`: the

@@ -561,10 +561,22 @@ fn an_unchanged_claim_is_checked_fresh_at_the_new_version_and_a_changed_one_chan
     let fake = Fake::new();
     run(&fake, &opts(Some(3)));
     fake.clear_calls();
-    // Version 4 is an append: nothing a claim states moved, and the version did.
+    // Version 4 of orders is an append: nothing a claim states moved, and the
+    // version did. (Clicks edits its description at 4, so its table claim moves.)
     let r = run(&fake, &opts(Some(4)));
-    assert!(outcomes(&r).values().all(|o| o == "unchanged"));
-    assert!(fake.writes.borrow().is_empty());
+    let out = outcomes(&r);
+    assert!(
+        out.iter()
+            .filter(|(k, _)| k.contains("sales/orders"))
+            .all(|(_, o)| o == "unchanged")
+    );
+    assert_eq!(out["delta/events/clicks/table"], "changed");
+    assert!(fake.writes.borrow().iter().all(|(_, b)| {
+        b["anchor"]["uri"]
+            .as_str()
+            .unwrap()
+            .ends_with("events/clicks")
+    }));
     {
         let checks = fake.checks.borrow();
         let orders: Vec<_> = checks
@@ -610,21 +622,86 @@ fn a_dry_run_sends_nothing_and_a_held_claim_is_pending() {
     assert!(fake.writes.borrow().is_empty());
 }
 
+/// A copy of the fixture's orders table in a directory of its own.
+fn copy_orders(name: &str) -> PathBuf {
+    let dir = tempfile_dir(name);
+    let log = dir.join("sales/orders/_delta_log");
+    std::fs::create_dir_all(&log).unwrap();
+    for e in std::fs::read_dir(fixture().join("sales/orders/_delta_log")).unwrap() {
+        let e = e.unwrap();
+        std::fs::copy(e.path(), log.join(e.file_name())).unwrap();
+    }
+    dir
+}
+
 #[test]
-fn a_dropped_comment_retires_its_column_claim_and_an_unreadable_table_retires_nothing() {
+fn a_dropped_column_retires_its_claim_and_its_source_check_says_removed() {
+    let dir = copy_orders("dropped");
+    let mut o = opts(None);
+    o.root = dir.clone();
     let fake = Fake::new();
-    run(&fake, &opts(Some(0)));
-    // Version 0 has no `channel` column and a different set of claims than 2.
+    run(&fake, &o);
+    // Version 6 drops `channel`: the version 5 metaData, without that field.
+    let v5 = std::fs::read_to_string(dir.join("sales/orders/_delta_log/00000000000000000005.json"))
+        .unwrap();
+    let mut meta: Value = serde_json::from_str(v5.lines().next().unwrap()).unwrap();
+    let schema = meta["metaData"]["schemaString"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut schema: Value = serde_json::from_str(&schema).unwrap();
+    schema["fields"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|f| f["name"] != "channel");
+    meta["metaData"]["schemaString"] = json!(schema.to_string());
+    std::fs::write(
+        dir.join("sales/orders/_delta_log/00000000000000000006.json"),
+        meta.to_string() + "\n",
+    )
+    .unwrap();
     fake.clear_calls();
-    let r = run(&fake, &opts(Some(2)));
+    let r = run(&fake, &o);
     let out = outcomes(&r);
-    assert_eq!(out["delta/sales/orders/col/col-7d3e"], "new");
+    assert_eq!(out["delta/sales/orders/col/col-7d3e"], "removed");
+    assert_eq!(out["delta/sales/orders/schema"], "changed");
+    assert_eq!(out.values().filter(|o| *o == "removed").count(), 1);
+    let writes = fake.writes.borrow();
+    let retire = writes
+        .iter()
+        .find(|(_, b)| b["retirement"] == true)
+        .unwrap();
+    assert_eq!(retire.1["anchor"]["fragment"], "col=channel");
+    assert_eq!(retire.1["anchor"]["rev"], "6");
+    assert!(
+        fake.checks
+            .borrow()
+            .iter()
+            .any(|(a, b)| a == "art-delta/sales/orders/col/col-7d3e-v1" && b["result"] == "removed")
+    );
+}
+
+#[test]
+fn a_version_below_the_anchored_one_is_a_rollback_and_writes_nothing() {
+    let fake = Fake::new();
+    run(&fake, &opts(Some(4)));
     fake.clear_calls();
-    // Reading at version 0 again drops the `channel` claim: removed.
-    let r = run(&fake, &opts(Some(0)));
-    assert_eq!(outcomes(&r)["delta/sales/orders/col/col-7d3e"], "removed");
-    // A lake whose only table is unsupported retires nothing and exits 1.
-    let dir = tempfile_dir();
+    let r = run(&fake, &opts(Some(3)));
+    assert_eq!(r.exit, 1);
+    let out = outcomes(&r);
+    assert!(
+        out.iter()
+            .any(|(k, o)| k.contains("sales/orders") && o == "rollback")
+    );
+    assert!(fake.writes.borrow().is_empty());
+}
+
+#[test]
+fn an_unsupported_table_is_named_and_its_claims_are_never_retired() {
+    let fake = Fake::new();
+    run(&fake, &opts(None));
+    fake.clear_calls();
+    let dir = tempfile_dir("unsupported");
     let log = dir.join("sales/orders/_delta_log");
     std::fs::create_dir_all(&log).unwrap();
     std::fs::write(
@@ -634,10 +711,15 @@ fn a_dropped_comment_retires_its_column_claim_and_an_unreadable_table_retires_no
     .unwrap();
     let mut o = opts(None);
     o.root = dir;
-    fake.clear_calls();
     let r = run(&fake, &o);
     assert_eq!(r.exit, 1);
     assert!(fake.writes.borrow().is_empty());
+    assert!(
+        outcomes(&r)
+            .iter()
+            .filter(|(k, _)| k.contains("sales/orders"))
+            .all(|(_, o)| o == "skipped")
+    );
     assert!(
         r.json["tables"].as_array().unwrap().iter().any(|t| {
             t["table"] == "sales/orders"
@@ -649,8 +731,8 @@ fn a_dropped_comment_retires_its_column_claim_and_an_unreadable_table_retires_no
     );
 }
 
-fn tempfile_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("oml-cli-lake-sync-{}", std::process::id()));
+fn tempfile_dir(test: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("oml-cli-lake-sync-{test}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

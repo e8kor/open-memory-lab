@@ -740,7 +740,8 @@ struct SyncArgs {
     #[arg(long)]
     workarea: String,
     /// adr, headings or lines; omitted, adr for ADR-NNNN-*.md files and
-    /// headings otherwise (ADR-0057 d7, d21).
+    /// headings otherwise (ADR-0057 d7, d21). `delta` reads a Delta Lake's
+    /// tables from their logs and is in the lake build, `oml-lake` (ADR-0062).
     #[arg(long)]
     adapter: Option<String>,
     /// The commit read; never the working tree.
@@ -804,6 +805,11 @@ struct SyncArgs {
     /// With --pr, the branch the pull request targets.
     #[arg(long, default_value = "origin/main", requires = "pr")]
     base: String,
+    /// With --adapter delta, the canonical location a lake read from a mirror
+    /// or a copy stands for (`s3://`, `gs://`, `https://` or `file://`): the
+    /// anchors carry it, never a local path (ADR-0062 d5).
+    #[arg(long, requires = "adapter")]
+    uri_base: Option<String>,
 }
 
 #[derive(Args)]
@@ -1848,6 +1854,9 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
 /// at --rev, and runs the plan through the HTTP API (ADR-0057 d6-d11).
 fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode, CliError> {
     use oml_cli::sync::{adapter::Kind, api::HttpApi, run, source};
+    if args.adapter.as_deref() == Some("delta") {
+        return run_lake_sync(cli, stored, args);
+    }
     let client = resolve(cli, stored)?;
     let cwd = std::env::current_dir()
         .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
@@ -1905,6 +1914,66 @@ fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode
     if !opts.dry_run && !opts.check && !opts.edges && report.exit == 0 {
         run::record_exclude(&loaded, &opts).map_err(CliError::Local)?;
     }
+    if cli.json {
+        print_json(&report.json);
+    }
+    Ok(ExitCode::from(report.exit))
+}
+
+/// `oml sync --adapter delta`: the lake build reads a Delta Lake's tables from
+/// their logs; the default build names the build that does (ADR-0062 d3).
+#[cfg(not(feature = "lake-sync"))]
+fn run_lake_sync(_: &Cli, _: &Credentials, _: &SyncArgs) -> Result<ExitCode, CliError> {
+    Err(CliError::local(
+        "--adapter delta reads a Delta Lake, and this oml was built without it: install the lake \
+         build, oml-lake, which has the same verbs and this adapter (ADR-0062 d3)",
+    ))
+}
+
+#[cfg(feature = "lake-sync")]
+fn run_lake_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode, CliError> {
+    use oml_cli::lake::run::{self, Options};
+    use oml_cli::sync::{api::HttpApi, source};
+    let unsupported = [
+        (args.pr.is_some(), "--pr"),
+        (args.edges, "--edges"),
+        (args.ratify, "--ratify"),
+        (args.retire_all, "--retire-all"),
+        (args.adopt, "--adopt"),
+        (args.allow_rollback, "--allow-rollback"),
+        (args.change_adapter, "--change-adapter"),
+        (!args.exclude.is_empty(), "--exclude"),
+        (args.repo.is_some(), "--repo"),
+    ];
+    if let Some((_, flag)) = unsupported.iter().find(|(set, _)| *set) {
+        return Err(CliError::local(format!(
+            "{flag} is for a repository's documents and does not apply to --adapter delta (ADR-0062 d2)"
+        )));
+    }
+    let root = oml_cli::lake::local_root(&args.source).map_err(CliError::Local)?;
+    let client = resolve(cli, stored)?;
+    if source::is_public_server(client.server()) && !args.allow_public_server {
+        return Err(CliError::local(format!(
+            "{} is the maintainer's public server: its admins read every memory, and a written \
+             anchor and text are never erased; pass --allow-public-server to sync to it \
+             (ADR-0057 d6)",
+            client.server()
+        )));
+    }
+    let opts = Options {
+        root,
+        uri_base: args.uri_base.clone(),
+        workarea: args.workarea.clone(),
+        dry_run: args.dry_run,
+        check: args.check,
+        record: args.record,
+        json: cli.json,
+        max_writes: args.max_writes,
+        depth: run::DEPTH,
+        at_version: None,
+    };
+    let api = HttpApi { client };
+    let report = run::execute(&api, &opts, &mut std::io::stdout())?;
     if cli.json {
         print_json(&report.json);
     }
