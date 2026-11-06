@@ -2286,6 +2286,45 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/admin/rescan:
+    get:
+      tags: [admin]
+      operationId: adminRescan
+      summary: Rescan the versions the tenant stores with the server's rule set and report what it would refuse or hold, by rule and place, never the text.
+      description: 'Requires: admin key role (ADR-0065 d13); every other role answers access.verb_ceiling. Reads the submissions journalled after after_seq, at most limit journal events, and scans each stored version but an erased one, body and anchor, as admission does. Changes nothing and journals nothing: a version it would veto stays where it is for a person to retire (ADR-0001 R4). A finding names its class, rule and place, never the matched text. Since v0.6.0.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: after_seq, in: query, required: false, schema: { type: integer, minimum: 0, default: 0 }, description: 'Rescan the submissions journalled after this sequence number.' }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 1000, default: 1000 }, description: 'The most journal events this window reads.' }
+      responses:
+        '200':
+          description: What this window found.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                scanner_version: oml-scan/1
+                scanned: 2
+                findings:
+                - artifact_id: 00000000-0000-4000-8000-0000000000a1
+                  workarea_id: 00000000-0000-4000-8000-0000000000b1
+                  version: 1
+                  state: promoted
+                  class: secret.api_token
+                  rule: github-token
+                  action: veto
+                  at: /body line 3
+                by_rule:
+                - { class: secret.api_token, rule: github-token, action: veto, count: 1 }
+                next_after_seq: null
+              schema: { $ref: '#/components/schemas/RescanReport' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -4014,6 +4053,52 @@ components:
             The lead's oauth.issuer, or null where connections are off; doctor reads whether
             connections are on here, not from the discovery paths it checks (ADR-0031 d14).
         build: { $ref: '#/components/schemas/Build' }
+        scan:
+          type: [object, 'null']
+          description: >-
+            The scanner's rule set, how many rules it loaded and whether the personal-data rules
+            are on, or null for a server that pins none; doctor's scan line reads it (ADR-0065
+            d11). Its findings are counted on the metrics listener, never here.
+          properties:
+            version: { type: string }
+            rules: { type: integer, minimum: 0 }
+            pii: { type: boolean }
+
+    RescanReport:
+      type: object
+      description: One rescan window (ADR-0065 d13). No field carries a version's text, claim key or anchor value.
+      required: [scanner_version, scanned, findings, by_rule, next_after_seq]
+      additionalProperties: false
+      properties:
+        scanner_version: { type: [string, 'null'] }
+        scanned: { type: integer, minimum: 0, description: 'Versions scanned in this window: every stored state but erased.' }
+        findings:
+          type: array
+          items:
+            type: object
+            required: [artifact_id, workarea_id, version, state, class, rule, action, at]
+            additionalProperties: false
+            properties:
+              artifact_id: { type: string }
+              workarea_id: { type: string }
+              version: { type: integer, minimum: 1 }
+              state: { type: string }
+              class: { type: string }
+              rule: { type: string }
+              action: { type: string, enum: [veto, hold] }
+              at: { type: string, description: 'The field and line, /body line 3.' }
+        by_rule:
+          type: array
+          items:
+            type: object
+            required: [class, rule, action, count]
+            additionalProperties: false
+            properties:
+              class: { type: string }
+              rule: { type: string }
+              action: { type: string, enum: [veto, hold] }
+              count: { type: integer, minimum: 1 }
+        next_after_seq: { type: [integer, 'null'], description: 'The after_seq of the next window, or null at the chain head.' }
 
     Build:
       type: object

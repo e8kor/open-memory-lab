@@ -146,6 +146,7 @@ from .protected_resource_metadata_scopes_supported_item import (
 )
 from .ready import Ready
 from .ready_checks import ReadyChecks
+from .ready_scan_type_0 import ReadyScanType0
 from .ready_status import ReadyStatus
 from .recall_budget import RecallBudget
 from .recall_budget_counter import RecallBudgetCounter
@@ -177,6 +178,11 @@ from .replay_report import ReplayReport
 from .replay_report_pipelines_item import ReplayReportPipelinesItem
 from .rerank_outcome import RerankOutcome
 from .rerank_reason import RerankReason
+from .rescan_report import RescanReport
+from .rescan_report_by_rule_item import RescanReportByRuleItem
+from .rescan_report_by_rule_item_action import RescanReportByRuleItemAction
+from .rescan_report_findings_item import RescanReportFindingsItem
+from .rescan_report_findings_item_action import RescanReportFindingsItemAction
 from .review_next_body import ReviewNextBody
 from .review_policy import ReviewPolicy
 from .revoke_connection_body import RevokeConnectionBody
@@ -388,6 +394,7 @@ __all__ = (
     "ProtectedResourceMetadataScopesSupportedItem",
     "Ready",
     "ReadyChecks",
+    "ReadyScanType0",
     "ReadyStatus",
     "RecallBudget",
     "RecallBudgetCounter",
@@ -419,6 +426,11 @@ __all__ = (
     "ReplayReportPipelinesItem",
     "RerankOutcome",
     "RerankReason",
+    "RescanReport",
+    "RescanReportByRuleItem",
+    "RescanReportByRuleItemAction",
+    "RescanReportFindingsItem",
+    "RescanReportFindingsItemAction",
     "ReviewNextBody",
     "ReviewPolicy",
     "RevokeConnectionBody",

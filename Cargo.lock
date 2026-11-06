@@ -1911,6 +1911,7 @@ dependencies = [
  "oml-app",
  "oml-guardrail",
  "oml-pg",
+ "oml-scan",
  "oml-server-lead",
  "oml-transport-http",
  "rpassword",
@@ -1933,6 +1934,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "oml-guardrail",
+ "oml-scan",
  "proptest",
  "serde_json",
  "sha2",
@@ -2007,6 +2009,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oml-scan"
+version = "0.5.8"
+dependencies = [
+ "regex",
+ "serde_json",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "oml-server-lead"
 version = "0.5.8"
 dependencies = [
@@ -2018,6 +2029,7 @@ dependencies = [
  "oml-guardrail",
  "oml-pg",
  "oml-rerank",
+ "oml-scan",
  "oml-transport-http",
  "opentelemetry",
  "opentelemetry-proto",

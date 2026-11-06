@@ -134,11 +134,9 @@ a use case, and a capability is a parameter before it is a tool.
   under the fact, prefixed `> `. It is part of the body, so the server's deterministic scanner
   runs over it as over every body, and a finding refuses the write with `submission.scan_veto`;
   crypto-shredding erases it with the body (ADR-0005). What the scanner finds is its rule set's
-  to say: the PoC's rules are two literal markers, and lane `feat/scan` builds `oml-scan/1`'s
-  secret shapes. So nothing here promises that a secret is refused: the skill tells the agent
-  never to quote one, and the excerpt test runs every rule the lead's scanner declares, so it
-  covers `oml-scan/1` once that lands. Off by default because an excerpt is the person's words,
-  kept; it should stay off until the release serves a scanner with secret rules.
+  to say: `oml-scan/1` (ADR-0065) vetoes the secret shapes it declares. So nothing here promises that a secret is refused: the skill tells the agent
+  never to quote one, and the excerpt test runs a case for each rule family of `oml-scan/1`,
+  through a chat excerpt. Off by default because an excerpt is the person's words, kept.
 
 - **d6 — Capture is asked of the running agent at `Stop`, under budgets, and the server calls no
   model.** Three hook verbs, each a no-op unless `OML_CHAT_CAPTURE=1` (or `OML_TURN_RECALL=1` for

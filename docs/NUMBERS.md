@@ -83,7 +83,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0062 | `design/delta-mapping` | #74 | oml sync maps a delta lakes tables into anchored claims from the log a | open |
 | adr | 0063 | `feat/chat-memory-r2` | #88 | a chat turn becomes memory only when the agent in it writes the fact a | open |
 | adr | 0064 | `design/implicit-code-capture` | #80 | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
-| adr | 0065 | `feat/content-scanner` | #81 | the scan is a versioned compiled in rule set that vetoes leaked keys a | open |
+| adr | 0065 | `feat/content-scanner-r2` | #92 | the scan is a versioned compiled in rule set that vetoes leaked keys a | open |
 | fr | 1 | `main` |  | Erasure destroys body and attachment bytes by destroying their keys; a | used |
 | fr | 2 | `main` |  | Review throughput is unmeasured. The design's gate is only as useful a | used |
 | fr | 3 | `main` |  | The lake mirror claims exactly-once application of every event across  | used |
@@ -219,8 +219,8 @@ is a collision: the branch that reserved later renumbers.
 | fr | 174 | `design/implicit-code-capture` | #80 | A chat fact about code carries its turn in `origin.turn`, stored and s | open |
 | fr | 175 | `design/implicit-code-capture` | #80 | Each repository a person opts into adds one workarea under their code  | open |
 | fr | 176 | `design/implicit-code-capture` | #80 | A hook manager that rewrites `core.hooksPath` on install silently remo | open |
-| fr | 180 | `feat/content-scanner` | #81 | The personal-data rules (`pii.email`, `pii.phone`) are compiled in and | open |
-| fr | 181 | `feat/content-scanner` | #81 | `GET /v2/admin/rescan` reads one window of at most 1,000 journal event | open |
+| fr | 180 | `feat/content-scanner-r2` | #92 | The personal-data rules (`pii.email`, `pii.phone`) are compiled in and | open |
+| fr | 181 | `feat/content-scanner-r2` | #92 | `GET /v2/admin/rescan` reads one window of at most 1,000 journal event | open |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |

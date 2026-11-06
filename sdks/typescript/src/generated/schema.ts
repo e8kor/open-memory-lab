@@ -1030,6 +1030,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/admin/rescan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Rescan the versions the tenant stores with the server's rule set and report what it would refuse or hold, by rule and place, never the text.
+         * @description Requires: admin key role (ADR-0065 d13); every other role answers access.verb_ceiling. Reads the submissions journalled after after_seq, at most limit journal events, and scans each stored version but an erased one, body and anchor, as admission does. Changes nothing and journals nothing: a version it would veto stays where it is for a person to retire (ADR-0001 R4). A finding names its class, rule and place, never the matched text. Since v0.6.0.
+         */
+        get: operations["adminRescan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2320,6 +2340,39 @@ export interface components {
             /** @description The lead's oauth.issuer, or null where connections are off; doctor reads whether connections are on here, not from the discovery paths it checks (ADR-0031 d14). */
             oauth_issuer: string | null;
             build: components["schemas"]["Build"];
+            /** @description The scanner's rule set, how many rules it loaded and whether the personal-data rules are on, or null for a server that pins none; doctor's scan line reads it (ADR-0065 d11). Its findings are counted on the metrics listener, never here. */
+            scan?: {
+                version?: string;
+                rules?: number;
+                pii?: boolean;
+            } | null;
+        };
+        /** @description One rescan window (ADR-0065 d13). No field carries a version's text, claim key or anchor value. */
+        RescanReport: {
+            scanner_version: string | null;
+            /** @description Versions scanned in this window: every stored state but erased. */
+            scanned: number;
+            findings: {
+                artifact_id: string;
+                workarea_id: string;
+                version: number;
+                state: string;
+                class: string;
+                rule: string;
+                /** @enum {string} */
+                action: "veto" | "hold";
+                /** @description The field and line, /body line 3. */
+                at: string;
+            }[];
+            by_rule: {
+                class: string;
+                rule: string;
+                /** @enum {string} */
+                action: "veto" | "hold";
+                count: number;
+            }[];
+            /** @description The after_seq of the next window, or null at the chain head. */
+            next_after_seq: number | null;
         };
         /** @description The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field nothing could supply is the string unknown. */
         Build: {
@@ -5632,6 +5685,69 @@ export interface operations {
             };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    adminRescan: {
+        parameters: {
+            query?: {
+                /** @description Rescan the submissions journalled after this sequence number. */
+                after_seq?: number;
+                /** @description The most journal events this window reads. */
+                limit?: number;
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What this window found. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "scanner_version": "oml-scan/1",
+                     *       "scanned": 2,
+                     *       "findings": [
+                     *         {
+                     *           "artifact_id": "00000000-0000-4000-8000-0000000000a1",
+                     *           "workarea_id": "00000000-0000-4000-8000-0000000000b1",
+                     *           "version": 1,
+                     *           "state": "promoted",
+                     *           "class": "secret.api_token",
+                     *           "rule": "github-token",
+                     *           "action": "veto",
+                     *           "at": "/body line 3"
+                     *         }
+                     *       ],
+                     *       "by_rule": [
+                     *         {
+                     *           "class": "secret.api_token",
+                     *           "rule": "github-token",
+                     *           "action": "veto",
+                     *           "count": 1
+                     *         }
+                     *       ],
+                     *       "next_after_seq": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["RescanReport"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
             default: components["responses"]["Error"];
         };
     };
