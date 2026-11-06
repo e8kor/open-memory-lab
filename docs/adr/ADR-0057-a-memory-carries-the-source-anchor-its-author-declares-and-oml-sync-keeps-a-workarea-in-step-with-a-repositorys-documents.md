@@ -160,8 +160,11 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   `id_*`, `*credentials*`, `*secret*`), and, as ADR-0047 d16 and question 11 have it for client
   code, the maintainer's public server `https://memory.doublegate.io`
   ([ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)) unless
-  `--allow-public-server` is given, after printing that the server's admins read every memory
-  and that a written anchor and text are never erased. It writes kind `memory` only; ADR-0047's
+  `--allow-public-server` is given or this clone recorded that flag's earlier opt-in. The first
+  opt-in prints that the server's admins can read submitted memories and that supersession or
+  retirement does not erase submitted text or anchors, then records consent in the source clone's
+  local git config; later runs print no repeated warning. A source outside a clone needs the flag
+  each run. It writes kind `memory` only; ADR-0047's
   `code` kind is a later flag. It writes through `POST /v1/memories` and
   `…/{artifact_id}/supersede`, one request per memory, honouring `Retry-After`; the batch route
   stays unbuilt (ADR-0047 d15).

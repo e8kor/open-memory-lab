@@ -51,7 +51,7 @@ A dash means OML refuses the verb with a typed error. For content verbs, the col
 
 Approve, sign and delete appear in no column: approval is an effect of review, `oml-server` signs, and deletion does not exist.
 
-- **A memory you wrote is your own.** You read your own memories in any state. Everyone else sees `promoted` memories only.
+- **A memory you wrote is your own.** A bearer key reads its own memories in any state. The signed-in user page also reads every key belonging to that user (ADR-0045 d16). Everyone else sees `promoted` memories only.
 - **An admin key reads workarea structure without grants**: names, ids, parents, statuses, crews, children and edges in its tenant. Never a memory's content.
 - **A global denial on an admin key is refused, `request.validation` with `details.field: key`.**
 - **Only a reader grant reads content, and no admin key can carry one.** An admin key that calls recall gets `access.verb_ceiling`.
@@ -69,7 +69,7 @@ A key is issued with a role no higher than its issuer's. Only admin and operator
 |---|---|
 | `reader` | `reader` |
 | `writer` | `reader`, `writer` |
-| `dreamer` | `reader`, `dreamer` |
+| `dreamer` | `reader`, `dreamer`; an agent-held `curator` profile may also carry `writer` inside an in-progress scope (ADR-0030 d8) |
 | `admin`, `operator` | none |
 
 A grant outside that set is refused with `access.issuer_ceiling`. An admin key with a dreamer grant is refused with `access.role_exclusive`: the two-key rule. A person who administers and reviews holds two keys, so the journal shows which capacity acted.

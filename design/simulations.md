@@ -82,8 +82,8 @@ writes are accepted, journalled and held — and stay held, subject to the worka
 expiry policy ([admission](https://github.com/e8kor/open-memory-lab/blob/main/docs/architecture/admission.md)) — until the audience is corrected or the simulation
 ends. This is deliberate. A simulation with no reviewer is a channel where an admin could inject
 unreviewed content; rather than carve an exception, the design lets such a simulation exist and be
-useless. The cost is operator friction (a misconfigured simulation looks stuck); the stuck state is
-visible in `oml status` queue depths and the fix — an audience correction through
+useless. The cost is operator friction (a misconfigured simulation looks stuck); the planned,
+unimplemented `oml status` (ADR-0015 d6) exposes the stuck queue depth, and the fix — an audience correction through
 `POST /v2/simulations/{id}/audience`, journalled as `simulation.audience_changed` — is auditable.
 
 The deeper reason to run the full pipeline is evidence parity: a simulated memory that influenced a

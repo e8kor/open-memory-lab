@@ -48,9 +48,9 @@ NOT_RELEASED = "Not released yet (next release)."
 # whose text is gone from the output stops the generator, so a stale entry cannot stay.
 UNRELEASED = {
     "cli": [
-        ("adr, headings, lines or rust; omitted, adr for ADR-NNNN-*.md files and headings otherwise; rust (one claim per crate and per module doc of a Cargo workspace) is never chosen unnamed. `delta` reads a Delta Lake's tables from their logs and is in the lake build, `oml-lake`",
-         "adr, headings or lines; omitted, adr for ADR-NNNN-*.md files and headings otherwise. " + NOT_RELEASED + " `rust` (one claim per crate and per module doc of a Cargo workspace, never chosen unnamed) and `delta` (a Delta Lake's tables, read from their logs)"),
-        ("With --adapter delta, the canonical location", NOT_RELEASED + " With --adapter delta, the canonical location"),
+        ("Adapter: adr, headings, lines, rust, or delta. Defaults to adr for decision-record Markdown files and headings otherwise; rust (one claim per crate and module doc) is never inferred. delta reads Delta Lake tables and requires the oml-lake build",
+         "Adapter: adr, headings or lines. Defaults to adr for decision-record Markdown files and headings otherwise. " + NOT_RELEASED + " `rust` (one claim per crate and module doc, never inferred) and `delta` (Delta Lake tables, requiring the oml-lake build)"),
+        ("With --adapter delta, canonical source URI", NOT_RELEASED + " With --adapter delta, canonical source URI"),
     ],
     "mcp": [
         ("`oml-md/1` \\| `oml-turn/1` \\| `oml-rustdoc/1` \\| `oml-crate/1`", "`oml-md/1` \\| `oml-turn/1`; `oml-rustdoc/1` and `oml-crate/1` are not released yet (next release)"),

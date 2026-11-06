@@ -97,13 +97,13 @@ impl Kind {
             "headings" => Ok(Self::Headings),
             "lines" => Ok(Self::Lines),
             "delta" => Err(
-                "--adapter delta reads a Delta Lake and syncs it with `oml sync <lake> --adapter \
-                 delta`, in the lake build, oml-lake (ADR-0062 d3)"
+                "--adapter delta requires the oml-lake build; run `oml sync <lake> --adapter \
+                 delta` there"
                     .to_owned(),
             ),
             "rust" => Ok(Self::Rust),
             other => Err(format!(
-                "--adapter {other:?} is not one of adr, headings, lines, rust (ADR-0057 d7, d21; ADR-0061)"
+                "--adapter {other:?} is invalid; choose adr, headings, lines, or rust"
             )),
         }
     }

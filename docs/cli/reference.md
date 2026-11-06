@@ -14,8 +14,8 @@ answers: "every oml command, subcommand, argument and option, as the build print
 
 | Option | Meaning |
 |---|---|
-| `--url <URL>` | The server's URL, without /mcp. One pair with --api-key: the pair comes from the flags, else the environment, else the credentials file, and a source setting one alone is refused |
-| `--api-key <API_KEY>` | The API key value, paired with --url. argv is visible to other processes, so prefer OML_API_KEY or the credentials file |
+| `--url <URL>` | Server URL without /mcp. URL and API key must come together from flags, environment, or credentials file, in that order |
+| `--api-key <API_KEY>` | API key paired with --url. Prefer OML_API_KEY or the credentials file because argv is visible to other processes |
 | `--json` | Emit the server's typed response as one JSON document on stdout |
 | `-h, --help` | Print help |
 | `-V, --version` | Print version |
@@ -26,74 +26,74 @@ Per-command sections below omit these options.
 
 | Command | What it does |
 |---|---|
-| `oml bootstrap claim` | Exchange the single-use enrollment token for the first admin key and store the URL and the key, nothing else, owner-only (0600) |
+| `oml bootstrap claim` | Exchange a single-use enrollment token for the first admin key and store the URL and key owner-only (0600) |
 | `oml tenants create` | Create a tenant (not available in the standalone PoC) |
-| `oml guardrails show` | Print the set as the hook's frame, every line even over the cap of twelve, and exit 1 over it |
-| `oml guardrails export` | Write the promoted set, text only, for a harness without the plugin's hooks: claude-md a whole.claude/rules/ file, agents-md the text between the one pair of <!-- oml:guardrails --> markers in the named file |
-| `oml keys issue` | Issue a key; the value is printed exactly once |
-| `oml keys issue-agent` | Issue the one key the agent plugin needs, in one POST /v2/keys, and print the OML_URL and OML_API_KEY export lines, and with --out the claude plugin configure line that reads the file |
-| `oml keys show` | One key, by id or name, a revoked key's included: grants, denials, crew and epoch, never its value |
-| `oml keys connect-code` | Mint a fresh connect code for a connector key, voiding its earlier codes, and print the connector URL and the code |
-| `oml keys disconnect` | End one connection of a connector key; journalled as connection.revoked |
-| `oml deny set` | Create or extend the key's global deny object over a subtree. |
-| `oml chat init` | Open your chat workarea, `chat` under your user root, with a key a person holds; agents are refused (access.verb_ceiling, chat_scope_is_human_only). |
+| `oml guardrails show` | Print all guardrails as the hook frames them; exit 1 if there are more than twelve |
+| `oml guardrails export` | Export promoted guardrail text for a harness without plugin hooks. |
+| `oml keys issue` | Issue a key and print its value once |
+| `oml keys issue-agent` | Issue an agent-plugin key and print OML_URL/OML_API_KEY exports; with --out, print the claude configure line that reads it |
+| `oml keys show` | Show a key's grants, denials, crew, and epoch, including revoked keys; never print its value |
+| `oml keys connect-code` | Mint a connector key's connect code, void earlier codes, and print the connector URL and code |
+| `oml keys disconnect` | Revoke one connector-key connection and journal connection.revoked |
+| `oml deny set` | Create or extend a global deny over a subtree, overriding all grants; journals key.denied |
+| `oml chat init` | Open your `chat` workarea under your user root and print OML_CHAT_WORKAREA for plugin capture and recall. |
 | `oml workareas create` | Create a child workarea in development status |
-| `oml workareas tree` | The tree from a workarea down, with each node's path, id, status and crew: every page of one tree read |
-| `oml workareas show` | One workarea, by id or name: path, status, crew, children |
-| `oml workareas mode` | Put a workarea in progress, or commit it back to standard: a person's dreamer key only. |
-| `oml workareas crew set` | Point the workarea at a crew record (workarea.crew_updated); allowed on validated workareas |
+| `oml workareas tree` | List a workarea tree with each node's path, id, status, and crew |
+| `oml workareas show` | Show a workarea's path, status, crew, and children |
+| `oml workareas mode` | Set in_progress to recall labelled unreviewed memories within the workarea, or standard to commit. |
+| `oml workareas crew set` | Set the workarea's crew record, including on validated workareas; journals workarea.crew_updated |
 | `oml workareas status propose` | Propose the next forward rung; it waits for a second identity |
 | `oml workareas status ratify` | Ratify a pending proposal under a key that did not propose it |
 | `oml workareas status pending` | The workarea's live proposals and the review policy in force |
-| `oml edges propose claim` | A labelled link from one claim to another: supports, contradicts, relates_to and continues are the recommended labels |
-| `oml edges propose brief` | A promoted claim proposed into a workarea's brief |
-| `oml edges ratify` | Ratify a pending edge of either kind under a key that did not propose it |
-| `oml edges list` | One page of one kind's edges, pending and ratified, newest first |
-| `oml crews create` | Create a crew record (crew.created); its name never changes |
-| `oml crews update` | Update a crew record's charter URI or external manager (crew.updated); at least one flag, never the name |
-| `oml crews list` | The tenant's crew records |
-| `oml crews show` | One crew record, by id or name |
-| `oml web allow` | Add an email to the list, or change its user or admin flag (web.email_allowed, web.email_changed); a change ends its sessions |
-| `oml web remove` | Remove an email from the list (web.email_removed), ending its sessions; the user's agent keys keep working |
-| `oml web list` | The tenant's list |
-| `oml search show` | The served pipelines, the deployment's default, the tenant's and the one a recall naming none runs |
-| `oml search set-default` | Set the tenant's default pipeline (search.default_set), journalled; recalls use it from the next request, no restart |
-| `oml usage settings` | Whether this server records recalls and whether the tenant's keep their query text; with --query-text, turn it on or off (telemetry.settings_set), journalled |
-| `oml usage events` | The tenant's recalls of the last 30 days with what their readers did next, newest first |
-| `oml usage eval` | Replay the tenant's labelled recalls through each pipeline, under each original key's scope, inside the server; prints the scores alone |
-| `oml admin read` | One memory with its text and attribution, or with --query, --workarea or --state a search over every memory of the organisation (memory.admin_read) |
-| `oml admin rescan` | Rescan every stored version with the server's rule set and report what it would refuse or hold, by rule and place, never the text. |
-| `oml write` | Write a claim, held until reviewed: a submission, or with --replaces a new version of a claim or its retirement |
-| `oml read` | Read memories: fetch one by artifact id, recall with --query, or list with neither |
-| `oml events` | Tail the journal's events within the key's reader access, digests only |
-| `oml sync` | Keep a workarea in step with a repository's committed documents: extract claims at one commit, diff them against the workarea and write, check or link them |
-| `oml anchor` | Print the anchor of a committed file or of one part of it, at --rev, as one JSON object for oml write --anchor |
-| `oml review next` | Serve one held item (claims it for this key) |
-| `oml review list` | List the held items this key may judge, with their text, oldest first; claims nothing. |
-| `oml review approve` | Verdict: promote. |
-| `oml review reject` | Verdict: reject, with the reason. |
-| `oml audit verify-chain` | Verify the chain per chain-format.md from the chain export; refused while the server serves none (the events tail is a filtered feed) |
-| `oml login` | Read an API key without echo, from the terminal or from stdin when stdin is not one, check it through GET /v2/whoami, and only then store the URL and the key, nothing else, owner-only |
-| `oml doctor` | Each health signal with a verdict; exit 1 on any fail |
-| `oml quickstart` | Start OML on this machine with Docker: write the compose profile and its owner-only.env into --dir, `docker compose up`, claim the lead, issue an agent key and a reviewer key into owner-only files, check a write end to end, and print the agent's key file and the oml login line |
-| `oml setup claude-code` | Install the oml plugin at this CLI's own release through the claude CLI and hand it the URL and key on stdin, refusing an admin or operator key; a key given without a URL goes to the default server, `https://memory.doublegate.io`; with --print, or with no claude on PATH, print the commands instead |
-| `oml hook user-prompt` | Count the turn and record its hash for chat capture, and with OML_TURN_RECALL=1 inject what the prompt recalls within its budget; always exits 0 |
-| `oml hook stop` | With OML_CHAT_CAPTURE=1, when a capture is due, ask the agent to write the facts the uncaptured turns established; always exits 0 |
-| `oml hook pre-compact` | Record that the session compacted, so the next Stop asks at once; prints nothing and never blocks |
-| `oml hook session-start` | Print the SessionStart context from the plugin's url and api_key options, else OML_URL and OML_API_KEY — steering, this key's recent submissions, the matching memories — or nothing; always exits 0 |
-| `oml hook tool-failure` | Print memories matching a failed Bash command's error, from the plugin's url and api_key options, else OML_URL and OML_API_KEY, only with OML_FAILURE_RECALL=1; always exits 0 |
-| `oml hook session-end` | Delete this session's failure-recall cache; prints nothing and always exits 0 |
-| `oml hook guardrails` | Print the guardrails in force for this agent's key in their own frame, and at SessionStart write the session's rule cache; a failure is a message the user sees, exit 0 |
-| `oml hook pre-tool-use` | Check one tool call against the session's rule cache: deny, ask or nothing, never allow, with no network call; no cache decides nothing and warns, and a failure exits 2, which blocks the call |
-| `oml demo seed` | Create a workarea and fill it with thirty memories of a fictional team: twenty approved, four approved and then superseded, six held. |
+| `oml edges propose claim` | Link claims with a label such as supports, contradicts, relates_to, or continues |
+| `oml edges propose brief` | Propose a promoted claim for a workarea's brief |
+| `oml edges ratify` | Ratify a pending edge under a key that did not propose it |
+| `oml edges list` | List one page of pending and ratified edges, newest first |
+| `oml crews create` | Create a crew record with an immutable name; journals crew.created |
+| `oml crews update` | Update and journal a crew's charter URI or external manager; at least one flag is required and the name cannot change |
+| `oml crews list` | List crew records |
+| `oml crews show` | Show one crew record by id or name |
+| `oml web allow` | Add an email or change its user/admin flags; journals web.email_allowed or web.email_changed and ends its sessions |
+| `oml web remove` | Remove an email, end its sessions, and journal web.email_removed; the user's agent keys keep working |
+| `oml web list` | List the tenant's allowed emails |
+| `oml search show` | Show served pipelines and the deployment, tenant, and effective recall defaults |
+| `oml search set-default` | Set the tenant's default recall pipeline for subsequent requests; journals search.default_set |
+| `oml usage settings` | Show recall recording and query-text settings; --query-text changes and journals query-text retention (telemetry.settings_set) |
+| `oml usage events` | List the tenant's recalls from the last 30 days with reader follow-up, newest first |
+| `oml usage eval` | Replay labelled recalls through each pipeline under the original keys' scopes; print only scores |
+| `oml admin read` | Read one memory with text and attribution, or search all organisation memories with --query, --workarea, or --state; journals memory.admin_read |
+| `oml admin rescan` | Report by rule and location which stored versions current rules would refuse or hold; never prints text or changes data |
+| `oml write` | Submit a claim for review, replace one with --replaces, or propose its retirement |
+| `oml read` | Fetch a memory by artifact id, recall with --query, or list memories |
+| `oml events` | Tail journal event digests within the key's reader access |
+| `oml sync` | Sync a workarea with committed repository documents: extract, diff, write, check, or link claims |
+| `oml anchor` | Print a JSON source anchor for a committed file or fragment at --rev, for oml write --anchor |
+| `oml review next` | Claim and serve one held item for this key |
+| `oml review list` | List held items this key may judge, with text, oldest first, without claiming them. |
+| `oml review approve` | Promote one claimed serve (default) or each artifact in --ids |
+| `oml review reject` | Reject the claimed serve or each --ids artifact with one shared reason |
+| `oml audit verify-chain` | Verify the exported chain using chain-format.md; fails if the server has no export. |
+| `oml login` | Read an API key without echo from the terminal or stdin, verify it, and store the URL and key owner-only |
+| `oml doctor` | Check health signals; exit 1 if any fail |
+| `oml quickstart` | Start OML locally with Docker, issue agent and reviewer keys, and verify a write |
+| `oml setup claude-code` | Install the matching oml plugin through the claude CLI, passing the URL and key on stdin. |
+| `oml hook user-prompt` | Count and hash the turn for chat capture; with OML_TURN_RECALL=1, inject recalled memories within budget. |
+| `oml hook stop` | With OML_CHAT_CAPTURE=1, ask the agent to write facts from uncaptured turns when capture is due. |
+| `oml hook pre-compact` | Record session compaction so the next Stop captures immediately; print nothing and never block |
+| `oml hook session-start` | Print SessionStart context from plugin url/api_key options or OML_URL/OML_API_KEY: steering, recent submissions, and matching memories. |
+| `oml hook tool-failure` | With OML_FAILURE_RECALL=1, print memories matching a failed Bash command's error using plugin options or OML_URL/OML_API_KEY. |
+| `oml hook session-end` | Delete this session's failure-recall cache; print nothing and always exit 0 |
+| `oml hook guardrails` | Print guardrails for this agent's key; at SessionStart, write the session rule cache. |
+| `oml hook pre-tool-use` | Check a tool call against the session rule cache without network access; return deny, ask, or nothing, never allow. |
+| `oml demo seed` | Create 30 fictional-team memories (20 approved, 4 superseded, 6 held), then fence their author and reviewer identities. |
 
 ## `oml bootstrap`
 
-The bootstrap ceremony: exchange the enrollment token for a key
+Exchange an enrollment token for the first admin key
 
 ### `oml bootstrap claim`
 
-Exchange the single-use enrollment token for the first admin key and store the URL and the key, nothing else, owner-only (0600)
+Exchange a single-use enrollment token for the first admin key and store the URL and key owner-only (0600)
 
 ```
 oml bootstrap claim [OPTIONS] --token-stdin <KEY_NAME>
@@ -101,18 +101,18 @@ oml bootstrap claim [OPTIONS] --token-stdin <KEY_NAME>
 
 | Argument | Meaning |
 |---|---|
-| `<KEY_NAME>` | The name of the key the claim mints, unique in its namespace and never released |
+| `<KEY_NAME>` | Name for the minted key; unique in its namespace and never released |
 
 | Option | Meaning |
 |---|---|
-| `--token-stdin` | Read the enrollment token the lead printed at first boot from stdin, without echo on a terminal, so it never reaches argv or shell history; required, since --token is gone |
-| `--tenant-name <TENANT_NAME>` | Name for the tenant the ceremony creates |
-| `--principal <PRINCIPAL>` | Principal recorded on the first admin key |
+| `--token-stdin` | Read the enrollment token from stdin without terminal echo, keeping it out of argv and shell history; required |
+| `--tenant-name <TENANT_NAME>` | Name for the tenant to create |
+| `--principal <PRINCIPAL>` | Principal for the first admin key |
 
 
 ## `oml tenants`
 
-Tenant verbs (operator tier)
+Manage tenants (operator tier)
 
 ### `oml tenants create`
 
@@ -129,11 +129,11 @@ oml tenants create [OPTIONS] <NAME>
 
 ## `oml guardrails`
 
-The guardrails in force for this key: their text, or an export for a harness without the plugin's hooks
+Show or export guardrails in force for this key
 
 ### `oml guardrails show`
 
-Print the set as the hook's frame, every line even over the cap of twelve, and exit 1 over it
+Print all guardrails as the hook frames them; exit 1 if there are more than twelve
 
 ```
 oml guardrails show [OPTIONS]
@@ -141,11 +141,11 @@ oml guardrails show [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--workarea <WORKAREA>` | The scope node, by id or name; omitted, the key's default |
+| `--workarea <WORKAREA>` | Scope workarea by id or name; omitted, the key's default |
 
 ### `oml guardrails export`
 
-Write the promoted set, text only, for a harness without the plugin's hooks: claude-md a whole.claude/rules/ file, agents-md the text between the one pair of <!-- oml:guardrails --> markers in the named file
+Export promoted guardrail text for a harness without plugin hooks. claude-md writes a whole.claude/rules/ file; agents-md updates text between <!-- oml:guardrails --> markers
 
 ```
 oml guardrails export [OPTIONS] --format <FORMAT> --out <OUT>
@@ -154,18 +154,18 @@ oml guardrails export [OPTIONS] --format <FORMAT> --out <OUT>
 | Option | Meaning |
 |---|---|
 | `--format <FORMAT>` | agents-md \| claude-md [possible values: agents-md, claude-md] |
-| `--out <OUT>` | The file to write |
-| `--check` | Write nothing; exit 1 when the live set differs from the file's |
-| `--workarea <WORKAREA>` | The scope node, by id or name; omitted, the key's default |
+| `--out <OUT>` | File to write |
+| `--check` | Write nothing; exit 1 if the file differs from the live set |
+| `--workarea <WORKAREA>` | Scope workarea by id or name; omitted, the key's default |
 
 
 ## `oml keys`
 
-Key issuance (show-once ceremony)
+Manage keys and connections
 
 ### `oml keys issue`
 
-Issue a key; the value is printed exactly once
+Issue a key and print its value once
 
 ```
 oml keys issue [OPTIONS] --role <ROLE> <KEY_NAME>
@@ -173,25 +173,25 @@ oml keys issue [OPTIONS] --role <ROLE> <KEY_NAME>
 
 | Argument | Meaning |
 |---|---|
-| `<KEY_NAME>` | The key's name, unique in the tenant and never released; distinct from its principal and label |
+| `<KEY_NAME>` | Key name, unique in the tenant and never released; distinct from principal and label |
 
 | Option | Meaning |
 |---|---|
 | `--role <ROLE>` | reader \| writer \| dreamer \| admin |
 | `--held-by <HELD_BY>` | agent \| human \| service [default: agent] |
-| `--default-workarea <DEFAULT_WORKAREA>` | Workarea (id or name) the provider ring targets when a request names none; some grant must cover it. Omitted, the first grant's node |
-| `--grant <GRANTS>` | Grant as <workarea>:<role>, or <workarea>:<role>:node for the node alone, the workarea by id or name; repeatable. A writer grant brings a reader grant on the same workarea, with the same coverage, unless --write-only |
-| `--crew <CREW>` | The key's crew record, by id or name, fixed for the key's life |
-| `--user <USER>` | The person the key acts for: a user key, whose grants lie in the user's root `universe.<user>` and whose workarea names resolve there; the first key naming a user creates the root |
-| `--write-only` | Send the writer grants alone, with no reader grant beside them |
+| `--default-workarea <DEFAULT_WORKAREA>` | Default workarea (id or name) for provider requests without one; must be covered by a grant. Defaults to the first grant's workarea |
+| `--grant <GRANTS>` | Grant <workarea>:<role>, or <workarea>:<role>:node for one node; workarea may be id or name. Repeatable. Writer grants include reader access unless --write-only |
+| `--crew <CREW>` | Crew record (id or name), fixed for the key's life |
+| `--user <USER>` | User the key acts for. Grants must be under `universe.<user>`, where workarea names resolve; the first key creates that root |
+| `--write-only` | Send writer grants without matching reader grants |
 | `--principal <PRINCIPAL>` | Principal the key acts as |
 | `--label <LABEL>` |  |
-| `--guardrail-scope <GUARDRAIL_SCOPE>` | The guardrail scope an admin sets on the key: workarea loads the default workarea's guardrails alone, ancestors those of every ancestor the key reads too; omitted, the server's default, ancestors [possible values: workarea, ancestors] |
-| `--profile <PROFILE>` | The key's profile: `curator`, a dreamer key held by an agent that narrows inside an in-progress workarea and never promotes [possible values: curator] |
+| `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workarea loads only the default workarea's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workarea, ancestors] |
+| `--profile <PROFILE>` | Key profile: curator is an agent-held dreamer that narrows within an in-progress workarea and never promotes [possible values: curator] |
 
 ### `oml keys issue-agent`
 
-Issue the one key the agent plugin needs, in one POST /v2/keys, and print the OML_URL and OML_API_KEY export lines, and with --out the claude plugin configure line that reads the file
+Issue an agent-plugin key and print OML_URL/OML_API_KEY exports; with --out, print the claude configure line that reads it
 
 ```
 oml keys issue-agent [OPTIONS] --principal <PRINCIPAL> <KEY_NAME>
@@ -199,23 +199,23 @@ oml keys issue-agent [OPTIONS] --principal <PRINCIPAL> <KEY_NAME>
 
 | Argument | Meaning |
 |---|---|
-| `<KEY_NAME>` | The key's name, unique in the tenant and never released; never derived from the principal |
+| `<KEY_NAME>` | Key name, unique in the tenant and never released; not derived from the principal |
 
 | Option | Meaning |
 |---|---|
 | `--principal <PRINCIPAL>` | Principal the key acts as; give each agent its own |
-| `--workarea <WORKAREA>` | The workarea, by id or name, the key writes and recalls on, and its default. With --user it is optional, defaults to the user's root, and resolves in that user's namespace |
-| `--user <USER>` | The person the key acts for: a user key under `universe.<user>`, the root created by the first key naming the user |
-| `--crew <CREW>` | The key's crew record, by id or name, fixed for the key's life |
+| `--workarea <WORKAREA>` | Workarea (id or name) to write and recall, and its default. With --user, optional and resolved in that user's namespace; defaults to the user's root |
+| `--user <USER>` | User the key acts for, under `universe.<user>`; the first key for a user creates that root |
+| `--crew <CREW>` | Crew record (id or name), fixed for the key's life |
 | `--held-by <HELD_BY>` | Who holds the key [default: agent] [possible values: agent, human] |
-| `--write-only` | Send the writer grant alone, with no reader grant beside it |
-| `--out <OUT>` | Write the key value to this new file (mode 0600, never overwritten) and print a line that reads it back instead of the value |
-| `--connect-code` | Issue a connector key for a claude.ai custom connector: no value, and a single-use connect code printed in its place |
-| `--guardrail-scope <GUARDRAIL_SCOPE>` | The guardrail scope an admin sets on the key: workarea loads the default workarea's guardrails alone, ancestors those of every ancestor the key reads too; omitted, the server's default, ancestors [possible values: workarea, ancestors] |
+| `--write-only` | Send the writer grant without a matching reader grant |
+| `--out <OUT>` | Write the key to a new 0600 file without overwriting and print a line that reads it instead of the value |
+| `--connect-code` | Issue a claude.ai custom-connector key with a single-use connect code instead of a key value |
+| `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workarea loads only the default workarea's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workarea, ancestors] |
 
 ### `oml keys show`
 
-One key, by id or name, a revoked key's included: grants, denials, crew and epoch, never its value
+Show a key's grants, denials, crew, and epoch, including revoked keys; never print its value
 
 ```
 oml keys show [OPTIONS] <KEY>
@@ -223,11 +223,11 @@ oml keys show [OPTIONS] <KEY>
 
 | Argument | Meaning |
 |---|---|
-| `<KEY>` | The key's id or name |
+| `<KEY>` | Key id or name |
 
 ### `oml keys connect-code`
 
-Mint a fresh connect code for a connector key, voiding its earlier codes, and print the connector URL and the code
+Mint a connector key's connect code, void earlier codes, and print the connector URL and code
 
 ```
 oml keys connect-code [OPTIONS] <KEY>
@@ -235,15 +235,15 @@ oml keys connect-code [OPTIONS] <KEY>
 
 | Argument | Meaning |
 |---|---|
-| `<KEY>` | The connector key's id or name |
+| `<KEY>` | Connector key id or name |
 
 | Option | Meaning |
 |---|---|
-| `--ttl <DURATION>` | How long the code lives, such as 90s, 45m, 12h or 7d, up to 30d; omitted, ten minutes. Past ten minutes the server mints it only for a key whose grants sit on one workarea other than the universe |
+| `--ttl <DURATION>` | Code lifetime, such as 90s, 45m, 12h, or 7d, up to 30d; defaults to 10m. Longer than 10m requires a key granted on exactly one non-universe workarea |
 
 ### `oml keys disconnect`
 
-End one connection of a connector key; journalled as connection.revoked
+Revoke one connector-key connection and journal connection.revoked
 
 ```
 oml keys disconnect [OPTIONS] <KEY> <CONNECTION_ID>
@@ -251,21 +251,21 @@ oml keys disconnect [OPTIONS] <KEY> <CONNECTION_ID>
 
 | Argument | Meaning |
 |---|---|
-| `<KEY>` | The connector key's id or name |
-| `<CONNECTION_ID>` | The connection's id, as `oml keys show` lists it |
+| `<KEY>` | Connector key id or name |
+| `<CONNECTION_ID>` | Connection id listed by `oml keys show` |
 
 | Option | Meaning |
 |---|---|
-| `--reason <REASON>` | Why; the journal keeps its digest |
+| `--reason <REASON>` | Reason for revocation; only its digest is journalled |
 
 
 ## `oml deny`
 
-Global per-key denials: deny-wins across all of a key's grants
+Manage global per-key denials, which override all grants
 
 ### `oml deny set`
 
-Create or extend the key's global deny object over a subtree. Distinct from a per-grant deny; journalled as key.denied
+Create or extend a global deny over a subtree, overriding all grants; journals key.denied
 
 ```
 oml deny set [OPTIONS] <KEY> <SUBTREE>
@@ -273,21 +273,21 @@ oml deny set [OPTIONS] <KEY> <SUBTREE>
 
 | Argument | Meaning |
 |---|---|
-| `<KEY>` | The key the denial binds, by id or name |
-| `<SUBTREE>` | The workarea, by id or name, whose subtree the key no longer reaches |
+| `<KEY>` | Key to deny, by id or name |
+| `<SUBTREE>` | Workarea (id or name) whose subtree the key can no longer access |
 
 | Option | Meaning |
 |---|---|
-| `--reason <REASON>` | Why; the server accepts it and journals no reason |
+| `--reason <REASON>` | Reason for denial; accepted by the server but not journalled |
 
 
 ## `oml chat`
 
-A person's chat memory
+Manage a person's chat memory
 
 ### `oml chat init`
 
-Open your chat workarea, `chat` under your user root, with a key a person holds; agents are refused (access.verb_ceiling, chat_scope_is_human_only). Prints the OML_CHAT_WORKAREA value the plugin's capture and per-turn recall read
+Open your `chat` workarea under your user root and print OML_CHAT_WORKAREA for plugin capture and recall. Requires a person's key
 
 ```
 oml chat init [OPTIONS]
@@ -295,12 +295,12 @@ oml chat init [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--parent <PARENT>` | The parent, by id or name; omitted, your key's user root |
+| `--parent <PARENT>` | Parent by id or name; omitted, your key's user root |
 
 
 ## `oml workareas`
 
-Workarea tree verbs
+Manage workareas
 
 ### `oml workareas create`
 
@@ -312,28 +312,32 @@ oml workareas create [OPTIONS] <PARENT> <NAME>
 
 | Argument | Meaning |
 |---|---|
-| `<PARENT>` | The parent workarea, by id or name |
-| `<NAME>` | The new workarea's name, unique in the tenant and never changed |
+| `<PARENT>` | Parent workarea, by id or name |
+| `<NAME>` | New workarea name, unique in the tenant and immutable |
 
 | Option | Meaning |
 |---|---|
-| `--crew <CREW>` | The crew record the workarea names, by id or name |
+| `--crew <CREW>` | Crew record to assign, by id or name |
 
 ### `oml workareas tree`
 
-The tree from a workarea down, with each node's path, id, status and crew: every page of one tree read
+List a workarea tree with each node's path, id, status, and crew
 
 ```
-oml workareas tree [OPTIONS]
+oml workareas tree [OPTIONS] [ROOT]
 ```
+
+| Argument | Meaning |
+|---|---|
+| `[ROOT]` | Root workarea, by id or name |
 
 | Option | Meaning |
 |---|---|
-| `--root <ROOT>` | The workarea the listing starts at, by id or name [default: universe] |
+| `--root <ROOT>` | Root workarea, by id or name |
 
 ### `oml workareas show`
 
-One workarea, by id or name: path, status, crew, children
+Show a workarea's path, status, crew, and children
 
 ```
 oml workareas show [OPTIONS] <WORKAREA>
@@ -341,11 +345,11 @@ oml workareas show [OPTIONS] <WORKAREA>
 
 | Argument | Meaning |
 |---|---|
-| `<WORKAREA>` | The workarea's id or name |
+| `<WORKAREA>` | Workarea id or name |
 
 ### `oml workareas mode`
 
-Put a workarea in progress, or commit it back to standard: a person's dreamer key only. Inside an in-progress workarea readers recall unreviewed memories, labelled; nothing leaves until the commit, refused while anything is held
+Set in_progress to recall labelled unreviewed memories within the workarea, or standard to commit. Person-held dreamer keys only; commit is refused while items are held
 
 ```
 oml workareas mode [OPTIONS] <WORKAREA> <MODE>
@@ -353,16 +357,16 @@ oml workareas mode [OPTIONS] <WORKAREA> <MODE>
 
 | Argument | Meaning |
 |---|---|
-| `<WORKAREA>` | The workarea, by id or name |
+| `<WORKAREA>` | Workarea id or name |
 | `<MODE>` | `in_progress`, or `standard` to commit [possible values: in_progress, standard] |
 
 ### `oml workareas crew`
 
-The crew record a workarea names (admin key role)
+Set a workarea's crew record (admin key)
 
 ### `oml workareas crew set`
 
-Point the workarea at a crew record (workarea.crew_updated); allowed on validated workareas
+Set the workarea's crew record, including on validated workareas; journals workarea.crew_updated
 
 ```
 oml workareas crew set [OPTIONS] --crew <CREW> <WORKAREA>
@@ -370,15 +374,15 @@ oml workareas crew set [OPTIONS] --crew <CREW> <WORKAREA>
 
 | Argument | Meaning |
 |---|---|
-| `<WORKAREA>` | The workarea, by id or name |
+| `<WORKAREA>` | Workarea id or name |
 
 | Option | Meaning |
 |---|---|
-| `--crew <CREW>` | The crew record, by id or name |
+| `--crew <CREW>` | Crew record id or name |
 
 ### `oml workareas status`
 
-The status ladder: development, committed, validated, each step proposed by one key and ratified by another
+Move through development, committed, and validated; each step needs proposal and ratification by different keys
 
 ### `oml workareas status propose`
 
@@ -424,15 +428,15 @@ oml workareas status pending [OPTIONS] <WORKAREA>
 
 ## `oml edges`
 
-Edges: claim-to-claim links and a claim's place in a workarea's brief, each proposed by one key and ratified by another
+Manage claim links and workarea brief entries, proposed and ratified by different keys
 
 ### `oml edges propose`
 
-Propose an edge; it stays pending until another key ratifies it
+Propose an edge for ratification by another key
 
 ### `oml edges propose claim`
 
-A labelled link from one claim to another: supports, contradicts, relates_to and continues are the recommended labels
+Link claims with a label such as supports, contradicts, relates_to, or continues
 
 ```
 oml edges propose claim [OPTIONS] --label <LABEL> <FROM> <TO>
@@ -440,8 +444,8 @@ oml edges propose claim [OPTIONS] --label <LABEL> <FROM> <TO>
 
 | Argument | Meaning |
 |---|---|
-| `<FROM>` | The source claim's artifact id |
-| `<TO>` | The target claim's artifact id |
+| `<FROM>` | Source claim artifact id |
+| `<TO>` | Target claim artifact id |
 
 | Option | Meaning |
 |---|---|
@@ -449,7 +453,7 @@ oml edges propose claim [OPTIONS] --label <LABEL> <FROM> <TO>
 
 ### `oml edges propose brief`
 
-A promoted claim proposed into a workarea's brief
+Propose a promoted claim for a workarea's brief
 
 ```
 oml edges propose brief [OPTIONS] <ARTIFACT> <WORKAREA>
@@ -457,12 +461,12 @@ oml edges propose brief [OPTIONS] <ARTIFACT> <WORKAREA>
 
 | Argument | Meaning |
 |---|---|
-| `<ARTIFACT>` | The claim's artifact id |
-| `<WORKAREA>` | The workarea, by id or name |
+| `<ARTIFACT>` | Claim artifact id |
+| `<WORKAREA>` | Workarea id or name |
 
 ### `oml edges ratify`
 
-Ratify a pending edge of either kind under a key that did not propose it
+Ratify a pending edge under a key that did not propose it
 
 ```
 oml edges ratify [OPTIONS] <EDGE_ID>
@@ -470,11 +474,11 @@ oml edges ratify [OPTIONS] <EDGE_ID>
 
 | Argument | Meaning |
 |---|---|
-| `<EDGE_ID>` | The edge's id |
+| `<EDGE_ID>` | Edge id |
 
 ### `oml edges list`
 
-One page of one kind's edges, pending and ratified, newest first
+List one page of pending and ratified edges, newest first
 
 ```
 oml edges list [OPTIONS] --kind <KIND>
@@ -483,19 +487,19 @@ oml edges list [OPTIONS] --kind <KIND>
 | Option | Meaning |
 |---|---|
 | `--kind <KIND>` | claim or brief |
-| `--workarea <WORKAREA>` | kind claim: a subtree filter; kind brief: the workarea, required |
-| `--artifact <ARTIFACT>` | kind claim: only the edges touching this artifact |
-| `--limit <LIMIT>` | The page size |
-| `--cursor <CURSOR>` | The next_cursor of the previous page |
+| `--workarea <WORKAREA>` | For claim, filter by subtree; for brief, required workarea |
+| `--artifact <ARTIFACT>` | For claim, only edges touching this artifact |
+| `--limit <LIMIT>` | Page size |
+| `--cursor <CURSOR>` | Previous page's next_cursor |
 
 
 ## `oml crews`
 
-Crew records: named, recorded, not operated (admin key role)
+Manage named crew records (admin key)
 
 ### `oml crews create`
 
-Create a crew record (crew.created); its name never changes
+Create a crew record with an immutable name; journals crew.created
 
 ```
 oml crews create [OPTIONS] <NAME>
@@ -503,7 +507,7 @@ oml crews create [OPTIONS] <NAME>
 
 | Argument | Meaning |
 |---|---|
-| `<NAME>` | The crew's name, unique in the tenant |
+| `<NAME>` | Crew name, unique in the tenant |
 
 | Option | Meaning |
 |---|---|
@@ -512,7 +516,7 @@ oml crews create [OPTIONS] <NAME>
 
 ### `oml crews update`
 
-Update a crew record's charter URI or external manager (crew.updated); at least one flag, never the name
+Update and journal a crew's charter URI or external manager; at least one flag is required and the name cannot change
 
 ```
 oml crews update [OPTIONS] <--charter-uri <CHARTER_URI>|--external-manager <EXTERNAL_MANAGER>> <CREW>
@@ -529,7 +533,7 @@ oml crews update [OPTIONS] <--charter-uri <CHARTER_URI>|--external-manager <EXTE
 
 ### `oml crews list`
 
-The tenant's crew records
+List crew records
 
 ```
 oml crews list [OPTIONS]
@@ -537,7 +541,7 @@ oml crews list [OPTIONS]
 
 ### `oml crews show`
 
-One crew record, by id or name
+Show one crew record by id or name
 
 ```
 oml crews show [OPTIONS] <CREW>
@@ -545,16 +549,16 @@ oml crews show [OPTIONS] <CREW>
 
 | Argument | Meaning |
 |---|---|
-| `<CREW>` | The crew's id or name |
+| `<CREW>` | Crew id or name |
 
 
 ## `oml web`
 
-The web pages' email allowlist: who may sign in, as which user, and whether as an admin
+Manage the email allowlist for web sign-in (admin key)
 
 ### `oml web allow`
 
-Add an email to the list, or change its user or admin flag (web.email_allowed, web.email_changed); a change ends its sessions
+Add an email or change its user/admin flags; journals web.email_allowed or web.email_changed and ends its sessions
 
 ```
 oml web allow [OPTIONS] --user <USER> <EMAIL>
@@ -562,16 +566,16 @@ oml web allow [OPTIONS] --user <USER> <EMAIL>
 
 | Argument | Meaning |
 |---|---|
-| `<EMAIL>` | The email address, compared whole and ASCII case-insensitively |
+| `<EMAIL>` | Email address, compared whole and ASCII case-insensitively |
 
 | Option | Meaning |
 |---|---|
-| `--user <USER>` | The user the address signs in as, at most 56 characters |
-| `--admin` | The address opens the admin page |
+| `--user <USER>` | Sign-in user, at most 56 characters |
+| `--admin` | Allow access to the admin page |
 
 ### `oml web remove`
 
-Remove an email from the list (web.email_removed), ending its sessions; the user's agent keys keep working
+Remove an email, end its sessions, and journal web.email_removed; the user's agent keys keep working
 
 ```
 oml web remove [OPTIONS] <EMAIL>
@@ -579,11 +583,11 @@ oml web remove [OPTIONS] <EMAIL>
 
 | Argument | Meaning |
 |---|---|
-| `<EMAIL>` | The email address |
+| `<EMAIL>` | Email address |
 
 ### `oml web list`
 
-The tenant's list
+List the tenant's allowed emails
 
 ```
 oml web list [OPTIONS]
@@ -592,11 +596,11 @@ oml web list [OPTIONS]
 
 ## `oml search`
 
-The search pipelines the server serves, and the tenant's default among them
+Show or set search pipelines (admin key)
 
 ### `oml search show`
 
-The served pipelines, the deployment's default, the tenant's and the one a recall naming none runs
+Show served pipelines and the deployment, tenant, and effective recall defaults
 
 ```
 oml search show [OPTIONS]
@@ -604,7 +608,7 @@ oml search show [OPTIONS]
 
 ### `oml search set-default`
 
-Set the tenant's default pipeline (search.default_set), journalled; recalls use it from the next request, no restart
+Set the tenant's default recall pipeline for subsequent requests; journals search.default_set
 
 ```
 oml search set-default [OPTIONS] <PIPELINE>
@@ -612,16 +616,16 @@ oml search set-default [OPTIONS] <PIPELINE>
 
 | Argument | Meaning |
 |---|---|
-| `<PIPELINE>` | A pipeline the server serves; `deployment` clears the tenant's own default, so the deployment's applies |
+| `<PIPELINE>` | Served pipeline name; `deployment` clears the tenant override |
 
 
 ## `oml usage`
 
-The recall telemetry: the query-text setting, the recorded recalls and the real-usage replay (admin key role)
+Manage recall telemetry and replay real usage (admin key)
 
 ### `oml usage settings`
 
-Whether this server records recalls and whether the tenant's keep their query text; with --query-text, turn it on or off (telemetry.settings_set), journalled
+Show recall recording and query-text settings; --query-text changes and journals query-text retention (telemetry.settings_set)
 
 ```
 oml usage settings [OPTIONS]
@@ -629,11 +633,11 @@ oml usage settings [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--query-text <QUERY_TEXT>` | `on` keeps the text of recalls from now, for the replay; `off` stops and clears the text already kept [possible values: on, off] |
+| `--query-text <QUERY_TEXT>` | `on` keeps future recall query text for replay; `off` stops retention and clears stored text [possible values: on, off] |
 
 ### `oml usage events`
 
-The tenant's recalls of the last 30 days with what their readers did next, newest first
+List the tenant's recalls from the last 30 days with reader follow-up, newest first
 
 ```
 oml usage events [OPTIONS]
@@ -641,11 +645,11 @@ oml usage events [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--limit <LIMIT>` | At most this many, 1 to 200 [default: 50] |
+| `--limit <LIMIT>` | Maximum events, 1 to 200 [default: 50] |
 
 ### `oml usage eval`
 
-Replay the tenant's labelled recalls through each pipeline, under each original key's scope, inside the server; prints the scores alone
+Replay labelled recalls through each pipeline under the original keys' scopes; print only scores
 
 ```
 oml usage eval [OPTIONS] --pipelines <PIPELINES>
@@ -653,16 +657,16 @@ oml usage eval [OPTIONS] --pipelines <PIPELINES>
 
 | Option | Meaning |
 |---|---|
-| `--pipelines <PIPELINES>` | The pipelines, comma separated, each one the server serves |
+| `--pipelines <PIPELINES>` | Comma-separated served pipelines |
 
 
 ## `oml admin`
 
-An administrator's reads of every memory's text and attribution, each recorded in the history
+Read or rescan memories; admin reads are recorded in history (admin key)
 
 ### `oml admin read`
 
-One memory with its text and attribution, or with --query, --workarea or --state a search over every memory of the organisation (memory.admin_read)
+Read one memory with text and attribution, or search all organisation memories with --query, --workarea, or --state; journals memory.admin_read
 
 ```
 oml admin read [OPTIONS] [MEMORY]
@@ -670,17 +674,17 @@ oml admin read [OPTIONS] [MEMORY]
 
 | Argument | Meaning |
 |---|---|
-| `[MEMORY]` | The memory's artifact id; omitted, a search |
+| `[MEMORY]` | Memory artifact id; omit to search |
 
 | Option | Meaning |
 |---|---|
-| `--query <QUERY>` | Full-text search, the words recall matches |
-| `--workarea <WORKAREA>` | Only this workarea's subtree, by id, name or qualified name |
+| `--query <QUERY>` | Full-text search using recall matching |
+| `--workarea <WORKAREA>` | Limit to this workarea subtree (id, name, or qualified name) |
 | `--state <STATE>` | held, promoted, rejected, superseded or demoted |
 
 ### `oml admin rescan`
 
-Rescan every stored version with the server's rule set and report what it would refuse or hold, by rule and place, never the text. Changes nothing: a version it would refuse stays, for a person to retire
+Report by rule and location which stored versions current rules would refuse or hold; never prints text or changes data
 
 ```
 oml admin rescan [OPTIONS]
@@ -689,7 +693,7 @@ oml admin rescan [OPTIONS]
 
 ## `oml write`
 
-Write a claim, held until reviewed: a submission, or with --replaces a new version of a claim or its retirement
+Submit a claim for review, replace one with --replaces, or propose its retirement
 
 
 ```
@@ -698,30 +702,30 @@ oml write [OPTIONS] <TEXT>
 
 | Argument | Meaning |
 |---|---|
-| `<TEXT>` | The claim text |
+| `<TEXT>` | Claim text |
 
 | Option | Meaning |
 |---|---|
-| `--claim-key <CLAIM_KEY>` | Claim key; omitted, the server derives `auto-<16 hex>` from the key and the text. A new version takes its target's |
-| `--kind <KIND>` | memory \| derived_fact \| steering \| term \| term_mapping \| vocab_release \| guardrail; omitted, memory, or with --replaces the target's |
-| `--severity <SEVERITY>` | A guardrail's severity: never \| must \| should; required with --kind guardrail unless it retires [possible values: never, must, should] |
-| `--rule <RULE>` | A guardrail's oml-gr/1 rule, as one JSON object; deny or ask, never allow |
-| `--derives-from <DERIVES_FROM>` | Lineage artifact ids; repeatable. Set, a submission is journalled learn |
-| `--workarea <WORKAREA>` | The workarea, by id or name; omitted, the key's default workarea, or with --replaces the target's, which alone it may name |
-| `--replaces <REPLACES>` | The promoted tip this write replaces, by artifact id: a new version of its claim, held like any write |
-| `--expected-version <EXPECTED_VERSION>` | With --replaces, required: the claim's latest version as you last read it; the server refuses the write with submission.version_conflict if the claim moved on |
-| `--anchor <ANCHOR>` | Where the claim came from, one JSON object or @file holding one: {repo, rev, path, fragment?, hash?, hasher?} or {uri, rev?, …} |
-| `--format <FORMAT>` | The media type of the text: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml or "text/vnd.oml.code; lang=<language>". With the text `-`, the text is read from standard input |
-| `--title <TITLE>` | One line stating the fact the text shows, at most 100 characters; required with a format that is not prose |
-| `--origin-kind <ORIGIN_KIND>` | What kind of source the text came from: repo, doc, code, lake, chat, web or manual; omitted, the server records manual [possible values: repo, doc, code, lake, chat, web, manual] |
-| `--retirement` | Propose retiring the --replaces claim; the text says why |
-| `--reason <REASON>` | Why the claim changes, journalled with the new version |
-| `--idempotency-key <IDEMPOTENCY_KEY>` | The write's Idempotency-Key, so a re-run naming it replays the first answer; omitted, a fresh one per run |
+| `--claim-key <CLAIM_KEY>` | Claim key; defaults to `auto-<16 hex>` derived from API key and text. New versions inherit the target's key |
+| `--kind <KIND>` | memory \| derived_fact \| steering \| term \| term_mapping \| vocab_release \| guardrail; defaults to memory, or the target's kind with --replaces |
+| `--severity <SEVERITY>` | Guardrail severity: never, must, or should; required for non-retirement guardrails [possible values: never, must, should] |
+| `--rule <RULE>` | Guardrail oml-gr/1 rule as one JSON object; deny or ask, never allow |
+| `--derives-from <DERIVES_FROM>` | Lineage artifact id; repeatable. Journals submissions with lineage as learn |
+| `--workarea <WORKAREA>` | Workarea (id or name); defaults to the key's default, or the target's with --replaces, which it may not change |
+| `--replaces <REPLACES>` | Promoted tip artifact id to replace with a new held version |
+| `--expected-version <EXPECTED_VERSION>` | Required with --replaces: latest version last read. The server rejects moved claims with submission.version_conflict |
+| `--anchor <ANCHOR>` | Source anchor as a JSON object or @file: {repo, rev, path, fragment?, hash?, hasher?} or {uri, rev?, …} |
+| `--format <FORMAT>` | Media type: text/plain (default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or "text/vnd.oml.code; lang=<language>". If claim text is `-`, read it from stdin |
+| `--title <TITLE>` | One-line fact shown by the text, at most 100 characters; required for non-prose formats |
+| `--origin-kind <ORIGIN_KIND>` | Source kind: repo, doc, code, lake, chat, web, or manual; defaults to manual [possible values: repo, doc, code, lake, chat, web, manual] |
+| `--retirement` | Propose retiring the --replaces claim; text explains why |
+| `--reason <REASON>` | Reason for the change, journalled with the new version |
+| `--idempotency-key <IDEMPOTENCY_KEY>` | Idempotency-Key for the write; reusing it replays the first response. Defaults to a fresh key per run |
 
 
 ## `oml read`
 
-Read memories: fetch one by artifact id, recall with --query, or list with neither
+Fetch a memory by artifact id, recall with --query, or list memories
 
 
 ```
@@ -730,33 +734,33 @@ oml read [OPTIONS] [ARTIFACT_ID]
 
 | Argument | Meaning |
 |---|---|
-| `[ARTIFACT_ID]` | Fetch this one version, in any state the key may read |
+| `[ARTIFACT_ID]` | Fetch one version in any state readable by this key |
 
 | Option | Meaning |
 |---|---|
-| `--query <QUERY>` | Recall: ranked retrieval over promoted rows, steering first |
-| `--k <K>` | How many hits the recall returns, 1 to 100; omitted, 8 |
-| `--kinds <KINDS>` | Recall only these kinds, memory or derived_fact; repeatable |
-| `--include-unreviewed` | Let the recall return this key's own held rows beside promoted hits |
-| `--search <SEARCH>` | The search pipeline the recall runs, among those the server serves (`oml search show`); omitted, the tenant's default |
-| `--match <MATCH_MODE>` | any (the default) or all: every query word must match, and when no memory has them all the any-word hits come back marked fallback |
-| `--workarea <WORKAREA>` | The subtree read, by id or name; omitted, the key's default workarea, or for the own listing every workarea the key wrote in |
-| `--own` | List this key's own rows in every state (the listing's default) |
-| `--all` | List the promoted tips of the workarea's subtree instead |
-| `--state <STATE>` | List only rows in this state: held, promoted, demoted, rejected or erased |
-| `--kind <KIND>` | List only rows of this kind |
+| `--query <QUERY>` | Recall ranked promoted rows, steering first |
+| `--k <K>` | Number of recall hits, 1 to 100; defaults to 8 |
+| `--kinds <KINDS>` | Recall only memory or derived_fact kinds; repeatable |
+| `--include-unreviewed` | Include this key's own held rows beside promoted hits |
+| `--search <SEARCH>` | Served search pipeline to run (see `oml search show`); defaults to the tenant's default |
+| `--match <MATCH_MODE>` | any (default) or all. all requires every query word; if no memory matches them all, any-word hits are returned and marked fallback |
+| `--workarea <WORKAREA>` | Subtree (id or name) to read; defaults to the key's workarea, or all workareas this key wrote in for --own |
+| `--own` | List this key's own rows in every state (default listing) |
+| `--all` | List promoted tips in the workarea subtree instead |
+| `--state <STATE>` | Filter by state: held, promoted, demoted, rejected, or erased |
+| `--kind <KIND>` | Filter by kind |
 | `--since <SINCE>` | List versions written at or after this RFC 3339 instant |
 | `--until <UNTIL>` | List versions written before this RFC 3339 instant |
-| `--limit <LIMIT>` | The listing's page size |
-| `--cursor <CURSOR>` | The next_cursor of the listing's previous page |
-| `--anchor-repo <ANCHOR_REPO>` | Recall or list only memories anchored in this repository, such as github.com/owner/name |
-| `--anchor-path-prefix <ANCHOR_PATH_PREFIX>` | Recall or list only memories whose anchor path starts with this prefix, such as docs/adr/ |
-| `--origin-kind <ORIGIN_KINDS>` | Recall or list only memories of this origin kind; repeat for several, such as --origin-kind chat --origin-kind doc [possible values: repo, doc, code, lake, chat, web, manual] |
+| `--limit <LIMIT>` | Listing page size |
+| `--cursor <CURSOR>` | Previous listing's next_cursor |
+| `--anchor-repo <ANCHOR_REPO>` | Filter by anchor repository, such as github.com/owner/name |
+| `--anchor-path-prefix <ANCHOR_PATH_PREFIX>` | Filter by anchor path prefix, such as docs/adr/ |
+| `--origin-kind <ORIGIN_KINDS>` | Filter by origin kind; repeat for multiple, for example --origin-kind chat --origin-kind doc [possible values: repo, doc, code, lake, chat, web, manual] |
 
 
 ## `oml events`
 
-Tail the journal's events within the key's reader access, digests only
+Tail journal event digests within the key's reader access
 
 
 ```
@@ -765,14 +769,14 @@ oml events [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--after-seq <AFTER_SEQ>` | Resume after this seq: pass back the previous page's next_after_seq |
-| `--workarea <WORKAREA>` | The subtree tailed, by id or name; omitted, the key's default workarea |
-| `--limit <LIMIT>` | How many journal events one call scans |
+| `--after-seq <AFTER_SEQ>` | Resume after this sequence number, using the previous page's next_after_seq |
+| `--workarea <WORKAREA>` | Subtree to tail (id or name); defaults to the key's workarea |
+| `--limit <LIMIT>` | Journal events scanned per call |
 
 
 ## `oml sync`
 
-Keep a workarea in step with a repository's committed documents: extract claims at one commit, diff them against the workarea and write, check or link them
+Sync a workarea with committed repository documents: extract, diff, write, check, or link claims
 
 
 ```
@@ -781,35 +785,35 @@ oml sync [OPTIONS] --workarea <WORKAREA> <SOURCE>
 
 | Argument | Meaning |
 |---|---|
-| `<SOURCE>` | A file or directory inside a git clone, read at --rev |
+| `<SOURCE>` | File or directory inside a git clone, read at --rev |
 
 | Option | Meaning |
 |---|---|
-| `--workarea <WORKAREA>` | The workarea to keep in step, by id or name; with --pr the parent of the draft's `<workarea>-pr-<n>` |
-| `--adapter <ADAPTER>` | adr, headings or lines; omitted, adr for ADR-NNNN-*.md files and headings otherwise. Not released yet (next release). `rust` (one claim per crate and per module doc of a Cargo workspace, never chosen unnamed) and `delta` (a Delta Lake's tables, read from their logs) |
-| `--rev <REV>` | The commit read; never the working tree [default: HEAD] |
-| `--repo <REPO>` | The anchor's repository name; omitted, derived from `origin` |
-| `--dry-run` | Print the plan and send nothing |
-| `--check` | Report each anchored claim and edge against --rev; write no memory |
-| `--record` | With --check, record the source checks |
-| `--max-writes <MAX_WRITES>` | The most memories one run writes, so one run is one bulk verdict; the next run continues [default: 200] [alias: --batch] |
+| `--workarea <WORKAREA>` | Workarea (id or name) to sync; with --pr, the parent of `<workarea>-pr-<n>` |
+| `--adapter <ADAPTER>` | Adapter: adr, headings or lines. Defaults to adr for decision-record Markdown files and headings otherwise. Not released yet (next release). `rust` (one claim per crate and module doc, never inferred) and `delta` (Delta Lake tables, requiring the oml-lake build) |
+| `--rev <REV>` | Commit to read; never the working tree [default: HEAD] |
+| `--repo <REPO>` | Repository name for anchors; omitted, derived from the `origin` remote |
+| `--dry-run` | Print the plan without sending anything |
+| `--check` | Report anchored claims and edges against --rev without writing memories |
+| `--record` | With --check, record source checks |
+| `--max-writes <MAX_WRITES>` | Maximum memories one run writes; each run is one bulk verdict and the next run continues [default: 200] [alias: --batch] |
 | `--adopt` | Supersede a tip with no anchor in this repository as changed |
-| `--retire-all` | Propose retiring every claim this key wrote in the workarea under the source, as when a draft's pull request closes |
-| `--edges` | Propose the stated edges between promoted tips (a dreamer key) |
-| `--ratify` | With --edges, ratify the pending edges the source states that another key proposed |
-| `--allow-public-server` | Allow the maintainer's public server, whose admins read every memory and where an anchor and text are never erased |
-| `--allow-rollback` | Write a source equal to an older promoted version as changed, a deliberate revert |
-| `--change-adapter` | Allow --adapter to name another adapter than the one the workarea's claims of this source were written by; the old adapter's claims are then retired |
-| `--pr <PR>` | Drafts: load the records pull request <n> adds or changes between --base and --rev into `<workarea>-pr-<n>` |
-| `--exclude <EXCLUDE>` | A glob of paths left out of the source, repeatable (`docs/adr/**`): never read, compared or retired. The set is recorded for the source on this clone |
-| `--change-exclude` | Allow an exclude set other than the recorded one |
-| `--base <BASE>` | With --pr, the branch the pull request targets [default: origin/main] |
-| `--uri-base <URI_BASE>` | Not released yet (next release). With --adapter delta, the canonical location a lake read from a mirror or a copy stands for (`s3://`, `gs://`, `https://` or `file://`): the anchors carry it, never a local path |
+| `--retire-all` | Propose retiring every claim this key wrote under the source, as when a draft pull request closes |
+| `--edges` | Propose source-stated edges between promoted tips (dreamer key) |
+| `--ratify` | With --edges, ratify matching pending edges proposed by another key |
+| `--allow-public-server` | Allow the maintainer's public server and record consent for this clone. Its admins can read submissions; supersession or retirement does not erase submitted text or anchors |
+| `--allow-rollback` | Treat a source matching an older promoted version as a deliberate revert |
+| `--change-adapter` | Allow changing the adapter used for this source; retires claims written by the old adapter |
+| `--pr <PR>` | Draft pull request <n>: sync records changed between --base and --rev into `<workarea>-pr-<n>` |
+| `--exclude <EXCLUDE>` | Glob of source paths to exclude; repeatable, for example `docs/adr/**`. Excluded paths are never read, compared, or retired; the set is recorded for this clone |
+| `--change-exclude` | Allow an exclude set different from the recorded one |
+| `--base <BASE>` | With --pr, the pull request's target branch [default: origin/main] |
+| `--uri-base <URI_BASE>` | Not released yet (next release). With --adapter delta, canonical source URI (`s3://`, `gs://`, `https://`, or `file://`) stored in anchors instead of a local mirror or copy path |
 
 
 ## `oml anchor`
 
-Print the anchor of a committed file or of one part of it, at --rev, as one JSON object for oml write --anchor
+Print a JSON source anchor for a committed file or fragment at --rev, for oml write --anchor
 
 
 ```
@@ -818,22 +822,22 @@ oml anchor [OPTIONS] <TARGET>
 
 | Argument | Meaning |
 |---|---|
-| `<TARGET>` | A path inside a git clone, with an optional #fragment: a decision handle, a heading's slug, or a line span L<n> or L<n>-L<m> |
+| `<TARGET>` | Path inside a git clone, optionally with #fragment: decision handle, heading slug, or line span L<n> or L<n>-L<m> |
 
 | Option | Meaning |
 |---|---|
-| `--rev <REV>` | The commit read; never the working tree [default: HEAD] |
-| `--repo <REPO>` | The repository name; omitted, derived from `origin` |
-| `--adapter <ADAPTER>` | How the file is split into fragments: adr, headings or lines |
+| `--rev <REV>` | Commit to read; never the working tree [default: HEAD] |
+| `--repo <REPO>` | Repository name; omitted, derived from the `origin` remote |
+| `--adapter <ADAPTER>` | Fragmentation adapter: adr, headings, or lines |
 
 
 ## `oml review`
 
-The review ceremony
+Review held submissions
 
 ### `oml review next`
 
-Serve one held item (claims it for this key)
+Claim and serve one held item for this key
 
 ```
 oml review next [OPTIONS]
@@ -841,7 +845,7 @@ oml review next [OPTIONS]
 
 ### `oml review list`
 
-List the held items this key may judge, with their text, oldest first; claims nothing. A dreamer key held by a person only
+List held items this key may judge, with text, oldest first, without claiming them. Person-held dreamer keys only
 
 ```
 oml review list [OPTIONS]
@@ -850,15 +854,15 @@ oml review list [OPTIONS]
 | Option | Meaning |
 |---|---|
 | `--workarea <WORKAREA>` | Only this workarea's subtree, by id or name |
-| `--author-key <AUTHOR_KEY>` | Only rows this key wrote, by id or name |
-| `--claim-key-prefix <CLAIM_KEY_PREFIX>` | Only claim keys that start with this text, taken literally |
-| `--limit <LIMIT>` | Rows a page, 1 to 200 [default: 50] |
-| `--all` | Every page, not only the first |
-| `--ids-only` | Print only the ids, one per line, for `--ids` |
+| `--author-key <AUTHOR_KEY>` | Only rows written by this author key (id or name) |
+| `--claim-key-prefix <CLAIM_KEY_PREFIX>` | Only claim keys starting with this literal text |
+| `--limit <LIMIT>` | Rows per page, 1 to 200 [default: 50] |
+| `--all` | Fetch every page |
+| `--ids-only` | Print only ids, one per line, for --ids |
 
 ### `oml review approve`
 
-Verdict: promote. Omitted, the serve is the one item this key has claimed; with --ids, every listed id, each its own verdict
+Promote one claimed serve (default) or each artifact in --ids
 
 ```
 oml review approve [OPTIONS] [SERVE_ID]
@@ -866,16 +870,16 @@ oml review approve [OPTIONS] [SERVE_ID]
 
 | Argument | Meaning |
 |---|---|
-| `[SERVE_ID]` | The serve_id `oml review next` printed |
+| `[SERVE_ID]` | serve_id printed by `oml review next` |
 
 | Option | Meaning |
 |---|---|
-| `--note <NOTE>` | A note journalled with the verdict |
-| `--ids <IDS>` | Artifact ids, as a file of one per line (`oml review list --ids-only` writes one), `-` for standard input, or id,id,… |
+| `--note <NOTE>` | Note journalled with the verdict |
+| `--ids <IDS>` | Artifact ids as a one-per-line file (`oml review list --ids-only` output), `-` for stdin, or comma-separated ids |
 
 ### `oml review reject`
 
-Verdict: reject, with the reason. Omitted, the serve is the one item this key has claimed; with --ids, every listed id, each its own verdict with the one reason
+Reject the claimed serve or each --ids artifact with one shared reason
 
 ```
 oml review reject [OPTIONS] --reason <REASON> [SERVE_ID]
@@ -883,21 +887,21 @@ oml review reject [OPTIONS] --reason <REASON> [SERVE_ID]
 
 | Argument | Meaning |
 |---|---|
-| `[SERVE_ID]` | The serve_id `oml review next` printed |
+| `[SERVE_ID]` | serve_id printed by `oml review next` |
 
 | Option | Meaning |
 |---|---|
-| `--reason <REASON>` | Why the item is rejected; required |
+| `--reason <REASON>` | Reason for rejection; required |
 | `--ids <IDS>` | Artifact ids, as for approve |
 
 
 ## `oml audit`
 
-Evidence verbs
+Verify audit evidence
 
 ### `oml audit verify-chain`
 
-Verify the chain per chain-format.md from the chain export; refused while the server serves none (the events tail is a filtered feed)
+Verify the exported chain using chain-format.md; fails if the server has no export. The events tail is only a filtered feed
 
 ```
 oml audit verify-chain [OPTIONS]
@@ -905,14 +909,14 @@ oml audit verify-chain [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--genesis` | Run the full-history verification from genesis |
-| `--signing-key <SIGNING_KEYS>` | A deployment signing public key: 64 hex chars (the 32 raw ed25519 bytes). Repeatable — the authenticated key set is the verifier's input, confirmed out of band (chain-format.md) |
-| `--tenant <TENANT>` | Tenant, by id or name (defaults to the key's own, read through GET /v2/whoami) |
+| `--genesis` | Verify full history from genesis |
+| `--signing-key <SIGNING_KEYS>` | Deployment signing public key (64 hex chars for 32 raw ed25519 bytes); repeatable. Confirm the authenticated key set out of band (chain-format.md) |
+| `--tenant <TENANT>` | Tenant (id or name); defaults to the key's tenant from GET /v2/whoami |
 
 
 ## `oml login`
 
-Read an API key without echo, from the terminal or from stdin when stdin is not one, check it through GET /v2/whoami, and only then store the URL and the key, nothing else, owner-only
+Read an API key without echo from the terminal or stdin, verify it, and store the URL and key owner-only
 
 
 ```
@@ -921,12 +925,12 @@ oml login [OPTIONS] <URL>
 
 | Argument | Meaning |
 |---|---|
-| `<URL>` | The server's URL, without /mcp |
+| `<URL>` | Server URL without /mcp |
 
 
 ## `oml doctor`
 
-Each health signal with a verdict; exit 1 on any fail
+Check health signals; exit 1 if any fail
 
 
 ```
@@ -936,7 +940,7 @@ oml doctor [OPTIONS]
 
 ## `oml quickstart`
 
-Start OML on this machine with Docker: write the compose profile and its owner-only.env into --dir, `docker compose up`, claim the lead, issue an agent key and a reviewer key into owner-only files, check a write end to end, and print the agent's key file and the oml login line
+Start OML locally with Docker, issue agent and reviewer keys, and verify a write
 
 
 ```
@@ -945,8 +949,8 @@ oml quickstart [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--dir <DIR>` | Where the compose file, its.env, the admin credentials and the keys are written; refused if a quickstart already wrote there [default: oml] |
-| `--port <PORT>` | The port on 127.0.0.1 the lead is published on [default: 8080] |
+| `--dir <DIR>` | Directory for compose files, credentials, and keys; refuses a previous quickstart [default: oml] |
+| `--port <PORT>` | Port on 127.0.0.1 for the lead [default: 8080] |
 
 
 ## `oml setup`
@@ -955,7 +959,7 @@ Install and configure an agent tool's OML plugin
 
 ### `oml setup claude-code`
 
-Install the oml plugin at this CLI's own release through the claude CLI and hand it the URL and key on stdin, refusing an admin or operator key; a key given without a URL goes to the default server, `https://memory.doublegate.io`; with --print, or with no claude on PATH, print the commands instead
+Install the matching oml plugin through the claude CLI, passing the URL and key on stdin. Admin and operator keys are refused. Print commands with --print or when claude is unavailable. Without --url, use <https://memory.doublegate.io>
 
 ```
 oml setup claude-code [OPTIONS]
@@ -963,17 +967,17 @@ oml setup claude-code [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--key-file <KEY_FILE>` | The key file `oml keys issue-agent --out` wrote, read in place of --api-key and paired with --url; without --url, with the default server `https://memory.doublegate.io` |
-| `--print` | Run nothing: print the claude commands, whose configure line reads the key file, or OML_API_KEY without one |
+| `--key-file <KEY_FILE>` | Key file from `oml keys issue-agent --out`, used instead of --api-key and paired with --url or the default server |
+| `--print` | Print claude commands without running them; configure reads the key file or OML_API_KEY |
 
 
 ## `oml hook`
 
-Claude Code hooks of the agent plugin, run under the agent's own key
+Run Claude Code plugin hooks under the agent's key
 
 ### `oml hook user-prompt`
 
-Count the turn and record its hash for chat capture, and with OML_TURN_RECALL=1 inject what the prompt recalls within its budget; always exits 0
+Count and hash the turn for chat capture; with OML_TURN_RECALL=1, inject recalled memories within budget. Always exits 0
 
 ```
 oml hook user-prompt [OPTIONS]
@@ -981,7 +985,7 @@ oml hook user-prompt [OPTIONS]
 
 ### `oml hook stop`
 
-With OML_CHAT_CAPTURE=1, when a capture is due, ask the agent to write the facts the uncaptured turns established; always exits 0
+With OML_CHAT_CAPTURE=1, ask the agent to write facts from uncaptured turns when capture is due. Always exits 0
 
 ```
 oml hook stop [OPTIONS]
@@ -989,7 +993,7 @@ oml hook stop [OPTIONS]
 
 ### `oml hook pre-compact`
 
-Record that the session compacted, so the next Stop asks at once; prints nothing and never blocks
+Record session compaction so the next Stop captures immediately; print nothing and never block
 
 ```
 oml hook pre-compact [OPTIONS]
@@ -997,7 +1001,7 @@ oml hook pre-compact [OPTIONS]
 
 ### `oml hook session-start`
 
-Print the SessionStart context from the plugin's url and api_key options, else OML_URL and OML_API_KEY — steering, this key's recent submissions, the matching memories — or nothing; always exits 0
+Print SessionStart context from plugin url/api_key options or OML_URL/OML_API_KEY: steering, recent submissions, and matching memories. Print nothing on failure; always exit 0
 
 ```
 oml hook session-start [OPTIONS]
@@ -1005,7 +1009,7 @@ oml hook session-start [OPTIONS]
 
 ### `oml hook tool-failure`
 
-Print memories matching a failed Bash command's error, from the plugin's url and api_key options, else OML_URL and OML_API_KEY, only with OML_FAILURE_RECALL=1; always exits 0
+With OML_FAILURE_RECALL=1, print memories matching a failed Bash command's error using plugin options or OML_URL/OML_API_KEY. Always exits 0
 
 ```
 oml hook tool-failure [OPTIONS]
@@ -1013,7 +1017,7 @@ oml hook tool-failure [OPTIONS]
 
 ### `oml hook session-end`
 
-Delete this session's failure-recall cache; prints nothing and always exits 0
+Delete this session's failure-recall cache; print nothing and always exit 0
 
 ```
 oml hook session-end [OPTIONS]
@@ -1021,7 +1025,7 @@ oml hook session-end [OPTIONS]
 
 ### `oml hook guardrails`
 
-Print the guardrails in force for this agent's key in their own frame, and at SessionStart write the session's rule cache; a failure is a message the user sees, exit 0
+Print guardrails for this agent's key; at SessionStart, write the session rule cache. Failures are shown to the user and exit 0
 
 ```
 oml hook guardrails [OPTIONS]
@@ -1029,7 +1033,7 @@ oml hook guardrails [OPTIONS]
 
 ### `oml hook pre-tool-use`
 
-Check one tool call against the session's rule cache: deny, ask or nothing, never allow, with no network call; no cache decides nothing and warns, and a failure exits 2, which blocks the call
+Check a tool call against the session rule cache without network access; return deny, ask, or nothing, never allow. Missing cache warns and decides nothing; failures exit 2 and block the call
 
 ```
 oml hook pre-tool-use [OPTIONS]
@@ -1038,11 +1042,11 @@ oml hook pre-tool-use [OPTIONS]
 
 ## `oml demo`
 
-Demonstration data, written through the public API
+Write demonstration data through the public API
 
 ### `oml demo seed`
 
-Create a workarea and fill it with thirty memories of a fictional team: twenty approved, four approved and then superseded, six held. It issues one author and two reviewer identities, writes and reviews as them, and fences all three from the whole tree when it ends; no key value is printed. Admin key
+Create 30 fictional-team memories (20 approved, 4 superseded, 6 held), then fence their author and reviewer identities. Admin key; no keys are printed
 
 ```
 oml demo seed [OPTIONS] <WORKAREA>
@@ -1050,8 +1054,8 @@ oml demo seed [OPTIONS] <WORKAREA>
 
 | Argument | Meaning |
 |---|---|
-| `<WORKAREA>` | The new workarea's name; it must not exist |
+| `<WORKAREA>` | New workarea name; it must not exist |
 
 | Option | Meaning |
 |---|---|
-| `--parent <PARENT>` | The workarea it is created under [default: universe] |
+| `--parent <PARENT>` | Parent workarea [default: universe] |

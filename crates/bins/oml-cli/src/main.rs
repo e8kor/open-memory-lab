@@ -11,7 +11,7 @@
 #![allow(rustdoc::invalid_html_tags)]
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{ArgGroup, Args, Parser, Subcommand};
@@ -31,16 +31,15 @@ use oml_cli::verify::parse_verifying_key;
 #[command(
     name = "oml",
     version,
-    about = "Open Memory Lab administration — a lab client of the same HTTP API every agent speaks (ADR-0015)."
+    about = "Administer Open Memory Lab through its HTTP API."
 )]
 struct Cli {
-    /// The server's URL, without /mcp. One pair with --api-key: the pair
-    /// comes from the flags, else the environment, else the credentials
-    /// file, and a source setting one alone is refused (ADR-0039 d15).
+    /// Server URL without /mcp. URL and API key must come together from flags,
+    /// environment, or credentials file, in that order.
     #[arg(long, global = true, env = "OML_URL")]
     url: Option<String>,
-    /// The API key value, paired with --url. argv is visible to other
-    /// processes, so prefer OML_API_KEY or the credentials file.
+    /// API key paired with --url. Prefer OML_API_KEY or the credentials file
+    /// because argv is visible to other processes.
     #[arg(
         long = "api-key",
         global = true,
@@ -89,132 +88,116 @@ impl Start {
 
 #[derive(Subcommand)]
 enum Command {
-    /// The bootstrap ceremony: exchange the enrollment token for a key.
+    /// Exchange an enrollment token for the first admin key.
     Bootstrap {
         #[command(subcommand)]
         command: BootstrapCommand,
     },
-    /// Tenant verbs (operator tier).
+    /// Manage tenants (operator tier).
     Tenants {
         #[command(subcommand)]
         command: TenantsCommand,
     },
-    /// The guardrails in force for this key: their text, or an export for
-    /// a harness without the plugin's hooks (proposed ADR-0037 d7, d11).
+    /// Show or export guardrails in force for this key.
     Guardrails {
         #[command(subcommand)]
         command: GuardrailsCommand,
     },
-    /// Key issuance (show-once ceremony).
+    /// Manage keys and connections.
     Keys {
         #[command(subcommand)]
         command: KeysCommand,
     },
-    /// Global per-key denials: deny-wins across all of a key's grants.
+    /// Manage global per-key denials, which override all grants.
     Deny {
         #[command(subcommand)]
         command: DenyCommand,
     },
-    /// A person's chat memory (ADR-0063).
+    /// Manage a person's chat memory.
     Chat {
         #[command(subcommand)]
         command: ChatCommand,
     },
-    /// Workarea tree verbs.
+    /// Manage workareas.
     Workareas {
         #[command(subcommand)]
         command: WorkareasCommand,
     },
-    /// Edges: claim-to-claim links and a claim's place in a workarea's
-    /// brief, each proposed by one key and ratified by another (ADR-0046
-    /// d4, d7).
+    /// Manage claim links and workarea brief entries, proposed and ratified by different keys.
     Edges {
         #[command(subcommand)]
         command: EdgesCommand,
     },
-    /// Crew records: named, recorded, not operated (admin key role).
+    /// Manage named crew records (admin key).
     Crews {
         #[command(subcommand)]
         command: CrewsCommand,
     },
-    /// The web pages' email allowlist: who may sign in, as which user, and
-    /// whether as an admin (admin key role; ADR-0045 d2).
+    /// Manage the email allowlist for web sign-in (admin key).
     Web {
         #[command(subcommand)]
         command: WebCommand,
     },
-    /// The search pipelines the server serves, and the tenant's default
-    /// among them (admin key role; ADR-0049 d4).
+    /// Show or set search pipelines (admin key).
     Search {
         #[command(subcommand)]
         command: SearchCommand,
     },
-    /// The recall telemetry: the query-text setting, the recorded recalls
-    /// and the real-usage replay (admin key role; ADR-0054 d2, d3, d11).
+    /// Manage recall telemetry and replay real usage (admin key).
     Usage {
         #[command(subcommand)]
         command: UsageCommand,
     },
-    /// An administrator's reads of every memory's text and attribution,
-    /// each recorded in the history (admin key role; ADR-0045 d21).
+    /// Read or rescan memories; admin reads are recorded in history (admin key).
     Admin {
         #[command(subcommand)]
         command: AdminCommand,
     },
-    /// Write a claim, held until reviewed: a submission, or with --replaces
-    /// a new version of a claim or its retirement (ADR-0039 d3, d10).
+    /// Submit a claim for review, replace one with --replaces, or propose its retirement.
     Write(WriteArgs),
-    /// Read memories: fetch one by artifact id, recall with --query, or
-    /// list with neither (ADR-0039 d4, d10).
+    /// Fetch a memory by artifact id, recall with --query, or list memories.
     Read(ReadArgs),
-    /// Tail the journal's events within the key's reader access, digests
-    /// only (GET /v2/events; ADR-0039 d10).
+    /// Tail journal event digests within the key's reader access.
     Events(EventsArgs),
-    /// Keep a workarea in step with a repository's committed documents:
-    /// extract claims at one commit, diff them against the workarea and
-    /// write, check or link them (ADR-0057 d6-d11, d14).
+    /// Sync a workarea with committed repository documents: extract, diff, write,
+    /// check, or link claims.
     Sync(SyncArgs),
-    /// Print the anchor of a committed file or of one part of it, at
-    /// --rev, as one JSON object for oml write --anchor (ADR-0057 d13).
+    /// Print a JSON source anchor for a committed file or fragment at --rev, for
+    /// oml write --anchor.
     Anchor(AnchorArgs),
-    /// The review ceremony.
+    /// Review held submissions.
     Review {
         #[command(subcommand)]
         command: ReviewCommand,
     },
-    /// Evidence verbs.
+    /// Verify audit evidence.
     Audit {
         #[command(subcommand)]
         command: AuditCommand,
     },
-    /// Read an API key without echo, from the terminal or from stdin when
-    /// stdin is not one, check it through GET /v2/whoami, and only then
-    /// store the URL and the key, nothing else, owner-only (ADR-0039 d15).
+    /// Read an API key without echo from the terminal or stdin, verify it, and
+    /// store the URL and key owner-only.
     Login {
-        /// The server's URL, without /mcp.
+        /// Server URL without /mcp.
         // Not `url`: clap would merge that id with the global --url.
         #[arg(value_name = "URL")]
         target: String,
     },
-    /// Each health signal with a verdict; exit 1 on any fail.
+    /// Check health signals; exit 1 if any fail.
     Doctor,
-    /// Start OML on this machine with Docker: write the compose profile and
-    /// its owner-only .env into --dir, `docker compose up`, claim the lead,
-    /// issue an agent key and a reviewer key into owner-only files, check a
-    /// write end to end, and print the agent's key file and the oml login
-    /// line (ADR-0041 d9).
+    /// Start OML locally with Docker, issue agent and reviewer keys, and verify a write.
     Quickstart(QuickstartArgs),
-    /// Install and configure an agent tool's OML plugin (ADR-0041 d7).
+    /// Install and configure an agent tool's OML plugin.
     Setup {
         #[command(subcommand)]
         command: SetupCommand,
     },
-    /// Claude Code hooks of the agent plugin, run under the agent's own key.
+    /// Run Claude Code plugin hooks under the agent's key.
     Hook {
         #[command(subcommand)]
         command: HookCommand,
     },
-    /// Demonstration data, written through the public API (ADR-0067 d4).
+    /// Write demonstration data through the public API.
     Demo {
         #[command(subcommand)]
         command: DemoCommand,
@@ -223,16 +206,13 @@ enum Command {
 
 #[derive(Subcommand)]
 enum DemoCommand {
-    /// Create a workarea and fill it with thirty memories of a fictional team:
-    /// twenty approved, four approved and then superseded, six held. It issues
-    /// one author and two reviewer identities, writes and reviews as them,
-    /// and fences all three from the whole tree when it ends; no key value is
-    /// printed (ADR-0067 d4). Admin key.
+    /// Create 30 fictional-team memories (20 approved, 4 superseded, 6 held),
+    /// then fence their author and reviewer identities. Admin key; no keys are printed.
     Seed {
-        /// The new workarea's name; it must not exist.
+        /// New workarea name; it must not exist.
         #[arg(value_name = "WORKAREA")]
         workarea: String,
-        /// The workarea it is created under.
+        /// Parent workarea.
         #[arg(long, default_value = "universe")]
         parent: String,
     },
@@ -240,62 +220,55 @@ enum DemoCommand {
 
 #[derive(Args)]
 struct QuickstartArgs {
-    /// Where the compose file, its .env, the admin credentials and the keys
-    /// are written; refused if a quickstart already wrote there.
+    /// Directory for compose files, credentials, and keys; refuses a previous quickstart.
     #[arg(long, default_value = "oml")]
     dir: PathBuf,
-    /// The port on 127.0.0.1 the lead is published on.
+    /// Port on 127.0.0.1 for the lead.
     #[arg(long, default_value_t = 8080)]
     port: u16,
 }
 
 #[derive(Subcommand)]
 enum SetupCommand {
-    /// Install the oml plugin at this CLI's own release through the claude
-    /// CLI and hand it the URL and key on stdin, refusing an admin or
-    /// operator key; a key given without a URL goes to the default server,
-    /// `https://memory.doublegate.io`; with --print, or with no claude on
-    /// PATH, print the commands instead (ADR-0041 d7, ADR-0043 d4).
+    /// Install the matching oml plugin through the claude CLI, passing the URL and key
+    /// on stdin. Admin and operator keys are refused. Print commands with --print or
+    /// when claude is unavailable. Without --url, use <https://memory.doublegate.io>.
     ClaudeCode(SetupClaudeCodeArgs),
 }
 
 #[derive(Args)]
 struct SetupClaudeCodeArgs {
-    /// The key file `oml keys issue-agent --out` wrote, read in place of
-    /// --api-key and paired with --url; without --url, with the default
-    /// server `https://memory.doublegate.io` (ADR-0043 d4).
+    /// Key file from `oml keys issue-agent --out`, used instead of --api-key and
+    /// paired with --url or the default server.
     #[arg(long)]
     key_file: Option<PathBuf>,
-    /// Run nothing: print the claude commands, whose configure line reads
-    /// the key file, or OML_API_KEY without one.
+    /// Print claude commands without running them; configure reads the key file or OML_API_KEY.
     #[arg(long)]
     print: bool,
 }
 
 #[derive(Subcommand)]
 enum GuardrailsCommand {
-    /// Print the set as the hook's frame, every line even over the cap of
-    /// twelve, and exit 1 over it (proposed ADR-0037 d7).
+    /// Print all guardrails as the hook frames them; exit 1 if there are more than twelve.
     Show {
-        /// The scope node, by id or name; omitted, the key's default.
+        /// Scope workarea by id or name; omitted, the key's default.
         #[arg(long)]
         workarea: Option<String>,
     },
-    /// Write the promoted set, text only, for a harness without the
-    /// plugin's hooks: claude-md a whole .claude/rules/ file, agents-md the
-    /// text between the one pair of <!-- oml:guardrails --> markers in the
-    /// named file (proposed ADR-0037 d11).
+    /// Export promoted guardrail text for a harness without plugin hooks.
+    /// claude-md writes a whole .claude/rules/ file; agents-md updates text
+    /// between <!-- oml:guardrails --> markers.
     Export {
         /// agents-md | claude-md
         #[arg(long, value_parser = ["agents-md", "claude-md"])]
         format: String,
-        /// The file to write.
+        /// File to write.
         #[arg(long)]
         out: PathBuf,
-        /// Write nothing; exit 1 when the live set differs from the file's.
+        /// Write nothing; exit 1 if the file differs from the live set.
         #[arg(long)]
         check: bool,
-        /// The scope node, by id or name; omitted, the key's default.
+        /// Scope workarea by id or name; omitted, the key's default.
         #[arg(long)]
         workarea: Option<String>,
     },
@@ -303,12 +276,10 @@ enum GuardrailsCommand {
 
 #[derive(Subcommand)]
 enum ChatCommand {
-    /// Open your chat workarea, `chat` under your user root, with a key a
-    /// person holds; agents are refused (access.verb_ceiling,
-    /// chat_scope_is_human_only). Prints the OML_CHAT_WORKAREA value the
-    /// plugin's capture and per-turn recall read (ADR-0063 d8).
+    /// Open your `chat` workarea under your user root and print OML_CHAT_WORKAREA
+    /// for plugin capture and recall. Requires a person's key.
     Init {
-        /// The parent, by id or name; omitted, your key's user root.
+        /// Parent by id or name; omitted, your key's user root.
         #[arg(long)]
         parent: Option<String>,
     },
@@ -316,57 +287,48 @@ enum ChatCommand {
 
 #[derive(Subcommand)]
 enum HookCommand {
-    /// Count the turn and record its hash for chat capture, and with
-    /// OML_TURN_RECALL=1 inject what the prompt recalls within its budget;
-    /// always exits 0 (ADR-0063 d6, d10).
+    /// Count and hash the turn for chat capture; with OML_TURN_RECALL=1, inject
+    /// recalled memories within budget. Always exits 0.
     UserPrompt,
-    /// With OML_CHAT_CAPTURE=1, when a capture is due, ask the agent to
-    /// write the facts the uncaptured turns established; always exits 0
-    /// (ADR-0063 d6).
+    /// With OML_CHAT_CAPTURE=1, ask the agent to write facts from uncaptured
+    /// turns when capture is due. Always exits 0.
     Stop,
-    /// Record that the session compacted, so the next Stop asks at once;
-    /// prints nothing and never blocks (ADR-0063 d6).
+    /// Record session compaction so the next Stop captures immediately; print
+    /// nothing and never block.
     PreCompact,
-    /// Print the SessionStart context from the plugin's url and api_key
-    /// options, else OML_URL and OML_API_KEY — steering, this key's recent
-    /// submissions, the matching memories — or nothing; always exits 0
-    /// (ADR-0029, ADR-0040 d3).
+    /// Print SessionStart context from plugin url/api_key options or
+    /// OML_URL/OML_API_KEY: steering, recent submissions, and matching memories.
+    /// Print nothing on failure; always exit 0.
     SessionStart,
-    /// Print memories matching a failed Bash command's error, from the
-    /// plugin's url and api_key options, else OML_URL and OML_API_KEY, only
-    /// with OML_FAILURE_RECALL=1; always exits 0 (ADR-0038, ADR-0040 d3).
+    /// With OML_FAILURE_RECALL=1, print memories matching a failed Bash command's
+    /// error using plugin options or OML_URL/OML_API_KEY. Always exits 0.
     ToolFailure,
-    /// Delete this session's failure-recall cache; prints nothing and
-    /// always exits 0 (ADR-0038).
+    /// Delete this session's failure-recall cache; print nothing and always exit 0.
     SessionEnd,
-    /// Print the guardrails in force for this agent's key in their own
-    /// frame, and at SessionStart write the session's rule cache; a failure
-    /// is a message the user sees, exit 0 (proposed ADR-0037 d6, d7, d9).
+    /// Print guardrails for this agent's key; at SessionStart, write the session
+    /// rule cache. Failures are shown to the user and exit 0.
     Guardrails,
-    /// Check one tool call against the session's rule cache: deny, ask or
-    /// nothing, never allow, with no network call; no cache decides nothing
-    /// and warns, and a failure exits 2, which blocks the call (proposed
-    /// ADR-0037 d8, d9).
+    /// Check a tool call against the session rule cache without network access;
+    /// return deny, ask, or nothing, never allow. Missing cache warns and decides
+    /// nothing; failures exit 2 and block the call.
     PreToolUse,
 }
 
 #[derive(Subcommand)]
 enum BootstrapCommand {
-    /// Exchange the single-use enrollment token for the first admin key and
-    /// store the URL and the key, nothing else, owner-only (0600).
+    /// Exchange a single-use enrollment token for the first admin key and store
+    /// the URL and key owner-only (0600).
     Claim {
-        /// The name of the key the claim mints, unique in its namespace and
-        /// never released (ADR-0026 d9, d12).
+        /// Name for the minted key; unique in its namespace and never released.
         key_name: String,
-        /// Read the enrollment token the lead printed at first boot from
-        /// stdin, without echo on a terminal, so it never reaches argv or
-        /// shell history; required, since --token is gone (ADR-0039 d10).
+        /// Read the enrollment token from stdin without terminal echo, keeping it
+        /// out of argv and shell history; required.
         #[arg(long, required = true)]
         token_stdin: bool,
-        /// Name for the tenant the ceremony creates.
+        /// Name for the tenant to create.
         #[arg(long)]
         tenant_name: Option<String>,
-        /// Principal recorded on the first admin key.
+        /// Principal for the first admin key.
         #[arg(long)]
         principal: Option<String>,
     },
@@ -380,43 +342,39 @@ enum TenantsCommand {
 
 #[derive(Subcommand)]
 enum KeysCommand {
-    /// Issue a key; the value is printed exactly once.
+    /// Issue a key and print its value once.
     Issue(KeysIssueArgs),
-    /// Issue the one key the agent plugin needs, in one POST /v2/keys, and
-    /// print the OML_URL and OML_API_KEY export lines, and with --out the
-    /// claude plugin configure line that reads the file (ADR-0028 d1,
-    /// ADR-0040 d4).
+    /// Issue an agent-plugin key and print OML_URL/OML_API_KEY exports; with
+    /// --out, print the claude configure line that reads it.
     IssueAgent(IssueAgentArgs),
-    /// One key, by id or name, a revoked key's included: grants, denials,
-    /// crew and epoch, never its value.
+    /// Show a key's grants, denials, crew, and epoch, including revoked keys;
+    /// never print its value.
     Show {
-        /// The key's id or name.
+        /// Key id or name.
         // Not `key`: clap would merge that id with the global --key.
         #[arg(value_name = "KEY")]
         key_ref: String,
     },
-    /// Mint a fresh connect code for a connector key, voiding its earlier
-    /// codes, and print the connector URL and the code (ADR-0031 d7, d8).
+    /// Mint a connector key's connect code, void earlier codes, and print the
+    /// connector URL and code.
     ConnectCode {
-        /// The connector key's id or name.
+        /// Connector key id or name.
         #[arg(value_name = "KEY")]
         key_ref: String,
-        /// How long the code lives, such as 90s, 45m, 12h or 7d, up to 30d;
-        /// omitted, ten minutes. Past ten minutes the server mints it only
-        /// for a key whose grants sit on one workarea other than the
-        /// universe (ADR-0067 d3).
+        /// Code lifetime, such as 90s, 45m, 12h, or 7d, up to 30d; defaults to
+        /// 10m. Longer than 10m requires a key granted on exactly one non-universe
+        /// workarea.
         #[arg(long, value_name = "DURATION")]
         ttl: Option<String>,
     },
-    /// End one connection of a connector key; journalled as
-    /// connection.revoked (ADR-0031 d11).
+    /// Revoke one connector-key connection and journal connection.revoked.
     Disconnect {
-        /// The connector key's id or name.
+        /// Connector key id or name.
         #[arg(value_name = "KEY")]
         key_ref: String,
-        /// The connection's id, as `oml keys show` lists it.
+        /// Connection id listed by `oml keys show`.
         connection_id: String,
-        /// Why; the journal keeps its digest.
+        /// Reason for revocation; only its digest is journalled.
         #[arg(long)]
         reason: Option<String>,
     },
@@ -424,8 +382,7 @@ enum KeysCommand {
 
 #[derive(Args)]
 struct KeysIssueArgs {
-    /// The key's name, unique in the tenant and never released; distinct
-    /// from its principal and label (ADR-0026 d9, d12).
+    /// Key name, unique in the tenant and never released; distinct from principal and label.
     key_name: String,
     /// reader | writer | dreamer | admin
     #[arg(long)]
@@ -433,26 +390,23 @@ struct KeysIssueArgs {
     /// agent | human | service
     #[arg(long, default_value = "agent")]
     held_by: String,
-    /// Workarea (id or name) the provider ring targets when a request names
-    /// none; some grant must cover it. Omitted, the first grant's node.
+    /// Default workarea (id or name) for provider requests without one; must be
+    /// covered by a grant. Defaults to the first grant's workarea.
     #[arg(long)]
     default_workarea: Option<String>,
-    /// Grant as <workarea>:<role>, or <workarea>:<role>:node for the node
-    /// alone (ADR-0044 d4), the workarea by id or name; repeatable. A writer
-    /// grant brings a reader grant on the same workarea, with the same
-    /// coverage, unless --write-only.
+    /// Grant <workarea>:<role>, or <workarea>:<role>:node for one node; workarea
+    /// may be id or name. Repeatable. Writer grants include reader access unless
+    /// --write-only.
     #[arg(long = "grant", value_parser = parse_grant)]
     grants: Vec<(String, String)>,
-    /// The key's crew record, by id or name, fixed for the key's life.
+    /// Crew record (id or name), fixed for the key's life.
     #[arg(long)]
     crew: Option<String>,
-    /// The person the key acts for: a user key, whose grants lie in the
-    /// user's root `universe.<user>` and whose workarea names resolve there;
-    /// the first key naming a user creates the root (ADR-0044 d2, d11).
+    /// User the key acts for. Grants must be under `universe.<user>`, where
+    /// workarea names resolve; the first key creates that root.
     #[arg(long)]
     user: Option<String>,
-    /// Send the writer grants alone, with no reader grant beside them
-    /// (ADR-0028 d2).
+    /// Send writer grants without matching reader grants.
     #[arg(long)]
     write_only: bool,
     /// Principal the key acts as.
@@ -460,76 +414,66 @@ struct KeysIssueArgs {
     principal: Option<String>,
     #[arg(long)]
     label: Option<String>,
-    /// The guardrail scope an admin sets on the key: workarea loads the
-    /// default workarea's guardrails alone, ancestors those of every
-    /// ancestor the key reads too; omitted, the server's default, ancestors
-    /// (proposed ADR-0037 d4).
+    /// Guardrail scope: workarea loads only the default workarea's guardrails;
+    /// ancestors also loads every readable ancestor. Defaults to ancestors.
     #[arg(long, value_parser = ["workarea", "ancestors"])]
     guardrail_scope: Option<String>,
-    /// The key's profile: `curator`, a dreamer key held by an agent that
-    /// narrows inside an in-progress workarea and never promotes
-    /// (ADR-0030 d8).
+    /// Key profile: curator is an agent-held dreamer that narrows within an
+    /// in-progress workarea and never promotes.
     #[arg(long, value_parser = ["curator"])]
     profile: Option<String>,
 }
 
 #[derive(Args)]
 struct IssueAgentArgs {
-    /// The key's name, unique in the tenant and never released; never
-    /// derived from the principal (ADR-0026 d9, d12).
+    /// Key name, unique in the tenant and never released; not derived from the principal.
     key_name: String,
     /// Principal the key acts as; give each agent its own.
     #[arg(long)]
     principal: String,
-    /// The workarea, by id or name, the key writes and recalls on, and its
-    /// default. With --user it is optional, defaults to the user's root, and
-    /// resolves in that user's namespace (ADR-0044 d11).
+    /// Workarea (id or name) to write and recall, and its default. With --user,
+    /// optional and resolved in that user's namespace; defaults to the user's root.
     #[arg(long)]
     workarea: Option<String>,
-    /// The person the key acts for: a user key under `universe.<user>`, the
-    /// root created by the first key naming the user (ADR-0044 d2, d11).
+    /// User the key acts for, under `universe.<user>`; the first key for a user
+    /// creates that root.
     #[arg(long)]
     user: Option<String>,
-    /// The key's crew record, by id or name, fixed for the key's life
-    /// (ADR-0026 d12).
+    /// Crew record (id or name), fixed for the key's life.
     #[arg(long)]
     crew: Option<String>,
     /// Who holds the key.
     #[arg(long, default_value = "agent", value_parser = ["agent", "human"])]
     held_by: String,
-    /// Send the writer grant alone, with no reader grant beside it
-    /// (ADR-0028 d2).
+    /// Send the writer grant without a matching reader grant.
     #[arg(long)]
     write_only: bool,
-    /// Write the key value to this new file (mode 0600, never overwritten)
-    /// and print a line that reads it back instead of the value.
+    /// Write the key to a new 0600 file without overwriting and print a line that
+    /// reads it instead of the value.
     #[arg(long)]
     out: Option<PathBuf>,
-    /// Issue a connector key for a claude.ai custom connector: no value, and
-    /// a single-use connect code printed in its place (ADR-0031 d7).
+    /// Issue a claude.ai custom-connector key with a single-use connect code
+    /// instead of a key value.
     #[arg(long)]
     connect_code: bool,
-    /// The guardrail scope an admin sets on the key: workarea loads the
-    /// default workarea's guardrails alone, ancestors those of every
-    /// ancestor the key reads too; omitted, the server's default, ancestors
-    /// (proposed ADR-0037 d4).
+    /// Guardrail scope: workarea loads only the default workarea's guardrails;
+    /// ancestors also loads every readable ancestor. Defaults to ancestors.
     #[arg(long, value_parser = ["workarea", "ancestors"])]
     guardrail_scope: Option<String>,
 }
 
 #[derive(Subcommand)]
 enum DenyCommand {
-    /// Create or extend the key's global deny object over a subtree. Distinct
-    /// from a per-grant deny; journalled as key.denied.
+    /// Create or extend a global deny over a subtree, overriding all grants;
+    /// journals key.denied.
     Set {
-        /// The key the denial binds, by id or name.
+        /// Key to deny, by id or name.
         // Not `key`: clap would merge that id with the global --key.
         #[arg(value_name = "KEY")]
         key_ref: String,
-        /// The workarea, by id or name, whose subtree the key no longer
-        /// reaches.
+        /// Workarea (id or name) whose subtree the key can no longer access.
         subtree: String,
-        /// Why; the server accepts it and journals no reason.
+        /// Reason for denial; accepted by the server but not journalled.
         #[arg(long)]
         reason: Option<String>,
     },
@@ -539,45 +483,45 @@ enum DenyCommand {
 enum WorkareasCommand {
     /// Create a child workarea in development status.
     Create {
-        /// The parent workarea, by id or name.
+        /// Parent workarea, by id or name.
         parent: String,
-        /// The new workarea's name, unique in the tenant and never changed.
+        /// New workarea name, unique in the tenant and immutable.
         name: String,
-        /// The crew record the workarea names, by id or name.
+        /// Crew record to assign, by id or name.
         #[arg(long)]
         crew: Option<String>,
     },
-    /// The tree from a workarea down, with each node's path, id, status
-    /// and crew: every page of one tree read.
+    /// List a workarea tree with each node's path, id, status, and crew.
     Tree {
-        /// The workarea the listing starts at, by id or name.
-        #[arg(long, default_value = "universe")]
-        root: String,
+        /// Root workarea, by id or name.
+        #[arg(value_name = "ROOT", conflicts_with = "root")]
+        positional_root: Option<String>,
+        /// Root workarea, by id or name.
+        #[arg(long, conflicts_with = "positional_root")]
+        root: Option<String>,
     },
-    /// One workarea, by id or name: path, status, crew, children.
+    /// Show a workarea's path, status, crew, and children.
     Show {
-        /// The workarea's id or name.
+        /// Workarea id or name.
         workarea: String,
     },
-    /// Put a workarea in progress, or commit it back to standard: a
-    /// person's dreamer key only. Inside an in-progress workarea readers
-    /// recall unreviewed memories, labelled; nothing leaves until the
-    /// commit, refused while anything is held (ADR-0030 d1, d6).
+    /// Set in_progress to recall labelled unreviewed memories within the workarea,
+    /// or standard to commit. Person-held dreamer keys only; commit is refused
+    /// while items are held.
     Mode {
-        /// The workarea, by id or name.
+        /// Workarea id or name.
         workarea: String,
         /// `in_progress`, or `standard` to commit.
         #[arg(value_parser = ["in_progress", "standard"])]
         mode: String,
     },
-    /// The crew record a workarea names (admin key role).
+    /// Set a workarea's crew record (admin key).
     Crew {
         #[command(subcommand)]
         command: WorkareaCrewCommand,
     },
-    /// The status ladder: development, committed, validated, each step
-    /// proposed by one key and ratified by another (ADR-0009 d3; ADR-0046
-    /// d3).
+    /// Move through development, committed, and validated; each step needs
+    /// proposal and ratification by different keys.
     Status {
         #[command(subcommand)]
         command: WorkareaStatusCommand,
@@ -610,32 +554,31 @@ enum WorkareaStatusCommand {
 
 #[derive(Subcommand)]
 enum EdgesCommand {
-    /// Propose an edge; it stays pending until another key ratifies it.
+    /// Propose an edge for ratification by another key.
     Propose {
         #[command(subcommand)]
         kind: EdgeProposeCommand,
     },
-    /// Ratify a pending edge of either kind under a key that did not
-    /// propose it.
+    /// Ratify a pending edge under a key that did not propose it.
     Ratify {
-        /// The edge's id.
+        /// Edge id.
         edge_id: String,
     },
-    /// One page of one kind's edges, pending and ratified, newest first.
+    /// List one page of pending and ratified edges, newest first.
     List {
         /// claim or brief.
         #[arg(long)]
         kind: String,
-        /// kind claim: a subtree filter; kind brief: the workarea, required.
+        /// For claim, filter by subtree; for brief, required workarea.
         #[arg(long)]
         workarea: Option<String>,
-        /// kind claim: only the edges touching this artifact.
+        /// For claim, only edges touching this artifact.
         #[arg(long)]
         artifact: Option<String>,
-        /// The page size.
+        /// Page size.
         #[arg(long)]
         limit: Option<u32>,
-        /// The next_cursor of the previous page.
+        /// Previous page's next_cursor.
         #[arg(long)]
         cursor: Option<String>,
     },
@@ -643,33 +586,32 @@ enum EdgesCommand {
 
 #[derive(Subcommand)]
 enum EdgeProposeCommand {
-    /// A labelled link from one claim to another: supports, contradicts,
-    /// relates_to and continues are the recommended labels (ADR-0046 d6).
+    /// Link claims with a label such as supports, contradicts, relates_to, or continues.
     Claim {
-        /// The source claim's artifact id.
+        /// Source claim artifact id.
         from: String,
-        /// The target claim's artifact id.
+        /// Target claim artifact id.
         to: String,
         #[arg(long)]
         label: String,
     },
-    /// A promoted claim proposed into a workarea's brief (ADR-0046 d7).
+    /// Propose a promoted claim for a workarea's brief.
     Brief {
-        /// The claim's artifact id.
+        /// Claim artifact id.
         artifact: String,
-        /// The workarea, by id or name.
+        /// Workarea id or name.
         workarea: String,
     },
 }
 
 #[derive(Subcommand)]
 enum WorkareaCrewCommand {
-    /// Point the workarea at a crew record (workarea.crew_updated); allowed
-    /// on validated workareas.
+    /// Set the workarea's crew record, including on validated workareas;
+    /// journals workarea.crew_updated.
     Set {
-        /// The workarea, by id or name.
+        /// Workarea id or name.
         workarea: String,
-        /// The crew record, by id or name.
+        /// Crew record id or name.
         #[arg(long)]
         crew: String,
     },
@@ -677,66 +619,59 @@ enum WorkareaCrewCommand {
 
 #[derive(Subcommand)]
 enum AdminCommand {
-    /// One memory with its text and attribution, or with --query, --workarea
-    /// or --state a search over every memory of the organisation
-    /// (memory.admin_read).
+    /// Read one memory with text and attribution, or search all organisation
+    /// memories with --query, --workarea, or --state; journals memory.admin_read.
     Read {
-        /// The memory's artifact id; omitted, a search.
+        /// Memory artifact id; omit to search.
         memory: Option<String>,
-        /// Full-text search, the words recall matches.
+        /// Full-text search using recall matching.
         #[arg(long)]
         query: Option<String>,
-        /// Only this workarea's subtree, by id, name or qualified name.
+        /// Limit to this workarea subtree (id, name, or qualified name).
         #[arg(long)]
         workarea: Option<String>,
         /// held, promoted, rejected, superseded or demoted.
         #[arg(long)]
         state: Option<String>,
     },
-    /// Rescan every stored version with the server's rule set and report
-    /// what it would refuse or hold, by rule and place, never the text
-    /// (ADR-0065 d13). Changes nothing: a version it would refuse stays,
-    /// for a person to retire.
+    /// Report by rule and location which stored versions current rules would
+    /// refuse or hold; never prints text or changes data.
     Rescan,
 }
 
 #[derive(Subcommand)]
 enum SearchCommand {
-    /// The served pipelines, the deployment's default, the tenant's and the
-    /// one a recall naming none runs.
+    /// Show served pipelines and the deployment, tenant, and effective recall defaults.
     Show,
-    /// Set the tenant's default pipeline (search.default_set), journalled;
-    /// recalls use it from the next request, no restart.
+    /// Set the tenant's default recall pipeline for subsequent requests;
+    /// journals search.default_set.
     SetDefault {
-        /// A pipeline the server serves; `deployment` clears the tenant's
-        /// own default, so the deployment's applies.
+        /// Served pipeline name; `deployment` clears the tenant override.
         pipeline: String,
     },
 }
 
 #[derive(Subcommand)]
 enum UsageCommand {
-    /// Whether this server records recalls and whether the tenant's keep
-    /// their query text; with --query-text, turn it on or off
-    /// (telemetry.settings_set), journalled.
+    /// Show recall recording and query-text settings; --query-text changes and
+    /// journals query-text retention (telemetry.settings_set).
     Settings {
-        /// `on` keeps the text of recalls from now, for the replay; `off`
-        /// stops and clears the text already kept.
+        /// `on` keeps future recall query text for replay; `off` stops retention
+        /// and clears stored text.
         #[arg(long, value_parser = ["on", "off"])]
         query_text: Option<String>,
     },
-    /// The tenant's recalls of the last 30 days with what their readers did
-    /// next, newest first.
+    /// List the tenant's recalls from the last 30 days with reader follow-up,
+    /// newest first.
     Events {
-        /// At most this many, 1 to 200.
+        /// Maximum events, 1 to 200.
         #[arg(long, default_value_t = 50)]
         limit: u32,
     },
-    /// Replay the tenant's labelled recalls through each pipeline, under
-    /// each original key's scope, inside the server; prints the scores
-    /// alone.
+    /// Replay labelled recalls through each pipeline under the original keys'
+    /// scopes; print only scores.
     Eval {
-        /// The pipelines, comma separated, each one the server serves.
+        /// Comma-separated served pipelines.
         #[arg(long, value_delimiter = ',', required = true)]
         pipelines: Vec<String>,
     },
@@ -744,47 +679,47 @@ enum UsageCommand {
 
 #[derive(Subcommand)]
 enum WebCommand {
-    /// Add an email to the list, or change its user or admin flag
-    /// (web.email_allowed, web.email_changed); a change ends its sessions.
+    /// Add an email or change its user/admin flags; journals web.email_allowed
+    /// or web.email_changed and ends its sessions.
     Allow {
-        /// The email address, compared whole and ASCII case-insensitively.
+        /// Email address, compared whole and ASCII case-insensitively.
         email: String,
-        /// The user the address signs in as, at most 56 characters.
+        /// Sign-in user, at most 56 characters.
         #[arg(long)]
         user: String,
-        /// The address opens the admin page.
+        /// Allow access to the admin page.
         #[arg(long)]
         admin: bool,
     },
-    /// Remove an email from the list (web.email_removed), ending its
-    /// sessions; the user's agent keys keep working.
+    /// Remove an email, end its sessions, and journal web.email_removed; the
+    /// user's agent keys keep working.
     Remove {
-        /// The email address.
+        /// Email address.
         email: String,
     },
-    /// The tenant's list.
+    /// List the tenant's allowed emails.
     List,
 }
 
 #[derive(Subcommand)]
 enum CrewsCommand {
-    /// Create a crew record (crew.created); its name never changes.
+    /// Create a crew record with an immutable name; journals crew.created.
     Create {
-        /// The crew's name, unique in the tenant.
+        /// Crew name, unique in the tenant.
         name: String,
         #[arg(long)]
         charter_uri: Option<String>,
         #[arg(long)]
         external_manager: Option<String>,
     },
-    /// Update a crew record's charter URI or external manager
-    /// (crew.updated); at least one flag, never the name.
+    /// Update and journal a crew's charter URI or external manager; at least
+    /// one flag is required and the name cannot change.
     Update(CrewsUpdateArgs),
-    /// The tenant's crew records.
+    /// List crew records.
     List,
-    /// One crew record, by id or name.
+    /// Show one crew record by id or name.
     Show {
-        /// The crew's id or name.
+        /// Crew id or name.
         crew: String,
     },
 }
@@ -811,213 +746,197 @@ struct CrewsUpdateArgs {
     reason = "one flag per mode of ADR-0057's contract sketch"
 )]
 struct SyncArgs {
-    /// A file or directory inside a git clone, read at --rev.
+    /// File or directory inside a git clone, read at --rev.
     source: String,
-    /// The workarea to keep in step, by id or name; with --pr the parent of
-    /// the draft's `<workarea>-pr-<n>`.
+    /// Workarea (id or name) to sync; with --pr, the parent of `<workarea>-pr-<n>`.
     #[arg(long)]
     workarea: String,
-    /// adr, headings, lines or rust; omitted, adr for ADR-NNNN-*.md files and
-    /// headings otherwise; rust (one claim per crate and per module doc of a
-    /// Cargo workspace) is never chosen unnamed (ADR-0057 d7, d21; ADR-0061).
-    /// `delta` reads a Delta Lake's tables from their logs and is in the lake
-    /// build, `oml-lake` (ADR-0062).
+    /// Adapter: adr, headings, lines, rust, or delta. Defaults to adr for
+    /// decision-record Markdown files and headings otherwise; rust (one claim per
+    /// crate and module doc) is never inferred. delta reads Delta Lake tables and
+    /// requires the oml-lake build.
     #[arg(long)]
     adapter: Option<String>,
-    /// The commit read; never the working tree.
+    /// Commit to read; never the working tree.
     #[arg(long, default_value = "HEAD")]
     rev: String,
-    /// The anchor's repository name; omitted, derived from `origin`.
+    /// Repository name for anchors; omitted, derived from the `origin` remote.
     #[arg(long)]
     repo: Option<String>,
-    /// Print the plan and send nothing.
+    /// Print the plan without sending anything.
     #[arg(long, conflicts_with_all = ["check", "edges"])]
     dry_run: bool,
-    /// Report each anchored claim and edge against --rev; write no memory.
+    /// Report anchored claims and edges against --rev without writing memories.
     #[arg(long)]
     check: bool,
-    /// With --check, record the source checks (ADR-0057 d5).
+    /// With --check, record source checks.
     #[arg(long, requires = "check")]
     record: bool,
-    /// The most memories one run writes, so one run is one bulk verdict
-    /// (ADR-0055 d3); the next run continues.
+    /// Maximum memories one run writes; each run is one bulk verdict and the
+    /// next run continues.
     #[arg(long, visible_alias = "batch", default_value_t = oml_cli::sync::run::MAX_WRITES)]
     max_writes: usize,
     /// Supersede a tip with no anchor in this repository as changed.
     #[arg(long)]
     adopt: bool,
-    /// Propose retiring every claim this key wrote in the workarea under the
-    /// source, as when a draft's pull request closes (ADR-0057 d14).
+    /// Propose retiring every claim this key wrote under the source, as when a
+    /// draft pull request closes.
     #[arg(long, requires = "pr", conflicts_with_all = ["check", "edges"])]
     retire_all: bool,
-    /// Propose the stated edges between promoted tips (a dreamer key).
+    /// Propose source-stated edges between promoted tips (dreamer key).
     #[arg(long, conflicts_with = "check")]
     edges: bool,
-    /// With --edges, ratify the pending edges the source states that another
-    /// key proposed.
+    /// With --edges, ratify matching pending edges proposed by another key.
     #[arg(long, requires = "edges")]
     ratify: bool,
-    /// Allow the maintainer's public server, whose admins read every memory
-    /// and where an anchor and text are never erased (ADR-0057 d6).
+    /// Allow the maintainer's public server and record consent for this clone.
+    /// Its admins can read submissions; supersession or retirement does not erase
+    /// submitted text or anchors.
     #[arg(long)]
     allow_public_server: bool,
-    /// Write a source equal to an older promoted version as changed, a
-    /// deliberate revert (ADR-0057 d20).
+    /// Treat a source matching an older promoted version as a deliberate revert.
     #[arg(long)]
     allow_rollback: bool,
-    /// Allow --adapter to name another adapter than the one the workarea's
-    /// claims of this source were written by; the old adapter's claims are
-    /// then retired (ADR-0057 d7).
+    /// Allow changing the adapter used for this source; retires claims written
+    /// by the old adapter.
     #[arg(long, requires = "adapter")]
     change_adapter: bool,
-    /// Drafts: load the records pull request <n> adds or changes between
-    /// --base and --rev into `<workarea>-pr-<n>` (ADR-0057 d14).
+    /// Draft pull request <n>: sync records changed between --base and --rev
+    /// into `<workarea>-pr-<n>`.
     #[arg(long)]
     pr: Option<u64>,
-    /// A glob of paths left out of the source, repeatable (`docs/adr/**`):
-    /// never read, compared or retired. The set is recorded for the source
-    /// on this clone.
+    /// Glob of source paths to exclude; repeatable, for example `docs/adr/**`.
+    /// Excluded paths are never read, compared, or retired; the set is recorded
+    /// for this clone.
     #[arg(long)]
     exclude: Vec<String>,
-    /// Allow an exclude set other than the recorded one.
+    /// Allow an exclude set different from the recorded one.
     #[arg(long)]
     change_exclude: bool,
-    /// With --pr, the branch the pull request targets.
+    /// With --pr, the pull request's target branch.
     #[arg(long, default_value = "origin/main", requires = "pr")]
     base: String,
-    /// With --adapter delta, the canonical location a lake read from a mirror
-    /// or a copy stands for (`s3://`, `gs://`, `https://` or `file://`): the
-    /// anchors carry it, never a local path (ADR-0062 d5).
+    /// With --adapter delta, canonical source URI (`s3://`, `gs://`, `https://`,
+    /// or `file://`) stored in anchors instead of a local mirror or copy path.
     #[arg(long, requires = "adapter")]
     uri_base: Option<String>,
 }
 
 #[derive(Args)]
 struct AnchorArgs {
-    /// A path inside a git clone, with an optional #fragment: a decision
-    /// handle, a heading's slug, or a line span L<n> or L<n>-L<m>.
+    /// Path inside a git clone, optionally with #fragment: decision handle,
+    /// heading slug, or line span L<n> or L<n>-L<m>.
     target: String,
-    /// The commit read; never the working tree.
+    /// Commit to read; never the working tree.
     #[arg(long, default_value = "HEAD")]
     rev: String,
-    /// The repository name; omitted, derived from `origin`.
+    /// Repository name; omitted, derived from the `origin` remote.
     #[arg(long)]
     repo: Option<String>,
-    /// How the file is split into fragments: adr, headings or lines.
+    /// Fragmentation adapter: adr, headings, or lines.
     #[arg(long)]
     adapter: Option<String>,
 }
 
 #[derive(Args)]
 struct WriteArgs {
-    /// The claim text.
+    /// Claim text.
     text: String,
-    /// Claim key; omitted, the server derives `auto-<16 hex>` from the key
-    /// and the text (ADR-0039 d6). A new version takes its target's.
+    /// Claim key; defaults to `auto-<16 hex>` derived from API key and text.
+    /// New versions inherit the target's key.
     #[arg(long, conflicts_with = "replaces")]
     claim_key: Option<String>,
-    /// memory | derived_fact | steering | term | term_mapping |
-    /// vocab_release | guardrail; omitted, memory, or with --replaces the
-    /// target's.
+    /// memory | derived_fact | steering | term | term_mapping | vocab_release |
+    /// guardrail; defaults to memory, or the target's kind with --replaces.
     #[arg(long)]
     kind: Option<String>,
-    /// A guardrail's severity: never | must | should; required with --kind
-    /// guardrail unless it retires (proposed ADR-0037 d2, d10).
+    /// Guardrail severity: never, must, or should; required for non-retirement guardrails.
     #[arg(long, value_parser = ["never", "must", "should"])]
     severity: Option<String>,
-    /// A guardrail's oml-gr/1 rule, as one JSON object; deny or ask, never
-    /// allow (proposed ADR-0037 d8).
+    /// Guardrail oml-gr/1 rule as one JSON object; deny or ask, never allow.
     #[arg(long, value_parser = parse_rule)]
     rule: Option<serde_json::Value>,
-    /// Lineage artifact ids; repeatable. Set, a submission is journalled
-    /// learn (ADR-0039 d3).
+    /// Lineage artifact id; repeatable. Journals submissions with lineage as learn.
     #[arg(long = "derives-from")]
     derives_from: Vec<String>,
-    /// The workarea, by id or name; omitted, the key's default workarea, or
-    /// with --replaces the target's, which alone it may name.
+    /// Workarea (id or name); defaults to the key's default, or the target's
+    /// with --replaces, which it may not change.
     #[arg(long)]
     workarea: Option<String>,
-    /// The promoted tip this write replaces, by artifact id: a new version
-    /// of its claim, held like any write.
+    /// Promoted tip artifact id to replace with a new held version.
     #[arg(long, requires = "expected_version")]
     replaces: Option<String>,
-    /// With --replaces, required: the claim's latest version as you last
-    /// read it; the server refuses the write with
-    /// submission.version_conflict if the claim moved on (ADR-0057 d19).
+    /// Required with --replaces: latest version last read. The server rejects
+    /// moved claims with submission.version_conflict.
     #[arg(long = "expected-version", requires = "replaces")]
     expected_version: Option<u32>,
-    /// Where the claim came from, one JSON object or @file holding one:
-    /// {repo, rev, path, fragment?, hash?, hasher?} or {uri, rev?, …}
-    /// (ADR-0057 d1).
+    /// Source anchor as a JSON object or @file: {repo, rev, path, fragment?,
+    /// hash?, hasher?} or {uri, rev?, …}.
     #[arg(long, value_parser = parse_anchor_arg)]
     anchor: Option<serde_json::Value>,
-    /// The media type of the text: text/plain (the default), text/markdown,
-    /// text/vnd.oml.mermaid, application/json, application/yaml or
-    /// "text/vnd.oml.code; lang=<language>". With the text `-`, the text is
-    /// read from standard input (ADR-0056 d13).
+    /// Media type: text/plain (default), text/markdown, text/vnd.oml.mermaid,
+    /// application/json, application/yaml, or "text/vnd.oml.code; lang=<language>".
+    /// If claim text is `-`, read it from stdin.
     #[arg(long)]
     format: Option<String>,
-    /// One line stating the fact the text shows, at most 100 characters;
-    /// required with a format that is not prose (ADR-0056 d10).
+    /// One-line fact shown by the text, at most 100 characters; required for
+    /// non-prose formats.
     #[arg(long)]
     title: Option<String>,
-    /// What kind of source the text came from: repo, doc, code, lake,
-    /// chat, web or manual; omitted, the server records manual (ADR-0063
-    /// d1, d2).
+    /// Source kind: repo, doc, code, lake, chat, web, or manual; defaults to manual.
     #[arg(long = "origin-kind", value_parser = ORIGIN_KINDS)]
     origin_kind: Option<String>,
-    /// Propose retiring the --replaces claim; the text says why.
+    /// Propose retiring the --replaces claim; text explains why.
     #[arg(long, requires = "replaces")]
     retirement: bool,
-    /// Why the claim changes, journalled with the new version.
+    /// Reason for the change, journalled with the new version.
     #[arg(long, requires = "replaces")]
     reason: Option<String>,
-    /// The write's Idempotency-Key, so a re-run naming it replays the first
-    /// answer; omitted, a fresh one per run.
+    /// Idempotency-Key for the write; reusing it replays the first response.
+    /// Defaults to a fresh key per run.
     #[arg(long)]
     idempotency_key: Option<String>,
 }
 
 #[derive(Args)]
 struct ReadArgs {
-    /// Fetch this one version, in any state the key may read.
+    /// Fetch one version in any state readable by this key.
     #[arg(value_name = "ARTIFACT_ID")]
     artifact_id: Option<String>,
-    /// Recall: ranked retrieval over promoted rows, steering first.
+    /// Recall ranked promoted rows, steering first.
     #[arg(long, conflicts_with = "artifact_id")]
     query: Option<String>,
-    /// How many hits the recall returns, 1 to 100; omitted, 8.
+    /// Number of recall hits, 1 to 100; defaults to 8.
     #[arg(long, requires = "query")]
     k: Option<u32>,
-    /// Recall only these kinds, memory or derived_fact; repeatable.
+    /// Recall only memory or derived_fact kinds; repeatable.
     #[arg(long, requires = "query")]
     kinds: Vec<String>,
-    /// Let the recall return this key's own held rows beside promoted hits.
+    /// Include this key's own held rows beside promoted hits.
     #[arg(long, requires = "query")]
     include_unreviewed: bool,
-    /// The search pipeline the recall runs, among those the server serves
-    /// (`oml search show`); omitted, the tenant's default.
+    /// Served search pipeline to run (see `oml search show`); defaults to the
+    /// tenant's default.
     #[arg(long, requires = "query")]
     search: Option<String>,
-    /// any (the default) or all: every query word must match, and when no
-    /// memory has them all the any-word hits come back marked fallback.
+    /// any (default) or all. all requires every query word; if no memory matches
+    /// them all, any-word hits are returned and marked fallback.
     #[arg(long = "match", requires = "query")]
     match_mode: Option<String>,
-    /// The subtree read, by id or name; omitted, the key's default
-    /// workarea, or for the own listing every workarea the key wrote in.
+    /// Subtree (id or name) to read; defaults to the key's workarea, or all
+    /// workareas this key wrote in for --own.
     #[arg(long, conflicts_with = "artifact_id")]
     workarea: Option<String>,
-    /// List this key's own rows in every state (the listing's default).
+    /// List this key's own rows in every state (default listing).
     #[arg(long, conflicts_with_all = ["artifact_id", "query", "all"])]
     own: bool,
-    /// List the promoted tips of the workarea's subtree instead.
+    /// List promoted tips in the workarea subtree instead.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     all: bool,
-    /// List only rows in this state: held, promoted, demoted, rejected or
-    /// erased.
+    /// Filter by state: held, promoted, demoted, rejected, or erased.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     state: Option<String>,
-    /// List only rows of this kind.
+    /// Filter by kind.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     kind: Option<String>,
     /// List versions written at or after this RFC 3339 instant.
@@ -1026,22 +945,20 @@ struct ReadArgs {
     /// List versions written before this RFC 3339 instant.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     until: Option<String>,
-    /// The listing's page size.
+    /// Listing page size.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     limit: Option<u32>,
-    /// The next_cursor of the listing's previous page.
+    /// Previous listing's next_cursor.
     #[arg(long, conflicts_with_all = ["artifact_id", "query"])]
     cursor: Option<String>,
-    /// Recall or list only memories anchored in this repository, such as
-    /// github.com/owner/name (ADR-0057 d4).
+    /// Filter by anchor repository, such as github.com/owner/name.
     #[arg(long = "anchor-repo", conflicts_with = "artifact_id")]
     anchor_repo: Option<String>,
-    /// Recall or list only memories whose anchor path starts with this
-    /// prefix, such as docs/adr/ (ADR-0057 d4).
+    /// Filter by anchor path prefix, such as docs/adr/.
     #[arg(long = "anchor-path-prefix", conflicts_with = "artifact_id")]
     anchor_path_prefix: Option<String>,
-    /// Recall or list only memories of this origin kind; repeat for
-    /// several, such as --origin-kind chat --origin-kind doc (ADR-0063 d3).
+    /// Filter by origin kind; repeat for multiple, for example
+    /// --origin-kind chat --origin-kind doc.
     #[arg(long = "origin-kind", value_parser = ORIGIN_KINDS, conflicts_with = "artifact_id")]
     origin_kinds: Vec<String>,
 }
@@ -1051,49 +968,43 @@ const ORIGIN_KINDS: [&str; 7] = ["repo", "doc", "code", "lake", "chat", "web", "
 
 #[derive(Args)]
 struct EventsArgs {
-    /// Resume after this seq: pass back the previous page's next_after_seq.
+    /// Resume after this sequence number, using the previous page's next_after_seq.
     #[arg(long)]
     after_seq: Option<u64>,
-    /// The subtree tailed, by id or name; omitted, the key's default
-    /// workarea.
+    /// Subtree to tail (id or name); defaults to the key's workarea.
     #[arg(long)]
     workarea: Option<String>,
-    /// How many journal events one call scans.
+    /// Journal events scanned per call.
     #[arg(long)]
     limit: Option<u32>,
 }
 
 #[derive(Subcommand)]
 enum ReviewCommand {
-    /// Serve one held item (claims it for this key).
+    /// Claim and serve one held item for this key.
     Next,
-    /// List the held items this key may judge, with their text, oldest
-    /// first; claims nothing. A dreamer key held by a person only
-    /// (ADR-0055 d2, d11).
+    /// List held items this key may judge, with text, oldest first, without
+    /// claiming them. Person-held dreamer keys only.
     List(ReviewListArgs),
-    /// Verdict: promote. Omitted, the serve is the one item this key has
-    /// claimed (ADR-0039 d10); with --ids, every listed id, each its own
-    /// verdict (ADR-0055 d11).
+    /// Promote one claimed serve (default) or each artifact in --ids.
     Approve {
-        /// The serve_id `oml review next` printed.
+        /// serve_id printed by `oml review next`.
         #[arg(conflicts_with = "ids")]
         serve_id: Option<String>,
-        /// A note journalled with the verdict.
+        /// Note journalled with the verdict.
         #[arg(long)]
         note: Option<String>,
-        /// Artifact ids, as a file of one per line (`oml review list
-        /// --ids-only` writes one), `-` for standard input, or id,id,…
+        /// Artifact ids as a one-per-line file (`oml review list --ids-only`
+        /// output), `-` for stdin, or comma-separated ids.
         #[arg(long)]
         ids: Option<String>,
     },
-    /// Verdict: reject, with the reason. Omitted, the serve is the one
-    /// item this key has claimed (ADR-0039 d10); with --ids, every listed
-    /// id, each its own verdict with the one reason (ADR-0055 d8, d11).
+    /// Reject the claimed serve or each --ids artifact with one shared reason.
     Reject {
-        /// The serve_id `oml review next` printed.
+        /// serve_id printed by `oml review next`.
         #[arg(conflicts_with = "ids")]
         serve_id: Option<String>,
-        /// Why the item is rejected; required.
+        /// Reason for rejection; required.
         #[arg(long)]
         reason: String,
         /// Artifact ids, as for approve.
@@ -1107,42 +1018,40 @@ struct ReviewListArgs {
     /// Only this workarea's subtree, by id or name.
     #[arg(long)]
     workarea: Option<String>,
-    /// Only rows this key wrote, by id or name.
+    /// Only rows written by this author key (id or name).
     #[arg(long)]
     author_key: Option<String>,
-    /// Only claim keys that start with this text, taken literally.
+    /// Only claim keys starting with this literal text.
     #[arg(long)]
     claim_key_prefix: Option<String>,
-    /// Rows a page, 1 to 200.
+    /// Rows per page, 1 to 200.
     #[arg(long, default_value_t = 50)]
     limit: u32,
-    /// Every page, not only the first.
+    /// Fetch every page.
     #[arg(long)]
     all: bool,
-    /// Print only the ids, one per line, for `--ids`.
+    /// Print only ids, one per line, for --ids.
     #[arg(long)]
     ids_only: bool,
 }
 
 #[derive(Subcommand)]
 enum AuditCommand {
-    /// Verify the chain per chain-format.md from the chain export; refused
-    /// while the server serves none (the events tail is a filtered feed).
+    /// Verify the exported chain using chain-format.md; fails if the server has
+    /// no export. The events tail is only a filtered feed.
     VerifyChain(VerifyChainArgs),
 }
 
 #[derive(Args)]
 struct VerifyChainArgs {
-    /// Run the full-history verification from genesis.
+    /// Verify full history from genesis.
     #[arg(long)]
     genesis: bool,
-    /// A deployment signing public key: 64 hex chars (the 32 raw ed25519
-    /// bytes). Repeatable — the authenticated key set is the verifier's
-    /// input, confirmed out of band (chain-format.md).
+    /// Deployment signing public key (64 hex chars for 32 raw ed25519 bytes);
+    /// repeatable. Confirm the authenticated key set out of band (chain-format.md).
     #[arg(long = "signing-key", env = "OML_CLI_SIGNING_KEY")]
     signing_keys: Vec<String>,
-    /// Tenant, by id or name (defaults to the key's own, read through
-    /// GET /v2/whoami).
+    /// Tenant (id or name); defaults to the key's tenant from GET /v2/whoami.
     #[arg(long)]
     tenant: Option<String>,
 }
@@ -1474,9 +1383,8 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             // tier is out of slice and the standalone deployment hosts the
             // one tenant `oml bootstrap claim` mints (ADR-0023 d16).
             Err(CliError::local(format!(
-                "`oml tenants create {name}` needs the operator tier, which the PoC does not \
-                 compose: the standalone deployment hosts exactly the tenant created by \
-                 `oml bootstrap claim` (ADR-0023 d16; cli/reference.md `oml tenants`)"
+                "`oml tenants create {name}` needs the operator tier; this standalone deployment \
+                 hosts only the tenant created by `oml bootstrap claim`"
             )))
         }
 
@@ -1744,8 +1652,19 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         Command::Edges { command } => run_edges(cli, &stored, command),
 
         Command::Workareas {
-            command: WorkareasCommand::Tree { root },
-        } => run_workareas_tree(cli, &stored, root),
+            command:
+                WorkareasCommand::Tree {
+                    positional_root,
+                    root,
+                },
+        } => run_workareas_tree(
+            cli,
+            &stored,
+            positional_root
+                .as_deref()
+                .or(root.as_deref())
+                .unwrap_or("universe"),
+        ),
 
         Command::Workareas {
             command: WorkareasCommand::Show { workarea },
@@ -2077,7 +1996,8 @@ fn run_chat_init(
             println!("in progress: your agents read each other's chat facts, labelled unreviewed")
         }
         Err(e) => println!(
-            "not in progress ({}): each agent key reads only its own chat facts until the server serves ADR-0030's mode",
+            "not in progress ({}): each agent key reads only its own chat facts; retry with \
+             `oml workareas mode {id} in_progress`",
             one_line_error(&e)
         ),
     }
@@ -2170,34 +2090,41 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
 // oml sync (ADR-0057)
 // ---------------------------------------------------------------------------
 
+/// Authorize a public-server sync and disclose its retention when the operator
+/// first opts a source's clone in, or for a one-time opt-in outside a clone
+/// (ADR-0057 d6, d17).
+fn authorize_public_sync(client: &Client, source: &Path, explicit: bool) -> Result<(), CliError> {
+    use oml_cli::sync::source::{
+        PublicServerConsent, authorize_public_server, record_public_server_consent,
+    };
+    let consent =
+        authorize_public_server(client.server(), source, explicit).map_err(CliError::Local)?;
+    let scope = match consent {
+        PublicServerConsent::FirstOptIn => "for this clone",
+        PublicServerConsent::OneTime => "for this run only; the source is outside a git clone",
+        PublicServerConsent::NotRequired | PublicServerConsent::Recorded => return Ok(()),
+    };
+    eprintln!(
+        "warn: public-server sync allowed {scope} for {}: its admins can read submitted memories; \
+         supersession or retirement does not erase submitted text or anchors",
+        client.server()
+    );
+    if consent == PublicServerConsent::FirstOptIn {
+        record_public_server_consent(source).map_err(CliError::Local)?;
+    }
+    Ok(())
+}
+
 /// `oml sync`: refuses the public server unless allowed, reads the source
 /// at --rev, and runs the plan through the HTTP API (ADR-0057 d6-d11).
 fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode, CliError> {
-    use oml_cli::sync::{adapter::Kind, api::HttpApi, run, source};
+    use oml_cli::sync::{adapter::Kind, api::HttpApi, run};
     if args.adapter.as_deref() == Some("delta") {
         return run_lake_sync(cli, stored, args);
     }
     let client = resolve(cli, stored)?;
     let cwd = std::env::current_dir()
         .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
-    if source::is_public_server(client.server()) {
-        if !args.allow_public_server {
-            return Err(CliError::local(format!(
-                "{} is the maintainer's public server: its admins read every memory, and a \
-                 written anchor and text are never erased; pass --allow-public-server to sync \
-                 to it (ADR-0057 d6)",
-                client.server()
-            )));
-        }
-        eprintln!(
-            "warn: syncing to the public server {}: its admins read every memory, and a written \
-             anchor and text are never erased",
-            client.server()
-        );
-        if let Ok(git) = source::Git::at(&cwd) {
-            let _ = git.set_config(source::ALLOW_PUBLIC_CONFIG, "true");
-        }
-    }
     let opts = run::Options {
         source: args.source.clone(),
         workarea: args.workarea.clone(),
@@ -2226,6 +2153,8 @@ fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode
         base: args.base.clone(),
     };
     let loaded = run::load(&cwd, &opts).map_err(CliError::Local)?;
+    let consent_root = loaded.root.as_deref().unwrap_or(&cwd);
+    authorize_public_sync(&client, consent_root, args.allow_public_server)?;
     for warning in &loaded.warnings {
         eprintln!("{warning}");
     }
@@ -2245,15 +2174,15 @@ fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode
 #[cfg(not(feature = "lake-sync"))]
 fn run_lake_sync(_: &Cli, _: &Credentials, _: &SyncArgs) -> Result<ExitCode, CliError> {
     Err(CliError::local(
-        "--adapter delta reads a Delta Lake, and this oml was built without it: install the lake \
-         build, oml-lake, which has the same verbs and this adapter (ADR-0062 d3)",
+        "--adapter delta requires the oml-lake build; install oml-lake for the same commands \
+         with Delta Lake support",
     ))
 }
 
 #[cfg(feature = "lake-sync")]
 fn run_lake_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode, CliError> {
     use oml_cli::lake::run::{self, Options};
-    use oml_cli::sync::{api::HttpApi, source};
+    use oml_cli::sync::api::HttpApi;
     let unsupported = [
         (args.pr.is_some(), "--pr"),
         (args.edges, "--edges"),
@@ -2267,19 +2196,12 @@ fn run_lake_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<Exi
     ];
     if let Some((_, flag)) = unsupported.iter().find(|(set, _)| *set) {
         return Err(CliError::local(format!(
-            "{flag} is for a repository's documents and does not apply to --adapter delta (ADR-0062 d2)"
+            "{flag} applies only to repository documents, not --adapter delta; remove it"
         )));
     }
     let root = oml_cli::lake::local_root(&args.source).map_err(CliError::Local)?;
     let client = resolve(cli, stored)?;
-    if source::is_public_server(client.server()) && !args.allow_public_server {
-        return Err(CliError::local(format!(
-            "{} is the maintainer's public server: its admins read every memory, and a written \
-             anchor and text are never erased; pass --allow-public-server to sync to it \
-             (ADR-0057 d6)",
-            client.server()
-        )));
-    }
+    authorize_public_sync(&client, &root, args.allow_public_server)?;
     let opts = Options {
         root,
         uri_base: args.uri_base.clone(),
@@ -3141,15 +3063,14 @@ fn run_issue_agent(
 ) -> Result<ExitCode, CliError> {
     if args.connect_code && args.out.is_some() {
         return Err(CliError::local(
-            "refused: --out with --connect-code, because a connector key has no value to write \
-             and its code is for a person to read and type within minutes; nothing was sent \
-             (ADR-0031 d7)",
+            "refused: --out cannot be used with --connect-code because connector keys have no \
+             value to write; omit --out. Nothing was sent",
         ));
     }
     if cli.json && args.out.is_some() {
         return Err(CliError::local(
-            "refused: --out with --json, because the 201 body --json prints carries the key \
-             value; nothing was sent (ADR-0028 d1)",
+            "refused: --out cannot be used with --json because the JSON response contains the \
+             key value; omit one flag. Nothing was sent",
         ));
     }
     // With --user the workarea defaults to the user's root, which the
@@ -3159,8 +3080,7 @@ fn run_issue_agent(
         (None, Some(user)) => user.clone(),
         (None, None) => {
             return Err(CliError::local(
-                "refused: --workarea is required without --user; nothing was sent \
-                 (ADR-0028 d1; ADR-0044 d11)",
+                "refused: --workarea is required without --user; nothing was sent",
             ));
         }
     };
@@ -3203,20 +3123,17 @@ fn run_issue_agent(
                 // nothing kept. Only a refusal, or a failure before sending,
                 // means no key exists (ADR-0028 d1).
                 CliError::Unanswered(why) if args.connect_code => CliError::Unanswered(format!(
-                    "{why}. A connector key named {name} for principal {principal} may have been \
-                     issued. If it was, its connect code is lost: `oml keys show {name}` answers \
-                     whether it exists, and `oml keys connect-code {name}` mints a new code \
-                     (ADR-0031 d7)",
+                    "{why}. Connector key {name} for principal {principal} may have been issued, \
+                     but its connect code is lost. Run `oml keys show {name}` to check, then \
+                     `oml keys connect-code {name}` to mint a new code",
                     name = args.key_name,
                     principal = args.principal,
                 )),
                 CliError::Unanswered(why) => CliError::Unanswered(format!(
-                    "{why}. A key named {name} for principal {principal} may have been issued. If \
-                     it was, its value is lost, since the server keeps only its hash and the CLI \
-                     kept none of the answer: `oml keys show {name}` answers whether it exists. \
-                     Issue a new key under a new name, since no name is released, and revoke \
-                     this one; until key revocation is built, `oml deny set {name} universe` \
-                     keeps it from every workarea (ADR-0028 d1; ADR-0026 d10)",
+                    "{why}. Key {name} for principal {principal} may have been issued, but its \
+                     value is lost. Run `oml keys show {name}` to check. If it exists, revoke it, \
+                     or until revocation is available run `oml deny set {name} universe`; issue \
+                     a replacement under a new name",
                     name = args.key_name,
                     principal = args.principal,
                 )),
@@ -3242,9 +3159,8 @@ fn run_issue_agent(
     let key_name = field(&response, "name");
     let lost = |why: &str| {
         CliError::local(format!(
-            "key {key_name} ({key_id}) was issued, but {why}: its value is lost and the key is \
-             live. Revoke key {key_id}; until key revocation is built, `oml deny set {key_id} \
-             universe` keeps it from every workarea (ADR-0028 d1)"
+            "key {key_name} ({key_id}) was issued, but {why}; its value is lost and the key is \
+             live. Revoke it, or until revocation is available run `oml deny set {key_id} universe`"
         ))
     };
     let value = response["value"]
@@ -3931,6 +3847,11 @@ fn read_secret(what: &str) -> Result<String, CliError> {
 // oml quickstart
 // ---------------------------------------------------------------------------
 
+/// Quote one argument for the POSIX shell command printed to the operator.
+fn shell_word(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// `oml quickstart` (ADR-0041 d9): refuse a directory a quickstart wrote
 /// into and a machine without `docker compose`, before anything is written;
 /// then the compose file and its `.env`, `docker compose up --detach
@@ -3943,11 +3864,12 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
     let dir = std::path::absolute(&args.dir)
         .map_err(|e| CliError::local(format!("cannot resolve {}: {e}", args.dir.display())))?;
     let shown = dir.display().to_string();
+    let shell_dir = shell_word(&shown);
     if let Some(name) = quickstart::existing(&dir) {
         return Err(CliError::local(format!(
-            "refused: quickstart.exists — {shown} already holds {name} from a quickstart; \
-             `docker compose --project-directory {shown} down -v` removes that stack and its \
-             data, or pass another --dir; nothing was changed (ADR-0041 d9)"
+            "refused: quickstart.exists — {shown} already contains {name} from a quickstart. \
+             Use another --dir, or remove the stack and its data with `docker compose \
+             --project-directory {shell_dir} down -v`. Nothing was changed"
         )));
     }
     let project = quickstart::project_name(&dir);
@@ -3971,8 +3893,8 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
         Ok(out) if out.status.success() => {}
         _ => {
             return Err(CliError::local(
-                "refused: quickstart.docker — `docker compose version` did not answer, and the \
-                 quickstart needs Docker with compose v2; nothing was written (ADR-0041 d9)",
+                "refused: quickstart.docker — `docker compose version` failed. Install Docker \
+                 with Compose v2; nothing was written",
             ));
         }
     }
@@ -3989,14 +3911,16 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
     let keys = dir.join("keys");
     owner_only_dir(&keys)?;
 
-    eprintln!("starting the stack: docker compose --project-directory {shown} up --detach --wait");
+    eprintln!(
+        "starting the stack: docker compose --project-directory {shell_dir} up --detach --wait"
+    );
     let status = compose(&["up", "--detach", "--wait"])
         .stdout(std::process::Stdio::from(std::io::stderr()))
         .status()
         .map_err(|e| CliError::local(format!("cannot run docker compose up: {e}")))?;
     if !status.success() {
         return Err(CliError::local(format!(
-            "docker compose up failed ({status}); `docker compose --project-directory {shown} \
+            "docker compose up failed ({status}); `docker compose --project-directory {shell_dir} \
              logs` shows why"
         )));
     }
@@ -4009,7 +3933,7 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
     let token = quickstart::enrollment_token(&logs).ok_or_else(|| {
         CliError::local(format!(
             "no enrollment token in the lead's log: a lead prints one on its first start \
-             against an empty database only; `docker compose --project-directory {shown} logs \
+             against an empty database only; `docker compose --project-directory {shell_dir} logs \
              oml-server` shows what it printed"
         ))
     })?;
@@ -4369,9 +4293,9 @@ fn run_setup_claude_code(
     let role = me["role"].as_str().unwrap_or_default();
     if setup::refuses_role(role) {
         return Err(CliError::local(format!(
-            "refused: setup.admin_key — key {} is an {role} key, and the agent plugin takes an \
-             agent's key, never an admin's; issue one with `oml keys issue-agent --out`; \
-             nothing was installed (ADR-0041 d7)",
+            "refused: setup.admin_key — key {} has role {role}; the agent plugin requires an \
+             agent key, not an admin or operator key. Issue one with \
+             `oml keys issue-agent --out`; nothing was installed",
             field(&me, "name"),
         )));
     }
@@ -4423,16 +4347,16 @@ fn run_setup_claude_code(
         Some(found) if found >= setup::MIN_CLAUDE_CODE => {}
         found => {
             return Err(CliError::local(format!(
-                "refused: setup.claude_code_version — `claude --version` printed {}, and \
-                 `claude plugin configure --values-stdin` needs Claude Code {min} or later; \
-                 nothing was installed (ADR-0040 d5)",
+                "refused: setup.claude_code_version — `claude --version` reported {}; Claude \
+                 Code {min} or later is required for `claude plugin configure --values-stdin`. \
+                 Upgrade Claude Code; nothing was installed",
                 found.map_or_else(|| format!("{:?}", claude_version.trim()), setup::dotted),
             )));
         }
     }
     let refused = |why: String| {
         CliError::local(format!(
-            "refused: setup.marketplace — {why}; nothing was changed (ADR-0041 d7)"
+            "refused: setup.marketplace — {why}; nothing was changed"
         ))
     };
     let listed = claude_output(&setup::marketplace_list_command())?;
@@ -4561,7 +4485,9 @@ fn review_doctor(me: Option<&Value>) -> Option<String> {
     Some(match me["held_by"].as_str() {
         Some("human") => "ok bulk review: this key lists and judges held items in bulk (oml review list, oml review approve --ids)".to_owned(),
         held_by => format!(
-            "warn bulk review: refused for this key, held by {}: bulk review is a person's act (access.verb_ceiling, bulk_review_is_human_only); a person reviews in bulk with a dreamer key issued --held-by human, or on the admin page (ADR-0055 d1)",
+            "warn bulk review: this key is held by {}, so it cannot review in bulk \
+             (access.verb_ceiling, bulk_review_is_human_only); use a dreamer key issued \
+             --held-by human or the admin page",
             held_by.unwrap_or("unknown")
         ),
     })
@@ -4584,20 +4510,28 @@ fn in_progress_doctor(
     let root = default_node.and_then(|n| n["in_progress_root"]["name"].as_str());
     match root {
         Some(root) => lines.push(format!(
-            "ok in progress: the default workarea lies inside {root}, so recall there also serves memories still waiting for review, labelled unreviewed, and nothing leaves until a person commits it (ADR-0030 d3, d6)"
+            "ok in progress: the default workarea is inside {root}; recall includes labelled \
+             unreviewed memories, which stay inside until a person commits them"
         )),
         None if me["profile"] == "curator" => lines.push(
-            "warn curator: the default workarea is not in progress, and a curator key acts only inside an in-progress workarea (access.verb_ceiling, curator_outside_in_progress; ADR-0030 d9)".to_owned(),
+            "warn curator: the default workarea is not in progress; curator keys act only \
+             inside in-progress workareas (access.verb_ceiling, curator_outside_in_progress)"
+                .to_owned(),
         ),
         None => {}
     }
     if me["role"] == "dreamer" && me["held_by"] == "human" && me["profile"].is_null() {
-        lines.push("ok mode: this key may put a workarea in progress and commit it (oml workareas mode <workarea> in_progress|standard; ADR-0030 d1)".to_owned());
+        lines.push(
+            "ok mode: set workarea mode with `oml workareas mode <workarea> \
+             in_progress|standard`"
+                .to_owned(),
+        );
         if let (Some(root), Some(n)) = (root, held_blocking)
             && n > 0
         {
             lines.push(format!(
-                "warn commit: {n} held item(s) this key can review block the commit of {root}: oml review list --workarea {root} (workarea.held_remaining; ADR-0030 d6)"
+                "warn commit: {n} held item(s) block committing {root}; review them with \
+                 `oml review list --workarea {root}` (workarea.held_remaining)"
             ));
         }
     }
@@ -5299,7 +5233,9 @@ fn sparse_doctor(body: &Value, enabled: &[&str], settings: Option<&Value>) -> Ve
         // restarted since one stopped (ADR-0052 d15).
         if n("sparse_backlog") > 0 {
             return vec![format!(
-                "warn search_sparse_undrained: {} memory versions wait for a sparse encoder and this lead serves no sparse pipeline, so nothing drains them; serve sparse or bm25-sparse on every lead, or restart the leads without it, whose start turns the queue off and empties it (ADR-0052 d15)",
+                "warn search_sparse_undrained: {} memory versions await a sparse encoder, but \
+                 this lead serves no sparse pipeline; serve sparse or bm25-sparse on every lead, \
+                 or restart leads without sparse to disable and clear the queue",
                 n("sparse_backlog")
             )];
         }
@@ -5308,7 +5244,9 @@ fn sparse_doctor(body: &Value, enabled: &[&str], settings: Option<&Value>) -> Ve
     let mut lines = Vec::new();
     let Some(model) = body["search"]["sparse"]["model"].as_str() else {
         return vec![format!(
-            "warn search_sparse_model: search.enabled names {} and /readyz names no sparse encoder, so those recalls cannot be served; place the model's files in search.sparse.model_dir (scripts/fetch_sparse_model.sh) or set search.sparse.fetch = true, then restart (ADR-0052 d16)",
+            "warn search_sparse_model: search.enabled lists {}, but /readyz reports no sparse \
+             encoder. Place model files in search.sparse.model_dir (scripts/fetch_sparse_model.sh) \
+             or set search.sparse.fetch = true, then restart",
             sparse.join(", ")
         )];
     };
@@ -5420,7 +5358,9 @@ fn valid_time_doctor(enabled: &[&str], settings: Option<&Value>) -> Vec<String> 
     );
     if declared == 0 && !timed.is_empty() {
         return vec![format!(
-            "warn time: {} enabled and no served memory declares valid_from, so its time list is always empty and it answers as bm25-postings; authors declare valid_from and valid_until when they write (ADR-0059 d12)",
+            "warn time: {} is enabled, but no served memory declares valid_from; time results \
+             are empty and recall falls back to bm25-postings. Authors should set valid_from \
+             and valid_until when writing",
             timed.join(", ")
         )];
     }
@@ -5445,7 +5385,9 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
         #[allow(clippy::cast_precision_loss, reason = "a share of small counts")]
         let percent = scan as f64 * 100.0 / total as f64;
         lines.push(format!(
-            "warn search: bm25-postings answered {scan} of {total} recalls by the scan since the lead started ({percent:.1}%, above {SCAN_SHARE_WARN_PERCENT}%): their words are held by most memories the keys read, so those recalls cost what bm25 costs (ADR-0052 d6)"
+            "warn search: bm25-postings scanned {scan} of {total} recalls since startup \
+             ({percent:.1}%, above {SCAN_SHARE_WARN_PERCENT}%); shared words across readable \
+             memories make these recalls as costly as bm25"
         ));
     }
     let Some(h) = settings.map(|s| &s["postings"]).filter(|h| h.is_object()) else {
@@ -5455,7 +5397,9 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
     let refill = "as the owner, in a transaction with oml.tenant_id set to the tenant, SELECT oml_search_postings_refill('<tenant id>') rebuilds them (postgres-schema.md, search postings)";
     if h["partition"] == Value::Bool(false) {
         lines.push(
-            "warn search: this tenant has no postings partition, so every memory write for it fails, as a lead before 0021 leaves a tenant it creates; restart the lead, whose start creates and fills it (ADR-0052 d1)".to_owned(),
+            "warn search: this tenant has no postings partition, so every memory write fails; \
+             restart the lead to create and fill it"
+                .to_owned(),
         );
     }
     if n("unfilled") > 0 {
@@ -5484,7 +5428,9 @@ fn postings_doctor(recall_counts: Option<(u64, u64)>, settings: Option<&Value>) 
     let similar_refill = "as the owner, in a transaction with oml.tenant_id set to the tenant, SELECT oml_similar_keys_refill('<tenant id>') rebuilds them (postgres-schema.md, similar keys)";
     if h["similar_partition"] == Value::Bool(false) {
         lines.push(
-            "warn similar: this tenant has no similar keys partition, so every memory write for it fails, as a lead before 0027 leaves a tenant it creates; restart the lead, whose start creates and fills it (ADR-0050 d17)".to_owned(),
+            "warn similar: this tenant has no similar keys partition, so every memory write \
+             fails; restart the lead to create and fill it"
+                .to_owned(),
         );
     }
     if n("similar_unfilled") > 0 || n("similar_drift") > 0 {
@@ -5713,6 +5659,12 @@ fn verdict(ok: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn printed_shell_commands_quote_each_path_as_one_word() {
+        assert_eq!(shell_word("/tmp/my oml"), "'/tmp/my oml'");
+        assert_eq!(shell_word("/tmp/it's"), "'/tmp/it'\\''s'");
+    }
 
     #[test]
     fn the_formats_doctor_names_the_media_types_and_the_adapters_with_their_versions() {
@@ -5950,7 +5902,7 @@ mod tests {
         let lines = valid_time_doctor(&["bm25-postings", "bm25-postings-time"], Some(&none));
         assert_eq!(lines.len(), 1);
         assert!(
-            lines[0].starts_with("warn time: bm25-postings-time enabled"),
+            lines[0].starts_with("warn time: bm25-postings-time is enabled"),
             "{lines:?}"
         );
         let some = serde_json::json!({ "valid_time": { "declared": 12, "expired": 3 } });

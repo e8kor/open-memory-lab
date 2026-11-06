@@ -33,7 +33,7 @@ impl Adapter for RustAdapter {
 
     fn extract(&self, path: &str, _bytes: &[u8]) -> Result<Extraction, String> {
         Err(format!(
-            "{path}: the rust adapter reads a set of files, not one (ADR-0061 d4)"
+            "{path}: the rust adapter requires a source directory, not a single file"
         ))
     }
 
@@ -171,7 +171,7 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
         if !members.contains(path) {
             out.skipped.push((
                 path.clone(),
-                "not a workspace member: its workspace's members and exclude leave it out, so it is not a crate of this source (ADR-0061 d1)".to_owned(),
+                "not a workspace member: the workspace's members or exclude settings omit it; add it to the workspace to sync it".to_owned(),
             ));
             continue;
         }
@@ -274,8 +274,7 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
     if packages.is_empty() && out.unreadable.is_empty() {
         out.unreadable.push((
             ".".to_owned(),
-            "the source holds no [package] Cargo.toml, so there is no crate to read; \
-             name a directory under a Cargo workspace (ADR-0061 d1)"
+            "no [package] Cargo.toml found; pass a crate directory within a Cargo workspace"
                 .to_owned(),
         ));
     }
@@ -348,7 +347,7 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
                     .find(|d| d.attrs.iter().any(|a| is_path_attr(a)))
                 {
                     crate_bad[idx] = Some(format!(
-                        "unsupported: #[path = …] on `mod {}` in {file}, which this adapter does not follow (ADR-0061 d3)",
+                        "unsupported: #[path = …] on `mod {}` in {file}; this adapter cannot follow it",
                         d.name
                     ));
                 }
@@ -585,7 +584,7 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
         }
         out.skipped.push((
             path,
-            "undeclared: no `mod` declaration reaches it, so it is not compiled (ADR-0061 d1)"
+            "undeclared: no `mod` declaration reaches this file, so Rust does not compile it"
                 .to_owned(),
         ));
     }

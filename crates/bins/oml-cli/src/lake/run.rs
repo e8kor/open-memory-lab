@@ -49,9 +49,8 @@ fn base_uri(opts: &Options) -> Result<String, CliError> {
     match &opts.uri_base {
         Some(b) => canonical(b).map_err(|e| CliError::local(format!("--uri-base: {e}"))),
         None => Err(CliError::local(
-            "a lake on a disk is read with --uri-base <its location> (s3://, gs://, https:// \
-             or file://): without it the anchor would carry this machine's local path, which \
-             the server stores for good (ADR-0062 d5)",
+            "--uri-base is required for a local lake; use its s3://, gs://, https://, or file:// \
+             location so anchors do not permanently store this machine's local path",
         )),
     }
 }
