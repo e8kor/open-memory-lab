@@ -231,7 +231,6 @@ is a collision: the branch that reserved later renumbers.
 | fr | 176 | `feat/implicit-capture` | #97 | A hook manager that rewrites `core.hooksPath` on install silently remo | open |
 | fr | 180 | `main` |  | The personal-data rules (`pii.email`, `pii.phone`) are compiled in and | used |
 | fr | 181 | `main` |  | `GET /v2/admin/rescan` reads one window of at most 1,000 journal event | used |
-| fr | 182 | `design/web-api-client` |  | the web hop's overhead is unmeasured against its 5 ms p95 budget | reserved |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |

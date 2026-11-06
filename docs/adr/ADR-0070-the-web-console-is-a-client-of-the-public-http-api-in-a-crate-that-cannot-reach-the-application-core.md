@@ -120,7 +120,7 @@ Decided, not built. The build follows #163, #166 and #167.
     | 3 | Session load | `oml-web` reads the cookie; the API decides | Reads `__Host-oml_session` and derives the `web` credential; the first API call of the page, `GET /v2/whoami`, is the check. No session, or `auth.invalid` from the API, renders the sign-in page (d6). `oml-web` never judges a session itself. |
     | 4 | Same-origin and CSRF | `oml-web` | Every `POST` passes the existing `same_origin` check against the public origin and carries `csrf_token` = SHA-256 over the fixed purpose and the session token, compared in constant time (ADR-0045 d8, unchanged). Every form also carries a random nonce, and the `Idempotency-Key` of the act's API call is the hex SHA-256 over the session token and that nonce, so a resubmitted form replays instead of repeating. The API never sees a form, so CSRF belongs to the layer that renders forms. |
     | 5 | Response headers and CSP | `oml-web` | `default-src 'none'`, `style-src` naming the one stylesheet's digest, `script-src` naming only the hashes of the scripts that page carries (none today; #167's copy script on `/web/start`), `form-action 'self'`, `frame-ancestors 'none'`, `base-uri 'none'`, `no-store`, `nosniff`, `Referrer-Policy: same-origin`; the frame route keeps its own policy. Digests computed at compile time from `oml-page`. |
-    | 6 | Rate limit | `oml-web` for fan-out, the API for acts | A page view becomes several API calls, so `oml-web` caps the requests one session has in flight and answers `limit.rate` with `Retry-After` past it; the cap is a constant of the build, unmeasured (FR-182). Every act stays under its key's limits at the API, as for any client ([FR-8](../product/roadmap.md)). Provider-call caps stay with sign-in in the auth context (ADR-0045 d15). |
+    | 6 | Rate limit | `oml-web` for fan-out, the API for acts | A page view becomes several API calls, so `oml-web` caps the requests one session has in flight and answers `limit.rate` with `Retry-After` past it; the cap is a constant of the build, unmeasured ([#170](https://github.com/e8kor/open-memory-lab/issues/170)). Every act stays under its key's limits at the API, as for any client ([FR-8](../product/roadmap.md)). Provider-call caps stay with sign-in in the auth context (ADR-0045 d15). |
     | 7 | Error mapping | `oml-web` | The API's envelope (`code`, `details`) becomes a page outcome: `access.not_found` the not-found page, `auth.invalid` the sign-in page, `request.validation` the form again with `details.field` marked, `limit.*` the retry page, `review.*` and `workarea.*` the message the page shows today. A code the table does not name renders the generic refusal page with the request id. |
 
     **Audit is the API's journal, not a layer of `oml-web`.** Every act and every admin read
@@ -303,7 +303,7 @@ Decided, not built. The build follows #163, #166 and #167.
   today one `web_caller` per request already does it once) and, on a `POST`, an idempotency
   row. The 5 ms p95 is a budget the operator can hold the build to, not a measurement: the
   benchmark of each page, before and after, on the [FR-25](../product/roadmap.md) harness is
-  FR-182's exit. Over budget, the remedy is fewer calls per page (a field on an existing
+  [#170](https://github.com/e8kor/open-memory-lab/issues/170)'s exit. Over budget, the remedy is fewer calls per page (a field on an existing
   operation), never a cache of resolved sessions, which would let authority outlive the list.
   Standalone, the network adds its own time; no budget is set for it.
 
@@ -335,7 +335,7 @@ Decided, not built. The build follows #163, #166 and #167.
 - `docs/api/http-api.md`, `openapi.yaml`, `errors.md` and the SDKs gain the ten operations and
   six changes in phase (a); the CLI may use them (`oml keys list`, `oml review queue`) in a
   change of its own.
-- FR-182 opens: the web hop's overhead is unmeasured against its 5 ms p95 budget, and the
+- [#170](https://github.com/e8kor/open-memory-lab/issues/170) tracks it: the web hop's overhead is unmeasured against its 5 ms p95 budget, and the
   per-session in-flight cap of d3 is a constant chosen without measurement.
 - #163, #166 and #167 land first, on the current design; this change then moves what they
   built, so none of them is rebased onto an unbuilt crate.
