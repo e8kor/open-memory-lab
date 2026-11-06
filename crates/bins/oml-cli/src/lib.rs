@@ -9,6 +9,7 @@
 pub mod chat;
 pub mod client;
 pub mod creds;
+pub mod demo;
 pub mod discovery;
 pub mod events;
 pub mod guardrails;

@@ -118,6 +118,7 @@ from .key_issue_request import KeyIssueRequest
 from .key_issue_request_held_by import KeyIssueRequestHeldBy
 from .key_issue_request_profile import KeyIssueRequestProfile
 from .key_issued import KeyIssued
+from .key_live_connect_code_type_1 import KeyLiveConnectCodeType1
 from .key_profile_type_1 import KeyProfileType1
 from .key_profile_type_2_type_1 import KeyProfileType2Type1
 from .key_profile_type_3_type_1 import KeyProfileType3Type1
@@ -133,6 +134,7 @@ from .memory_summary_provenance import MemorySummaryProvenance
 from .memory_summary_replaces_type_0 import MemorySummaryReplacesType0
 from .memory_summary_severity import MemorySummarySeverity
 from .memory_summary_state import MemorySummaryState
+from .mint_connect_code_body import MintConnectCodeBody
 from .o_auth_error import OAuthError
 from .o_auth_error_error import OAuthErrorError
 from .origin import Origin
@@ -372,6 +374,7 @@ __all__ = (
     "KeyIssueRequestHeldBy",
     "KeyIssueRequestProfile",
     "KeyIssued",
+    "KeyLiveConnectCodeType1",
     "KeyProfileType1",
     "KeyProfileType2Type1",
     "KeyProfileType3Type1",
@@ -387,6 +390,7 @@ __all__ = (
     "MemorySummaryReplacesType0",
     "MemorySummarySeverity",
     "MemorySummaryState",
+    "MintConnectCodeBody",
     "OAuthError",
     "OAuthErrorError",
     "Origin",

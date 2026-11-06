@@ -567,7 +567,7 @@ export interface paths {
         put?: never;
         /**
          * Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
-         * @description Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl setting.
+         * @description Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
          */
         post: operations["mintConnectCode"];
         delete?: never;
@@ -2142,6 +2142,13 @@ export interface components {
              * @enum {string|null}
              */
             profile?: "curator" | null;
+            /** @description The key's one connect code that can still open a connection, named and never shown: its id, its expiry, and whether it outlives the ten-minute default (a reviewer code, ADR-0067 d3). Null when none is live and for a bearer key. */
+            live_connect_code?: null | {
+                code_id: string;
+                /** Format: date-time */
+                expires_at: string;
+                extended: boolean;
+            };
             /** @description A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11). */
             connections?: components["schemas"]["Connection"][];
         };
@@ -4386,7 +4393,14 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description How long the code lives, 1 second to 30 days; omitted, the ten-minute default. A lifetime past ten minutes is minted only for a connector key whose grants all sit on one workarea other than the universe and that names no user root; otherwise 422 oauth.connect_refused with details.reason not_confined. Outside 1 to 2592000 is request.validation naming /ttl_seconds (ADR-0067 d3). */
+                    ttl_seconds?: number;
+                };
+            };
+        };
         responses: {
             /** @description The connect code, shown once. */
             201: {

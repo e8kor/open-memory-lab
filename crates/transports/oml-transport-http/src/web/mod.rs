@@ -17,6 +17,8 @@
 
 pub mod admin_read;
 pub mod atlas;
+#[rustfmt::skip]
+mod brand;
 pub mod emails;
 pub mod memories;
 pub mod page;

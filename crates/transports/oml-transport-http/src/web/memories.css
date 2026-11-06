@@ -1,0 +1,47 @@
+/* The Memories list's compact card and the Atlas treemap (ADR-0045 d32): only
+   var(--…) from tokens.css; the shared classes are web.css's. */
+.filters{display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:flex-end;margin:0 0 var(--space-3)}
+.filters label{font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);letter-spacing:normal;text-transform:none;color:var(--ink-dim)}
+.mlist{display:flex;flex-direction:column;max-width:var(--card-max)}
+.mhead{display:flex;align-items:center;gap:var(--space-2)}
+.mhead .end{margin-left:auto;display:flex;align-items:center;gap:var(--space-2)}
+.ver{font:var(--t-meta-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-mono);color:var(--ink-faint)}
+.steps{display:inline-flex;gap:var(--space-0\.5);list-style:none;margin:0;padding:0}
+.steps li{width:var(--space-3);height:calc(var(--bar-h) * 0.75);border-radius:var(--radius-sm);background:var(--rule)}
+.steps li.done{background:var(--promoted)}
+.steps li.no{background:var(--rejected)}
+.card.memory .mby{font:var(--t-meta-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-body);color:var(--ink-dim)}
+.mby b{font-weight:var(--t-button-weight);color:var(--ink)}
+details.more summary{cursor:pointer;color:var(--ink-dim);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);width:max-content}
+.timeline{list-style:none;padding:0;margin:var(--space-2) 0;display:grid;gap:var(--space-0\.5);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.timeline li.wait{color:var(--ink-faint)}
+.timeline li.no{color:var(--rejected)}
+.timeline b{display:inline-block;min-width:var(--space-16);color:var(--ink);font-weight:var(--t-button-weight)}
+.facts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:var(--space-0\.5) var(--space-3);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);margin:var(--space-1) 0 var(--space-2)}
+.facts dt{color:var(--ink-faint)}
+.facts dd{margin:0;overflow-wrap:anywhere}
+.atlas-grid{display:grid;grid-template-columns:minmax(0,1fr) var(--rail-w);gap:var(--space-6);align-items:start}
+@media (max-width:1100px){.atlas-grid{grid-template-columns:minmax(0,1fr)}}
+.tm-fig{margin:0}
+.tm{width:100%;height:auto;display:block}
+.tm a,.tm text{text-decoration:none}
+.tm.narrow{display:none}
+@media (max-width:599px){.tm.wide{display:none}.tm.narrow{display:block}}
+.tm-r{fill:var(--panel);stroke:var(--rule);stroke-width:var(--stroke)}
+.tm a:hover .tm-r,.tm a:focus-visible .tm-r{stroke:var(--focus);stroke-width:var(--stroke-strong)}
+.tm-r.ip{stroke:var(--in-progress);stroke-dasharray:var(--space-1) var(--space-0\.5)}
+.tm-nm{fill:var(--ink);font-family:var(--font-mono)}
+.tm-n{fill:var(--ink-dim);font-family:var(--font-body);font-variant-numeric:tabular-nums}
+.tm-ip{fill:var(--in-progress);font-family:var(--font-body)}
+.bar.promoted{fill:var(--promoted)}
+.bar.held{fill:var(--held)}
+.bar.unreviewed{fill:var(--unreviewed)}
+.bar.superseded{fill:var(--superseded)}
+.lifebar{width:100%;height:var(--bar-h);display:block;margin:var(--space-1) 0}
+.twin{margin-top:var(--space-4)}
+.twin .num{text-align:right;font-variant-numeric:tabular-nums}
+.twin .cap{font:var(--t-meta-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-body);color:var(--ink-faint)}
+.legend{list-style:none;padding:0;margin:var(--space-1) 0;display:flex;flex-wrap:wrap;gap:var(--space-1) var(--space-3);font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);color:var(--ink-dim)}
+.legend li{display:flex;align-items:center;gap:var(--space-1)}
+.legend b{color:var(--ink);font-variant-numeric:tabular-nums}
+.atlas-rail h2{margin:0 0 var(--space-1);overflow-wrap:anywhere}

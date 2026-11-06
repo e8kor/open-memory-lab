@@ -25,7 +25,7 @@ use oml_app::domain::valid_time::ValidTime;
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::{AdminState, Bearer, HIT_KINDS, RecallRequest, ServedMemory};
 
-use super::page::{attr, input, select, text};
+use super::page::{attr, input, select, state_tag, text};
 use super::views::Fields;
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::oauth::percent_encode;
@@ -323,11 +323,11 @@ impl Card {
             .as_deref()
             .map_or_else(|| "the shared area".to_owned(), text);
         let mut out = format!(
-            r#"<article class="mcard" id="m-{}" aria-label="Memory v{}, {}"><div class="mhead">{}<span class="end"><span class="ver">v{}</span><ol class="steps" role="img" aria-label="{}"><li class="{}"></li><li class="{}"></li><li class="{}"></li><li class="{}"></li></ol></span></div>"#,
+            r#"<article class="card memory" id="m-{}" aria-label="Memory v{}, {}"><div class="mhead">{}<span class="end"><span class="ver">v{}</span><ol class="steps" role="img" aria-label="{}"><li class="{}"></li><li class="{}"></li><li class="{}"></li><li class="{}"></li></ol></span></div>"#,
             self.id,
             self.version,
             self.state,
-            chip(self.state),
+            state_tag(self.state),
             self.version,
             steps_label,
             step(true, false),
@@ -336,11 +336,11 @@ impl Card {
             step(served, rejected),
         );
         if let Some(title) = &self.title {
-            let _ = write!(out, r#"<p class="mtitle">{}</p>"#, text(title));
+            let _ = write!(out, r#"<p class="title">{}</p>"#, text(title));
         }
         let _ = write!(
             out,
-            r#"<p class="mtext{}">{}</p><p class="mby">{}{}</p>"#,
+            r#"<p class="text{}">{}</p><p class="mby">{}{}</p>"#,
             if self.prose { "" } else { " mono" },
             text(&self.body),
             self.author_kind
@@ -390,42 +390,6 @@ impl Card {
         );
         out
     }
-}
-
-/// A state as the design system's chip: its glyph and its one word.
-pub(crate) fn chip(state: &str) -> String {
-    format!(
-        r#"<span class="chip is-{state}" title="{}">{}{state}</span>"#,
-        match state {
-            "held" => "Held until someone else reviews it",
-            "promoted" => "Passed review by another identity; not a claim that it is true",
-            _ => state,
-        },
-        glyph(state)
-    )
-}
-
-/// The state's glyph, an inline SVG in the state's colour: held an open
-/// ring with a gap, promoted a disc, superseded a half disc, rejected the
-/// one square, demoted a slashed ring, in progress a dotted ring.
-pub(crate) fn glyph(state: &str) -> String {
-    let shape = match state {
-        "held" => {
-            r#"<circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="21 5.4"/>"#
-        }
-        "promoted" => r#"<circle cx="6" cy="6" r="4.6" fill="currentColor"/>"#,
-        "superseded" => {
-            r#"<circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 1.8A4.2 4.2 0 0 0 6 10.2Z" fill="currentColor"/>"#
-        }
-        "rejected" => r#"<rect x="2" y="2" width="8" height="8" fill="currentColor"/>"#,
-        "in-progress" => {
-            r#"<circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="1.4 2.2"/>"#
-        }
-        _ => {
-            r#"<circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3 9 9 3" stroke="currentColor" stroke-width="1.4"/>"#
-        }
-    };
-    format!(r#"<svg class="glyph g-{state}" viewBox="0 0 12 12" aria-hidden="true">{shape}</svg>"#)
 }
 
 /// One page of cards and the cursor of the next.
@@ -735,7 +699,7 @@ pub(crate) fn list_view(base: &str, q: &ListQuery, page: Option<&CardPage>, lede
         origin,
     );
     let mut out = format!(
-        r#"<h1>{}</h1><p class="desc">{lede}</p><form class="filters" method="get" action="{base}"><input type="hidden" name="view" value="memories">{}{}{}{}{}{}<button type="submit">Filter</button></form>"#,
+        r#"<header class="oml-section-head"><div class="top"><h1>{}</h1></div><p class="desc">{lede}</p></header><form class="filters" method="get" action="{base}"><input type="hidden" name="view" value="memories">{}{}{}{}{}{}<button type="submit">Filter</button></form>"#,
         "Memories",
         input("q", "Text", q.q.as_deref().unwrap_or(""), false),
         select("state", "State", &states),

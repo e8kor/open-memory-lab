@@ -15,8 +15,7 @@ use oml_app::app::{Caller, Region, Regions, WorkareaOffers};
 use oml_app::domain::name::Reference;
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 
-use super::memories::glyph;
-use super::page::{attr, text};
+use super::page::{attr, glyph_svg, text};
 use crate::ApiState;
 use crate::error::{ApiError, ErrorContext, map_app_error};
 
@@ -285,10 +284,11 @@ pub(crate) fn lifebar(c: Counts) -> String {
 fn legend(c: Counts) -> String {
     let mut out = String::from(r#"<ul class="legend" aria-hidden="true">"#);
     for (class, n, word) in c.parts() {
+        let state = class_state(class);
         let _ = write!(
             out,
-            "<li>{}<b>{n}</b> {word}</li>",
-            glyph(class_state(class))
+            r#"<li><span class="is-{state}">{}</span><b>{n}</b> {word}</li>"#,
+            glyph_svg(state)
         );
     }
     out.push_str("</ul>");
