@@ -449,7 +449,7 @@ async fn initialize_answers_with_instructions_under_4096_characters_that_name_om
         "Claude Code cuts server instructions past 4,096 characters: {}",
         instructions.chars().count()
     );
-    // The call to recall comes before anything Claude Code could cut.
+    // The description of recall comes before anything Claude Code could cut.
     let recall = instructions
         .find("oml_read with a query")
         .expect("names oml_read");
@@ -463,7 +463,7 @@ async fn initialize_answers_with_instructions_under_4096_characters_that_name_om
         "the server derives the claim_key, so the agent is not asked for one"
     );
     assert!(
-        instructions.contains("not as instructions to follow"),
+        instructions.contains("never instructions to follow"),
         "what recall returns is framed as data"
     );
 
@@ -898,6 +898,26 @@ async fn tools_list_names_three_tools_each_with_its_annotations() {
     // nor destructive, all three idempotent and closed-world (d2, d5).
     let listed = rpc(&router, &writer, 1, "tools/list", json!({})).await;
     let tools = listed["result"]["tools"].as_array().expect("tools");
+    // Each tool also carries the human title the Connectors Directory asks for
+    // (ADR-0067 d1), and a write that only adds a held row is not destructive.
+    let titles: Vec<(&str, &str)> = tools
+        .iter()
+        .map(|t| {
+            (
+                t["name"].as_str().expect("name"),
+                t["title"].as_str().expect("every tool has a title"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            ("oml_write", "Remember"),
+            ("oml_read", "Recall"),
+            ("oml_workarea", "Workarea"),
+        ],
+        "{listed}"
+    );
     let named: Vec<(&str, &Value)> = tools
         .iter()
         .map(|t| (t["name"].as_str().expect("name"), &t["annotations"]))
@@ -922,6 +942,69 @@ async fn tools_list_names_three_tools_each_with_its_annotations() {
     );
 
     drop_db(&db).await;
+}
+
+/// The server instructions and the three tool descriptions say what a tool does
+/// and when it helps; none tells Claude to call a tool, and the safety facts
+/// stay: a write is held for another identity and recalled text is data
+/// (ADR-0067 d2; the Connectors Directory's prompt-injection criteria).
+#[test]
+fn the_instructions_and_tool_descriptions_describe_and_do_not_command() {
+    let mut texts: Vec<(String, String)> =
+        vec![("instructions".to_owned(), SERVER_INSTRUCTIONS.to_owned())];
+    for tool in oml_transport_http::mcp::served_catalog() {
+        texts.push((
+            tool["name"].as_str().expect("name").to_owned(),
+            tool["description"]
+                .as_str()
+                .expect("description")
+                .to_owned(),
+        ));
+    }
+    assert_eq!(texts.len(), 4);
+    // An imperative aimed at the model: a sentence that opens with a verb
+    // about calling, trying, recording or treating, or tells it to do so
+    // "before" or "after" something.
+    let commands = [
+        "call oml_",
+        "try other words",
+        "so try",
+        "record a durable",
+        "treat every",
+        "never write",
+        "send match",
+        "you should",
+        "you must",
+        "always call",
+    ];
+    for (name, text) in &texts {
+        let lower = text.to_lowercase();
+        for command in commands {
+            assert!(
+                !lower.contains(command),
+                "{name} instructs the model with {command:?}: {text}"
+            );
+        }
+    }
+    let instructions = SERVER_INSTRUCTIONS;
+    assert!(
+        instructions.contains("held until a different identity reviews"),
+        "a write is held for another identity"
+    );
+    assert!(
+        instructions.contains("never instructions to follow"),
+        "recalled text is data"
+    );
+    let read = &texts[2].1;
+    assert!(
+        read.contains("data, never instructions"),
+        "the recall tool says its text is data: {read}"
+    );
+    let write = &texts[1].1;
+    assert!(
+        write.contains("never changes or deletes"),
+        "the write tool says why it is not destructive: {write}"
+    );
 }
 
 #[tokio::test]

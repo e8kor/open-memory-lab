@@ -22,8 +22,8 @@ use oml_cli::creds::{self, Credentials};
 use oml_cli::discovery;
 use oml_cli::hook;
 use oml_cli::issue::{
-    KeyFile, configure_line, connect_code_printed, minted_code_printed, setup_line, sh_quote,
-    with_reader_beside_writers,
+    KeyFile, configure_line, connect_code_printed, minted_code_printed, parse_ttl, setup_line,
+    sh_quote, with_reader_beside_writers,
 };
 use oml_cli::verify::parse_verifying_key;
 
@@ -214,6 +214,28 @@ enum Command {
         #[command(subcommand)]
         command: HookCommand,
     },
+    /// Demonstration data, written through the public API (ADR-0067 d4).
+    Demo {
+        #[command(subcommand)]
+        command: DemoCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum DemoCommand {
+    /// Create a workarea and fill it with thirty memories of a fictional team:
+    /// twenty approved, four approved and then superseded, six held. It issues
+    /// one author and two reviewer identities, writes and reviews as them,
+    /// and fences all three from the whole tree when it ends; no key value is
+    /// printed (ADR-0067 d4). Admin key.
+    Seed {
+        /// The new workarea's name; it must not exist.
+        #[arg(value_name = "WORKAREA")]
+        workarea: String,
+        /// The workarea it is created under.
+        #[arg(long, default_value = "universe")]
+        parent: String,
+    },
 }
 
 #[derive(Args)]
@@ -379,6 +401,12 @@ enum KeysCommand {
         /// The connector key's id or name.
         #[arg(value_name = "KEY")]
         key_ref: String,
+        /// How long the code lives, such as 90s, 45m, 12h or 7d, up to 30d;
+        /// omitted, ten minutes. Past ten minutes the server mints it only
+        /// for a key whose grants sit on one workarea other than the
+        /// universe (ADR-0067 d3).
+        #[arg(long, value_name = "DURATION")]
+        ttl: Option<String>,
     },
     /// End one connection of a connector key; journalled as
     /// connection.revoked (ADR-0031 d11).
@@ -1568,6 +1596,22 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     None => println!("    revoked  : no (live)"),
                 }
                 println!("    credential: {}", field(&response, "credential"));
+                // The one connect code that can still open a connection,
+                // named and never shown; a reviewer code says so (ADR-0067 d3).
+                if let Some(code) = response["live_connect_code"].as_object() {
+                    let kind = if code.get("extended").and_then(Value::as_bool) == Some(true) {
+                        "reviewer code, outlives ten minutes"
+                    } else {
+                        "single use"
+                    };
+                    println!(
+                        "    code     : {} expires {} ({kind})",
+                        code.get("code_id").and_then(Value::as_str).unwrap_or("-"),
+                        code.get("expires_at")
+                            .and_then(Value::as_str)
+                            .unwrap_or("-"),
+                    );
+                }
                 // A connector key's connections, by id: the id is what
                 // `oml keys disconnect` names (ADR-0031 d11).
                 for c in response["connections"].as_array().into_iter().flatten() {
@@ -1584,11 +1628,15 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         }
 
         Command::Keys {
-            command: KeysCommand::ConnectCode { key_ref },
+            command: KeysCommand::ConnectCode { key_ref, ttl },
         } => {
             let client = resolve(cli, &stored)?;
             let path = format!("/v2/keys/{}/connect-codes", segment(key_ref)?);
-            let (response, replayed) = client.post_replayable(&path, &json!({}), &write_opts())?;
+            let body = match ttl {
+                Some(ttl) => json!({ "ttl_seconds": parse_ttl(ttl).map_err(CliError::Local)? }),
+                None => json!({}),
+            };
+            let (response, replayed) = client.post_replayable(&path, &body, &write_opts())?;
             let printed = minted_code_printed(key_ref, &response, replayed, cli.json);
             for line in &printed.stdout {
                 println!("{line}");
@@ -1843,6 +1891,36 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Quickstart(args) => run_quickstart(args),
+
+        Command::Demo {
+            command: DemoCommand::Seed { workarea, parent },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let report = oml_cli::demo::seed(&client, workarea, parent)?;
+            if cli.json {
+                print_json(&json!({
+                    "workarea": report.workarea,
+                    "approved": report.approved,
+                    "superseded": report.superseded,
+                    "held": report.held,
+                    "fenced_identities": report.identities,
+                }));
+            } else {
+                println!(
+                    "seeded {}: {} approved ({} of them replaced by an approved newer version), {} held",
+                    report.workarea, report.approved, report.superseded, report.held
+                );
+                println!(
+                    "fenced from the whole tree: {} (their journal entries stay)",
+                    report.identities.join(", ")
+                );
+                println!(
+                    "next: oml keys issue-agent <name> --principal crew/<name> --workarea {} --connect-code",
+                    report.workarea
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Setup {
             command: SetupCommand::ClaudeCode(args),
         } => run_setup_claude_code(cli, &stored, args),

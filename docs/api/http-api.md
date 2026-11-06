@@ -1418,7 +1418,7 @@ in the issuance response; the journal records `key.issued` with `value_disclosed
 | `POST /v2/keys/{key}/grants/{grant_id}/revoke` | Journalled grant removal; epoch bump. |
 | `POST /v2/keys/{key}/denials` | Create or extend the key's **global** deny object — deny-wins across all the key's grants, distinct from a per-grant deny. Journalled as `key.denied`, whose seq is the denial's epoch. `{workarea, reason?}`, `workarea_node_id` refused naming `workarea` ([ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md) d7). A denial on an admin key is refused, `request.validation` with `details.field: key`: denials attenuate grants, and an admin key carries none ([admin structure reads](../architecture/roles-and-keys.md#permission-matrix), footnote 6). |
 | `POST /v2/keys/{key}/denials/{denial_id}/lift` | Journalled lift. |
-| `POST /v2/keys/{key}/connect-codes` | Mint a fresh connect code for a connector key → `201` `{code_id, code, expires_at, connector_url}`, the code shown once; the same commit (`connection.code_issued`) voids the key's earlier codes as [connections](../architecture/roles-and-keys.md#connections) declares. A bearer key, a revoked or expired key, or a deployment without `oauth.issuer` answers `422 oauth.connect_refused`. |
+| `POST /v2/keys/{key}/connect-codes` | Mint a fresh connect code for a connector key → `201` `{code_id, code, expires_at, connector_url}`, the code shown once; the same commit (`connection.code_issued`) voids the key's earlier codes as [connections](../architecture/roles-and-keys.md#connections) declares. A bearer key, a revoked or expired key, or a deployment without `oauth.issuer` answers `422 oauth.connect_refused`. An optional body `{"ttl_seconds": n}`, 1 to 2,592,000, sets the lifetime past the ten-minute default for a key whose grants all sit on one workarea other than the universe and that names no user root; any other key answers `422 oauth.connect_refused` with `details.reason: not_confined`, and a value outside the span `400 request.validation` naming `/ttl_seconds` ([ADR-0067](../adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) d3). `GET /v2/keys/{key}` names the live code in `live_connect_code`, never the code. |
 | `POST /v2/keys/{key}/connections/{connection_id}/revoke` | `{reason?}` → journalled `connection.revoked`, which ends the connection and voids the key's codes as [connections](../architecture/roles-and-keys.md#connections) declares. An `authorized` connection is not listed, and naming one answers `access.not_found`, as an unknown id does. `GET /v2/keys/{key}` lists a key's open and revoked connections. The revoke answers the connection, `state: revoked`, `revoked_cause: admin`, and works whether or not the deployment sets `oauth.issuer`. |
 | `GET /v2/keys/{key}/effective-access?workarea=…` | The resolved answer: what this key may do where, and which deny produced each hole — reproducible from journalled grants by construction (permission epoch). |
 
@@ -1588,6 +1588,9 @@ are fixed, word for word:
 - Above the code field: "Enter the code only if you opened this page yourself,
   by adding the connector in Claude, in the last few minutes. If someone sent you this link, close
   it."
+- Below it: "Get a connect code from your account page: Connect Claude on the web or a phone."
+  with the phrase linked to `/web` on the same origin, then "Codes are shown once; use New connect
+  code on the key's row if you lost it."
 - A wrong code — unknown, expired, voided, spent, or a revoked or expired key's alike — with the attempts left: "This code
   is not valid. Check it, or ask your administrator for a new one."
 

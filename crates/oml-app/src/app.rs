@@ -98,14 +98,14 @@ use crate::types::{
     CrewPage, CrewRecord, CrewUpdate, DenialRecord, EdgeRatification, ExchangeForm, FormatFields,
     GrantRecord, GuardrailFields, GuardrailRequest, GuardrailSet, GuardrailVerdict, HIT_KINDS,
     IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest,
-    ListingFilter, ListingPosition, ListingScope, MemoryPage, MemoryRecord, MintedToken, NamedRef,
-    NamingRefusal, OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT,
-    ProposeBriefEdge, ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts,
-    RefreshForm, RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory,
-    SimilarItem, SourceCheck, SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt,
-    SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
-    TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
-    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
+    ListingFilter, ListingPosition, ListingScope, LiveConnectCode, MemoryPage, MemoryRecord,
+    MintedToken, NamedRef, NamingRefusal, OAuthClientRecord, OnSimilar, OwnHeldGuardrail,
+    PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge, RecallHit, RecallRequest, RecallResult,
+    RefreshFacts, RefreshForm, RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail,
+    ServedMemory, SimilarItem, SourceCheck, SourceCheckReceipt, SourceCheckRequest, SubmitOutcome,
+    SubmitReceipt, SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest,
+    TailPage, TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView,
+    TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
     WorkareaInfo, WorkareaRecord, WorkareaStatusView,
 };
 use crate::types::{
@@ -162,6 +162,11 @@ const ADMIN_DENIAL_LIFT_REASON: &str = "adr-0026-d15";
 /// build mints, as [`CURSOR_TTL_SECS`](crate::cursor::CURSOR_TTL_SECS) is a
 /// cursor's.
 pub const CONNECT_CODE_TTL_SECS: i64 = 600;
+
+/// The longest an admin may ask a connect code to live, 30 days, in seconds:
+/// the reviewer code of a directory listing, minted only for a key confined
+/// to one workarea (ADR-0067 d3).
+pub const CONNECT_CODE_TTL_MAX_SECS: i64 = 30 * 24 * 3600;
 
 /// `oauth.access_token_ttl`'s shipped default, 1 hour, in seconds: the
 /// lifetime of every access token this build mints until settings are
@@ -2253,16 +2258,22 @@ where
     /// folds it, holding only the code's digest, and the answer that shows
     /// the code once, with its connector URL `<issuer>/mcp`. The code is 60
     /// bits of the id generator's secret, and lives
-    /// [`CONNECT_CODE_TTL_SECS`] from now (ADR-0031 d8).
-    fn new_connect_code(&self, oauth: &Issuer, key_id: Uuid) -> (ConnectCode, ConnectCodeIssued) {
+    /// `ttl_secs` from now: [`CONNECT_CODE_TTL_SECS`] unless an admin asked
+    /// for longer (ADR-0031 d8, ADR-0067 d3).
+    fn new_connect_code(
+        &self,
+        oauth: &Issuer,
+        key_id: Uuid,
+        ttl_secs: i64,
+    ) -> (ConnectCode, ConnectCodeIssued) {
         let secret = self.ids.new_secret();
         let mut random = [0_u8; 8];
         random.copy_from_slice(&secret[24..]);
         let symbols = CodeSymbols::from_random(random);
         let expires_at = EventTime::from_unix_micros(
-            self.clock.now().unix_micros() + CONNECT_CODE_TTL_SECS * 1_000_000,
+            self.clock.now().unix_micros() + ttl_secs * 1_000_000,
         )
-        .expect("ten minutes after a clock reading is a time the fixed-width form writes");
+        .expect("at most thirty days after a clock reading is a time the fixed-width form writes");
         let code = ConnectCode {
             code_id: self.ids.new_id(),
             key_id,
@@ -2857,7 +2868,7 @@ where
                 last = event.clone();
                 links.push((event, MetadataFold::GrantIssued { key_id, grant }));
             }
-            let (code, shown) = self.new_connect_code(oauth, key_id);
+            let (code, shown) = self.new_connect_code(oauth, key_id, CONNECT_CODE_TTL_SECS);
             let event = self.seal(
                 Some(&last),
                 tenant_id,
@@ -8221,9 +8232,25 @@ where
         api_key: &str,
         key: Reference,
     ) -> Result<ConnectCodeIssued, AppError> {
+        self.mint_connect_code_with_ttl(api_key, key, None).await
+    }
+
+    /// [`App::mint_connect_code`] with a lifetime: `None` is the ten-minute
+    /// default, and `Some(seconds)` is one second to
+    /// [`CONNECT_CODE_TTL_MAX_SECS`], outside which it is refused by name
+    /// ([`AppError::ConnectCodeLifetime`]). A lifetime past the default is
+    /// minted only for a key confined to one workarea (`oauth.connect_refused`,
+    /// `not_confined`; ADR-0067 d3).
+    pub async fn mint_connect_code_with_ttl(
+        &self,
+        api_key: &str,
+        key: Reference,
+        ttl_secs: Option<i64>,
+    ) -> Result<ConnectCodeIssued, AppError> {
         let admin = self.authenticate(api_key).await?.key;
         require_role(&admin, Role::Admin, "mint_connect_code")?;
-        self.mint_connect_code_by(&admin, key).await
+        self.mint_connect_code_by_with_ttl(&admin, key, ttl_secs)
+            .await
     }
 
     /// [`App::mint_connect_code`] once the issuer is known: an admin key, or
@@ -8234,6 +8261,25 @@ where
         admin: &KeyRecord,
         key: Reference,
     ) -> Result<ConnectCodeIssued, AppError> {
+        self.mint_connect_code_by_with_ttl(admin, key, None).await
+    }
+
+    async fn mint_connect_code_by_with_ttl(
+        &self,
+        admin: &KeyRecord,
+        key: Reference,
+        ttl_secs: Option<i64>,
+    ) -> Result<ConnectCodeIssued, AppError> {
+        let ttl_secs = match ttl_secs {
+            None => CONNECT_CODE_TTL_SECS,
+            Some(seconds) if (1..=CONNECT_CODE_TTL_MAX_SECS).contains(&seconds) => seconds,
+            Some(seconds) => {
+                return Err(AppError::ConnectCodeLifetime {
+                    seconds,
+                    max: CONNECT_CODE_TTL_MAX_SECS,
+                });
+            }
+        };
         let admin = admin.clone();
         let tenant_id = admin.tenant_id;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
@@ -8255,6 +8301,9 @@ where
             .oauth_issuer
             .as_ref()
             .ok_or_else(|| connect_refused(ConnectRefused::NotConfigured))?;
+        if ttl_secs > CONNECT_CODE_TTL_SECS {
+            self.require_confined(&target).await?;
+        }
         let voids = self
             .journal
             .connect_codes(tenant_id, key_id)
@@ -8262,7 +8311,7 @@ where
             .into_iter()
             .find(|c| c.redeemed_at.is_none() && c.voided_seq.is_none())
             .map(|c| c.code_id);
-        let (code, shown) = self.new_connect_code(oauth, key_id);
+        let (code, shown) = self.new_connect_code(oauth, key_id, ttl_secs);
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
@@ -8275,6 +8324,68 @@ where
         self.commit(event, MetadataFold::ConnectCodeIssued { code, voids }, None)
             .await?;
         Ok(shown)
+    }
+
+    /// Whether `target` is confined to one workarea: no user root, and every
+    /// grant on one node that is not the universe. A connect code that lives
+    /// longer than ten minutes is a standing credential, so it is minted only
+    /// for a key whose reach is that one node's subtree (ADR-0067 d3). The
+    /// roles that cannot hold a connection at all, admin and operator, never
+    /// get here.
+    async fn require_confined(&self, target: &KeyRecord) -> Result<(), AppError> {
+        let not_confined = || connect_refused(ConnectRefused::NotConfined);
+        if target.user.is_some() {
+            return Err(not_confined());
+        }
+        let access = self
+            .journal
+            .key_access(target.tenant_id, target.key_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let universe = self.universe(target.tenant_id).await?;
+        let mut nodes = access.grants.iter().map(|g| g.grant.node);
+        let Some(first) = nodes.next() else {
+            return Err(not_confined());
+        };
+        if first == universe || nodes.any(|node| node != first) {
+            return Err(not_confined());
+        }
+        Ok(())
+    }
+
+    /// The one connect code of a key that can still open a connection (not
+    /// redeemed, not voided, not lapsed), by id or name: admin key role only.
+    /// `extended` is true when it outlives the ten-minute default, so a
+    /// reviewer code is named on `oml keys show` (ADR-0067 d3). The code
+    /// itself is never returned; none is stored.
+    pub async fn live_connect_code(
+        &self,
+        api_key: &str,
+        key: Reference,
+    ) -> Result<Option<LiveConnectCode>, AppError> {
+        let admin = self.authenticate(api_key).await?.key;
+        require_role(&admin, Role::Admin, "live_connect_code")?;
+        let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
+        if self.journal.key(admin.tenant_id, key_id).await?.is_none() {
+            return Err(AppError::NotFound);
+        }
+        let now = self.clock.now().unix_micros();
+        let horizon = now + CONNECT_CODE_TTL_SECS * 1_000_000;
+        Ok(self
+            .journal
+            .connect_codes(admin.tenant_id, key_id)
+            .await?
+            .into_iter()
+            .find(|c| {
+                c.redeemed_at.is_none()
+                    && c.voided_seq.is_none()
+                    && c.expires_at.unix_micros() > now
+            })
+            .map(|c| LiveConnectCode {
+                code_id: c.code_id,
+                extended: c.expires_at.unix_micros() > horizon,
+                expires_at: c.expires_at,
+            }))
     }
 
     /// A key's open and revoked connections in creation order, the key by

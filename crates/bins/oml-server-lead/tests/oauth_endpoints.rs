@@ -1074,7 +1074,7 @@ async fn the_pages_sentences_match_http_api_md_word_for_word() {
         .step_by(2)
         .map(|s| s.replace('`', ""))
         .collect();
-    assert_eq!(sentences.len(), 10, "{sentences:?}");
+    assert_eq!(sentences.len(), 12, "{sentences:?}");
 
     // The code form and the wrong-code form, over the real routes.
     let rig = rig(Some(ISSUER));
@@ -1091,6 +1091,10 @@ async fn the_pages_sentences_match_http_api_md_word_for_word() {
     )
     .await;
     let wrong = collapse(&html(&body));
+    // The page links the account page; the doc quotes the words, so compare without the link tags.
+    let code_form_text = code_form
+        .replace("<a href=\"/web\">", "")
+        .replace("</a>", "");
 
     // The confirmation, with every sentence kind present.
     let name = |n: &str| Name::parse(n).expect("a name");
@@ -1117,18 +1121,20 @@ async fn the_pages_sentences_match_http_api_md_word_for_word() {
         (&code_form, "verified by".to_owned()),
         (&code_form, "name not verified".to_owned()),
         (&code_form, sentences[2].clone()),
+        (&code_form_text, sentences[3].clone()),
+        (&code_form_text, sentences[4].clone()),
         (&wrong, sentences[2].clone()),
-        (&wrong, sentences[3].clone()),
+        (&wrong, sentences[5].clone()),
         (
             &confirmation,
-            sentences[4].replace("<workareas>", "alpha, gamma"),
+            sentences[6].replace("<workareas>", "alpha, gamma"),
         ),
-        (&confirmation, sentences[5].replace("<workareas>", "beta")),
-        (&confirmation, sentences[6].replace("<workareas>", "delta")),
-        (&confirmation, sentences[7].clone()),
-        (&confirmation, sentences[8].replace("<workarea>", "alpha")),
-        (&confirmation, sentences[8].replace("<workarea>", "gamma")),
+        (&confirmation, sentences[7].replace("<workareas>", "beta")),
+        (&confirmation, sentences[8].replace("<workareas>", "delta")),
         (&confirmation, sentences[9].clone()),
+        (&confirmation, sentences[10].replace("<workarea>", "alpha")),
+        (&confirmation, sentences[10].replace("<workarea>", "gamma")),
+        (&confirmation, sentences[11].clone()),
     ];
     // "verified by" is a document client's; the form names a registered one.
     for (page, sentence) in &expected[1..] {
@@ -1136,10 +1142,12 @@ async fn the_pages_sentences_match_http_api_md_word_for_word() {
     }
     assert_eq!(expected[0].1, sentences[0]);
     assert_eq!(expected[1].1, sentences[1]);
-    assert!(!code_form.contains(&sentences[3]), "{code_form}");
+    assert!(!code_form.contains(&sentences[5]), "{code_form}");
     // The last sentence closes the list.
-    let last = confirmation.find(&sentences[9]).expect("the last sentence");
-    for (page, sentence) in &expected[5..11] {
+    let last = confirmation
+        .find(&sentences[11])
+        .expect("the last sentence");
+    for (page, sentence) in &expected[7..13] {
         let at = page.find(sentence.as_str()).expect("a sentence");
         assert!(at < last, "{sentence:?} before the last sentence");
     }
@@ -1348,4 +1356,135 @@ async fn no_log_line_of_a_full_flow_carries_a_code_token_verifier_handle_or_thei
             assert!(!log.contains(&form), "{form} in {log}");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// A reviewer's connect code (ADR-0067 d3)
+// ---------------------------------------------------------------------------
+
+/// `POST /v2/keys/{key}/connect-codes` takes `ttl_seconds`: a lifetime past
+/// the default is minted for a key confined to one workarea and refused
+/// `not_confined` for one that reaches the universe, a lifetime outside 1 to
+/// 2,592,000 seconds is `request.validation` naming `/ttl_seconds`, and
+/// `GET /v2/keys/{key}` names the live code as extended without showing it.
+#[tokio::test]
+async fn a_reviewer_code_is_minted_for_a_confined_key_and_named_on_the_key() {
+    let rig = rig(Some(ISSUER));
+    let boot = rig
+        .app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: Name::parse("acme").expect("a name"),
+            admin_key_name: Name::parse("root-admin").expect("a name"),
+            admin_principal: "alice-admin".to_owned(),
+        })
+        .await
+        .expect("bootstrap");
+    let admin = boot.admin_key.value.clone();
+    let demo = rig
+        .app
+        .create_workarea(
+            &admin,
+            &Name::parse("demo").expect("a name"),
+            Some(boot.root_workarea_id.into()),
+            None,
+        )
+        .await
+        .expect("a workarea")
+        .workarea
+        .workarea_id;
+    let connector = |name: &str, node| IssueKeyRequest {
+        profile: None,
+        role: Role::Writer,
+        name: Name::parse(name).expect("a name"),
+        principal: format!("crew/{name}"),
+        held_by: Some(HeldBy::Agent),
+        default_workarea: None,
+        crew: None,
+        grants: vec![GrantRequest {
+            node,
+            role: Role::Writer,
+            deny: Vec::new(),
+            covers: Covers::Subtree,
+        }],
+        connect_code: true,
+        user: None,
+        guardrail_scope: None,
+    };
+    rig.app
+        .issue_key(&admin, &connector("reviewer", demo.into()))
+        .await
+        .expect("a confined connector key");
+    rig.app
+        .issue_key(&admin, &connector("wide", boot.root_workarea_id.into()))
+        .await
+        .expect("a connector key on the universe");
+
+    let post = |key: &str, body: &str| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/v2/keys/{key}/connect-codes"))
+            .header(header::AUTHORIZATION, format!("Bearer {admin}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", "reviewer-code")
+            .body(Body::from(body.to_owned()))
+            .expect("request builds")
+    };
+
+    let (status, _, body) = send(&rig.router, post("reviewer", r#"{"ttl_seconds": 604800}"#)).await;
+    assert_eq!(status, StatusCode::CREATED, "{}", json_of(&body));
+    let minted = json_of(&body);
+    assert!(minted["code"].is_string(), "{minted}");
+
+    let (status, _, body) = send(&rig.router, post("wide", r#"{"ttl_seconds": 604800}"#)).await;
+    assert_eq!(
+        status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        json_of(&body)
+    );
+    let refused = json_of(&body);
+    assert_eq!(
+        refused["error"]["code"], "oauth.connect_refused",
+        "{refused}"
+    );
+    assert_eq!(
+        refused["error"]["details"]["reason"], "not_confined",
+        "{refused}"
+    );
+
+    for body in [r#"{"ttl_seconds": 0}"#, r#"{"ttl_seconds": 2592001}"#] {
+        let (status, _, answer) = send(&rig.router, post("reviewer", body)).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{body}: {}",
+            json_of(&answer)
+        );
+        let refused = json_of(&answer);
+        assert_eq!(refused["error"]["code"], "request.validation", "{refused}");
+        assert_eq!(
+            refused["error"]["details"]["field"], "/ttl_seconds",
+            "{refused}"
+        );
+    }
+
+    let shown = Request::builder()
+        .method("GET")
+        .uri("/v2/keys/reviewer")
+        .header(header::AUTHORIZATION, format!("Bearer {admin}"))
+        .body(Body::empty())
+        .expect("request builds");
+    let (status, _, body) = send(&rig.router, shown).await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    let key = json_of(&body);
+    assert_eq!(
+        key["live_connect_code"]["code_id"], minted["code_id"],
+        "{key}"
+    );
+    assert_eq!(key["live_connect_code"]["extended"], true, "{key}");
+    assert!(
+        !key.to_string()
+            .contains(minted["code"].as_str().expect("code")),
+        "the key's view never carries the code"
+    );
 }

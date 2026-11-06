@@ -2361,6 +2361,8 @@ async fn get_v2_keys_by_name_answers_the_key() {
             // A bearer key, which holds no connection (ADR-0031 d7, d11).
             "credential": "bearer",
             "connections": [],
+            // No connector key, no connect code to name (ADR-0067 d3).
+            "live_connect_code": null,
             // Sent none, the issuance default (proposed ADR-0037 d4).
             "guardrail_scope": "ancestors",
             "profile": null,
