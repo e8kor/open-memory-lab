@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0058-the-public-server-runs-to-stated-slos-with-an-error-budget-and-without-backups-until-a-second-person-stores-data
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-06
 answers: where the public server's deployment policy lives; which SLOs it runs to, with which targets and windows, and why; what spending an error budget stops; how SLOs alert; why the server has no backups yet and what makes it get them; how it is upgraded; from which sources usage is measured and what monitoring may never read; whether the operator's organisation keeps recall query text
 -->
 
 # ADR-0058 — The public server runs to stated SLOs with an error budget, and without backups until a second person stores data
 
-**Status:** proposed · 2026-11-05
+**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05
 
-**Release:** deployment policy for memory.doublegate.io; no release builds it.
+**Release:** introduced in v0.6.0 ([releases](../product/releases.md#decisions))
 
 ## Context
 

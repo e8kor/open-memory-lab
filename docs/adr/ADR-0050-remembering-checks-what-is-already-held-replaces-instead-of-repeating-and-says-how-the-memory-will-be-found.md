@@ -1,17 +1,17 @@
 <!--
 id: adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-06
 answers: what a write does about a memory OML already holds, and whether it refuses, warns or links; how a write to an existing subject replaces it instead of adding a second claim; how an author revises or withdraws its own held version (RS-17); how "the latest" of a changed fact is answered; what a writer may add so the memory is found (a title, keywords, validity dates, sources) and how the server tells the writer which terms it indexed; which quality problems the scan warns about without vetoing; how a memory says when it should be checked again without ever being deleted; how a session's findings are written as one bounded batch of held candidates; what the reviewer sees beside a held row; the oml_write field set, refusals and response in their cleanest form, and the skill's text; how each decision keeps R1 to R4; the doctor lines; the remember eval that gates each decision; the build order; and the questions left for the maintainer
 -->
 
 # ADR-0050 — Remembering checks what is already held, replaces instead of repeating, and says how the memory will be found
 
-**Status:** proposed · 2026-11-04 · revised 2026-11-05 (r2): d1's check is a same-text and
+**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-04 · revised 2026-11-05 (r2): d1's check is a same-text and
 near-copy match read from integer keys, with no recall and no model, specified in d17; its nine
 questions answered at their recommendations ([the answers](#the-maintainers-answers-of-2026-11-05))
 
-**Release:** W3's write side (d1, d17) built on `feat/remember-dedup` and proposed for v0.5.9;
+**Release:** introduced in v0.6.0 ([releases](../product/releases.md#decisions))
 W1, W2 and W3's reviewer side not assigned; W4–W7 not assigned, each gated on the remember eval
 ([releases](../product/releases.md#decisions))
 

@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-06
 answers: what replaces the marker scanner; how the rule set is named, versioned and journalled; which secret, path, injection, Unicode, encoding and personal-data rules it carries and what each does; where gitleaks' patterns come from and under which licence; which fields of a submission are scanned and which are not; what a finding says and what it never says; the time budget and the size bound; what happens to the PoC markers; the findings metric and the doctor line; how false positives are measured and on what; the rejected roads and the open questions
 -->
 
 # ADR-0065 — The scan is a versioned, compiled-in rule set that vetoes leaked keys and holds what a reviewer should judge
 
-**Status:** proposed · 2026-11-05
+**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05
 
 **Amends:** ADR-0019 (d4: the scanner port gains `version()`, the plugin's identity on the events
 it informs, as d4 already asks); ADR-0057 (d2, d6, d18: the secret-shaped path list becomes one
