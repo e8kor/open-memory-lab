@@ -42,3 +42,20 @@ pub fn short(digest: &str) -> &str {
     let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
     &hex[..hex.len().min(16)]
 }
+
+/// The hasher of a module's doc block (ADR-0061 d7).
+pub const HASHER_RUSTDOC: &str = "oml-rustdoc/1";
+/// The hasher of a crate's facts (ADR-0061 d7).
+pub const HASHER_CRATE: &str = "oml-crate/1";
+
+/// `oml-rustdoc/1` of a doc block's lines as written after their `//!`.
+#[must_use]
+pub fn rustdoc_hash(_lines: &[String]) -> String {
+    String::new()
+}
+
+/// `oml-crate/1` of a crate's facts (ADR-0061 d7).
+#[must_use]
+pub fn crate_hash(_facts: &[String]) -> String {
+    String::new()
+}

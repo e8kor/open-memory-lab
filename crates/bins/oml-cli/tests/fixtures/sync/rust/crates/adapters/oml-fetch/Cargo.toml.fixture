@@ -1,0 +1,16 @@
+[package]
+name = "oml-fetch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Outbound fetch adapters: the client ID metadata document, resolved and fetched from one checked address with no proxy and no redirect (ADR-0031 d5), and the Google and GitHub sign-in exchanges (ADR-0045 d3, d4; ADR-0019)."
+
+[dependencies]
+oml-app.workspace = true
+tokio = { workspace = true, features = ["time"] }
+ureq.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
