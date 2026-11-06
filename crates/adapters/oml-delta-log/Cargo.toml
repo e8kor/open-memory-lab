@@ -12,12 +12,10 @@ license.workspace = true
 description = "A minimal Delta Lake log reader: protocol, metadata, schema, partitioning, clustering and version from JSON commits and checkpoint parquet, and never a data file (ADR-0062 d2, d3)."
 
 [dependencies]
+bytes = "1"
 parquet.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [lints]
 workspace = true
-
-[dev-dependencies]
-bytes = "1"

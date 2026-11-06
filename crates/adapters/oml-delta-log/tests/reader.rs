@@ -122,11 +122,7 @@ fn the_reader_matches_the_delta_rs_oracle_at_every_fixture_version() {
             rec["column_mapping_mode"],
             "{table}@{version} column mapping"
         );
-        assert_eq!(
-            got.schema_json(),
-            rec["schema"],
-            "{table}@{version} schema"
-        );
+        assert_eq!(got.schema_json(), rec["schema"], "{table}@{version} schema");
     }
 }
 
@@ -169,7 +165,12 @@ fn no_object_outside_delta_log_is_ever_opened() {
     }
     // The store itself refuses a name that leaves the log's directory, so a
     // data file or a sibling table is out of reach by construction.
-    for bad in ["../x.parquet", "region=EU/part-0.parquet", "/etc/passwd", "a/b"] {
+    for bad in [
+        "../x.parquet",
+        "region=EU/part-0.parquet",
+        "/etc/passwd",
+        "a/b",
+    ] {
         assert!(store.get(bad).is_err(), "{bad} was opened");
         assert!(store.get_range(bad, 0, 1).is_err(), "{bad} was opened");
         assert!(store.len(bad).is_err(), "{bad} was opened");
@@ -196,9 +197,7 @@ fn commit_info_add_and_remove_are_never_decoded() {
     );
     let s = read_table(&m, None).unwrap();
     let shown = format!("{s:?}");
-    for sentinel in ["SENTINEL"] {
-        assert!(!shown.contains(sentinel), "{shown}");
-    }
+    assert!(!shown.contains("SENTINEL"), "{shown}");
     assert_eq!(s.version, 0);
 }
 
@@ -240,7 +239,8 @@ fn column_ranges(bytes: &[u8], top: &str) -> Vec<(u64, u64)> {
 #[test]
 fn a_checkpoint_is_read_by_projection_without_its_add_column() {
     let table = fixture().join("events/clicks");
-    let cp = std::fs::read(table.join("_delta_log/00000000000000000002.checkpoint.parquet")).unwrap();
+    let cp =
+        std::fs::read(table.join("_delta_log/00000000000000000002.checkpoint.parquet")).unwrap();
     let add = column_ranges(&cp, "add");
     assert!(!add.is_empty(), "the fixture's checkpoint carries add");
     let store = DirStore::new(&table);
@@ -316,7 +316,10 @@ fn a_last_checkpoint_naming_a_missing_file_is_unreadable() {
 fn a_checkpoint_that_does_not_parse_is_unreadable_and_never_skipped() {
     let mut m = Mem::default();
     m.put("00000000000000000000.json", &commit(&[PROTOCOL, &meta("")]));
-    m.put("00000000000000000001.checkpoint.parquet", "not parquet at all");
+    m.put(
+        "00000000000000000001.checkpoint.parquet",
+        "not parquet at all",
+    );
     m.put("00000000000000000002.json", &commit(&[]));
     assert!(matches!(read_table(&m, None), Err(LogError::Unreadable(_))));
 }
