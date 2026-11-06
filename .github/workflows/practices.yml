@@ -32,6 +32,10 @@ jobs:
     name: ADR, FR and migration numbers are reserved
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # check_numbers.py lists open pull requests with gh, so a closed PR's branch holds no numbers
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,6 +45,8 @@ jobs:
           python-version: "3.12"
       - run: git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
       - run: python scripts/check_numbers.py --base origin/main
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   changelog-fragment:
     name: change adds a changelog fragment
