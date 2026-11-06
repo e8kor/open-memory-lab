@@ -14,6 +14,8 @@ pub mod events;
 pub mod guardrails;
 pub mod hook;
 pub mod issue;
+#[cfg(feature = "lake-sync")]
+pub mod lake;
 pub mod owner_only;
 pub mod quickstart;
 pub mod setup;
