@@ -202,7 +202,16 @@ enum Kind {
     V2,
 }
 
+/// The longest log file name the reader looks at; any other is not one of the
+/// protocol's, whatever it starts with.
+const NAME_MAX: usize = 255;
+
+/// A log file's kind and version, by its name. A number that does not fit a
+/// `u64` makes the name no log file's: nothing is sized from a name.
 fn classify(name: &str) -> Option<(u64, Kind)> {
+    if name.len() > NAME_MAX {
+        return None;
+    }
     let (v, rest) = name.split_once('.')?;
     if v.len() != 20 || !v.bytes().all(|b| b.is_ascii_digit()) {
         return None;
@@ -253,16 +262,21 @@ fn checkpoint_files(version: u64, files: &[(String, Kind)]) -> Option<Vec<String
             _ => None,
         })
         .collect();
+    // Keyed by part, so nothing is allocated from the `parts` a name states: a
+    // checkpoint is whole when the parts present are exactly 1 to `parts`.
     let parts = multi.first()?.2;
-    let mut named: Vec<Option<String>> = vec![None; usize::try_from(parts).ok()?];
+    let mut named: BTreeMap<u64, &String> = BTreeMap::new();
     for (n, p, total) in multi {
         if total != parts || p == 0 || p > parts {
             return None;
         }
-        named[usize::try_from(p - 1).ok()?] = Some(n.clone());
+        named.insert(p, n);
     }
     let _ = version;
-    named.into_iter().collect()
+    if u64::try_from(named.len()).ok()? != parts {
+        return None;
+    }
+    Some(named.into_values().cloned().collect())
 }
 
 /// Reads a table at `at`, or at its newest version.
@@ -321,11 +335,18 @@ pub fn read_table_with(
     at: Option<u64>,
     limits: &Limits,
 ) -> Result<Snapshot, LogError> {
-    let _ = limits;
     let mut commits: BTreeMap<u64, String> = BTreeMap::new();
     let mut checkpoints: BTreeMap<u64, Vec<(String, Kind)>> = BTreeMap::new();
     let mut hint = false;
-    for name in store.list()? {
+    let names = store.list()?;
+    if names.len() > limits.files {
+        return Err(unreadable(format!(
+            "_delta_log holds {} files, over the {}-file cap",
+            names.len(),
+            limits.files
+        )));
+    }
+    for name in names {
         if name == "_last_checkpoint" {
             hint = true;
         } else if let Some((v, kind)) = classify(&name) {
@@ -353,7 +374,7 @@ pub fn read_table_with(
         (_, None) => return Err(unreadable("the log holds no commit and no checkpoint")),
     };
     if hint {
-        let named = commit::last_checkpoint(&store.get("_last_checkpoint")?)?;
+        let named = commit::last_checkpoint(&fetch(store, "_last_checkpoint", limits)?)?;
         if named <= target && !whole.contains_key(&named) {
             return Err(unreadable(format!(
                 "_last_checkpoint names version {named}, whose checkpoint is not in the log"
@@ -361,17 +382,25 @@ pub fn read_table_with(
         }
     }
     let base = whole.range(..=target).next_back();
-    let first_commit = base.map_or(0, |(v, _)| v + 1);
+    // A checkpoint at the top of u64 has no commit after it.
+    let first_commit = base.map_or(Some(0), |(v, _)| v.checked_add(1));
     let mut state = State::default();
     if let Some((v, files)) = base {
         for f in files {
-            checkpoint::replay(store, f, &mut state).map_err(|e| match e {
+            // The parquet crate asserts on some corrupt files instead of
+            // returning an error; that is this table's `unreadable`, not the
+            // run's end.
+            let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                checkpoint::replay(store, f, &mut state, limits)
+            }))
+            .unwrap_or_else(|_| Err(unreadable(format!("the reader panicked on {f}"))));
+            read.map_err(|e| match e {
                 LogError::Unreadable(w) => unreadable(format!("checkpoint {v}: {w}")),
                 other => other,
             })?;
         }
     }
-    for v in first_commit..=target {
+    for v in first_commit.map_or(1..=0, |first| first..=target) {
         let Some(name) = commits.get(&v) else {
             return Err(unreadable(format!(
                 "the log has no commit {v:020}.json between {} and {target}",
@@ -381,13 +410,29 @@ pub fn read_table_with(
                 )
             )));
         };
-        commit::replay(&store.get(name)?, &mut state)
+        commit::replay(&fetch(store, name, limits)?, &mut state, limits)
             .map_err(|e| unreadable(format!("{name}: {e}")))?;
     }
-    finish(target, state)
+    finish(target, state, limits)
 }
 
-fn finish(version: u64, state: State) -> Result<Snapshot, LogError> {
+/// A JSON log file, once its length is within the commit cap.
+pub(crate) fn fetch(
+    store: &dyn LogStore,
+    name: &str,
+    limits: &Limits,
+) -> Result<Vec<u8>, LogError> {
+    let len = store.len(name)?;
+    if len > limits.commit_bytes {
+        return Err(unreadable(format!(
+            "{name} is {len} bytes, over the {}-byte commit cap",
+            limits.commit_bytes
+        )));
+    }
+    store.get(name)
+}
+
+fn finish(version: u64, state: State, limits: &Limits) -> Result<Snapshot, LogError> {
     let Some(protocol) = state.protocol else {
         return Err(unreadable(format!(
             "no protocol action up to version {version}"
@@ -399,7 +444,7 @@ fn finish(version: u64, state: State) -> Result<Snapshot, LogError> {
             "no metaData action up to version {version}"
         )));
     };
-    let schema = commit::parse_schema(&meta.schema_string)
+    let schema = commit::parse_schema(&meta.schema_string, limits.columns)
         .map_err(|e| unreadable(format!("the schema at version {version}: {e}")))?;
     let clustering_columns = match state.clustering {
         None => Vec::new(),

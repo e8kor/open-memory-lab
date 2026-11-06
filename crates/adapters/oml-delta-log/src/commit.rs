@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde::de::{self, Deserializer, IgnoredAny, MapAccess, Visitor};
 use serde_json::Value;
 
-use crate::{Field, LogError, Meta, Protocol, State, kept, unreadable};
+use crate::{Field, Limits, LogError, Meta, Protocol, State, kept, unreadable};
 
 const CLUSTERING_DOMAIN: &str = "delta.clustering";
 
@@ -82,9 +82,17 @@ fn kept_config<'de, D: Deserializer<'de>>(d: D) -> Result<BTreeMap<String, Strin
 }
 
 /// Applies one commit (or a V2 checkpoint's JSON file) to `state`.
-pub(crate) fn replay(bytes: &[u8], state: &mut State) -> Result<(), String> {
+pub(crate) fn replay(bytes: &[u8], state: &mut State, limits: &Limits) -> Result<(), String> {
     let text = std::str::from_utf8(bytes).map_err(|e| format!("not UTF-8 ({e})"))?;
     for (n, line) in text.lines().enumerate() {
+        if line.len() > limits.commit_line {
+            return Err(format!(
+                "line {} is {} bytes, over the {}-byte line cap",
+                n + 1,
+                line.len(),
+                limits.commit_line
+            ));
+        }
         if line.trim().is_empty() {
             continue;
         }
@@ -128,8 +136,14 @@ pub(crate) fn last_checkpoint(bytes: &[u8]) -> Result<u64, LogError> {
 }
 
 /// The fields of a `schemaString`.
-pub(crate) fn parse_schema(schema_string: &str) -> Result<Vec<Field>, String> {
+pub(crate) fn parse_schema(schema_string: &str, max_columns: usize) -> Result<Vec<Field>, String> {
     let v: Value = serde_json::from_str(schema_string).map_err(|e| e.to_string())?;
+    let columns = count_fields(&v, max_columns);
+    if columns > max_columns {
+        return Err(format!(
+            "the schema has more than {max_columns} columns, over the {max_columns}-column cap"
+        ));
+    }
     if v["type"] != "struct" {
         return Err("the root is not a struct".into());
     }
@@ -158,4 +172,27 @@ pub(crate) fn clustering_columns(configuration: &str) -> Result<Vec<Vec<String>>
     serde_json::from_str::<Config>(configuration)
         .map(|c| c.clustering_columns)
         .map_err(|e| e.to_string())
+}
+
+/// The fields of a type, nested ones included, counted up to `cap + 1`.
+fn count_fields(t: &Value, cap: usize) -> usize {
+    let mut n = 0;
+    if let Some(fields) = t.get("fields").and_then(Value::as_array) {
+        n += fields.len();
+        for f in fields {
+            if n > cap {
+                return n;
+            }
+            n += f
+                .get("type")
+                .map_or(0, |t| count_fields(t, cap - n.min(cap)));
+        }
+    }
+    for k in ["elementType", "keyType", "valueType"] {
+        if n > cap {
+            break;
+        }
+        n += t.get(k).map_or(0, |t| count_fields(t, cap - n.min(cap)));
+    }
+    n
 }

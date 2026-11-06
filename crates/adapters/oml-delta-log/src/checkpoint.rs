@@ -14,7 +14,7 @@ use parquet::file::reader::{ChunkReader, FileReader, Length, SerializedFileReade
 use parquet::record::{Field as Cell, Row};
 use parquet::schema::types::Type;
 
-use crate::{LogError, LogStore, Meta, Protocol, State, commit, kept, unreadable};
+use crate::{Limits, LogError, LogStore, Meta, Protocol, State, commit, fetch, kept, unreadable};
 
 const COLUMNS: [&str; 3] = ["protocol", "metaData", "domainMetadata"];
 const CLUSTERING_DOMAIN: &str = "delta.clustering";
@@ -30,9 +30,14 @@ struct Window {
 
 impl Window {
     fn slice(&self, start: u64, length: u64) -> parquet::errors::Result<bytes::Bytes> {
-        let end = start + length;
+        let end = start.checked_add(length).ok_or_else(|| {
+            parquet::errors::ParquetError::General(format!(
+                "{} bytes {start}+{length} overflow",
+                self.name
+            ))
+        })?;
         for (s, b) in &self.parts {
-            if start >= *s && end <= *s + b.len() as u64 {
+            if start >= *s && end <= s.saturating_add(b.len() as u64) {
                 let from = usize::try_from(start - s).unwrap_or(usize::MAX);
                 let to = usize::try_from(end - s).unwrap_or(usize::MAX);
                 return Ok(b.slice(from..to));
@@ -59,8 +64,8 @@ impl ChunkReader for Window {
         let rest = self
             .parts
             .iter()
-            .find(|(s, b)| start >= *s && start < *s + b.len() as u64)
-            .map(|(s, b)| *s + b.len() as u64 - start)
+            .find(|(s, b)| start >= *s && start < s.saturating_add(b.len() as u64))
+            .map(|(s, b)| s.saturating_add(b.len() as u64) - start)
             .ok_or_else(|| {
                 parquet::errors::ParquetError::General(format!(
                     "{} byte {start} is outside the projected columns",
@@ -76,10 +81,15 @@ impl ChunkReader for Window {
 }
 
 /// Applies one checkpoint file to `state`.
-pub(crate) fn replay(store: &dyn LogStore, name: &str, state: &mut State) -> Result<(), LogError> {
+pub(crate) fn replay(
+    store: &dyn LogStore,
+    name: &str,
+    state: &mut State,
+    limits: &Limits,
+) -> Result<(), LogError> {
     if name.ends_with(".json") {
         // A V2 checkpoint's top-level file is JSON lines, as a commit is.
-        return commit::replay(&store.get(name)?, state).map_err(unreadable);
+        return commit::replay(&fetch(store, name, limits)?, state, limits).map_err(unreadable);
     }
     let len = store.len(name)?;
     if len < 2 * FOOTER {
@@ -93,6 +103,12 @@ pub(crate) fn replay(store: &dyn LogStore, name: &str, state: &mut State) -> Res
     let footer = parquet::file::metadata::FooterTail::try_from(tail)
         .map_err(|e| unreadable(format!("not a parquet file ({e})")))?;
     let meta_len = footer.metadata_length() as u64;
+    if meta_len > limits.footer_bytes {
+        return Err(unreadable(format!(
+            "the footer is {meta_len} bytes, over the {}-byte footer cap",
+            limits.footer_bytes
+        )));
+    }
     if meta_len + FOOTER > len {
         return Err(unreadable(
             "the footer names more metadata than the file holds",
@@ -103,9 +119,15 @@ pub(crate) fn replay(store: &dyn LogStore, name: &str, state: &mut State) -> Res
     let metadata = ParquetMetaDataReader::decode_metadata(&footer_bytes[..footer_bytes.len() - 8])
         .map_err(|e| unreadable(format!("the parquet footer does not parse ({e})")))?;
     let mut parts = vec![(meta_start, bytes::Bytes::from(footer_bytes))];
+    let mut projected: u64 = 0;
     for rg in metadata.row_groups() {
         for c in rg.columns() {
-            if !COLUMNS.contains(&c.column_path().parts()[0].as_str()) {
+            if !c
+                .column_path()
+                .parts()
+                .first()
+                .is_some_and(|top| COLUMNS.contains(&top.as_str()))
+            {
                 continue;
             }
             match c.compression() {
@@ -116,8 +138,15 @@ pub(crate) fn replay(store: &dyn LogStore, name: &str, state: &mut State) -> Res
                     )));
                 }
             }
-            let (start, length) = c.byte_range();
-            if start + length > meta_start {
+            let (start, length, uncompressed) = chunk(c)?;
+            projected = projected.saturating_add(length.max(uncompressed));
+            if projected > limits.checkpoint_bytes {
+                return Err(unreadable(format!(
+                    "the projected columns hold over {projected} bytes, over the {}-byte checkpoint cap",
+                    limits.checkpoint_bytes
+                )));
+            }
+            if start.checked_add(length).is_none_or(|end| end > meta_start) {
                 return Err(unreadable("a column chunk overlaps the footer"));
             }
             parts.push((
@@ -157,6 +186,21 @@ pub(crate) fn replay(store: &dyn LogStore, name: &str, state: &mut State) -> Res
         apply(&row, state)?;
     }
     Ok(())
+}
+
+/// A column chunk's start, compressed length and uncompressed length, each
+/// checked before the parquet crate's `byte_range` asserts on a negative one.
+fn chunk(c: &parquet::file::metadata::ColumnChunkMetaData) -> Result<(u64, u64, u64), LogError> {
+    let start = match c.dictionary_page_offset() {
+        Some(d) if d > 0 => d,
+        _ => c.data_page_offset(),
+    };
+    let bad = || unreadable("a column chunk names a negative offset or length");
+    Ok((
+        u64::try_from(start).map_err(|_| bad())?,
+        u64::try_from(c.compressed_size()).map_err(|_| bad())?,
+        u64::try_from(c.uncompressed_size()).map_err(|_| bad())?,
+    ))
 }
 
 fn group<'a>(row: &'a Row, name: &str) -> Option<&'a Row> {
