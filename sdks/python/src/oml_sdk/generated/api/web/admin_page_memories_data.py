@@ -56,7 +56,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[AdminPageMemoriesDataResponse200 | ErrorEnvelope]:
-    """The admin page's page of memories as JSON, for the Atlas view.
+    """The admin page's page of memories as JSON.
 
      As /web/data/memories, as <user>-admin through the admin read: the page is one memory.admin_read;
     the workareas are the tenant's tree, counted as structure (ADR-0045 d24, d25, d30).
@@ -82,7 +82,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> AdminPageMemoriesDataResponse200 | ErrorEnvelope | None:
-    """The admin page's page of memories as JSON, for the Atlas view.
+    """The admin page's page of memories as JSON.
 
      As /web/data/memories, as <user>-admin through the admin read: the page is one memory.admin_read;
     the workareas are the tenant's tree, counted as structure (ADR-0045 d24, d25, d30).
@@ -104,7 +104,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[AdminPageMemoriesDataResponse200 | ErrorEnvelope]:
-    """The admin page's page of memories as JSON, for the Atlas view.
+    """The admin page's page of memories as JSON.
 
      As /web/data/memories, as <user>-admin through the admin read: the page is one memory.admin_read;
     the workareas are the tenant's tree, counted as structure (ADR-0045 d24, d25, d30).
@@ -128,7 +128,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> AdminPageMemoriesDataResponse200 | ErrorEnvelope | None:
-    """The admin page's page of memories as JSON, for the Atlas view.
+    """The admin page's page of memories as JSON.
 
      As /web/data/memories, as <user>-admin through the admin read: the page is one memory.admin_read;
     the workareas are the tenant's tree, counted as structure (ADR-0045 d24, d25, d30).

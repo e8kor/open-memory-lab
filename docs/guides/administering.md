@@ -226,7 +226,7 @@ verify-chain` exists and is refused while the server serves no chain export.
 At `/web/admin`, an administrator's session acts through its own keys. **Memories** lists every
 memory of the organisation, newest first, 50 a page, filtered by state, workarea, origin,
 author key or text; each page read is one `memory.admin_read` in the journal, the Atlas view's
-included. **Atlas** draws the same page inside the workareas it sits in, sized by their rows.
+included. **Atlas** shows the workareas as a map sized by their rows, with a table twin.
 **Workareas** shows the tree with one dropdown a workarea: status changes as your admin key,
 ratified only by a key other than the proposer's; in progress and commit as your reviewer key.
 Apply asks you to confirm first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).

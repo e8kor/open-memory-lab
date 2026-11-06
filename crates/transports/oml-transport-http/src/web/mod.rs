@@ -16,6 +16,7 @@
 //! `sign_out` answers the app's `not_built` refusal.
 
 pub mod admin_read;
+pub mod atlas;
 pub mod emails;
 pub mod memories;
 pub mod page;
@@ -366,8 +367,6 @@ where
     async fn render_asset(State(_): State<Self>, Path(file): Path<String>) -> Response {
         if file == format!("mermaid-{}.js", render::BUNDLE_SHA256) {
             render::bundle_response()
-        } else if let Some(bytes) = memories::asset(&file) {
-            memories::asset_response(bytes)
         } else {
             let mut response = Response::new(Body::empty());
             *response.status_mut() = StatusCode::NOT_FOUND;
@@ -482,14 +481,13 @@ where
             Ok(Some((token, session))) => {
                 line.session(&session);
                 let fields = Self::query_fields(query);
-                let atlas = fields.as_ref().is_ok_and(is_atlas);
                 let html = match fields {
                     Ok(q) => self.user_view(&token, &session, &q).await,
                     Err(e) => Err(e),
                 };
                 match html {
                     Ok(html) => Answer {
-                        response: self.view_response(html, atlas, false),
+                        response: self.view_response(html),
                         error_code: None,
                         line,
                     },
@@ -526,14 +524,13 @@ where
             Ok(Some((token, session))) if session.admin => {
                 line.session(&session);
                 let fields = Self::query_fields(query);
-                let atlas = fields.as_ref().is_ok_and(is_atlas);
                 let html = match fields {
                     Ok(q) => self.admin_view(&token, &session, &q).await,
                     Err(e) => Err(e),
                 };
                 match html {
                     Ok(html) => Answer {
-                        response: self.view_response(html, atlas, true),
+                        response: self.view_response(html),
                         error_code: None,
                         line,
                     },
@@ -549,32 +546,10 @@ where
         }
     }
 
-    /// A view's page, and on the Atlas view the policy's two scripts and one
-    /// route (ADR-0045 d26); every other view keeps d8's policy, no script.
-    fn view_response(&self, html: String, atlas: bool, admin: bool) -> Response {
-        let mut response = self.page(StatusCode::OK, html);
-        if atlas
-            && let Some(issuer) = self.app.oauth_issuer()
-            && let Some(csp) = response
-                .headers()
-                .get(header::CONTENT_SECURITY_POLICY)
-                .and_then(|v| v.to_str().ok())
-        {
-            let with = csp.replacen(
-                "default-src 'none';",
-                &format!(
-                    "default-src 'none';{}",
-                    memories::atlas_policy(issuer.as_str(), admin)
-                ),
-                1,
-            );
-            if let Ok(value) = HeaderValue::from_str(&with) {
-                response
-                    .headers_mut()
-                    .insert(header::CONTENT_SECURITY_POLICY, value);
-            }
-        }
-        response
+    /// A view's page under d8's policy: no view runs script (ADR-0045
+    /// d32), the Atlas included.
+    fn view_response(&self, html: String) -> Response {
+        self.page(StatusCode::OK, html)
     }
 
     // -- GET /web/data/memories and GET /web/admin/data/memories --------------
@@ -1061,14 +1036,6 @@ where
             self.frame_src().as_deref(),
         )
     }
-}
-
-/// Whether a view's query opens the Atlas view of the Memories list
-/// (ADR-0045 d25): the list, not one memory, with `display=atlas`.
-fn is_atlas(fields: &views::Fields) -> bool {
-    fields.get("view") == Some("memories")
-        && fields.get("display") == Some("atlas")
-        && fields.get("memory").is_none()
 }
 
 /// An `Authorization` header on a web route: refused before anything else

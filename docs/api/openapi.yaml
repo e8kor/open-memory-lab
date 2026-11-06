@@ -2159,7 +2159,7 @@ paths:
     get:
       tags: [web]
       operationId: userPageMemoriesData
-      summary: The user page's page of memories as JSON, for the Atlas view.
+      summary: The user page's page of memories as JSON.
       description: 'The Memories view''s query (state, workarea, origin, author, q, limit, cursor) and its scope, as <user>-web: the rows the list shows with the card''s fields alone, and the workareas the key may read under the filter with their rows counted by state and their dropdown''s acts. The session cookie alone; an Authorization header is access.verb_ceiling web_is_human_only, no session access.not_found; no-store, nosniff, no CORS (ADR-0045 d25, d30).'
       security: []
       responses:
@@ -2178,7 +2178,7 @@ paths:
     get:
       tags: [web]
       operationId: adminPageMemoriesData
-      summary: The admin page's page of memories as JSON, for the Atlas view.
+      summary: The admin page's page of memories as JSON.
       description: 'As /web/data/memories, as <user>-admin through the admin read: the page is one memory.admin_read; the workareas are the tenant''s tree, counted as structure (ADR-0045 d24, d25, d30).'
       security: []
       responses:

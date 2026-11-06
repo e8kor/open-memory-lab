@@ -1721,20 +1721,17 @@ for any other; the bundle route, `/web/assets/mermaid-<sha256>.js`, serves the b
 opaque origin with no cookie, storage or network; a rendering is never signed and journals
 nothing.
 
-*Planned for the next release ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30):* the Memories view of both
-pages lists one page of cards, newest first by `(created_at, artifact_id)`, resumed after the
-last row by `cursor`, `limit` 50 by default and at most 200, filtered by `state`, `workarea`,
-`origin`, `author` and `q`. `display=atlas` opens the Atlas view of the same page, the one view
-that runs script: its answer's CSP gains `script-src <issuer>/web/assets/three-<sha256>.min.js
-<issuer>/web/assets/atlas-<sha256>.js; connect-src <issuer>/web/data/memories` (or
-`/web/admin/data/memories`), no `'unsafe-inline'`, no `'unsafe-eval'`, no other host. Two web
-routes, `GET /web/data/memories` and `GET /web/admin/data/memories`, answer the same page as
-JSON, `{items, next_cursor, workareas, base}`, by the same session key and with the same scope;
-the admin route's page is one `memory.admin_read`. `workareas` holds the nodes the reading key
-may read under the filter with their rows counted by state and the acts each one's dropdown
-offers. The Workareas views offer each workarea's acts as one `select` computed by the verbs'
-own checks, confirmed by a `GET` before the `POST` of `workarea_transition`, `workarea_ratify`
-or `workarea_mode` runs.
+*Planned for the next release ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d32):* the Memories view of both
+pages lists one page of compact cards, newest first by `(created_at, artifact_id)`, resumed
+after the last row by `cursor`, `limit` 50 by default and at most 200, filtered by `state`,
+`workarea`, `origin`, `author` and `q`. `display=atlas` opens the Atlas: the readable workareas
+of the scope as a treemap whose areas are readable counts, drawn by the server as SVG with its
+table twin, under the same CSP as every page, with no script. Two web routes,
+`GET /web/data/memories` and `GET /web/admin/data/memories`, answer the same page as JSON,
+`{items, next_cursor, workareas, base}`, by the same session key and with the same scope; the
+admin route's page is one `memory.admin_read`. The Workareas views offer each workarea's acts
+as one `select` computed by the verbs' own checks, confirmed by a `GET` before the `POST` of
+`workarea_transition`, `workarea_ratify` or `workarea_mode` runs.
 
 ### Admin read
 

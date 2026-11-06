@@ -136,7 +136,7 @@ fn confirm_form(base: &str, csrf: &str, node: Uuid, offer: &WorkareaOffer) -> St
 
 /// A workarea's dropdown: its offered acts, a withheld commit shown
 /// disabled with its count, and Apply only where something is offered.
-fn dropdown(base: &str, node: Uuid, offers: &WorkareaOffers) -> String {
+pub(crate) fn dropdown(base: &str, node: Uuid, offers: &WorkareaOffers) -> String {
     if offers.offers.is_empty() && offers.commit_withheld.is_none() {
         return r#"<span class="dim">nothing to do here now</span>"#.to_owned();
     }

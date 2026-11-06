@@ -10,7 +10,6 @@
 //! fields the card shows (d25, d26).
 
 use std::fmt::Write as _;
-use std::sync::LazyLock;
 
 use axum::body::Body;
 use axum::http::{HeaderValue, StatusCode, header};
@@ -26,10 +25,9 @@ use oml_app::domain::valid_time::ValidTime;
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::{AdminState, Bearer, HIT_KINDS, RecallRequest, ServedMemory};
 
-use super::page::{attr, input, select, state_tag, text};
+use super::page::{attr, input, select, text};
 use super::views::Fields;
 use crate::error::{ApiError, ErrorContext, map_app_error};
-use crate::oauth::page::sha256;
 use crate::oauth::percent_encode;
 use crate::{ApiState, retry_chain};
 
@@ -39,67 +37,6 @@ pub const PAGE_DEFAULT: usize = 50;
 pub const PAGE_MAX: usize = 200;
 /// Recall's own bound on one answer, the user page's text search.
 pub const RECALL_MAX: usize = 100;
-
-/// three.js r152 (MIT, `assets/three.LICENSE`), vendored and compiled in,
-/// the file `docs/atlas` ships; nothing is fetched from a CDN.
-pub const THREE: &[u8] = include_bytes!(
-    "../../assets/three-218b9f9420af1ee2b773fa066cee0eeb52f7ac76ca2fa11b11b732c1ba0a6e39.min.js"
-);
-/// three.js's SHA-256, the digest in its file name; a test holds the two
-/// equal to the bytes.
-pub const THREE_SHA256: &str = "218b9f9420af1ee2b773fa066cee0eeb52f7ac76ca2fa11b11b732c1ba0a6e39";
-/// The Atlas script, compiled in.
-pub const ATLAS: &[u8] = include_bytes!("../../assets/atlas.js");
-
-static ATLAS_SHA256: LazyLock<String> = LazyLock::new(|| hex::encode(sha256(ATLAS)));
-
-/// The path of three.js under `/web/assets`.
-#[must_use]
-pub fn three_path() -> String {
-    format!("/web/assets/three-{THREE_SHA256}.min.js")
-}
-
-/// The path of the Atlas script, its digest in the name.
-#[must_use]
-pub fn atlas_path() -> String {
-    format!("/web/assets/atlas-{}.js", *ATLAS_SHA256)
-}
-
-/// The script file `/web/assets/{file}` names, if it is one of the two.
-#[must_use]
-pub fn asset(file: &str) -> Option<&'static [u8]> {
-    let path = format!("/web/assets/{file}");
-    if path == three_path() {
-        Some(THREE)
-    } else if path == atlas_path() {
-        Some(ATLAS)
-    } else {
-        None
-    }
-}
-
-/// The JSON route of a page (ADR-0045 d25).
-#[must_use]
-pub fn data_path(admin: bool) -> &'static str {
-    if admin {
-        "/web/admin/data/memories"
-    } else {
-        "/web/data/memories"
-    }
-}
-
-/// What the Atlas view's answer adds to the pages' policy (ADR-0045 d26):
-/// the two files by path under the issuer, and the one route it fetches.
-#[must_use]
-pub fn atlas_policy(issuer: &str, admin: bool) -> String {
-    let issuer = issuer.trim_end_matches('/');
-    format!(
-        " script-src {issuer}{} {issuer}{}; connect-src {issuer}{};",
-        three_path(),
-        atlas_path(),
-        data_path(admin)
-    )
-}
 
 /// The Memories view's query, each field validated (ADR-0045 d22).
 pub(crate) struct ListQuery {
@@ -177,6 +114,11 @@ impl ListQuery {
         })
     }
 
+    /// The `workarea` filter as a reference, if one is set.
+    pub(crate) fn workarea_reference(&self) -> Option<Reference> {
+        self.workarea.as_ref().map(|(_, r)| r.clone())
+    }
+
     /// The view's link on `base` with every filter kept, the cursor when
     /// given, and the Atlas when asked; escaped for an attribute.
     fn link(&self, base: &str, cursor: Option<&str>, atlas: bool) -> String {
@@ -216,6 +158,12 @@ pub(crate) struct Card {
     claim_key: String,
     /// `None` where the card shows the shared area (ADR-0044 d9).
     author: Option<String>,
+    /// `agent`, `person` or `service`, the author key's `held_by`, where
+    /// the page's key may know it; `None` otherwise.
+    author_kind: Option<&'static str>,
+    written: String,
+    served: Option<String>,
+    scan: Option<String>,
     anchor: Option<String>,
     format: Option<String>,
     valid: Option<String>,
@@ -253,10 +201,33 @@ fn is_prose(media_type: &str) -> bool {
     matches!(media_type, "text/plain" | "text/markdown")
 }
 
+fn kind_word(held_by: oml_app::domain::HeldBy) -> &'static str {
+    match held_by {
+        oml_app::domain::HeldBy::Human => "person",
+        oml_app::domain::HeldBy::Agent => "agent",
+        _ => "service",
+    }
+}
+
+fn day(t: &oml_app::domain::EventTime) -> String {
+    t.as_str().chars().take(10).collect()
+}
+
 impl Card {
-    fn of_served(m: &ServedMemory) -> Self {
+    fn of_served(m: &ServedMemory, kinds: &[(Uuid, &'static str)]) -> Self {
         let r = &m.memory;
         Self {
+            author_kind: (!m.anonymous)
+                .then(|| {
+                    kinds
+                        .iter()
+                        .find(|(k, _)| *k == r.author_key_id)
+                        .map(|(_, w)| *w)
+                })
+                .flatten(),
+            written: day(&r.created_at),
+            served: r.promoted_at.as_ref().map(day),
+            scan: r.scan_finding.clone(),
             id: r.memory_id,
             state: AdminState::of(r).as_str(),
             workarea: m.workarea_path.clone().unwrap_or_default(),
@@ -280,6 +251,10 @@ impl Card {
             .and_then(|k| k.name.as_ref())
             .map_or_else(|| r.author_key_id.to_string(), |n| n.as_str().to_owned());
         Self {
+            author_kind: m.author.as_ref().map(|k| kind_word(k.held_by)),
+            written: day(&r.created_at),
+            served: r.promoted_at.as_ref().map(day),
+            scan: r.scan_finding.clone(),
             id: r.memory_id,
             state: m.state.as_str(),
             workarea: m.workarea_path.clone(),
@@ -308,57 +283,149 @@ impl Card {
             "text": self.body,
             "claim_key": self.claim_key,
             "author": self.author,
+            "author_kind": self.author_kind,
             "anchor": self.anchor,
             "format": self.format,
             "valid": self.valid,
         })
     }
 
-    /// The card, in the review card's form (ADR-0045 d11, d22).
+    /// The card, compact, in the design system's MemoryCard form
+    /// (ADR-0045 d22, d32): the state as glyph and word, the version and
+    /// the lifecycle steps in the head, the text, the author's kind and
+    /// key; the provenance timeline and the facts behind Details.
     fn html(&self, open: &str) -> String {
+        let reviewed = !matches!(self.state, "held");
+        let served = matches!(self.state, "promoted" | "superseded" | "demoted");
+        let step = |done: bool, never: bool| {
+            if never {
+                "no"
+            } else if done {
+                "done"
+            } else {
+                "wait"
+            }
+        };
+        let rejected = self.state == "rejected";
+        let steps_label = format!(
+            "written, held, reviewed{}, served{}",
+            if reviewed { "" } else { ": not yet" },
+            if served {
+                ""
+            } else if rejected {
+                ": never"
+            } else {
+                ": not yet"
+            }
+        );
+        let who = self
+            .author
+            .as_deref()
+            .map_or_else(|| "the shared area".to_owned(), text);
         let mut out = format!(
-            r#"<article class="card memory" id="m-{}"><p class="label">{} · {} · version {}</p>"#,
+            r#"<article class="mcard" id="m-{}" aria-label="Memory v{}, {}"><div class="mhead">{}<span class="end"><span class="ver">v{}</span><ol class="steps" role="img" aria-label="{}"><li class="{}"></li><li class="{}"></li><li class="{}"></li><li class="{}"></li></ol></span></div>"#,
             self.id,
-            state_tag(self.state),
-            text(&self.workarea),
-            self.version
+            self.version,
+            self.state,
+            chip(self.state),
+            self.version,
+            steps_label,
+            step(true, false),
+            step(true, false),
+            step(reviewed, false),
+            step(served, rejected),
         );
         if let Some(title) = &self.title {
-            let _ = write!(out, r#"<p class="title">{}</p>"#, text(title));
+            let _ = write!(out, r#"<p class="mtitle">{}</p>"#, text(title));
         }
         let _ = write!(
             out,
-            r#"<p class="text{}">{}</p>"#,
+            r#"<p class="mtext{}">{}</p><p class="mby">{}{}</p>"#,
             if self.prose { "" } else { " mono" },
-            text(&self.body)
+            text(&self.body),
+            self.author_kind
+                .map_or_else(String::new, |k| format!("<b>{k}</b> · ")),
+            who
         );
-        if self.state == "held" {
-            out.push_str(r#"<p class="held">Held until someone else reviews it.</p>"#);
-        }
+        // The provenance timeline and the facts, folded: compact by default.
+        let review_line = match self.state {
+            "held" => "waiting: held until someone else reviews it".to_owned(),
+            "rejected" => "rejected by a key outside its lineage".to_owned(),
+            _ => "approved by a key outside its lineage".to_owned(),
+        };
+        let served_line = match (self.state, &self.served) {
+            ("rejected", _) => "never: the text is kept".to_owned(),
+            (_, Some(d)) => format!("to readers of {} · {d}", text(&self.workarea)),
+            _ => "not yet".to_owned(),
+        };
         let _ = write!(
             out,
-            r#"<p class="dim mono">{} · from {}</p>"#,
-            text(&self.claim_key),
-            self.author
+            r#"<details class="more"><summary>Details</summary><ol class="timeline" aria-label="Provenance"><li class="done"><b>Written</b> {} · {}</li><li class="done"><b>Held</b> scan: {}</li><li class="{}"><b>Reviewed</b> {}</li><li class="{}"><b>Served</b> {}</li></ol><dl class="facts"><dt>Id</dt><dd class="mono">{}</dd><dt>Workarea</dt><dd class="mono">{}</dd><dt>Claim key</dt><dd class="mono">{}</dd>"#,
+            who,
+            self.written,
+            self.scan
                 .as_deref()
-                .map_or_else(|| "the shared area".to_owned(), text)
+                .map_or_else(|| "no findings".to_owned(), text),
+            step(reviewed, false),
+            review_line,
+            step(served, rejected),
+            served_line,
+            self.id,
+            text(&self.workarea),
+            text(&self.claim_key),
         );
         for (label, value) in [
-            ("source", &self.anchor),
-            ("format", &self.format),
-            ("valid", &self.valid),
+            ("Source", &self.anchor),
+            ("Format", &self.format),
+            ("Valid", &self.valid),
         ] {
             if let Some(value) = value {
-                let _ = write!(out, r#"<p class="dim mono">{label}: {}</p>"#, text(value));
+                let _ = write!(out, "<dt>{label}</dt><dd>{}</dd>", text(value));
             }
         }
         let _ = write!(
             out,
-            r#"<p><a href="{open}&amp;memory={}">Open</a></p></article>"#,
+            r#"</dl><a href="{open}&amp;memory={}">Open</a></details></article>"#,
             self.id
         );
         out
     }
+}
+
+/// A state as the design system's chip: its glyph and its one word.
+pub(crate) fn chip(state: &str) -> String {
+    format!(
+        r#"<span class="chip is-{state}" title="{}">{}{state}</span>"#,
+        match state {
+            "held" => "Held until someone else reviews it",
+            "promoted" => "Passed review by another identity; not a claim that it is true",
+            _ => state,
+        },
+        glyph(state)
+    )
+}
+
+/// The state's glyph, an inline SVG in the state's colour: held an open
+/// ring with a gap, promoted a disc, superseded a half disc, rejected the
+/// one square, demoted a slashed ring, in progress a dotted ring.
+pub(crate) fn glyph(state: &str) -> String {
+    let shape = match state {
+        "held" => {
+            r#"<circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="21 5.4"/>"#
+        }
+        "promoted" => r#"<circle cx="6" cy="6" r="4.6" fill="currentColor"/>"#,
+        "superseded" => {
+            r#"<circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6 1.8A4.2 4.2 0 0 0 6 10.2Z" fill="currentColor"/>"#
+        }
+        "rejected" => r#"<rect x="2" y="2" width="8" height="8" fill="currentColor"/>"#,
+        "in-progress" => {
+            r#"<circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="1.4 2.2"/>"#
+        }
+        _ => {
+            r#"<circle cx="6" cy="6" r="4.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3 9 9 3" stroke="currentColor" stroke-width="1.4"/>"#
+        }
+    };
+    format!(r#"<svg class="glyph g-{state}" viewBox="0 0 12 12" aria-hidden="true">{shape}</svg>"#)
 }
 
 /// One page of cards and the cursor of the next.
@@ -394,26 +461,6 @@ pub(crate) fn json_answer(status: StatusCode, value: &Value) -> Response {
     h.insert(
         header::REFERRER_POLICY,
         HeaderValue::from_static("same-origin"),
-    );
-    response
-}
-
-/// A script file's answer, immutable: its digest is in its name.
-#[must_use]
-pub fn asset_response(bytes: &'static [u8]) -> Response {
-    let mut response = Response::new(Body::from(bytes));
-    let h = response.headers_mut();
-    h.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/javascript; charset=utf-8"),
-    );
-    h.insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=31536000, immutable"),
-    );
-    h.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
     );
     response
 }
@@ -459,8 +506,13 @@ where
                 )
                 .await
                 .map_err(app_error)?;
+            let kinds = self.own_kinds(web).await?;
             return Ok(CardPage {
-                cards: page.items.iter().map(Card::of_served).collect(),
+                cards: page
+                    .items
+                    .iter()
+                    .map(|m| Card::of_served(m, &kinds))
+                    .collect(),
                 next: page.next_cursor,
             });
         };
@@ -479,6 +531,7 @@ where
                     .key_id,
             ),
         };
+        let kinds = self.own_kinds(web).await?;
         let result = self
             .app
             .recall(
@@ -511,9 +564,22 @@ where
             .chain(result.hits.iter().map(|h| &h.served))
             .filter(|m| q.state.is_none_or(|s| AdminState::of(&m.memory) == s))
             .filter(|m| author.is_none_or(|a| m.memory.author_key_id == a))
-            .map(Card::of_served)
+            .map(|m| Card::of_served(m, &kinds))
             .collect();
         Ok(CardPage { cards, next: None })
+    }
+
+    /// The `held_by` of each of the person's keys, the authors the user
+    /// page may name a kind for (ADR-0045 d32).
+    async fn own_kinds(&self, web: &Caller) -> Result<Vec<(Uuid, &'static str)>, ApiError> {
+        Ok(self
+            .app
+            .web_own_keys(web)
+            .await
+            .map_err(app_error)?
+            .iter()
+            .map(|k| (k.key.key_id, kind_word(k.key.held_by)))
+            .collect())
     }
 
     /// The admin page's page of the list (ADR-0045 d22, d24), as
@@ -669,23 +735,18 @@ pub(crate) fn list_view(base: &str, q: &ListQuery, page: Option<&CardPage>, lede
         origin,
     );
     let mut out = format!(
-        r#"<h1>{}</h1><p class="desc">{lede}</p><form class="row" method="get" action="{base}"><input type="hidden" name="view" value="memories">{}{}{}{}{}{}<button type="submit">Filter</button></form>"#,
+        r#"<h1>{}</h1><p class="desc">{lede}</p><form class="filters" method="get" action="{base}"><input type="hidden" name="view" value="memories">{}{}{}{}{}{}<button type="submit">Filter</button></form>"#,
         "Memories",
-        input("q", "text", q.q.as_deref().unwrap_or(""), false),
-        select("state", "state", &states),
+        input("q", "Text", q.q.as_deref().unwrap_or(""), false),
+        select("state", "State", &states),
         input(
             "workarea",
-            "workarea",
+            "Workarea",
             q.workarea.as_ref().map_or("", |(w, _)| w.as_str()),
             false
         ),
-        select("origin", "origin", &origins),
-        input(
-            "author",
-            "author key",
-            q.author.as_deref().unwrap_or(""),
-            false
-        ),
+        select("origin", "Source", &origins),
+        input("author", "Author", q.author.as_deref().unwrap_or(""), false),
         if q.atlas {
             r#"<input type="hidden" name="display" value="atlas">"#
         } else {
@@ -718,10 +779,11 @@ pub(crate) fn list_view(base: &str, q: &ListQuery, page: Option<&CardPage>, lede
         out.push_str(r#"<p class="dim">No memory matches.</p>"#);
     }
     let open = q.link(base, None, false);
+    out.push_str(r#"<div class="mlist">"#);
     for card in &page.cards {
         out.push_str(&card.html(&open));
     }
-    out.push_str(r#"<p class="pager">"#);
+    out.push_str(r#"</div><p class="pager">"#);
     if q.cursor.is_some() {
         let _ = write!(
             out,
@@ -738,49 +800,4 @@ pub(crate) fn list_view(base: &str, q: &ListQuery, page: Option<&CardPage>, lede
     }
     out.push_str("</p>");
     out
-}
-
-/// The Atlas view's body: the canvas, the text list the script builds,
-/// the way back to the list without script, and the two script files
-/// (ADR-0045 d25–d27). It renders no memory itself.
-pub(crate) fn atlas_view(base: &str, q: &ListQuery, lede: &str) -> String {
-    let admin = base != "/web";
-    let open = format!("{base}?view=memories");
-    let mut out = list_view(base, q, None, lede);
-    let _ = write!(
-        out,
-        r#"<nav class="crumbs" id="atlas-crumbs" aria-label="workareas"></nav><div class="atlas" id="atlas" data-src="{}" data-open="{}"><canvas id="atlas-canvas" aria-hidden="true"></canvas><div id="atlas-labels" aria-hidden="true"></div><div id="atlas-panel" class="atlas-panel card" hidden></div></div><p id="atlas-status" class="dim" role="status">Drawing.</p><noscript><p>The Atlas needs script. <a href="{}">List view</a></p></noscript><h2>Workareas</h2><ol id="atlas-regions" class="atlas-list"></ol><h2>Memories on this page</h2><ol id="atlas-list" class="atlas-list"></ol><p class="pager" id="atlas-next"></p><script src="{}"></script><script src="{}"></script>"#,
-        data_path(admin),
-        open,
-        q.link(base, q.cursor.as_deref(), false),
-        three_path(),
-        atlas_path()
-    );
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_vendored_three_js_is_the_one_its_file_name_says() {
-        assert_eq!(hex::encode(sha256(THREE)), THREE_SHA256);
-        assert!(asset(&format!("three-{THREE_SHA256}.min.js")).is_some());
-        assert!(asset("three.min.js").is_none(), "only by its digest");
-    }
-
-    #[test]
-    fn the_atlas_policy_names_two_files_and_one_route_under_the_issuer() {
-        let policy = atlas_policy("https://oml.example.com/", true);
-        assert_eq!(
-            policy,
-            format!(
-                " script-src https://oml.example.com{} https://oml.example.com{}; connect-src https://oml.example.com/web/admin/data/memories;",
-                three_path(),
-                atlas_path()
-            )
-        );
-        assert!(!policy.contains("unsafe") && !policy.contains("'self'"));
-    }
 }

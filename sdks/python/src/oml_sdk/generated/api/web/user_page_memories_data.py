@@ -56,7 +56,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorEnvelope | UserPageMemoriesDataResponse200]:
-    """The user page's page of memories as JSON, for the Atlas view.
+    """The user page's page of memories as JSON.
 
      The Memories view's query (state, workarea, origin, author, q, limit, cursor) and its scope, as
     <user>-web: the rows the list shows with the card's fields alone, and the workareas the key may read
@@ -85,7 +85,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> ErrorEnvelope | UserPageMemoriesDataResponse200 | None:
-    """The user page's page of memories as JSON, for the Atlas view.
+    """The user page's page of memories as JSON.
 
      The Memories view's query (state, workarea, origin, author, q, limit, cursor) and its scope, as
     <user>-web: the rows the list shows with the card's fields alone, and the workareas the key may read
@@ -110,7 +110,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[ErrorEnvelope | UserPageMemoriesDataResponse200]:
-    """The user page's page of memories as JSON, for the Atlas view.
+    """The user page's page of memories as JSON.
 
      The Memories view's query (state, workarea, origin, author, q, limit, cursor) and its scope, as
     <user>-web: the rows the list shows with the card's fields alone, and the workareas the key may read
@@ -137,7 +137,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> ErrorEnvelope | UserPageMemoriesDataResponse200 | None:
-    """The user page's page of memories as JSON, for the Atlas view.
+    """The user page's page of memories as JSON.
 
      The Memories view's query (state, workarea, origin, author, q, limit, cursor) and its scope, as
     <user>-web: the rows the list shows with the card's fields alone, and the workareas the key may read

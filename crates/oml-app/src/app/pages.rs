@@ -156,6 +156,9 @@ pub struct Region {
 pub struct Regions {
     pub regions: Vec<Region>,
     pub partial: bool,
+    /// The first region's ancestors, `universe` first, each its id and
+    /// name: the breadcrumb out of a zoomed Atlas.
+    pub ancestors: Vec<(Uuid, Name)>,
 }
 
 /// One act a workarea's dropdown may offer (ADR-0045 d28).
@@ -939,7 +942,34 @@ where
                 .count_listing(web, Some(Reference::Id(root)), &mut regions, &outside)
                 .await?;
         }
-        Ok(Regions { regions, partial })
+        let ancestors = self.ancestors_of(web.key.tenant_id, &regions).await?;
+        Ok(Regions {
+            regions,
+            partial,
+            ancestors,
+        })
+    }
+
+    /// The ancestors of the first region, `universe` first.
+    async fn ancestors_of(
+        &self,
+        tenant_id: Uuid,
+        regions: &[Region],
+    ) -> Result<Vec<(Uuid, Name)>, AppError> {
+        let Some(top) = regions.first() else {
+            return Ok(Vec::new());
+        };
+        let ancestry = self
+            .journal
+            .workarea_ancestry(tenant_id, top.workarea.workarea_id)
+            .await?
+            .unwrap_or_default();
+        Ok(ancestry
+            .iter()
+            .skip(1)
+            .rev()
+            .map(|w| (w.workarea_id, w.name.clone()))
+            .collect())
     }
 
     /// Counts the rows [`Self::web_memories`] lists under `workarea` onto
@@ -1030,7 +1060,12 @@ where
                 None => break false,
             }
         };
-        Ok(Regions { regions, partial })
+        let ancestors = self.ancestors_of(tenant_id, &regions).await?;
+        Ok(Regions {
+            regions,
+            partial,
+            ancestors,
+        })
     }
 
     /// The nodes the tree read serves `caller` under `scope`, uncounted.

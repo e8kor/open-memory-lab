@@ -226,7 +226,7 @@ where
             "setup" => ("/web?view=setup", self.setup_view()),
             "memories" => (
                 "/web?view=memories",
-                self.memories_view(&web, &csrf, query).await?,
+                self.memories_view(&web, session, &csrf, query).await?,
             ),
             "workarea" => (
                 "/web?view=workarea",
@@ -417,6 +417,7 @@ where
     async fn memories_view(
         &self,
         web: &oml_app::app::Caller,
+        session: &WebSessionRecord,
         csrf: &str,
         query: &Fields,
     ) -> Result<String, ApiError> {
@@ -435,7 +436,19 @@ where
         let list = super::memories::ListQuery::parse(query)?;
         let lede = "Newest first. A held memory is held until someone else reviews it; only its author reads it before then.";
         if list.atlas {
-            return Ok(super::memories::atlas_view("/web", &list, lede));
+            // The Atlas reads no memory: the person's workareas and their
+            // counts, from the root unless a workarea is chosen (d32).
+            let review = self.caller(session, Capacity::Review).await?;
+            let scope = list
+                .workarea_reference()
+                .or_else(|| web.key().user.map(Reference::Id));
+            let mut body = super::memories::list_view("/web", &list, None, lede);
+            body.push_str(
+                &self
+                    .atlas_view("/web", web, &review, &review, scope, false)
+                    .await?,
+            );
+            return Ok(body);
         }
         let page = self.user_cards(web, &list).await?;
         Ok(super::memories::list_view("/web", &list, Some(&page), lede))
@@ -729,7 +742,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             "queue" => ("/web/admin?view=queue", self.queue_view(&admin).await?),
             "memories" => (
                 "/web/admin?view=memories",
-                self.admin_memories_view(&admin, query, &csrf).await?,
+                self.admin_memories_view(&admin, session, query, &csrf)
+                    .await?,
             ),
             "review" => ("/web/admin?view=review", review_start("/web/admin", &csrf)),
             "workarea" => (
@@ -1211,6 +1225,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
     async fn admin_memories_view(
         &self,
         admin: &oml_app::app::Caller,
+        session: &WebSessionRecord,
         query: &Fields,
         csrf: &str,
     ) -> Result<String, ApiError> {
@@ -1259,7 +1274,20 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
         let list = super::memories::ListQuery::parse(query)?;
         let lede = "Every memory, newest first. Each page you read is journalled.";
         if list.atlas {
-            return Ok(super::memories::atlas_view("/web/admin", &list, lede));
+            let mut body = super::memories::list_view("/web/admin", &list, None, lede);
+            body.push_str(
+                &self
+                    .atlas_view(
+                        "/web/admin",
+                        admin,
+                        admin,
+                        &self.caller(session, Capacity::Review).await?,
+                        list.workarea_reference(),
+                        true,
+                    )
+                    .await?,
+            );
+            return Ok(body);
         }
         let page = self.admin_cards(admin, &list).await?;
         Ok(super::memories::list_view(
