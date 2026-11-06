@@ -319,6 +319,18 @@ Decided, not built. The build follows #163, #166 and #167.
   client fails where the Python and TypeScript layers already fail. The cost is hand-written
   response types, kept honest by the check on requests and by the page tests on responses.
 
+- **d10 — The operator's answers of 2026-11-06 to this record's open choices.** Each is folded
+  into the decision it governs; this list is where each answer is found.
+    - **(a) Identity.** A session-derived `omls_` credential per capacity, accepted only with
+      the web client secret and never on `/mcp`: accepted (d2).
+    - **(b) Transport.** In the lead, the in-process `oneshot` through the same router the
+      listener serves, in place of a loopback hop: accepted (d4).
+    - **(c) SDK.** A hand-written thin client held to `openapi.yaml` by a contract check:
+      accepted (d9).
+    - **(d) Ring.** The new operations go on `/v2`, the current API version: confirmed (d5).
+    - **(e) Sign-in page.** `GET /web` with no live session passes through to the auth
+      context's sign-in page, with no redirect: accepted (d6).
+
 ## Consequences
 
 - `oml-web`, `oml-page` and `oml-sdk` join the workspace; `oml-transport-http` loses its page
