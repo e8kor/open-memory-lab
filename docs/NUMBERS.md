@@ -80,7 +80,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0059 | `feat/valid-time-r2` | #83 | a memory states when it is true recall hides what has ended and search | open |
 | adr | 0060 | `feat/lake-writer` | #75 | the lake writer drains the outbox it has seals what it materializes an | open |
 | adr | 0061 | `design/rust-adapter` | #70 | oml sync reads a rust workspace as one claim per crate and one per mod | open |
-| adr | 0062 | `design/delta-mapping` | #74 | oml sync maps a delta lakes tables into anchored claims from the log a | open |
+| adr | 0062 | `feat/delta-sync` | #74 | oml sync maps a delta lakes tables into anchored claims from the log a | open |
 | adr | 0063 | `feat/chat-memory` | #78 | a chat turn becomes memory only when the agent in it writes the fact a | open |
 | adr | 0064 | `design/implicit-code-capture` | #80 | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
 | adr | 0065 | `feat/content-scanner` | #81 | the scan is a versioned compiled in rule set that vetoes leaked keys a | open |
@@ -199,14 +199,14 @@ is a collision: the branch that reserved later renumbers.
 | fr | 131 | `design/rust-adapter` | #70 | A module claim goes stale only when its doc changes (ADR-0061 d8), so  | open |
 | fr | 132 | `design/rust-adapter` | #70 | Crate dependencies are stated in each crate claim's text and not as `d | open |
 | fr | 133 | `design/rust-adapter` | #70 | Whether syn in the shipped `oml` binary would change its build time or | open |
-| fr | 140 | `design/delta-mapping` | #74 | The proposed ADR-0062 d3 ships `--adapter delta` in a second `oml` art | open |
-| fr | 141 | `design/delta-mapping` | #74 | The minimal Delta log reader (ADR-0062 d3, d4) is checked against delt | open |
-| fr | 142 | `design/delta-mapping` | #74 | The review burden of a lake (ADR-0062 d18) depends on how many columns | open |
-| fr | 143 | `design/delta-mapping` | #74 | The object-storage requests, time and cost of syncing 2,000 tables (AD | open |
-| fr | 144 | `design/delta-mapping` | #74 | The lake eval (ADR-0062 d19) has no results: whether table, schema and | open |
-| fr | 145 | `design/delta-mapping` | #74 | A table copied to a new location reads `removed` there and `new` here  | open |
-| fr | 146 | `design/delta-mapping` | #74 | A lake sync records source checks one request each through ADR-0057's  | open |
-| fr | 147 | `design/delta-mapping` | #74 | ADR-0062 d1 moves ADR-0020 d7's row reading to the client, which strea | open |
+| fr | 140 | `feat/delta-sync` | #74 | The proposed ADR-0062 d3 ships `--adapter delta` in a second `oml` art | open |
+| fr | 141 | `feat/delta-sync` | #74 | The minimal Delta log reader (ADR-0062 d3, d4) is checked against delt | open |
+| fr | 142 | `feat/delta-sync` | #74 | The review burden of a lake (ADR-0062 d18) depends on how many columns | open |
+| fr | 143 | `feat/delta-sync` | #74 | The object-storage requests, time and cost of syncing 2,000 tables (AD | open |
+| fr | 144 | `feat/delta-sync` | #74 | The lake eval (ADR-0062 d19) has no results: whether table, schema and | open |
+| fr | 145 | `feat/delta-sync` | #74 | A table copied to a new location reads `removed` there and `new` here  | open |
+| fr | 146 | `feat/delta-sync` | #74 | A lake sync records source checks one request each through ADR-0057's  | open |
+| fr | 147 | `feat/delta-sync` | #74 | ADR-0062 d1 moves ADR-0020 d7's row reading to the client, which strea | open |
 | fr | 160 | `feat/chat-memory` | #78 | Whether the agent's own extraction of chat facts answers more LongMemE | open |
 | fr | 161 | `feat/chat-memory` | #78 | The turns of a session that ends between two captures are not captured | open |
 | fr | 162 | `feat/chat-memory` | #78 | Per-turn recall's relevance is unlabelled: at least 30 labelled inject | open |
