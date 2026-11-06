@@ -7,9 +7,9 @@ answers: how big-data datasets onboard through an import manifest (explicitly po
 
 # ADR-0020 — Dataset onboarding: the import manifest
 
-**Status:** accepted design · 2026-10-29 · explicitly post-v1 ([critical path](../product/critical-path.md) M5)
+**Status:** accepted design · 2026-10-29 · explicitly post-v1 (critical path M5)
 
-**Release:** not scheduled ([releases](../product/releases.md#decisions))
+**Release:** not built ([releases](../changelog.md))
 
 Everything this record decides is design — no code exists, and nothing here is on the v1 build.
 It is recorded now because a few of its reservations are cheap in v1 and expensive later; those
@@ -45,7 +45,7 @@ partial loads and refusals are journalled, never silent.
   source locator with a snapshot pin (Delta version, Parquet digest set, CSV digest, or
   warehouse query plus as-of); a deterministic, versioned schema-mapping spec — columns to
   `claim_key` (unique within the snapshot), body, attribution/producer, event-time, and the rows'
-  `kind` (default `memory`; `kind: term` is the reserved external-ontology import profile, RS-11) —
+  `kind` (default `memory`; `kind: term` is the reserved external-ontology import profile, #148) —
   whose digest rides the signed envelope; the transform's plugin identity and version
   ([ADR-0019](ADR-0019-hexagonal-architecture-and-plugins.md)); the row count, mapping-failure
   count and failure-report digest; **two Merkle roots** — per-row plaintext digests and per-row
@@ -61,7 +61,7 @@ partial loads and refusals are journalled, never silent.
   manifest, and `import.completed`. Per-row facts live in a root-anchored side table,
   `import_rows` (`tenant_id`, `manifest_id`, `row_index`, `artifact_id`, `claim_key`,
   `plaintext_digest`, `ciphertext_digest`, `event_time`, `body_ref`) — outside the chain but
-  reconcilable against it: the [reconciler](../architecture/reconciliation.md) recomputes the
+  reconcilable against it: the [reconciler](https://github.com/e8kor/open-memory-lab/blob/main/design/reconciliation.md) recomputes the
   Merkle root over `import_rows` and compares it to the signed root, the same pattern
   `read_events` and `system.readlog_anchor` already use. `artifact_id` is UUIDv5 over
   (`manifest_id` + row plaintext digest), so retry and re-import are idempotent. Per-row
@@ -136,7 +136,7 @@ partial loads and refusals are journalled, never silent.
   digests exist when `import.manifest_submitted` is signed, preserving the ciphertext-comparand
   rule of [storage](../architecture/storage.md). The reconciler verifies chunk bytes and
   per-row ciphertext digests keylessly. `artifact_keys` gains on the order of ten million rows
-  per import — a Postgres volume fact [FR-7](../product/roadmap.md) must carry, stated, not
+  per import — a Postgres volume fact #99 must carry, stated, not
   solved.
 
 - **d8 — Lineage is structural at row grain, ordinary at dataset grain.**
@@ -168,16 +168,16 @@ partial loads and refusals are journalled, never silent.
   attachment rules, its digest in the signed event. `max_failure_rate` is enforced at capture
   as a deterministic scan-class veto: above the threshold, the whole import is refused with a
   typed error — and, as a scan-class veto, it journals nothing, the refusal reproducible from
-  the journalled rule-set pin (RS-16). Partial semantics are all-or-nothing at capture
+  the journalled rule-set pin (#140). Partial semantics are all-or-nothing at capture
   against the threshold; after ratification, `import.completed` attests actually-loaded against
   declared, and a shortfall is a reconciler `missing` finding.
 
 - **d11 — Imported rows are not indexed by default.** The default is fetch- and
   filter-serving, not the shared FTS and vector indexes; a manifest's `index_policy`
   (`none | fts | fts+vector`) opts in, journalled and priced. A ten-million-row index flood is
-  both a build cost (embedding at scale — the RS-1 boundary) and a recall-quality cost
+  both a build cost (embedding at scale — the #153 boundary) and a recall-quality cost
   (reference data drowning organic memories in [retrieval](../architecture/retrieval.md)).
-  Both are unmeasured — [FR-14](../product/roadmap.md).
+  Both are unmeasured — #148.
 
 - **d12 — Simulation imports are allowed, with the provenance compromise stated.** A manifest
   and its rows may take a `simulation_id`; rows then take `provenance='simulation'`, so every
@@ -189,7 +189,7 @@ partial loads and refusals are journalled, never silent.
 
 - **d13 — Export is the mirror image.** `gold.curated_<workarea>` already is "a validated
   workarea as a stable Delta dataset", in ciphertext; the readable version is exactly
-  [FR-5](../product/roadmap.md). This record adds one requirement: exports emit a
+  #125. This record adds one requirement: exports emit a
   manifest-shaped descriptor — snapshot pin, row count, Merkle roots — so that an OML export
   can be re-imported elsewhere verifiably. Import and export are symmetric.
 
@@ -197,7 +197,7 @@ partial loads and refusals are journalled, never silent.
 
 - **v1 reservations, cheap now and expensive later** — these are the only parts of this record
   on the v1 build, and they are already reserved in the
-  [schema](../data/postgres-schema.md) and [event catalog](../data/event-catalog.md) pages:
+  [schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations) and [event catalog](../data/event-catalog.md) pages:
   nullable `memories.manifest_id` and `review_scope` columns, the `import-materialize` outbox
   kind in the CHECK, and the `import.*` event namespace. This also closes an existing
   inconsistency: `provenance='connector'` sat in the `memories` CHECK with no event family in
@@ -210,26 +210,26 @@ partial loads and refusals are journalled, never silent.
     3. Erasure never reaches the external source. With the fence it is durable against *this
        dataset's* re-imports only — the same bytes arriving under a different manifest are a
        new admission, unless tenant-wide erased-digest matching is adopted
-       ([RS-8](../product/roadmap.md)).
+       (#148).
     4. The chain is O(1) per import, but Postgres is not — on the order of ten million rows
-       across three tables per import; [FR-7](../product/roadmap.md) becomes load-bearing.
+       across three tables per import; #99 becomes load-bearing.
     5. Head-of-line blocking is bounded, not eliminated.
     6. Fail-closed at dataset scale: an unreviewed manifest holds millions of encrypted rows
        in quarantine until expiry — the occupancy is priced, not hidden.
     7. Attribution attests the importer; source-side authorship is mapped data.
-    8. Bulk chunked exactly-once inherits [FR-3](../product/roadmap.md)'s unverified delta-rs
+    8. Bulk chunked exactly-once inherits #101's unverified delta-rs
        assumption, now with a second appId scheme to conformance-test.
-- **The smallest useful slice** ([critical path](../product/critical-path.md) M5): pinned-file
+- **The smallest useful slice** (critical path M5): pinned-file
   sources only (Parquet/CSV by digest), full-replace only, the exclusion fence reduced to
   refusing re-import of erased digests, one dataset workarea per import under `committed`, no
   FTS or vector indexing, no simulation targeting, a hard 1M-row cap under the inline lake
   budget. The slice exercises every structural decision at a scale where the unmeasured
-  foundations (FR-2, FR-3, FR-7) are least likely to collapse; everything after is relaxing
+  foundations (#98, #101, #99) are least likely to collapse; everything after is relaxing
   caps, not redesigning.
-- **Roadmap rows opened**: [FR-13](../product/roadmap.md) (the v1 slice end to end),
-  [FR-14](../product/roadmap.md) (import throughput; indexed-import recall impact), and the
-  open questions RS-4 (Merkle specification), RS-5 (sampling-policy semantics), RS-6 (the
-  connector surface), RS-7 (MWK rotation against KEK rotation and backup decay), RS-8
+- **Issues opened**: #148 (the v1 slice end to end),
+  #148 (import throughput; indexed-import recall impact), and the
+  open questions #148 (Merkle specification), #148 (sampling-policy semantics), #148 (the
+  connector surface), #148 (MWK rotation against KEK rotation and backup decay), #148
   (tenant-wide erased-digest matching).
 
 ## Rejected alternatives

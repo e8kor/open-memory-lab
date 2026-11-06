@@ -76,7 +76,6 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0056 | `feat/claim-formats` | #90 | a claim version names its format the signature covers its source and a | open |
 | adr | 0056 | `main` |  | a claim version names its format the signature covers its source and a | used |
 | adr | 0057 | `main` |  | a memory carries the source anchor its author declares and oml sync ke | used |
-| adr | 0058 | `docs/restructure` |  | a public server runs to stated slos with an error budget | reserved |
 | adr | 0058 | `main` |  | the public server runs to stated slos with an error budget and without | used |
 | adr | 0059 | `main` |  | a memory states when it is true recall hides what has ended and search | used |
 | adr | 0060 | `main` |  | the lake writer drains the outbox it has seals what it materializes an | used |
@@ -89,7 +88,6 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0067 | `feat/connector-directory` |  | a directory reviewer reaches a demo workarea through a connect code that lives longer, and the tools and instructions describe instead of command | reserved |
 | adr | 0067 | `main` |  | a directory reviewer reaches a demo workarea through a connect code th | used |
 | adr | 0068 | `feat/open-signup` |  | anyone signs in and gets a private root under quotas when the operator opens sign-up | reserved |
-| adr | 0068 | `feat/web-memories-atlas` | #163 | oml s design system is the source of truth for every surface | open |
 | adr | 0069 | `feat/design-system` |  | OML's design system is the source of truth for every surface | reserved |
 | fr | 1 | `main` |  | Erasure destroys body and attachment bytes by destroying their keys; a | used |
 | fr | 2 | `main` |  | Review throughput is unmeasured. The design's gate is only as useful a | used |

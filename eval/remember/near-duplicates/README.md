@@ -29,7 +29,7 @@ the other.
 check does with copies and small edits, not how often real writers repeat themselves. The
 paraphrases are the only model-written probes, and the check is not built to find them. Real
 writes, labelled by reviewers' `duplicate_of` verdicts, are version 2 of the remember eval and
-FR-90's question.
+#141's question.
 
 ## Results
 

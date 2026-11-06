@@ -10,6 +10,7 @@ sys.path.insert(0, str(S))
 import assemble_changelog as A  # noqa: E402
 import check_changelog_fragment as C  # noqa: E402
 import check_numbers as CN  # noqa: E402
+import oml_numbers as N  # noqa: E402
 import reserve_number as R  # noqa: E402
 
 ENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"}
@@ -26,20 +27,18 @@ def put(root, name, text):
 
 
 def repo():
-    """A clone whose origin has main (ADR-0001, migration 0001, FR-1) and a branch other/x
-    that adds ADR-0002, migration 0002 and FR-2."""
+    """A clone whose origin has main (ADR-0001, migration 0001) and a branch other/x
+    that adds ADR-0002 and migration 0002."""
     base = Path(tempfile.mkdtemp())
     o = base / "o"
     o.mkdir()
     sh(o, "git", "init", "-q", "-b", "main")
     put(o, "docs/adr/ADR-0001-first.md", "x")
     put(o, "migrations/0001_init.sql", "select 1;")
-    put(o, "docs/product/roadmap.md", "| FR-1 | one | e | open |\n")
     sh(o, "git", "add", "-A"); sh(o, "git", "commit", "-qm", "m")
     sh(o, "git", "checkout", "-qb", "other/x")
     put(o, "docs/adr/ADR-0002-theirs.md", "x")
     put(o, "migrations/0002_theirs.sql", "select 1;")
-    put(o, "docs/product/roadmap.md", "| FR-1 | one | e | open |\n| FR-2 | two | e | open |\n")
     sh(o, "git", "add", "-A"); sh(o, "git", "commit", "-qm", "x")
     sh(o, "git", "checkout", "-q", "main")
     c = base / "c"
@@ -49,6 +48,15 @@ def repo():
 
 
 class Numbers(unittest.TestCase):
+    def test_only_adr_and_migration_numbers_are_tracked(self):
+        c = repo()
+        put(c, "docs/product/roadmap.md", "| FR-9 | nine | e | open |\n")
+        sh(c, "git", "add", "-A"); sh(c, "git", "commit", "-qm", "fr")
+        self.assertEqual(("adr", "migration"), N.KINDS)
+        self.assertEqual({}, N.numbers_added(c, "origin/main", "HEAD"))
+        self.assertEqual([], CN.check(c, "origin/main", "mine"))
+
+
     def test_reserve_takes_the_number_after_every_branch_and_a_second_reserve_takes_the_next(self):
         c = repo()
         R.main(["adr", "--branch", "mine", "--title", "a", "--root", str(c)])

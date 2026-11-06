@@ -9,7 +9,7 @@ answers: how the status ladder and claim edges, built on two branches before the
 
 **Status:** accepted design · 2026-11-04 · proposed and accepted on 2026-11-04 with release v0.5.2, its nine questions answered that day · amended by [ADR-0055](ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md) (d2: `same_user` compares the person behind each key and marks a claim's approval too)
 
-**Release:** introduced in v0.5.2 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.2 ([releases](../changelog.md))
 
 **Amends:** ADR-0008 (d5), ADR-0009 (d1, d3, d5), ADR-0021 (d5), ADR-0029 (d2), ADR-0039 (d2, d9)
 
@@ -23,12 +23,12 @@ cases and Postgres folds, with no route, tool or CLI verb, because the v0.4.0 re
 ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md)) was about to move both surfaces. Both are
 now replayed onto v0.4.1 for v0.5.2. Their own pages state the readings they took:
 [workareas](../architecture/workareas.md#readings-the-build-takes) for the ladder, the
-[schema](../data/postgres-schema.md) and the [changelog](../changelog.md) for claim edges.
+[schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations) and the [changelog](../changelog.md) for claim edges.
 
 **The plan of 2026-11-04 put three things in v0.5.2.** The workarea lifecycle, labelled links
 between memories, and a brief for each workarea, after v0.5.0 (user roots, ADR-0044, and the web
 pages, ADR-0045, both proposed on their own branches) and v0.5.1 (guardrails, ADR-0037,
-proposed) ([releases](../product/releases.md#planned-releases)). The maintainer decided on
+proposed) ([releases](../changelog.md)). The maintainer decided on
 2026-11-03 that the brief is built from ratified edges, not from a `claim_key` prefix.
 
 **Three records meet here and none of them says how.** ADR-0044 d1 says a user root "starts in
@@ -38,7 +38,7 @@ exclusion per key and principal rather than per person. ADR-0039 d8 forbids a fo
 tool without a record, d9 merges the claim-edge and workarea-edge routes into one `/v2/edges`
 family and folds the status read into the workarea read, while `mcp-tools.designed.json` still
 holds `oml_relate_propose`. No record designs the brief: the
-[use-case call map](../engineering/use-case-call-map.md) lists UC-BR-01 as "decided, not
+[use-case call map](../api/mcp-plugin.md) lists UC-BR-01 as "decided, not
 designed".
 
 This record states the reconciliation the build follows. It was proposed on 2026-11-04 with nine
@@ -122,7 +122,7 @@ say otherwise.
   [retrieval](../architecture/retrieval.md) (counter `oml-tc/1`) under recall's prefix rule: the
   first member that does not fit ends the brief. The budget is the server setting
   `brief.max_tokens` (`OML_BRIEF__MAX_TOKENS`), default 400; the number is unmeasured, tracked as
-  FR-77. A superseded or retired claim drops out of the brief by itself, since only served tips
+  #145. A superseded or retired claim drops out of the brief by itself, since only served tips
   are members.
 
 - **d9 — The brief reaches an agent through the workarea read and the session-start hook.** The
@@ -157,7 +157,7 @@ say otherwise.
   workarea's status, its waiting proposals and its brief on the user page is planned, for a later
   record, and until then the CLI and the API serve them.
 - **Limits.** The brief edges of one workarea are read whole and paged in the use case; the count
-  per workarea is unbounded, tracked with the budget as FR-77. A brief member must be promoted, so
+  per workarea is unbounded, tracked with the budget as #145. A brief member must be promoted, so
   a brief starts empty in a workarea with nothing reviewed.
 - **New failure modes and their doctor lines.** `oml doctor` names a default workarea whose brief
   is empty and one whose pending transitions wait with no second dreamer able to ratify.
@@ -183,7 +183,7 @@ say otherwise.
 | Alternative | Why not |
 |---|---|
 | **Serve the transitions and claim edges as MCP tools** (`oml_transition`, `oml_relate_propose`) | ADR-0039 d8 requires a record showing that no parameter, resource or hook carries a capability; the workarea read already carries the status, and a transition is a governed act an agent should ask a person for. |
-| **Keep the built `/v2/claim-edges` routes** | ADR-0039 d9 merged them into `/v2/edges` with `kind`; a second family would be one more surface to remove before FR-21 closes. |
+| **Keep the built `/v2/claim-edges` routes** | ADR-0039 d9 merged them into `/v2/edges` with `kind`; a second family would be one more surface to remove before #150 closes. |
 | **A user root that reaches `validated`** (question 1 a) | It freezes its user out of creating any work; the child-status rule already freezes a finished subtree inside it. |
 | **A user root that never leaves `development`** (question 1 c) | It would keep ADR-0001 d5's development exception open over a person's whole space for good. |
 | **Refuse a ratification by another key of the same user** (question 2 b) | A solo user could never move their own work; the mark tells the auditor the same thing without stopping the work. |

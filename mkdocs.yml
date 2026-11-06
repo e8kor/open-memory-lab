@@ -1,11 +1,26 @@
 site_name: Open Memory Lab
-site_description: An external memory provider for AI agents — every memory is a claim under test.
+site_description: An external memory provider for AI agents. Every write is held until a different identity reviews it.
 site_url: https://e8kor.github.io/open-memory-lab/
 repo_url: https://github.com/e8kor/open-memory-lab
 edit_uri: edit/main/docs/
 docs_dir: docs
 exclude_docs: |
+  includes/
   assets/brand/tokens.md
+  contributing/
+  NUMBERS.md
+  adr/
+  legal/
+hooks:
+  - hooks/status_line.py
+
+extra:
+  oml_series: "0.6"
+
+extra_css:
+  - stylesheets/oml.css
+  - assets/status.css
+
 copyright: >
   Code licensed <a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE">Apache-2.0</a> ·
   documentation licensed <a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE-docs">CC BY 4.0</a>
@@ -13,37 +28,54 @@ copyright: >
 validation:
   nav:
     omitted_files: warn
+  anchors: warn
 
 theme:
   name: material
   logo: assets/brand/oml-mark.svg
+  font: false
   favicon: assets/brand/favicon.svg
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: deep purple
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
+    # Colours come from docs/stylesheets/oml.css, generated from design/tokens.json (ADR-0069).
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: deep purple
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
-        name: Switch to light mode
+        name: Switch to paper
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to night
   features:
-    - navigation.sections
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.indexes
+    - navigation.path
+    - navigation.footer
     - navigation.top
+    - navigation.instant
+    - search.suggest
+    - search.highlight
+    - toc.follow
+    - content.tabs.link
     - content.code.copy
     - content.action.edit
     - content.action.view
-    - toc.integrate
 
 markdown_extensions:
   - admonition
   - tables
   - attr_list
+  - md_in_html
   - pymdownx.details
+  - pymdownx.snippets:
+      base_path: [docs/includes]
+      check_paths: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -53,159 +85,81 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
 
+
 nav:
   - Home: index.md
   - Get started:
-      - Three paths: start/index.md
-      - Install: start/install.md
+      - start/index.md
+      - Install the CLI: start/install.md
+      - Quickstart: start/quickstart.md
+      - Get an agent key: guides/get-an-agent-key.md
+      - Connect Claude Code: guides/claude-code.md
+      - Connect claude.ai and your phone: guides/claude-ai-and-mobile.md
+      - Connect other agent tools: guides/other-harnesses.md
+      - Run your own server: start/run-your-own.md
   - Guides:
-      - Claude Code: guides/claude-code.md
-      - claude.ai and mobile: guides/claude-ai-and-mobile.md
-      - Other agent tools: guides/other-harnesses.md
-      - Reviewing memories: guides/reviewing.md
-      - Administering a server: guides/administering.md
-      - Self-hosting: guides/self-hosting.md
-      - Kubernetes: guides/kubernetes.md
-      - Upgrading from v0.3: guides/upgrading.md
-      - Troubleshooting: guides/troubleshooting.md
-  - Concepts: concepts.md
-  - Review guide: review-guide.md
-  - Spec changelog: changelog.md
-  - Live atlas: https://e8kor.github.io/open-memory-lab/atlas/
-  - Product:
-      - Positioning: product/positioning.md
-      - Use cases: product/use-cases.md
-      - Quick scenarios: product/scenarios.md
-      - Releases: product/releases.md
-      - Roadmap: product/roadmap.md
-      - Commitments: product/commitments.md
-      - Critical path: product/critical-path.md
-      - Compliance: product/compliance.md
-  - Architecture:
-      - Overview: architecture/overview.md
-      - Admission: architecture/admission.md
-      - Workareas: architecture/workareas.md
-      - Roles and keys: architecture/roles-and-keys.md
-      - Simulations: architecture/simulations.md
-      - Ontologies: architecture/ontologies.md
-      - Storage: architecture/storage.md
-      - Retrieval: architecture/retrieval.md
-      - Reconciliation: architecture/reconciliation.md
-      - Audit and lineage: architecture/audit-and-lineage.md
-      - Security: architecture/security.md
-  - Data:
-      - PostgreSQL schema: data/postgres-schema.md
-      - Delta tables: data/delta-tables.md
+      - guides/index.md
+      - Use:
+          - Write and read memories: use/remember-and-recall.md
+          - Review held memories: guides/reviewing.md
+          - Organize memory in workareas: use/workareas.md
+          - Capture chat memory: use/chat-memory.md
+          - Sync docs and code: use/sync.md
+          - Give agents rules: use/guardrails.md
+      - Integrate:
+          - Integrate a reviewer crew over HTTP: api/reviewer-crews.md
+          - Use the client SDKs: engineering/sdks.md
+  - Operate:
+      - operations/index.md
+      - Administer a server: guides/administering.md
+      - Deploy: operations/deployment.md
+      - Install on Kubernetes: guides/kubernetes.md
+      - Monitor: operations/observability.md
+      - Upgrade: operations/upgrades.md
+      - Back up and restore: operations/restore.md
+      - Operational alerts: operations/runbooks.md
+      - Failure modes: operations/failure-modes.md
+      - Run the lake writer: operations/lake.md
+      - Capacity and SLOs: operations/operating.md
+  - Reference:
+      - reference/index.md
+      - CLI: cli/reference.md
+      - HTTP API: api/http-api.md
+      - MCP tools: api/mcp-plugin.md
+      - Settings: operations/configuration.md
+      - Error codes: api/errors.md
+      - Connect page: reference/connect-page.md
+      - Limits: reference/limits.md
+      - Metrics: reference/metrics.md
       - Event catalog: data/event-catalog.md
       - Chain format: data/chain-format.md
-  - API:
-      - HTTP API: api/http-api.md
-      - MCP plugin: api/mcp-plugin.md
-      - Errors: api/errors.md
-      - Reviewer crews: api/reviewer-crews.md
-      - Benchmarks:
-          - Overview: api/benchmarks/index.md
-          - Synthetic recall set: api/benchmarks/recall-synthetic.md
-          - BEIR SciFact: api/benchmarks/beir-scifact.md
-          - BEIR NFCorpus: api/benchmarks/beir-nfcorpus.md
-          - LoCoMo: api/benchmarks/locomo.md
-          - SciFact ×10: api/benchmarks/beir-scifact-x10.md
-          - Latency at scale: api/benchmarks/scale.md
-  - CLI:
-      - Reference: cli/reference.md
-      - Sessions: cli/sessions.md
-  - Operations:
-      - Deployment: operations/deployment.md
-      - Configuration: operations/configuration.md
-      - Observability: operations/observability.md
-      - Runbooks: operations/runbooks.md
-      - Failure modes: operations/failure-modes.md
-      - Upgrades: operations/upgrades.md
-      - Restore: operations/restore.md
-      - Disaster recovery: operations/disaster-recovery.md
-      - Capacity: operations/capacity.md
-      - Releasing: operations/releasing.md
-      - The lake: operations/lake.md
-      - Production (memory.doublegate.io): operations/production.md
-  - Engineering:
-      - Workspace plan: engineering/workspace-plan.md
-      - Test strategy: engineering/test-strategy.md
-      - CI and toolchain: engineering/ci-and-toolchain.md
-      - Benchmark harness: engineering/benchmark-harness.md
-      - Pre-review checklist: contributing/review-checklist.md
-      - Number registry: NUMBERS.md
-      - M0 spikes:
-          - Harness and status: engineering/spikes/index.md
-          - "Finding: chain-format vectors": engineering/spikes/chain-vectors.md
-          - "Findings: spike 3, RLS": engineering/spikes/spike-3-rls.md
-      - Client SDKs: engineering/sdks.md
-      - Use-case call map: engineering/use-case-call-map.md
-      - Session claims: engineering/session-claims.md
-      - "Plan: documentation for v0.4.0": engineering/docs-upgrade-v0.4.0.md
-  - Legal (draft):
-      - Privacy policy: legal/privacy.md
-      - Terms of service: legal/terms.md
-      - Support: legal/support.md
-  - Decisions:
-      - Index: adr/index.md
-      - ADR template: adr/TEMPLATE.md
-      - ADR-0001: adr/ADR-0001-the-constitution.md
-      - ADR-0002: adr/ADR-0002-postgresql-system-of-record.md
-      - ADR-0003: adr/ADR-0003-delta-lake-derived-lakehouse.md
-      - ADR-0004: adr/ADR-0004-bodies-and-attachments.md
-      - ADR-0005: adr/ADR-0005-erasure-by-crypto-shredding.md
-      - ADR-0006: adr/ADR-0006-pure-rust.md
-      - ADR-0007: adr/ADR-0007-tenancy-first-class.md
-      - ADR-0008: adr/ADR-0008-workarea-algebra.md
-      - ADR-0009: adr/ADR-0009-status-ladder.md
-      - ADR-0010: adr/ADR-0010-roles-and-keys.md
-      - ADR-0011: adr/ADR-0011-simulations.md
-      - ADR-0012: adr/ADR-0012-admission-and-review.md
-      - ADR-0013: adr/ADR-0013-reads-served-from-postgres.md
-      - ADR-0014: adr/ADR-0014-http-api-and-mcp-facade.md
-      - ADR-0015: adr/ADR-0015-cli-administration.md
-      - ADR-0016: adr/ADR-0016-kubernetes-workloads.md
-      - ADR-0017: adr/ADR-0017-reconciliation.md
-      - ADR-0018: adr/ADR-0018-the-documentation-set.md
-      - ADR-0019: adr/ADR-0019-hexagonal-architecture-and-plugins.md
-      - ADR-0020: adr/ADR-0020-dataset-onboarding.md
-      - ADR-0021: adr/ADR-0021-ai-human-ontologies.md
-      - ADR-0022: adr/ADR-0022-two-ring-api.md
-      - ADR-0023: adr/ADR-0023-install-profiles-and-cluster-mode.md
-      - ADR-0024: adr/ADR-0024-performance-foundation.md
-      - ADR-0025: adr/ADR-0025-the-agent-only-memory-surface.md
-      - ADR-0026: adr/ADR-0026-names-are-keys.md
-      - ADR-0028: adr/ADR-0028-agent-key-issuance.md
-      - ADR-0029: adr/ADR-0029-session-start-hook.md
-      - ADR-0030: adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md
-      - ADR-0031: adr/ADR-0031-oauth-connections-by-connect-code.md
-      - ADR-0033: adr/ADR-0033-interim-helm-chart.md
-      - ADR-0034: adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md
-      - ADR-0037: adr/ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md
-      - ADR-0038: adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md
-      - ADR-0039: adr/ADR-0039-the-api-rewritten-for-v0-4-0.md
-      - ADR-0040: adr/ADR-0040-plugin-setup-in-claude-code.md
-      - ADR-0041: adr/ADR-0041-a-quick-start-in-one-command-per-role.md
-      - ADR-0042: adr/ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md
-      - ADR-0043: adr/ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md
-      - ADR-0044: adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md
-      - ADR-0045: adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md
-      - ADR-0046: adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md
-      - ADR-0047: adr/ADR-0047-project-knowledge-and-a-code-skeleton-follow-the-development-lifecycle.md
-      - ADR-0048: adr/ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md
-      - ADR-0049: adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval.md
-      - ADR-0050: adr/ADR-0050-remembering-checks-what-is-already-held-replaces-instead-of-repeating-and-says-how-the-memory-will-be-found.md
-      - ADR-0052: adr/ADR-0052-text-search-reads-integer-postings-that-row-security-lets-an-index-serve.md
-      - ADR-0053: adr/ADR-0053-reranking-is-a-local-cross-encoder-stage-after-fusion-off-by-default-until-it-fits-the-latency-budget.md
-      - ADR-0057: adr/ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md
-      - ADR-0061: adr/ADR-0061-oml-sync-reads-a-rust-workspace-as-one-claim-per-crate-and-one-per-module-doc-and-a-claim-goes-stale-only-when-its-docs-or-its-crates-facts-change.md
-      - ADR-0054: adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md
-      - ADR-0055: adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md
-      - ADR-0058: adr/ADR-0058-the-public-server-runs-to-stated-slos-with-an-error-budget-and-without-backups-until-a-second-person-stores-data.md
-      - ADR-0059: adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md
-      - ADR-0056: adr/ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md
-      - ADR-0060: adr/ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md
-      - ADR-0062: adr/ADR-0062-oml-sync-maps-a-delta-lakes-tables-into-anchored-claims-from-the-log-alone-on-the-client-and-catalogs-and-reviewed-terms-say-what-they-mean.md
-      - ADR-0063: adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md
-      - ADR-0065: adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md
-      - ADR-0067: adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md
+      - Lake tables: data/delta-tables.md
+      - Glossary: reference/glossary.md
+      - Design records: reference/design-records.md
+  - Concepts:
+      - concepts.md
+      - Evaluate OML: product/evaluate.md
+      - Is OML for you: product/is-oml-for-you.md
+      - Why a write is held: concepts/why-a-write-is-held.md
+      - What OML guarantees: product/commitments.md
+      - How a write is admitted: architecture/admission.md
+      - Architecture overview: architecture/overview.md
+      - How workareas grant access: architecture/workareas.md
+      - Roles and keys: architecture/roles-and-keys.md
+      - Security: architecture/security.md
+      - Storage: architecture/storage.md
+      - Audit and lineage: architecture/audit-and-lineage.md
+      - Retrieval: architecture/retrieval.md
+      - Compliance: product/compliance.md
+  - Benchmarks:
+      - benchmarks/index.md
+      - Synthetic recall set: benchmarks/recall-synthetic.md
+      - BEIR SciFact: benchmarks/beir-scifact.md
+      - BEIR NFCorpus: benchmarks/beir-nfcorpus.md
+      - LoCoMo: benchmarks/locomo.md
+      - Latency at scale: benchmarks/scale.md
+  - Help:
+      - FAQ: faq.md
+      - Troubleshoot the client: help/troubleshooting-client.md
+      - Troubleshoot a server: help/troubleshooting-server.md
+      - Release notes: changelog.md

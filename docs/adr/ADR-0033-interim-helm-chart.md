@@ -9,7 +9,7 @@ answers: what the Helm chart holds while the build has one server binary; why on
 
 **Status:** proposed · 2026-10-31
 
-**Release:** introduced in v0.3.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.3.0 ([releases](../changelog.md))
 
 **Amends:** ADR-0016 (d4), ADR-0023 (d16) — for the interim chart only; the designed chart returns to both
 
@@ -20,7 +20,7 @@ The designed Kubernetes profile is one umbrella chart with a `local` and a `scal
 lease-guarded `oml-server-lead`, `oml-server-follower` at zero replicas, the lake-writer, the
 reconciler CronJob, the indexer and a bootstrap hook Job, with the signing key in a Secret or KMS
 (ADR-0016 d4; [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md) d16). The
-[critical path](../product/critical-path.md) lands the `local` value set at M3 and `scaled` at M6.
+critical path lands the `local` value set at M3 and `scaled` at M6.
 
 The build is the M1 slice and part of M2. It has one server binary, `oml-server-lead`, and four
 facts about it (`crates/bins/oml-server-lead/src/main.rs` and `lib.rs` at v0.2.2) decide what any
@@ -70,7 +70,7 @@ has. Everything the designed chart holds beyond that stays decided, not built.
   (`pg_advisory_xact_lock`, ADR-0002 d3, built in `oml-pg`), which serializes every append, so
   they cannot fork a chain. The cost: every upgrade and every restart stops the API, reads
   included, until the new pod is ready. The length of that window is unmeasured; lead
-  replacement is what [FR-24](../product/roadmap.md) measures. `replicas` is not a value.
+  replacement is what #117 measures. `replicas` is not a value.
 
 - **d3 — The keyring lives on a ReadWriteOnce volume claim mounted at `/var/lib/oml/keyring`, and
   `helm uninstall` leaves the claim.** This sets ADR-0016 d4 ("deployment identity replaces volume
@@ -110,7 +110,7 @@ has. Everything the designed chart holds beyond that stays decided, not built.
   dropped; seccomp `RuntimeDefault`; and a ServiceAccount with `automountServiceAccountToken:
   false` on the account and on the pod, because the lead calls no Kubernetes API. Resource
   requests and limits ship as commented hints in `values.yaml`, never as values: no number for
-  them is measured ([capacity](../operations/capacity.md)). An optional NetworkPolicy, off by
+  them is measured ([capacity](../operations/deployment.md#capacity)). An optional NetworkPolicy, off by
   default because its peers are site facts, admits the API port from listed peers (by default,
   pods in the release's Kubernetes namespace) and lets the lead open connections to DNS and to
   the Postgres port alone.
@@ -156,7 +156,7 @@ has. Everything the designed chart holds beyond that stays decided, not built.
   and reinstalls the chart, requiring each time the same public key and no new token. New
   `release.yml` jobs check the chart's version against the tag, package it, sign the `.tgz`
   keyless with `cosign sign-blob` like every other release artifact
-  ([CI and toolchain](../engineering/ci-and-toolchain.md#release-artifacts-sbom-signing-provenance)),
+  ([CI and toolchain](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md)),
   and attach both files to the GitHub release; `scripts/check_release.py` refuses a release
   workflow that stops doing so. No chart repository is published: the `helm repo add` URL of the
   deployment page's quickstart stays a mockup.
@@ -167,15 +167,15 @@ has. Everything the designed chart holds beyond that stays decided, not built.
   runs, how it differs from the designed chart, the claim ceremony and its failure modes — and
   its keyring backup row covers this chart's claim; the designed Kubernetes quickstart stays a
   mockup. `deploy/k8s/README.md` points to the chart.
-- [CI and toolchain](../engineering/ci-and-toolchain.md) lists the chart among the release
+- [CI and toolchain](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/ci-and-toolchain.md) lists the chart among the release
   artifacts and the kind job among the merge gates.
 - The critical path is unchanged: the `local` value set still joins at M3 and `scaled` at M6, and
   this chart is neither.
-- The costs, in one place: every upgrade is an outage of the one lead, unmeasured (FR-24); the
+- The costs, in one place: every upgrade is an outage of the one lead, unmeasured (#117); the
   deployment's identity is a volume until the designed chart lands; the token is in the pod log
   until claimed; and the one Postgres URL holds migration rights.
 - No HTTP operation, error code, event type or claim state changes, and `info.version` stays
-  `0.2.0-design`. No roadmap row opens.
+  `0.2.0-design`. No issue opens.
 
 ## Rejected alternatives
 
@@ -189,3 +189,12 @@ has. Everything the designed chart holds beyond that stays decided, not built.
 | **`postgres.url` as a chart value** | The password would live in every Helm release revision and in `helm get values` output. |
 | **Refusing an install that enables the Ingress** | The chart cannot see whether the claim happened, so the refusal would block a reinstall over a claimed database and let through an upgrade before the claim. The notes' warning and the documented ceremony carry it. |
 | **A chart repository now: an `index.yaml` on Pages, or an OCI push to ghcr.io** | A second publication path, with its own index or registry permissions to keep in step; the release page already carries the signed artifacts, and `helm install` takes the archive's URL. Rejected for this chart; a later record may reopen it once someone asks for `helm repo add`. |
+
+## Notes moved from the Kubernetes install page (2026-11-06)
+
+- `kubeVersion` is `>=1.23.0-0` because the keyring depends on `fsGroupChangePolicy`, stable since 1.23.
+- Deleting the keyring claim while keeping the database loses the deployment's identity: the server mints a new key and refuses readiness at the fork check. The claim is annotated `helm.sh/resource-policy: keep`; a reinstall under another release name attaches it with `keyring.existingClaim`.
+- The chart cannot see whether the first claim happened, so it does not refuse an Ingress before it; its install notes warn when an install enables one.
+- The migrations grant the serving role its privileges; nothing is granted by hand.
+- The server applies migrations under the owner URL before its listener binds, then serves under the serving URL.
+

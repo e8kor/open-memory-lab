@@ -9,7 +9,7 @@ answers: why PostgreSQL is the sole system of record and commit point; why each 
 
 **Status:** accepted design · 2026-10-29 · [ADR-0023](ADR-0023-install-profiles-and-cluster-mode.md) d13 supersedes d6's every-replica-loads-the-key statement — the signing key is the lead's alone; the attests-the-deployment boundary stands
 
-**Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.1.0; the rest not built ([releases](../changelog.md))
 
 Everything this record decides is design — no code exists. Mechanics (schemas, the outbox
 protocol, the chain layout) are owned by [architecture/storage.md](../architecture/storage.md);
@@ -54,8 +54,8 @@ volume.
   with quorum synchronous standbys; the deployment profiles pin this. The local single-node
   profile cannot provide it, and its documentation says so rather than implying the production
   guarantee: on one node, "durable" means one disk. The cost is quorum round-trip latency on every
-  write; that latency is unmeasured and is tracked as its own measurement row (FR-18) on the
-  [roadmap](../product/roadmap.md).
+  write; that latency is unmeasured and is tracked as its own measurement row (#99) on the
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).
 
 - **d3 — The hash chain is per tenant.** One chain-head row per `tenant_id`. Chain assignment —
   per-tenant `seq`, `prev_hash`, ed25519 signature — is serialized by
@@ -80,8 +80,8 @@ volume.
   ciphertext digest is also what gives the key-less reconciler (ADR-0017) a journal-side comparand
   for store bytes. Identity metadata in the chain (writer
   identity, principal) is minimized but present — attribution is what reconciliation and evidence
-  exports need — and its erasure or pseudonymization is an open FR on the
-  [roadmap](../product/roadmap.md), stated there rather than implied here.
+  exports need — and its erasure or pseudonymization is an open issue on the
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap), stated there rather than implied here.
 
 - **d6 — The signature attests the deployment, and every replica holds the key.** Every
   `oml-server` replica loads the same deployment signing key (Kubernetes Secret or KMS). What is
@@ -100,7 +100,7 @@ volume.
 
 - Every write pays the price of its guarantee: a quorum round trip (d2) and a per-tenant
   serialization point (d3). Both are stated costs with unmeasured magnitudes; the Postgres scale
-  ceiling and partition strategy FR on the [roadmap](../product/roadmap.md) carries the
+  ceiling and partition strategy issue on the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) carries the
   measurement with an exit criterion.
 - Chain verification is keyless and erasure-proof: an auditor (or the reconciler, ADR-0017) can
   verify every link from digest/ciphertext envelopes without a DEK and after any shredding (d5).

@@ -111,7 +111,7 @@ A key holding many held rows, recalling with them (`include_unreviewed`), warm p
 
 The own held rows are counted at query time from the versions and their postings, so their cost
 grows with how many the key holds in the scope: 1,000 add about 30 ms at the universe scope, and
-10,000 put it at 238–266 ms, still below `bm25`'s scan. A bulk import awaiting review (FR-87)
+10,000 put it at 238–266 ms, still below `bm25`'s scan. A bulk import awaiting review (#98)
 is the case that reaches it.
 
 ## Space, the fill and writes
@@ -126,7 +126,7 @@ About 36 postings per memory (the lexemes, identifier parts and stems of a 176-c
 all states kept (65% served, 15% held, 20% off). Postings, both indexes and the counts take about
 7 times the memories heap: about 1.1 GiB per 165,000 memories, so about 6.7 GiB per 1,000,000
 by linear extrapolation. The 0021 fill grows linearly, about 0.4 s per 1,000 memories, so about
-7 minutes of held writes at 1,000,000 (FR-103).
+7 minutes of held writes at 1,000,000 (#103).
 
 Write cost, p50 / p95 ms, each step its own transaction as the serving role:
 
@@ -138,13 +138,13 @@ Write cost, p50 / p95 ms, each step its own transaction as the serving role:
 | 165,000, with postings | 2.40 / 8.08 | 4.54 / 8.94 | 6.35 / 12.6 |
 
 A promotion pays about 2–3 ms more p50: its postings enter the served index and its tokens'
-counts are updated. One client; contention between promotions in one workarea is FR-102.
+counts are updated. One client; contention between promotions in one workarea is #100.
 
 ## Not measured
 
 - **1,000,000 memories.** The build host's two filesystems had 1.5 to 5 GiB free while other lanes
   ran, and 1,000,000 memories need about 7 GiB for the postings alone. The 1M figures above are
-  extrapolations, as FR-100 says they must not stay.
+  extrapolations, as #103 says they must not stay.
 - **Cold caches.** Every number is warm: the second of two runs of each query.
 
 ## The learned sparse lane (2026-11-05, ADR-0052 d16)
@@ -161,7 +161,7 @@ scope / every scope:
 About 104 kind 2 postings per version; at 100,000 memories the kind 2 heap is 1,276 MiB and the
 served index 985 MiB. The 100,000 point reuses the 10,000 point's encodings (`--reuse`: each
 version takes one of 9,189 encoded texts by its text's digest), so it measures the read, not the
-ranking. The sparse leg misses ADR-0052 d9's 50 ms bar at 100,000 readable rows: FR-118.
+ranking. The sparse leg misses ADR-0052 d9's 50 ms bar at 100,000 readable rows: #104.
 
 ## The similar check (ADR-0050 d17), 2026-11-05
 
@@ -186,4 +186,4 @@ and 180 ms p95 at 1M; this one costs 2.95 and 15.7. The plan is an index-only sc
 memories heap (2,124 MiB against 985 at 1M). The trigger adds 0.4 ms p50 to a held insert at 10k,
 2.1 at 100k and 6.2 at 1M (10.8 to 17.0), and nothing measurable to a promotion. 0027's fill holds
 the trigger's lock on `memories` for its whole run, 19 minutes at 1M on this host, so writes wait
-that long during the upgrade, as 0021's fill does (FR-103).
+that long during the upgrade, as 0021's fill does (#103).

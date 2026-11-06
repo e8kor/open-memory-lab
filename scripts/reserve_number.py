@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Reserve the next free ADR, FR or migration number in docs/NUMBERS.md.
+"""Reserve the next free ADR or migration number in docs/NUMBERS.md.
 
-    python scripts/reserve_number.py adr|fr|migration --branch <b> --title <t>
+    python scripts/reserve_number.py adr|migration --branch <b> --title <t>
     python scripts/reserve_number.py --rebuild          # rescan main and the open branches
 
 The next number is one above the highest used on main, on any remote branch, or reserved in
@@ -25,12 +25,12 @@ HEADER = """<!--
 id: engineering/numbers
 tier: engineering
 status: process register
-answers: which ADR, FR and migration numbers are used or reserved, and by which branch
+answers: which ADR and migration numbers are used or reserved, and by which branch
 -->
 
 # Number registry
 
-Every ADR, FR and migration number is used on main or reserved by one branch. Reserve a
+Every ADR and migration number is used on main or reserved by one branch. Reserve a
 number before writing the file or row that uses it:
 
 ```sh
