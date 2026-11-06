@@ -1,0 +1,23 @@
+# The minimal Delta log reader (ADR-0062 d3): a pure function from one table's
+# `_delta_log` files to its version, protocol, metadata and clustering, over a
+# `LogStore` port. It never decodes `add`, `remove`, `cdc`, `txn`, `sidecar` or
+# `commitInfo`, and reads a checkpoint by column projection. delta-rs is its
+# test oracle by committed fixture (testing/lake), never a dependency.
+[package]
+name = "oml-delta-log"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "A minimal Delta Lake log reader: protocol, metadata, schema, partitioning, clustering and version from JSON commits and checkpoint parquet, and never a data file (ADR-0062 d2, d3)."
+
+[dependencies]
+parquet.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+bytes = "1"

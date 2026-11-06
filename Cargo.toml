@@ -8,6 +8,7 @@ members = [
     "crates/oml-app",
     "crates/adapters/oml-pg",
     "crates/adapters/oml-fetch",
+    "crates/adapters/oml-delta-log",
     "crates/adapters/oml-rerank",
     "crates/transports/oml-transport-http",
     "crates/bins/oml-server-lead",
@@ -33,6 +34,12 @@ oml-server-lead = { path = "crates/bins/oml-server-lead", default-features = fal
 oml-transport-http = { path = "crates/transports/oml-transport-http" }
 oml-pg = { path = "crates/adapters/oml-pg" }
 oml-fetch = { path = "crates/adapters/oml-fetch" }
+# The minimal Delta `_delta_log` reader (ADR-0062 d3): linked into the CLI only
+# under its `lake-sync` feature, which the default `oml` never enables.
+oml-delta-log = { path = "crates/adapters/oml-delta-log" }
+# Checkpoint reading by column projection, without arrow and without any codec
+# but snappy (ADR-0062 d3): only oml-delta-log names it.
+parquet = { version = "59", default-features = false, features = ["snap"] }
 # Without its `model` feature unless a member asks for it (the lead does,
 # by its `rerank` feature), so no graph builds candle by inheritance.
 oml-rerank = { path = "crates/adapters/oml-rerank", default-features = false }
