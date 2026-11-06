@@ -385,26 +385,29 @@ pub const ALLOW_PUBLIC_CONFIG: &str = "oml.allowPublicServer";
 pub enum PublicServerConsent {
     /// The URL is not the maintainer's public server.
     NotRequired,
-    /// This clone recorded an earlier opt-in.
+    /// The source's clone recorded an earlier opt-in.
     Recorded,
-    /// This invocation supplied the first explicit opt-in.
+    /// This invocation supplied the first explicit opt-in for the source's clone.
     FirstOptIn,
+    /// The source is outside a clone, so this explicit opt-in cannot be reused.
+    OneTime,
 }
 
-/// Authorize a public-server sync from this clone's recorded consent or this
-/// invocation's explicit flag. A first opt-in records the choice locally.
+/// Authorize a public-server sync from the source clone's recorded consent or
+/// this invocation's explicit flag. The caller must print the disclosure before
+/// passing a `FirstOptIn` result to [`record_public_server_consent`].
 ///
 /// # Errors
-/// The public server is not allowed, or recording the opt-in fails.
+/// The public server is not allowed without recorded or explicit consent.
 pub fn authorize_public_server(
     url: &str,
-    cwd: &Path,
+    source: &Path,
     explicit: bool,
 ) -> Result<PublicServerConsent, String> {
     if !is_public_server(url) {
         return Ok(PublicServerConsent::NotRequired);
     }
-    let git = Git::at(cwd).ok();
+    let git = Git::at(source).ok();
     if git
         .as_ref()
         .and_then(|git| git.config(ALLOW_PUBLIC_CONFIG))
@@ -417,12 +420,24 @@ pub fn authorize_public_server(
         return Err(format!(
             "{url} is the maintainer's public server: its admins can read submitted memories, \
              and superseding or retiring a memory does not erase submitted text or anchors; \
-             pass --allow-public-server to opt in and record consent for this clone"
+             pass --allow-public-server to opt in; consent is reused when the source is inside \
+             a git clone"
         ));
     }
-    if let Some(git) = git {
-        git.set_config(ALLOW_PUBLIC_CONFIG, "true")
-            .map_err(|e| format!("could not record {ALLOW_PUBLIC_CONFIG} for this clone: {e}"))?;
-    }
-    Ok(PublicServerConsent::FirstOptIn)
+    Ok(if git.is_some() {
+        PublicServerConsent::FirstOptIn
+    } else {
+        PublicServerConsent::OneTime
+    })
+}
+
+/// Record the disclosed first opt-in in the clone containing the sync source.
+///
+/// # Errors
+/// The source is outside a clone or its local git config cannot be written.
+pub fn record_public_server_consent(source: &Path) -> Result<(), String> {
+    let git = Git::at(source)
+        .map_err(|e| format!("cannot record public-server consent for this clone: {e}"))?;
+    git.set_config(ALLOW_PUBLIC_CONFIG, "true")
+        .map_err(|e| format!("could not record {ALLOW_PUBLIC_CONFIG} for this clone: {e}"))
 }

@@ -280,6 +280,16 @@ impl Caller {
         }
     }
 
+    /// Whether `author_key_id` belongs to this caller's own-key set, without
+    /// cloning that set for each row.
+    fn owns(&self, author_key_id: Uuid) -> bool {
+        if self.own_keys.is_empty() {
+            self.key.key_id == author_key_id
+        } else {
+            self.own_keys.contains(&author_key_id)
+        }
+    }
+
     /// `effective_roles` at the node whose ancestry, node to root, this is.
     fn effective(&self, ancestry: &[Uuid]) -> BTreeSet<Role> {
         effective_roles(&self.grants, &self.denials, ancestry)
@@ -1707,7 +1717,7 @@ where
         let ancestry = self
             .ancestry(caller.key.tenant_id, memory.workarea_id)
             .await?;
-        if caller.own_key_ids().contains(&memory.author_key_id) {
+        if caller.owns(memory.author_key_id) {
             return Ok(!caller.denied(&ancestry));
         }
         let reader = caller.effective(&ancestry).contains(&Role::Reader);

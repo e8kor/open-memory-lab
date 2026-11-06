@@ -46,6 +46,20 @@ fn shape(i: &LakeItem) -> (String, Option<String>, String, String) {
 }
 
 #[test]
+fn file_urls_and_plain_paths_apply_the_same_directory_validation() {
+    let root = fixture();
+    let url = format!("file://{}", root.display());
+    assert_eq!(oml_cli::lake::local_root(&url).unwrap(), root);
+    for missing in [
+        "/definitely/not/an/oml/lake",
+        "file:///definitely/not/an/oml/lake",
+    ] {
+        let err = oml_cli::lake::local_root(missing).unwrap_err();
+        assert!(err.contains("is not a directory"), "{missing}: {err}");
+    }
+}
+
+#[test]
 fn the_fixture_lake_is_two_tables_found_by_their_log() {
     let rels: Vec<String> = read_lake(&fixture(), 3, None)
         .into_iter()

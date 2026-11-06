@@ -2155,6 +2155,46 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
 }
 
 #[tokio::test]
+async fn the_guardrail_selector_includes_workareas_after_the_first_tree_page() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    for n in 0..200 {
+        let name = format!("w{n:03}");
+        let (status, _, body) = act(
+            &rig,
+            &cookie,
+            "/web",
+            &[("action", "create_workarea"), ("name", &name)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{name}: {body}");
+    }
+    let root = key_named(&rig, "alice-web").await.user.expect("a root");
+    let last = rig
+        .store
+        .workarea_children(rig.boot.tenant_id, root)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|w| w.name.as_str() == "w199")
+        .expect("the child after the first 200-node page")
+        .workarea_id;
+    let (status, _, page) = send(
+        &rig.router,
+        get(
+            &format!("/web?view=guardrails&workarea={last}"),
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains(&format!("value=\"{last}\" selected")),
+        "the selected workarea is present beyond the first page: {page}"
+    );
+}
+
+#[tokio::test]
 async fn the_review_page_shows_a_held_guardrails_load_warning() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;

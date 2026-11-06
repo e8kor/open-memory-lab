@@ -1996,8 +1996,8 @@ fn run_chat_init(
             println!("in progress: your agents read each other's chat facts, labelled unreviewed")
         }
         Err(e) => println!(
-            "not in progress ({}): each agent key reads only its own chat facts; use a server \
-             that supports in-progress mode to share them",
+            "not in progress ({}): each agent key reads only its own chat facts; retry with \
+             `oml workareas mode {id} in_progress`",
             one_line_error(&e)
         ),
     }
@@ -2090,18 +2090,27 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
 // oml sync (ADR-0057)
 // ---------------------------------------------------------------------------
 
-/// Authorize a public-server sync and disclose its retention once, when the
-/// operator first opts a clone in (ADR-0057 d6, d17).
-fn authorize_public_sync(client: &Client, cwd: &Path, explicit: bool) -> Result<(), CliError> {
-    use oml_cli::sync::source::{PublicServerConsent, authorize_public_server};
+/// Authorize a public-server sync and disclose its retention when the operator
+/// first opts a source's clone in, or for a one-time opt-in outside a clone
+/// (ADR-0057 d6, d17).
+fn authorize_public_sync(client: &Client, source: &Path, explicit: bool) -> Result<(), CliError> {
+    use oml_cli::sync::source::{
+        PublicServerConsent, authorize_public_server, record_public_server_consent,
+    };
     let consent =
-        authorize_public_server(client.server(), cwd, explicit).map_err(CliError::Local)?;
+        authorize_public_server(client.server(), source, explicit).map_err(CliError::Local)?;
+    let scope = match consent {
+        PublicServerConsent::FirstOptIn => "for this clone",
+        PublicServerConsent::OneTime => "for this run only; the source is outside a git clone",
+        PublicServerConsent::NotRequired | PublicServerConsent::Recorded => return Ok(()),
+    };
+    eprintln!(
+        "warn: public-server sync allowed {scope} for {}: its admins can read submitted memories; \
+         supersession or retirement does not erase submitted text or anchors",
+        client.server()
+    );
     if consent == PublicServerConsent::FirstOptIn {
-        eprintln!(
-            "warn: public-server sync allowed for {}: its admins can read submitted memories; \
-             supersession or retirement does not erase submitted text or anchors",
-            client.server()
-        );
+        record_public_server_consent(source).map_err(CliError::Local)?;
     }
     Ok(())
 }
@@ -2116,7 +2125,6 @@ fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode
     let client = resolve(cli, stored)?;
     let cwd = std::env::current_dir()
         .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
-    authorize_public_sync(&client, &cwd, args.allow_public_server)?;
     let opts = run::Options {
         source: args.source.clone(),
         workarea: args.workarea.clone(),
@@ -2145,6 +2153,8 @@ fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode
         base: args.base.clone(),
     };
     let loaded = run::load(&cwd, &opts).map_err(CliError::Local)?;
+    let consent_root = loaded.root.as_deref().unwrap_or(&cwd);
+    authorize_public_sync(&client, consent_root, args.allow_public_server)?;
     for warning in &loaded.warnings {
         eprintln!("{warning}");
     }
@@ -2191,9 +2201,7 @@ fn run_lake_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<Exi
     }
     let root = oml_cli::lake::local_root(&args.source).map_err(CliError::Local)?;
     let client = resolve(cli, stored)?;
-    let cwd = std::env::current_dir()
-        .map_err(|e| CliError::local(format!("the current directory: {e}")))?;
-    authorize_public_sync(&client, &cwd, args.allow_public_server)?;
+    authorize_public_sync(&client, &root, args.allow_public_server)?;
     let opts = Options {
         root,
         uri_base: args.uri_base.clone(),
@@ -3839,6 +3847,11 @@ fn read_secret(what: &str) -> Result<String, CliError> {
 // oml quickstart
 // ---------------------------------------------------------------------------
 
+/// Quote one argument for the POSIX shell command printed to the operator.
+fn shell_word(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// `oml quickstart` (ADR-0041 d9): refuse a directory a quickstart wrote
 /// into and a machine without `docker compose`, before anything is written;
 /// then the compose file and its `.env`, `docker compose up --detach
@@ -3855,7 +3868,8 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
         return Err(CliError::local(format!(
             "refused: quickstart.exists — {shown} already contains {name} from a quickstart. \
              Use another --dir, or remove the stack and its data with `docker compose \
-             --project-directory {shown} down -v`. Nothing was changed"
+             --project-directory {} down -v`. Nothing was changed",
+            shell_word(&shown)
         )));
     }
     let project = quickstart::project_name(&dir);
@@ -5643,6 +5657,12 @@ fn verdict(ok: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn printed_shell_commands_quote_each_path_as_one_word() {
+        assert_eq!(shell_word("/tmp/my oml"), "'/tmp/my oml'");
+        assert_eq!(shell_word("/tmp/it's"), "'/tmp/it'\\''s'");
+    }
 
     #[test]
     fn the_formats_doctor_names_the_media_types_and_the_adapters_with_their_versions() {

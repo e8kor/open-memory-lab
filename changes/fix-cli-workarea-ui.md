@@ -1,4 +1,4 @@
-Fixed `oml sync` public-server consent: the first `--allow-public-server` opt-in explains the disclosure and records it for the clone, while later repository and Delta syncs reuse that consent without repeating the warning. Failures to record consent are reported.
+Fixed `oml sync` public-server consent: the first `--allow-public-server` opt-in explains the disclosure and records it for the source clone, while later repository and Delta syncs reuse that consent without repeating the warning. A source outside a clone needs the flag each run. Failures to record consent are reported.
 
 `oml workareas tree` now accepts a positional root beside `--root`, and the design text names `oml status` as planned rather than implemented. CLI help and local runtime messages now use concise wording without design-record references.
 

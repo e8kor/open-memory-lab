@@ -34,6 +34,12 @@ pub const DEFAULT_SERVER: &str = "https://memory.doublegate.io";
 
 const GUIDES: &str = "https://e8kor.github.io/open-memory-lab/guides";
 
+/// The workarea name a person uses, with the tenant root removed and every
+/// intermediate parent retained.
+fn workarea_label(path: &str) -> &str {
+    path.strip_prefix("universe.").unwrap_or(path)
+}
+
 /// What an act answers.
 pub(crate) enum Outcome {
     /// `303` to this view.
@@ -280,11 +286,25 @@ where
             .await
             .map_err(app_error)?;
         let root = web.key().user.ok_or_else(ApiError::not_found)?;
-        let tree = self
-            .app
-            .workarea_tree(Bearer::Session(web), Reference::Id(root), None, 200)
-            .await
-            .map_err(app_error)?;
+        let mut workareas = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = self
+                .app
+                .workarea_tree(
+                    Bearer::Session(web),
+                    Reference::Id(root),
+                    cursor.as_deref(),
+                    200,
+                )
+                .await
+                .map_err(app_error)?;
+            cursor = page.next_cursor;
+            workareas.extend(page.items);
+            if cursor.is_none() {
+                break;
+            }
+        }
         let frame = render_frame(
             &crate::guardrail_set_json(&set),
             &FrameOptions {
@@ -303,9 +323,9 @@ where
             text(&set.scope_path),
             scope,
         );
-        for node in &tree.items {
+        for node in &workareas {
             let id = node.workarea.workarea_id.to_string();
-            let label = node.path.strip_prefix("universe.").unwrap_or(&node.path);
+            let label = workarea_label(&node.path);
             let _ = write!(
                 body,
                 r#"<option value="{}"{}>{}</option>"#,
@@ -521,14 +541,7 @@ where
             .map(|node| super::workareas::Node {
                 id: node.workarea.workarea_id,
                 path: node.path.clone(),
-                name: if node.workarea.workarea_id == root {
-                    node.workarea.name.as_str().to_owned()
-                } else {
-                    node.path
-                        .strip_prefix("universe.")
-                        .unwrap_or(&node.path)
-                        .to_owned()
-                },
+                name: workarea_label(&node.path).to_owned(),
             })
             .collect();
         // Every act here is the person's reviewer key's: a dreamer key a
@@ -1233,11 +1246,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             .map(|node| super::workareas::Node {
                 id: node.workarea.workarea_id,
                 path: node.path.clone(),
-                name: node
-                    .path
-                    .strip_prefix("universe.")
-                    .unwrap_or(&node.path)
-                    .to_owned(),
+                name: workarea_label(&node.path).to_owned(),
             })
             .collect();
         let review = self.caller(session, Capacity::Review).await?;
