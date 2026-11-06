@@ -990,8 +990,8 @@ ALTER TABLE web_emails ADD COLUMN disabled_at   timestamptz; -- set by web.user_
 CREATE TABLE user_quotas (
     tenant_id uuid   NOT NULL REFERENCES tenants (id),
     user_root uuid   NOT NULL,                 -- the person's root
-    quota     text   NOT NULL,                 -- memories | keys | connections | requests_per_minute
-    max_count bigint NOT NULL,                 -- 0 to 1 000 000
+    quota     text   NOT NULL,                 -- memories | text_bytes | writes_per_month | keys | connections | requests_per_minute (0038)
+    max_count bigint NOT NULL,                 -- 0 to 1 000 000; 10^12 from 0038
     PRIMARY KEY (tenant_id, user_root, quota)
 );
 
@@ -1011,6 +1011,63 @@ limit deletes the row. `web_deletion_requests` is folded from `web.deletion_requ
 `web.deletion_closed`; no row is deleted. Both tables are under `tenant_isolation`; the serving
 role holds `SELECT, INSERT, UPDATE, DELETE` on `user_quotas` and `SELECT, INSERT, UPDATE` on
 `web_deletion_requests`.
+
+## usage metering (ADR-0070)
+
+*Proposed (migration `0038_usage_metering`) · [ADR-0070](../adr/ADR-0070-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d2, d3, d4, d5*
+
+```sql
+CREATE TABLE account_meters (            -- one row per account, moved by the metered commit
+    tenant_id   uuid   NOT NULL REFERENCES tenants (id),
+    user_root   uuid   NOT NULL,         -- the account: the person's root workarea
+    memories    bigint NOT NULL DEFAULT 0,  -- live chains the account started
+    text_bytes  bigint NOT NULL DEFAULT 0,  -- claim bytes of every version its keys wrote
+    keys        bigint NOT NULL DEFAULT 0,  -- live bearer and connector keys
+    connections bigint NOT NULL DEFAULT 0,  -- open connections of those keys
+    PRIMARY KEY (tenant_id, user_root)
+);
+
+CREATE TABLE account_activity (          -- one row per account per UTC day, kept 62 days
+    tenant_id uuid   NOT NULL REFERENCES tenants (id),
+    user_root uuid   NOT NULL,
+    day       date   NOT NULL,
+    writes    bigint NOT NULL DEFAULT 0,  -- moved by the commit of each held version
+    recalls   bigint NOT NULL DEFAULT 0,  -- moved by each recall, never its query
+    PRIMARY KEY (tenant_id, user_root, day)
+);
+
+CREATE TABLE usage_daily (               -- the ledger: appended once, never updated, kept 25 months
+    tenant_id uuid NOT NULL REFERENCES tenants (id),
+    user_root uuid NOT NULL,
+    day       date NOT NULL,
+    profile   text,                       -- the assigned profile; NULL is the deployment default
+    memories, text_bytes, writes, recalls, keys, connections bigint NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    PRIMARY KEY (tenant_id, user_root, day)
+);
+
+CREATE TABLE account_profiles (          -- folded from account.profile_set
+    tenant_id uuid NOT NULL REFERENCES tenants (id),
+    user_root uuid NOT NULL,
+    profile   text NOT NULL,
+    PRIMARY KEY (tenant_id, user_root)
+);
+```
+
+The commit that folds a held version, a promotion, a rejection, a supersession, a key issued or
+revoked, or a connection opened or revoked moves `account_meters` and `account_activity` in its
+own transaction, under the chain lock. For a memory fold it reads `oml_chain_live` before and
+after the fold and moves `memories` by the difference, charged to `oml_chain_account`, the
+account of the chain's first version. When the commit carries a ceiling and a meter it raised
+passes it, the store refuses the commit (`quota_reached`) and nothing is written.
+`oml_account_source(tenant)` recomputes every account's stocks from the rows by the same
+definitions: 0038 fills the counters from it, and the drift report compares the counters with
+it. `usage_daily` is appended by the lead's hourly rollup, `ON CONFLICT DO NOTHING`. The same
+pass deletes ledger rows older than 25 months and activity rows older than 62 days. `0038`
+widens `user_quotas.quota` to six quotas and its `max_count` to 10^12, for `text_bytes`. Every
+table is under `tenant_isolation`. The serving role holds `SELECT, INSERT, UPDATE` on
+`account_meters`, `SELECT, INSERT, UPDATE, DELETE` on `account_activity` and `account_profiles`,
+and `SELECT, INSERT, DELETE` on `usage_daily`, never `UPDATE`.
 
 ## vocabularies (ADR-0021)
 

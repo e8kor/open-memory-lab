@@ -856,6 +856,16 @@ A person signed up in open mode. The actor is the `signup.issuer` admin key; the
 `web.email_allowed`'s, with `terms_version` recorded on the entry. The user is drawn, never
 derived from the email.
 
+### account.profile_set
+
+```json
+{ "user_root": "…", "profile": "free", "overrides": { "memories": 5000 } }
+```
+
+An admin key set an account's quota profile and its overrides, replacing the ones it had; the
+fold writes `account_profiles` and replaces the account's `user_quotas` rows
+([ADR-0070](../adr/ADR-0070-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d5). Counts and names only.
+
 ### web.quota_set
 
 ```json

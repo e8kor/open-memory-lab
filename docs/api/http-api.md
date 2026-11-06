@@ -527,6 +527,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `POST /v1/memories/{artifact_id}/supersede` | writer (own claims) or dreamer(propose); includes retirement | served |
 | `POST /v1/memories/{artifact_id}/source-check` | the version's author key, or dreamer on its workarea; a promoted, anchored served tip only | served |
 | `GET /v1/guardrails` | reader on the scope node; the set under the key's reader access and `guardrail_scope` ([Guardrails](#guardrails-get-v1guardrails)) | served |
+| `GET /v1/account/usage` | any key of an account, for its own account only; a tenant key gets `access.not_found` ([account usage](#account-usage)) | served |
 | `POST /v1/attachments/uploads` | writer | designed |
 | `PUT /v1/attachments/uploads/{session_id}/parts/{part_number}` | writer (session owner) | designed |
 | `POST /v1/attachments/uploads/{session_id}/complete` | writer (session owner) | designed |
@@ -569,6 +570,7 @@ join this table. The Contract column says where each endpoint is declared: **ser
 | `GET /v2/web/users` | admin (key role); the people with their quota use and limits, and the pending deletion requests ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d11) | served |
 | `POST /v2/admin/memories/search` · `GET /v2/admin/memories/{artifact_id}` | admin (key role), lead only, every answer journalled as `memory.admin_read`; *since v0.5.0* ([admin read](#admin-read)) | served |
 | `GET /v2/admin/rescan` | admin (key role); the stored versions rescanned by rule, nothing changed or journalled; *since v0.6.0* ([rescan](#rescan)) | served |
+| `GET /v2/admin/accounts/{account}/usage` · `PUT /v2/admin/accounts/{account}/profile` · `GET /v2/admin/usage` · `GET /v2/admin/usage/drift` | admin (key role); one account's usage, its quota profile journalled as `account.profile_set`, the month's ledger as JSON or CSV, and the drift report ([account usage](#account-usage)) | served |
 | `GET /v2/search` · `POST /v2/search/default` | admin (key role); the tenant's default search pipeline, journalled as `search.default_set`; *since v0.5.5* ([search settings](#search-settings)) | served |
 | `GET /v2/usage/settings` · `POST /v2/usage/settings` · `GET /v2/usage/events` · `POST /v2/usage/eval` | admin (key role); the tenant's recalls, its query-text setting journalled as `telemetry.settings_set`, and the real-usage replay; *since v0.5.7* ([recall telemetry](#recall-telemetry)) | served |
 
@@ -1779,6 +1781,36 @@ names `artifact_id`, `workarea_id`, `version`, `state`, `class`, `rule`, `action
 version the scan would refuse today stays where it is, for a person to read with
 `oml admin read` and retire. `oml admin rescan` walks every window, sums them by rule, and exits 1
 when any finding vetoes.
+
+### Account usage
+
+*Proposed · [ADR-0070](../adr/ADR-0070-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md)*
+
+An account is a person's user root and everything its keys write. Six meters count it:
+`memories` (live chains it started), `text_bytes` (the claim text of every version it wrote),
+`writes` and `recalls` (this UTC month), `keys` and `connections`. A write's own commit moves
+the counter and refuses past the limit, so two writers at the last free unit never both
+commit.
+
+- `GET /v1/account/usage`, any key of an account, answers that account's
+  `{account, user, profile, profile_declared, period, meters}`. Each meter is `{meter, used,
+  limit, percent, state}`, with `limit` null where none holds and `state` `ok`, `warning` (80%
+  or more) or `reached`. No parameter names an account, so no key reads another's. A tenant
+  key, which belongs to no account, gets `access.not_found`.
+- `GET /v2/admin/accounts/{account}/usage`, admin key role, answers the same for one account,
+  by its root id or user name.
+- `PUT /v2/admin/accounts/{account}/profile`, admin key role, takes `{profile, overrides}` and
+  replaces the account's quota profile and overrides, journalled as `account.profile_set`. A
+  profile the configuration does not declare, or an unknown quota, is `request.validation`.
+- `GET /v2/admin/usage?period=YYYY-MM&format=json|csv`, admin key role, serves the month's
+  ledger: one row per account per closed UTC day, kept 25 months, for billing.
+- `GET /v2/admin/usage/drift`, admin key role, recomputes every account's stocks from the rows
+  and lists each counter that differs, and each account on an undeclared profile. `oml doctor`
+  reads it.
+
+Past a limit, a write, a key or a connection is refused `429 limit.quota` with `{quota, limit,
+used}` ([errors](errors.md)). No quota refuses a read. The meters are counts and never hold text
+or a query.
 
 ## Bans
 
