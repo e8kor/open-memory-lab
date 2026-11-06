@@ -64,6 +64,7 @@ async fn issue(app: &TestApp, admin: &str, role: Role, grants: Vec<GrantRequest>
     app.issue_key(
         admin,
         &IssueKeyRequest {
+            profile: None,
             role,
             name: name(&format!("rerank-key-{n}")),
             principal: format!("principal-{n}"),
@@ -143,7 +144,9 @@ async fn world(reranker: Arc<FakeReranker>, policy: RerankPolicy) -> World {
 
 fn submit(idem: &str, body: &str, workarea: Option<Uuid>) -> SubmitRequest {
     SubmitRequest {
+        on_similar: Default::default(),
         anchor: None,
+        origin: None,
         idempotency_key: idem.to_owned(),
         claim_key: Some(format!("claim-{idem}")),
         verb: None,
@@ -153,6 +156,8 @@ fn submit(idem: &str, body: &str, workarea: Option<Uuid>) -> SubmitRequest {
         derives_from: Vec::new(),
         severity: None,
         rule: None,
+        valid_from: None,
+        valid_until: None,
     }
 }
 
@@ -182,16 +187,19 @@ impl World {
 
 fn recall(query: &str) -> RecallRequest {
     RecallRequest {
+        timings: false,
         anchor: oml_app::types::AnchorFilter::default(),
         query: query.to_owned(),
         k: 10,
         workarea: None,
         kinds: Vec::new(),
         include_text: true,
-        include_unreviewed: false,
+        include_unreviewed: Some(false),
         max_tokens: None,
         search: None,
         match_mode: MatchMode::Any,
+        include_expired: false,
+        now: None,
     }
 }
 
@@ -226,6 +234,7 @@ async fn bm25_rerank_reorders_the_first_stages_head_by_the_rerankers_relevance()
         .recall(
             &w.reader,
             &RecallRequest {
+                timings: false,
                 search: Some("keyword-any".to_owned()),
                 ..recall("deploy friday")
             },
@@ -289,7 +298,8 @@ async fn an_own_held_row_is_reranked_by_the_same_function_as_a_promoted_one() {
         .recall(
             &w.writer,
             &RecallRequest {
-                include_unreviewed: true,
+                timings: false,
+                include_unreviewed: Some(true),
                 ..recall("rotate signing key")
             },
         )
@@ -408,6 +418,7 @@ async fn a_pipeline_that_does_not_rerank_never_calls_the_reranker() {
         .recall(
             &w.reader,
             &RecallRequest {
+                timings: false,
                 search: Some("keyword-any".to_owned()),
                 ..recall("deploy saturday")
             },

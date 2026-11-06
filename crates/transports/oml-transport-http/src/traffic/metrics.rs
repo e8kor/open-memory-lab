@@ -60,6 +60,11 @@ fn review_histogram() -> Histogram {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct OriginLabels {
+    origin_kind: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct AnswerLabels {
     pipeline: String,
     result: String,
@@ -68,6 +73,18 @@ struct AnswerLabels {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct PipelineLabels {
     pipeline: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct StageLabels {
+    pipeline: String,
+    stage: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct SimilarLabels {
+    relation: String,
+    on_similar: String,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -88,6 +105,16 @@ struct ReasonLabels {
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct RelationLabels {
     relation: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct ModeLabels {
+    mode: String,
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct ActLabels {
+    act: String,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -146,6 +173,9 @@ pub struct Metrics {
     recalls: Family<RecallLabels, Counter>,
     reranks: Family<RerankLabels, Counter>,
     bulk_items: Family<BulkLabels, Counter>,
+    unreviewed_hits: Counter,
+    mode_changes: Family<ModeLabels, Counter>,
+    curation_acts: Family<ActLabels, Counter>,
     source_checks: Family<BulkLabels, Counter>,
     web_failures: Family<WebFailureLabels, Counter>,
     quality: Quality,
@@ -171,6 +201,10 @@ struct Quality {
     lag: Gauge<f64, AtomicU64>,
     purge_overdue: Gauge,
     unrecalled: Family<AgeLabels, Gauge>,
+    origins: Family<OriginLabels, Counter>,
+    stages: Family<StageLabels, Histogram, fn() -> Histogram>,
+    similar: Family<SimilarLabels, Counter>,
+    similar_duration: Histogram,
 }
 
 impl Quality {
@@ -187,7 +221,26 @@ impl Quality {
             lag: Gauge::default(),
             purge_overdue: Gauge::default(),
             unrecalled: Family::default(),
+            origins: Family::default(),
+            stages: Family::new_with_constructor(histogram as fn() -> Histogram),
+            similar: Family::default(),
+            similar_duration: histogram(),
         };
+        registry.register(
+            "oml_recall_stage_duration_seconds",
+            "time a recall spent in each stage, by pipeline and stage: scope, retrieve_<retriever>, fuse, rerank, suggest, hydrate, cut",
+            q.stages.clone(),
+        );
+        registry.register(
+            "oml_remember_similar",
+            "writes the similar check ran for, by the best relation it named (none, same_text, near_copy) and on_similar (hold, refuse)",
+            q.similar.clone(),
+        );
+        registry.register(
+            "oml_remember_similar_duration_seconds",
+            "time a write's similar check took",
+            q.similar_duration.clone(),
+        );
         registry.register(
             "oml_recall_answers",
             "recall answers by pipeline and shape: hits, empty, or below_floor when the relevance floor withheld a row",
@@ -239,6 +292,11 @@ impl Quality {
             q.purge_overdue.clone(),
         );
         registry.register(
+            "oml_recall_hits_by_origin",
+            "recall hits served, by the origin kind of the version, none for one written before kinds (ADR-0063 d13)",
+            q.origins.clone(),
+        );
+        registry.register(
             "oml_memories_unrecalled",
             "served memories no recall of the last 30 days returned, by how long ago they were promoted",
             q.unrecalled.clone(),
@@ -262,6 +320,9 @@ impl Default for Metrics {
         let recalls = Family::<RecallLabels, Counter>::default();
         let reranks = Family::<RerankLabels, Counter>::default();
         let bulk_items = Family::<BulkLabels, Counter>::default();
+        let unreviewed_hits = Counter::default();
+        let mode_changes = Family::<ModeLabels, Counter>::default();
+        let curation_acts = Family::<ActLabels, Counter>::default();
         let source_checks = Family::<BulkLabels, Counter>::default();
         let web_failures = Family::<WebFailureLabels, Counter>::default();
         let sparse_encoded = Family::<SparseLabels, Counter>::default();
@@ -313,6 +374,26 @@ impl Default for Metrics {
             "items of bulk verdicts by outcome",
             bulk_items.clone(),
         );
+        // No label: hits served labelled unreviewed inside an in-progress
+        // scope, or a key's own held rows (ADR-0030 d5).
+        registry.register(
+            "oml_recall_unreviewed_hits",
+            "recall hits served labelled unreviewed",
+            unreviewed_hits.clone(),
+        );
+        // The mode is a closed set: in_progress or standard (ADR-0030 d5).
+        registry.register(
+            "oml_workarea_mode_changes",
+            "workarea modes set by a person's key, by the mode set; standard on an in-progress root is its commit",
+            mode_changes.clone(),
+        );
+        // The act is a closed set: reject, retire, flag or write (ADR-0030
+        // d5, d9).
+        registry.register(
+            "oml_curation_acts",
+            "acts committed by curator keys inside in-progress workareas, by act",
+            curation_acts.clone(),
+        );
         // The outcome is a closed set: fresh, equivalent, moved, changed or
         // removed (ADR-0057 d17).
         registry.register(
@@ -360,6 +441,9 @@ impl Default for Metrics {
             recalls,
             reranks,
             bulk_items,
+            unreviewed_hits,
+            mode_changes,
+            curation_acts,
             source_checks,
             web_failures,
             quality,
@@ -421,6 +505,29 @@ impl Metrics {
         self.bulk_items
             .get_or_create(&BulkLabels {
                 outcome: outcome.to_owned(),
+            })
+            .inc();
+    }
+
+    /// `n` recall hits served labelled `unreviewed` (ADR-0030 d5).
+    pub(crate) fn unreviewed_hits(&self, n: u64) {
+        self.unreviewed_hits.inc_by(n);
+    }
+
+    /// One workarea mode set by a person's key (ADR-0030 d5).
+    pub(crate) fn mode_set(&self, mode: &'static str) {
+        self.mode_changes
+            .get_or_create(&ModeLabels {
+                mode: mode.to_owned(),
+            })
+            .inc();
+    }
+
+    /// One curator act (ADR-0030 d5, d9).
+    pub(crate) fn curation(&self, act: &'static str) {
+        self.curation_acts
+            .get_or_create(&ActLabels {
+                act: act.to_owned(),
             })
             .inc();
     }
@@ -489,6 +596,44 @@ impl Metrics {
                 pipeline: pipeline.to_owned(),
             })
             .observe(seconds);
+    }
+
+    /// One recall hit of `origin_kind`, one of eight closed values.
+    pub(crate) fn recall_hit_origin(&self, origin_kind: &str) {
+        self.quality
+            .origins
+            .get_or_create(&OriginLabels {
+                origin_kind: origin_kind.to_owned(),
+            })
+            .inc();
+    }
+
+    /// One recall stage's seconds (ADR-0049 d14).
+    pub(crate) fn recall_stage(&self, pipeline: &'static str, stage: &'static str, seconds: f64) {
+        self.quality
+            .stages
+            .get_or_create(&StageLabels {
+                pipeline: pipeline.to_owned(),
+                stage: stage.to_owned(),
+            })
+            .observe(seconds);
+    }
+
+    /// One write's similar check (ADR-0050 d1; ADR-0054 d1).
+    pub(crate) fn similar_checked(
+        &self,
+        relation: &'static str,
+        on_similar: &'static str,
+        seconds: f64,
+    ) {
+        self.quality
+            .similar
+            .get_or_create(&SimilarLabels {
+                relation: relation.to_owned(),
+                on_similar: on_similar.to_owned(),
+            })
+            .inc();
+        self.quality.similar_duration.observe(seconds);
     }
 
     /// One verdict, `waited` seconds after its memory's submission.

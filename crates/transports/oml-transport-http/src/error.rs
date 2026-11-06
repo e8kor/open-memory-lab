@@ -433,6 +433,12 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "{field} is a guardrail's field, refused on any other kind and on a retirement"
         ))
         .with_details(json!({ "field": format!("/{field}") })),
+        AppError::ValidTime(err) => ApiError::validation(err.to_string())
+            .with_details(json!({ "field": err.field() })),
+        AppError::NowUnparsable => ApiError::validation(
+            "now must be YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset",
+        )
+        .with_details(json!({ "field": "/now" })),
         // Raised only from the agent plugin, whose oml_write names the
         // target `replaces` (proposed ADR-0037 d10, amending ADR-0039 d3).
         AppError::GuardrailTarget => ApiError::validation(
@@ -483,6 +489,83 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "role": role.as_str(),
             "held_by": held_by.as_str(),
         })),
+        AppError::OriginInvalid { field, reason } => {
+            ApiError::validation(format!("{field}: {reason}"))
+                .with_details(json!({ "field": field }))
+        }
+        // The chat workarea is a person's to open (ADR-0063 d8).
+        AppError::ChatScopeHumanOnly { held_by } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "R1: an agent never opens the scope that holds a person's own words; the person does.",
+            format!(
+                "a workarea named chat under a user root is created by a key held by a human, and this key is held by {}",
+                held_by.as_str()
+            ),
+        )
+        .with_details(json!({
+            "reason": "chat_scope_is_human_only",
+            "held_by": held_by.as_str(),
+        })),
+        // Only a person's key sets a workarea's mode (ADR-0030 d1).
+        AppError::ModeHumanOnly { role, held_by } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "R1: the surface an agent can call never promotes, signs, demotes or deletes; a workarea's mode is set by a person.",
+            format!(
+                "setting a workarea's mode needs a dreamer key held by a human, and this is a {} key held by {}",
+                role.as_str(),
+                held_by.as_str()
+            ),
+        )
+        .with_details(json!({
+            "reason": "mode_is_human_only",
+            "role": role.as_str(),
+            "held_by": held_by.as_str(),
+        })),
+        // A curator narrows inside an in-progress scope only (ADR-0030 d9).
+        AppError::Curator { verb, refusal } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "R1: a curator key narrows inside an in-progress scope and never widens.",
+            format!("a curator key may not {verb} here"),
+        )
+        .with_details(json!({ "reason": refusal.as_str(), "verb": verb })),
+        AppError::ProfileMismatch { profile } => ApiError::validation(format!(
+            "profile {profile} needs a dreamer key held by an agent"
+        ))
+        .with_details(json!({ "field": "/profile" })),
+        // ADR-0030 d1, d6, d7.
+        AppError::InProgressRefused {
+            workarea_id,
+            reason,
+        } => ApiError::new(
+            StatusCode::CONFLICT,
+            "workarea.in_progress_refused",
+            "Until its commit, nothing crosses an in-progress subtree's boundary, and subtrees never nest.",
+            format!("workarea {workarea_id}: {reason}"),
+        )
+        .with_details(json!({ "workarea": workarea_id, "reason": reason.as_str() })),
+        // ADR-0030 d6: no count, so a committer learns nothing of rows it
+        // cannot read.
+        // The use case maps the store's in-transaction refusal to
+        // HeldRemaining with the root; reaching here unmapped still answers
+        // the code, naming no workarea (ADR-0030 d6).
+        AppError::Store(StoreError::HeldRemaining) => ApiError::new(
+            StatusCode::CONFLICT,
+            "workarea.held_remaining",
+            "Nothing leaves an in-progress workarea until every memory in it is reviewed.",
+            "the subtree still holds unreviewed memories: review them, then commit".to_owned(),
+        ),
+        AppError::HeldRemaining { workarea_id } => ApiError::new(
+            StatusCode::CONFLICT,
+            "workarea.held_remaining",
+            "Nothing leaves an in-progress workarea until every memory in it is reviewed.",
+            format!(
+                "workarea {workarea_id} still holds unreviewed memories in its subtree: review them, then commit"
+            ),
+        )
+        .with_details(json!({ "workarea": workarea_id })),
         AppError::BulkShape { field, reason } => {
             ApiError::validation(reason).with_details(json!({ "field": field }))
         }
@@ -514,6 +597,17 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "A claim_key names one live claim per (tenant, workarea); a claim whose every version is rejected or erased releases it (D7).",
             "a held, promoted or demoted version already holds this claim_key in the workarea",
         ),
+        AppError::TimingsOff => ApiError::validation(
+            "timings is refused: this deployment does not serve recall timings; an operator sets search.timings to serve them",
+        )
+        .with_details(json!({ "field": "/timings" })),
+        AppError::SimilarExists(similar) => ApiError::new(
+            StatusCode::CONFLICT,
+            "submission.similar_exists",
+            "The similar check names what the writer may already read and decides nothing: with on_similar refuse the writer reads the named rows and chooses, before anything waits for review (ADR-0050 d1).",
+            "on_similar is refuse and the writer may already read a row with the same text or a near copy",
+        )
+        .with_details(json!({ "similar": crate::similar_json(&similar) })),
         AppError::ScanVeto(finding) => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "submission.scan_veto",

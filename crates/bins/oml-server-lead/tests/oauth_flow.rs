@@ -307,6 +307,7 @@ async fn run_flow(db: &str) -> Option<Flow> {
         .issue_key(
             &boot.admin_key.value,
             &IssueKeyRequest {
+                profile: None,
                 role: Role::Writer,
                 name: Name::parse("claude-mobile").expect("a name"),
                 principal: "crew/claude-mobile".to_owned(),

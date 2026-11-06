@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use oml_app::app::{AdminMemory, Capacity, OwnKey};
 use oml_app::domain::guardrail::{FrameOptions, render_frame};
+use oml_app::domain::in_progress::WorkareaMode;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::web::{Email, csrf_token};
 use oml_app::domain::{MemoryKind, Role};
@@ -438,15 +439,18 @@ where
                 .recall(
                     bearer,
                     &RecallRequest {
+                        timings: false,
                         query: q.to_owned(),
                         k: 25,
                         workarea: None,
                         kinds: HIT_KINDS.to_vec(),
                         include_text: true,
-                        include_unreviewed: true,
+                        include_unreviewed: Some(true),
                         max_tokens: None,
                         search: None,
                         match_mode: oml_app::search::MatchMode::Any,
+                        include_expired: false,
+                        now: None,
                         anchor: oml_app::types::AnchorFilter::default(),
                     },
                 )
@@ -528,7 +532,7 @@ where
             .await
             .map_err(app_error)?;
         let mut body = format!(
-            r#"<p class="label">Workareas</p><h1>Your workarea</h1><p class="lede">Your keys write, read and make workareas under <code>universe.{}</code>, and nowhere else.</p><table><tr><th>Path</th><th>Name to use</th></tr>"#,
+            r#"<p class="label">Workareas</p><h1>Your workarea</h1><p class="lede">Your keys write, read and make workareas under <code>universe.{}</code>, and nowhere else.</p><table><tr><th>Path</th><th>Name to use</th><th>Mode</th></tr>"#,
             short(session.user.as_str())
         );
         for node in &tree.items {
@@ -539,12 +543,37 @@ where
             };
             let _ = write!(
                 body,
-                r#"<tr><td class="mono">{}</td><td class="mono">{}</td></tr>"#,
+                r#"<tr><td class="mono">{}</td><td class="mono">{}</td><td>{}</td></tr>"#,
                 short(&node.path),
-                short(&qualified)
+                short(&qualified),
+                if node.workarea.in_progress {
+                    "in progress"
+                } else {
+                    "standard"
+                }
             );
         }
-        body.push_str("</table><h2>Make a workarea</h2>");
+        // A person's reviewer key puts a workarea in progress, where your
+        // agents read each other's unreviewed memories at once, and commits
+        // it once nothing is held (ADR-0030 d1, d6).
+        body.push_str("</table><h2>In progress</h2><p>In a workarea in progress your agents recall each other's memories before review, marked unreviewed, and nothing reaches anyone outside it until you commit it, which needs every memory in it reviewed.</p>");
+        body.push_str(&form(
+            "/web",
+            "workarea_mode",
+            csrf,
+            &format!(
+                "{}{}",
+                input("workarea", "workarea", "", true),
+                select(
+                    "mode",
+                    "mode",
+                    &[("in_progress", "put in progress"), ("standard", "commit")]
+                )
+            ),
+            "Set",
+            true,
+        ));
+        body.push_str("<h2>Make a workarea</h2>");
         body.push_str(&form(
             "/web",
             "create_workarea",
@@ -632,6 +661,27 @@ where
                 .map_err(app_error)?;
                 Ok(Outcome::Redirect(
                     "/web?view=workarea&done=created".to_owned(),
+                ))
+            }
+            "workarea_mode" => {
+                fields.only(&["workarea", "mode"])?;
+                let workarea = fields.reference("workarea")?;
+                let mode = fields
+                    .get("mode")
+                    .and_then(WorkareaMode::parse)
+                    .ok_or_else(|| {
+                        ApiError::validation("mode is in_progress or standard")
+                            .with_details(json!({"field": "mode"}))
+                    })?;
+                let review = self.caller(session, Capacity::Review).await?;
+                retry_chain(|| {
+                    self.app
+                        .set_workarea_mode(Bearer::Session(&review), workarea.clone(), mode)
+                })
+                .await
+                .map_err(app_error)?;
+                Ok(Outcome::Redirect(
+                    "/web?view=workarea&done=mode+set".to_owned(),
                 ))
             }
             "review_next" | "verdict" => {
@@ -861,18 +911,18 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             input("claim_key_prefix", "claim key prefix", filters[2].1, false),
         );
         let mut rows = String::from(
-            "<table><tr><th></th><th>Claim key</th><th>Workarea</th><th>From</th><th>Held since</th><th>Text</th><th>Source</th></tr>",
+            "<table><tr><th></th><th>Claim key</th><th>Workarea</th><th>From</th><th>Held since</th><th>Text</th><th>Source</th><th>Valid</th></tr>",
         );
         if page.items.is_empty() {
             rows.push_str(
-                r#"<tr><td colspan="7" class="dim">Nothing waits for you here.</td></tr>"#,
+                r#"<tr><td colspan="8" class="dim">Nothing waits for you here.</td></tr>"#,
             );
         }
         for (i, item) in page.items.iter().enumerate() {
             let m = &item.served.memory;
             let _ = write!(
                 rows,
-                r#"<tr><td><input type="checkbox" name="pick_{i:03}" value="{}"{}></td><td class="mono">{}</td><td class="mono">{}</td><td class="mono">{}{}</td><td class="mono">{}</td><td class="text">{}</td><td class="mono">{}</td></tr>"#,
+                r#"<tr><td><input type="checkbox" name="pick_{i:03}" value="{}"{}></td><td class="mono">{}</td><td class="mono">{}</td><td class="mono">{}{}</td><td class="mono">{}</td><td class="text">{}</td><td class="mono">{}</td><td class="mono">{}</td></tr>"#,
                 m.memory_id,
                 if all { " checked" } else { "" },
                 short(&m.claim_key),
@@ -881,7 +931,8 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 if item.same_user { " (you)" } else { "" },
                 short(item.held_since.as_str()),
                 text(&m.body),
-                anchor_line(m.anchor.as_deref())
+                anchor_line(m.anchor.as_deref()),
+                valid_line(&item.served)
             );
         }
         rows.push_str("</table>");
@@ -1377,6 +1428,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     format!("{source}\n{text_value}").as_bytes(),
                 );
                 let req = SubmitRequest {
+                    on_similar: Default::default(),
                     idempotency_key: format!("web-curate-{}", &digest.to_prefixed()[7..39]),
                     claim_key: fields.get("claim_key").map(ToOwned::to_owned),
                     verb: Some(SubmitVerb::Learn),
@@ -1388,7 +1440,10 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     derives_from: vec![source],
                     severity: None,
                     rule: None,
+                    valid_from: None,
+                    valid_until: None,
                     anchor: None,
+                    origin: None,
                 };
                 retry_chain(|| self.app.submit_memory(Bearer::Session(&curate), &req))
                     .await
@@ -1433,6 +1488,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                 let digest =
                     oml_app::domain::Sha256Hash::digest(format!("{target}\n{body}").as_bytes());
                 let req = SupersedeRequest {
+                    on_similar: Default::default(),
                     idempotency_key: format!("web-supersede-{}", &digest.to_prefixed()[7..39]),
                     target_id: target,
                     body,
@@ -1444,7 +1500,10 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     refuse_vocabulary_target: false,
                     severity: None,
                     rule: None,
+                    valid_from: None,
+                    valid_until: None,
                     anchor: None,
+                    origin: None,
                     expected_version,
                 };
                 retry_chain(|| self.app.supersede(Bearer::Session(&acting), &req))
@@ -1717,6 +1776,33 @@ fn anchor_line(anchor: Option<&oml_app::domain::anchor::Anchor>) -> String {
     }
 }
 
+/// A version's valid time as one line for a reviewer, and on a held
+/// successor the end approving it gives the version it replaces, so a
+/// verdict is given on what it makes true (proposed ADR-0059 d2, d4).
+fn valid_line(m: &ServedMemory) -> String {
+    let valid = &m.memory.valid;
+    let mut line = if valid.is_open() {
+        "none declared".to_owned()
+    } else {
+        format!(
+            "from {}, {}",
+            valid.from.as_ref().map_or("any time", |f| f.as_str()),
+            valid
+                .until
+                .as_ref()
+                .map_or_else(|| "open".to_owned(), |u| format!("until {}", u.as_str()))
+        )
+    };
+    if let (Some(end), Some(replaces)) = (&m.replaces_valid_until, &m.replaces) {
+        line.push_str(&format!(
+            "; approving ends version {} at {}",
+            replaces.version,
+            end.as_str()
+        ));
+    }
+    text(&line)
+}
+
 fn memory_card(m: &ServedMemory) -> String {
     let from = if m.anonymous {
         "the shared area".to_owned()
@@ -1730,14 +1816,15 @@ fn memory_card(m: &ServedMemory) -> String {
     });
     warning
         + &format!(
-            r#"<div class="card"><p class="label">{} · {} · version {}</p><p class="text">{}</p><p class="dim mono">{} · from {}</p><p class="dim mono">source: {}</p></div>"#,
+            r#"<div class="card"><p class="label">{} · {} · version {}</p><p class="text">{}</p><p class="dim mono">{} · from {}</p><p class="dim mono">source: {}</p><p class="dim mono">valid {}</p></div>"#,
             state_tag(memory_state(m)),
             short(m.workarea_path.as_deref().unwrap_or("")),
             m.memory.version,
             text(&m.memory.body),
             short(&m.memory.claim_key),
             from,
-            anchor_line(m.memory.anchor.as_deref())
+            anchor_line(m.memory.anchor.as_deref()),
+            valid_line(m)
         )
 }
 
@@ -1783,6 +1870,26 @@ fn attribution_card(m: &AdminMemory) -> String {
         ),
         ("text digest", short(&m.memory.body_digest)),
         ("source", anchor_line(m.memory.anchor.as_deref())),
+        (
+            "valid",
+            if m.memory.valid.is_open() {
+                "none declared".to_owned()
+            } else {
+                text(&format!(
+                    "from {}, {}",
+                    m.memory
+                        .valid
+                        .from
+                        .as_ref()
+                        .map_or("any time", |f| f.as_str()),
+                    m.memory
+                        .valid
+                        .until
+                        .as_ref()
+                        .map_or_else(|| "open".to_owned(), |u| format!("until {}", u.as_str()))
+                ))
+            },
+        ),
     ] {
         let _ = write!(
             out,

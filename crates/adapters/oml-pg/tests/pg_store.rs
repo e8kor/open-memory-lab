@@ -376,15 +376,19 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                         promoted_nodes: vec![wa],
                         kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
                         own_held: Some(OwnHeldScope {
+                            any_author: false,
                             author_key_ids: vec![own],
                             nodes: vec![wa],
                         }),
+                        expired_at: None,
                     },
                     RetrievalQuery {
                         query,
                         match_mode: MatchMode::Any,
                         k,
                         sparse: &[],
+                        window: None,
+                        within: &[],
                     },
                 )
                 .await
@@ -2557,19 +2561,21 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  CASE WHEN t.parent_id IS NULL THEN 'committed' ELSE 'development' END)"
             }
             // 0014 adds user_root and namespace_root_id, folded as false and
-            // null for every workarea it finds (ADR-0044 d12).
+            // null for every workarea it finds (ADR-0044 d12); 0028 adds
+            // mode, standard for every workarea it finds (ADR-0030 d14).
             (true, "workareas") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'user_root' \
-                 - 'namespace_root_id') || jsonb_build_object('name', t.prior_name)"
+                 - 'namespace_root_id' - 'mode') || jsonb_build_object('name', t.prior_name)"
             }
             // 0012 adds credential, folded as bearer for every key it finds
             // (ADR-0031 d7); 0014 adds user_root_id, null for every key it
             // finds (ADR-0044 d12); 0015 adds session_for, null for every
             // key it finds (ADR-0045 d6); 0016 adds guardrail_scope, folded
-            // as ancestors (proposed ADR-0037 d4).
+            // as ancestors (proposed ADR-0037 d4); 0028 adds profile, null
+            // for every key it finds (ADR-0030 d14).
             (true, "api_keys") => {
                 "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
-                 - 'session_for' - 'guardrail_scope'"
+                 - 'session_for' - 'guardrail_scope' - 'profile'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
             // d12).
@@ -2578,13 +2584,17 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // kind (proposed ADR-0037 d10); 0020 adds the stored search
             // lexemes, generated from the claim (ADR-0049 d12); 0025 adds
             // the anchor and the latest source check, null on every row
-            // written before it (ADR-0057 d1, d5).
+            // written before it (ADR-0057 d1, d5); 0026 adds valid time, open
+            // on every existing row (proposed ADR-0059 d11); 0029 adds the origin
+            // kind, null on every row written before it and never backfilled
+            // (ADR-0063 d2).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
                  - 'anchor_fragment' - 'anchor_hash' - 'anchor_hasher' - 'source_check_rev' \
                  - 'source_check_result' - 'source_check_hash' - 'source_check_path' \
-                 - 'source_check_fragment' - 'source_check_at'"
+                 - 'source_check_fragment' - 'source_check_at' \
+                 - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us' - 'origin_kind'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -5877,7 +5887,10 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 25, "every migration through 0025_source_anchors");
+    assert_eq!(
+        applied, 30,
+        "every migration through 0030_origin_kind_validate"
+    );
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -6196,6 +6209,7 @@ async fn dreamer_pg(
     app.issue_key(
         admin,
         &oml_app::types::IssueKeyRequest {
+            profile: None,
             role: Role::Dreamer,
             name: name(key_name),
             principal: principal.to_owned(),
@@ -7199,6 +7213,7 @@ async fn the_bm25_statement_reads_the_stored_lexemes_and_never_a_rows_claim() {
     .bind("the prices of useInvoiceFilters")
     .bind(10_i64)
     .bind(false)
+    .bind(i64::MIN)
     .fetch_all(&mut *tx)
     .await
     .expect("plan");
@@ -7230,12 +7245,15 @@ async fn bm25_list(
                 promoted_nodes: vec![wa],
                 kinds: oml_app::types::HIT_KINDS.to_vec(),
                 own_held: None,
+                expired_at: None,
             },
             RetrievalQuery {
                 query,
                 match_mode: MatchMode::Any,
                 k: 50,
                 sparse: &[],
+                window: None,
+                within: &[],
             },
         )
         .await
@@ -7316,7 +7334,10 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 25, "every migration through 0025_source_anchors");
+    assert_eq!(
+        applied, 30,
+        "every migration through 0030_origin_kind_validate"
+    );
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -7386,6 +7407,10 @@ async fn bm25_postings_contract_laws() {
     }
     let created = Mutex::new(Vec::new());
     oml_port_contracts::bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned(
+        &postings_store(&created, oml_pg::PruneLimits::NONE).await,
+    )
+    .await;
+    oml_port_contracts::bm25_postings_ranks_as_bm25_does_when_a_readable_row_has_expired(
         &postings_store(&created, oml_pg::PruneLimits::NONE).await,
     )
     .await;
@@ -7462,6 +7487,48 @@ async fn oml_token_id_in_sql_equals_the_adapters() {
             .await
             .expect("oml_token_id");
         assert_eq!(sql, oml_pg::token_id(lexeme), "{lexeme:?}");
+    }
+    drop_dbs(&created).await;
+}
+
+/// `oml_similar_keys` and `oml_similar_words` in SQL and
+/// `oml_domain::similar` give every text the same words and keys, so a
+/// write's keys meet the stored ones (ADR-0050 d17).
+#[tokio::test]
+async fn similar_keys_computed_in_sql_equal_the_cores() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let texts = [
+        "",
+        "--- !!!",
+        "ok",
+        "Port 8080, not 8081.",
+        "Production deploys run only on Tuesday and Thursday between 10:00 and 12:00 CET; \
+         outside that window a deploy needs the on-call lead's approval.",
+        "Use `pnpm`, not NPM: v0.5.7 — ok? Grüße aus Köln, 東京 and naïve café.",
+        "UPPER lower MiXeD\ttabs\nnew lines  and \u{a0}no-break spaces",
+        "x'y back\\slash under_score dash-ed dot.ted",
+        "yes yes yes yes yes yes yes yes yes yes yes",
+    ];
+    for text in texts {
+        let words: Vec<String> = sqlx::query_scalar("SELECT oml_similar_words($1)")
+            .bind(text)
+            .fetch_one(store.pool())
+            .await
+            .expect("oml_similar_words");
+        assert_eq!(words, oml_app::domain::similar::words(text), "{text:?}");
+        let mut sql: Vec<(i16, i64)> = sqlx::query_as("SELECT band, key FROM oml_similar_keys($1)")
+            .bind(text)
+            .fetch_all(store.pool())
+            .await
+            .expect("oml_similar_keys");
+        sql.sort_unstable();
+        let mut core = oml_app::domain::similar::Fingerprint::of(text).stored_keys();
+        core.sort_unstable();
+        assert_eq!(sql, core, "{text:?}");
     }
     drop_dbs(&created).await;
 }
@@ -7837,6 +7904,173 @@ async fn an_erased_version_leaves_no_posting_and_no_count() {
     drop_dbs(&created).await;
 }
 
+/// The memories of `tenant` that hold similar keys, with how many, read as
+/// the owner under the tenant's row security.
+async fn similar_keys_of(store: &PgStore, tenant: Uuid) -> BTreeMap<Uuid, i64> {
+    let mut owner = owner_conn(store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    let rows: Vec<(Uuid, i64)> = sqlx::query_as(
+        "SELECT memory_id, count(*) FROM similar_keys WHERE tenant_id = $1 GROUP BY memory_id",
+    )
+    .bind(tenant)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("similar keys");
+    rows.into_iter().collect()
+}
+
+/// A replaced, retired, rejected, demoted or erased version, and a deleted
+/// row, holds no similar key, and the keys the check reads never outlive the
+/// text they were made from; doctor finds neither a gap nor a drift
+/// afterwards (ADR-0050 d17, R4; ADR-0005 d4). A demotion or an erase that
+/// leaves `is_tip` set is covered as much as one that clears it.
+#[tokio::test]
+async fn a_demoted_retired_or_erased_version_leaves_no_similar_key() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(574);
+    rig.seed_chain(&store, 0).await;
+    let (replaced, retired, demoted, rejected, served) = lifecycle_rows(&mut rig, &store).await;
+    let tenant = rig.tenant_id;
+    let before = similar_keys_of(&store, tenant).await;
+    for (what, id) in [
+        ("replaced", replaced),
+        ("retired", retired),
+        ("demoted", demoted),
+        ("rejected", rejected),
+        ("retirement version", Uuid::from_u128(0xB12)),
+    ] {
+        assert!(!before.contains_key(&id), "the {what} version holds no key");
+    }
+    for (what, id) in [
+        ("served tip", served),
+        ("successor", Uuid::from_u128(0xB11)),
+        ("held", Uuid::from_u128(0xB07)),
+        ("derived fact", Uuid::from_u128(0xB05)),
+        ("steering", Uuid::from_u128(0xB06)),
+    ] {
+        assert!(before.contains_key(&id), "the {what} version holds keys");
+    }
+    // A demotion and an erase that leave is_tip set.
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE memories SET status = 'demoted' WHERE tenant_id = $1 AND id = $2",
+        served,
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE memories SET status = 'erased' WHERE tenant_id = $1 AND id = $2",
+        Uuid::from_u128(0xB05),
+    )
+    .await;
+    // A held row erased by deletion.
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM review_queue WHERE tenant_id = $1 AND memory_id = $2",
+        Uuid::from_u128(0xB07),
+    )
+    .await;
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM memories WHERE tenant_id = $1 AND id = $2",
+        Uuid::from_u128(0xB07),
+    )
+    .await;
+    let after = similar_keys_of(&store, tenant).await;
+    for id in [served, Uuid::from_u128(0xB05), Uuid::from_u128(0xB07)] {
+        assert!(!after.contains_key(&id), "{id}: no key is left");
+    }
+    assert_eq!(
+        after.keys().copied().collect::<Vec<_>>(),
+        vec![Uuid::from_u128(0xB06), Uuid::from_u128(0xB11)],
+        "the other versions keep theirs"
+    );
+    let health = store
+        .postings_health(tenant)
+        .await
+        .expect("health")
+        .expect("PostgreSQL keeps keys");
+    assert_eq!(
+        (health.similar_unfilled, health.similar_drift),
+        (0, 0),
+        "{health:?}"
+    );
+    drop_dbs(&created).await;
+}
+
+/// Doctor's similar-key health names a version with no key and a key in the
+/// wrong state, from the sample it reads, and reads clean again after the
+/// owner's refill (ADR-0050 d15, d17).
+#[tokio::test]
+async fn the_similar_health_names_a_missing_key_and_a_wrong_state_until_a_refill() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(575);
+    rig.seed_chain(&store, 0).await;
+    let (_, _, _, _, served) = lifecycle_rows(&mut rig, &store).await;
+    let tenant = rig.tenant_id;
+    let health = || async {
+        let h = store
+            .postings_health(tenant)
+            .await
+            .expect("health")
+            .expect("PostgreSQL keeps keys");
+        (h.similar_partition, h.similar_unfilled, h.similar_drift)
+    };
+    assert_eq!(health().await, (true, 0, 0));
+    as_owner(
+        &store,
+        tenant,
+        "DELETE FROM similar_keys WHERE tenant_id = $1 AND memory_id = $2",
+        served,
+    )
+    .await;
+    assert_eq!(
+        health().await,
+        (true, 1, 0),
+        "a served version without keys"
+    );
+    as_owner(
+        &store,
+        tenant,
+        "UPDATE similar_keys SET state = 0 WHERE tenant_id = $1 AND memory_id = $2",
+        Uuid::from_u128(0xB11),
+    )
+    .await;
+    assert_eq!(health().await, (true, 1, 1), "keys in another state");
+    let mut owner = owner_conn(&store).await;
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query("SELECT oml_similar_keys_refill($1)")
+        .bind(tenant)
+        .execute(&mut *tx)
+        .await
+        .expect("refill");
+    tx.commit().await.expect("commit");
+    assert_eq!(health().await, (true, 0, 0), "a refill repairs both");
+    drop_dbs(&created).await;
+}
+
 /// The `bm25_postings` statement reads the postings by their token index as
 /// the serving role, under row security: integer equality is leakproof, so
 /// the policy leaves the index usable (ADR-0052 Context, d1).
@@ -7882,6 +8116,7 @@ async fn the_bm25_postings_statement_reads_the_postings_by_their_index_under_row
     .bind(false)
     .bind(1_i64)
     .bind(10_i64)
+    .bind(i64::MIN)
     .fetch_all(&mut *tx)
     .await
     .expect("plan");
@@ -7977,7 +8212,10 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 25, "every migration through 0025_source_anchors");
+    assert_eq!(
+        applied, 30,
+        "every migration through 0030_origin_kind_validate"
+    );
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8007,15 +8245,19 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                         promoted_nodes: vec![wa, Uuid::from_u128(0xE3)],
                         kinds: oml_app::types::HIT_KINDS.to_vec(),
                         own_held: Some(OwnHeldScope {
+                            any_author: false,
                             author_key_ids: vec![Uuid::from_u128(0xE5)],
                             nodes: vec![wa],
                         }),
+                        expired_at: None,
                     },
                     RetrievalQuery {
                         query,
                         match_mode: MatchMode::Any,
                         k: 50,
                         sparse: &[],
+                        window: None,
+                        within: &[],
                     },
                 )
                 .await
@@ -8897,5 +9139,131 @@ async fn a_version_enqueued_again_after_its_read_is_not_written_with_the_older_c
     assert_eq!(oml_port_contracts::encode_sparse_backlog(&store).await, 1);
     let list = store.sparse_pending(tenant, 10).await.expect("pending");
     assert!(list.is_empty(), "written with the new claim and dequeued");
+    drop_dbs(&created).await;
+}
+
+/// Migration 0026 is shaped to run on a live database, as 0025 is: it waits
+/// for a lock 5 s at most, adds its check NOT VALID and validates it apart,
+/// and builds each partition's index on its own and attaches it to an
+/// index created ON ONLY the parent; over a database with a tenant
+/// partition the check ends validated and every index valid and attached
+/// (proposed ADR-0059 d11).
+#[tokio::test]
+async fn migration_0026_is_live_safe_and_leaves_every_partitions_indexes_attached() {
+    let sql = MIGRATOR
+        .iter()
+        .find(|m| m.version == 26)
+        .expect("migration 0026")
+        .sql
+        .to_string();
+    for shape in [
+        "SET LOCAL lock_timeout = '5s'",
+        ") NOT VALID;",
+        "VALIDATE CONSTRAINT memories_valid_time_ends",
+        "ON ONLY memories (tenant_id, valid_from_us)",
+        "ON ONLY memories (tenant_id, valid_until_us)",
+        "ATTACH PARTITION",
+    ] {
+        assert!(sql.contains(shape), "0026 lacks {shape:?}");
+    }
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 25).await;
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(591);
+    rig.seed_chain(&store, 0).await;
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0026 applies over a database with a tenant partition");
+    let partitions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_inherits WHERE inhparent = 'memories'::regclass",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .expect("partitions");
+    assert!(partitions >= 1, "the seeded tenant has a partition");
+    for index in ["memories_valid_from", "memories_valid_until"] {
+        let (attached, valid): (i64, bool) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pg_inherits WHERE inhparent = $1::regclass), \
+                    (SELECT indisvalid FROM pg_index WHERE indexrelid = $1::regclass)",
+        )
+        .bind(index)
+        .fetch_one(&mut conn)
+        .await
+        .expect("index");
+        assert_eq!(attached, partitions, "{index}: one attached per partition");
+        assert!(valid, "{index} is valid once every partition's is attached");
+    }
+    let validated: bool = sqlx::query_scalar(
+        "SELECT convalidated FROM pg_constraint WHERE conname = 'memories_valid_time_ends' \
+           AND conrelid = 'memories'::regclass",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .expect("constraint");
+    assert!(validated, "the check is validated");
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// The expiry cut of `bm25-postings` compares `valid_until_us` with a bound
+/// `int8`, leakproof, so under row security the serving role reads the
+/// ended versions by `memories_valid_until`'s index condition instead of
+/// filtering every dated row of the tenant (proposed ADR-0059 d3).
+#[tokio::test]
+async fn the_expiry_cut_is_an_index_condition_for_the_serving_role_under_row_security() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(592);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0xE2);
+    lexeme_rows(&mut rig, &store, wa).await;
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(rig.tenant_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *tx)
+        .await
+        .expect("seqscan off");
+    let token = oml_pg::token_id("deploy");
+    let plan: Vec<String> = sqlx::query_scalar(&format!("EXPLAIN {}", oml_pg::bm25_postings_sql()))
+        .bind(rig.tenant_id)
+        .bind(vec![wa])
+        .bind(vec![1_i16, 2])
+        .bind(Vec::<Uuid>::new())
+        .bind(vec!["deploy".to_owned()])
+        .bind(vec![token])
+        .bind(vec![2.0_f64])
+        .bind(5.0_f64)
+        .bind(10.0_f64)
+        .bind(vec![token])
+        .bind(Some(10_i64))
+        .bind(false)
+        .bind(1_i64)
+        .bind(10_i64)
+        .bind(1_793_000_000_000_000_i64)
+        .fetch_all(&mut *tx)
+        .await
+        .expect("plan");
+    tx.commit().await.expect("commit");
+    let plan = plan.join("\n");
+    eprintln!("bm25-postings plan as the serving role:\n{plan}");
+    assert!(
+        plan.lines()
+            .any(|l| l.contains("Index Cond") && l.contains("valid_until_us <=")),
+        "the expiry cut is an index condition under the policy: {plan}"
+    );
     drop_dbs(&created).await;
 }

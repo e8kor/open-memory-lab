@@ -2,7 +2,7 @@
 id: changelog
 tier: engineering
 status: design draft for review · decided, not built
-answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design, 0.5.6-design, 0.5.7-design and 0.5.8-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
+answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.0-design, 0.4.0-design, 0.5.0-design, 0.5.1-design, 0.5.2-design, 0.5.5-design, 0.5.6-design, 0.5.7-design, 0.5.8-design and the unreleased 0.6.0-design cover, what each revision changed, and the breaks of 0.4.0 with their migrations
 -->
 
 # Spec changelog
@@ -10,7 +10,7 @@ answers: how the design spec is versioned, what 0.1.0-design, 0.2.0-design, 0.3.
 **Status:** design draft for review · decided, not built
 
 This page is the revision record of the design specification itself. The current spec version
-is **0.5.8-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
+is **0.6.0-design**, matching `info.version` in the [OpenAPI document](api/openapi.yaml). Until
 2026-10-30 no code existed; since the PoC entry below, an entry may also record an
 implementation milestone where it changes what the repository holds.
 
@@ -27,33 +27,23 @@ implementation milestone where it changes what the repository holds.
   revision of the design it was built against; a revision carrying a `proposed` record is
   tagged when that record is accepted.
 
-## 0.6.0-design (unreleased)
+## Unreleased
 
-### 2026-11-05 — the deterministic scan's rule set (ADR-0065, proposed)
+### 2026-11-05 — Chat memory and origin kinds (ADR-0063, proposed)
 
-- **[ADR-0065](adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md)** replaces the marker scanner with `oml-scan/1`, a compiled-in,
-  versioned rule set in a leaf crate: provider tokens, key-value secrets above an entropy floor,
-  URL credentials and private keys veto; instructions aimed at the reader, bidirectional and
-  invisible Unicode and long base64 runs hold; personal-data rules exist and stay off. One
-  secret-shaped path list serves the anchor scan and `oml sync`. A finding names its class, rule,
-  field and line, never what it matched. `scan.scanner_version` carries the rule set, and the
-  findings metric counts by rule. `/readyz` and `oml doctor` name the rule set, its rule count
-  and the personal-data setting; `GET /v2/admin/rescan` and `oml admin rescan` report what the
-  rule set finds in versions already stored, by rule and place, changing nothing (d13). The
-  per-tenant personal-data setting is FR-180, and the rescan's window is FR-181.
-- After review: each rule runs as its own regex, with the base64 and AWS-pair rules counted by
-  hand, so a mebibyte scans in about 13 ms rather than 5 s, and a field over 64 KiB is scanned off
-  the async worker. Claim keys and verdict reasons are scanned (d7). Key assignments need an
-  operator and a value that is not a written identifier. JSON `Authorization` headers,
-  `curl -u`, legacy `sk-` keys and a bare AWS secret beside its key id are vetoed. Provider tokens
-  glued to a word are found. The veto rules also read a normalised view (d14). The gitleaks
-  notice ships as `LICENSES/gitleaks-MIT.txt`. The path list no longer refuses `id_generator.rs`,
-  `.env.example` or this record, which was renamed so its file name holds no `secret`.
-- Pages touched: [admission](architecture/admission.md) (the registry's new classes and the
-  measured pass), [errors](api/errors.md) (`details.finding`'s shape),
-  [workspace plan](engineering/workspace-plan.md) (the second leaf crate),
-  [HTTP API](api/http-api.md) and [OpenAPI](api/openapi.yaml) (the rescan route and `/readyz`'s
-  `scan`), and the [roadmap](product/roadmap.md) (FR-180, FR-181).
+What changes for someone using OML: every memory says what kind of source it came from, recall
+can be narrowed to what a person said or to what documents say, and an opted-in agent writes the
+facts a conversation settled into the person's own chat workarea, held until they review them.
+
+- `info.version` is `0.6.0-design`. `SubmitRequest` and `SupersedeRequest` gain `origin`;
+  `RecallRequest` and `GET /v1/memories` gain `origin_kinds`; `MemorySummary` gains `origin`; the
+  `Anchor` schema admits a `chat://` uri and the `oml-turn/1` hasher. No error code is added.
+- `oml_write` gains `origin`, `oml_read` gains `origin_kinds`; the catalog stays three tools.
+- `submission.remember` and `submission.learn` carry `origin`. Migration 0030 adds
+  `memories.origin_kind` and `memories_origin_kind`.
+- The CLI gains `oml chat init`, `--origin-kind` on `oml write` and `oml read`, and the hook verbs
+  `user-prompt`, `stop` and `pre-compact`; the plugin gains their three hooks, the
+  `oml-chat-capture` skill and the `chat_workarea` option.
 
 ## 0.5.8-design
 

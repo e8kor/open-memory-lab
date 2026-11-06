@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Open Memory Lab HTTP API
-  version: 0.5.8-design
+  version: 0.6.0-design
   summary: >-
     The two-ring JSON API of OML, an agentic external memory provider: /v1 the provider ring,
     /v2 the memory lab.
@@ -146,6 +146,7 @@ paths:
         - { name: own, in: query, schema: { type: boolean, default: false } }
         - { name: anchor_repo, in: query, schema: { $ref: '#/components/schemas/AnchorRepo' }, description: "Rows whose anchor names this repository, with own or without it; unanchored rows are left out (ADR-0057 d4). Malformed is request.validation naming anchor_repo." }
         - { name: anchor_path_prefix, in: query, schema: { $ref: '#/components/schemas/AnchorPathPrefix' }, description: "Rows whose anchor path starts with these bytes; unanchored rows are left out (ADR-0057 d4)." }
+        - { name: origin_kinds, in: query, style: form, explode: false, schema: { $ref: '#/components/schemas/OriginKinds' }, description: "Comma-separated: rows whose origin kind is one of these; rows without a kind are left out (ADR-0063 d3). Malformed is request.validation naming origin_kinds." }
         - { name: since, in: query, schema: { type: string, format: date-time } }
         - { name: until, in: query, schema: { type: string, format: date-time } }
         - { $ref: '#/components/parameters/Limit' }
@@ -624,6 +625,37 @@ paths:
                   external_manager: crewd.example.com
                 created_at: '2026-09-02T09:14:33Z'
               schema: { $ref: '#/components/schemas/Workarea' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/workareas/{workarea}/mode:
+    post:
+      tags: [workareas]
+      operationId: setWorkareaMode
+      summary: A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
+      description: 'Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool reaches it.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              mode: in_progress
+            schema: { $ref: '#/components/schemas/WorkareaModeSet' }
+      responses:
+        '200':
+          description: The node as the key reads it.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkareaView' }
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -2646,8 +2678,11 @@ components:
         - submission.tip_conflict
         - submission.version_conflict
         - submission.claim_key_conflict
+        - submission.similar_exists
         - submission.universe_refused
         - workarea.frozen
+        - workarea.in_progress_refused
+        - workarea.held_remaining
         - workarea.transition_refused
         - review.author_in_lineage
         - review.ratifier_is_proposer
@@ -2700,6 +2735,8 @@ components:
         verb: { type: string, enum: [remember, learn], description: "Omitted, learn when derives_from is non-empty and remember otherwise (ADR-0039 d3); a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact." }
         claim_key: { type: string, description: "Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6)." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail], default: memory, description: "guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1)." }
+        valid_from: { $ref: '#/components/schemas/ValidEnd', description: "When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the submission; only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0059 d2)." }
+        valid_until: { $ref: '#/components/schemas/ValidEnd', description: "When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3)." }
         severity: { $ref: '#/components/schemas/Severity' }
         rule: { $ref: '#/components/schemas/GuardrailRule' }
         body: { type: string, description: 'Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through the designed attachments (openapi-designed.yaml).' }
@@ -2708,7 +2745,9 @@ components:
           type: array
           items: { type: string }
           description: Artifact ids; the declared lineage (omission is undetectable — honesty rule).
+        on_similar: { type: string, enum: [hold, refuse], description: "Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. Not part of the request digest. Since v0.5.9." }
         anchor: { $ref: '#/components/schemas/Anchor' }
+        origin: { $ref: '#/components/schemas/Origin' }
 
     SubmitAccepted:
       type: object
@@ -2733,6 +2772,39 @@ components:
             result: { type: string }
             scanner_version: { type: string }
         journal_seq: { type: integer }
+        similar:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/SimilarItem' }
+          description: "The rows the similar check named, as first answered: a replay serves the list of the write it replays (ADR-0050 d1). Since v0.5.9."
+
+    SimilarItem:
+      type: object
+      additionalProperties: false
+      description: "A row the key may read that holds the same words in the same order (same_text) or a word set at Jaccard 0.9 or more (near_copy), found by integer keys and verified exactly, with no model (ADR-0050 d1, d17). Ordered same_text first, then by jaccard, then by artifact_id. To replace it, write with replaces set to artifact_id."
+      required: [artifact_id, claim_key, version, kind, workarea_id, state, relation, jaccard, own]
+      properties:
+        artifact_id: { type: string }
+        claim_key: { type: string }
+        version: { type: integer }
+        kind: { type: string, enum: [memory, derived_fact, steering] }
+        workarea_id: { type: string }
+        state: { type: string, enum: [held, promoted], description: held only for the calling key's own rows. }
+        relation: { type: string, enum: [same_text, near_copy] }
+        jaccard: { type: number, minimum: 0.9, maximum: 1, description: "The two word sets' Jaccard similarity, rounded down to hundredths; 1 for same_text." }
+        own: { type: boolean, description: The calling key wrote it. }
+
+    RecallTimings:
+      type: object
+      additionalProperties: false
+      description: "Each stage's milliseconds, in the order the stages ran, and their sum (ADR-0049 d14). Present only when the request sent timings true, which a deployment serves only with search.timings on."
+      required: [stages_ms, total_ms]
+      properties:
+        stages_ms:
+          type: object
+          description: "Keys from the closed set scope, retrieve_keyword_all, retrieve_keyword_any, retrieve_bm25, retrieve_trigram, retrieve_bm25_postings, retrieve_sparse, fuse, rerank, suggest, hydrate, cut; a stage that did not run is absent."
+          additionalProperties: { type: number, minimum: 0 }
+        total_ms: { type: number, minimum: 0 }
 
     AttachmentDescriptor:
       type: object
@@ -2743,7 +2815,7 @@ components:
 
     MemorySummary:
       type: object
-      required: [artifact_id, claim_key, version, tip, workarea_id, workarea_path, kind, state, tokens, retirement, replaces, held_expires_at, created_at, promoted_at, anchor, stale, source_checked]
+      required: [artifact_id, claim_key, version, tip, workarea_id, workarea_path, kind, state, unreviewed, tokens, retirement, replaces, held_expires_at, created_at, promoted_at, anchor, stale, source_checked]
       properties:
         artifact_id: { type: string }
         claim_key: { type: string }
@@ -2753,6 +2825,7 @@ components:
         workarea_path: { type: [string, 'null'], description: "Derived at read time; grants bind to node ids. Null wherever workarea_id is." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail] }
         state: { type: string, enum: [held, promoted, demoted, rejected, erased] }
+        unreviewed: { type: boolean, description: "True exactly when the served version is held: the caller's own held version, or, inside a workarea a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4)." }
         severity: { type: string, enum: [never, must, should], description: "On kind guardrail alone, except a retirement version (ADR-0037 d2)." }
         rule: { description: "On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8)." }
         load_warning: { type: string, description: "On a held guardrail alone: every reader of it is told that every key reading its workarea will load the rule once it binds (ADR-0037 d10)." }
@@ -2783,6 +2856,11 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/Anchor' }
             - { type: 'null' }
+        origin:
+          description: What kind of source the version's text came from, as signed; null on versions written before ADR-0063 (d1-d3).
+          oneOf:
+            - { $ref: '#/components/schemas/Origin' }
+            - { type: 'null' }
         stale:
           description: changed or removed from the served version's latest source check; null otherwise, and always null on a held version (ADR-0057 d5).
           oneOf:
@@ -2793,6 +2871,14 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/SourceChecked' }
             - { type: 'null' }
+        valid_from: { type: [string, 'null'], description: "When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM, YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2)." }
+        valid_until: { type: [string, 'null'], description: "When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (proposed ADR-0059 d2, d4)." }
+        replaces_valid_until: { type: string, description: "On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (proposed ADR-0059 d4)." }
+
+    ValidEnd:
+      type: string
+      pattern: '^[0-9]{4}(-[0-9]{2}(-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?([Zz]|[+-][0-9]{2}:[0-9]{2}))?)?)?$'
+      description: 'YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).'
 
     Memory:
       allOf:
@@ -2826,15 +2912,17 @@ components:
         include_text: { type: boolean, default: true, description: Whether each served item carries its text (ADR-0039 d7). }
         anchor_repo: { $ref: '#/components/schemas/AnchorRepo' }
         anchor_path_prefix: { $ref: '#/components/schemas/AnchorPathPrefix' }
+        origin_kinds: { $ref: '#/components/schemas/OriginKinds' }
         include_unreviewed:
           type: boolean
-          default: false
           description: >-
             When true, the calling key's own held rows (kind memory or derived_fact, never steering
             or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by
             the kinds filter when one is sent as promoted hits are, join the hits, ranked in the
-            same order, with memory.state held; they count against k and max_tokens.
-            Rules: docs/architecture/retrieval.md.
+            same order, with memory.state held and unreviewed true; they count against k and
+            max_tokens. Inside a workarea a person put in progress, every author's held memories
+            on the served nodes join too, and absent means true there; absent means false
+            everywhere else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md.
         max_tokens:
           type: integer
           format: int64
@@ -2847,11 +2935,11 @@ components:
             docs/architecture/retrieval.md, Token budgets.
         search:
           type: string
-          enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse]
+          enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse, bm25-sparse-rrf, bm25-postings-time]
           description: >-
             The search pipeline, among those the deployment serves (search.enabled); omitted, the
             tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and
-            bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16). A name the deployment does not
+            bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-sparse-rrf, the same two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13; bm25-postings-time, bm25-postings fused with the memories whose valid time overlaps a date the query names, ADR-0059 d7). A name the deployment does not
             serve is request.validation with details.field /search and details.served.
         match:
           type: string
@@ -2861,6 +2949,9 @@ components:
             all keeps only rows holding every query word; when none does, the any-word hits are
             served and search.fallback is any_term (ADR-0049 d5).
         feedback: { $ref: '#/components/schemas/Feedback' }
+        timings: { type: boolean, description: "Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d14). Since v0.5.9." }
+        include_expired: { type: boolean, default: false, description: 'true also serves memories whose valid_until has passed, which recall hides by default; get and the listings always serve them (proposed ADR-0059 d3).' }
+        now: { $ref: '#/components/schemas/ValidEnd', description: "The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired and anchors the query's relative dates (last week, three days ago) (proposed ADR-0059 d5)." }
 
     Feedback:
       type: object
@@ -2882,6 +2973,7 @@ components:
       type: object
       required: [recall_id, steering, hits, query_digest, search]
       properties:
+        timings: { $ref: '#/components/schemas/RecallTimings' }
         recall_id: { type: string, format: uuid, description: 'The recall''s id: the feedback member of a later read names it (ADR-0054 d6).' }
         steering:
           type: array
@@ -2910,7 +3002,7 @@ components:
       properties:
         terms: { type: array, items: { type: string }, description: 'The query words the row holds, as the pipeline reads words.' }
         of: { type: integer, minimum: 0, description: How many words the query had. }
-        via: { type: array, items: { type: string, enum: [keyword_all, keyword_any, bm25, trigram, bm25_postings, sparse] }, description: The retrievers whose lists held the row. }
+        via: { type: array, items: { type: string, enum: [keyword_all, keyword_any, bm25, trigram, bm25_postings, sparse, time] }, description: 'The retrievers whose lists held the row; time when its valid time overlaps the window the query named (proposed ADR-0059 d7).' }
         rerank: { type: [number, 'null'], minimum: 0, maximum: 1, description: 'The reranker''s relevance of the row to the query, when a reranking pipeline scored it; the hit''s score is then this relevance (ADR-0053 d7).' }
         rank_before: { type: [integer, 'null'], minimum: 1, description: 'The row''s rank in the first stage''s list, from 1, when the reranker scored it (ADR-0053 d7).' }
         tokens:
@@ -2932,13 +3024,22 @@ components:
       description: What ran and how the query was read (ADR-0049 d5, d6; ADR-0052 d11; ADR-0053 d5-d7).
       required: [pipeline, match, terms, fallback, did_you_mean, access, pruned, rerank, rerank_reason, floor, below_floor]
       properties:
-        pipeline: { type: string, enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse] }
+        pipeline: { type: string, enum: [keyword-all, keyword-any, bm25, bm25-trigram, bm25-postings, bm25-rerank, sparse, bm25-sparse, bm25-sparse-rrf, bm25-postings-time] }
         match: { type: string, enum: [any, all] }
         terms: { type: array, items: { type: string } }
         fallback: { type: [string, 'null'], description: 'any_term when match all found no row with every word and the any-word hits were served; null otherwise.' }
         did_you_mean: { type: array, items: { type: string }, description: 'Spellings from rows the key may read, from a pipeline with a trigram list, when no hit holds every word; else empty.' }
         access: { type: string, enum: [postings, scan], description: 'postings when every list was read from integer postings by their index; scan when any list scanned the rows in scope, as every pipeline but bm25-postings does, and as bm25-postings does when every query word was pruned (ADR-0052 d6).' }
         pruned: { type: array, items: { type: string }, description: 'The query words left out of the postings read because they are frequent among the rows the key may read; a hit the other words reach is still scored with them, and a memory holding only them is not found. Empty for a scan (ADR-0052 d6, d11).' }
+        window:
+          type: [object, 'null']
+          additionalProperties: false
+          description: 'The date window read from the query by rule oml-when/1, anchored to the recall''s now; null when the query names no date (proposed ADR-0059 d6).'
+          required: [from, until, phrase]
+          properties:
+            from: { type: [string, 'null'], format: date-time, description: The window's first instant; null when open. }
+            until: { type: [string, 'null'], format: date-time, description: The instant after its last; null when open. }
+            phrase: { type: string, description: The query's words the window was read from. }
         rerank:
           description: 'applied when a reranking pipeline reordered the head of its first stage; skipped when the reranker was busy, late or failed and the first stage''s order was served; null when the pipeline does not rerank or found nothing.'
           oneOf:
@@ -2972,6 +3073,14 @@ components:
         tenant_default: { type: [string, 'null'], description: The tenant's journalled default; a name the deployment no longer serves stays here and is not effective. }
         effective: { type: string, description: The pipeline a recall naming none runs now. }
         postings: { $ref: '#/components/schemas/PostingsHealth' }
+        valid_time:
+          type: object
+          additionalProperties: false
+          description: 'The tenant''s served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (proposed ADR-0059 d12).'
+          required: [declared, expired]
+          properties:
+            declared: { type: integer, minimum: 0 }
+            expired: { type: integer, minimum: 0 }
 
     UsageSettings:
       type: object
@@ -3102,6 +3211,7 @@ components:
         body: { type: string, description: 'Claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). With retirement true, why the claim is retired.' }
         expected_version: { type: integer, minimum: 1, description: "The claim's latest version the caller can read, as it last read it: its promoted versions where it reads the workarea and its own keys' versions; never another author's held version. Any other is 409 submission.version_conflict, details.current_version (ADR-0057 d19)." }
         anchor: { $ref: '#/components/schemas/Anchor' }
+        origin: { $ref: '#/components/schemas/Origin' }
         workarea: { $ref: '#/components/schemas/WorkareaRef', description: "When sent, the target's workarea, by id or name; any other is request.validation, details.field /workarea (ADR-0039 d7)." }
         retirement: { type: boolean, default: false, description: 'true proposes retiring the claim, and body states why. Refused with request.validation when the target''s kind is term (terms deprecate), or when a kind is sent that differs from the target''s.' }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail], description: 'Omitted, the successor takes the target''s kind — the one field inherited from the target. A memory, derived_fact or steering target admits any of those three; a vocabulary-kind target and a retirement keep the target''s kind; anything else is request.validation (docs/architecture/audit-and-lineage.md).' }
@@ -3109,6 +3219,9 @@ components:
         reason: { type: string }
         severity: { $ref: '#/components/schemas/Severity' }
         rule: { $ref: '#/components/schemas/GuardrailRule' }
+        on_similar: { type: string, enum: [hold, refuse], description: "Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9." }
+        valid_from: { $ref: '#/components/schemas/ValidEnd', description: "When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the successor, which inherits no valid time from its target; once ratified, a declared valid_from also ends the replaced version there (proposed ADR-0059 d4); only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0059 d2)." }
+        valid_until: { $ref: '#/components/schemas/ValidEnd', description: "When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3)." }
 
     Anchor:
       type: object
@@ -3122,12 +3235,36 @@ components:
         submission.scan_veto.
       properties:
         repo: { $ref: '#/components/schemas/AnchorRepo' }
-        uri: { type: string, maxLength: 2048, pattern: '^https://[^@#\s]+$', description: 'A page outside a repository: an absolute https URL with no user information and no fragment.' }
+        uri: { type: string, maxLength: 2048, pattern: '^(https://[^@#\s]+|chat://[a-z][a-z0-9-]{0,31}/[0-9a-f]{32})$', description: 'A page outside a repository: an absolute https URL with no user information and no fragment. Or a chat turn''s session, chat://<harness>/<session>, the session 32 lower-case hex digits derived by the plugin, never the harness''s own id; then rev is refused and fragment, hash and hasher oml-turn/1 are required (ADR-0063 d4, d5).' }
         rev: { type: string, minLength: 1, maxLength: 128, description: 'With repo, required: a full git object id, 40 or 64 lower-case hex digits. With uri, optional: a page version, printable ASCII without whitespace.' }
         path: { type: string, minLength: 1, description: 'With repo, required; with uri, refused. NFC, relative POSIX, at most 1,024 UTF-8 bytes, no empty, . or .. segment, no leading /, no backslash or control character.' }
-        fragment: { type: string, minLength: 1, maxLength: 256, description: 'The part of the file or page: a heading slug, an ADR decision handle dN, or a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file or page (ADR-0057 d3, d21).' }
+        fragment: { type: string, minLength: 1, maxLength: 256, description: 'The part of the file or page: a heading slug, an ADR decision handle dN, or a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file or page (ADR-0057 d3, d21). With a chat uri, required: turn=<n> or turn=<n>-<m>, 1 <= n <= m <= 100000, the person''s prompts counted from 1; turn= is refused with any other anchor (ADR-0063 d4).' }
         hash: { type: string, pattern: '^sha256:[0-9a-f]{64}$', description: "Digest of the fragment's text, or the file's, under hasher." }
-        hasher: { type: string, enum: [oml-md/1], description: 'oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7).' }
+        hasher: { type: string, enum: [oml-md/1, oml-turn/1], description: 'oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7). oml-turn/1: HMAC-SHA-256 of the person''s prompt as the harness passed it, UTF-8 after NFC, keyed by the person''s chat salt, which never leaves their machine; with a chat uri alone (ADR-0063 d4).' }
+
+    Origin:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      description: >-
+        What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission
+        event, immutable per version, never inherited by a successor. Omitted on a write, it is
+        recorded manual. chat requires a chat anchor and a chat anchor requires chat; either
+        mismatch is request.validation naming /origin/kind.
+      properties:
+        kind: { $ref: '#/components/schemas/OriginKind' }
+
+    OriginKind:
+      type: string
+      enum: [repo, doc, code, lake, chat, web, manual]
+
+    OriginKinds:
+      type: array
+      minItems: 1
+      maxItems: 7
+      uniqueItems: true
+      items: { $ref: '#/components/schemas/OriginKind' }
+      description: 'Rows whose origin kind is one of these, combined with every other filter by AND; rows without a kind are left out (ADR-0063 d3).'
 
     AnchorRepo:
       type: string
@@ -3231,6 +3368,13 @@ components:
       properties:
         crew: { $ref: '#/components/schemas/CrewRef' }
 
+    WorkareaModeSet:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [in_progress, standard], description: "in_progress puts the node in progress; standard on an in-progress root is its commit (ADR-0030 d1, d6)." }
+
     Workarea:
       type: object
       required: [id, name, parent_id, path, status]
@@ -3246,6 +3390,7 @@ components:
             - { $ref: '#/components/schemas/Crew' }
             - { type: 'null' }
         user_root: { type: boolean, description: "Whether the node is a user root, universe.<user>, which only the issuance of the first key naming its user creates (ADR-0044 d1, d11)." }
+        mode: { type: string, enum: [standard, in_progress], description: "in_progress when a person's key put the node in progress: readers inside recall unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1, d2)." }
         created_at: { type: string, format: date-time }
 
     WorkareaView:
@@ -3255,6 +3400,11 @@ components:
         - type: object
           required: [children, edges, my_effective_verbs, permission_epoch, policy, pending_transitions, brief, stale_versions]
           properties:
+            in_progress_root:
+              description: "The in-progress workarea this node lies inside, itself for a root, by id and name; null outside every in-progress subtree (ADR-0030 d13)."
+              oneOf:
+                - { $ref: '#/components/schemas/WhoamiRef' }
+                - { type: 'null' }
             stale_versions: { type: integer, minimum: 0, description: "The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workarea." }
             children:
               type: array
@@ -3596,6 +3746,7 @@ components:
         label: { type: string, description: A free-text note; unique nowhere. }
         principal: { type: string, description: 'Who acts — the attribution identity, shared across one identity''s keys; free text.' }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
+        profile: { type: string, enum: [curator], description: "curator: a dreamer key held by an agent that may reject, propose retirements and summaries, and flag contradictions inside an in-progress workarea only, and never approves; any other role or held_by is request.validation, details.field /profile (ADR-0030 d8, d9)." }
         connect_code: { type: boolean, default: false, description: "Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), held_by service (held_by_service), or a deployment without oauth.issuer (not_configured)." }
 
     Key:
@@ -3623,6 +3774,7 @@ components:
         epoch: { type: integer }
         credential: { type: string, enum: [bearer, connection, session], description: "bearer: the key has a value presented as Authorization: Bearer. connection: a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7). session: a key the server holds for a person and acts with only from their web session, no value (ADR-0045 d6)." }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
+        profile: { type: [string, 'null'], enum: [curator, null], description: "The key's profile as key.issued journals it; null for none (ADR-0030 d8)." }
         connections: { type: array, items: { $ref: '#/components/schemas/Connection' }, description: "A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11)." }
 
     Severity:
@@ -3771,6 +3923,7 @@ components:
             - { type: 'null' }
         grants: { type: array, items: { $ref: '#/components/schemas/WhoamiGrant' }, description: "The key's stored grants, each with its epoch and without its deny masks." }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
+        profile: { type: [string, 'null'], enum: [curator, null], description: "The key's profile; null for none (ADR-0030 d8)." }
 
     KeyIssued:
       allOf:

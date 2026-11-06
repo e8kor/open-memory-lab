@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0001-the-constitution
 tier: engineering
-status: accepted design · amended by ADR-0025
+status: accepted design · amended by ADR-0025, ADR-0030
 answers: what the four constitutional rules R1–R4 commit, and what the one bounded development exception permits and marks
 -->
 
 # ADR-0001 — The constitution: four rules, one bounded development exception
 
-**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+**Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
 
 **Release:** partly in v0.1.0; the rest planned for v0.6.0 ([releases](../product/releases.md#decisions))
 
@@ -50,7 +50,9 @@ held to, not a property of running software.
   enter the silver or gold lake zones. The exception is named in the constitution on the day it
   is made, not discovered later; the mark is indelible; and a marked self-signature is recorded
   but never called a review. No other page may widen this scope; a change to it is a new
-  decision on this record.
+  decision on this record. *(Amended 2026-11-05 — a second bounded exception, of R3's first
+  sentence only, inside a workarea a person put in progress: [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d3. R2 holds there
+  without exception.)*
 
 - **d6 — The honest limit on R2.** Undeclared derivation — a writer omitting `derives_from` —
   is not detectable by the service. Lineage-closure exclusion is exactly as good as the

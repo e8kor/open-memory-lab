@@ -32,6 +32,14 @@ fn settings_json(settings: &SearchSettings) -> Value {
         "tenant_default": settings.tenant_default,
         "effective": settings.effective.as_str(),
     });
+    // The tenant's valid time doctor reads where a time pipeline is served
+    // (proposed ADR-0059 d12).
+    if let (Some(v), Some(obj)) = (&settings.valid_time, body.as_object_mut()) {
+        obj.insert(
+            "valid_time".to_owned(),
+            json!({ "declared": v.declared, "expired": v.expired }),
+        );
+    }
     // The postings health doctor reads, on the read alone (ADR-0052 d12).
     if let (Some(h), Some(obj)) = (&settings.postings, body.as_object_mut()) {
         obj.insert(
@@ -49,6 +57,10 @@ fn settings_json(settings: &SearchSettings) -> Value {
                 "sparse_failing": h.sparse_failing,
                 "sparse_parked": h.sparse_parked,
                 "sparse_enabled": h.sparse_enabled,
+                // The similar check's keys (ADR-0050 d17).
+                "similar_partition": h.similar_partition,
+                "similar_unfilled": h.similar_unfilled,
+                "similar_drift": h.similar_drift,
             }),
         );
     }
