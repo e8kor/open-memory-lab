@@ -8,6 +8,20 @@ answers: "what each OML release changed for users and operators, newest first"
 
 Newest first. Each release is a signed tag on the [releases page](https://github.com/e8kor/open-memory-lab/releases).
 
+## 0.6.1
+
+Released 2026-11-06.
+
+- Added claim formats: a write may name a `format` (plain text, Markdown, Mermaid, JSON, YAML or code) and a one-line `title`; the format is signed with the version and changes only by replacement. Migrations 0032 to 0034 run at upgrade.
+- Added the Rust adapter for `oml sync`, which reads a Cargo workspace as one claim per crate and one per module doc.
+- Added titles to the MCP tools (Remember, Recall and Workarea) and rewrote the server instructions to describe what recall returns instead of telling the model to call it.
+- Added `oml keys connect-code --ttl`, which mints a connect code that lives up to 30 days, only for a key confined to one workarea other than the universe.
+- Added `oml demo seed <workarea>`, which fills a workarea with thirty demonstration memories.
+- Changed the connect page to say where the code comes from, with a link to your account page.
+- Changed a handler panic to answer a named `500 system.internal` with the request id; `oml doctor` warns when any occurred.
+
+Upgrade notes: Migrations 0032 to 0034 run at upgrade.
+
 ## 0.6.0
 
 Released 2026-11-06.

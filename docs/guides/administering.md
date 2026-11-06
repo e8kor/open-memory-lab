@@ -74,7 +74,7 @@ A key's role fixes its grants: `writer` takes `reader` and `writer`, `dreamer` t
 
 **An agent.** `oml keys issue-agent` issues a writer key with a writer grant on the workarea, a reader grant unless `--write-only`, and the workarea as default. Give each agent its own principal. With `--out` the CLI creates the file owner-only first, refuses a path that exists, and prints lines that read the file, none carrying the value; without it, the verb prints `export` lines. The `oml-admin` plugin runs this from Claude Code with `--out`.
 
-**A claude.ai or phone connection.** Add `--connect-code`: the key gets no value; the verb prints the connector URL and a single-use code. It needs `oauth.issuer`, else `oauth.connect_refused`. `oml keys connect-code <key>` mints a fresh code, voiding earlier ones ([claude.ai and mobile](claude-ai-and-mobile.md)).
+**A claude.ai or phone connection.** Add `--connect-code`: the key gets no value; the verb prints the connector URL and a single-use code. It needs `oauth.issuer`, else `oauth.connect_refused`. `oml keys connect-code <key>` mints a fresh code, voiding earlier ones; `--ttl 14d` makes it live up to 30 days, for a key confined to one workarea other than the universe ([claude.ai and mobile](claude-ai-and-mobile.md)).
 
 **A reviewer.** `oml keys issue --role dreamer --grant <workarea>:dreamer` with a principal no writer there uses, plus `--grant <workarea>:reader`, or the reviewer sees a held memory without its sources ([reviewing](reviewing.md)).
 

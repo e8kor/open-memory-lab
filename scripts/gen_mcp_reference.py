@@ -67,6 +67,8 @@ def render(doc: dict) -> str:
     for t in tools:
         hints = [HINTS[k] if v else "not " + HINTS[k] for k, v in t.get("annotations", {}).items() if k in HINTS]
         out.append(f"## `{t['name']}`\n")
+        if t.get("title"):
+            out.append(f"Shown in clients as **{t['title']}**.\n")
         out.append(cell(t["description"]) + "\n")
         out.append("Annotations: " + ", ".join(hints) + ".\n")
         sch = t["inputSchema"]

@@ -16,25 +16,26 @@ You get a server, a workarea `crew`, an agent key, a second agent key called `co
 
 === "Binaries, no Docker"
 
-    Install PostgreSQL 17 or later with `ltree` and `pg_trgm` (the contrib package). The first block makes a throwaway cluster on port 54329. Use your own database if you have one.
+    Install PostgreSQL 17 or later with `ltree` and `pg_trgm` (the contrib package). The first block makes a throwaway cluster on port 54329. Use your own database if you have one, and set `OWNER_PW` and `SERVER_PW` to the passwords of its owner and serving roles.
 
     ```sh
     initdb -D oml/pg -A trust -U postgres
     pg_ctl -D oml/pg -o "-p 54329 -k $PWD/oml -c listen_addresses=127.0.0.1" -l oml/pg.log -w start
+    OWNER_PW=$(openssl rand -hex 16) SERVER_PW=$(openssl rand -hex 16)
     psql -h 127.0.0.1 -p 54329 -U postgres \
-      -c "CREATE ROLE oml_owner LOGIN PASSWORD 'ownerpw'" \
-      -c "CREATE ROLE oml_server LOGIN PASSWORD 'serverpw'" \
+      -c "CREATE ROLE oml_owner LOGIN PASSWORD '$OWNER_PW'" \
+      -c "CREATE ROLE oml_server LOGIN PASSWORD '$SERVER_PW'" \
       -c "CREATE DATABASE oml OWNER oml_owner"
     ```
 
-    Download the server and the CLI, verify both with cosign and unpack them, as in [install the server archive](../operations/deployment.md#install-the-server-archive) (`oml-server-lead-0.6.0-x86_64-unknown-linux-gnu` and `oml-cli-0.6.0-x86_64-unknown-linux-musl`). Then start the server. It prints a single-use enrollment token in its log.
+    Download the server and the CLI, verify both with cosign and unpack them, as in [install the server archive](../operations/deployment.md#install-the-server-archive) (`oml-server-lead-0.6.1-x86_64-unknown-linux-gnu` and `oml-cli-0.6.1-x86_64-unknown-linux-musl`). Then start the server. It prints a single-use enrollment token in its log.
 
     ```sh
     mkdir -p oml/srv oml/keys && chmod 700 oml/keys && umask 077
     cd oml/srv
-    OML_POSTGRES__OWNER_URL=postgres://oml_owner:ownerpw@127.0.0.1:54329/oml \
-      OML_POSTGRES__URL=postgres://oml_server:serverpw@127.0.0.1:54329/oml \
-      ../../oml-server-lead-0.6.0-x86_64-unknown-linux-gnu/oml-server-lead > ../server.log 2>&1 &
+    OML_POSTGRES__OWNER_URL=postgres://oml_owner:${OWNER_PW}@127.0.0.1:54329/oml \
+      OML_POSTGRES__URL=postgres://oml_server:${SERVER_PW}@127.0.0.1:54329/oml \
+      ../../oml-server-lead-0.6.1-x86_64-unknown-linux-gnu/oml-server-lead > ../server.log 2>&1 &
     echo $! > ../server.pid; cd ../..
     ```
 

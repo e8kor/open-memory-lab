@@ -20,7 +20,7 @@ The commands are in the [CLI reference](../cli/reference.md). The plugin's behav
 ## 1. Install the CLI
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.1/scripts/install/install.sh | sh
 ```
 
 It writes one file, `~/.local/bin/oml`, and prints what it checked. For Windows and the

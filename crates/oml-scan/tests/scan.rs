@@ -476,8 +476,6 @@ const ACCEPTED: &[(&str, &str)] = &[
     ("api/mcp-plugin.md", "authorization-header"),
     // A spike's throwaway database URL.
     ("spikes/spike-3-rls.md", "url-credentials"),
-    // The quickstart's throwaway local database, with passwords that exist for one run.
-    ("start/quickstart.md", "url-credentials"),
     // The ADR that decides the scanner names the markers and quotes the
     // injection phrases it holds.
     ("ADR-0065-", "marker-veto"),

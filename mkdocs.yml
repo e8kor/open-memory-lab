@@ -119,6 +119,7 @@ nav:
       - MCP tools: api/mcp-plugin.md
       - Settings: operations/configuration.md
       - Error codes: api/errors.md
+      - Connect page: reference/connect-page.md
       - Limits: reference/limits.md
       - Metrics: reference/metrics.md
       - Event catalog: data/event-catalog.md

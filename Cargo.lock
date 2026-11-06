@@ -3806,7 +3806,7 @@ dependencies = [
 
 [[package]]
 name = "oml-app"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ed25519-dalek",
  "oml-domain",
@@ -3819,7 +3819,7 @@ dependencies = [
 
 [[package]]
 name = "oml-cli"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "axum",
  "clap",
@@ -3849,7 +3849,7 @@ dependencies = [
 
 [[package]]
 name = "oml-delta-log"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "bytes",
  "parquet",
@@ -3859,7 +3859,7 @@ dependencies = [
 
 [[package]]
 name = "oml-domain"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -3875,7 +3875,7 @@ dependencies = [
 
 [[package]]
 name = "oml-fetch"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "oml-app",
  "serde_json",
@@ -3885,7 +3885,7 @@ dependencies = [
 
 [[package]]
 name = "oml-format"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "oml-app",
  "proptest",
@@ -3897,7 +3897,7 @@ dependencies = [
 
 [[package]]
 name = "oml-guardrail"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "hex",
  "proptest",
@@ -3909,7 +3909,7 @@ dependencies = [
 
 [[package]]
 name = "oml-lake"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "chrono",
  "deltalake",
@@ -3926,7 +3926,7 @@ dependencies = [
 
 [[package]]
 name = "oml-lakewriter"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "chrono",
  "clap",
@@ -3949,7 +3949,7 @@ dependencies = [
 
 [[package]]
 name = "oml-pg"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "hex",
  "oml-app",
@@ -3963,7 +3963,7 @@ dependencies = [
 
 [[package]]
 name = "oml-port-contracts"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "oml-app",
  "serde_json",
@@ -3973,7 +3973,7 @@ dependencies = [
 
 [[package]]
 name = "oml-rerank"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -3992,7 +3992,7 @@ dependencies = [
 
 [[package]]
 name = "oml-scan"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "regex",
  "serde_json",
@@ -4001,7 +4001,7 @@ dependencies = [
 
 [[package]]
 name = "oml-server-lead"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
@@ -4035,7 +4035,7 @@ dependencies = [
 
 [[package]]
 name = "oml-transport-http"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "axum",
  "getrandom 0.2.17",

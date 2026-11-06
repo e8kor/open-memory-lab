@@ -1,5 +1,5 @@
 ---
-status: Verified
+status: Stable
 verified: 2026-11-06
 answers: "what the connect page shows a person who adds the claude.ai connector, word for word"
 ---

@@ -50,12 +50,23 @@ It prints the connector address, such as `https://oml.example.com/mcp`, and a co
 `7KQ2-M9XD-4TPA`. The key has no value. Replace a code that ran out with
 `oml keys connect-code <key>` ([CLI reference](../cli/reference.md)).
 
+A code lives ten minutes. To hand one to someone who will connect later, such as a reviewer, add
+`--ttl`: `oml keys connect-code <key> --ttl 14d` mints a code that lives up to 30 days. The server
+mints a longer code only for a key whose grants sit on one workarea other than the universe, and
+refuses any other key with `oauth.connect_refused`. `oml keys show <key>` names the live code.
+
+To give that person something to recall, `oml demo seed <workarea>` fills a workarea with thirty
+memories of a fictional team: twenty approved, four approved and then replaced, six held.
+
 ## 2. Add the connector and paste the code
 
 1. On claude.ai, open Customize > Connectors and add a custom connector with your server's
    address, `https://<your-server>/mcp`.
-2. Claude opens OML's connect page. Paste the code from step 1 into it. If someone sent you a link
-   to the page and you did not start the connection yourself, close it.
+2. Claude opens OML's connect page. Paste the code from step 1 into it. The page tells you where
+   the code comes from: "Get a connect code from your account page: Connect Claude on the web or a
+   phone", with a link to `/web`, and "Codes are shown once; use New connect code on the key's row
+   if you lost it." If someone sent you a link to the page and you did not start the connection
+   yourself, close it.
 3. The page shows the organization, the agent identity and the workareas the connection will use,
    and what it may do there. Where it may write, it says that nothing written reaches anyone else
    until someone else reviews it. Confirm.
@@ -68,7 +79,8 @@ fetched 2026-11-04: "Free users are limited to one custom connector.").
 
 ## What chat and mobile get
 
-The three tools, `oml_write`, `oml_read` and `oml_workarea`, under the connector key's grants.
+The three tools, which a client lists as Remember (`oml_write`), Recall (`oml_read`) and Workarea
+(`oml_workarea`), under the connector key's grants.
 They get no skill, no session-start hook, no failure recall and no librarian, because those are
 parts of the Claude Code plugin. The agent searches when the server's instructions and the tools'
 descriptions lead it to. Every write is held, as from any client.
