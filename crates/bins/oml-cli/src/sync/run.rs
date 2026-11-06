@@ -195,13 +195,13 @@ pub fn load(cwd: &Path, opts: &Options) -> Result<Loaded, String> {
         None => {
             let url = git
                 .origin_url()
-                .ok_or("the clone has no origin remote; pass --repo (ADR-0057 d3)")?;
+                .ok_or("this clone has no origin remote; pass --repo <repository>")?;
             let remote = repo_of_remote(&url)?;
             if remote.had_credentials {
                 warnings.push(
-                    "warn: the origin remote's URL carries credentials (in .git/config, or a \
-                     url.insteadOf rewrite in a git config); sync strips them from the anchor, \
-                     and they belong in a credential helper (ADR-0057 d17)"
+                    "warn: the origin remote URL contains credentials (in .git/config or a \
+                     url.insteadOf rewrite); sync removes them from anchors; move them to a \
+                     credential helper"
                         .to_owned(),
                 );
             }
@@ -235,9 +235,8 @@ pub fn load(cwd: &Path, opts: &Options) -> Result<Loaded, String> {
     let rust = opts.adapter == Some(Kind::Rust);
     if rust && opts.pr.is_some() {
         return Err(
-            "--pr is refused with --adapter rust: a crate's claim names its dependents, which \
-             live in manifests a pull request did not change, so the rust adapter reads the \
-             whole source (ADR-0061 d4)"
+            "--pr cannot be used with --adapter rust because dependent crates may be outside \
+             the pull request; omit --pr to sync the whole source"
                 .into(),
         );
     }
@@ -249,7 +248,7 @@ pub fn load(cwd: &Path, opts: &Options) -> Result<Loaded, String> {
             if is_secret_shaped(file) {
                 skipped.push((
                     file.clone(),
-                    "its path matches a secret pattern, so it is never read (ADR-0057 d6)".into(),
+                    "path matches a secret pattern; the file was not read".into(),
                 ));
                 continue;
             }
@@ -333,8 +332,8 @@ pub fn execute(
 ) -> Result<Report, CliError> {
     if opts.retire_all && opts.pr.is_none() {
         return Err(CliError::local(
-            "--retire-all retires a draft's claims and requires --pr <n>: it never touches the \
-             main workarea (ADR-0057 d14)",
+            "--retire-all requires --pr <n>; it only retires draft claims and never changes \
+             the main workarea",
         ));
     }
     let workarea = opts.target_workarea();
@@ -510,8 +509,8 @@ fn resolve_adapter(
             Ok((k, all))
         }
         Some(k) => Err(CliError::local(format!(
-            "the workarea's claims of this source were written by the {} adapter; --adapter {} \
-             is refused unless --change-adapter, which retires them (ADR-0057 d7)",
+            "this source uses the {} adapter; to switch to {} and retire its existing claims, \
+             pass --change-adapter",
             names(),
             k.name()
         ))),
@@ -607,18 +606,16 @@ fn guard_rev(
     for rev in &revs {
         if !git.knows(rev) {
             return Err(CliError::local(format!(
-                "the workarea's claims of this source were read at {}, a commit unknown to this \
-                 clone: fetch it first, or pass --allow-rollback for a deliberate revert \
-                 (ADR-0057 d20); nothing was written",
+                "commit {} from the previous sync is missing from this clone; fetch it, or pass \
+                 --allow-rollback to revert deliberately; nothing was written",
                 short(rev)
             )));
         }
         if git.is_strict_ancestor(&loaded.commit, rev) {
             return Err(CliError::local(format!(
-                "--rev {} is older than {}, which the workarea's claims of this source were read \
-                 at: a sync from an older checkout would retire what was added since and revert \
-                 what changed. Pull, or pass --allow-rollback for a deliberate revert (ADR-0057 \
-                 d20); nothing was written",
+                "--rev {} is older than previously synced commit {}; an older sync would retire \
+                 newer claims and undo changes. Pull a newer checkout, or pass --allow-rollback \
+                 to revert deliberately; nothing was written",
                 short(&loaded.commit),
                 short(rev)
             )));
@@ -639,8 +636,8 @@ fn list_served(api: &dyn SyncApi, ctx: &Context) -> Result<Vec<Listed>, CliError
     })
     .map_err(|e| match e {
         CliError::Refused { code, .. } if code == "request.validation" => CliError::local(
-            "the server does not accept anchors: its listing refused anchor_repo, so it is older \
-             than v0.5.8; nothing was read or written (ADR-0057 d17)",
+            "the server does not support anchors; upgrade it to v0.5.8 or later; nothing was \
+             read or written",
         ),
         other => other,
     })

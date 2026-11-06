@@ -22,7 +22,7 @@ impl Git {
         };
         let top = git
             .run(&["rev-parse", "--show-toplevel"])
-            .map_err(|e| format!("{} is not inside a git clone ({e}); oml sync reads committed files only (ADR-0057 d6)", dir.display()))?;
+            .map_err(|e| format!("{} is not inside a git clone ({e}); run oml sync from a clone because only committed files are read", dir.display()))?;
         Ok(Self {
             dir: PathBuf::from(top.trim()),
         })
@@ -76,7 +76,7 @@ impl Git {
         .map(|s| s.trim().to_owned())
         .map_err(|_| {
             format!(
-                "--rev {rev:?} names no commit in {} (ADR-0057 d6)",
+                "--rev {rev:?} is not a commit in {}; fetch it or choose another revision",
                 self.dir.display()
             )
         })
@@ -280,7 +280,7 @@ pub fn repo_of_remote(url: &str) -> Result<Remote, String> {
     // The remainder may carry a token (`?access_token=`), so it is never
     // echoed.
     check_repo(&rest).map_err(|_| {
-        "the origin remote names no repository under ADR-0057 d3's grammar; pass --repo".to_owned()
+        "cannot derive a repository name from origin; pass --repo <repository>".to_owned()
     })?;
     Ok(Remote {
         repo: rest,
@@ -312,7 +312,7 @@ pub fn check_repo(repo: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "{repo:?} is not a repository name: lower case, 1 to 8 segments of [a-z0-9][a-z0-9._-]* (ADR-0057 d3); pass --repo"
+            "{repo:?} is invalid; pass --repo as 1-8 lower-case segments matching [a-z0-9][a-z0-9._-]*, separated by /"
         ))
     }
 }
@@ -379,3 +379,50 @@ pub fn is_public_server(url: &str) -> bool {
 /// The git config entry recording that this clone's operator allowed the
 /// public server (ADR-0057 d17).
 pub const ALLOW_PUBLIC_CONFIG: &str = "oml.allowPublicServer";
+
+/// How a sync is allowed to use the maintainer's public server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublicServerConsent {
+    /// The URL is not the maintainer's public server.
+    NotRequired,
+    /// This clone recorded an earlier opt-in.
+    Recorded,
+    /// This invocation supplied the first explicit opt-in.
+    FirstOptIn,
+}
+
+/// Authorize a public-server sync from this clone's recorded consent or this
+/// invocation's explicit flag. A first opt-in records the choice locally.
+///
+/// # Errors
+/// The public server is not allowed, or recording the opt-in fails.
+pub fn authorize_public_server(
+    url: &str,
+    cwd: &Path,
+    explicit: bool,
+) -> Result<PublicServerConsent, String> {
+    if !is_public_server(url) {
+        return Ok(PublicServerConsent::NotRequired);
+    }
+    let git = Git::at(cwd).ok();
+    if git
+        .as_ref()
+        .and_then(|git| git.config(ALLOW_PUBLIC_CONFIG))
+        .as_deref()
+        == Some("true")
+    {
+        return Ok(PublicServerConsent::Recorded);
+    }
+    if !explicit {
+        return Err(format!(
+            "{url} is the maintainer's public server: its admins can read submitted memories, \
+             and superseding or retiring a memory does not erase submitted text or anchors; \
+             pass --allow-public-server to opt in and record consent for this clone"
+        ));
+    }
+    if let Some(git) = git {
+        git.set_config(ALLOW_PUBLIC_CONFIG, "true")
+            .map_err(|e| format!("could not record {ALLOW_PUBLIC_CONFIG} for this clone: {e}"))?;
+    }
+    Ok(PublicServerConsent::FirstOptIn)
+}

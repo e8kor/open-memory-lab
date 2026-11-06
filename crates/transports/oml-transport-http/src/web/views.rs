@@ -12,7 +12,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use oml_app::app::{AdminMemory, Capacity, OwnKey};
-use oml_app::domain::guardrail::{FrameOptions, render_frame};
+use oml_app::domain::guardrail::{FrameOptions, GuardrailScope, render_frame};
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::web::{Email, csrf_token};
 use oml_app::domain::{MemoryKind, Role};
@@ -244,7 +244,10 @@ where
                 self.workarea_view(&web, session, &csrf, query).await?,
             ),
             "review" => ("/web?view=review", review_start("/web", &csrf)),
-            "guardrails" => ("/web?view=guardrails", self.guardrails_view(&web).await?),
+            "guardrails" => (
+                "/web?view=guardrails",
+                self.guardrails_view(&web, query).await?,
+            ),
             _ => ("/web", self.keys_view(&web, session, &csrf).await?),
         };
         Ok(shell(
@@ -257,16 +260,29 @@ where
         ))
     }
 
-    /// The guardrails in force at the person's root, read-only: the read
-    /// `GET /v1/guardrails` serves, as `<user>-web` at its default
-    /// workarea, rendered by the hook's renderer with no line marked
-    /// checked; the page writes, supersedes and retires none (proposed
-    /// ADR-0037 d17).
-    async fn guardrails_view(&self, web: &oml_app::app::Caller) -> Result<String, ApiError> {
-        let request = GuardrailRequest::default();
+    /// The guardrails in force at the selected workarea, read-only. The page
+    /// shows the scope and each rule's source path; it writes, supersedes and
+    /// retires none (proposed ADR-0037 d17).
+    async fn guardrails_view(
+        &self,
+        web: &oml_app::app::Caller,
+        query: &Fields,
+    ) -> Result<String, ApiError> {
+        let request = GuardrailRequest {
+            workarea: query
+                .get("workarea")
+                .map(|_| query.reference("workarea"))
+                .transpose()?,
+        };
         let set = self
             .app
             .guardrails(Bearer::Session(web), &request)
+            .await
+            .map_err(app_error)?;
+        let root = web.key().user.ok_or_else(ApiError::not_found)?;
+        let tree = self
+            .app
+            .workarea_tree(Bearer::Session(web), Reference::Id(root), None, 200)
             .await
             .map_err(app_error)?;
         let frame = render_frame(
@@ -278,12 +294,33 @@ where
             },
         )
         .map_err(ApiError::internal)?;
-        let mut lines = frame.text.lines();
-        let header = lines.next().unwrap_or_default();
+        let scope = match set.guardrail_scope {
+            GuardrailScope::Workarea => "This workarea only.",
+            GuardrailScope::Ancestors => "This workarea and its readable parent workareas.",
+        };
         let mut body = format!(
-            r#"<h1>Guardrails</h1><p class="desc">Read-only here; change them with the API or the CLI.</p><p class="dim">{}</p><ul>"#,
-            text(header)
+            r#"<h1>Guardrails</h1><p class="desc">Read-only here; change them with the API or the CLI.</p><p>Rules in force at <code>{}</code>.</p><p><strong>Scope:</strong> {} Each rule names its source workarea.</p><form class="row" method="get" action="/web"><input type="hidden" name="view" value="guardrails"><label>Workarea<select name="workarea">"#,
+            text(&set.scope_path),
+            scope,
         );
+        for node in &tree.items {
+            let id = node.workarea.workarea_id.to_string();
+            let label = node.path.strip_prefix("universe.").unwrap_or(&node.path);
+            let _ = write!(
+                body,
+                r#"<option value="{}"{}>{}</option>"#,
+                attr(&id),
+                if node.workarea.workarea_id == set.scope_node {
+                    " selected"
+                } else {
+                    ""
+                },
+                text(label)
+            );
+        }
+        body.push_str("</select></label><button type=\"submit\">Show</button></form><ul>");
+        let mut lines = frame.text.lines();
+        let _header = lines.next();
         for line in lines {
             let _ = write!(body, "<li>{}</li>", text(line.trim_start_matches("- ")));
         }
@@ -445,7 +482,7 @@ where
             return Ok(body);
         }
         let list = super::memories::ListQuery::parse(query)?;
-        let lede = "Newest first. A held memory is held until someone else reviews it; only its author reads it before then, except inside an in-progress workarea.";
+        let lede = "Newest first. A held memory waits for another identity's review. Its author and the agent's signed-in owner can read it; an in-progress workarea also serves it to readers.";
         if list.atlas {
             // The Atlas reads no memory: the person's workareas and their
             // counts, from the root unless a workarea is chosen (d32).
@@ -487,7 +524,10 @@ where
                 name: if node.workarea.workarea_id == root {
                     node.workarea.name.as_str().to_owned()
                 } else {
-                    format!("{}.{}", session.user.as_str(), node.workarea.name.as_str())
+                    node.path
+                        .strip_prefix("universe.")
+                        .unwrap_or(&node.path)
+                        .to_owned()
                 },
             })
             .collect();

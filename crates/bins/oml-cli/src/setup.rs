@@ -25,9 +25,8 @@ pub const DEFAULT_URL: &str = "https://memory.doublegate.io";
 
 /// What the verb prints to stderr before it sends a key named without a URL
 /// to [`DEFAULT_URL`] (ADR-0043 d4).
-pub const DEFAULT_NOTICE: &str = "no URL was given beside the key, so it goes to \
-    https://memory.doublegate.io, the maintainer's public server; pass --url to name another \
-    (ADR-0043 d4)";
+pub const DEFAULT_NOTICE: &str = "no URL was given; the key will be sent to \
+    https://memory.doublegate.io, the maintainer's public server; pass --url to use another server";
 
 /// What the verb prints to stderr when [`DEFAULT_URL`] refuses a key it was
 /// given no URL for, before the refusal itself (ADR-0043 d4, d7).

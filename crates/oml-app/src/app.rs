@@ -1701,12 +1701,13 @@ where
     /// Whether the caller can read `memory`: its own row in any state,
     /// unless a global denial masks the row's workarea, or a promoted version
     /// within its reader effective access (roles-and-keys.md#own; ADR-0025
-    /// d3). Own is the authoring key, never the principal.
+    /// d3). Own is the authoring key for a bearer caller, and every key in the
+    /// session caller's own-key set for the user page (ADR-0045 d16).
     async fn readable(&self, caller: &Caller, memory: &MemoryRecord) -> Result<bool, AppError> {
         let ancestry = self
             .ancestry(caller.key.tenant_id, memory.workarea_id)
             .await?;
-        if memory.author_key_id == caller.key.key_id {
+        if caller.own_key_ids().contains(&memory.author_key_id) {
             return Ok(!caller.denied(&ancestry));
         }
         let reader = caller.effective(&ancestry).contains(&Role::Reader);

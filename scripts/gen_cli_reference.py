@@ -35,6 +35,9 @@ def find_binary(explicit: str | None) -> str:
 def help_of(oml: str, path: list[str]) -> str:
     env = {"HOME": "/nonexistent", "PATH": "/usr/bin:/bin", "COLUMNS": "10000"}
     out = subprocess.run([oml, *path, "--help"], env=env, capture_output=True, text=True, check=True)
+    if re.search(r"\bADR-\d", out.stdout):
+        command = " ".join(["oml", *path])
+        sys.exit(f"{command} --help names a design record; keep CLI help self-contained")
     return out.stdout
 
 

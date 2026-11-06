@@ -19,8 +19,10 @@ fingerprint of the span it came from.
 3. **Preview.** `oml sync docs/adr --workarea design --adapter adr --dry-run` lists each item as
    `new`, `changed`, `removed`, `moved` or `unchanged` and writes nothing.
 4. **Run.** Drop `--dry-run`. A run writes up to 200 items (`--max-writes`), so repeat for larger
-   sources. The public server is refused unless you pass `--allow-public-server`, because its
-   operators read every memory and an anchor and text are never erased.
+   sources. The public server needs one `--allow-public-server` opt-in per clone. That first run
+   explains the disclosure and records consent in local git config; later runs need no flag. The
+   server's admins can read submitted memories. Supersession or retirement does not erase submitted
+   text or anchors.
 5. **Review in bulk.** A person reads the batch with `oml review list --author-key <sync key>` and
    approves it with `oml review approve --ids -`.
 6. **Check for drift.** `oml sync … --check` writes nothing and exits `1` on `stale`, `removed` or

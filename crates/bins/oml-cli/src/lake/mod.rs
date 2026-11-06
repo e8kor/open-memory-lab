@@ -19,8 +19,8 @@ pub fn local_root(source: &str) -> Result<std::path::PathBuf, String> {
     }
     if let Some((scheme, _)) = source.split_once("://") {
         return Err(format!(
-            "{scheme}:// is read by the next phase of the lake build (ADR-0062 d21, v0.6.2); \
-             this one reads a lake on a disk: pass its directory, and its location with --uri-base"
+            "{scheme}:// lakes are not supported yet; pass a local directory and its canonical \
+             location with --uri-base"
         ));
     }
     let path = std::path::PathBuf::from(source);
