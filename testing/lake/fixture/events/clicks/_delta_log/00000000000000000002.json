@@ -1,0 +1,2 @@
+{"add":{"dataChange":true,"modificationTime":1760000000012,"partitionValues":{},"path":"region=EU/SENTINEL-FILE-part-0001-12.parquet","size":1036,"stats":"{\"numRecords\":42,\"minValues\":{\"col-6f1a\":1},\"maxValues\":{\"col-6f1a\":9917,\"note\":\"SENTINEL-STAT-9917\"}}"}}
+{"commitInfo":{"notebook":{"notebookPath":"/Users/eugene/secret-notebook"},"operation":"WRITE","timestamp":1760000000000,"userName":"SENTINEL-USER-eugene"}}
