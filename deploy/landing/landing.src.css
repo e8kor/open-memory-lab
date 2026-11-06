@@ -88,7 +88,7 @@ details.astext ol{margin:var(--space-2) 0 0;padding-left:var(--space-6);font:var
 .start ol b{color:var(--ink)}
 .term{background:var(--ground-alt);border:1px solid var(--rule);border-radius:var(--radius-md);overflow:hidden;align-self:start}
 .term .bar{display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--rule-soft);font:var(--t-label-weight) var(--t-label-size)/var(--t-label-line) var(--font-mono);letter-spacing:var(--t-label-tracking);text-transform:uppercase;color:var(--ink-faint)}
-.term pre{margin:0;padding:var(--space-4);overflow-x:auto;font:var(--t-code-weight) var(--t-code-size)/var(--t-code-line) var(--font-mono);color:var(--ink);font-variant-ligatures:none}
+.term pre{margin:0;padding:var(--space-4);white-space:pre-wrap;overflow-wrap:anywhere;font:var(--t-code-weight) var(--t-code-size)/var(--t-code-line) var(--font-mono);color:var(--ink);font-variant-ligatures:none}
 .term .c{color:var(--ink-faint)}.term .p{color:var(--star)}
 .links{display:flex;flex-wrap:wrap;gap:var(--space-4);font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body)}
 

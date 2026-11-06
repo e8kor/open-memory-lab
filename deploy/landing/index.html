@@ -108,7 +108,7 @@ details.astext ol{margin:var(--space-2) 0 0;padding-left:var(--space-6);font:var
 .start ol b{color:var(--ink)}
 .term{background:var(--ground-alt);border:1px solid var(--rule);border-radius:var(--radius-md);overflow:hidden;align-self:start}
 .term .bar{display:flex;align-items:center;justify-content:space-between;padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--rule-soft);font:var(--t-label-weight) var(--t-label-size)/var(--t-label-line) var(--font-mono);letter-spacing:var(--t-label-tracking);text-transform:uppercase;color:var(--ink-faint)}
-.term pre{margin:0;padding:var(--space-4);overflow-x:auto;font:var(--t-code-weight) var(--t-code-size)/var(--t-code-line) var(--font-mono);color:var(--ink);font-variant-ligatures:none}
+.term pre{margin:0;padding:var(--space-4);white-space:pre-wrap;overflow-wrap:anywhere;font:var(--t-code-weight) var(--t-code-size)/var(--t-code-line) var(--font-mono);color:var(--ink);font-variant-ligatures:none}
 .term .c{color:var(--ink-faint)}.term .p{color:var(--star)}
 .links{display:flex;flex-wrap:wrap;gap:var(--space-4);font:var(--t-body-dense-weight) var(--t-body-dense-size)/var(--t-body-dense-line) var(--font-body)}
 
@@ -172,9 +172,9 @@ h2.h3{font:var(--t-heading-weight) var(--t-heading-size)/var(--t-heading-line) v
   <div class="hero">
     <div class="hero-copy">
       <h1>One memory across your AI tools.</h1>
-      <p class="lede">Your decisions and project facts, saved once and recalled from Claude, Codex, Cursor or any MCP tool. Nothing is shared until someone approves it.</p>
+      <p class="lede">Your decisions and project facts, recalled from Claude, Codex, Cursor or any MCP tool. Nothing is shared until someone who didn't write it approves it.</p>
       <ul class="tools" aria-label="MCP clients"><li>Claude Code</li><li>claude.ai</li><li>Claude Desktop</li><li>Claude mobile</li><li>Codex</li><li>Cursor</li><li>Gemini CLI</li><li>VS Code</li></ul>
-      <p class="caption">Each connects over MCP, the open protocol AI tools use to reach other services. Claude Code runs daily against this server; the others follow each tool's own MCP setup (<a href="https://e8kor.github.io/open-memory-lab/reference/limits/#not-verified-against-a-live-client">limits</a>).</p>
+      <p class="caption">Each connects over MCP, the open protocol AI tools use to reach other services. The Claude Code plugin is in daily use against this server; the others connect through each tool's own MCP settings (<a href="https://e8kor.github.io/open-memory-lab/reference/limits/#not-verified-against-a-live-client">what we have not tested live</a>).</p>
       <div class="row"><a class="btn primary" href="#start">Get started</a><a class="btn" href="mailto:contact@doublegate.io?subject=OML%20access">Ask about access</a></div>
     </div>
     <article class="card proof" aria-label="An example memory, waiting for approval">
@@ -192,8 +192,8 @@ h2.h3{font:var(--t-heading-weight) var(--t-heading-size)/var(--t-heading-line) v
   </div>
 
   <nav class="aud" aria-label="Who it is for">
-    <a class="aud-card" href="/teams"><svg class="glyph g-shared" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="5" r="2.7" stroke="currentColor" fill="none" stroke-width="1.6" stroke-dasharray="1.6 1.4"/><path d="M2.8 14.2a5.2 5.2 0 0 1 10.4 0" stroke="currentColor" fill="none" stroke-width="1.6" stroke-dasharray="1.6 1.4"/></svg><span class="stack"><h2 class="h3">For teams</h2><span class="caption">Memory your agents and teammates share, with an author and an approver on every entry.</span><span class="go">See it for teams →</span></span></a>
-    <a class="aud-card" href="/personal"><svg class="glyph g-person" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="5" r="2.7" stroke="currentColor" fill="none" stroke-width="1.6"/><path d="M2.8 14.2a5.2 5.2 0 0 1 10.4 0" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round"/></svg><span class="stack"><h2 class="h3">For you</h2><span class="caption">Stop re-explaining your work: one memory across Claude, your phone and your other AI tools.</span><span class="go">See it for you →</span></span></a>
+    <a class="aud-card" href="/teams"><svg class="glyph g-shared" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="5" r="2.7" stroke="currentColor" fill="none" stroke-width="1.6" stroke-dasharray="1.6 1.4"/><path d="M2.8 14.2a5.2 5.2 0 0 1 10.4 0" stroke="currentColor" fill="none" stroke-width="1.6" stroke-dasharray="1.6 1.4"/></svg><span class="stack"><h2 class="h3">For teams</h2><span class="caption">Memory your agents and teammates share, with an author and an approver on every memory.</span><span class="go">See it for teams →</span></span></a>
+    <a class="aud-card" href="/personal"><svg class="glyph g-person" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="5" r="2.7" stroke="currentColor" fill="none" stroke-width="1.6"/><path d="M2.8 14.2a5.2 5.2 0 0 1 10.4 0" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round"/></svg><span class="stack"><h2 class="h3">Personal</h2><span class="caption">Stop re-explaining your work: one memory across Claude, your phone and your other AI tools.</span><span class="go">See it for personal use →</span></span></a>
   </nav>
 
   <section id="how" aria-labelledby="how-h">
@@ -241,16 +241,16 @@ h2.h3{font:var(--t-heading-weight) var(--t-heading-size)/var(--t-heading-line) v
 </svg>
       <details class="astext"><summary>As text</summary><ol>
         <li>An agent, here <code>crew/scout</code>, saves a memory.</li>
-        <li>The memory waits, <code>held</code>: only its author and its reviewers can read it. It is scanned for leaked secrets (private keys, API tokens, passwords), and a match refuses the write.</li>
+        <li>The memory waits, <code>held</code>: only its author and its reviewers can read it. It is scanned for leaked secrets, such as private keys, known providers' API tokens and passwords set in config (<code>DB_PASSWORD=…</code>), and a match refuses the write.</li>
         <li>Someone who did not write it, nor what it builds on, approves it: a person, here <code>eugene</code>, or a reviewer agent. The key that wrote a memory never approves it.</li>
-        <li>The memory is <code>promoted</code>: every agent with access to its workarea recalls it. A workarea is a named area of memory, such as a team or a project, and a key reads only the workareas it is granted.</li>
-        <li>Two exceptions, both opt-in and confined to one workarea: a development workarea may allow self-approval, readable only there; and an in-progress workarea lets its agents read unapproved memories until it is committed.</li>
+        <li>The memory is <code>promoted</code>, approved and shared: every agent with access to its workarea recalls it. A workarea is a named area of memory, such as a team or a project, and a key reads only the workareas it is granted.</li>
+        <li>Two opt-in exceptions, each confined to one workarea, are listed in <a href="https://e8kor.github.io/open-memory-lab/product/commitments/">the commitments</a>.</li>
       </ol></details>
     </figure>
     <div class="vals">
-      <div><span class="v-held"><svg class="glyph g-held" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="5.5" stroke="currentColor" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="26.5 8.06" transform="rotate(-20 8 8)"/></svg></span><h3>Nothing shared unapproved</h3><p class="caption">An agent's memory waits until a person, or a reviewer agent, that didn't write it approves it.</p></div>
+      <div><span class="v-held"><svg class="glyph g-held" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="5.5" stroke="currentColor" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="26.5 8.06" transform="rotate(-20 8 8)"/></svg></span><h3>Nothing shared unapproved</h3><p class="caption">An agent's memory waits until a person, or a reviewer agent, who didn't write it approves it.</p></div>
       <div><span class="v-gate"><svg class="glyph g-gate" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1V4.6M8 11.4V15" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round"/><rect x="5.6" y="4" width="4.8" height="2" rx=".6"/><rect x="5.6" y="10" width="4.8" height="2" rx=".6"/><path d="M1.5 8H11" stroke="currentColor" fill="none" stroke-width="1.4"/><path d="M10.5 6 13.5 8 10.5 10Z"/></svg></span><h3>Every memory shows its source</h3><p class="caption">Who wrote it, who approved it and, where given, the repository, commit and file it came from.</p></div>
-      <div><span class="v-prom"><svg class="glyph g-promoted" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="6.5"/></svg></span><h3>Answers say why they matched</h3><p class="caption">Each recall names the words that matched and how many results it held back.</p></div>
+      <div><span class="v-prom"><svg class="glyph g-promoted" aria-hidden="true" focusable="false" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="6.5"/></svg></span><h3>Answers say why they matched</h3><p class="caption">Each hit names the words it matched, so you can see why it came back.</p></div>
     </div>
   </section>
 
@@ -258,28 +258,31 @@ h2.h3{font:var(--t-heading-weight) var(--t-heading-size)/var(--t-heading-line) v
     <div class="start">
       <div class="hero-copy">
         <h2 id="start-h">Get started</h2>
-        <p class="caption">The public server is by invitation: <a href="mailto:contact@doublegate.io?subject=OML%20access">ask about access</a>. Invited? <a href="/web">Sign in</a> with GitHub or Google, create a key for your agent on your page, then:</p>
+        <p class="caption">The public server is by invitation: email <a href="mailto:contact@doublegate.io?subject=OML%20access">contact@doublegate.io</a>. Invited? <a href="/web">Sign in</a> with GitHub or Google, and issue a key for your agent on your account page, <code>/web</code>. Then:</p>
         <ol>
-          <li><b>Install <code>oml</code>.</b> The installer checks the download against the release's signed checksums.</li>
+          <li><b>Install <code>oml</code> on Linux.</b> The installer checks the download against the release's signed checksums. On a Mac, build it from source; on Windows, use PowerShell (<a href="https://e8kor.github.io/open-memory-lab/start/install/">install options</a>).</li>
           <li><b>Store your key.</b> <code>oml login</code> asks for it, checks it with the server and keeps it in a file only you can read.</li>
-          <li><b>Set up Claude Code.</b> <code>oml setup claude-code</code> installs the plugin with that key.</li>
-          <li><b>claude.ai or the Claude app?</b> On your page, issue a connector key and copy its code. On claude.ai, open Customize &gt; Connectors, add <code>https://memory.doublegate.io/mcp</code> and paste the code. Your phone gets it too.</li>
+          <li><b>Set up Claude Code.</b> <code>oml setup claude-code</code> installs the plugin with that key. Then run <code>/reload-plugins</code> in Claude Code, or restart it.</li>
+          <li><b>claude.ai or the Claude app?</b> On your account page, under Connect Claude on the web or a phone, issue a connector key and copy its code. On claude.ai, open Customize &gt; Connectors, add <code>https://memory.doublegate.io/mcp</code> and paste the code. Your phone gets it too.</li>
         </ol>
-        <p class="caption">No invitation? <a href="https://e8kor.github.io/open-memory-lab/start/quickstart/">Run your own server</a> in about five minutes. claude.ai and phones need it on a public HTTPS address.</p>
-        <p class="caption">Your memory text stays on the server you choose. Its request logs carry no memory text and are kept at most 30 days (<a href="https://e8kor.github.io/open-memory-lab/operations/observability/">what is logged</a>).</p>
-        <p class="links"><a href="https://e8kor.github.io/open-memory-lab/guides/claude-code/">Claude Code guide</a><a href="https://e8kor.github.io/open-memory-lab/guides/claude-ai-and-mobile/">claude.ai and phone guide</a><a href="https://e8kor.github.io/open-memory-lab/guides/other-harnesses/">Codex, Cursor, Gemini</a><a href="https://e8kor.github.io/open-memory-lab/start/run-your-own/">Run your own</a><a href="https://e8kor.github.io/open-memory-lab/changelog/">Changelog (pre-1.0)</a></p>
+        <p class="caption">No invitation? <a href="https://e8kor.github.io/open-memory-lab/start/quickstart/">Try a local server</a> in about five minutes. claude.ai and phones cannot reach a server on your laptop; they need one on a public HTTPS address.</p>
+        <p class="caption">Your memories stay on the server you choose. On the public server its operator can read them; its request logs hold no memory text and are kept 30 days (<a href="https://e8kor.github.io/open-memory-lab/operations/observability/">what is logged</a>).</p>
+        <p class="links"><a href="https://e8kor.github.io/open-memory-lab/guides/claude-code/">Claude Code guide</a><a href="https://e8kor.github.io/open-memory-lab/guides/claude-ai-and-mobile/">claude.ai and phone guide</a><a href="https://e8kor.github.io/open-memory-lab/guides/other-harnesses/">Connect Codex, Cursor or Gemini</a><a href="https://e8kor.github.io/open-memory-lab/start/run-your-own/">Run your own</a><a href="https://e8kor.github.io/open-memory-lab/changelog/">Release notes (pre-1.0)</a></p>
       </div>
       <div class="term">
-        <div class="bar"><span>macOS · Linux</span><button class="btn sm" type="button" data-copy="cmd-unix">Copy</button></div>
-<pre id="cmd-unix"><span class="c"># install the CLI</span>
+        <div class="bar"><span>Linux</span><button class="btn sm" type="button" data-copy="cmd-unix">Copy</button></div>
+<pre id="cmd-unix"><span class="c"># install the CLI (Linux)</span>
+<span class="p">$ </span>r=https://raw.githubusercontent.com/e8kor
+<span class="p">$ </span>u=$r/open-memory-lab/v0.6.1/scripts/install
 <span class="p">$ </span>curl -fsSL --proto '=https' --tlsv1.2 \
-    https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.1/scripts/install/install.sh | sh
+    "$u/install.sh" | sh
 
 <span class="c"># store your key; paste it when asked</span>
 <span class="p">$ </span>oml login https://memory.doublegate.io
 
 <span class="c"># install the Claude Code plugin</span>
-<span class="p">$ </span>oml setup claude-code</pre>
+<span class="p">$ </span>oml setup claude-code
+<span class="c"># then, in Claude Code: /reload-plugins</span></pre>
       </div>
     </div>
   </section>
@@ -287,7 +290,7 @@ h2.h3{font:var(--t-heading-weight) var(--t-heading-size)/var(--t-heading-line) v
 
 <footer>
   <span>Open Memory Lab · Apache-2.0 · memory.doublegate.io v0.6.1</span>
-  <nav aria-label="Footer"><a href="https://e8kor.github.io/open-memory-lab/">Docs</a><a href="https://github.com/e8kor/open-memory-lab">GitHub</a><a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE">Licence</a><a href="mailto:contact@doublegate.io?subject=OML%20access">contact@doublegate.io</a></nav>
+  <nav aria-label="Footer"><a href="https://e8kor.github.io/open-memory-lab/">Docs</a><a href="https://github.com/e8kor/open-memory-lab">GitHub</a><a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE">License</a><a href="mailto:contact@doublegate.io?subject=OML%20access">contact@doublegate.io</a></nav>
 </footer>
 
 <script>

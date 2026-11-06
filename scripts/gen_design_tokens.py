@@ -317,7 +317,7 @@ def landing_header(page: str) -> str:
 
 def landing_footer(version: str, legal: bool) -> str:
     links = (f'<a href="{DOCS_URL}">Docs</a><a href="{GITHUB_URL}">GitHub</a>'
-             f'<a href="{GITHUB_URL}/blob/main/LICENSE">Licence</a>')
+             f'<a href="{GITHUB_URL}/blob/main/LICENSE">License</a>')
     if legal:
         links += '<a href="/privacy">Privacy</a><a href="/terms">Terms</a>'
     return ('<footer>\n'
