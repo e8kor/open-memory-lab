@@ -94,7 +94,7 @@ No key sees the crew family on the events tail.
 | `tenant.created` | `tenant_id`, `name`, `created_by_key_id` | An operator creates a tenant. It is written in the provider tenant's chain. |
 | `tenant.genesis` | `tenant_id`, `name`, `provider_seq`, `created_event_id` | The first event of every tenant chain. It references the provider chain's `tenant.created` event. The provider tenant's own genesis has null `name`, `created_event_id` and `provider_seq`. |
 | `key.issued` | `key_id`, `name`, `role`, `principal`, `held_by`, `issued_by_key_id`, `default_workarea_id`, `crew_id`, `credential`, `user`, `value_disclosed`, `expiry` | A key is issued. `credential` is `bearer`, or `connection` for a connector key that has no value. `user` is the id of a user key's root, or null. |
-| `key.revoked` | `key_id`, `revoked_by_key_id`, `reason_digest` | A key is revoked. Its next request answers `auth.invalid`. A follower acts after replication lag. |
+| `key.revoked` | `key_id`, `revoked_by_key_id`, `reason_digest` | A key is revoked. Its next request answers `auth.invalid`. |
 | `grant.issued` | `grant_id`, `key_id`, `workarea_node_id`, `role`, `deny`, `subtree_node_id`, `covers`, `epoch` | A key is bound to a workarea node id, never a path. `covers` is `subtree` or `node`. `epoch` is the event's own `seq`. |
 | `key.denied` | `denial_id`, `key_id`, `workarea_node_id`, `epoch` | A global per-key denial. It wins over every grant. |
 | `key.denial_lifted` | `denial_id`, `key_id`, `lifted_by_key_id`, `reason_digest`, `epoch` | A denial is lifted. The denial row stays as history. |

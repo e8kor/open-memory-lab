@@ -19,7 +19,7 @@ A value that does not parse stops the server at start and names the key. Per-ten
 | `postgres.url` | `OML_POSTGRES__URL` | none (required) | The connection string of the serving role, a Postgres role that owns nothing and holds only the privileges the server's statements need. |
 | `postgres.owner_url` | `OML_POSTGRES__OWNER_URL` | none (required) | The connection string of the owner role. The server runs its migrations under it at start and serves under `postgres.url`. A start without it is refused as `postgres.role_split`. |
 | `server.listen` | `OML_SERVER__LISTEN` | `127.0.0.1:8080` | The address of the API listener. |
-| `kms.adapter` | `OML_KMS__ADAPTER` | the file keyring | Which key store wraps each memory's encryption key. `file` is the keyring file; `aws` is AWS KMS. |
+| `kms.adapter` | `OML_KMS__ADAPTER` | the file keyring | Which key store wraps each memory's encryption key. This build has one, `file`, the keyring file; any other value stops the server at start. |
 | `kms.keyring_path` | `OML_KMS__KEYRING_PATH` | `oml-keyring` | The keyring file, for the `file` adapter. Back it up with the database; a database restored without it cannot be read. |
 | `oauth.issuer` | `OML_OAUTH__ISSUER` | unset (connections off) | The public origin of the server, `https` with no path and no trailing slash, such as `https://memory.example.com`. It turns on OAuth connections for claude.ai and the web pages. Set it to the address people reach, not the address the process binds behind its proxy. |
 | `server.trusted_proxies` | `OML_SERVER__TRUSTED_PROXIES` | empty (no proxy trusted) | Addresses and CIDR ranges of reverse proxies, a TOML array in the file and comma-separated in the environment. Only a request from a listed peer has its client address read from `X-Forwarded-For`. Behind a proxy on the same host, set loopback. |
@@ -37,7 +37,7 @@ A value that does not parse stops the server at start and names the key. Per-ten
 | `search.rerank.fetch` | `OML_SEARCH__RERANK__FETCH` | `false` | `true` lets the server download missing model files at start from the pinned revision on Hugging Face and check each digest. `false` never uses the network. |
 | `search.timings` | `OML_SEARCH__TIMINGS` | `false` | `true` lets a recall ask for each stage's milliseconds. Off by default because stage times over rows a key cannot read reveal how many there are. |
 | `search.rerank.depth` | `OML_SEARCH__RERANK__DEPTH` | `10` | How many of the best candidates the cross-encoder reorders, 1 to 100. |
-| `search.rerank.floor` | `OML_SEARCH__RERANK__FLOOR` | False | A relevance between 0 and 1 below which a reranked hit is withheld. A recall whose candidates all fall below it answers no hit and reports how many it withheld. |
+| `search.rerank.floor` | `OML_SEARCH__RERANK__FLOOR` | `off` | A relevance between 0 and 1 below which a reranked hit is withheld. A recall whose candidates all fall below it answers no hit and reports how many it withheld. |
 | `search.rerank.max_concurrent` | `OML_SEARCH__RERANK__MAX_CONCURRENT` | `2` | Reranks that run at once. A recall that waits past its deadline for a slot serves the unreranked order and says why. |
 | `search.rerank.timeout_ms` | `OML_SEARCH__RERANK__TIMEOUT_MS` | `1000` | The deadline of one rerank in milliseconds, waiting for a slot included. Past it the recall serves the unreranked order. |
 | `search.rerank.threads` | `OML_SEARCH__RERANK__THREADS` | `2` | The threads of the reranker's own pool, shared by every rerank. |

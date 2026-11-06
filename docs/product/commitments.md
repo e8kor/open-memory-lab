@@ -18,7 +18,7 @@ This page lists every guarantee OML makes, in four tiers: guaranteed by construc
 | 4 | No one but its author can read a memory before a reviewer who did not write it approves it. See [admission](../architecture/admission.md). | The held state, a check that the reviewer is not in the memory's declared derivation, and a serve binding. |
 | 5 | A workarea moves forward through its statuses only. See [workareas](../architecture/workareas.md). | No backward transition exists as a verb or as a domain rule. |
 | 6 | No tenant reads or writes another tenant's rows. See [security](../architecture/security.md). | The server derives the tenant from the key. Row-level security applies on every tenant table. No service role bypasses it. |
-| 7 | The lake writer cannot decrypt anything. | The binary has no key-management component. |
+| 7 | The lake writer cannot decrypt anything. | The binary holds no server keyring key and cannot unwrap a memory's data key; it seals what it writes with its own key-encryption key. |
 | 8 | No held memory body reaches the lake. See [storage](../architecture/storage.md). | The outbox carries digests for held writes. Only approval enqueues the body. |
 | 9 | No key exceeds the verbs its role allows. An agent can never approve, sign, demote or delete. See [roles and keys](../architecture/roles-and-keys.md). | A server-side check per role. Every transport is an adapter over the same application layer. |
 | 10 | A `self_signed` memory never leaves its development workarea and never reaches the lake's analytic tables. See [delta tables](../data/delta-tables.md). | An indelible mark in the schema. |
@@ -30,19 +30,19 @@ Guarantee 6 depends on three deployment settings: `FORCE ROW LEVEL SECURITY` on 
 
 - **Tamper evidence.** The chain detects rewriting by anyone who cannot sign. An attacker who holds the signing key and can write to the database can rebuild a consistent chain. Detection then depends on chain heads you stored outside the deployment.
 - **Durability.** Surviving a failover without losing acknowledged commits needs quorum-synchronous replication with `remote_apply`. `remote_write` does not survive a standby operating-system crash. A single-node install is one machine's disk.
-- **Exactly-once lake writes.** This rests on the Delta library's transaction-identifier behavior. Not measured yet.
+- **Exactly-once lake writes.** This rests on the Delta library's transaction-identifier behavior, which we have not tested under load.
 - **Access changes.** A denied key or withdrawn grant stops acting at the key's next request. The server recomputes access from the record on every request.
 
 ## Provided, not measured
 
 Each item works. Its quality has no figure yet.
 
-- Review throughput per reviewing crew. Not measured yet.
-- Recall quality and latency at scale beyond the [benchmarks](../benchmarks/index.md). Not measured yet.
-- Scan latency at admission. Not measured yet.
-- Lake-writer throughput and commit latency. Not measured yet.
-- The record store's size ceiling. Not measured yet.
-- Time to restore from backup. Not measured yet.
+- Review throughput per reviewing crew: it depends on your reviewers, and we have no figure.
+- Recall quality and latency at scale beyond the [benchmarks](../benchmarks/index.md): we have no other figures.
+- Scan latency at admission: only the per-rule timings on the [admission page](../architecture/admission.md).
+- Lake-writer throughput and commit latency: not yet measured.
+- The record store's size ceiling: not yet measured.
+- Time to restore from backup: not yet timed.
 
 ## Not claimed
 

@@ -76,7 +76,7 @@ After a crash, the writer rebuilds the same batch from the recorded bounds. It n
 
 **A failing row is dead-lettered.** After a bounded retry budget, the writer journals a `materialize-skipped` event, moves the row to the `dead_letter` table and moves on. The lake is then knowingly incomplete until repair. A stalled frontier would hide the same problem inside unbounded lag. `oml-lakewriter doctor` reports the count.
 
-Not measured yet: lake writer throughput and Delta commit latency.
+We have not measured lake writer throughput or Delta commit latency.
 
 ## Where held bodies live
 

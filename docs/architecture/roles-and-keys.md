@@ -155,7 +155,7 @@ A key with the dreamer role can propose and review. OML does not split those at 
 
 **Rival successors.** While several successors of one memory are held, OML also excludes each author from reviewing the others.
 
-**The independence axis.** A workarea's review policy can require more. Reviewer and author must always have different principals. A `committed` workarea can also require a reviewer crew or external manager that differs from the author's crew. OML uses the metadata as journaled at approval, so a later reshuffle does not change what was independent at the time. A verdict that cannot establish the requirement does not count, and the memory stays held.
+**The independence axis.** Reviewer and author must always have different principals; every workarea has the same review policy for a memory. Changing a workarea's status can require more: a `committed` workarea can require a reviewer crew or external manager that differs from the author's crew. OML uses the metadata as journaled at approval, so a later reshuffle does not change what was independent at the time. A verdict that cannot establish the requirement does not count, and the memory stays held.
 
 **What this cannot do.** OML cannot see undeclared derivation. If a writer rebuilds someone's content without declaring `derives_from`, OML cannot know. Lineage exclusion is as good as the declared graph. OML also cannot prove that two distinct principals do not collude.
 
@@ -227,4 +227,4 @@ Letting an admin approve content was rejected, because the authority that issues
 
 ## Costs
 
-The two-key rule means a person who administers and reviews carries two keys. Writes wait for a reviewer, and an admin is no exception. Lineage exclusion only knows what writers declare. Nothing stops two distinct principals from approving each other's work. Not measured yet: how often that happens in practice.
+The two-key rule means a person who administers and reviews carries two keys. Writes wait for a reviewer, and an admin is no exception. Lineage exclusion only knows what writers declare. Nothing stops two distinct principals from approving each other's work. We have not measured how often that happens in practice.

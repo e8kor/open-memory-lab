@@ -17,7 +17,7 @@ names its source kind (`origin.kind`). You need a person's key and the
    exiting 0 without blocking:
     - `oml hook user-prompt` counts the turn and records its hash.
     - `oml hook stop` counts turns. Every `OML_CHAT_CAPTURE_EVERY` turns (default 5) it asks the
-      agent to use the `oml:oml-chat-capture` skill: at most 6 facts, each anchored to its turn.
+      agent to use the `oml:oml-chat-capture` skill: at most 6 facts, each anchored to its turn. A session asks at most 4 times and keeps at most 24 facts.
     - `oml hook pre-compact` records a compaction, so the next `stop` asks at once.
 3. **Recall in the next prompt (optional).** `OML_TURN_RECALL=1` makes `user-prompt` send up to eight
    distinctive words of your prompt as a recall, with secret shapes, URLs and the key removed. Hits
@@ -27,7 +27,7 @@ names its source kind (`origin.kind`). You need a person's key and the
 5. **Switch off.** Unset `OML_CHAT_CAPTURE`. Retire stored facts with a retirement write.
 
 **Privacy.** The cache keeps a keyed hash of each prompt, never the prompt. The session id is
-hashed with a salt kept on your machine (`oml/chat-salt`, mode 0600), so one person's chat on two
+hashed with a salt kept on your machine (`$XDG_CONFIG_HOME/oml/chat-salt`, or `~/.config/oml/chat-salt`; mode 0600), so one person's chat on two
 machines yields two sessions. On a server whose operators read memories, such as
 [the public server](../start/install.md), treat captured facts as readable by them.
 

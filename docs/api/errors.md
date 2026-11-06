@@ -182,12 +182,12 @@ Reserved. This build serves no attachment uploads.
 |---|---|---|
 | `lifecycle.erased` | 410 | The fetched version's key was destroyed by a journaled erase, and this key could read it before. Every other key gets `access.not_found`. |
 
-## `limit` — rates and quotas
+## `limit` — rate limits
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `limit.rate` | 429 | The key or tenant exceeded its rate limit, or a read's `feedback` would pass 1,000 labels in a UTC day. Retryable, with `Retry-After`. |
-| `limit.quota` | 429 | A quota is exhausted. `details.quota` names it. |
+| `limit.rate` | 429 | Unused OAuth client registrations passed 10,000, or a read's `feedback` would pass 1,000 labels in a UTC day. Retryable, with `Retry-After`. |
+| `limit.quota` | 429 | Reserved. This build never returns it. |
 
 ## `export` and `settings`
 

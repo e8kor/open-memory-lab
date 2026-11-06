@@ -44,6 +44,11 @@ BLURB = {
 }
 
 
+# Records the page leaves out although they are accepted: ADR-0061 ships in a release after v0.6.0,
+# and ADR-0066 is about how this repository tracks work, which readers of the site do not need.
+HELD_BACK = {61, 66}
+
+
 def record(path: pathlib.Path) -> tuple[int, str, str, str]:
     text = path.read_text()
     num = int(re.search(r"ADR-(\d+)", path.name).group(1))
@@ -54,24 +59,25 @@ def record(path: pathlib.Path) -> tuple[int, str, str, str]:
 
 
 def render() -> tuple[str, list[str]]:
-    recs = {r[0]: r for r in (record(p) for p in sorted(ADR_DIR.glob("ADR-*.md")))}
+    every = {r[0]: r for r in (record(p) for p in sorted(ADR_DIR.glob("ADR-*.md")))}
+    recs = {n: r for n, r in every.items() if r[2].startswith("accepted") and n not in HELD_BACK}
     placed = {n for ns in CATEGORIES.values() for n in ns}
     problems = [f"ADR-{n:04d} has no category in scripts/gen_design_records.py" for n in recs if n not in placed]
-    problems += [f"category list names ADR-{n:04d}, which does not exist" for n in placed if n not in recs]
+    problems += [f"category list names ADR-{n:04d}, which does not exist" for n in placed if n not in every]
     out = [
-        docgen.front_matter("every design record, its status and the decision it records"),
+        docgen.front_matter("every accepted design record of the current release and the decision it records"),
         "# Design records\n",
-        f"Each decision about how OML works is a numbered record in the repository, with the alternatives it rejected. "
-        f"The records are not part of this site. This page lists all {len(recs)} by subject, and each row links to the record on GitHub.\n",
+        f"Each decision about how OML works is a record in the repository, with the alternatives it rejected. "
+        f"The records are not part of this site. This page lists the {len(recs)} accepted records that describe the current release, by subject, and each row links to the record on GitHub.\n",
         f"*{docgen.BANNER.format(script='scripts/gen_design_records.py')}*\n",
     ]
     for cat, nums in CATEGORIES.items():
         out.append(f"## {cat}\n")
         out.append(BLURB[cat] + "\n")
-        out.append("| Record | Status | Decision |\n|---|---|---|")
+        out.append("| Decision |\n|---|")
         for n in sorted(x for x in nums if x in recs):
             _, title, status, fname = recs[n]
-            out.append(f"| [ADR-{n:04d}]({BLOB}{fname}) | {status} | {title.replace('|', '\\|')} |")
+            out.append(f"| [{docgen.strip_handles(title).replace('|', '\\|')}]({BLOB}{fname}) |")
         out.append("")
     return "\n".join(out), problems
 

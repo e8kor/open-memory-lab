@@ -50,8 +50,7 @@ recorded earlier. `oml events` prints the head seq.
    `OML_POSTGRES__URL` and `OML_POSTGRES__OWNER_URL` at it. A dump restores one moment and nothing after it.
 4. **Place the keyring copy before you start the server.** Put the copy from the same moment at
    `kms.keyring_path`, owner-only (mode 0600). A server started against a missing or wrong keyring fails at
-   its first decryption, not at startup. In the AWS KMS profile (`kms.adapter = aws`) this step does not
-   exist, because the key never left KMS.
+   its first decryption, not at startup.
 5. **Install the server version that matches the backup, or newer.** A newer server migrates the
    schema forward at boot, as in any upgrade ([Upgrade OML](upgrades.md)). Migrations never run backward.
 6. **Start the server and let the fork check run.** The stored chain head must verify against the last
@@ -85,10 +84,9 @@ new head seq somewhere off the server.
 | The host disk, with a backup | Everything since the last base backup and archived WAL, or since the last dump | The restore steps above. |
 | PostgreSQL only, keyring intact | Everything since the last backup | Restore PostgreSQL, then start. |
 | The keyring only, no copy | Every body becomes unreadable. The journal, the chain and the attribution still verify. | None for content. Back the keyring up as carefully as the database. |
-| The AWS KMS key destroyed | The memories it wrapped | None for that content. |
 | The whole site | Everything co-located | Restore into new infrastructure from off-site copies. |
 
 Losing or replacing the signing key never loses history, because signatures verify against the key that
 made them ([runbooks](runbooks.md)).
 
-Recovery time is the steps above, from the restore to a clean `oml doctor`. Not measured yet.
+Recovery time is the steps above, from the restore to a clean `oml doctor`. We have not timed it.

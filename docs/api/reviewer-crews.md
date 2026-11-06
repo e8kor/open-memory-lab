@@ -151,12 +151,11 @@ There is no path to make a stale judgment count. The crew re-serves and reviews 
 
 ## Choose a polling cadence
 
-`review/next` is a poll. There is no push on this surface. Not measured yet: no cadence has a
+`review/next` is a poll. There is no push on this surface. No poll cadence has a
 measured basis, so poll at the rate your review deadline implies.
 
 - A `204` costs one request. Back off on repeated `204`s and tighten when held memories pile up.
-- The rate-limit grant bounds the crew. When it is exceeded, the answer is `429 limit.rate` with
-  `Retry-After`.
+- This build sets no per-key rate limit. Poll at the rate your review deadline implies.
 
 ## Errors the loop meets
 
@@ -166,5 +165,4 @@ measured basis, so poll at the rate your review deadline implies.
 | `access.grant_refused` (403) or `access.not_found` (404) | A verdict targets a workarea outside the key's `dreamer` access. | Check the crew's grants. |
 | `idempotency.in_progress` (409) | A verdict is retried while the first attempt is still committing. | Honor `Retry-After` and resend the identical request. |
 | `idempotency.digest_mismatch` (409) | An `Idempotency-Key` is reused for a different request. | Mint one key per act, such as `crew-review/run-N/verdict-N`. |
-| `limit.rate` (429) | The crew polls faster than its rate-limit grant. | Back off per `Retry-After`. |
 | `system.unavailable` (503) | The server cannot serve safely. | Retry; the loop resumes where the client-held state says. |

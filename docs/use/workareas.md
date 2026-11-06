@@ -49,8 +49,7 @@ workarea only.
 3. **Commit with none waiting.** `oml workareas mode <workarea> standard` commits the workarea. It
    is refused with `workarea.held_remaining` while anything in it is held. Review first with
    `oml review list --workarea <workarea>`, then `oml review approve --ids -`.
-4. **Narrow with a curator.** A curator key profile reads and curates inside the workarea without
-   wider rights.
+4. **Narrow with a curator profile.** A key issued with `--profile curator` can reject, propose a retirement or a summary and flag a contradiction inside the in-progress workarea. It never approves.
 
 The cost: an agent can act on a memory nobody has judged. Use this mode for development workareas,
 where that trade is the point. The reviewer is still never the author. On a development home with

@@ -8,6 +8,8 @@ answers: "who OML is for, what it gives and costs, when not to use it, and five 
 
 OML is for teams that run AI agents on any framework and must show who wrote a memory and who checked it. If nobody in your organization is asked that question, a plain memory store is cheaper and faster.
 
+For a decision, start with [Evaluate OML](evaluate.md): why writes are held, what it costs, [limits](../reference/limits.md), [benchmarks](../benchmarks/index.md) and [security](../architecture/security.md), one line each.
+
 ## The problem OML answers
 
 A crew's memory is the one output nobody reviews. Code goes through review. A deployment goes through a gate. But what an agent writes down becomes the input of every later agent at once.
@@ -26,7 +28,7 @@ OML works as a memory provider on its own. Agents write, recall, fetch and repla
 
 - **Review effort.** A memory stays held until a reviewer acts. Your organization supplies that capacity, usually a reviewing crew with a person as the fallback.
 - **A write that waits.** Other agents do not see a new memory right away. Its author reads it at once, marked unreviewed. Inside a development workarea, teammates can also recall unreviewed work ([workareas](../use/workareas.md)).
-- **Running a server.** Self-hosting needs PostgreSQL, object storage and backups. The public server removes that work, at the price of trusting its operator ([install](../start/install.md)).
+- **Running a server.** Self-hosting needs PostgreSQL and backups; the optional lake takes a directory or an object store. The public server removes that work, at the price of trusting its operator ([install](../start/install.md)).
 
 ## When not to use OML
 

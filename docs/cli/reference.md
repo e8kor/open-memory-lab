@@ -779,7 +779,7 @@ oml sync [OPTIONS] --workarea <WORKAREA> <SOURCE>
 | Option | Meaning |
 |---|---|
 | `--workarea <WORKAREA>` | The workarea to keep in step, by id or name; with --pr the parent of the draft's `<workarea>-pr-<n>` |
-| `--adapter <ADAPTER>` | adr, headings, lines or rust; omitted, adr for ADR-NNNN-*.md files and headings otherwise; rust (one claim per crate and per module doc of a Cargo workspace) is never chosen unnamed. `delta` reads a Delta Lake's tables from their logs and is in the lake build, `oml-lake` |
+| `--adapter <ADAPTER>` | adr, headings or lines; omitted, adr for ADR-NNNN-*.md files and headings otherwise. Not released yet (next release). `rust` (one claim per crate and per module doc of a Cargo workspace, never chosen unnamed) and `delta` (a Delta Lake's tables, read from their logs) |
 | `--rev <REV>` | The commit read; never the working tree [default: HEAD] |
 | `--repo <REPO>` | The anchor's repository name; omitted, derived from `origin` |
 | `--dry-run` | Print the plan and send nothing |
@@ -797,7 +797,7 @@ oml sync [OPTIONS] --workarea <WORKAREA> <SOURCE>
 | `--exclude <EXCLUDE>` | A glob of paths left out of the source, repeatable (`docs/adr/**`): never read, compared or retired. The set is recorded for the source on this clone |
 | `--change-exclude` | Allow an exclude set other than the recorded one |
 | `--base <BASE>` | With --pr, the branch the pull request targets [default: origin/main] |
-| `--uri-base <URI_BASE>` | With --adapter delta, the canonical location a lake read from a mirror or a copy stands for (`s3://`, `gs://`, `https://` or `file://`): the anchors carry it, never a local path |
+| `--uri-base <URI_BASE>` | Not released yet (next release). With --adapter delta, the canonical location a lake read from a mirror or a copy stands for (`s3://`, `gs://`, `https://` or `file://`): the anchors carry it, never a local path |
 
 
 ## `oml anchor`

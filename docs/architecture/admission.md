@@ -54,7 +54,7 @@ The rule set is `oml-scan/1`. Its findings fall into two actions:
 | Veto | `secret.private_key`, `secret.api_token`, `secret.credential_pair`, `secret.assignment`, `format.scan_bound` (one field over 1 MiB) | The write is refused with `submission.scan_veto`. `details.finding` names the class. |
 | Hold | `injection.override`, `injection.role`, `injection.tool_call`, `unicode.bidi`, `unicode.invisible`, `encoding.base64_blob` | The memory is held for a reviewer to judge. |
 
-The `pii.email` and `pii.phone` findings are off unless a tenant turns them on. A rule pass takes about 4 µs for a 124-byte chat turn and 26 µs for a 1.5 KB abstract. It takes 13 ms for a mebibyte of base64.
+The `pii.email` and `pii.phone` rules exist and are off in this build; no setting turns them on. A rule pass takes about 4 µs for a 124-byte chat turn and 26 µs for a 1.5 KB abstract. It takes 13 ms for a mebibyte of base64.
 
 `oml admin rescan` reports what the current rule set would refuse or hold in memories already stored. It changes nothing.
 
@@ -75,4 +75,4 @@ Nothing promotes. A workarea with no reviewer key that is allowed to judge its m
 
 A failure inside the pipeline is typed and names its rule ([errors](../api/errors.md)). An unclassifiable failure refuses the write rather than admitting it unscanned.
 
-Review throughput is not measured yet.
+How fast review goes depends on your reviewers; OML has no measured figure.

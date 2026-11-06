@@ -14,7 +14,7 @@ server:
     note: The address of the API listener.
   kms.adapter:
     default: the file keyring
-    note: Which key store wraps each memory's encryption key. `file` is the keyring file; `aws` is AWS KMS.
+    note: Which key store wraps each memory's encryption key. This build has one, `file`, the keyring file; any other value stops the server at start.
   kms.keyring_path:
     default: "`oml-keyring`"
     note: The keyring file, for the `file` adapter. Back it up with the database; a database restored without it cannot be read.
@@ -67,7 +67,7 @@ server:
     default: "`10`"
     note: How many of the best candidates the cross-encoder reorders, 1 to 100.
   search.rerank.floor:
-    default: off
+    default: "`off`"
     note: A relevance between 0 and 1 below which a reranked hit is withheld. A recall whose candidates all fall below it answers no hit and reports how many it withheld.
   search.rerank.max_concurrent:
     default: "`2`"

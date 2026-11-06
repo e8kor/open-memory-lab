@@ -1,49 +1,71 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "what install.sh and install.ps1 check and their two outcomes word for word; the flags and variables; where they write; the PATH line; the inspect-first form; what a piped install trusts; uninstalling; Windows PowerShell 5.1 and 7; the manual cosign steps; and the package managers not offered"
+answers: "how to install the oml CLI on Linux and Windows; the flags and variables; where it writes; and how to verify the download"
 ---
 
 # Install the `oml` command
 
-Two scripts install the `oml` CLI for the current user, write one file and print the next command.
-The lines below fetch them at the tag `v0.6.0`.
+Two scripts install the `oml` CLI for the current user, write one file and print the next command. The lines below fetch them at the tag `v0.6.0`.
 
-!!! info "The public server"
-    The default server is `https://memory.doublegate.io`. The plugin and the agent kit use it
-    unless you name another. A key from that server needs no other setting.
+!!! warning "macOS"
+    Releases after v0.5.2 carry no macOS build, and the installer stops on a Mac with that message. Build from source: `cargo install --git https://github.com/e8kor/open-memory-lab --tag vX.Y.Z oml-cli`.
 
-| Platform | Build |
-|---|---|
-| Linux x86_64 and arm64 | static musl binary |
-| Windows x86_64 | native; Windows on ARM64 runs it under emulation |
-| macOS | none since v0.5.3; build from source (below) |
+=== "Linux"
 
-!!! tip "Install not working?"
-    See [the installer refuses](../help/troubleshooting-client.md#the-installer-refuses) and the [FAQ](../faq.md#install-and-connect).
+    ```sh
+    curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/install/install.sh | sh
+    ```
 
-## Run the installer
+    Static musl binary for x86_64 and arm64.
 
-**macOS.** Releases after v0.5.2 carry no macOS build. On a Mac the installer stops with that message. Build from source: `cargo install --git https://github.com/e8kor/open-memory-lab --tag vX.Y.Z oml-cli`.
+=== "Windows"
 
-Linux:
+    In Windows PowerShell 5.1 or PowerShell 7:
 
-```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/install/install.sh | sh
+    ```powershell
+    irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/install/install.ps1 | iex
+    ```
+
+    Native on x86_64; Windows on ARM64 runs it under emulation.
+
+The default server is `https://memory.doublegate.io`. The plugin and the agent kit use it unless you name another. A key from that server needs no other setting; [get an agent key](../guides/get-an-agent-key.md).
+
+If the installer refuses, see [the installer refuses](../help/troubleshooting-client.md#the-installer-refuses) and the [FAQ](../faq.md#install-and-connect).
+
+## Put `oml` on your `PATH`
+
+The one file is `oml` (`oml.exe`) in the install directory, renamed into place, so a running `oml` is never left half written. When the directory is not on `PATH`, the script prints the one line that would add it and changes nothing. It then prints the next command:
+
+```text
+Next, connect to your server with your agent key:
+    oml login https://<your OML server>
+    oml doctor
 ```
 
-Windows, in Windows PowerShell 5.1 or PowerShell 7:
+**Uninstalling** is deleting that one file. `oml login` writes one more, the owner-only credentials file, `$HOME/.config/oml/credentials` ([CLI reference](../cli/reference.md)); delete it too to forget the server and the key.
 
-```powershell
-irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/install/install.ps1 | iex
-```
+## Flags and variables
 
-**What a piped install trusts**:
+| `install.sh` | `install.ps1` | Variable | Default |
+|---|---|---|---|
+| `--version X.Y.Z` or `latest` | `-Version` | `OML_VERSION` | the release the script was cut with: 0.6.0 at `v0.6.0` |
+| `--dir PATH` | `-Dir` | `OML_INSTALL_DIR` | `$HOME/.local/bin`; `%LOCALAPPDATA%\Programs\oml\bin` |
+| `--require-signature` | `-RequireSignature` | `OML_REQUIRE_SIGNATURE=1` | off |
 
-- The pipe trusts GitHub's TLS, the repository and the tag. A tag can be moved by whoever can push
-  to the repository, which is why the cosign check below pins the tag in the signer's identity.
-- A server can tell a pipe from a download and serve each different bytes. To read the script
-  before it runs, download it, read it, then run it:
+`latest` reads GitHub's latest-release API, which skips drafts and prereleases. A
+piped install takes its flags after `sh -s --`, as in `… | sh -s -- --version latest`. `irm … |
+iex` takes none, so set `$env:OML_VERSION`, `$env:OML_INSTALL_DIR` or
+`$env:OML_REQUIRE_SIGNATURE = '1'` first.
+
+## Verify the download
+
+The installer checks the archive for you. This section says what it checks and how to check by hand.
+
+### What a piped install trusts
+
+- The pipe trusts GitHub's TLS, the repository and the tag. Whoever can push to the repository can move a tag, which is why the cosign check pins the tag in the signer's identity.
+- A server can tell a pipe from a download and serve each different bytes. To read the script before it runs, download it, read it, then run it:
 
     ```sh
     curl -fsSLO --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/install/install.sh
@@ -53,7 +75,7 @@ irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/insta
 
 - The script never asks for sudo, writes one file and edits no shell profile.
 
-## Check what the installer verified
+### Check what the installer verified
 
 The script picks the archive for this OS and architecture (Apple silicon is detected under
 Rosetta; Windows on ARM64 gets the x86_64 build, which it runs under emulation), downloads it and
@@ -80,36 +102,7 @@ requires that `oml --version` prints the requested version. The shell script's b
 function called on its last line, so a download cut short runs nothing. The PowerShell script
 throws rather than exits, so `| iex` never closes your shell.
 
-## Flags and variables
-
-| `install.sh` | `install.ps1` | Variable | Default |
-|---|---|---|---|
-| `--version X.Y.Z` or `latest` | `-Version` | `OML_VERSION` | the release the script was cut with: 0.6.0 at `v0.6.0` |
-| `--dir PATH` | `-Dir` | `OML_INSTALL_DIR` | `$HOME/.local/bin`; `%LOCALAPPDATA%\Programs\oml\bin` |
-| `--require-signature` | `-RequireSignature` | `OML_REQUIRE_SIGNATURE=1` | off |
-
-`latest` reads GitHub's latest-release API, which skips drafts and prereleases. A
-piped install takes its flags after `sh -s --`, as in `… | sh -s -- --version latest`. `irm … |
-iex` takes none, so set `$env:OML_VERSION`, `$env:OML_INSTALL_DIR` or
-`$env:OML_REQUIRE_SIGNATURE = '1'` first.
-
-## Put `oml` on your `PATH`
-
-The one file is `oml` (`oml.exe`) in the install directory, renamed into place, so a running `oml` is never left half written. When the directory is not on
-`PATH`, the script prints the one line that would add it and changes nothing. It then prints the
-next command:
-
-```text
-Next, connect to your server with your agent key:
-    oml login https://<your OML server>
-    oml doctor
-```
-
-**Uninstalling** is deleting that one file. `oml login` writes one more, the owner-only
-credentials file, `$HOME/.config/oml/credentials` ([CLI
-reference](../cli/reference.md)); delete it too to forget the server and the key.
-
-## Install by hand with cosign
+### Install by hand with cosign
 
 Each release carries the CLI as `oml-cli-X.Y.Z-<target>.tar.gz` (`.zip` on Windows) for Linux
 x86_64 and arm64 and Windows x86_64, each with a cosign signature bundle.
@@ -150,9 +143,4 @@ exits 0: an archive that does not verify is not a release. What else differs on 
 owner-only files and the plugin's hook under Git Bash, is in the [CLI
 reference](../cli/reference.md).
 
-## Package managers
-
-OML offers no Homebrew, Scoop or winget package and no npm wrapper. A third-party Homebrew tap needs
-`brew trust` before it installs, and winget publishes through a reviewed pull request per release.
-Neither is one command on every OS. An npm or `npx` wrapper would make Node a dependency of a
-static binary.
+No Homebrew, Scoop, winget or npm package is offered; use the installer.

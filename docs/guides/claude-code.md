@@ -6,16 +6,16 @@ answers: "how to connect Claude Code to an OML server from nothing: install the 
 
 # Connect Claude Code to OML
 
-This page takes you from nothing to an agent that saves and finds shared memory in Claude Code.
+This page takes you from nothing to an agent that saves and finds shared memory in Claude Code, in four steps.
 
 ## Before you start
 
 - Claude Code 2.1.285 or later.
-- An agent key from your administrator.
+- An agent key. [Get an agent key](get-an-agent-key.md) from the web page of a server you can sign in to, or from your administrator. Trying it alone? Run the [quickstart](../start/quickstart.md), then use `oml setup claude-code --url http://127.0.0.1:8080 --key-file oml/keys/agent`.
 - The server's address, unless you use [the public server](../start/install.md). With a key from the public server, the key is the only setting.
 
 The commands are in the [CLI reference](../cli/reference.md). The plugin's behavior is in its
-[README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md).
+[README](https://github.com/e8kor/open-memory-lab/blob/main/plugins/oml/README.md). What we have run against a live Claude Code is under [Limits](../reference/limits.md#not-verified-against-a-live-client).
 
 ## 1. Install the CLI
 
@@ -35,10 +35,9 @@ oml login https://oml.example.com
 oml doctor
 ```
 
-`oml login` reads the key without echo and calls `GET /v2/whoami`. It stores `url` and `api_key`
-in the owner-only credentials file only when the server accepts the key. `oml doctor` prints
-where each value came from, never the key, and the key's role, tenant and default workarea
-([start settings](../cli/reference.md)).
+`oml login` reads the key without echo and stores `url` and `api_key` in the owner-only
+credentials file only when the server accepts the key. `oml doctor` prints where each value came
+from, never the key, and the key's role, tenant and default workarea.
 
 ## 3. Set up the plugin
 
@@ -50,25 +49,34 @@ oml setup claude-code                                                    # after
 Given a key and no URL, the command pairs the key with the public server and says so on stderr
 before it sends anything. If that server refuses the key, the command names `--url` and installs
 nothing. It refuses an `admin` or `operator` key (`setup.admin_key`) and checks `claude --version`.
-It adds the marketplace at the CLI's own tag, installs `oml@open-memory-lab` and passes the pair to
-`claude plugin configure --values-stdin`. The key reaches neither a command line nor a transcript.
+It adds the marketplace at the CLI's own tag, installs `oml@open-memory-lab` and hands the key to
+Claude Code on standard input.
 
 If your administrator sent a key file from `oml keys issue-agent --out`, skip step 2 and run the
 line they sent: `oml setup claude-code --url <url> --key-file <file>`. With `--print`, the
 command runs nothing and prints the commands.
 
-Then run `/reload-plugins` in Claude Code, or restart it. This setup has not been run against a
-real Claude Code yet.
+Then run `/reload-plugins` in Claude Code, or restart it.
 
 ## 4. Check the first write and read
 
-Ask the agent to remember a decision. It calls `oml_write`, and the answer carries
-`state: "held"`. The agent reads it back at once with `oml_read` and `include_unreviewed: true`.
-No other key reads it until a reviewer who did not write it approves it
-([why a write is held](../concepts/why-a-write-is-held.md)). The agent lists its own work with
-`oml_read` and `state`.
+Ask Claude Code:
 
-## 5. Start every session from memory
+```text
+Remember that we deploy on Tuesdays.
+```
+
+It calls `oml_write`, and the answer carries `state: "held"`. Ask it to look the decision up
+again; it calls `oml_read` with `include_unreviewed: true` and finds its own memory, marked
+unreviewed. No other key finds it until a reviewer who did not write it approves it
+([why a write is held](../concepts/why-a-write-is-held.md)).
+
+To approve it yourself on a server you run, use a reviewer key:
+`OML_API_KEY=$(cat oml/keys/reviewer) oml review next`, then [review held memories](reviewing.md).
+
+## Go further
+
+### Start every session from memory
 
 With `oml` on `PATH`, the plugin's SessionStart hook runs `oml hook session-start` at each start,
 resume, clear, compaction and fork. It adds the workarea's steering, the key's ten newest writes
@@ -94,7 +102,7 @@ on writes, add to `permissions.allow` in your settings:
 `mcp__plugin_oml_oml` also allows the write, which Claude then makes without showing you the
 call. The write is still held for review.
 
-## 6. Optional: the librarian and failure recall
+### The librarian and failure recall
 
 - `@agent-oml:librarian` answers "what does OML hold about X" with up to eight searches on Haiku.
   `oml_read` is its only tool.

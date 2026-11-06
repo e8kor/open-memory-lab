@@ -41,6 +41,31 @@ def strip_handles(text: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
+NOT_RELEASED = "Not released yet (next release)."
+
+# Text the build carries that the last release (v0.6.0) does not. Each pair is the generated text
+# and what the page shows instead. Remove a pair in the change that releases the feature; a pair
+# whose text is gone from the output stops the generator, so a stale entry cannot stay.
+UNRELEASED = {
+    "cli": [
+        ("adr, headings, lines or rust; omitted, adr for ADR-NNNN-*.md files and headings otherwise; rust (one claim per crate and per module doc of a Cargo workspace) is never chosen unnamed. `delta` reads a Delta Lake's tables from their logs and is in the lake build, `oml-lake`",
+         "adr, headings or lines; omitted, adr for ADR-NNNN-*.md files and headings otherwise. " + NOT_RELEASED + " `rust` (one claim per crate and per module doc of a Cargo workspace, never chosen unnamed) and `delta` (a Delta Lake's tables, read from their logs)"),
+        ("With --adapter delta, the canonical location", NOT_RELEASED + " With --adapter delta, the canonical location"),
+    ],
+    "mcp": [
+        ("`oml-md/1` \\| `oml-turn/1` \\| `oml-rustdoc/1` \\| `oml-crate/1`", "`oml-md/1` \\| `oml-turn/1`; `oml-rustdoc/1` and `oml-crate/1` are not released yet (next release)"),
+    ],
+}
+
+
+def mark_unreleased(text: str, page: str) -> str:
+    for old, new in UNRELEASED.get(page, []):
+        if old not in text:
+            sys.exit(f"docgen.UNRELEASED[{page!r}] names text the build no longer prints: {old[:60]!r}; remove the entry")
+        text = text.replace(old, new)
+    return text
+
+
 def front_matter(answers: str) -> str:
     return f'---\nstatus: Generated\nverified: {VERIFIED}\nanswers: "{answers}"\n---\n'
 

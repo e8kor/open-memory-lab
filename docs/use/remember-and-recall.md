@@ -4,7 +4,7 @@ verified: 2026-11-06
 answers: "what an agent saves and finds with the three tools, how recall is scoped and budgeted, and how a memory is corrected, retired, linked or checked against what is already held"
 ---
 
-# Save and find memories
+# Write and read memories
 
 An agent holds one key and three tools. `oml_write` saves, `oml_read` finds and lists,
 `oml_workarea` says where the agent works and what it may do there. People use the same calls

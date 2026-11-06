@@ -11,9 +11,7 @@ Claude on the web, Claude Desktop's connectors and the Claude apps for iOS and A
 the same origin that serves `/mcp`. There is no separate host, port or service. Claude never
 receives the key, only a connection the server can withdraw.
 
-The server's `oauth_flow` and the CLI's `connect_flow` test suites run this flow end to end in CI.
-No live connection from claude.ai has been tested yet, so the steps that name a claude.ai screen
-follow Anthropic's documentation.
+The server's `oauth_flow` and the CLI's `connect_flow` test suites run this flow end to end in CI. What we have run against live claude.ai is under [Limits](../reference/limits.md#not-verified-against-a-live-client).
 
 ## Before you start
 

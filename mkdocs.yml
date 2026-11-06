@@ -1,5 +1,5 @@
 site_name: Open Memory Lab
-site_description: An external memory provider for AI agents — every memory is a claim under test.
+site_description: An external memory provider for AI agents. Every write is held until a different identity reviews it.
 site_url: https://e8kor.github.io/open-memory-lab/
 repo_url: https://github.com/e8kor/open-memory-lab
 edit_uri: edit/main/docs/
@@ -80,8 +80,9 @@ nav:
   - Home: index.md
   - Get started:
       - start/index.md
-      - Quickstart, six commands: start/quickstart.md
       - Install the CLI: start/install.md
+      - Quickstart: start/quickstart.md
+      - Get an agent key: guides/get-an-agent-key.md
       - Connect Claude Code: guides/claude-code.md
       - Connect claude.ai and your phone: guides/claude-ai-and-mobile.md
       - Connect other agent tools: guides/other-harnesses.md
@@ -89,7 +90,7 @@ nav:
   - Guides:
       - guides/index.md
       - Use:
-          - Remember and recall: use/remember-and-recall.md
+          - Write and read memories: use/remember-and-recall.md
           - Review held memories: guides/reviewing.md
           - Organize memory in workareas: use/workareas.md
           - Capture chat memory: use/chat-memory.md
@@ -126,8 +127,9 @@ nav:
       - Design records: reference/design-records.md
   - Concepts:
       - concepts.md
-      - Why a write is held: concepts/why-a-write-is-held.md
+      - Evaluate OML: product/evaluate.md
       - Is OML for you: product/is-oml-for-you.md
+      - Why a write is held: concepts/why-a-write-is-held.md
       - What OML guarantees: product/commitments.md
       - How a write is admitted: architecture/admission.md
       - Architecture overview: architecture/overview.md

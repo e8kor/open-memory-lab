@@ -35,7 +35,7 @@ On a home server for one person, where one built-in issuer signs everything, the
 
 ## What it costs
 
-- A write is not recallable by others until a reviewer acts. Review throughput is Not measured yet.
+- A write is not recallable by others until a reviewer acts. How fast review goes depends on your reviewers; OML has no measured figure.
 - Someone has to review. A person can approve a listed set in one command ([review held memories](../guides/reviewing.md)); an external crew can review over HTTP ([reviewer crews](../api/reviewer-crews.md)).
 - Your reviewers set the quality. OML records who approved what; it cannot make a reviewer careful.
 

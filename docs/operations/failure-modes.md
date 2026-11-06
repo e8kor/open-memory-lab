@@ -11,12 +11,10 @@ When the server cannot establish that an act is permitted and durable, the act d
 | Failure | What the server does | What you see | What to do |
 |---|---|---|---|
 | Postgres primary unreachable | Refuses every write and read, because the serving store is the store that is down. | `system.unavailable` (503, retryable). `/readyz` fails. | Restore Postgres. Clients retry on their own. |
-| Postgres standby lost, quorum intact (`scaled` profile) | Keeps committing. | Nothing in OML. | Replace the standby. Watch synchronous-standby health in Postgres. |
-| Postgres standby quorum lost | Refuses every write rather than acknowledge one the quorum does not hold. | `system.unavailable` on writes. | Restore the quorum. |
-| Stored chain head does not verify at start (fork check) | Refuses writes and stays down. It never signs on top of a fork. | `/readyz` fails on every replica. Writes return `system.unavailable`. | Follow [fork check failing](runbooks.md#fork-check-failing). |
-| Lead takes over | Refuses writes until a new lead holds the lease and passes the fork check. Followers keep serving reads. | A short burst of `system.unavailable` on writes. | Retry. If it repeats, see [lead takeovers repeat](runbooks.md#lead-takeovers-repeat). |
-| Key store (`kms.keyring_path` or AWS KMS) unreachable | Refuses writes, because nothing can be encrypted. Reads of cached keys keep working until the cache expires. | `system.unavailable`. | Restore the keyring file or the KMS grant. |
-| Scan rule set fails to load | The replica reports not ready and serves nothing. It never admits an unscanned write. | `/readyz` fails. `oml doctor` shows `scan_ruleset` or `scan_rules`. | Fix the rule set the server names, then restart. |
+| Stored chain head does not verify at start (fork check) | Refuses writes and stays down. It never signs on top of a fork. | `/readyz` fails. Writes return `system.unavailable`. | Follow [fork check failing](runbooks.md#fork-check-failing). |
+| Lead takes over | Refuses writes until a new lead holds the lease and passes the fork check. | A short burst of `system.unavailable` on writes. | Retry. If it repeats, see [lead takeovers repeat](runbooks.md#lead-takeovers-repeat). |
+| Keyring file (`kms.keyring_path`) unreadable | Refuses writes, because nothing can be encrypted. Reads of cached keys keep working until the cache expires. | `system.unavailable`. | Restore the keyring file. |
+| Scan rule set fails to load | The server reports not ready and serves nothing. It never admits an unscanned write. | `/readyz` fails. `oml doctor` shows `scan_ruleset` or `scan_rules`. | Fix the rule set the server names, then restart. |
 | Scan fails on one write | Refuses that write. | `system.internal`. | Retry. If it repeats, send the `request_id` to the operator. |
 | Search index behind | Recall misses memories approved after the backlog. Get by id is unaffected. | Fewer hits. `oml_sparse_backlog` rises when the sparse encoder is on. | Wait for the backlog to drain. Check `oml doctor` search lines. |
 | Reranker slow or failing | Skips reranking and returns the unreranked order. | `oml_reranks_total{outcome="skipped"}` rises. `oml doctor` warns. | See [troubleshooting the server](../help/troubleshooting-server.md#search-model-files-are-missing). |
@@ -24,4 +22,4 @@ When the server cannot establish that an act is permitted and durable, the act d
 | No reviewer available | Accepts writes and holds them. It does not refuse them. | Memories stay `held`. `oml doctor` reports review capacity. | Follow [no reviewer can approve](runbooks.md#no-reviewer-can-approve). |
 | Metrics listener not set | Serves no `/metrics`. | `oml doctor` says where the counts are. | Set `server.metrics_listen`. |
 
-Durations are not measured yet: how long each refusal window lasts, and how fast read staleness grows.
+We have not measured how long each refusal window lasts.

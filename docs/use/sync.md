@@ -47,5 +47,5 @@ fingerprint of the span it came from.
 - A file whose name matches a secret pattern (`.env*`, `*.pem`, `*id_*`, `*credentials*`) is
   reported `unreadable` and skipped.
 
-Whether a reviewer catches a wrong extraction in a batch of 200 is not measured yet. All flags are
+We have not measured whether a reviewer catches a wrong extraction in a batch of 200. All flags are
 in the [CLI reference](../cli/reference.md).

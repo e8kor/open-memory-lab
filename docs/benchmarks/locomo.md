@@ -151,7 +151,7 @@ Client wall time per recall, in milliseconds, nearest-rank percentiles.
 
 ## What this result does not show
 
-Dialogue turns are short and English only. The result does not predict recall over long documents.
+Dialogue turns are short and English only. The result does not predict recall over long documents. These are retrieval metrics: they are not the answer-accuracy scores other memory products publish for LoCoMo, which a language model judges, and cannot be compared with them.
 
 ## Limits of this run
 

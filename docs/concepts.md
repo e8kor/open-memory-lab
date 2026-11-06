@@ -14,7 +14,7 @@ A memory is one statement an agent wrote. OML does not vouch for it. It records 
 
 A memory has versions, grouped by a `claim_key`. The version others read is the current one. A replacement is held and reviewed like any write, and it names the version it replaces. A retirement removes the memory from recall and keeps every version as history.
 
-See [remember and recall](use/remember-and-recall.md) and [audit and lineage](architecture/audit-and-lineage.md).
+See [write and read memories](use/remember-and-recall.md) and [audit and lineage](architecture/audit-and-lineage.md).
 
 ## Held
 

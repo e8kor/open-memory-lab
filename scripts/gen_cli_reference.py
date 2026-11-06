@@ -150,7 +150,7 @@ def main() -> int:
     oml = find_binary(args.oml)
     nodes: list[dict] = []
     walk(oml, [], nodes)
-    return docgen.finish(OUT, render(nodes), args.check)
+    return docgen.finish(OUT, docgen.mark_unreleased(render(nodes), "cli"), args.check)
 
 
 if __name__ == "__main__":

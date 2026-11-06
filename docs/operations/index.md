@@ -6,7 +6,7 @@ answers: "where an operator starts: administer, deploy, monitor, upgrade, back u
 
 # Operate
 
-Pages for the person who runs an OML server.
+Pages for the person who runs an OML server. First time: deploy, then administer, then monitor, then back up.
 
 | Task | Page |
 |---|---|
@@ -17,6 +17,6 @@ Pages for the person who runs an OML server.
 | Protect the data | [Back up and restore](restore.md) |
 | Respond to a page | [Operational alerts](runbooks.md), [Failure modes](failure-modes.md) |
 | Run the lake | [Run the lake writer](lake.md) |
-| Plan capacity | [Capacity and SLOs](operating.md) |
+| Plan capacity: how many memories and clients one server serves | [Capacity and SLOs](operating.md) |
 
 Something failing? Start with `oml doctor`, then [troubleshoot a server](../help/troubleshooting-server.md).

@@ -83,7 +83,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true", help="fail if the page differs from mcp-tools.json")
     args = ap.parse_args()
-    return docgen.finish(OUT, render(json.loads(CATALOG.read_text())), args.check)
+    return docgen.finish(OUT, docgen.mark_unreleased(render(json.loads(CATALOG.read_text())), "mcp"), args.check)
 
 
 if __name__ == "__main__":

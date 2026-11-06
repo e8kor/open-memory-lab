@@ -27,7 +27,7 @@ OML derives the tenant from the API key on the server and never from the request
 - **Embeddings and full-text indexes are partitioned by tenant.** No index spans tenants, so a correctly pruned query never ranks foreign rows. RLS stays the isolation authority if pruning fails, because pruning is planner behavior and not a security boundary.
 - **Quarantine and body objects sit under per-tenant paths.**
 
-The cost: RLS predicates sit on every query plan, and a full-text read scans its tenant's partition under RLS. Not measured yet: read latency by tenant size.
+The cost: RLS predicates sit on every query plan, and a full-text read scans its tenant's partition under RLS. We have not measured read latency by tenant size.
 
 Tenants share the deployment: the Postgres cluster, the lead process and its signing key, and the key store.
 
@@ -36,7 +36,7 @@ Tenants share the deployment: the Postgres cluster, the lead process and its sig
 | Material | Held by |
 |---|---|
 | Ed25519 deployment signing key | The lead only. No other process loads it. |
-| Memory encryption keys (DEKs) | Wrapped by the key store (`kms.adapter`: the keyring file, or AWS KMS). The lead unwraps them to encrypt at admission and to decrypt when it serves a read. |
+| Memory encryption keys (DEKs) | Wrapped by the keyring file (`kms.keyring_path`); the `file` adapter is the only key store in this build. The lead unwraps them to encrypt at admission and to decrypt when it serves a read. |
 | Lake sealing key (KEK file) | The lake writer. It holds no signing key. |
 | API keys | The lead stores hashes only. Clients hold the values. |
 | Connect codes and connection tokens | The lead mints them and stores digests only. |
@@ -46,7 +46,7 @@ Tenants share the deployment: the Postgres cluster, the lead process and its sig
 
 Three controls bound the damage. The per-tenant chain makes forged history detectable by anyone holding an earlier chain head. The startup fork check refuses to extend a chain that does not verify against the last signed head. The journal shows what the lead did before the compromise. Nothing detects quiet reads by a compromised lead.
 
-**With AWS KMS, the key encryption key never leaves the key store.** With the `file` adapter, the keyring is a file on the lead's host. Whoever reads that file can unwrap every DEK. Back it up with the database. A database restored without it cannot be read.
+**The keyring is a file on the lead's host.** Whoever reads that file can unwrap every DEK. Back it up with the database. A database restored without it cannot be read.
 
 **The lake writer holds no signing key.** It copies ciphertext the lead already produced. A compromised lake writer cannot sign an event or alter the journal. It can corrupt the lake, and the journal's ciphertext digests expose the change. The lake serves no client read.
 
@@ -144,7 +144,7 @@ flowchart LR
   end
 
   LW["oml-lakewriter<br/>own Postgres role<br/>no signing key<br/>moves ciphertext verbatim"]
-  KMS["Key store<br/>keyring file or AWS KMS"]
+  KMS["Keyring file"]
 
   A -- "HTTPS, bearer key" --> S
   H -- "HTTPS, access token" --> S
@@ -169,4 +169,4 @@ These risks remain after the controls above.
 4. **The platform operator is trusted.** A Postgres superuser, a key store administrator or whoever holds the Kubernetes Secrets can read attribution metadata, destroy keys and rewrite unprotected state. Signed chains that tenants keep make some of this detectable after the fact. OML is a trusted-provider design.
 5. **Counts leak what reads hide.** A key that cannot read another author's held work still sees tenant-wide journal positions. It learns how many events it cannot see, and when. A `claim_key` collision tells a writer that a name is taken. The lineage read names unreadable ancestors as redacted ids. Each leak is a count, a name or an id, never content.
 6. **A connect code is a bearer secret for its minutes.** The lead also fetches client-chosen URLs.
-7. **Rate limits are unmeasured.** Not measured yet: request limits under skewed load.
+7. **Request limits under skewed load are untested.** This build sets no per-key rate limit, and we have not measured how skewed load behaves.

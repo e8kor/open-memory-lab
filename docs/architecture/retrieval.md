@@ -133,4 +133,4 @@ The benchmarks run every pipeline through the same served path as an agent. The 
 
 - **It does not answer questions.** OML returns memories. The agent that recalls them reasons over them.
 - **It does not match word forms in the keyword pipelines.** With `keyword-any`, a query for "deploy" does not find "deployments". `bm25` pipelines add English stems and identifier parts.
-- **It has no measured latency beyond the scale benchmarks.** Not measured yet. Without a text index under row security, every pipeline but `bm25-postings` costs more as the readable rows grow.
+- **Latency is measured only in the scale benchmarks.** Without a text index under row security, every pipeline but `bm25-postings` costs more as the readable rows grow.

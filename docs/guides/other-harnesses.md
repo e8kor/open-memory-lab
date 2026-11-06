@@ -10,11 +10,9 @@ Every tool here reaches the same `/mcp` endpoint with the same three tools. The 
 for each comes from the agent kit, `oml-agent-kit-X.Y.Z.tar.gz` (or `.zip`), attached to each
 release and signed with cosign. The kit's
 [README](https://github.com/e8kor/open-memory-lab/blob/main/kit/README.md) names each file, where
-it goes and the tool's documentation with its fetch date. It marks what that documentation does
-not settle as unverified.
+it goes and the tool's documentation with its fetch date.
 
-You need an agent key. OML provides configuration for these tools. None has been run against a real
-client yet.
+You need an agent key ([get one](get-an-agent-key.md)). Which tools we have run against a live client is under [Limits](../reference/limits.md#not-verified-against-a-live-client).
 
 
 ## 1. Export the key

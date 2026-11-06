@@ -22,6 +22,7 @@ with each box ticked or struck through with a reason.
 - [ ] No new MCP tool without a use case in `docs/product/use-cases.md` or `docs/engineering/use-case-call-map.md`.
 - [ ] The SDKs are regenerated (`python scripts/generate_sdks.py`) and the contract surfaces agree (`python scripts/check_contract_sync.py`).
 - [ ] Every ADR and migration number is reserved in `docs/NUMBERS.md` (`python scripts/check_numbers.py`).
+- [ ] Reader-facing prose names each action once: headings use the command's verb (write, read), a memory is `held` or approved (state `promoted`), and "approve", "promote" and "ratify" are never swapped. Sentences stay under 25 words.
 - [ ] A change fragment is in `changes/`, or the pull request carries the `no-changelog` label.
 ```
 

@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "the steps to take for each operational alert: a failed fork check, no available reviewer, a stalled review queue, a lagging lake, repeated lead takeovers, rate limits and key compromise"
+answers: "the steps to take for each operational alert: a failed fork check, no available reviewer, a stalled review queue, a lagging lake, repeated lead takeovers, repeated 429 answers and key compromise"
 ---
 
 # Operational alerts
@@ -12,7 +12,7 @@ Two rules hold throughout. Never edit a store by hand. Capture ids, digests and 
 
 ## Fork check failing
 
-Use this when `/readyz` fails on every replica after a restart and writes return `system.unavailable`. The stored chain head did not verify against the last signed head. The server refuses writes rather than fork the chain. There is no override.
+Use this when `/readyz` fails after a restart and writes return `system.unavailable`. The stored chain head did not verify against the last signed head. The server refuses writes rather than fork the chain. There is no override.
 
 1. Read the chain state.
 
@@ -111,9 +111,9 @@ Use this when writes fail with `system.unavailable` outside a deploy. Every take
 4. If two lead-eligible processes run, stop the extra one. They cannot fork the chain, only contend.
 5. While writes fail, do not restart the fleet. Each restart opens another refusal window.
 
-## Rate limits for one tenant
+## Repeated 429 answers
 
-Use this when clients get `limit.rate` (429) repeatedly.
+Use this when clients get `limit.rate` (429) repeatedly. This build has two caps that answer it: unused OAuth client registrations (10,000) and recall feedback labels (1,000 a UTC day). It has no per-key or per-tenant rate limit.
 
 1. Find the route in the request log.
 
@@ -121,7 +121,7 @@ Use this when clients get `limit.rate` (429) repeatedly.
    journalctl -u oml-server -o cat | jq -c 'select(.status==429) | {route, key_name, client_ip}'
    ```
 
-2. If the traffic is legitimate, raise the limit in `oml.toml` and restart. See [configuration](configuration.md).
+2. If the route is `/oauth/register`, the cap is on unused registrations; they lapse after 24 hours.
 3. If one key floods the server, deny it.
 
    ```bash
@@ -132,7 +132,7 @@ Use this when clients get `limit.rate` (429) repeatedly.
 
 Planned and emergency rotation are deployment steps. OML has no command for either. The server journals `system.signing_key_rotated` when a new signing key starts. See the [event catalog](../data/event-catalog.md).
 
-1. For a compromise, stop the lead first. Writes refuse everywhere. Reads continue where followers run.
+1. For a compromise, stop the lead first. Writes refuse everywhere.
 2. Rebuild the lead's host or pod from a trusted image.
 3. Rotate every credential the lead held: the Postgres role, the key-store grant and the object-store credentials.
 4. Replace the signing key at its custody point (the Kubernetes Secret or the mounted file) and start the lead.

@@ -10,11 +10,11 @@ answers: "how recall latency grows with the rows in a recall's scope, per search
 
 [All suites](index.md)
 
-The ten-fold SciFact corpus (about 50,000 memories) is the largest suite. The default pipeline, `bm25-postings`, has no row at that size yet: Not measured yet.
+The ten-fold SciFact corpus (about 50,000 memories) is the largest suite. We have not run the default pipeline, `bm25-postings`, at that size in this suite. At the database it measured 25.5 ms p95 at 99,721 readable memories (`bench/scale/REPORT.md`).
 
 Each point is one suite's run: the rows in the recall's scope (for LoCoMo, all conversations together, though each query reads one) and the client's p50 and p95 in milliseconds. The line is 50 ms.
 
-**Why latency grows with the rows.** Under row security no text index serves a recall, so every pipeline except `bm25-postings` reads the stored text vectors of every row the key may read, and its cost grows with those rows. Stored vectors made a row several times cheaper, not free: an every-word match crossed 50 ms near 70,000 readable rows (`bench/scale/REPORT-baseline.md`), and `bm25` reads more per row, so on abstract-length text it crosses sooner, as the tables show. `bm25-postings` reads integer postings, which row security lets an index serve, so its cost follows the postings it reads: 25.5 ms p95 at 99,721 readable memories, universe scope, against `bm25`'s 485 ms. That figure was measured at the database, not through the client, on 2026-11-05 on a host shared with other jobs, so treat it as an upper bound (`bench/scale/REPORT.md`).
+**Why latency grows with the rows.** Under row security no text index serves a recall. Every pipeline except `bm25-postings` therefore reads the stored text vectors of every row the key may read, and its cost grows with those rows. Stored vectors made a row several times cheaper, not free. An every-word match crossed 50 ms near 70,000 readable rows (`bench/scale/REPORT-baseline.md`). `bm25` reads more per row, so on abstract-length text it crosses sooner, as the tables show. `bm25-postings` reads integer postings, which row security lets an index serve, so its cost follows the postings it reads. It measured 25.5 ms p95 at 99,721 readable memories, universe scope, against `bm25`'s 485 ms. That figure was measured at the database, not through the client, on 2026-11-05 on a host shared with other jobs, so treat it as an upper bound (`bench/scale/REPORT.md`).
 
 | method | rows | suite | p50 ms | p95 ms | p95 under 50 ms |
 |---|---:|---|---:|---:|---|

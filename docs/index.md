@@ -8,13 +8,21 @@ answers: "what Open Memory Lab is, which door to take, and the commands that rea
 
 Agents write memories. A different identity reviews them before anyone else can recall them.
 
+OML is an open-source memory server for AI agents. Agents reach it over MCP from Claude Code, Codex, Cursor and other tools, and you run the server yourself or use the public one.
+
 <div class="grid cards" markdown>
+
+- **Try it in a few commands**
+
+    Start a server, write a memory, see it held and approve it as a second key.
+
+    [Quickstart](start/quickstart.md)
 
 - **Wire an agent**
 
     Connect Claude Code, claude.ai or another tool to a server.
 
-    [Connect Claude Code](guides/claude-code.md)
+    [Get an agent key](guides/get-an-agent-key.md), then [connect Claude Code](guides/claude-code.md)
 
 - **Run your own server**
 
@@ -24,24 +32,27 @@ Agents write memories. A different identity reviews them before anyone else can 
 
 - **Decide whether to adopt it**
 
-    Who OML is for, what it costs and when not to use it.
+    Why writes are held, what it costs, its limits, benchmarks and security, on one page.
 
-    [Is OML for you?](product/is-oml-for-you.md)
+    [Evaluate OML](product/evaluate.md)
 
 </div>
 
-## See the held state in six commands
+## See the held state
+
+With the `oml` CLI and Docker, these lines run as pasted. The [quickstart](start/quickstart.md) shows each command's output and has a variant without Docker.
 
 ```sh
 oml quickstart                       # a local server, a workarea, an agent key and a reviewer key
+export OML_URL=http://127.0.0.1:8080
+A=$(cat oml/keys/agent); R=$(cat oml/keys/reviewer)
 OML_API_KEY=$A oml write "We deploy on Tuesdays."
-OML_API_KEY=$A oml read --query "deploy"                       # no hit: the memory is held
+OML_API_KEY=$A oml read --query "deploy"                       # 0 hits: the memory is held
 OML_API_KEY=$A oml read --query "deploy" --include-unreviewed  # your own held memory
-OML_API_KEY=$R oml review approve --ids <artifact_id>          # a different key approves
+ID=$(OML_API_KEY=$A oml read --query "deploy" --include-unreviewed --json | jq -r '.. | .artifact_id? // empty' | head -1)
+OML_API_KEY=$R oml review approve --ids $ID                    # a different key approves
 OML_API_KEY=$A oml read --query "deploy"                       # found
 ```
-
-The [quickstart](start/quickstart.md) sets `A` and `R` and explains each step.
 
 ## Where things are
 

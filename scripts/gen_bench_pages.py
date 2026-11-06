@@ -46,16 +46,16 @@ QUALITY = [("ndcg@10", "nDCG@10"), ("recall@10", "R@10"), ("recall@20", "R@20"),
 LATENCY_LINE_MS = 50
 
 
-CEILING = ("**Why latency grows with the rows.** Under row security no text index serves a recall, "
-           "so every pipeline except `bm25-postings` reads the stored text vectors of every row the key "
-           "may read, and its cost grows with those rows. Stored vectors made a row several times "
-           "cheaper, not free: an every-word match crossed 50 ms near 70,000 readable rows "
-           "(`bench/scale/REPORT-baseline.md`), and `bm25` reads more per row, so on abstract-length "
-           "text it crosses sooner, as the tables show. `bm25-postings` reads integer postings, which "
-           "row security lets an index serve, so its cost follows the postings it reads: 25.5 ms p95 "
-           "at 99,721 readable memories, universe scope, against `bm25`'s 485 ms. That figure was "
-           "measured at the database, not through the client, on 2026-11-05 on a host shared with "
-           "other jobs, so treat it as an upper bound (`bench/scale/REPORT.md`).\n")
+CEILING = ("**Why latency grows with the rows.** Under row security no text index serves a recall. "
+           "Every pipeline except `bm25-postings` therefore reads the stored text vectors of every row "
+           "the key may read, and its cost grows with those rows. Stored vectors made a row several "
+           "times cheaper, not free. An every-word match crossed 50 ms near 70,000 readable rows "
+           "(`bench/scale/REPORT-baseline.md`). `bm25` reads more per row, so on abstract-length text "
+           "it crosses sooner, as the tables show. `bm25-postings` reads integer postings, which row "
+           "security lets an index serve, so its cost follows the postings it reads. It measured "
+           "25.5 ms p95 at 99,721 readable memories, universe scope, against `bm25`'s 485 ms. "
+           "That figure was measured at the database, not through the client, on 2026-11-05 on a host "
+           "shared with other jobs, so treat it as an upper bound (`bench/scale/REPORT.md`).\n")
 
 
 def load_results():
@@ -137,7 +137,9 @@ WHAT_NOT = {
                         "The scores compare OML pipelines with each other; do not compare them with BEIR or LoCoMo.",
     "beir-scifact": "SciFact is scientific abstracts and claims. It does not predict recall over short chat notes.",
     "beir-nfcorpus": "NFCorpus is nutrition and medical text. It does not predict recall over short chat notes.",
-    "locomo": "Dialogue turns are short and English only. The result does not predict recall over long documents.",
+    "locomo": "Dialogue turns are short and English only. The result does not predict recall over long documents. "
+              "These are retrieval metrics: they are not the answer-accuracy scores other memory products publish "
+              "for LoCoMo, which a language model judges, and cannot be compared with them.",
     "beir-scifact-x10": "Ten copies of the corpus measure latency, not quality.",
 }
 
@@ -208,47 +210,68 @@ def headline_row(doc):
             f"{ms(lat.get('p50'))} | {ms(lat.get('p95'))} |")
 
 
+def known_dates(docs):
+    return sorted({d["date"] for d in docs if d["date"] != "unknown"})
+
+
 def index_page(current, earlier, has_scale):
     default = default_pipeline()
-    lines = [header("benchmarks", "which search pipeline is the default and what each "
-                    "pipeline measured on every benchmark suite: quality, latency, the date, "
-                    "commit and environment of each run"),
+    quality = [(suite, current[suite][default]) for suite in suites_in_order(current)
+               if suite != "beir-scifact-x10" and default in current[suite]]
+    ndcg = [d["metrics"]["ndcg@10"] for _, d in quality]
+    p95 = [d["latency_ms"]["p95"] for _, d in quality]
+    sizes = [full_doc(current[suite])["n_docs"] for suite, _ in quality]
+    refs = {suite: full_doc(current[suite]).get("reference") for suite, _ in quality}
+    lines = [header("benchmarks", "what to take from the benchmarks, which search pipeline is the "
+                    "default and what each pipeline measured on every benchmark suite: quality, "
+                    "latency, the date, commit and environment of each run"),
              "# Benchmarks\n",
-             f"The default search pipeline is `{default}` (the deployment's `search.default` "
-             "when unset; [settings](../operations/configuration.md)). It scores within 0.003 nDCG@10 "
-             "of `bm25` on the quality suites and is the one pipeline an index serves under row "
-             "security, so its latency grows slowest with the rows; the pipelines that score "
-             "higher read every readable row's stored text vectors or add a model stage. The "
-             "[benchmark report](https://github.com/e8kor/open-memory-lab/blob/main/eval/bench/REPORT.md) "
-             "gives the reasoning.\n",
+             "**What to take from this.**\n",
+             f"- Recall quality is keyword-search grade: nDCG@10 of {min(ndcg):.2f} to {max(ndcg):.2f} "
+             "depending on the corpus. No embeddings model or language model judges an answer.",
+             f"- Recall took under {max(p95):.0f} ms at the 95th percentile for {min(sizes):,} to "
+             f"{max(sizes):,} memories. At the database, 99,721 readable memories took 25.5 ms "
+             "(`bench/scale/REPORT.md`).",
+             "- These are the maintainers' runs on one shared host, not independent results.",
+             "- They are retrieval metrics. They are not the answer-accuracy scores other memory products "
+             "publish for LoCoMo, which a language model judges, and cannot be compared with them.\n",
              GENERATED,
              "## Results at a glance\n",
-             f"The default pipeline, `{default}`, on each suite. nDCG@10 and S@5 measure "
-             "quality; p95 is the client's wall time per recall.\n",
-             "| suite | memories | queries | nDCG@10 | S@5 | p95 ms | run |",
-             "|---|---:|---:|---:|---:|---:|---|"]
-    for suite in suites_in_order(current):
+             f"The default search pipeline, `{default}`, on each suite. nDCG@10 and S@5 measure quality; "
+             "p95 is the client's wall time per recall. The BEIR column is the published BM25 baseline "
+             "for the same suite ([BEIR](https://arxiv.org/abs/2104.08663)), where one exists.\n",
+             "| suite | memories | queries | nDCG@10 | BEIR BM25 | S@5 | p95 ms | run |",
+             "|---|---:|---:|---:|---:|---:|---:|---|"]
+    for suite, d in quality:
         docs = current[suite]
-        any_doc = full_doc(docs)
-        d = docs.get(default)
-        title = SUITE_TITLES.get(suite, suite)
-        dates = ", ".join(sorted({x["date"].replace("unknown", "not recorded") for x in docs.values()}))
-        if d:
-            lines.append(f"| [{title}]({'scale' if suite == 'beir-scifact-x10' else suite}.md) | {any_doc['n_docs']:,} | {asked(d)} | "
-                         f"{num(d['metrics'].get('ndcg@10'))} | {num(d['metrics'].get('success@5'))} | "
-                         f"{ms(d['latency_ms'].get('p95'))} | {dates} |")
-        else:
-            lines.append(f"| [{title}]({'scale' if suite == 'beir-scifact-x10' else suite}.md) | {any_doc['n_docs']:,} | "
-                         f"{any_doc['n_queries']:,} | Not measured yet | Not measured yet | Not measured yet | {dates} |")
+        ref = refs[suite]
+        dates = ", ".join(known_dates(docs.values())) or "date not recorded"
+        lines.append(f"| [{SUITE_TITLES.get(suite, suite)}]({suite}.md) | {full_doc(docs)['n_docs']:,} | {asked(d)} | "
+                     f"{num(d['metrics'].get('ndcg@10'))} | {num(ref['value']) if ref else '–'} | "
+                     f"{num(d['metrics'].get('success@5'))} | {ms(d['latency_ms'].get('p95'))} | {dates} |")
     lines.append("")
+    ref_rows = [(suite, d) for suite, d in quality if refs[suite]]
+    if ref_rows:
+        text = "; ".join(
+            f"on {SUITE_TITLES[suite].replace('BEIR ', '')} the default scores {num(d['metrics']['ndcg@10'])} "
+            f"against the baseline's {num(refs[suite]['value'])}" for suite, d in ref_rows)
+        lines.append(text[0].upper() + text[1:] + ".\n")
     lines.append(DEFINITIONS)
+    lines.append("## Why `" + default + "` is the default\n")
+    lines.append(f"The default is `{default}` (the deployment's `search.default` when unset; "
+                 "[settings](../operations/configuration.md)). It scores within 0.003 nDCG@10 of `bm25` "
+                 "on the quality suites. It is also the one pipeline an index serves under row security, "
+                 "so its latency grows slowest with the rows. The pipelines that score higher read every "
+                 "readable row's stored text vectors or add a model stage. The "
+                 "[benchmark report](https://github.com/e8kor/open-memory-lab/blob/main/eval/bench/REPORT.md) "
+                 "gives the reasoning.\n")
     lines.append("## Methodology\n")
-    lines.append("Every number went through the served path: memories written over HTTP by an "
-                 "agent key, promoted by reviewer keys of other principals, and recalled through "
-                 "`oml_read` over `/mcp`, one query at a time. Latency is the client's wall time "
-                 "per call, in milliseconds. Reference rows are offline and have no latency. "
-                 "Every suite page lists all pipelines, the run's commit and host, and what the result does not show. "
-                 "Latency was measured on a host shared with other jobs, so every latency is an upper bound for one client.\n")
+    lines.append("Every number went through the served path. An agent key wrote the memories over HTTP, "
+                 "reviewer keys of other principals promoted them, and `oml_read` over `/mcp` recalled them, "
+                 "one query at a time. Latency is the client's wall time per call, in milliseconds. "
+                 "Reference rows are offline and have no latency. Every suite page lists all pipelines, "
+                 "the run's commit and host, and what the result does not show. The host was shared with "
+                 "other jobs, so every latency is an upper bound for one client.\n")
     lines.append(fold("The latency ceiling", [CEILING]))
     lines.append("## Suites\n")
     for suite in suites_in_order(current):
@@ -258,13 +281,18 @@ def index_page(current, earlier, has_scale):
         lines.append(f"- [{title}]({'scale' if suite == 'beir-scifact-x10' else suite}.md): {any_doc['n_docs']:,} memories, "
                      f"{any_doc['n_queries']:,} queries, {len(docs)} pipelines.")
     lines.append("")
-    lines.append(fold("Run details: commits and environments", [
-        f"- **{SUITE_TITLES.get(suite, suite)}**: " + run_line(list(current[suite].values()))
-        for suite in suites_in_order(current)]))
-    if has_scale:
-        lines.append("## [Latency at scale](scale.md)\n")
-        lines.append(f"Latency against the rows in a recall's scope, with the "
-                     f"{LATENCY_LINE_MS} ms line.\n")
+    rows = ["| suite | date | commits | environment |", "|---|---|---|---|"]
+    for suite in suites_in_order(current):
+        docs = list(current[suite].values())
+        dates = ", ".join(known_dates(docs)) or "not recorded"
+        if any(d["date"] == "unknown" for d in docs) and known_dates(docs):
+            dates += " (some files carry no date)"
+        commits = sorted({d["commit"] for d in docs if d["commit"] != "unknown"})
+        envs = sorted({", ".join(f"{k} {v}" for k, v in d.get("environment", {}).items()) for d in docs} - {""})
+        rows.append(f"| {SUITE_TITLES.get(suite, suite)} | {dates} | "
+                    + (", ".join(f"`{c}`" for c in commits) or "not recorded")
+                    + " | " + "<br>".join(envs) + " |")
+    lines.append(fold("Run details: dates, commits and environments", rows))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -332,7 +360,7 @@ def suite_page(suite, docs, earlier_docs):
     if chart:
         lines.append(fold("Chart: p95 latency by pipeline", [chart]))
     lines.append("## What this result does not show\n")
-    lines.append(WHAT_NOT.get(suite, "Not measured yet.") + "\n")
+    lines.append(WHAT_NOT.get(suite, "Nothing beyond the limits of this run, listed below.") + "\n")
     lines.append("## Limits of this run\n")
     notes = sorted({docgen.strip_handles(d.get("notes", "")) for d in docs.values()} - {""})
     split = [re.split(r"(?<=[.;])\s+(?=[A-Z])", n) for n in notes]
@@ -367,7 +395,8 @@ def scale_page(current):
              "# Latency at scale\n", GENERATED,
              "[All suites](index.md)\n",
              "The ten-fold SciFact corpus (about 50,000 memories) is the largest suite. "
-             "The default pipeline, `bm25-postings`, has no row at that size yet: Not measured yet.\n",
+             "We have not run the default pipeline, `bm25-postings`, at that size in this suite. "
+             "At the database it measured 25.5 ms p95 at 99,721 readable memories (`bench/scale/REPORT.md`).\n",
              "Each point is one suite's run: the rows in the recall's scope (for LoCoMo, all "
              "conversations together, though each query reads one) and the client's p50 and "
              f"p95 in milliseconds. The line is {LATENCY_LINE_MS} ms.\n", CEILING,

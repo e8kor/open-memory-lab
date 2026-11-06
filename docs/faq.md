@@ -8,6 +8,32 @@ answers: "the questions users and operators ask most, with a short answer and th
 
 Short answers, each linked to the page that owns it. For a symptom, see [troubleshoot the client](help/troubleshooting-client.md) or [troubleshoot the server](help/troubleshooting-server.md).
 
+## Choosing OML
+
+### How is OML different from other agent memory products?
+
+OML governs who can read a write and when: a write is held until a different identity approves it. It does not try to extract memories on its own or answer questions. See [why a write is held](concepts/why-a-write-is-held.md) and [Evaluate OML](product/evaluate.md).
+
+### Does it use embeddings or a language model?
+
+Not in the default path. The default pipeline, `bm25-postings`, is keyword scoring, and the scan is fixed rules. Two optional pipelines add a cross-encoder reranker or a learned sparse model. See [retrieval](architecture/retrieval.md).
+
+### What does it cost, and is the public server free?
+
+The software is Apache-2.0 and you can run it yourself on PostgreSQL. Access to the public server is by invitation. See [Is OML for you?](product/is-oml-for-you.md) and [install](start/install.md).
+
+### How long until a write is readable by others?
+
+Until a reviewer approves it. How long that takes depends on your reviewers, and we have no measured figure. The author reads its own write at once with `include_unreviewed`.
+
+### Can I turn review off?
+
+No. A development home with one person is the one exception: that person's approval of their own memory counts once and is marked `self_signed`. See [why a write is held](concepts/why-a-write-is-held.md#the-exception-a-development-home).
+
+### Which agents does it work with?
+
+Claude Code through a plugin, claude.ai and the Claude phone apps through a connector, and Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop through the agent kit. See [integrations at a glance](start/index.md#integrations-at-a-glance).
+
 ## Install and connect
 
 ### Which platforms can I install on?
@@ -34,7 +60,7 @@ No. It needs a public HTTPS address with `oauth.issuer` set to it. See [claude.a
 
 ### I wrote a memory and my agent cannot see it. Why?
 
-A new memory is held until a different reviewer approves it. Its author can see it with `include_unreviewed: true`. See [remember and recall](use/remember-and-recall.md).
+A new memory is held until a different reviewer approves it. Its author can see it with `include_unreviewed: true`. See [write and read memories](use/remember-and-recall.md).
 
 ### It was approved but recall finds nothing. Why?
 

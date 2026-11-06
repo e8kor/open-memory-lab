@@ -64,14 +64,13 @@ is for one client unless a row says otherwise.
 | Write cost in the store, 165,000 memories | insert held 2.40 / 8.08 ms, promote 4.54 / 8.94 ms, supersede 6.35 / 12.6 ms (p50 / p95) | `bench/scale/REPORT.md`, write cost |
 | Postings fill (migration 0021) | 70.4 s at 165,000 memories, about 0.4 s per 1,000 | `bench/scale/REPORT.md` |
 | Learned sparse recall, 100,000 memories | universe p95 164 ms, over the 50 ms bar, so it is off by default | `bench/scale/REPORT.md`, learned sparse lane |
-| Reranker, L6, depth 10, defaults (2 threads, 2 slots, 1 s) | p50 / p95: 1 client 140 / 246 ms; 4 clients 348 / 721 ms; 8 clients 805 / 1,018 ms with 32 timeouts and 2 busy of 121 | Source not recorded on the original page; re-measure before quoting |
 | Review queue under load | six reviewer keys approved about 77 rows a second with 5,000 held, 2 to 14 a second with 45,000 held, before the review index | `eval/bench/REPORT.md` |
 
 The limits bind in this order as a server grows: concurrent reranked recalls, the data volume, and a key
 holding thousands of unreviewed rows. More than four reranked recalls at once start to time out and fall back
 to the first-stage order.
 
-Not measured yet: 1,000,000 memories, cold caches, an idle host and the per-tenant write ceiling under the
+We have not measured 1,000,000 memories, cold caches, an idle host or the per-tenant write ceiling under the
 chain lock.
 
 ## Protect the data

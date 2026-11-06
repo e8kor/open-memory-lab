@@ -32,7 +32,7 @@ Annotations: not read-only, not destructive, idempotent, not open-world.
 | `anchor.path` | string | no |  |
 | `anchor.fragment` | string | no |  |
 | `anchor.hash` | string | no |  |
-| `anchor.hasher` | `oml-md/1` \| `oml-turn/1` \| `oml-rustdoc/1` \| `oml-crate/1` | no |  |
+| `anchor.hasher` | `oml-md/1` \| `oml-turn/1`; `oml-rustdoc/1` and `oml-crate/1` are not released yet (next release) | no |  |
 | `workarea` | string | no | The workarea, by node id or name. Without replaces, the workarea written in, omitted the key's default. With replaces it must be the target's workarea. |
 | `replaces` | string | no | The artifact id of the claim's current served tip to supersede (submission.tip_conflict otherwise). A target of a vocabulary kind (term, term_mapping, vocab_release) is refused; supersede it on the HTTP API. |
 | `expected_version` | integer | no | With replaces, required: the claim's latest version as you last read it (the version field of the tip you are replacing, or of your own newer held version). If the claim has moved on, the write is refused with submission.version_conflict and details.current_version; read it again before retrying. |

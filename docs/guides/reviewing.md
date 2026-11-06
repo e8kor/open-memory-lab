@@ -28,7 +28,7 @@ The command prints `key issued — SHOWN ONCE` and the value once. The server ke
 Give each reviewer their own key and principal, because a shared key makes two people one. An admin
 key is never a reviewer key, and a `held_by: service` key is refused every review verb with
 `access.verb_ceiling`. `oml quickstart` issues one reviewer key, `quickstart-reviewer`, into
-`<dir>/keys/reviewer` ([run your own server](../start/run-your-own.md)). The admin's side is in
+`<dir>/keys/reviewer` ([run your own server](../start/run-your-own.md)); it holds the `dreamer` grant only, so a held memory it serves has no sources. The admin's side is in
 [Administer an OML server](administering.md).
 
 Store the key once. `oml login` reads it without echo, checks it, and writes the URL and key to the
