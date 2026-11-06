@@ -397,9 +397,23 @@ list.
 - The submission event always carries `format`, including `text/plain`; an event written before
   the field reads as `text/plain` and keeps its digest, and `plaintext_digest` stays the digest of
   the source whatever its format.
-- A render token seals the source it draws, the memory id, the session's CSRF token and a
-  5-minute expiry, so the frame draws what the session was shown and opens for no other session; the
-  route reads nothing from the store and journals nothing.
+- A render token seals the memory id, the session's CSRF token and a 5-minute expiry, and names no
+  source: the lead holds the source it drew on the card under the session and the memory, at most
+  256 at a time and the oldest expiry first, so a diagram near the 64 KiB cap fits a URL path, and a
+  restart or an eviction answers `not_found` while the card still shows the source. The frame
+  draws what the session was shown, opens for no other session, reads nothing from the store and
+  journals nothing.
+- d6's keyed-secret rule reads every segment of a value's path, not its last: a value nested in an
+  array or object under `password` is as keyed as one beside it, since the rule's purpose is that a
+  secret-shaped value never reaches the search text. `_password` and `_passwd` join the suffixes.
+- A Mermaid source's entity codes (`#60;`, `#x3c;`, `#lt;`) are decoded as the drawing decodes them
+  before the HTML-label refusal reads the line, and the decoded source is one scan view, so
+  `AKIA#73;…` is scanned as the key the drawing shows. A line splits into statements on `;` outside
+  a quoted label, and an unclosed quote or bracket is `mermaid.syntax_error`.
+- The near-copy check of ADR-0050 d17 reads `coalesce(search_text, claim)` on both sides: the keys'
+  trigger and refill (0035), the writer's keys and each candidate's comparison. The approval's
+  event carries `format` beside `served_body_digest`. 0033 adds its checks `NOT VALID` and 0034,
+  marked `-- no-transaction`, validates them, so the scans run under `SHARE UPDATE EXCLUSIVE`.
 - A Mermaid card shows the title, the source, the drawing, then the format and what the claim will
   be found by; the structural diff on a card and the cross-format "format changed" line are not
   built, since the diff is an operation of the port with no caller on a page yet.
