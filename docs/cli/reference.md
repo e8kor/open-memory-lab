@@ -959,7 +959,7 @@ Install and configure an agent tool's OML plugin
 
 ### `oml setup claude-code`
 
-Install the matching oml plugin through the claude CLI, passing the URL and key on stdin. Admin and operator keys are refused. Print commands with --print or when claude is unavailable. Without --url, use https://memory.doublegate.io
+Install the matching oml plugin through the claude CLI, passing the URL and key on stdin. Admin and operator keys are refused. Print commands with --print or when claude is unavailable. Without --url, use <https://memory.doublegate.io>
 
 ```
 oml setup claude-code [OPTIONS]
