@@ -8,3 +8,4 @@ __pycache__/
 sbom.json
 .tmp-target/
 .tmp/
+/testing/lake/target

@@ -18,11 +18,18 @@ description = "The oml administration CLI (ADR-0015): a lab client that speaks t
 name = "oml"
 path = "src/main.rs"
 
+[features]
+# Reads Delta Lakes: the `delta` adapter of `oml sync` (ADR-0062 d3). Off in the
+# default `oml`, which refuses `--adapter delta` naming the lake build; the
+# release ships the build with it as `oml-lake`.
+lake-sync = ["dep:oml-delta-log"]
+
 [dependencies]
 clap.workspace = true
 ed25519-dalek.workspace = true
 getrandom.workspace = true
 hex.workspace = true
+oml-delta-log = { workspace = true, optional = true }
 oml-guardrail.workspace = true
 oml-scan.workspace = true
 rpassword.workspace = true

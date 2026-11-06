@@ -34,7 +34,7 @@ OML serves one JSON API on one keyed listener. `/v1` is the provider ring that a
 | [web](#web) | 9 | The sign-in, user and admin pages, and the email allowlist. |
 | [admin](#admin) | 3 | An administrator's reads of memory text and attribution. |
 | [search](#search) | 2 | The served search pipelines and the tenant default. |
-| [usage](#usage) | 4 | Recall telemetry and the replay of labeled recalls. |
+| [usage](#usage) | 4 | Recall telemetry and the replay of labelled recalls. |
 | [health](#health) | 2 | Liveness and readiness. |
 
 ## memories
@@ -65,7 +65,7 @@ Requires: writer effective access on the resolved workarea; every derives_from a
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `verb` | `remember` \| `learn` | no | Omitted, learn when derives_from is non-empty and remember otherwise; a sent verb is honored. learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact. |
+| `verb` | `remember` \| `learn` | no | Omitted, learn when derives_from is non-empty and remember otherwise; a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact. |
 | `claim_key` | string | no | Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). |
 | `kind` | `memory` \| `derived_fact` \| `steering` \| `term` \| `term_mapping` \| `vocab_release` \| `guardrail` | no | guardrail requires severity and admits rule (since v0.5.1). |
 | `valid_from` | string | no | When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. |
@@ -73,7 +73,7 @@ Requires: writer effective access on the resolved workarea; every derives_from a
 | `severity` | `never` \| `must` \| `should` | no | A guardrail's severity: never and must bind, should is the reviewed default, and it orders the set first; required on kind guardrail except a retirement, refused on every other kind (request.validation, details.field /severity). |
 | `rule` | object | no | A guardrail's optional rule in the oml-gr/1 grammar: one tool class, its match and an effect, deny or ask, never allow; should takes ask only. |
 | `body` | string | yes | Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). |
-| `workarea` | WorkareaRef | no | The workarea written in, by id or name, honored only within the key's grants; omitted, the key's default_workarea. |
+| `workarea` | WorkareaRef | no | The workarea written in, by id or name, honoured only within the key's grants; omitted, the key's default_workarea. |
 | `derives_from` | array of string | no | Artifact ids; the declared lineage (omission is undetectable — honesty rule). |
 | `on_similar` | `hold` \| `refuse` | no | Omitted, hold. |
 | `anchor` | object | no | The origin the author declares: signed in the submission event, immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-shredding never erases. |
@@ -576,7 +576,7 @@ Requires: a dreamer key held_by human; any other key, a dreamer key held by an a
 
 One verdict per named held item, each judged, journalled and signed as a single verdict; outcomes per item.
 
-Requires: a dreamer key held_by human. artifact_ids names 1 to 200 distinct ids the reviewer was listed; a filter is never evaluated (d3).
+Requires: a dreamer key held_by human. artifact_ids names 1 to 200 distinct ids the reviewer was listed; a filter is never evaluated.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -1065,14 +1065,14 @@ Requires: admin key role.
 
 ## usage
 
-Recall telemetry and the replay of labeled recalls.
+Recall telemetry and the replay of labelled recalls.
 
 | Operation | What it does |
 |---|---|
 | `GET /v2/usage/settings` | Whether this server records recalls, and whether the tenant's keep their query text. |
 | `POST /v2/usage/settings` | Keep the query text of the tenant's recalls from now, or stop and clear the text kept. |
 | `GET /v2/usage/events` | The tenant's recalls of the last 30 days, with what their readers did next, newest first. |
-| `POST /v2/usage/eval` | Replay the tenant's labeled recalls through each named pipeline and answer the scores alone. |
+| `POST /v2/usage/eval` | Replay the tenant's labelled recalls through each named pipeline and answer the scores alone. |
 
 ### `GET /v2/usage/settings`
 
@@ -1118,7 +1118,7 @@ Requires: admin key role.
 
 ### `POST /v2/usage/eval`
 
-Replay the tenant's labeled recalls through each named pipeline and answer the scores alone.
+Replay the tenant's labelled recalls through each named pipeline and answer the scores alone.
 
 Requires: admin key role.
 
