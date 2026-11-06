@@ -1733,11 +1733,8 @@ export interface components {
              * @enum {string}
              */
             mode?: "standard" | "in_progress";
-            /**
-             * @description agent when a person's key marked the node a code parent (ADR-0064 d3).
-             * @enum {string}
-             */
-            children?: "agent" | "none";
+            /** @description Whether a person's key marked the node a code parent with children: agent (ADR-0064 d3). */
+            code_parent?: boolean;
             /** Format: date-time */
             created_at?: string;
         };

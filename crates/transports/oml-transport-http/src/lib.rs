@@ -4073,7 +4073,7 @@ fn workarea_json(workarea: &WorkareaRecord, path: &str, crew: Option<&CrewRecord
         // A person's key puts a workarea in progress (ADR-0030 d1, d13).
         "mode": if workarea.in_progress { "in_progress" } else { "standard" },
         // A person's key marked the node a code parent (ADR-0064 d3).
-        "children": if workarea.children_agent { "agent" } else { "none" },
+        "code_parent": workarea.children_agent,
     })
 }
 

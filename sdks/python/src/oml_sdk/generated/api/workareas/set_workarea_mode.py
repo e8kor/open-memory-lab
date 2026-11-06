@@ -7,6 +7,7 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.workarea_mode_set import WorkareaModeSet
+from ...models.workarea_view import WorkareaView
 from ...types import UNSET, Response, Unset
 
 
@@ -48,7 +49,12 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope:
+) -> ErrorEnvelope | WorkareaView:
+    if response.status_code == 200:
+        response_200 = WorkareaView.from_dict(response.json())
+
+        return response_200
+
     if response.status_code == 415:
         response_415 = ErrorEnvelope.from_dict(response.json())
 
@@ -61,7 +67,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | WorkareaView]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,7 +85,7 @@ def sync_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | WorkareaView]:
     """A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
 
      children: agent marks a code parent and children: none unmarks it, by the same predicate, journalled
@@ -110,7 +116,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope]
+        Response[ErrorEnvelope | WorkareaView]
     """
 
     kwargs = _get_kwargs(
@@ -138,7 +144,7 @@ def sync(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> ErrorEnvelope | None:
+) -> ErrorEnvelope | WorkareaView | None:
     """A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
 
      children: agent marks a code parent and children: none unmarks it, by the same predicate, journalled
@@ -169,7 +175,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope
+        ErrorEnvelope | WorkareaView
     """
 
     return sync_detailed(
@@ -192,7 +198,7 @@ async def asyncio_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> Response[ErrorEnvelope]:
+) -> Response[ErrorEnvelope | WorkareaView]:
     """A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
 
      children: agent marks a code parent and children: none unmarks it, by the same predicate, journalled
@@ -223,7 +229,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope]
+        Response[ErrorEnvelope | WorkareaView]
     """
 
     kwargs = _get_kwargs(
@@ -249,7 +255,7 @@ async def asyncio(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> ErrorEnvelope | None:
+) -> ErrorEnvelope | WorkareaView | None:
     """A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
 
      children: agent marks a code parent and children: none unmarks it, by the same predicate, journalled
@@ -280,7 +286,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope
+        ErrorEnvelope | WorkareaView
     """
 
     return (

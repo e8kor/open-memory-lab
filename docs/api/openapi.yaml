@@ -3393,7 +3393,7 @@ components:
             - { type: 'null' }
         user_root: { type: boolean, description: "Whether the node is a user root, universe.<user>, which only the issuance of the first key naming its user creates (ADR-0044 d1, d11)." }
         mode: { type: string, enum: [standard, in_progress], description: "in_progress when a person's key put the node in progress: readers inside recall unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1, d2)." }
-        children: { type: string, enum: [agent, none], description: "agent when a person's key marked the node a code parent (ADR-0064 d3)." }
+        code_parent: { type: boolean, description: "Whether a person's key marked the node a code parent with children: agent (ADR-0064 d3)." }
         created_at: { type: string, format: date-time }
 
     WorkareaView:
