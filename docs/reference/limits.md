@@ -46,9 +46,9 @@ From the maintainers' own runs on one 8-vCPU host with PostgreSQL:
 
 ## Not verified against a live client
 
-The CI suites run the plugin, the connect flow and the agent kit's files against test servers. As of 2026-11-06 we have not run these against a live client, so each one's steps follow the vendor's documentation:
+The Claude Code plugin, installed from the plugin marketplace with its URL and key set in the plugin's options, is in daily use against memory.doublegate.io. The CI suites run the rest against test servers only. As of 2026-11-06 we have not run these against a live client, so their steps follow the vendor's documentation:
 
-- the Claude Code plugin setup (`oml setup claude-code`);
+- the `oml setup claude-code` command, which writes the same plugin options for you;
 - the claude.ai and mobile connector flow, where the steps that name a claude.ai screen follow Anthropic's documentation;
 - the agent kit's configuration for Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop, where the kit's README marks what a tool's documentation does not settle.
 
