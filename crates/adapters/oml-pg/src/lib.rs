@@ -16,11 +16,13 @@ use oml_app::domain::access::{Covers, Grant, KeyDenial};
 use oml_app::domain::anchor::{Anchor, CheckResult, Origin};
 use oml_app::domain::budget::hit_order;
 use oml_app::domain::guardrail::{GuardrailScope, Severity};
+use oml_app::domain::in_progress::KeyProfile;
 use oml_app::domain::name::{Name, NamedKind, Naming, UNIVERSE};
 use oml_app::domain::oauth::{
     CACHED_DOCUMENTS_MAX, ConnectionState, KeyState, RefreshDecision, RevokedCause, TokenKind,
     UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
 };
+use oml_app::domain::origin::OriginKind;
 use oml_app::domain::valid_time::{ValidEnd, ValidTime};
 use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::web::{Email, Provider};
@@ -729,7 +731,7 @@ pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
                     plainto_tsquery('simple', $4), 0) AS score \
      FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
-       AND m.author_key_id = ANY($2::uuid[]) \
+       AND ($2::uuid[] IS NULL OR m.author_key_id = ANY($2::uuid[])) \
        AND NOT m.retirement AND m.kind = ANY($5::text[]) \
        AND m.workarea_id = ANY($3::uuid[]) /*anchor*/ \
        AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $4) \
@@ -802,7 +804,7 @@ const SEARCH_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
        AND (m.valid_until_us IS NULL OR m.valid_until_us > $NOW::int8) \
        AND m.kind = ANY($3::text[]) \
        AND ((m.status = 'promoted' AND m.is_tip AND m.workarea_id = ANY($2::uuid[])) \
-         OR (m.status = 'held' AND m.author_key_id = ANY($4::uuid[]) \
+         OR (m.status = 'held' AND ($4::uuid[] IS NULL OR m.author_key_id = ANY($4::uuid[])) \
              AND m.workarea_id = ANY($5::uuid[])))";
 
 /// `sql` with its `$NOW` placeholder numbered `$n`: the request's now as
@@ -988,9 +990,10 @@ const POSTINGS_COUNTS: &str = "SELECT NULL::int8 AS token_id, COALESCE(sum(c.row
 /// (ADR-0025 d4, d5), with their lengths; read by the `memories_author`
 /// index (ADR-0052 d5, open question 7).
 const POSTINGS_OWN_HELD: &str = "SELECT m.id, m.search_len FROM memories m \
-     WHERE m.tenant_id = $1 AND m.status = 'held' AND m.author_key_id = ANY($2::uuid[]) \
-       AND m.workarea_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement \
-       AND (m.valid_until_us IS NULL OR m.valid_until_us > $5::int8)";
+     WHERE m.tenant_id = $1 AND m.status = 'held' \
+        AND ($2::uuid[] IS NULL OR m.author_key_id = ANY($2::uuid[])) \
+        AND m.workarea_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement \
+        AND (m.valid_until_us IS NULL OR m.valid_until_us > $5::int8)";
 
 /// The served versions on the readable nodes `$2` of the kinds `$3` whose
 /// valid time ended at or before the request's now `$4`, with their
@@ -1877,6 +1880,7 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.v
      m.anchor_repo, m.anchor_uri, m.anchor_rev, m.anchor_path, m.anchor_fragment, \
      m.anchor_hash, m.anchor_hasher, m.source_check_rev, m.source_check_result, \
      m.source_check_hash, m.source_check_path, m.source_check_fragment, m.source_check_at, \
+     m.origin_kind, \
      to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS created_at_signed, \
      to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -1927,8 +1931,19 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         guardrail,
         valid: Box::new(valid_from_row(row)?),
         anchor: anchor_from_row(row)?.map(Box::new),
+        origin_kind: origin_kind_from_row(row)?,
         source_check: source_check_from_row(row)?.map(Box::new),
     })
+}
+
+/// A row's `origin_kind`, `None` on versions written before ADR-0063.
+fn origin_kind_from_row(row: &PgRow) -> Result<Option<OriginKind>, StoreError> {
+    let kind: Option<String> = row.try_get("origin_kind").map_err(backend)?;
+    kind.map(|k| {
+        OriginKind::parse(&k)
+            .ok_or_else(|| StoreError::Backend(format!("unknown origin kind {k:?}")))
+    })
+    .transpose()
 }
 
 /// A row's declared valid time: each end's signed text and its bound
@@ -2062,7 +2077,7 @@ fn hit_kinds(kinds: &[MemoryKind]) -> Vec<&'static str> {
 /// The workarea columns every workarea read selects (unqualified: the
 /// recursive walks select them from their CTE).
 const WORKAREA_COLUMNS: &str =
-    "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id";
+    "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id, mode";
 
 /// A workarea row as the port's record. A row with no name yet predates
 /// names and is served to no one: the lead names every such row before it
@@ -2095,6 +2110,7 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
         crew_id: row.try_get("crew_id").map_err(backend)?,
         user_root: row.try_get("user_root").map_err(backend)?,
         namespace: row.try_get("namespace_root_id").map_err(backend)?,
+        in_progress: row.try_get::<String, _>("mode").map_err(backend)? == "in_progress",
     })
 }
 
@@ -2103,7 +2119,7 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
 /// `promoted_at` does, so `EventTime` round-trips exactly.
 const KEY_COLUMNS: &str = "id, tenant_id, role, principal, held_by, default_workarea_id, \
      issued_by, hash, credential, name, crew_id, user_root_id, session_for, guardrail_scope, \
-     to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     profile, to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS revoked_at_signed";
 
 /// A claim edge's columns, `e` the edge and `k` its proposer's key row;
@@ -2213,6 +2229,14 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
         session_user: stored_name(row, "session_for")?,
         guardrail_scope: GuardrailScope::parse(&scope)
             .ok_or_else(|| StoreError::Backend(format!("unknown guardrail_scope {scope:?}")))?,
+        profile: row
+            .try_get::<Option<String>, _>("profile")
+            .map_err(backend)?
+            .map(|p| {
+                KeyProfile::parse(&p)
+                    .ok_or_else(|| StoreError::Backend(format!("unknown key profile {p:?}")))
+            })
+            .transpose()?,
     })
 }
 
@@ -2354,14 +2378,23 @@ async fn insert_memory(
     } else {
         ("", "")
     };
+    // A version with a kind names `origin_kind` after the anchor's columns
+    // (ADR-0063 d2); one without, folded from an event before it, names
+    // none.
+    let origin_n = if anchor.is_some() { 32 } else { 25 };
+    let (origin_column, origin_value) = if m.origin_kind.is_some() {
+        (", origin_kind".to_owned(), format!(", ${origin_n}"))
+    } else {
+        (String::new(), String::new())
+    };
     let sql = format!(
         "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, \
          created_event_id, created_at, claim_key, author_principal, \
          author_key_id, derives_from, lineage_principals, lineage_key_ids, scan_finding, \
          version, kind, body_bytes, is_tip, promoted_at, retirement, replaces_artifact_id, \
-         severity, rule{columns}) \
+         severity, rule{columns}{origin_column}) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, ($8)::timestamptz, $9, $10, $11, $12, $13, $14, \
-         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24{values})"
+         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24{values}{origin_value})"
     );
     let mut insert = sqlx::query(&sql)
         .bind(m.memory_id)
@@ -2403,6 +2436,9 @@ async fn insert_memory(
             .bind(anchor.fragment.as_deref())
             .bind(anchor.hash.as_ref().map(|(h, _)| h.as_str()))
             .bind(anchor.hash.as_ref().map(|(_, h)| h.as_str()));
+    }
+    if let Some(kind) = m.origin_kind {
+        insert = insert.bind(kind.as_str());
     }
     insert.execute(&mut **tx).await.map_err(backend)?;
     // Declared valid time in the same transaction, only when declared, so a
@@ -3035,6 +3071,45 @@ async fn apply_fold(
                 )));
             }
         }
+        MetadataFold::WorkareaModeSet {
+            workarea_id,
+            in_progress,
+            held_free,
+        } => {
+            // The commit's zero-held test, in the committing transaction
+            // under the chain lock (ADR-0030 d6).
+            if !held_free.is_empty() {
+                let held: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM memories WHERE tenant_id = $1 \
+                     AND workarea_id = ANY($2::uuid[]) AND status = 'held')",
+                )
+                .bind(tenant_id)
+                .bind(&held_free)
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(backend)?;
+                if held {
+                    return Err(StoreError::HeldRemaining);
+                }
+            }
+            let updated =
+                sqlx::query("UPDATE workareas SET mode = $3 WHERE tenant_id = $1 AND id = $2")
+                    .bind(tenant_id)
+                    .bind(workarea_id)
+                    .bind(if in_progress {
+                        "in_progress"
+                    } else {
+                        "standard"
+                    })
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(backend)?;
+            if updated.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "workarea {workarea_id} is not held by this tenant"
+                )));
+            }
+        }
         MetadataFold::NamesAssigned(naming) => {
             fold_names_assigned(tx, tenant_id, at, &naming).await?;
         }
@@ -3053,8 +3128,8 @@ async fn apply_fold(
                 // api_keys_connector_has_no_hash holds (0012; ADR-0031 d7).
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
                  held_by, default_workarea_id, issued_by, issued_seq, name, crew_id, \
-                 user_root_id, session_for, guardrail_scope) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+                 user_root_id, session_for, guardrail_scope, profile) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
             )
             .bind(k.key_id)
             .bind(k.tenant_id)
@@ -3071,6 +3146,7 @@ async fn apply_fold(
             .bind(k.user)
             .bind(k.session_user.as_ref().map(Name::as_str))
             .bind(k.guardrail_scope.as_str())
+            .bind(k.profile.map(KeyProfile::as_str))
             .execute(&mut **tx)
             .await
             .map_err(|e| match &k.name {
@@ -3843,7 +3919,7 @@ impl PgStore {
                     .bind(
                         sqlx::query(&held)
                             .bind(tenant_id)
-                            .bind(&own.author_key_ids)
+                            .bind((!own.any_author).then_some(&own.author_key_ids))
                             .bind(&own.nodes)
                             .bind(query.query)
                             .bind(kinds)
@@ -3887,7 +3963,14 @@ enum AnchorRead {
         repo: Option<String>,
         lo: Option<String>,
         hi: Option<String>,
+        /// `origin_kinds` (ADR-0063 d3), empty when unset.
+        kinds: Vec<String>,
     },
+}
+
+/// The kinds a filter names, as the column stores them.
+fn origin_kind_strings(kinds: &[OriginKind]) -> Vec<String> {
+    kinds.iter().map(|k| k.as_str().to_owned()).collect()
 }
 
 /// The anchor predicate on the row `m` from `$first` on: the repository by
@@ -3895,6 +3978,19 @@ enum AnchorRead {
 /// bound, so the index serves the serving role under row security
 /// (ADR-0057 d4).
 fn anchor_columns_sql(m: &str, repo: bool, lo: bool, hi: bool, first: usize) -> String {
+    origin_columns_sql(m, repo, lo, hi, false, first)
+}
+
+/// [`anchor_columns_sql`] and, when `kinds`, the kind filter's predicate
+/// last, `{m}.origin_kind = ANY($n::text[])` (ADR-0063 d3).
+fn origin_columns_sql(
+    m: &str,
+    repo: bool,
+    lo: bool,
+    hi: bool,
+    kinds: bool,
+    first: usize,
+) -> String {
     let mut n = first;
     let mut sql = String::new();
     if repo {
@@ -3907,6 +4003,10 @@ fn anchor_columns_sql(m: &str, repo: bool, lo: bool, hi: bool, first: usize) -> 
     }
     if hi {
         sql.push_str(&format!(" AND {m}.anchor_path ~<~ ${n}"));
+        n += 1;
+    }
+    if kinds {
+        sql.push_str(&format!(" AND {m}.origin_kind = ANY(${n}::text[])"));
     }
     sql
 }
@@ -3952,9 +4052,19 @@ impl AnchorRead {
         match self {
             Self::Unfiltered => String::new(),
             Self::Ids(_) => format!(" AND {m}.id = ANY(${first}::uuid[])"),
-            Self::Columns { repo, lo, hi } => {
-                anchor_columns_sql(m, repo.is_some(), lo.is_some(), hi.is_some(), first)
-            }
+            Self::Columns {
+                repo,
+                lo,
+                hi,
+                kinds,
+            } => origin_columns_sql(
+                m,
+                repo.is_some(),
+                lo.is_some(),
+                hi.is_some(),
+                !kinds.is_empty(),
+                first,
+            ),
         }
     }
 
@@ -3979,9 +4089,17 @@ impl AnchorRead {
         match self {
             Self::Unfiltered => q,
             Self::Ids(ids) => q.bind(ids),
-            Self::Columns { repo, lo, hi } => {
+            Self::Columns {
+                repo,
+                lo,
+                hi,
+                kinds,
+            } => {
                 for value in [repo, lo, hi].into_iter().flatten() {
                     q = q.bind(value.as_str());
+                }
+                if !kinds.is_empty() {
+                    q = q.bind(kinds);
                 }
                 q
             }
@@ -3996,7 +4114,9 @@ struct ScopeBinds<'a> {
     tenant_id: Uuid,
     nodes: &'a [Uuid],
     kinds: &'a [&'static str],
-    authors: &'a [Uuid],
+    /// `None` reads every author's held rows on `held_nodes`, inside an
+    /// in-progress scope only (ADR-0030 d3).
+    authors: Option<&'a [Uuid]>,
     held_nodes: &'a [Uuid],
     /// How the origin filters narrow the candidates (ADR-0057 d4).
     anchor: &'a AnchorRead,
@@ -4025,7 +4145,7 @@ impl PgStore {
         tenant_id: Uuid,
         kinds: &[&'static str],
         scope: &CandidateScope,
-        authors: &[Uuid],
+        authors: Option<&[Uuid]>,
         held_nodes: &[Uuid],
     ) -> Result<AnchorRead, StoreError> {
         if scope.anchor.is_empty() {
@@ -4037,16 +4157,23 @@ impl PgStore {
             repo: scope.anchor.repo.clone(),
             lo,
             hi,
+            kinds: origin_kind_strings(&scope.anchor.origin_kinds),
         };
         let sql = with_now(
             &format!(
                 "SELECT m.id FROM memories m WHERE {SEARCH_SCOPE}{} LIMIT ${}",
                 columns.row("m", 7),
                 7 + match &columns {
-                    AnchorRead::Columns { repo, lo, hi } => {
+                    AnchorRead::Columns {
+                        repo,
+                        lo,
+                        hi,
+                        kinds,
+                    } => {
                         usize::from(repo.is_some())
                             + usize::from(lo.is_some())
                             + usize::from(hi.is_some())
+                            + usize::from(!kinds.is_empty())
                     }
                     _ => 0,
                 }
@@ -4209,19 +4336,20 @@ impl PgStore {
                 }
             }
         }
-        let held: Vec<(Uuid, i32)> = if scope.authors.is_empty() || scope.held_nodes.is_empty() {
-            Vec::new()
-        } else {
-            sqlx::query_as(POSTINGS_OWN_HELD)
-                .bind(scope.tenant_id)
-                .bind(scope.authors)
-                .bind(scope.held_nodes)
-                .bind(scope.kinds)
-                .bind(scope.expired_at)
-                .fetch_all(&mut **tx)
-                .await
-                .map_err(backend)?
-        };
+        let held: Vec<(Uuid, i32)> =
+            if scope.authors.is_some_and(<[Uuid]>::is_empty) || scope.held_nodes.is_empty() {
+                Vec::new()
+            } else {
+                sqlx::query_as(POSTINGS_OWN_HELD)
+                    .bind(scope.tenant_id)
+                    .bind(scope.authors)
+                    .bind(scope.held_nodes)
+                    .bind(scope.kinds)
+                    .bind(scope.expired_at)
+                    .fetch_all(&mut **tx)
+                    .await
+                    .map_err(backend)?
+            };
         rows += held.len() as u64;
         total_len += held
             .iter()
@@ -4398,12 +4526,16 @@ impl Retriever for PgStore {
             )));
         }
         let kinds = hit_kinds(&scope.kinds);
-        let (authors, held_nodes) = scope
-            .own_held
-            .as_ref()
-            .map_or((Vec::new(), Vec::new()), |own| {
-                (own.author_key_ids.clone(), own.nodes.clone())
-            });
+        let (authors, held_nodes): (Option<Vec<Uuid>>, Vec<Uuid>) =
+            scope
+                .own_held
+                .as_ref()
+                .map_or((Some(Vec::new()), Vec::new()), |own| {
+                    (
+                        (!own.any_author).then(|| own.author_key_ids.clone()),
+                        own.nodes.clone(),
+                    )
+                });
         let k = i64::try_from(query.k).unwrap_or(i64::MAX);
         let all = query.match_mode == MatchMode::All;
         let mut tx = self.pool.begin().await.map_err(backend)?;
@@ -4446,13 +4578,20 @@ impl Retriever for PgStore {
         // before scoring and the cut, so a filtered list is the unfiltered
         // one filtered then cut (ADR-0057 d4).
         let anchor = self
-            .anchor_read(&mut tx, tenant_id, &kinds, scope, &authors, &held_nodes)
+            .anchor_read(
+                &mut tx,
+                tenant_id,
+                &kinds,
+                scope,
+                authors.as_deref(),
+                &held_nodes,
+            )
             .await?;
         let scoped = ScopeBinds {
             tenant_id,
             nodes: &scope.promoted_nodes,
             kinds: &kinds,
-            authors: &authors,
+            authors: authors.as_deref(),
             held_nodes: &held_nodes,
             anchor: &anchor,
             expired_at,
@@ -4939,7 +5078,9 @@ impl PgStore {
         scope: &ScopeBinds<'_>,
         query: RetrievalQuery<'_>,
     ) -> Result<Vec<Candidate>, StoreError> {
-        if query.sparse.is_empty() || (scope.nodes.is_empty() && scope.authors.is_empty()) {
+        if query.sparse.is_empty()
+            || (scope.nodes.is_empty() && scope.authors.is_some_and(<[Uuid]>::is_empty))
+        {
             return Ok(Vec::new());
         }
         let memory_kinds: Vec<i16> = scope
@@ -4951,22 +5092,23 @@ impl PgStore {
                 _ => None,
             })
             .collect();
-        let held: Vec<Uuid> = if scope.authors.is_empty() || scope.held_nodes.is_empty() {
-            Vec::new()
-        } else {
-            sqlx::query_as::<_, (Uuid, i32)>(POSTINGS_OWN_HELD)
-                .bind(scope.tenant_id)
-                .bind(scope.authors)
-                .bind(scope.held_nodes)
-                .bind(scope.kinds)
-                .bind(scope.expired_at)
-                .fetch_all(&mut **tx)
-                .await
-                .map_err(backend)?
-                .into_iter()
-                .map(|(id, _)| id)
-                .collect()
-        };
+        let held: Vec<Uuid> =
+            if scope.authors.is_some_and(<[Uuid]>::is_empty) || scope.held_nodes.is_empty() {
+                Vec::new()
+            } else {
+                sqlx::query_as::<_, (Uuid, i32)>(POSTINGS_OWN_HELD)
+                    .bind(scope.tenant_id)
+                    .bind(scope.authors)
+                    .bind(scope.held_nodes)
+                    .bind(scope.kinds)
+                    .bind(scope.expired_at)
+                    .fetch_all(&mut **tx)
+                    .await
+                    .map_err(backend)?
+                    .into_iter()
+                    .map(|(id, _)| id)
+                    .collect()
+            };
         let tokens: Vec<i64> = query.sparse.iter().map(|t| i64::from(t.token_id)).collect();
         let weights: Vec<f64> = query.sparse.iter().map(|t| f64::from(t.weight)).collect();
         let pieces: Vec<&str> = query.sparse.iter().map(|t| t.piece.as_str()).collect();
@@ -5398,8 +5540,19 @@ impl JournalStore for PgStore {
                     .push_bind(masked.clone())
                     .push("::uuid[]))");
             }
-            ListingScope::Tips { nodes } => {
-                sql.push(" AND m.status = 'promoted' AND m.is_tip AND m.workarea_id = ANY(")
+            ListingScope::Tips { nodes, held } => {
+                // Inside an in-progress scope the held versions of every
+                // author on the nodes join the tips (ADR-0030 d3).
+                sql.push(" AND ((m.status = 'promoted' AND m.is_tip)");
+                if !held.is_empty() {
+                    sql.push(
+                        " OR (m.status = 'held' AND NOT m.retirement \
+                         AND m.kind IN ('memory', 'derived_fact') AND m.workarea_id = ANY(",
+                    )
+                    .push_bind(held.clone())
+                    .push("::uuid[]))");
+                }
+                sql.push(") AND m.workarea_id = ANY(")
                     .push_bind(nodes.clone())
                     .push("::uuid[])");
             }
@@ -5430,6 +5583,12 @@ impl JournalStore for PgStore {
             if let Some(upper) = prefix_upper(prefix) {
                 sql.push(" AND m.anchor_path ~<~ ").push_bind(upper);
             }
+        }
+        // The kind filter (ADR-0063 d3): a row without a kind never passes.
+        if !filter.anchor.origin_kinds.is_empty() {
+            sql.push(" AND m.origin_kind = ANY(")
+                .push_bind(origin_kind_strings(&filter.anchor.origin_kinds))
+                .push("::text[])");
         }
         if let Some(since) = &filter.since {
             sql.push(" AND m.created_at >= (")
@@ -5487,6 +5646,24 @@ impl JournalStore for PgStore {
             greatest_version: greatest.map(version).transpose()?,
             live: row.try_get("live").map_err(backend)?,
         })
+    }
+
+    async fn held_count(&self, tenant_id: Uuid, nodes: &[Uuid]) -> Result<u64, StoreError> {
+        // One probe per node through memories_workarea (tenant_id,
+        // workarea_id, state) (ADR-0030 d6).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM memories \
+             WHERE tenant_id = $1 AND workarea_id = ANY($2::uuid[]) AND status = 'held'",
+        )
+        .bind(tenant_id)
+        .bind(nodes)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        u64::try_from(n).map_err(backend)
     }
 
     async fn stale_count(&self, tenant_id: Uuid, workarea_id: Uuid) -> Result<u64, StoreError> {
@@ -6159,7 +6336,7 @@ impl JournalStore for PgStore {
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
                  SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
-                        w.user_root, w.namespace_root_id, up.depth + 1 \
+                        w.user_root, w.namespace_root_id, w.mode, up.depth + 1 \
                    FROM workareas w JOIN up ON w.id = up.parent_id \
                   WHERE w.tenant_id = $1 \
              ) SELECT {WORKAREA_COLUMNS} FROM up ORDER BY depth ASC"
@@ -6193,7 +6370,7 @@ impl JournalStore for PgStore {
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
                  SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
-                        w.user_root, w.namespace_root_id, down.depth + 1 \
+                        w.user_root, w.namespace_root_id, w.mode, down.depth + 1 \
                    FROM workareas w JOIN down ON w.parent_id = down.id \
                   WHERE w.tenant_id = $1 \
              ) SELECT {WORKAREA_COLUMNS} FROM down ORDER BY depth ASC, id ASC"
@@ -6368,7 +6545,14 @@ impl JournalStore for PgStore {
                     "::uuid[]) AND ({row}.status = 'promoted' OR {row}.author_key_id = "
                 ))
                 .push_bind(selection.reader_key_id)
-                .push(")");
+                // Inside an in-progress scope, any author's held memory or
+                // derived fact (ADR-0030 d3).
+                .push(format!(
+                    " OR ({row}.status = 'held' AND NOT {row}.retirement \
+                     AND {row}.kind IN ('memory', 'derived_fact') AND {row}.workarea_id = ANY("
+                ))
+                .push_bind(selection.held_nodes.clone())
+                .push("::uuid[])))");
         }
         if let Some(artifact_id) = selection.artifact_id {
             sql.push(" AND (e.src_artifact_id = ")

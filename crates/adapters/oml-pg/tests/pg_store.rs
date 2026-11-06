@@ -376,6 +376,7 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                         promoted_nodes: vec![wa],
                         kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
                         own_held: Some(OwnHeldScope {
+                            any_author: false,
                             author_key_ids: vec![own],
                             nodes: vec![wa],
                         }),
@@ -2560,19 +2561,21 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  CASE WHEN t.parent_id IS NULL THEN 'committed' ELSE 'development' END)"
             }
             // 0014 adds user_root and namespace_root_id, folded as false and
-            // null for every workarea it finds (ADR-0044 d12).
+            // null for every workarea it finds (ADR-0044 d12); 0028 adds
+            // mode, standard for every workarea it finds (ADR-0030 d14).
             (true, "workareas") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'user_root' \
-                 - 'namespace_root_id') || jsonb_build_object('name', t.prior_name)"
+                 - 'namespace_root_id' - 'mode') || jsonb_build_object('name', t.prior_name)"
             }
             // 0012 adds credential, folded as bearer for every key it finds
             // (ADR-0031 d7); 0014 adds user_root_id, null for every key it
             // finds (ADR-0044 d12); 0015 adds session_for, null for every
             // key it finds (ADR-0045 d6); 0016 adds guardrail_scope, folded
-            // as ancestors (proposed ADR-0037 d4).
+            // as ancestors (proposed ADR-0037 d4); 0028 adds profile, null
+            // for every key it finds (ADR-0030 d14).
             (true, "api_keys") => {
                 "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
-                 - 'session_for' - 'guardrail_scope'"
+                 - 'session_for' - 'guardrail_scope' - 'profile'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
             // d12).
@@ -2582,14 +2585,16 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // lexemes, generated from the claim (ADR-0049 d12); 0025 adds
             // the anchor and the latest source check, null on every row
             // written before it (ADR-0057 d1, d5); 0026 adds valid time, open
-            // on every existing row (proposed ADR-0059 d11).
+            // on every existing row (proposed ADR-0059 d11); 0029 adds the origin
+            // kind, null on every row written before it and never backfilled
+            // (ADR-0063 d2).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
                  - 'anchor_fragment' - 'anchor_hash' - 'anchor_hasher' - 'source_check_rev' \
                  - 'source_check_result' - 'source_check_hash' - 'source_check_path' \
                  - 'source_check_fragment' - 'source_check_at' \
-                 - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us'"
+                 - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us' - 'origin_kind'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -5882,7 +5887,10 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 27, "every migration through 0027_similar_keys");
+    assert_eq!(
+        applied, 30,
+        "every migration through 0030_origin_kind_validate"
+    );
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -6201,6 +6209,7 @@ async fn dreamer_pg(
     app.issue_key(
         admin,
         &oml_app::types::IssueKeyRequest {
+            profile: None,
             role: Role::Dreamer,
             name: name(key_name),
             principal: principal.to_owned(),
@@ -7325,7 +7334,10 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 27, "every migration through 0027_similar_keys");
+    assert_eq!(
+        applied, 30,
+        "every migration through 0030_origin_kind_validate"
+    );
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8200,7 +8212,10 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(applied, 27, "every migration through 0027_similar_keys");
+    assert_eq!(
+        applied, 30,
+        "every migration through 0030_origin_kind_validate"
+    );
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8230,6 +8245,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                         promoted_nodes: vec![wa, Uuid::from_u128(0xE3)],
                         kinds: oml_app::types::HIT_KINDS.to_vec(),
                         own_held: Some(OwnHeldScope {
+                            any_author: false,
                             author_key_ids: vec![Uuid::from_u128(0xE5)],
                             nodes: vec![wa],
                         }),

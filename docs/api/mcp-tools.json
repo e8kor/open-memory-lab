@@ -59,7 +59,7 @@
           "anchor": {
             "type": "object",
             "additionalProperties": false,
-            "description": "Where the memory came from, as you read it: {repo, rev, path, fragment?, hash?, hasher?} for a file in a git repository (repo like github.com/owner/name, rev the full commit id, path relative, fragment a heading slug, a decision handle such as d3, or a line span such as L10-L42), or {uri, rev?, fragment?} for a web page. The reviewer sees it beside the text; it is signed with the version and never changes. A successor declares its own; nothing is inherited.",
+            "description": "Where the memory came from, as you read it: {repo, rev, path, fragment?, hash?, hasher?} for a file in a git repository (repo like github.com/owner/name, rev the full commit id, path relative, fragment a heading slug, a decision handle such as d3, or a line span such as L10-L42), or {uri, rev?, fragment?} for a web page. The reviewer sees it beside the text; it is signed with the version and never changes. A successor declares its own; nothing is inherited. A chat fact names its turn: {uri: chat://<harness>/<session>, fragment: turn=<n>, hash, hasher: oml-turn/1}, exactly as the capture request gives it.",
             "properties": {
               "repo": {
                 "type": "string",
@@ -88,6 +88,7 @@
                 "type": "string",
                 "enum": [
                   "oml-md/1",
+                  "oml-turn/1",
                   "oml-rustdoc/1",
                   "oml-crate/1"
                 ]
@@ -115,6 +116,28 @@
           "reason": {
             "type": "string",
             "description": "With replaces, the reason for the change. Refused without replaces."
+          },
+          "origin": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind"
+            ],
+            "description": "What kind of source the text came from: repo (a commit, pull request or issue), doc (a document), code, lake (a lake table), chat (what a person said in this conversation; requires a chat anchor), web (a fetched page), or manual (no source; the default when omitted). Signed with the version; a successor declares its own.",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "repo",
+                  "doc",
+                  "code",
+                  "lake",
+                  "chat",
+                  "web",
+                  "manual"
+                ]
+              }
+            }
           },
           "on_similar": {
             "type": "string",
@@ -193,8 +216,7 @@
           },
           "include_unreviewed": {
             "type": "boolean",
-            "default": false,
-            "description": "Recall, default false. True: the calling key's own held rows that match (kind memory or derived_fact, never steering or retirement versions) join the hits, ranked in the same order and flagged state held; they count against k and max_tokens."
+            "description": "Recall. True: the calling key's own held rows that match (kind memory or derived_fact, never steering or retirement versions) join the hits, ranked in the same order and flagged state held and unreviewed true; they count against k and max_tokens. Inside a workarea a person put in progress, other agents' held memories join too and absent means true; elsewhere absent means false."
           },
           "max_tokens": {
             "type": "integer",
@@ -318,6 +340,25 @@
               }
             },
             "description": "Any mode. Which hits of this key's last recall answered its question and which did not, at most 20 ids, each a hit that recall served; checked before the read runs, refused by field, and never changes what this read answers. Recall improves for the next reader from it."
+          },
+          "origin_kinds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "repo",
+                "doc",
+                "code",
+                "lake",
+                "chat",
+                "web",
+                "manual"
+              ]
+            },
+            "description": "Recall and listing: only claims whose origin kind is one of these, such as [\"chat\"] for what a person said or [\"doc\"] for what documents say; claims written before origin kinds existed are left out. Refused in get mode."
           }
         },
         "required": [],

@@ -70,8 +70,10 @@ instructions from the crew. They come before the hits and are not ranked, so rea
 
 Pass `include_unreviewed: true` to search your own held writes as well. They come back
 among the hits with `state: "held"` and `tip: false`, and a held revision is listed beside
-the approved version it would replace. Recall never returns another key's held writes, and
-your own held steering and retirements are not in force until approved, so recall leaves
+the approved version it would replace. Recall returns another key's held writes only inside
+a workarea a person put in progress, where it does so by default and marks each one
+`unreviewed: true`: read such a claim as a colleague's draft that no one has checked. Your
+own held steering and retirements are not in force until approved, so recall leaves
 them out; list them with `oml_read` and no `query`.
 
 Pass `max_tokens` to bound the answer. Every item carries its `tokens`, the server's count

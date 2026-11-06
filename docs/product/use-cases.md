@@ -766,7 +766,7 @@ Every use case here is **designed**: UC-SM-01 to UC-SM-05 are **planned for v0.5
 ### Load a code base's crate and module docs and keep them in step
 
 - **Who:** a developer, an operator. **UC-SM-06.** Designed, planned for v0.6.1
-  ([ADR-0061](../adr/ADR-0061-oml-sync-reads-a-rust-workspace-as-one-claim-per-crate-and-one-per-module-doc-and-a-claim-goes-stale-only-when-its-docs-or-its-crates-facts-change.md), proposed).
+  ([ADR-0061](../adr/ADR-0061-oml-sync-reads-a-rust-workspace-as-one-claim-per-crate-and-one-per-module-doc-and-a-claim-goes-stale-only-when-its-docs-or-its-crates-facts-change.md), accepted).
 - **Goal:** know what each crate of a Rust code base is for, what it uses and what uses it, and
   what each module does, without a checkout, from the documentation its authors wrote.
 - **How it plays out:** `oml sync crates --workarea project-code --adapter rust --dry-run` shows
@@ -774,6 +774,48 @@ Every use case here is **designed**: UC-SM-01 to UC-SM-05 are **planned for v0.5
   to code leaves them as they are; an edit to a module's opening documentation, or a new
   dependency between crates, proposes a corrected version.
 
+
+## Conversations
+
+Every use case here is **designed** and **planned for v0.6.0** ([ADR-0063](../adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md), proposed).
+
+### Say what kind of source a memory came from
+
+- **Who:** an agent, a developer. **UC-CH-01.**
+- **Goal:** record whether a memory came from a conversation, a document, code, a lake table, a
+  web page, a repository's history, or no source at all.
+- **How it plays out:** the agent names the kind with its write; `oml sync` names `doc` for
+  every document it loads. The kind is kept with the memory and shown on every hit.
+
+### Find only what a person said, or only what documents say
+
+- **Who:** an agent, a developer. **UC-CH-02.**
+- **Goal:** search or list only memories of one or more kinds.
+- **How it plays out:** the agent asks for what OML holds about the person's editor among chat
+  memories only; memories from before kinds existed are left out.
+
+### Remember what a person said in a session
+
+- **Who:** a person working with an agent. **UC-CH-03.**
+- **Goal:** keep the preferences, decisions and corrections a conversation settled, without
+  keeping the conversation.
+- **How it plays out:** every few turns the agent is asked to write the facts the last turns
+  settled, each naming the turn it came from; the person reviews them later, in bulk.
+
+### Open a person's chat memory
+
+- **Who:** a person. **UC-CH-04.**
+- **Goal:** give their agents one place to write what the person tells them, which only the
+  person can create.
+- **How it plays out:** the person runs `oml chat init` once with their own key and gives the
+  printed id to the plugin.
+
+### Be reminded on each prompt
+
+- **Who:** a person working with an agent. **UC-CH-05.**
+- **Goal:** have relevant memories next to each prompt without asking.
+- **How it plays out:** with per-turn recall switched on, each prompt brings at most six short
+  memories, each marked when unreviewed, or nothing when the server is slow.
 ## Files and deliverables
 
 Every use case here is **designed**: deliverables and storage are parked, and files on a memory

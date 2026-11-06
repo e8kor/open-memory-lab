@@ -171,6 +171,7 @@ nav:
       - ADR-0026: adr/ADR-0026-names-are-keys.md
       - ADR-0028: adr/ADR-0028-agent-key-issuance.md
       - ADR-0029: adr/ADR-0029-session-start-hook.md
+      - ADR-0030: adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md
       - ADR-0031: adr/ADR-0031-oauth-connections-by-connect-code.md
       - ADR-0033: adr/ADR-0033-interim-helm-chart.md
       - ADR-0034: adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md
@@ -195,3 +196,4 @@ nav:
       - ADR-0054: adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md
       - ADR-0055: adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md
       - ADR-0059: adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md
+      - ADR-0063: adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md

@@ -1672,6 +1672,7 @@ async fn anchor_filter_latency_at_100k() {
             let filter = AnchorFilter {
                 repo: Some(REPO.to_owned()),
                 path_prefix: Some(prefix.to_owned()),
+                origin_kinds: Vec::new(),
             };
             let mut before = Vec::new();
             let mut after = Vec::new();
@@ -1763,4 +1764,408 @@ async fn anchor_filter_latency_at_100k() {
     let load = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
     println!("load average after: {}", load.trim());
     w.done().await;
+}
+
+// ---------------------------------------------------------------------------
+// origin.kind and the chat anchor (ADR-0063)
+// ---------------------------------------------------------------------------
+
+const SESSION: &str = "0123456789abcdef0123456789abcdef";
+
+fn chat_anchor(turn: u32) -> Value {
+    json!({
+        "uri": format!("chat://claude-code/{SESSION}"),
+        "fragment": format!("turn={turn}"),
+        "hash": HASH,
+        "hasher": "oml-turn/1",
+    })
+}
+
+impl World {
+    async fn write_origin(
+        &self,
+        key: &str,
+        text: &str,
+        anchor: Option<Value>,
+        origin: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let mut body = json!({
+            "claim_key": key, "kind": "memory", "body": text, "workarea": self.node,
+        });
+        if let Some(anchor) = anchor {
+            body["anchor"] = anchor;
+        }
+        if let Some(origin) = origin {
+            body["origin"] = origin;
+        }
+        send(
+            &self.rig.router,
+            "POST",
+            "/v1/memories",
+            Some(&self.writer),
+            Some(&format!("o-{key}-{}", IDEM.fetch_add(1, Ordering::SeqCst))),
+            Some(body),
+        )
+        .await
+    }
+
+    async fn written_origin(
+        &self,
+        key: &str,
+        text: &str,
+        anchor: Option<Value>,
+        origin: Option<Value>,
+    ) -> String {
+        let (status, body) = self.write_origin(key, text, anchor, origin).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "write {key}: {body}");
+        body["artifact_id"].as_str().expect("id").to_owned()
+    }
+}
+
+#[tokio::test]
+async fn an_origin_kind_is_journalled_in_the_submission_and_served_on_the_item() {
+    let Some(w) = world().await else { return };
+    let chat = w
+        .written_origin(
+            "chat/editor",
+            "The person prefers vim keybindings.",
+            Some(chat_anchor(3)),
+            Some(json!({"kind": "chat"})),
+        )
+        .await;
+    let doc = w
+        .written_origin(
+            "doc/one",
+            "a document says so",
+            None,
+            Some(json!({"kind": "doc"})),
+        )
+        .await;
+    let plain = w
+        .written_origin("plain/one", "no source named", None, None)
+        .await;
+    assert_eq!(
+        w.get(&w.writer, &chat).await["origin"],
+        json!({"kind": "chat"})
+    );
+    assert_eq!(w.get(&w.writer, &chat).await["anchor"], chat_anchor(3));
+    assert_eq!(
+        w.get(&w.writer, &doc).await["origin"],
+        json!({"kind": "doc"})
+    );
+    // Omitted, the kind is recorded manual, and the signed event says so.
+    assert_eq!(
+        w.get(&w.writer, &plain).await["origin"],
+        json!({"kind": "manual"})
+    );
+    let mut admin = PgConnection::connect(&super_url(&w.rig.db_name))
+        .await
+        .expect("connect");
+    for (id, kind) in [(&chat, "chat"), (&doc, "doc"), (&plain, "manual")] {
+        let signed: Value = sqlx::query_scalar(
+            "SELECT payload FROM journal WHERE event_type = 'submission.remember' AND payload->>'artifact_id' = $1",
+        )
+        .bind(id)
+        .fetch_one(&mut admin)
+        .await
+        .expect("event");
+        assert_eq!(signed["origin"], json!({"kind": kind}), "{id}");
+        let stored: String = sqlx::query_scalar("SELECT origin_kind FROM memories WHERE id = $1")
+            .bind(Uuid::parse_str(id).expect("uuid"))
+            .fetch_one(&mut admin)
+            .await
+            .expect("row");
+        assert_eq!(stored, kind);
+    }
+    drop(admin);
+    w.done().await;
+}
+
+#[tokio::test]
+async fn a_supersession_inherits_no_origin_kind() {
+    let Some(w) = world().await else { return };
+    let v1 = w
+        .written_origin(
+            "web/page",
+            "a page says so",
+            None,
+            Some(json!({"kind": "web"})),
+        )
+        .await;
+    w.approve(std::slice::from_ref(&v1)).await;
+    let (status, v2) = w
+        .supersede(&w.writer, &v1, "restated without a source", Some(1), None)
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{v2}");
+    let v2 = v2["artifact_id"].as_str().expect("id").to_owned();
+    assert_eq!(
+        w.get(&w.writer, &v2).await["origin"],
+        json!({"kind": "manual"})
+    );
+    assert_eq!(
+        w.get(&w.reader, &v1).await["origin"],
+        json!({"kind": "web"})
+    );
+    w.done().await;
+}
+
+#[tokio::test]
+async fn origin_and_the_chat_anchor_are_refused_out_of_step_naming_the_field() {
+    let Some(w) = world().await else { return };
+    for (anchor, origin, field) in [
+        (None, json!({"kind": "chat"}), "/origin/kind"),
+        (
+            Some(chat_anchor(1)),
+            json!({"kind": "manual"}),
+            "/origin/kind",
+        ),
+        (
+            Some(chat_anchor(1)),
+            json!({"kind": "email"}),
+            "/origin/kind",
+        ),
+        (None, json!({"kind": "doc", "via": "x"}), "/origin/via"),
+        (
+            Some(
+                json!({"uri": "chat://claude-code/00893aaf-19fa-41d2-8238-13269b9b3ca0",
+                        "fragment": "turn=1", "hash": HASH, "hasher": "oml-turn/1"}),
+            ),
+            json!({"kind": "chat"}),
+            "/anchor/uri",
+        ),
+    ] {
+        let (status, body) = w
+            .write_origin("bad", "a claim", anchor.clone(), Some(origin.clone()))
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{origin} {anchor:?}: {body}"
+        );
+        assert_eq!(error_code(&body), "request.validation");
+        assert_eq!(body["error"]["details"]["field"], field, "{origin}");
+    }
+    w.done().await;
+}
+
+/// What the lead's deterministic scanner vetoes, one case per rule. The
+/// PoC rule set is the one marker; lane `feat/scan` adds its `oml-scan/1`
+/// secret shapes here when it lands, and every case then runs through a
+/// chat excerpt (ADR-0063 d5).
+const SCANNER_VETOES: &[(&str, &str)] = &[("poc-rules/marker-veto", "[oml:veto]")];
+
+#[tokio::test]
+async fn a_chat_excerpt_passes_through_the_scanner_like_any_body() {
+    let Some(w) = world().await else { return };
+    for (i, (rule, shape)) in SCANNER_VETOES.iter().enumerate() {
+        let (status, body) = w
+            .write_origin(
+                &format!("chat/deploy-{i}"),
+                &format!("The person deploys on Fridays.\n> my token is {shape} here"),
+                Some(chat_anchor(2)),
+                Some(json!({"kind": "chat"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{rule}: {body}");
+        assert_eq!(error_code(&body), "submission.scan_veto", "{rule}");
+    }
+    w.done().await;
+}
+
+#[tokio::test]
+async fn recall_filtered_by_origin_kind_leaves_out_other_kinds_and_rows_without_one() {
+    let Some(w) = world().await else { return };
+    let chat = w
+        .written_origin(
+            "chat/colour",
+            "ultramarine is the favourite colour",
+            Some(chat_anchor(4)),
+            Some(json!({"kind": "chat"})),
+        )
+        .await;
+    let doc = w
+        .written_origin(
+            "doc/colour",
+            "ultramarine is a pigment colour",
+            None,
+            Some(json!({"kind": "doc"})),
+        )
+        .await;
+    let legacy = w
+        .written_origin(
+            "old/colour",
+            "ultramarine colour from before kinds",
+            None,
+            None,
+        )
+        .await;
+    let all = [chat.clone(), doc.clone(), legacy.clone()];
+    w.approve(&all).await;
+    // A version written before ADR-0063 has no kind.
+    let mut admin = PgConnection::connect(&super_url(&w.rig.db_name))
+        .await
+        .expect("connect");
+    sqlx::query("UPDATE memories SET origin_kind = NULL WHERE id = $1")
+        .bind(Uuid::parse_str(&legacy).expect("uuid"))
+        .execute(&mut admin)
+        .await
+        .expect("legacy row");
+    drop(admin);
+    assert_eq!(w.get(&w.reader, &legacy).await["origin"], Value::Null);
+    let recall = |kinds: Value| json!({"query": "ultramarine colour", "k": 10, "workarea": w.node, "origin_kinds": kinds});
+    let (status, body) = w.recall(&w.reader, recall(json!(["chat"]))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(ids(&body["hits"]), vec![chat.clone()]);
+    assert_eq!(body["hits"][0]["memory"]["origin"], json!({"kind": "chat"}));
+    let (_, body) = w.recall(&w.reader, recall(json!(["chat", "doc"]))).await;
+    let mut got = ids(&body["hits"]);
+    got.sort();
+    let mut want = vec![chat.clone(), doc.clone()];
+    want.sort();
+    assert_eq!(got, want, "rows without a kind are left out");
+    let (status, body) = w
+        .list(&w.reader, &format!("workarea={}&origin_kinds=doc", w.node))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(ids(&body["items"]), vec![doc.clone()]);
+    for bad in [json!([]), json!(["chat", "chat"]), json!(["email"])] {
+        let (status, body) = w.recall(&w.reader, recall(bad.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+        assert_eq!(body["error"]["details"]["field"], "/origin_kinds");
+    }
+    let (status, body) = w
+        .list(
+            &w.reader,
+            &format!("workarea={}&origin_kinds=email", w.node),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["details"]["field"], "origin_kinds");
+    w.done().await;
+}
+
+#[tokio::test]
+async fn an_agent_key_cannot_open_a_persons_chat_workarea_and_the_persons_key_can() {
+    let Some(rig) = fresh_rig_with(None).await else {
+        return;
+    };
+    let r = &rig.router;
+    let (admin, _) = bootstrap(r).await;
+    let user_key = |name: &'static str, held_by: &'static str| {
+        let admin = admin.clone();
+        async move {
+            let (status, body) = send(
+                r,
+                "POST",
+                "/v2/keys",
+                Some(&admin),
+                Some(&format!("issue-{name}")),
+                Some(json!({
+                    "role": "writer", "name": name, "principal": format!("eugene/{name}"),
+                    "user": "eugene", "held_by": held_by,
+                    "grants": [{ "workarea": "eugene", "role": "writer" }, { "workarea": "eugene", "role": "reader" }],
+                })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+            value_of(&body)
+        }
+    };
+    let agent = user_key("eugene-agent", "agent").await;
+    let person = user_key("eugene-cli", "human").await;
+    let open = |token: String, name: &'static str| async move {
+        send(
+            r,
+            "POST",
+            "/v2/workareas",
+            Some(&token),
+            Some(&format!(
+                "open-{name}-{}",
+                IDEM.fetch_add(1, Ordering::SeqCst)
+            )),
+            Some(json!({ "name": name })),
+        )
+        .await
+    };
+    let (status, body) = open(agent.clone(), "chat").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(error_code(&body), "access.verb_ceiling");
+    assert_eq!(
+        body["error"]["details"]["reason"],
+        "chat_scope_is_human_only"
+    );
+    // Nothing was journalled: the person's key opens it next.
+    let (status, body) = open(person, "chat").await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["path"], "universe.eugene.chat");
+    // The agent's other workareas are unaffected.
+    let (status, body) = open(agent, "notes").await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    drop(rig.store);
+    drop_db(&rig.db_name).await;
+}
+
+/// The law of d8: `chat` is reserved in each user root's namespace for a
+/// key a person holds, at any depth, so an agent cannot take the name first
+/// and leave the person's `chat init` a workarea the agent made (H1).
+#[tokio::test]
+async fn an_agent_key_cannot_take_the_name_chat_anywhere_under_a_user_root() {
+    let Some(rig) = fresh_rig_with(None).await else {
+        return;
+    };
+    let r = &rig.router;
+    let (admin, _) = bootstrap(r).await;
+    let user_key = |name: &'static str, held_by: &'static str| {
+        let admin = admin.clone();
+        async move {
+            let (status, body) = send(
+                r,
+                "POST",
+                "/v2/keys",
+                Some(&admin),
+                Some(&format!("issue-{name}")),
+                Some(json!({
+                    "role": "writer", "name": name, "principal": format!("eugene/{name}"),
+                    "user": "eugene", "held_by": held_by,
+                    "grants": [{ "workarea": "eugene", "role": "writer" }, { "workarea": "eugene", "role": "reader" }],
+                })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+            value_of(&body)
+        }
+    };
+    let agent = user_key("eugene-agent", "agent").await;
+    let person = user_key("eugene-cli", "human").await;
+    let create = |token: String, parent: Option<&'static str>, name: &'static str| async move {
+        let mut body = json!({ "name": name });
+        if let Some(parent) = parent {
+            body["parent"] = json!(parent);
+        }
+        send(
+            r,
+            "POST",
+            "/v2/workareas",
+            Some(&token),
+            Some(&format!(
+                "mk-{name}-{}",
+                IDEM.fetch_add(1, Ordering::SeqCst)
+            )),
+            Some(body),
+        )
+        .await
+    };
+    let (status, body) = create(agent.clone(), None, "notes").await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, body) = create(agent.clone(), Some("notes"), "chat").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "a nested squat: {body}");
+    assert_eq!(
+        body["error"]["details"]["reason"],
+        "chat_scope_is_human_only"
+    );
+    let (status, body) = create(person, None, "chat").await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["path"], "universe.eugene.chat");
+    drop(rig.store);
+    drop_db(&rig.db_name).await;
 }

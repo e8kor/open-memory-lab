@@ -355,6 +355,7 @@ async fn the_lead_serves_exactly_web_routes() {
             "connect_code",
             "cut_off",
             "create_workarea",
+            "workarea_mode",
             "review_next",
             "verdict",
             "sign_out"
@@ -1098,6 +1099,7 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
         .issue_key(
             &rig.boot.admin_key.value,
             &IssueKeyRequest {
+                profile: None,
                 role: Role::Writer,
                 name: Name::parse("agent-7").expect("a name"),
                 principal: "crew/agent-7".to_owned(),
@@ -1307,6 +1309,7 @@ async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
             &oml_app::types::SubmitRequest {
                 on_similar: Default::default(),
                 anchor: None,
+                origin: None,
                 idempotency_key: format!("k-{body}"),
                 claim_key: None,
                 verb: Some(oml_app::types::SubmitVerb::Remember),
@@ -1901,7 +1904,7 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
                 workarea: None,
                 kinds: oml_app::types::HIT_KINDS.to_vec(),
                 include_text: true,
-                include_unreviewed: false,
+                include_unreviewed: Some(false),
                 max_tokens: None,
                 search: None,
                 match_mode: oml_app::search::MatchMode::Any,
@@ -1943,6 +1946,7 @@ async fn agent_guardrail(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
             &oml_app::types::SubmitRequest {
                 on_similar: Default::default(),
                 anchor: None,
+                origin: None,
                 idempotency_key: format!("g-{body}"),
                 claim_key: None,
                 verb: None,
@@ -2125,6 +2129,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
         .submit_memory(
             value.as_str(),
             &oml_app::types::SubmitRequest {
+                origin: None,
                 anchor: None,
                 idempotency_key: "k-api-v3".to_owned(),
                 claim_key: Some("api-version".to_owned()),
@@ -2161,6 +2166,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
         .supersede(
             value.as_str(),
             &oml_app::types::SupersedeRequest {
+                origin: None,
                 idempotency_key: "k-api-v4".to_owned(),
                 target_id: v1,
                 body: "the api is at version 4".to_owned(),
