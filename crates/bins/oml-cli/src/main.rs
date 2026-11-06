@@ -3864,12 +3864,12 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
     let dir = std::path::absolute(&args.dir)
         .map_err(|e| CliError::local(format!("cannot resolve {}: {e}", args.dir.display())))?;
     let shown = dir.display().to_string();
+    let shell_dir = shell_word(&shown);
     if let Some(name) = quickstart::existing(&dir) {
         return Err(CliError::local(format!(
             "refused: quickstart.exists — {shown} already contains {name} from a quickstart. \
              Use another --dir, or remove the stack and its data with `docker compose \
-             --project-directory {} down -v`. Nothing was changed",
-            shell_word(&shown)
+             --project-directory {shell_dir} down -v`. Nothing was changed"
         )));
     }
     let project = quickstart::project_name(&dir);
@@ -3911,14 +3911,16 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
     let keys = dir.join("keys");
     owner_only_dir(&keys)?;
 
-    eprintln!("starting the stack: docker compose --project-directory {shown} up --detach --wait");
+    eprintln!(
+        "starting the stack: docker compose --project-directory {shell_dir} up --detach --wait"
+    );
     let status = compose(&["up", "--detach", "--wait"])
         .stdout(std::process::Stdio::from(std::io::stderr()))
         .status()
         .map_err(|e| CliError::local(format!("cannot run docker compose up: {e}")))?;
     if !status.success() {
         return Err(CliError::local(format!(
-            "docker compose up failed ({status}); `docker compose --project-directory {shown} \
+            "docker compose up failed ({status}); `docker compose --project-directory {shell_dir} \
              logs` shows why"
         )));
     }
@@ -3931,7 +3933,7 @@ fn run_quickstart(args: &QuickstartArgs) -> Result<ExitCode, CliError> {
     let token = quickstart::enrollment_token(&logs).ok_or_else(|| {
         CliError::local(format!(
             "no enrollment token in the lead's log: a lead prints one on its first start \
-             against an empty database only; `docker compose --project-directory {shown} logs \
+             against an empty database only; `docker compose --project-directory {shell_dir} logs \
              oml-server` shows what it printed"
         ))
     })?;
