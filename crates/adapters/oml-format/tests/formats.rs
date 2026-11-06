@@ -249,7 +249,7 @@ fn a_code_snippet_is_indexed_as_its_source() {
 #[test]
 fn the_scan_vetoes_a_private_key_hidden_by_a_json_escape() {
     let a = adapter("application/json");
-    let source = "{\"note\": \"\\u002d\\u002d\\u002d-BEGIN PRIVATE KEY\"}";
+    let source = "{\"note\": \"\\u002d\\u002d\\u002d\\u002d-BEGIN PRIVATE KEY\"}";
     assert!(
         !source.contains("-----BEGIN"),
         "the source alone shows no key"

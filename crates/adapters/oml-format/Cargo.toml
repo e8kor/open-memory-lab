@@ -10,6 +10,7 @@ description = "The compiled-in claim format adapters behind oml-app's Format por
 oml-app.workspace = true
 serde_json.workspace = true
 saphyr-parser = "0.3"
+serde = { workspace = true, features = ["derive"] }
 
 [lints]
 workspace = true

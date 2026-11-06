@@ -1963,6 +1963,7 @@ version = "0.5.8"
 dependencies = [
  "oml-app",
  "saphyr-parser",
+ "serde",
  "serde_json",
 ]
 
