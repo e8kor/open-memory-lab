@@ -345,8 +345,8 @@ async fn the_lead_serves_exactly_web_routes() {
     }
     assert_eq!(
         WEB_ROUTES.len(),
-        6,
-        "a new route is a new decision amending ADR-0045"
+        13,
+        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven"
     );
     assert_eq!(
         USER_ACTIONS,
