@@ -200,3 +200,17 @@ fn a_source_check_is_checked_against_its_anchor() {
     assert_eq!(CheckResult::Changed.stale(), Some("changed"));
     assert_eq!(CheckResult::Removed.stale(), Some("removed"));
 }
+
+#[test]
+fn the_rust_hashers_are_accepted_and_an_unknown_hasher_is_request_validation() {
+    // ADR-0061 d7: the closed set gains the two hashers of the rust adapter.
+    for hasher in ["oml-md/1", "oml-rustdoc/1", "oml-crate/1"] {
+        let anchor = with("hasher", json!(hasher));
+        let parsed = Anchor::from_json(&anchor, "/anchor").expect(hasher);
+        assert_eq!(parsed.to_json(), anchor);
+    }
+    assert_eq!(
+        refused(&with("hasher", json!("oml-rustdoc+pub/1"))),
+        "/anchor/hasher"
+    );
+}
