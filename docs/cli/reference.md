@@ -706,6 +706,8 @@ oml write [OPTIONS] <TEXT>
 | `--replaces <REPLACES>` | The promoted tip this write replaces, by artifact id: a new version of its claim, held like any write |
 | `--expected-version <EXPECTED_VERSION>` | With --replaces, required: the claim's latest version as you last read it; the server refuses the write with submission.version_conflict if the claim moved on |
 | `--anchor <ANCHOR>` | Where the claim came from, one JSON object or @file holding one: {repo, rev, path, fragment?, hash?, hasher?} or {uri, rev?, …} |
+| `--format <FORMAT>` | The media type of the text: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml or "text/vnd.oml.code; lang=<language>". With the text `-`, the text is read from standard input |
+| `--title <TITLE>` | One line stating the fact the text shows, at most 100 characters; required with a format that is not prose |
 | `--origin-kind <ORIGIN_KIND>` | What kind of source the text came from: repo, doc, code, lake, chat, web or manual; omitted, the server records manual [possible values: repo, doc, code, lake, chat, web, manual] |
 | `--retirement` | Propose retiring the --replaces claim; the text says why |
 | `--reason <REASON>` | Why the claim changes, journalled with the new version |

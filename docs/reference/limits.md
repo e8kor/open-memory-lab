@@ -46,10 +46,10 @@ From the maintainers' own runs on one 8-vCPU host with PostgreSQL:
 
 ## Not verified against a live client
 
-The Claude Code plugin, installed from the plugin marketplace with its URL and key set in the plugin's options, is in daily use against memory.doublegate.io. The CI suites run the rest against test servers only. As of 2026-11-06 we have not run these against a live client, so their steps follow the vendor's documentation:
+The Claude Code plugin, installed from the plugin marketplace with its URL and key set in the plugin's options, is in daily use against memory.doublegate.io. The CI suites run the rest against test servers only. As of 2026-11-06 we have not completed a run of these against a live client, so their steps follow the vendor's documentation:
 
 - the `oml setup claude-code` command, which writes the same plugin options for you;
-- the claude.ai and mobile connector flow, where the steps that name a claude.ai screen follow Anthropic's documentation;
+- the claude.ai and mobile connector flow, which the operator is verifying now; this page will be updated with the result, and until then the steps that name a claude.ai screen follow Anthropic's documentation;
 - the agent kit's configuration for Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop, where the kit's README marks what a tool's documentation does not settle.
 
 [Connect Claude Code](../guides/claude-code.md), [claude.ai and your phone](../guides/claude-ai-and-mobile.md) and [other agent tools](../guides/other-harnesses.md) link here.

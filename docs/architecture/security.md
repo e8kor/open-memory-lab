@@ -14,11 +14,11 @@ Nobody has penetration-tested, load-tested or measured these controls; they are 
 
 The server derives the tenant from the API key and never from the request: no parameter, header, path segment or MCP argument names a tenant.
 
-- **Row-level security covers every table** (`FORCE ROW LEVEL SECURITY`, keyed by tenant). The one exception is `_sqlx_migrations`, which holds no tenant data and is reachable by the owner role only. No OML workload role holds `BYPASSRLS`.
+- **Row-level security covers every table** (`FORCE ROW LEVEL SECURITY`, keyed by tenant). The one exception is `_sqlx_migrations`, which holds no tenant data and only the owner reaches. No OML workload role holds `BYPASSRLS`.
 - **Two database roles.** The owner only migrates and creates each new tenant's partitions, because `FORCE` does not bind the owner's `pg_stats` view or its DDL. Requests run under a serving role that owns nothing. The lead refuses to start if both roles share one URL.
 - **Storage is per tenant:** journal chains, lake prefixes (bodies are sealed ciphertext, [the lake](../operations/lake.md)), embedding and full-text partitions, and quarantine and body paths. RLS stays the isolation authority if partition pruning fails.
 
-Tenants share the Postgres cluster, the lead process and its signing key, and the key store. RLS predicates sit on every query plan; read latency by tenant size is unmeasured.
+Tenants share the Postgres cluster, the lead process with its signing key, and the key store.
 
 ## Key custody
 
@@ -30,30 +30,30 @@ Tenants share the Postgres cluster, the lead process and its signing key, and th
 | API keys, connect codes, connection tokens | The lead stores hashes or digests only. |
 | Postgres access | The lead: an RLS-scoped serving role. The lake writer: its own role, which must not be the owner, the serving role, a superuser or an RLS-bypassing role; it refuses to start on one that is. |
 
-**Lead compromise is signing-key compromise.** A compromised lead can sign arbitrary events and read any promoted body. Anyone holding an earlier chain head can detect forged history, the startup fork check refuses to extend a chain that does not verify, and the journal shows what the lead did earlier. Nothing detects quiet reads.
+**Lead compromise is signing-key compromise.** A compromised lead can sign arbitrary events and read any promoted body. Holders of an earlier chain head can detect forged history, and the startup fork check refuses to extend a chain that does not verify. Nothing detects quiet reads.
 
-**The keyring is a file on the lead's host.** Whoever reads it can unwrap every DEK. Back it up with the database; a database restored without it cannot be read.
+**The keyring is a file on the lead's host.** Whoever reads it can unwrap every DEK. Back it up with the database; a restore without it is unreadable.
 
-**A compromised lake writer cannot sign or alter the journal.** It can corrupt the lake, which the journal's ciphertext digests expose. The lake serves no client read.
+**A compromised lake writer cannot sign or alter the journal.** It can corrupt the lake, which the journal's ciphertext digests expose.
 
 ## If the signing key is compromised
 
-There is no rotate command. Stop writes, replace the key at its custody point and start the lead, which journals `system.signing_key_rotated`. Verify each tenant's chain against heads you kept outside the deployment; the [runbooks](../operations/runbooks.md) give the steps. Rotation bounds the future, not the past: events the old key signed in the compromise window still verify, and separating them from attacker events is an audit against those heads.
+There is no rotate command. Stop writes, replace the key at its custody point and start the lead, which journals `system.signing_key_rotated`. Verify each tenant's chain against heads you kept outside the deployment; the [runbooks](../operations/runbooks.md) give the steps. Rotation bounds the future only: events the old key signed in the compromise window still verify, and separating them from attacker events is an audit against those heads.
 
 ## Transport
 
-TLS 1.2 is the floor, 1.3 preferred. Plaintext HTTP is acceptable only on loopback or a private compose network: the bearer key is the whole capability. [Deployment](../operations/deployment.md) shows where TLS terminates per install path. Across hosts to Postgres, require `sslmode=verify-full`.
+TLS 1.2 is the floor. Plaintext HTTP only on loopback or a private compose network: the bearer key is the whole capability. [Deployment](../operations/deployment.md) shows where TLS terminates per install path. Across hosts to Postgres, require `sslmode=verify-full`.
 
 ## Hostile content after the gate
 
-The gate changes visibility, not truth or safety. An approved memory can still carry a prompt injection or a malicious URL.
+Approval changes visibility, not truth or safety: an approved memory can still carry a prompt injection or a malicious URL.
 
 - **Treat recalled content as data.** Delimit recalled bodies as untrusted in your agent's prompt, keep the served provenance (artifact id, author, workarea) beside them, and never auto-execute instructions found in a body.
 - **Steering rows get no stricter default review.** A steering row precedes every hit in its workarea's recalls, so it is the highest-leverage injection surface. It is held and reviewed under the workarea's policy; set a stricter policy where steering matters.
 
 ## Connections: the OAuth surface
 
-A connection lets Claude's hosted apps reach `/mcp` through an OAuth client bound to one connector key by a connect code ([roles and keys](roles-and-keys.md#connections)). Without a key, an attacker reaches two discovery documents, three OAuth endpoints and one HTML page, and the lead fetches a URL a client chose.
+A connection lets Claude's hosted apps reach `/mcp` through an OAuth client bound to one connector key by a connect code ([roles and keys](roles-and-keys.md#connections)). Without a key, an attacker reaches two discovery documents, three OAuth endpoints and one HTML page.
 
 | Threat | Control | What remains |
 |---|---|---|
@@ -85,7 +85,7 @@ A user page and an admin page run on the lead's origin. People sign in through G
 
 ## Review binding
 
-A verdict counts only under a `serve_id` that `oml-server` bound to the reviewer key, memory version and content. It expires, the first verdict consumes it, and changed content invalidates it. That stops replay, bait and switch, transplant to another reviewer key, and blind approval. It proves what the reviewer was shown, not what they read. The [independence rules](roles-and-keys.md#review-independence) make careless review visible, not impossible.
+A verdict counts only under a `serve_id` that `oml-server` bound to the reviewer key, memory version and content. It expires, the first verdict consumes it, and changed content invalidates it. That stops replay, bait and switch, transplant to another reviewer key, and blind approval. It proves what the reviewer was shown, not what they read.
 
 ## Trust boundaries
 
@@ -114,7 +114,7 @@ flowchart LR
   LW --> DL
 ```
 
-Every client path crosses one boundary, into `oml-server`. None reaches Postgres, the object store, the lake or the key store, and the signing authority never leaves the lead.
+Every client path crosses one boundary, into `oml-server`; none reaches Postgres, the object store, the lake or the key store.
 
 ## Residual risks
 
@@ -124,6 +124,6 @@ Every client path crosses one boundary, into `oml-server`. None reaches Postgres
 4. The platform operator is trusted: a Postgres superuser, key store administrator or Kubernetes Secrets holder can read attribution metadata, destroy keys and rewrite unprotected state. Tenant-held chain heads make some of this detectable.
 5. Counts leak: a key sees tenant-wide journal positions for events it cannot read, a `claim_key` collision tells a writer a name is taken, and the lineage read names unreadable ancestors as redacted ids. Never content.
 6. A connect code is a bearer secret for its minutes, and the lead fetches client-chosen URLs.
-7. No per-key rate limit exists, and skewed load is untested.
+7. No per-key rate limit exists; skewed load is untested.
 
 Design record: [ADR-0007](../adr/ADR-0007-tenancy-first-class.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md).

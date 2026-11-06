@@ -105,3 +105,11 @@ service.
 | **A web console, even a minimal one** | "Minimal" does not stay minimal: a console accretes duties — recall views, graph pictures, dashboards, assistants — because the surface exists and each addition looks small on its own. A web console also buys back everything the decline avoids — origin policy, sessions, CSP, a second presentation of every state to keep truthful. Declined whole: every administration duty — key ceremonies, review, mass-act previews, evidence export, settings, status — has its home in d1–d6 or in the API's own read verbs, and nothing load-bearing needs a browser. |
 | **An admin API separate from the agent API** | Two contracts to version and audit, and an invitation for admin verbs to escape the taxonomy and the journal. ADR-0014 d1 already settles it: one API, and the CLI is a client like any other — the verb ceiling lives in roles, not in network topology. (ADR-0022's `/v2` lab ring is not this: same listener, same contract document, same taxonomy — a stability ring, not a second API.) |
 | **Driving administration through MCP tools** | Admin verbs on an agent-facing protocol blur the verb ceiling R1 exists to enforce; evidence bundles and chunked uploads are not tool calls (ADR-0014, rejected alternatives); and the admin population gains nothing from MCP framing over plain HTTP plus a purpose-built CLI. |
+
+## Notes moved from the administering page (2026-11-06)
+
+- Key, grant, crew, connection and review events appear on no key's `oml events` tail; the tail is digest-only and bounded by the reading key's reader access, and needs a reader key.
+- An admin key cannot be cut off today (a denial on it is refused), so the admin credentials file stays on one machine and a second admin key goes only to a person who needs one.
+- If an issuance reaches the server but returns nothing usable, the CLI cannot tell whether the key exists; `oml keys show <key-name>` finds out, and a key whose value was lost is denied and replaced under a new name.
+- `oml keys issue` takes `--label <text>`; keys do not expire; a retired key's name stays taken.
+- A reviewer key also takes a reader grant on the workarea, or it sees a held memory without its sources.

@@ -189,3 +189,12 @@ has. Everything the designed chart holds beyond that stays decided, not built.
 | **`postgres.url` as a chart value** | The password would live in every Helm release revision and in `helm get values` output. |
 | **Refusing an install that enables the Ingress** | The chart cannot see whether the claim happened, so the refusal would block a reinstall over a claimed database and let through an upgrade before the claim. The notes' warning and the documented ceremony carry it. |
 | **A chart repository now: an `index.yaml` on Pages, or an OCI push to ghcr.io** | A second publication path, with its own index or registry permissions to keep in step; the release page already carries the signed artifacts, and `helm install` takes the archive's URL. Rejected for this chart; a later record may reopen it once someone asks for `helm repo add`. |
+
+## Notes moved from the Kubernetes install page (2026-11-06)
+
+- `kubeVersion` is `>=1.23.0-0` because the keyring depends on `fsGroupChangePolicy`, stable since 1.23.
+- Deleting the keyring claim while keeping the database loses the deployment's identity: the server mints a new key and refuses readiness at the fork check. The claim is annotated `helm.sh/resource-policy: keep`; a reinstall under another release name attaches it with `keyring.existingClaim`.
+- The chart cannot see whether the first claim happened, so it does not refuse an Ingress before it; its install notes warn when an install enables one.
+- The migrations grant the serving role its privileges; nothing is granted by hand.
+- The server applies migrations under the owner URL before its listener binds, then serves under the serving URL.
+

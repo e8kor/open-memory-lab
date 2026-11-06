@@ -8,7 +8,7 @@ answers: "how to start a server, write a memory as an agent, see it held, approv
 
 You start a server on your machine, write a memory as an agent and watch it stay invisible until a different key approves it. You need the `oml` CLI ([install](install.md)) and either PostgreSQL 17 or later or Docker.
 
-**Time.** Measured on 2026-11-06 on Linux x86_64 with the v0.6.0 release binaries and PostgreSQL 18.6, from the download to the last recall: 1.8 s to download both archives, 1.5 s to verify and unpack them, and 2.9 s for everything after that, about 6 s of command time in all. Typing and reading take longer, so allow five minutes. The Docker path was not timed; it adds the image pull.
+**Time.** Measured on 2026-11-06 on Linux x86_64 with the v0.6.0 release binaries and PostgreSQL 18.6, from the download to the last recall: 1.8 s to download both archives, 1.5 s to verify and unpack them, and 2.9 s for everything after that, about 6 s of command time in all. Typing and reading take longer, so allow five minutes. The Docker tab, measured in CI on a GitHub-hosted ubuntu runner on 2026-11-06, took 7 s from `oml quickstart` (start, claim and both keys) through the first held write to the first recall of it, with the image already on the runner. It excludes the image pull and the `colleague` key, so a first run takes longer by the pull.
 
 ## 1. Start a server and issue three keys
 

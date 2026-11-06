@@ -77,3 +77,18 @@ curl -s http://127.0.0.1:9466/metrics | grep -E 'oml_lake_(lag|commit_failures|d
 ```
 
 `lake.writer` fails when no writer holds the lease. Start it again. For lag that keeps growing, see [the lake falls behind](../operations/runbooks.md#the-lake-falls-behind) and [the lake](../operations/lake.md).
+
+## On Kubernetes
+
+[Install OML on Kubernetes](../guides/kubernetes.md) describes the chart. Probes: startup checks `/healthz` every 2 seconds for up to 60 failures, which covers migrations; liveness checks `/healthz` every 10 seconds; readiness checks `/readyz` every 5 seconds and answers 503 until PostgreSQL is reachable and the startup fork check has passed. The timings are chosen, not measured.
+
+| You see | Cause | Do this |
+|---|---|---|
+| The pod waits in `CreateContainerConfigError`, naming the Secret | The Secret or its key is missing | Create it as in step 2 of the install. The pod starts on its own. |
+| `CrashLoopBackOff`; the log ends `fatal: postgres connect: ...` | The URL in the Secret does not reach PostgreSQL | Fix the URL or the network path. With the NetworkPolicy on, check `networkPolicy.postgres`. |
+| `CrashLoopBackOff`; the log ends `fatal: keyring: keyring file permissions are not 0600 (kms-file shape)` | Something changed the keyring file's mode, such as `fsGroupChangePolicy` set back to `Always` or a volume that maps modes | Restore `OnRootMismatch`, or move the claim to a volume that keeps file modes. Set the file back to 0600 from a pod that mounts the claim as uid 999. Never replace the file: it holds the signing key. |
+| `/readyz` answers 503 with `fork_check: failed`; no token is printed | The server loaded a different signing key than the one that signed the chain | Reattach the claim that holds the deployment's key ([runbooks](../operations/runbooks.md)). Never delete the chain head. |
+| No `enr_` line in the pod log | A tenant exists, so the deployment was claimed, or the fork check failed | A claimed deployment prints no token. Issue further keys with the admin key. |
+
+The chart deploys one server under `Recreate`: no read followers, no rolling update, no lake writer, no bundled PostgreSQL. The signing key sits on a volume and the enrollment token in the pod log. It has no `oauth.issuer` value and no resource numbers.
+
