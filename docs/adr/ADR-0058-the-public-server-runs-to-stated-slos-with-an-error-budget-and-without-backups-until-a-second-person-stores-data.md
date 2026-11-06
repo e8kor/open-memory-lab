@@ -1,5 +1,5 @@
 <!--
-id: adr/ADR-0058-a-public-server-runs-to-stated-slos-with-an-error-budget
+id: adr/ADR-0058-the-public-server-runs-to-stated-slos-with-an-error-budget-and-without-backups-until-a-second-person-stores-data
 tier: engineering
 status: accepted · 2026-11-06
 answers: where a public server's production policy lives; which SLOs it runs to, with which targets and windows, and why; what spending an error budget stops; how SLOs alert; when backups become mandatory; how it is upgraded; from which sources usage is measured and what monitoring may never read; whether the operator's organisation keeps recall query text

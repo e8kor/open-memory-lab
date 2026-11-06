@@ -110,7 +110,7 @@ Deployment, identity, observability and the web pages.
 | [ADR-0044](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) | accepted design | Every user works under a root of their own beneath `universe`, and `universe` serves only curated claims, without their source |
 | [ADR-0045](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) | accepted design | People sign in with Google or GitHub to a user page and an admin page that the lead serves on its own origin, and every act there is a session key's |
 | [ADR-0046](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md) | accepted design | The lifecycle, claim edges and the brief ship in v0.5.2 inside user roots, with no new tool |
-| [ADR-0058](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0058-a-public-server-runs-to-stated-slos-with-an-error-budget.md) | accepted | A public server runs to stated SLOs with an error budget |
+| [ADR-0058](https://github.com/e8kor/open-memory-lab/blob/main/docs/adr/ADR-0058-the-public-server-runs-to-stated-slos-with-an-error-budget-and-without-backups-until-a-second-person-stores-data.md) | accepted | A public server runs to stated SLOs with an error budget |
 
 ## Architecture and platform
 

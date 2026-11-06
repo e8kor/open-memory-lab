@@ -43,7 +43,7 @@ sat in the decision records.
 - **d5 — Operator host details stay out of the repository.** Sizing, paths, ports, alert routing,
   backup status and incident notes of a named deployment are the operator's private notes. The
   published operating guide states policy and measured capacity of the software, and
-  [ADR-0058](ADR-0058-a-public-server-runs-to-stated-slos-with-an-error-budget.md) is the
+  [ADR-0058](ADR-0058-the-public-server-runs-to-stated-slos-with-an-error-budget-and-without-backups-until-a-second-person-stores-data.md) is the
   general policy.
 
 ## Consequences
