@@ -219,7 +219,7 @@ export interface paths {
         put?: never;
         /**
          * A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
-         * @description Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool reaches it.
+         * @description children: agent marks a code parent and children: none unmarks it, by the same predicate, journalled workarea.mode_set (ADR-0064 d3). Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool reaches it.
          */
         post: operations["setWorkareaMode"];
         delete?: never;
@@ -1707,7 +1707,12 @@ export interface components {
              * @description in_progress puts the node in progress; standard on an in-progress root is its commit (ADR-0030 d1, d6).
              * @enum {string}
              */
-            mode: "in_progress" | "standard";
+            mode?: "in_progress" | "standard";
+            /**
+             * @description agent marks the node a code parent: agent writer keys then create in-progress children under it and nowhere else; none unmarks it, and children already created keep their mode. Send exactly one of mode and children (ADR-0064 d3).
+             * @enum {string}
+             */
+            children?: "agent" | "none";
         };
         Workarea: {
             id: string;
@@ -1728,6 +1733,11 @@ export interface components {
              * @enum {string}
              */
             mode?: "standard" | "in_progress";
+            /**
+             * @description agent when a person's key marked the node a code parent (ADR-0064 d3).
+             * @enum {string}
+             */
+            children?: "agent" | "none";
             /** Format: date-time */
             created_at?: string;
         };
@@ -1859,6 +1869,11 @@ export interface components {
             parent?: components["schemas"]["WorkareaRef"];
             name: components["schemas"]["Name"];
             crew?: components["schemas"]["CrewRef"];
+            /**
+             * @description in_progress, from a writer user key under a code parent only: the child is development and in progress from its first instant. Anywhere else the field is refused request.validation naming /mode (ADR-0064 d3).
+             * @enum {string}
+             */
+            mode?: "in_progress";
         };
         WorkareaPage: {
             items: components["schemas"]["Workarea"][];

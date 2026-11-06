@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.workarea_children import WorkareaChildren
 from ..models.workarea_mode import WorkareaMode
 from ..models.workarea_status import WorkareaStatus
 from ..types import UNSET, Unset
@@ -34,6 +35,7 @@ class Workarea:
         mode (WorkareaMode | Unset): in_progress when a person's key put the node in progress: readers inside recall
             unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1,
             d2).
+        children (WorkareaChildren | Unset): agent when a person's key marked the node a code parent (ADR-0064 d3).
         created_at (datetime.datetime | Unset):
     """
 
@@ -45,6 +47,7 @@ class Workarea:
     crew: Crew | None | Unset = UNSET
     user_root: bool | Unset = UNSET
     mode: WorkareaMode | Unset = UNSET
+    children: WorkareaChildren | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -76,6 +79,10 @@ class Workarea:
         if not isinstance(self.mode, Unset):
             mode = self.mode.value
 
+        children: str | Unset = UNSET
+        if not isinstance(self.children, Unset):
+            children = self.children.value
+
         created_at: str | Unset = UNSET
         if not isinstance(self.created_at, Unset):
             created_at = self.created_at.isoformat()
@@ -97,6 +104,8 @@ class Workarea:
             field_dict["user_root"] = user_root
         if mode is not UNSET:
             field_dict["mode"] = mode
+        if children is not UNSET:
+            field_dict["children"] = children
         if created_at is not UNSET:
             field_dict["created_at"] = created_at
 
@@ -148,6 +157,13 @@ class Workarea:
         else:
             mode = WorkareaMode(_mode)
 
+        _children = d.pop("children", UNSET)
+        children: WorkareaChildren | Unset
+        if isinstance(_children, Unset):
+            children = UNSET
+        else:
+            children = WorkareaChildren(_children)
+
         _created_at = d.pop("created_at", UNSET)
         created_at: datetime.datetime | Unset
         if isinstance(_created_at, Unset):
@@ -164,6 +180,7 @@ class Workarea:
             crew=crew,
             user_root=user_root,
             mode=mode,
+            children=children,
             created_at=created_at,
         )
 

@@ -7,7 +7,6 @@ import httpx
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
 from ...models.workarea_mode_set import WorkareaModeSet
-from ...models.workarea_view import WorkareaView
 from ...types import UNSET, Response, Unset
 
 
@@ -49,12 +48,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | WorkareaView:
-    if response.status_code == 200:
-        response_200 = WorkareaView.from_dict(response.json())
-
-        return response_200
-
+) -> ErrorEnvelope:
     if response.status_code == 415:
         response_415 = ErrorEnvelope.from_dict(response.json())
 
@@ -67,7 +61,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | WorkareaView]:
+) -> Response[ErrorEnvelope]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -85,17 +79,18 @@ def sync_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> Response[ErrorEnvelope | WorkareaView]:
+) -> Response[ErrorEnvelope]:
     """A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
 
-     Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is
-    refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1).
-    in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not
-    development) or nested (an ancestor or descendant is in progress). standard on an in-progress root
-    is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held,
-    dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
-    otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool
-    reaches it.
+     children: agent marks a code parent and children: none unmarks it, by the same predicate, journalled
+    workarea.mode_set (ADR-0064 d3). Requires: a dreamer key held_by human with dreamer effective access
+    on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason
+    mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused,
+    details.reason universe, status (not development) or nested (an ancestor or descendant is in
+    progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining
+    while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the
+    mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node
+    as the key reads it. No MCP tool reaches it.
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -115,7 +110,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | WorkareaView]
+        Response[ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
@@ -143,17 +138,18 @@ def sync(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> ErrorEnvelope | WorkareaView | None:
+) -> ErrorEnvelope | None:
     """A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
 
-     Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is
-    refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1).
-    in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not
-    development) or nested (an ancestor or descendant is in progress). standard on an in-progress root
-    is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held,
-    dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
-    otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool
-    reaches it.
+     children: agent marks a code parent and children: none unmarks it, by the same predicate, journalled
+    workarea.mode_set (ADR-0064 d3). Requires: a dreamer key held_by human with dreamer effective access
+    on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason
+    mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused,
+    details.reason universe, status (not development) or nested (an ancestor or descendant is in
+    progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining
+    while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the
+    mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node
+    as the key reads it. No MCP tool reaches it.
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -173,7 +169,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | WorkareaView
+        ErrorEnvelope
     """
 
     return sync_detailed(
@@ -196,17 +192,18 @@ async def asyncio_detailed(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> Response[ErrorEnvelope | WorkareaView]:
+) -> Response[ErrorEnvelope]:
     """A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
 
-     Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is
-    refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1).
-    in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not
-    development) or nested (an ancestor or descendant is in progress). standard on an in-progress root
-    is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held,
-    dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
-    otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool
-    reaches it.
+     children: agent marks a code parent and children: none unmarks it, by the same predicate, journalled
+    workarea.mode_set (ADR-0064 d3). Requires: a dreamer key held_by human with dreamer effective access
+    on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason
+    mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused,
+    details.reason universe, status (not development) or nested (an ancestor or descendant is in
+    progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining
+    while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the
+    mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node
+    as the key reads it. No MCP tool reaches it.
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -226,7 +223,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | WorkareaView]
+        Response[ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
@@ -252,17 +249,18 @@ async def asyncio(
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
     idempotency_key: str,
-) -> ErrorEnvelope | WorkareaView | None:
+) -> ErrorEnvelope | None:
     """A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
 
-     Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is
-    refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1).
-    in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not
-    development) or nested (an ancestor or descendant is in progress). standard on an in-progress root
-    is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held,
-    dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
-    otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool
-    reaches it.
+     children: agent marks a code parent and children: none unmarks it, by the same predicate, journalled
+    workarea.mode_set (ADR-0064 d3). Requires: a dreamer key held_by human with dreamer effective access
+    on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason
+    mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused,
+    details.reason universe, status (not development) or nested (an ancestor or descendant is in
+    progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining
+    while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the
+    mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node
+    as the key reads it. No MCP tool reaches it.
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -282,7 +280,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | WorkareaView
+        ErrorEnvelope
     """
 
     return (

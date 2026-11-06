@@ -6,7 +6,6 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
-from ...models.workarea_view import WorkareaView
 from ...types import UNSET, Response, Unset
 
 
@@ -40,12 +39,7 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | WorkareaView:
-    if response.status_code == 200:
-        response_200 = WorkareaView.from_dict(response.json())
-
-        return response_200
-
+) -> ErrorEnvelope:
     if response.status_code == 404:
         response_404 = ErrorEnvelope.from_dict(response.json())
 
@@ -58,7 +52,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | WorkareaView]:
+) -> Response[ErrorEnvelope]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -74,7 +68,7 @@ def sync_detailed(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | WorkareaView]:
+) -> Response[ErrorEnvelope]:
     """One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
      Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads
@@ -103,7 +97,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | WorkareaView]
+        Response[ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
@@ -127,7 +121,7 @@ def sync(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | WorkareaView | None:
+) -> ErrorEnvelope | None:
     """One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
      Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads
@@ -156,7 +150,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | WorkareaView
+        ErrorEnvelope
     """
 
     return sync_detailed(
@@ -175,7 +169,7 @@ async def asyncio_detailed(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | WorkareaView]:
+) -> Response[ErrorEnvelope]:
     """One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
      Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads
@@ -204,7 +198,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | WorkareaView]
+        Response[ErrorEnvelope]
     """
 
     kwargs = _get_kwargs(
@@ -226,7 +220,7 @@ async def asyncio(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | WorkareaView | None:
+) -> ErrorEnvelope | None:
     """One node — id, parent, derived path, status, crew record — with the calling key's view of it.
 
      Requires: reader effective access (access.not_found otherwise), or the admin key role, which reads
@@ -255,7 +249,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | WorkareaView
+        ErrorEnvelope
     """
 
     return (
