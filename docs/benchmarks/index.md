@@ -1,9 +1,8 @@
-<!--
-id: benchmarks
-tier: engineering
-status: generated · measured, not a design decision
-answers: which search pipeline is the default and what each pipeline measured on every benchmark suite: quality, latency, the date, commit and environment of each run
--->
+---
+status: Measured
+verified: 2026-11-06
+answers: "which search pipeline is the default and what each pipeline measured on every benchmark suite: quality, latency, the date, commit and environment of each run"
+---
 
 
 # Benchmarks

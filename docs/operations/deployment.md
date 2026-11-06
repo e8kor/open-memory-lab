@@ -1,9 +1,8 @@
-<!--
-id: operations/deployment
-tier: engineering
-status: current
-answers: what runs where and how many of each; what state and credentials each workload holds; how the three install profiles differ
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what runs where and how many of each; what state and credentials each workload holds; how the three install profiles differ"
+---
 
 # Deployment
 

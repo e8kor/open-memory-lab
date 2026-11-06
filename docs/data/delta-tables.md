@@ -1,9 +1,8 @@
-<!--
-id: data/delta-tables
-tier: engineering
-status: current
-answers: every lake table column by column — Delta and Arrow types, partitioning, per-table commit protocol, and the maintenance that keeps the lake compact and erasable
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "every lake table column by column \u2014 Delta and Arrow types, partitioning, per-table commit protocol, and the maintenance that keeps the lake compact and erasable"
+---
 
 # Delta tables
 

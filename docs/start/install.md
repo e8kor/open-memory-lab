@@ -1,9 +1,8 @@
-<!--
-id: start/install
-tier: engineering
-status: current
-answers: what install.sh and install.ps1 check and their two outcomes word for word; the flags and variables; where they write; the PATH line; the inspect-first form; what a piped install trusts; uninstalling; Windows PowerShell 5.1 and 7; the manual cosign steps; and the package managers not offered
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what install.sh and install.ps1 check and their two outcomes word for word; the flags and variables; where they write; the PATH line; the inspect-first form; what a piped install trusts; uninstalling; Windows PowerShell 5.1 and 7; the manual cosign steps; and the package managers not offered"
+---
 
 # Install the `oml` command
 
@@ -18,7 +17,7 @@ below fetch them at the tag `v0.6.0`; CI's `install-smoke` job runs both on ever
 | macOS | none since v0.5.3; build from source (below) |
 
 !!! tip "Install not working?"
-    See [the installer refuses](../guides/troubleshooting.md#the-installer-refuses) and the [FAQ](../faq.md#install-and-connect).
+    See [the installer refuses](../help/troubleshooting-client.md#the-installer-refuses) and the [FAQ](../faq.md#install-and-connect).
 
 ## The line
 

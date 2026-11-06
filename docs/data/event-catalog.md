@@ -1,9 +1,8 @@
-<!--
-id: data/event-catalog
-tier: engineering
-status: current
-answers: every journal event type and its payload shape, the digest-only rule, and the system.* key-lifecycle events; which events record a name, and how rows that predate names are named; the connection events and why refreshes are not events
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "every journal event type and its payload shape, the digest-only rule, and the system.* key-lifecycle events; which events record a name, and how rows that predate names are named; the connection events and why refreshes are not events"
+---
 
 # Journal event catalog
 

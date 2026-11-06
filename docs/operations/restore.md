@@ -1,9 +1,8 @@
-<!--
-id: operations/restore
-tier: engineering
-status: current
-answers: how the restore ceremony runs and why it is a ceremony — the erased-content-resurrection and chain-rewind hazards and how each step contains them
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how the restore ceremony runs and why it is a ceremony \u2014 the erased-content-resurrection and chain-rewind hazards and how each step contains them"
+---
 
 # Restore
 

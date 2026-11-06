@@ -1,9 +1,8 @@
-<!--
-id: guides/troubleshooting
-tier: engineering
-status: current
-answers: what to do when something does not work, by symptom: the plugin serving no tools, each oml doctor line, oml login refusals, the error codes a user meets, a memory that does not appear, the session-start and failure-recall hooks staying silent, installer refusals, connect-code failures, and on the server /readyz at 503, postgres.role_split boot refusals, migrations and the proxy's access log; then a short FAQ
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what to do when something does not work, by symptom: the plugin serving no tools, each oml doctor line, oml login refusals, the error codes a user meets, a memory that does not appear, the session-start and failure-recall hooks staying silent, installer refusals, connect-code failures, and on the server /readyz at 503, postgres.role_split boot refusals, migrations and the proxy's access log; then a short FAQ"
+---
 
 # Troubleshooting by symptom
 

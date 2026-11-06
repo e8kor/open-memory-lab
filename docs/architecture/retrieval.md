@@ -1,9 +1,8 @@
-<!--
-id: architecture/retrieval
-tier: engineering
-status: current
-answers: where reads are served from and in what order; how recall ranks, through which pipelines, and how a deployment, a tenant or a request picks one; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope; which steering applies and how hits are ordered; how own held rows join recall; how a recall budget is counted and cut
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "where reads are served from and in what order; how recall ranks, through which pipelines, and how a deployment, a tenant or a request picks one; how bodies are decrypted; how reads are logged; which read-shaped features are out of scope; which steering applies and how hits are ordered; how own held rows join recall; how a recall budget is counted and cut"
+---
 
 # Retrieval: reads are served from Postgres, journalled
 

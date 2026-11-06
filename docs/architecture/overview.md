@@ -1,9 +1,8 @@
-<!--
-id: architecture/overview
-tier: engineering
-status: current
-answers: what the system looks like end to end — what the v0.6.0 build runs, the clients and the one pair each starts from, the per-platform artifacts, plugins and kit, OAuth on the same origin, context, containers, module structure, the five runtime scenarios, and where each constitutional rule is enforced
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what the system looks like end to end \u2014 what the v0.6.0 build runs, the clients and the one pair each starts from, the per-platform artifacts, plugins and kit, OAuth on the same origin, context, containers, module structure, the five runtime scenarios, and where each constitutional rule is enforced"
+---
 
 # Architecture overview
 

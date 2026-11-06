@@ -1,9 +1,8 @@
-<!--
-id: start/run-your-own
-tier: client
-status: current
-answers: how to run an OML server: oml quickstart on a laptop, one host with TLS for a team, and Kubernetes; what each gives and what it needs
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how to run an OML server: oml quickstart on a laptop, one host with TLS for a team, and Kubernetes; what each gives and what it needs"
+---
 
 # Run your own server
 
@@ -78,6 +77,6 @@ instance is ready. Read followers and cluster mode are open work
 ## Next
 
 Give each agent its own key with `oml keys issue-agent --out`
-([first workarea and keys](first-workarea.md)). Against the quickstart's stack, run it as
+([first workarea and keys](../guides/administering.md)). Against the quickstart's stack, run it as
 `OML_CLI_CREDENTIALS=./oml/credentials oml keys issue-agent …`, because the quickstart keeps its
 admin pair there and not in the file `oml login` writes.

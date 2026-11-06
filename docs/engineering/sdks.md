@@ -1,9 +1,8 @@
-<!--
-id: engineering/sdks
-tier: engineering
-status: current
-answers: which generators make the Python and TypeScript clients from openapi.yaml and at which pinned versions, the package names, what the hand-written wrappers add — the URL-and-key start, one Idempotency-Key per write, cursor iteration, one error type carrying the envelope, the seven verbs — and the rule that regenerates both clients whenever openapi.yaml changes
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "which generators make the Python and TypeScript clients from openapi.yaml and at which pinned versions, the package names, what the hand-written wrappers add \u2014 the URL-and-key start, one Idempotency-Key per write, cursor iteration, one error type carrying the envelope, the seven verbs \u2014 and the rule that regenerates both clients whenever openapi.yaml changes"
+---
 
 # Client SDKs
 

@@ -1,9 +1,8 @@
-<!--
-id: start/index
-tier: client
-status: current
-answers: which of three paths to take (use a server, run a server, administer a server) and what each needs
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "which of three paths to take (use a server, run a server, administer a server) and what each needs"
+---
 
 # Get started
 
@@ -16,12 +15,12 @@ a key from that server the key is the only setting.
 |---|---|---|
 | A user | an agent key from your administrator | [Install the CLI](install.md), then [connect Claude Code](../guides/claude-code.md), [claude.ai or a phone](../guides/claude-ai-and-mobile.md) or [another tool](../guides/other-harnesses.md) |
 | Running a server | a machine with Docker | [Run your own server](run-your-own.md) |
-| An administrator | an admin key | [First workarea and keys](first-workarea.md) |
+| An administrator | an admin key | [First workarea and keys](../guides/administering.md) |
 
 !!! tip "Something failed?"
-    Installer refuses or prints "NOT checked": [installer problems](../guides/troubleshooting.md#the-installer-refuses) and the [FAQ](../faq.md#install-and-connect).
-    `oml login` fails: [login problems](../guides/troubleshooting.md#oml-login-fails).
-    Plugin shows no tools: [plugin problems](../guides/troubleshooting.md#the-claude-code-plugin-shows-no-tools-or-does-not-connect).
+    Installer refuses or prints "NOT checked": [installer problems](../help/troubleshooting-client.md#the-installer-refuses) and the [FAQ](../faq.md#install-and-connect).
+    `oml login` fails: [login problems](../help/troubleshooting-client.md#oml-login-fails).
+    Plugin shows no tools: [plugin problems](../help/troubleshooting-client.md#the-claude-code-plugin-shows-no-tools-or-does-not-connect).
 
 ## Use a server (about two minutes with a key)
 
@@ -29,7 +28,7 @@ a key from that server the key is the only setting.
 2. Run `oml login <server url>`; it asks for the key without echo and stores it only after the
    server accepts it. With a key from the public server, skip this step.
 3. Run `oml setup claude-code` and reload plugins in Claude Code.
-4. Ask your agent to remember something: [your first memory](first-memory.md).
+4. Ask your agent to remember something: [your first memory](quickstart.md).
 
 ## Run a server (about five minutes with Docker)
 

@@ -1,9 +1,8 @@
-<!--
-id: api/reviewer-crews
-tier: engineering
-status: current
-answers: how a reviewer crew integrates over plain HTTP; the queue → next → fetch → verdict loop for approve and reject; serve invalidation and expiry; polling cadence; k>1 and human-required interplay; the review.* refusals
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how a reviewer crew integrates over plain HTTP; the queue \u2192 next \u2192 fetch \u2192 verdict loop for approve and reject; serve invalidation and expiry; polling cadence; k>1 and human-required interplay; the review.* refusals"
+---
 
 # Reviewer crews over HTTP
 

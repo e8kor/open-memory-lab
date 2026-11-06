@@ -1,9 +1,8 @@
-<!--
-id: faq
-tier: client
-status: current
-answers: the questions users and operators ask most, with the answer and the page that holds the detail
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "the questions users and operators ask most, with the answer and the page that holds the detail"
+---
 
 # FAQ
 
@@ -24,7 +23,7 @@ tampered release. Install cosign and rerun with `--require-signature`
 **The plugin shows no tools.** Set `api_key` and `url` in the plugin settings (`/plugin configure
 oml@open-memory-lab`), not `OML_API_KEY` in the shell, then reload plugins. You need Claude Code
 2.1.285 or later, no `/mcp` suffix on the `url`, and an agent key rather than an admin key
-([troubleshooting](guides/troubleshooting.md)).
+([troubleshooting](help/troubleshooting-client.md)).
 
 **I get `401 auth.invalid` right after setup.** The key is for another server. With an empty `url`
 the plugin uses `https://memory.doublegate.io`; set your own server's URL and use a key issued
@@ -42,7 +41,7 @@ minutes and works once ([claude.ai and mobile](guides/claude-ai-and-mobile.md)).
 
 **I wrote a memory and my agent cannot see it.** A held memory is visible to its author with
 `include_unreviewed: true` or when listing without a query. Everyone else sees it after a
-non-author approves it ([your first memory](start/first-memory.md)).
+non-author approves it ([your first memory](start/quickstart.md)).
 
 **It was approved but recall finds nothing.** Recall matches memories that contain every word of
 the query unless any-word search is on, so try fewer words. The key also needs a reader grant on
@@ -50,7 +49,7 @@ that workarea, otherwise the answer is `access.not_found`.
 
 **Can I read my own unreviewed work while I develop?** In a development workarea that opts in,
 readers recall memories still waiting for review, marked as such. Nothing leaves until a person
-commits it with none waiting ([in-progress workareas](use/in-progress.md)).
+commits it with none waiting ([in-progress workareas](use/workareas.md)).
 
 **Why was my write refused with `submission.scan_veto`?** The deterministic scan found a leaked
 key or similar. `details.finding` names the class and the rule, and nothing was stored. Remove it
@@ -87,7 +86,7 @@ items already present without the sync's anchor (`--adopt`), and the public serv
 
 **`/readyz` answers 503.** Read which of `postgres`, `fork_check` and `names_assigned` is not `ok`.
 The server also refuses to start when the owner and serving database URLs log in as one role
-([troubleshooting](guides/troubleshooting.md#server-readyz-answers-503)).
+([troubleshooting](help/troubleshooting-client.md#server-readyz-answers-503)).
 
 **Many writers get `503 system.unavailable` "chain head contention".** Writes in one organisation
 serialise on the chain head. Retry after `Retry-After`; the ceiling is not yet measured

@@ -1,9 +1,8 @@
-<!--
-id: use/guardrails
-tier: client
-status: current
-answers: what a guardrail is, how a team gives its agents reviewed standing rules, how they load and are checked, and the limits of a rule an agent only reads
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what a guardrail is, how a team gives its agents reviewed standing rules, how they load and are checked, and the limits of a rule an agent only reads"
+---
 
 # Rules for agents
 

@@ -1,9 +1,8 @@
-<!--
-id: concepts
-tier: engineering
-status: current
-answers: what each term of the design vocabulary means, in reading order, and which page or ADR decides it
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what each term of the design vocabulary means, in reading order, and which page or ADR decides it"
+---
 
 # Concepts
 

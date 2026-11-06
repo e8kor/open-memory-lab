@@ -1,9 +1,8 @@
-<!--
-id: operations/failure-modes
-tier: engineering
-status: current
-answers: what each dependency failure does to each client-facing operation; which refusals fire with which typed error code; which degradations are visible in which signal
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what each dependency failure does to each client-facing operation; which refusals fire with which typed error code; which degradations are visible in which signal"
+---
 
 # Failure modes
 

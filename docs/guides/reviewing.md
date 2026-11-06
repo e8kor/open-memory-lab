@@ -1,9 +1,8 @@
-<!--
-id: guides/reviewing
-tier: engineering
-status: current
-answers: how a person reviews held memories: what held means and why the reviewer is never the author, getting and storing a reviewer key, taking the next held memory, reading it and its sources, approving and rejecting, what to check, supersessions and steering, crews and review policy, what approval changes, and what a reviewer can never do
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how a person reviews held memories: what held means and why the reviewer is never the author, getting and storing a reviewer key, taking the next held memory, reading it and its sources, approving and rejecting, what to check, supersessions and steering, crews and review policy, what approval changes, and what a reviewer can never do"
+---
 
 # Guide: reviewing memories
 

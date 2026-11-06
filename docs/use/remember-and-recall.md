@@ -1,9 +1,8 @@
-<!--
-id: use/remember-and-recall
-tier: client
-status: current
-answers: what an agent saves and finds with the three tools, how recall is scoped and budgeted, and how a memory is corrected, retired, linked or checked against what is already held
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what an agent saves and finds with the three tools, how recall is scoped and budgeted, and how a memory is corrected, retired, linked or checked against what is already held"
+---
 
 # Remember and recall
 

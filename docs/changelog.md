@@ -1,9 +1,8 @@
-<!--
-id: changelog
-tier: client
-status: current
-answers: what each OML release changed for users and operators, newest first
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what each OML release changed for users and operators, newest first"
+---
 
 # Release notes
 

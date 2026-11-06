@@ -1,9 +1,8 @@
-<!--
-id: architecture/storage
-tier: engineering
-status: current
-answers: where the transactional commit point is; how the per-tenant signed hash chain, the outbox protocol and the derived lake interlock; where attachment bytes live
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "where the transactional commit point is; how the per-tenant signed hash chain, the outbox protocol and the derived lake interlock; where attachment bytes live"
+---
 
 # Storage: commit point, chain, outbox, lake
 

@@ -1,9 +1,8 @@
-<!--
-id: reference/index
-tier: client
-status: current
-answers: where each exact fact lives: CLI verbs, HTTP routes, MCP tools, settings, errors, formats
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "where each exact fact lives: CLI verbs, HTTP routes, MCP tools, settings, errors, formats"
+---
 
 # Reference
 

@@ -1,9 +1,8 @@
-<!--
-id: data/chain-format
-tier: engineering
-status: current
-answers: the byte-level chain spec — the signed envelope fields, JCS signed_bytes, SHA-256 hash, Ed25519 signature, the genesis rule, and the verification procedure an auditor can implement from this page alone
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "the byte-level chain spec \u2014 the signed envelope fields, JCS signed_bytes, SHA-256 hash, Ed25519 signature, the genesis rule, and the verification procedure an auditor can implement from this page alone"
+---
 
 # Journal chain format
 

@@ -1,9 +1,8 @@
-<!--
-id: operations/runbooks
-tier: engineering
-status: current
-answers: how to diagnose and act on each named operational condition — what it means, the doctor fields and metrics to read, the decision tree, and the evidence to capture first
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how to diagnose and act on each named operational condition \u2014 what it means, the doctor fields and metrics to read, the decision tree, and the evidence to capture first"
+---
 
 # Runbooks
 

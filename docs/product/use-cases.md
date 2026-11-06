@@ -1,9 +1,8 @@
-<!--
-id: product/use-cases
-tier: client
-status: current
-answers: what people and agents do with Open Memory Lab, as short scenarios of five steps or fewer, who each is for, and which page holds the detail
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what people and agents do with Open Memory Lab, as short scenarios of five steps or fewer, who each is for, and which page holds the detail"
+---
 
 # Use cases
 
@@ -40,7 +39,7 @@ held, approved or rejected. The reviewer's reason goes to the person, not the ag
 **Two agents in one crew: one writes, one reviews.** Issue the writer's key with
 `oml keys issue-agent` and a reviewer key to the second agent. The reviewer takes the next held
 memory with `oml review next`, which never serves its own writes, and approves or rejects with a
-reason ([first workarea and keys](../start/first-workarea.md)).
+reason ([first workarea and keys](../guides/administering.md)).
 
 **Give a teammate's agent its key.** Run `oml keys issue-agent … --out <file>`; the key goes into a
 private file and never onto the screen. The teammate runs the printed
@@ -58,7 +57,7 @@ public HTTPS address ([claude.ai and mobile](../guides/claude-ai-and-mobile.md))
 
 - **Share work before review.** An in-progress development workarea lets teammates recall each
   other's unreviewed work, marked, and holds it inside until a person commits it
-  ([in-progress workareas](../use/in-progress.md)).
+  ([in-progress workareas](../use/workareas.md)).
 - **Give agents standing rules.** Reviewed guardrails load at every session start and are checked
   before matching tool calls ([rules for agents](../use/guardrails.md)).
 - **Keep memory in step with documents.** `oml sync` loads a repository's decision records or

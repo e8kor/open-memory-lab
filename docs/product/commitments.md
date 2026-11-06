@@ -1,9 +1,8 @@
-<!--
-id: product/commitments
-tier: client
-status: current
-answers: every guarantee Open Memory Lab makes, sorted into four honesty tiers, each with its enforcement point and the assumption it rests on
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "every guarantee Open Memory Lab makes, sorted into four honesty tiers, each with its enforcement point and the assumption it rests on"
+---
 
 # What OML guarantees
 

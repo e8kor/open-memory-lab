@@ -1,9 +1,8 @@
-<!--
-id: guides/claude-ai-and-mobile
-tier: engineering
-status: current
-answers: how claude.ai, Claude Desktop's connectors and the Claude mobile apps reach an OML server through a one-time connect code on the server's own origin; what the server needs; the administrator's and the user's steps; what chat and mobile get and do not get; how a connection ends; and the open question of claude.ai's request headers
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how claude.ai, Claude Desktop's connectors and the Claude mobile apps reach an OML server through a one-time connect code on the server's own origin; what the server needs; the administrator's and the user's steps; what chat and mobile get and do not get; how a connection ends; and the open question of claude.ai's request headers"
+---
 
 # Guide: claude.ai and mobile
 

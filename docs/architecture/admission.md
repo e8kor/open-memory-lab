@@ -1,9 +1,8 @@
-<!--
-id: architecture/admission
-tier: engineering
-status: current
-answers: what the admission pipeline does between capture and release; what a review policy object contains; who supplies review capacity and what happens when it is absent
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what the admission pipeline does between capture and release; what a review policy object contains; who supplies review capacity and what happens when it is absent"
+---
 
 # Admission
 

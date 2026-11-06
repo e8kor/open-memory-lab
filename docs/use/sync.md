@@ -1,9 +1,8 @@
-<!--
-id: use/sync
-tier: client
-status: current
-answers: how oml sync keeps a workarea in step with a repository's documents and code, reviewed in bulk
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how oml sync keeps a workarea in step with a repository's documents and code, reviewed in bulk"
+---
 
 # Sync docs and code
 

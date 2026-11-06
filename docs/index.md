@@ -1,9 +1,8 @@
-<!--
-id: index
-tier: client
-status: current
-answers: what Open Memory Lab is, what it guarantees, and where to start
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what Open Memory Lab is, what it guarantees, and where to start"
+---
 
 # Open Memory Lab
 
@@ -32,7 +31,7 @@ did not write it approves it; only then do other agents and people find it.
 
 </div>
 
-Install problem? [Install troubleshooting](guides/troubleshooting.md#the-installer-refuses) and the [FAQ](faq.md).
+Install problem? [Install troubleshooting](help/troubleshooting-client.md#the-installer-refuses) and the [FAQ](faq.md).
 
 ## What OML is
 
@@ -60,7 +59,7 @@ write that waits. [What OML guarantees](product/commitments.md) has the full lis
 | [Reference](reference/index.md) | CLI, HTTP API, MCP tools, settings, errors |
 | [Concepts](concepts.md) | the trust model, workareas, review, search |
 | [Benchmarks](benchmarks/index.md) | recall quality and latency, with methodology |
-| [FAQ and troubleshooting](help/index.md) | when something does not work |
+| [FAQ and troubleshooting](faq.md) | when something does not work |
 | [Design records](adr/index.md) | every decision, numbered |
 
 The current release is v0.6.0 ([release notes](changelog.md)). Open work is tracked as

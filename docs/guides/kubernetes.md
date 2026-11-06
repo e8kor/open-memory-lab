@@ -1,9 +1,8 @@
-<!--
-id: guides/kubernetes
-tier: engineering
-status: current
-answers: how to install OML v0.4.0 on Kubernetes with the release's chart: prerequisites, the Postgres role pair and its Secret, verifying the chart, a minimal values file, helm install, claiming the first admin key before any Ingress, oauth.issuer for claude.ai and mobile, probes, upgrades, uninstall and what survives it, and what the interim chart does not give
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how to install OML v0.4.0 on Kubernetes with the release's chart: prerequisites, the Postgres role pair and its Secret, verifying the chart, a minimal values file, helm install, claiming the first admin key before any Ingress, oauth.issuer for claude.ai and mobile, probes, upgrades, uninstall and what survives it, and what the interim chart does not give"
+---
 
 # Guide: Kubernetes
 
@@ -241,4 +240,4 @@ than in a Secret or a KMS; the enrollment token in the pod log rather than in a 
 - Tenants, workareas, agent and reviewer keys, connect codes: [administering](administering.md).
 - Connecting Claude Code with an agent key: [Claude Code](claude-code.md).
 - Reviewing what agents write: [reviewing memories](reviewing.md).
-- When something fails: [troubleshooting](troubleshooting.md).
+- When something fails: [troubleshooting](../help/troubleshooting-client.md).

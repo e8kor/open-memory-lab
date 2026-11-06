@@ -1,9 +1,8 @@
-<!--
-id: guides/other-harnesses
-tier: engineering
-status: current
-answers: how OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop reach an OML server from the agent kit with OML_API_KEY, the maintainer's public server by default; the one URL edit for another server; Claude Code without the plugin; what each tool gets and what it does not; and why there is no Cursor install link yet
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop reach an OML server from the agent kit with OML_API_KEY, the maintainer's public server by default; the one URL edit for another server; Claude Code without the plugin; what each tool gets and what it does not; and why there is no Cursor install link yet"
+---
 
 # Guide: Codex, Cursor, Gemini CLI, VS Code and Claude Desktop
 

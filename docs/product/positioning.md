@@ -1,9 +1,8 @@
-<!--
-id: product/positioning
-tier: client
-status: current
-answers: who OML is for, the problem it answers, what it gives and costs, and what it deliberately does not do
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "who OML is for, the problem it answers, what it gives and costs, and what it deliberately does not do"
+---
 
 # Positioning
 
@@ -34,7 +33,7 @@ mirror your crews.
 The cost is a real gate. A memory is not visible to others until a reviewer has acted, and your
 organisation supplies that review capacity, normally a reviewing crew with a person as the
 exception path. A team that wants writes visible instantly is asking for what OML exists to
-refuse. [In-progress workareas](../use/in-progress.md) narrow the delay inside a development
+refuse. [In-progress workareas](../use/workareas.md) narrow the delay inside a development
 workarea, with unreviewed memories marked.
 
 ## AI-first, human in the loop

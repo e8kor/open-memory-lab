@@ -1,9 +1,8 @@
-<!--
-id: architecture/audit-and-lineage
-tier: engineering
-status: current
-answers: what the journal records and never records; what an evidence export contains; how lineage is queried; what erasure does to every copy class; how versions are numbered, superseded and retired
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what the journal records and never records; what an evidence export contains; how lineage is queried; what erasure does to every copy class; how versions are numbered, superseded and retired"
+---
 
 # Audit and lineage
 

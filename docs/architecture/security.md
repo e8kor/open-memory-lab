@@ -1,9 +1,8 @@
-<!--
-id: architecture/security
-tier: engineering
-status: current
-answers: what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included; what the connection surface adds to the threat model and what it leaves
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what the tenancy model isolates; who holds which key in the custody map; what the threat model defends against, hostile co-tenants included; what the connection surface adds to the threat model and what it leaves"
+---
 
 # Security and tenancy
 

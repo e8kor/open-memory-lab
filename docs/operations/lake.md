@@ -1,9 +1,8 @@
-<!--
-id: operations/lake
-tier: engineering
-status: current
-answers: how to run the lake writer, where the lake lives, what each table holds, how to read the lake as an operator, the named queries and their DuckDB form, the doctor lines and metrics
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how to run the lake writer, where the lake lives, what each table holds, how to read the lake as an operator, the named queries and their DuckDB form, the doctor lines and metrics"
+---
 
 # The lake
 

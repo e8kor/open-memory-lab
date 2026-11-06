@@ -1,9 +1,8 @@
-<!--
-id: use/workareas
-tier: client
-status: current
-answers: how memory is organised in workareas, what a person's own workarea and the shared universe are, how a workarea matures from development to validated, and what links and briefs do
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how memory is organised in workareas, what a person's own workarea and the shared universe are, how a workarea matures from development to validated, and what links and briefs do"
+---
 
 # Workareas
 

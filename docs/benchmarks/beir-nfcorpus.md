@@ -1,9 +1,8 @@
-<!--
-id: benchmarks/beir-nfcorpus
-tier: engineering
-status: generated · measured, not a design decision
-answers: what each search pipeline measured on BEIR NFCorpus: quality, per-category results, latency, the reference numbers and the limits of the run
--->
+---
+status: Measured
+verified: 2026-11-06
+answers: "what each search pipeline measured on BEIR NFCorpus: quality, per-category results, latency, the reference numbers and the limits of the run"
+---
 
 
 # BEIR NFCorpus

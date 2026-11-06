@@ -1,9 +1,8 @@
-<!--
-id: benchmarks/beir-scifact-x10
-tier: engineering
-status: generated · measured, not a design decision
-answers: what each search pipeline measured on SciFact ×10 (latency at 50k rows): quality, per-category results, latency, the reference numbers and the limits of the run
--->
+---
+status: Measured
+verified: 2026-11-06
+answers: "what each search pipeline measured on SciFact \u00d710 (latency at 50k rows): quality, per-category results, latency, the reference numbers and the limits of the run"
+---
 
 
 # SciFact ×10 (latency at 50k rows)

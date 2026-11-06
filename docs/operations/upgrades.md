@@ -1,9 +1,8 @@
-<!--
-id: operations/upgrades
-tier: engineering
-status: current
-answers: who runs migrations and when; in what order the binaries move; how much version skew a rolling update may hold; what rollback does and does not mean
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "who runs migrations and when; in what order the binaries move; how much version skew a rolling update may hold; what rollback does and does not mean"
+---
 
 # Upgrades
 

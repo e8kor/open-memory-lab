@@ -1,9 +1,8 @@
-<!--
-id: architecture/roles-and-keys
-tier: engineering
-status: current
-answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers; how a key's name differs from its principal and label; how a key's crew feeds the independence axis; what workarea structure an admin key reads without grants; what a connector key, a connect code and a connection are, and why a connection's token is never more than its key
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers; how a key's name differs from its principal and label; how a key's crew feeds the independence axis; what workarea structure an admin key reads without grants; what a connector key, a connect code and a connection are, and why a connection's token is never more than its key"
+---
 
 # Roles and keys
 

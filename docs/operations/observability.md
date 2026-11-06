@@ -1,9 +1,8 @@
-<!--
-id: operations/observability
-tier: engineering
-status: current
-answers: which metrics and structured-log fields each workload commits to emit, what oml doctor reads, and the starting points for alerting
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "which metrics and structured-log fields each workload commits to emit, what oml doctor reads, and the starting points for alerting"
+---
 
 # Observability
 

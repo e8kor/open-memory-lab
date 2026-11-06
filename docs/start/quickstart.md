@@ -1,9 +1,8 @@
-<!--
-id: start/first-memory
-tier: client
-status: current
-answers: how to save a first memory, why it is held, how to find it, how a reviewer approves it, and when others see it
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how to save a first memory, why it is held, how to find it, how a reviewer approves it, and when others see it"
+---
 
 # Your first memory
 

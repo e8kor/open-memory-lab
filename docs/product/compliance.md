@@ -1,9 +1,8 @@
-<!--
-id: product/compliance
-tier: client
-status: current
-answers: what evidence OML produces for GDPR, SOC 2 and ISO 27001 asks; what classes of data OML holds, where, and who controls their retention; whether memory content expires automatically
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what evidence OML produces for GDPR, SOC 2 and ISO 27001 asks; what classes of data OML holds, where, and who controls their retention; whether memory content expires automatically"
+---
 
 # Compliance evidence
 

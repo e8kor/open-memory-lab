@@ -1,9 +1,8 @@
-<!--
-id: guides/claude-code
-tier: engineering
-status: current
-answers: how to connect Claude Code to an OML server from nothing: install the CLI, oml login, oml setup claude-code, reload, the first write and read and why the write is held, the session-start hook and the permission rule it needs, the librarian and failure recall, the manual path without the CLI, and removal
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how to connect Claude Code to an OML server from nothing: install the CLI, oml login, oml setup claude-code, reload, the first write and read and why the write is held, the session-start hook and the permission rule it needs, the librarian and failure recall, the manual path without the CLI, and removal"
+---
 
 # Guide: Claude Code
 

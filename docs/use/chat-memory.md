@@ -1,9 +1,8 @@
-<!--
-id: use/chat-memory
-tier: client
-status: current
-answers: what chat memory captures, what it does not, how to switch it on and off, and where captured facts go
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what chat memory captures, what it does not, how to switch it on and off, and where captured facts go"
+---
 
 # Chat memory
 

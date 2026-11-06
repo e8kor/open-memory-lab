@@ -1,9 +1,8 @@
-<!--
-id: api/errors
-tier: engineering
-status: current
-answers: which typed error codes exist, their family, HTTP status and retryability, and why the taxonomy is closed; what a malformed, unknown or taken name answers; how the oauth family travels inside RFC error shapes on the OAuth endpoints
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "which typed error codes exist, their family, HTTP status and retryability, and why the taxonomy is closed; what a malformed, unknown or taken name answers; how the oauth family travels inside RFC error shapes on the OAuth endpoints"
+---
 
 # Error taxonomy
 

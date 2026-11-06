@@ -1,9 +1,8 @@
-<!--
-id: operations/operating
-tier: client
-status: current
-answers: which SLOs an operator can run an OML server to, how the error budget governs releases, what capacity has been measured, how data is protected, how an alert becomes an action, how to upgrade, and what the security posture is
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "which SLOs an operator can run an OML server to, how the error budget governs releases, what capacity has been measured, how data is protected, how an alert becomes an action, how to upgrade, and what the security posture is"
+---
 
 # Operating OML
 

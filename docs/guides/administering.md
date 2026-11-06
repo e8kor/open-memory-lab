@@ -1,9 +1,8 @@
-<!--
-id: guides/administering
-tier: engineering
-status: current
-answers: how an administrator runs an OML server with the oml CLI: the first hour on a new server; claiming it with the enrollment token and --token-stdin; where the admin credentials live; tenants; workareas, their tree and names; crews; issuing agent, reviewer and admin keys, --out and --connect-code; grants and denials; ending a connection; what stands in for revoking, rotating and listing keys until they are built; reading the journal; and the rules no admin key bypasses
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how an administrator runs an OML server with the oml CLI: the first hour on a new server; claiming it with the enrollment token and --token-stdin; where the admin credentials live; tenants; workareas, their tree and names; crews; issuing agent, reviewer and admin keys, --out and --connect-code; grants and denials; ending a connection; what stands in for revoking, rotating and listing keys until they are built; reading the journal; and the rules no admin key bypasses"
+---
 
 # Guide: administering a server
 

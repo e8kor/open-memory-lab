@@ -1,9 +1,8 @@
-<!--
-id: architecture/workareas
-tier: engineering
-status: current
-answers: how the workarea algebra works — universe tree, node-id grants, deny-wins semantics, edges — and how the status ladder changes a workarea's behavior; what the root is named and how paths relate to names; what a crew record is and how workareas and keys name one
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "how the workarea algebra works \u2014 universe tree, node-id grants, deny-wins semantics, edges \u2014 and how the status ladder changes a workarea's behavior; what the root is named and how paths relate to names; what a crew record is and how workareas and keys name one"
+---
 
 # Workareas: the algebra and the status ladder
 
