@@ -154,6 +154,17 @@ pub struct ConnectCodeRecord {
     pub voided_seq: Option<u64>,
 }
 
+/// A key's one live connect code as `oml keys show` names it: its id, its
+/// expiry, and whether it outlives the ten-minute default, which only an
+/// admin's explicit lifetime on a key confined to one workarea can do
+/// (ADR-0067 d3). The code itself is never here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveConnectCode {
+    pub code_id: Uuid,
+    pub expires_at: EventTime,
+    pub extended: bool,
+}
+
 /// How a connection's client was identified (postgres-schema.md
 /// `oauth_connections.client_kind`; ADR-0031 d5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2541,6 +2552,12 @@ pub enum AppError {
         "max_tokens counts text that include_text false would not send (retrieval.md token budgets, request.validation)"
     )]
     BudgetWithoutBodies,
+    /// A connect code asked to live outside one second to thirty days
+    /// (request.validation, field `/ttl_seconds`; ADR-0067 d3).
+    #[error(
+        "ttl_seconds {seconds} is outside 1 to {max}, the span a connect code may live (request.validation; ADR-0067 d3)"
+    )]
+    ConnectCodeLifetime { seconds: i64, max: i64 },
     /// `search` names a pipeline this deployment does not serve: unknown to
     /// the build, or not in `search.enabled` (ADR-0049 d4). `served` lists
     /// the names it does serve.

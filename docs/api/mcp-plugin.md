@@ -53,8 +53,10 @@ up front:
 - **No server session id.** The server issues no `Mcp-Session-Id`; a client
   that sends one is ignored, not refused. `initialize` is answered honestly
   (protocol version, capabilities, server name) and nothing is stored. Its
-  `instructions`, under the 4,096 characters Claude Code keeps, tell the agent
-  when to call [`oml_read`](#oml_read) with a query and with which words; the text is
+  `instructions`, under the 4,096 characters Claude Code keeps, describe what recall
+  through [`oml_read`](#oml_read) returns, when it helps and which words it matches, and what a
+  write through `oml_write` does; they tell the model to call nothing
+  ([ADR-0067](../adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) d2). The text is
   declared once, as `SERVER_INSTRUCTIONS` in
   `crates/transports/oml-transport-http/src/mcp.rs`
   ([ADR-0038](../adr/ADR-0038-the-agent-recalls-for-itself-and-a-failed-command-recalls-only-when-opted-in.md) d1).
@@ -247,16 +249,20 @@ An agent that tries anyway gets the MCP-level refusal for an unknown tool:
   predicate, not an error — fenced rows are simply absent.
 - All identifiers in the examples are illustrative.
 
-| Tool | One line | Annotations | Role class |
-|---|---|---|---|
-| [`oml_write`](#oml_write) | Store a claim, a derived claim, a new version or a retire-proposal — held on arrival | `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint: false` | writer; with `replaces`, writer (own claims) or dreamer (propose) |
-| [`oml_read`](#oml_read) | Fetch one version, recall in a subtree, or list own work or a workarea's tips | `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false` | reader, or the calling key for its own rows |
-| [`oml_workarea`](#oml_workarea) | One workarea: status, crew, the caller's effective verbs, pending transitions and the brief | `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false` | reader |
+| Tool | Title | One line | Annotations | Role class |
+|---|---|---|---|---|
+| [`oml_write`](#oml_write) | Remember | Store a claim, a derived claim, a new version or a retire-proposal — held on arrival | `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint: false` | writer; with `replaces`, writer (own claims) or dreamer (propose) |
+| [`oml_read`](#oml_read) | Recall | Fetch one version, recall in a subtree, or list own work or a workarea's tips | `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false` | reader, or the calling key for its own rows |
+| [`oml_workarea`](#oml_workarea) | Workarea | One workarea: status, crew, the caller's effective verbs, pending transitions and the brief | `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: false` | reader |
 
 The annotations are [ADR-0039](../adr/ADR-0039-the-api-rewritten-for-v0-4-0.md)
 d5's: Claude Code runs read-only calls in parallel and may repeat a pending
 idempotent one ([MCP in Claude Code](https://code.claude.com/docs/en/mcp),
 fetched 2026-11-03), and a write here is held for review, never destructive.
+Every tool also carries a `title`, the human name a client shows
+([ADR-0067](../adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md)
+d1). `oml_write` keeps `destructiveHint: false` because it only adds a held row and never
+changes or deletes an existing one.
 
 ## The claim item
 
@@ -300,7 +306,7 @@ items carry `text` and `tokens` like every other item, never a score.
 
 *Available since v0.4.0 · [releases](../product/releases.md)*
 
-Store a claim, a claim derived from others, a new version of one, or a
+Stores a claim, a claim derived from others, a new version of one, or a
 proposal to retire one. Every write is **held on arrival**: scanned, then
 reviewed by an identity that did not write it, and visible to others only
 after ratification (R2, R3; [admission](../architecture/admission.md)).

@@ -260,6 +260,10 @@ pub enum ConnectRefused {
     /// A session key, which a person acts with only from their web session
     /// (ADR-0045 d6).
     SessionKey,
+    /// A connect code asked to outlive the default, for a key whose grants
+    /// reach more than one workarea, the universe, or a user root
+    /// (ADR-0067 d3).
+    NotConfined,
 }
 
 impl ConnectRefused {
@@ -275,6 +279,7 @@ impl ConnectRefused {
             ConnectRefused::NotConfigured => "not_configured",
             ConnectRefused::ConnectorKey => "connector_key",
             ConnectRefused::SessionKey => "session_key",
+            ConnectRefused::NotConfined => "not_confined",
         }
     }
 }

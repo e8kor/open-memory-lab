@@ -728,7 +728,8 @@ or minting response, and appears in no log line, no URL and no journal payload; 
 holds the SHA-256 of the decoded symbols, and `connection.code_issued` carries only the code's id
 and expiry ([event catalog](../data/event-catalog.md#connectioncode_issued)). It lives
 `oauth.connect_code_ttl` ([configuration](../operations/configuration.md); shipped 10 minutes, 1
-to 60), is spent by its first correct entry on the authorization page, and is voided when a newer
+to 60), or the `ttl_seconds` an admin asks for, up to 30 days, for a key confined to one workarea
+([ADR-0067](../adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) d3), is spent by its first correct entry on the authorization page, and is voided when a newer
 code is minted for the same key or when the key is revoked, in that `key.revoked`'s commit.
 Minting a code, or revoking a connection of the key (`connection.revoked`, whatever its cause),
 also ends every live authorization request
