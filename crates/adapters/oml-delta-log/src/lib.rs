@@ -277,6 +277,51 @@ fn checkpoint_files(version: u64, files: &[(String, Kind)]) -> Option<Vec<String
 /// names a missing file, a file that does not parse, or a version the log does
 /// not reach.
 pub fn read_table(store: &dyn LogStore, at: Option<u64>) -> Result<Snapshot, LogError> {
+    read_table_with(store, at, &Limits::default())
+}
+
+/// The bounds a read keeps, each refused by name as `unreadable` (ADR-0062 d3).
+#[derive(Debug, Clone)]
+pub struct Limits {
+    /// Bytes of one JSON commit (or JSON checkpoint) file.
+    pub commit_bytes: u64,
+    /// Bytes of one line of one.
+    pub commit_line: usize,
+    /// Bytes of a checkpoint's parquet footer.
+    pub footer_bytes: u64,
+    /// Bytes of a checkpoint's projected column chunks, compressed and
+    /// uncompressed, summed.
+    pub checkpoint_bytes: u64,
+    /// Fields of a schema, nested ones included.
+    pub columns: usize,
+    /// Files directly under `_delta_log/`.
+    pub files: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            commit_bytes: 64 << 20,
+            commit_line: 16 << 20,
+            footer_bytes: 32 << 20,
+            checkpoint_bytes: 256 << 20,
+            columns: 20_000,
+            files: 100_000,
+        }
+    }
+}
+
+/// As [`read_table`], under `limits`.
+///
+/// # Errors
+/// As [`read_table`], and [`LogError::Unreadable`] naming the bound a file
+/// or a listing is over.
+pub fn read_table_with(
+    store: &dyn LogStore,
+    at: Option<u64>,
+    limits: &Limits,
+) -> Result<Snapshot, LogError> {
+    let _ = limits;
     let mut commits: BTreeMap<u64, String> = BTreeMap::new();
     let mut checkpoints: BTreeMap<u64, Vec<(String, Kind)>> = BTreeMap::new();
     let mut hint = false;

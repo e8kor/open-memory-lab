@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use oml_delta_log::{DirStore, LogError, LogStore, read_table};
+use oml_delta_log::{DirStore, Limits, LogError, LogStore, read_table, read_table_with};
 use serde_json::{Value, json};
 
 fn fixture() -> PathBuf {
@@ -162,18 +162,6 @@ fn no_object_outside_delta_log_is_ever_opened() {
             !n.contains('/') && !n.contains(".."),
             "{n} is not a file directly under _delta_log"
         );
-    }
-    // The store itself refuses a name that leaves the log's directory, so a
-    // data file or a sibling table is out of reach by construction.
-    for bad in [
-        "../x.parquet",
-        "region=EU/part-0.parquet",
-        "/etc/passwd",
-        "a/b",
-    ] {
-        assert!(store.get(bad).is_err(), "{bad} was opened");
-        assert!(store.get_range(bad, 0, 1).is_err(), "{bad} was opened");
-        assert!(store.len(bad).is_err(), "{bad} was opened");
     }
 }
 
@@ -332,4 +320,309 @@ fn a_version_the_log_does_not_reach_is_unreadable() {
         read_table(&m, Some(7)),
         Err(LogError::Unreadable(_))
     ));
+}
+
+fn scratch(test: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("oml-delta-log-{test}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn unreadable_with(r: Result<impl std::fmt::Debug, LogError>, words: &[&str]) {
+    match r {
+        Err(LogError::Unreadable(why)) => {
+            for w in words {
+                assert!(why.contains(w), "{why:?} does not name {w:?}");
+            }
+        }
+        other => panic!("expected unreadable naming {words:?}, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_store_opens_no_name_that_leaves_the_log_on_any_platform() {
+    let dir = scratch("traversal");
+    let table = dir.join("t");
+    std::fs::create_dir_all(table.join("_delta_log")).unwrap();
+    std::fs::create_dir_all(table.join("region=EU")).unwrap();
+    // Files a guard-less join would open: beside the log, in a partition
+    // directory, and one named by its absolute path.
+    std::fs::write(table.join("x.parquet"), b"outside").unwrap();
+    std::fs::write(table.join("region=EU/part-0.parquet"), b"data").unwrap();
+    let absolute = table.join("x.parquet");
+    let store = DirStore::new(&table);
+    let absolute = absolute.to_str().unwrap();
+    for bad in [
+        "../x.parquet",
+        "..\\x.parquet",
+        "region=EU/part-0.parquet",
+        "region=EU\\part-0.parquet",
+        absolute,
+        "a/b",
+        "..",
+        ".",
+        "",
+        "x\0y",
+    ] {
+        let expect = ["is not a file directly under _delta_log"];
+        unreadable_with(store.get(bad), &expect);
+        unreadable_with(store.get_range(bad, 0, 1), &expect);
+        unreadable_with(store.len(bad), &expect);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_is_never_followed_by_the_store() {
+    use std::os::unix::fs::symlink;
+    let dir = scratch("symlinks");
+    let real = dir.join("real");
+    std::fs::create_dir_all(real.join("_delta_log")).unwrap();
+    std::fs::write(
+        real.join("_delta_log/00000000000000000000.json"),
+        commit(&[PROTOCOL, &meta("")]),
+    )
+    .unwrap();
+    // A table whose whole _delta_log is a link to another directory's.
+    let linked = dir.join("linked");
+    std::fs::create_dir_all(&linked).unwrap();
+    symlink(real.join("_delta_log"), linked.join("_delta_log")).unwrap();
+    unreadable_with(read_table(&DirStore::new(&linked), None), &["symlink"]);
+    assert!(read_table(&DirStore::new(&real), None).is_ok());
+    // A commit that is a link to a file elsewhere reads as a missing commit.
+    let log = dir.join("t/_delta_log");
+    std::fs::create_dir_all(&log).unwrap();
+    std::fs::write(
+        log.join("00000000000000000000.json"),
+        commit(&[PROTOCOL, &meta("")]),
+    )
+    .unwrap();
+    std::fs::write(dir.join("elsewhere.json"), commit(&[])).unwrap();
+    symlink(
+        dir.join("elsewhere.json"),
+        log.join("00000000000000000001.json"),
+    )
+    .unwrap();
+    let store = DirStore::new(dir.join("t"));
+    assert!(!store.list().unwrap().iter().any(|n| n.ends_with("1.json")));
+    unreadable_with(store.get("00000000000000000001.json"), &["symlink"]);
+    unreadable_with(store.len("00000000000000000001.json"), &["symlink"]);
+    unreadable_with(
+        store.get_range("00000000000000000001.json", 0, 1),
+        &["symlink"],
+    );
+    assert_eq!(read_table(&store, None).unwrap().version, 0);
+}
+
+/// A tiny deterministic generator, so a failing name can be replayed.
+struct Rng(u64);
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+    fn digits(&mut self, n: usize) -> String {
+        (0..n)
+            .map(|_| char::from(b'0' + (self.next() % 10) as u8))
+            .collect()
+    }
+    fn number(&mut self) -> String {
+        match self.next() % 6 {
+            0 => "9".repeat(1 + (self.next() % 40) as usize),
+            1 => "18446744073709551615".into(),
+            2 => "18446744073709551616".into(),
+            3 => "0".repeat(1 + (self.next() % 30) as usize),
+            _ => {
+                let n = 1 + (self.next() % 25) as usize;
+                self.digits(n)
+            }
+        }
+    }
+}
+
+#[test]
+fn a_crafted_log_file_name_neither_allocates_nor_aborts_nor_overflows() {
+    let base = || {
+        let mut m = Mem::default();
+        m.put("00000000000000000000.json", &commit(&[PROTOCOL, &meta("")]));
+        m
+    };
+    // The name that asked `vec![None; 9999999999999]` for 240 TB.
+    let mut m = base();
+    m.put(
+        "00000000000000000000.checkpoint.0000000001.9999999999999.parquet",
+        "x",
+    );
+    assert_eq!(read_table(&m, None).unwrap().version, 0);
+    // A version at the top of u64: `v + 1` must not wrap or panic.
+    let mut m = base();
+    m.put("18446744073709551615.checkpoint.parquet", "x");
+    assert!(read_table(&m, None).is_err());
+    let mut m = base();
+    m.put("18446744073709551615.json", "");
+    assert!(read_table(&m, None).is_err());
+    // A seeded sweep over names of the three checkpoint shapes.
+    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    for _ in 0..4000 {
+        let mut m = base();
+        let v = format!("{:0>20}", rng.number());
+        let name = match rng.next() % 5 {
+            0 => format!("{v}.checkpoint.{}.{}.parquet", rng.number(), rng.number()),
+            1 => format!("{v}.checkpoint.parquet"),
+            2 => format!("{v}.checkpoint.{}.parquet", rng.digits(8)),
+            3 => format!("{v}.json"),
+            _ => format!(
+                "{}.checkpoint.{}.{}.parquet",
+                rng.number(),
+                rng.number(),
+                rng.number()
+            ),
+        };
+        m.put(&name, "x");
+        let _ = read_table(&m, None);
+    }
+}
+
+fn clicks_log() -> Mem {
+    let mut m = Mem::default();
+    let log = fixture().join("events/clicks/_delta_log");
+    for e in std::fs::read_dir(log).unwrap() {
+        let e = e.unwrap();
+        m.0.insert(
+            e.file_name().into_string().unwrap(),
+            std::fs::read(e.path()).unwrap(),
+        );
+    }
+    m
+}
+
+#[test]
+fn a_corrupt_checkpoint_is_unreadable_for_its_table_and_never_a_panic() {
+    let clean = clicks_log();
+    assert!(read_table(&clean, Some(2)).is_ok());
+    let name = "00000000000000000002.checkpoint.parquet";
+    let len = clean.0[name].len();
+    let mut panicked = Vec::new();
+    for i in 0..len {
+        for mask in [0xFF_u8, 0x80, 0x01] {
+            let mut m = Mem(clean.0.clone());
+            m.0.get_mut(name).unwrap()[i] ^= mask;
+            let run =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| read_table(&m, Some(2))));
+            if run.is_err() {
+                panicked.push((i, mask));
+            }
+        }
+    }
+    assert!(
+        panicked.is_empty(),
+        "the reader panicked on flips {panicked:?}"
+    );
+}
+
+struct Claimed {
+    name: String,
+    len: u64,
+    tail: Option<Vec<u8>>,
+}
+impl LogStore for Claimed {
+    fn list(&self) -> Result<Vec<String>, LogError> {
+        Ok(vec![self.name.clone()])
+    }
+    fn len(&self, _: &str) -> Result<u64, LogError> {
+        Ok(self.len)
+    }
+    fn get(&self, name: &str) -> Result<Vec<u8>, LogError> {
+        panic!("{name} was read whole though it is over its cap");
+    }
+    fn get_range(&self, name: &str, start: u64, len: u64) -> Result<Vec<u8>, LogError> {
+        match &self.tail {
+            Some(t) if start == self.len - 8 && len == 8 => Ok(t.clone()),
+            _ => panic!("{name} bytes {start}+{len} were read though the footer is over its cap"),
+        }
+    }
+}
+
+#[test]
+fn a_commit_of_300_megabytes_is_refused_before_it_is_read() {
+    let s = Claimed {
+        name: "00000000000000000000.json".into(),
+        len: 300_000_000,
+        tail: None,
+    };
+    unreadable_with(
+        read_table(&s, None),
+        &["00000000000000000000.json", "commit", "cap"],
+    );
+}
+
+#[test]
+fn a_commit_line_over_its_cap_is_refused_by_name() {
+    let mut m = Mem::default();
+    m.put(
+        "00000000000000000000.json",
+        &commit(&[
+            PROTOCOL,
+            &meta(""),
+            &format!(r#"{{"add":{{"path":"{}"}}}}"#, "a".repeat(5000)),
+        ]),
+    );
+    assert!(read_table(&m, None).is_ok());
+    let tight = Limits {
+        commit_line: 1000,
+        ..Limits::default()
+    };
+    unreadable_with(read_table_with(&m, None, &tight), &["line 3", "cap"]);
+}
+
+#[test]
+fn a_checkpoint_footer_over_its_cap_is_refused_before_it_is_read() {
+    let mut tail = 100_000_000_u32.to_le_bytes().to_vec();
+    tail.extend_from_slice(b"PAR1");
+    let s = Claimed {
+        name: "00000000000000000000.checkpoint.parquet".into(),
+        len: 1 << 31,
+        tail: Some(tail),
+    };
+    unreadable_with(read_table(&s, None), &["footer", "cap"]);
+}
+
+#[test]
+fn a_checkpoint_whose_projected_columns_are_over_the_cap_is_refused() {
+    let tight = Limits {
+        checkpoint_bytes: 100,
+        ..Limits::default()
+    };
+    unreadable_with(
+        read_table_with(&clicks_log(), Some(2), &tight),
+        &["checkpoint", "projected", "cap"],
+    );
+}
+
+#[test]
+fn a_schema_of_too_many_columns_is_refused_by_name() {
+    let tight = Limits {
+        columns: 0,
+        ..Limits::default()
+    };
+    let mut m = Mem::default();
+    m.put("00000000000000000000.json", &commit(&[PROTOCOL, &meta("")]));
+    unreadable_with(read_table_with(&m, None, &tight), &["columns", "cap"]);
+}
+
+#[test]
+fn a_log_of_too_many_files_is_refused_by_name() {
+    let mut m = Mem::default();
+    m.put("00000000000000000000.json", &commit(&[PROTOCOL, &meta("")]));
+    m.put("00000000000000000001.json", &commit(&[]));
+    m.put("00000000000000000002.json", &commit(&[]));
+    let tight = Limits {
+        files: 2,
+        ..Limits::default()
+    };
+    unreadable_with(read_table_with(&m, None, &tight), &["files", "cap"]);
+    assert!(read_table(&m, None).is_ok());
 }

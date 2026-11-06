@@ -737,3 +737,278 @@ fn tempfile_dir(test: &str) -> PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
+
+/// A lake directory holding one table whose log is these commits.
+fn lake_of(test: &str, rel: &str, commits: &[String]) -> PathBuf {
+    let dir = tempfile_dir(test);
+    let log = dir.join(rel).join("_delta_log");
+    std::fs::create_dir_all(&log).unwrap();
+    for (v, body) in commits.iter().enumerate() {
+        std::fs::write(log.join(format!("{v:020}.json")), body).unwrap();
+    }
+    dir
+}
+
+const PROTOCOL: &str = r#"{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}"#;
+
+fn meta_line(fields: &Value, mapping: bool) -> String {
+    let config = if mapping {
+        json!({ "delta.columnMapping.mode": "name" })
+    } else {
+        json!({})
+    };
+    json!({ "metaData": {
+        "id": "t-1", "name": "t", "format": { "provider": "parquet", "options": {} },
+        "schemaString": json!({ "type": "struct", "fields": fields }).to_string(),
+        "partitionColumns": [], "configuration": config,
+    }})
+    .to_string()
+}
+
+fn leaf(name: &str, comment: &str, mapping: Option<(u32, &str)>) -> Value {
+    let mut metadata = json!({ "comment": comment });
+    if let Some((id, physical)) = mapping {
+        metadata["delta.columnMapping.id"] = json!(id);
+        metadata["delta.columnMapping.physicalName"] = json!(physical);
+    }
+    json!({ "name": name, "type": "string", "nullable": true, "metadata": metadata })
+}
+
+fn parent(name: &str, inner: &[Value], mapping: Option<(u32, &str)>) -> Value {
+    let mut metadata = json!({});
+    if let Some((id, physical)) = mapping {
+        metadata["delta.columnMapping.id"] = json!(id);
+        metadata["delta.columnMapping.physicalName"] = json!(physical);
+    }
+    json!({ "name": name, "nullable": true, "metadata": metadata,
+            "type": { "type": "struct", "fields": inner } })
+}
+
+fn col_keys(lake: &std::path::Path) -> Vec<(String, Option<String>)> {
+    let tables = read_lake(lake, 3, None);
+    let snap = tables[0].outcome.as_ref().unwrap();
+    items("t", &format!("{BASE}/t"), snap)
+        .into_iter()
+        .filter(|i| i.claim_key.contains("/col/"))
+        .map(|i| (i.claim_key, i.fragment))
+        .collect()
+}
+
+#[test]
+fn nested_columns_sharing_a_leaf_name_each_keep_their_claim_under_column_mapping() {
+    // After an upgrade to column mapping a column's physical name is its old
+    // name, unique among its siblings only: both leaves are called `city`.
+    let fields = json!([
+        parent(
+            "billing",
+            &[leaf("city", "Billing city", Some((2, "city")))],
+            Some((1, "billing"))
+        ),
+        parent(
+            "shipping",
+            &[leaf("city", "Shipping city", Some((4, "city")))],
+            Some((3, "shipping"))
+        ),
+    ]);
+    let lake = lake_of(
+        "nested-mapped",
+        "t",
+        &[format!("{PROTOCOL}\n{}\n", meta_line(&fields, true))],
+    );
+    let got = col_keys(&lake);
+    assert_eq!(
+        got,
+        [
+            (
+                "delta/t/col/billing.city".to_owned(),
+                Some("col=billing.city".to_owned())
+            ),
+            (
+                "delta/t/col/shipping.city".to_owned(),
+                Some("col=shipping.city".to_owned())
+            ),
+        ]
+    );
+}
+
+#[test]
+fn turning_column_mapping_on_re_keys_no_nested_column() {
+    let plain = json!([
+        parent("billing", &[leaf("city", "Billing city", None)], None),
+        parent("shipping", &[leaf("city", "Shipping city", None)], None),
+    ]);
+    let mapped = json!([
+        parent(
+            "billing",
+            &[leaf("city", "Billing city", Some((2, "city")))],
+            Some((1, "billing"))
+        ),
+        parent(
+            "shipping",
+            &[leaf("city", "Shipping city", Some((4, "city")))],
+            Some((3, "shipping"))
+        ),
+    ]);
+    let before = col_keys(&lake_of(
+        "nested-plain",
+        "t",
+        &[format!("{PROTOCOL}\n{}\n", meta_line(&plain, false))],
+    ));
+    let after = col_keys(&lake_of(
+        "nested-on",
+        "t",
+        &[format!("{PROTOCOL}\n{}\n", meta_line(&mapped, true))],
+    ));
+    assert_eq!(before.len(), 2, "{before:?}");
+    assert_eq!(before, after);
+}
+
+#[test]
+fn two_columns_that_would_share_a_key_are_both_kept() {
+    // Physical names that collide as paths (a writer's bug): neither claim is
+    // dropped, and the id tells them apart.
+    let fields = json!([
+        leaf("a", "First", Some((1, "same"))),
+        leaf("b", "Second", Some((2, "same"))),
+    ]);
+    let lake = lake_of(
+        "collide",
+        "t",
+        &[format!("{PROTOCOL}\n{}\n", meta_line(&fields, true))],
+    );
+    let got = col_keys(&lake);
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert_ne!(got[0].0, got[1].0);
+}
+
+#[test]
+fn a_run_without_uri_base_is_refused_and_stores_no_local_path() {
+    let fake = Fake::new();
+    let mut o = opts(None);
+    o.uri_base = None;
+    let mut sink = Vec::new();
+    match execute(&fake, &o, &mut sink) {
+        Err(CliError::Local(why)) => {
+            assert!(why.contains("--uri-base"), "{why}");
+            assert!(why.contains("local path"), "{why}");
+        }
+        other => panic!("{:?}", other.map(|r| r.exit)),
+    }
+    assert!(fake.writes.borrow().is_empty());
+    assert!(fake.checks.borrow().is_empty());
+}
+
+#[test]
+fn a_file_uri_base_is_admitted_because_the_operator_wrote_it() {
+    let mut o = opts(None);
+    o.uri_base = Some("file:///srv/lake".into());
+    let r = run(&Fake::new(), &o);
+    assert_eq!(r.json["source"]["uri"], "file:///srv/lake");
+}
+
+#[test]
+fn a_type_change_changes_the_schema_claim_and_no_column_claim() {
+    let dir = copy_orders("type-change");
+    let mut o = opts(None);
+    o.root = dir.clone();
+    let fake = Fake::new();
+    run(&fake, &o);
+    // Version 6 widens `total_amount` from decimal(18,2) to decimal(20,2).
+    let v5 = std::fs::read_to_string(dir.join("sales/orders/_delta_log/00000000000000000005.json"))
+        .unwrap();
+    let mut meta: Value = serde_json::from_str(v5.lines().next().unwrap()).unwrap();
+    let schema = meta["metaData"]["schemaString"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(schema.contains("decimal(18,2)"));
+    meta["metaData"]["schemaString"] = json!(schema.replace("decimal(18,2)", "decimal(20,2)"));
+    std::fs::write(
+        dir.join("sales/orders/_delta_log/00000000000000000006.json"),
+        meta.to_string() + "\n",
+    )
+    .unwrap();
+    let r = run(&fake, &o);
+    let out = outcomes(&r);
+    assert_eq!(out["delta/sales/orders/schema"], "changed");
+    assert_eq!(out["delta/sales/orders/table"], "unchanged");
+    for (k, o) in &out {
+        if k.contains("/col/") {
+            assert_eq!(o, "unchanged", "{k}");
+        }
+    }
+}
+
+fn rels(root: &std::path::Path, depth: usize) -> Vec<String> {
+    read_lake(root, depth, None)
+        .into_iter()
+        .map(|t| t.rel)
+        .collect()
+}
+
+#[test]
+fn discovery_does_not_descend_into_a_table() {
+    let dir = copy_orders("no-descend");
+    // What a real table holds beside its log: partition directories, data
+    // files, and in one a log of its own.
+    let part = dir.join("sales/orders/region=EU");
+    std::fs::create_dir_all(part.join("_delta_log")).unwrap();
+    std::fs::write(part.join("part-0.parquet"), b"data").unwrap();
+    std::fs::write(
+        part.join("_delta_log/00000000000000000000.json"),
+        format!("{PROTOCOL}\n"),
+    )
+    .unwrap();
+    assert_eq!(rels(&dir, 5), ["sales/orders"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn discovery_never_follows_a_symlink() {
+    use std::os::unix::fs::symlink;
+    let dir = copy_orders("symlinks");
+    let real = dir.join("sales/orders");
+    symlink(&real, dir.join("linked")).unwrap();
+    symlink(&real, dir.join("sales/alias")).unwrap();
+    assert_eq!(rels(&dir, 4), ["sales/orders"]);
+    // A table whose _delta_log is a link is found and refused by name.
+    let odd = dir.join("odd");
+    std::fs::create_dir_all(&odd).unwrap();
+    symlink(real.join("_delta_log"), odd.join("_delta_log")).unwrap();
+    let tables = read_lake(&dir, 4, None);
+    let t = tables.iter().find(|t| t.rel == "odd").expect("found");
+    match &t.outcome {
+        Err(oml_delta_log::LogError::Unreadable(why)) => assert!(why.contains("symlink"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_corrupt_checkpoint_makes_its_table_unreadable_and_the_run_goes_on() {
+    let dir = tempfile_dir("corrupt");
+    for table in ["events/clicks", "sales/orders"] {
+        let log = dir.join(table).join("_delta_log");
+        std::fs::create_dir_all(&log).unwrap();
+        for e in std::fs::read_dir(fixture().join(table).join("_delta_log")).unwrap() {
+            let e = e.unwrap();
+            std::fs::copy(e.path(), log.join(e.file_name())).unwrap();
+        }
+    }
+    let cp = dir.join("events/clicks/_delta_log/00000000000000000002.checkpoint.parquet");
+    let clean = std::fs::read(&cp).unwrap();
+    // Flips that made the parquet crate panic inside the reader.
+    for (i, mask) in [
+        (1718, 0x01),
+        (11267, 0x01),
+        (11270, 0xFF),
+        (11431, 0xFF),
+        (12594, 0x01),
+    ] {
+        let mut bad = clean.clone();
+        bad[i] ^= mask;
+        std::fs::write(&cp, &bad).unwrap();
+        let tables = read_lake(&dir, 3, None);
+        assert_eq!(tables.len(), 2, "flip at {i}");
+        assert!(tables[1].outcome.is_ok(), "flip at {i}: orders unread");
+    }
+}
