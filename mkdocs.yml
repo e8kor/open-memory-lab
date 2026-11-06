@@ -5,6 +5,7 @@ repo_url: https://github.com/e8kor/open-memory-lab
 edit_uri: edit/main/docs/
 docs_dir: docs
 exclude_docs: |
+  includes/
   assets/brand/tokens.md
   contributing/
   NUMBERS.md
@@ -17,6 +18,7 @@ extra:
   oml_series: "0.6"
 
 extra_css:
+  - stylesheets/oml.css
   - assets/status.css
 
 copyright: >
@@ -31,20 +33,24 @@ validation:
 theme:
   name: material
   logo: assets/brand/oml-mark.svg
+  font: false
   favicon: assets/brand/favicon.svg
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: deep purple
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
+    # Colours come from docs/stylesheets/oml.css, generated from design/tokens.json (ADR-0069).
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: deep purple
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
-        name: Switch to light mode
+        name: Switch to paper
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to night
   features:
     - navigation.tabs
     - navigation.tabs.sticky
@@ -67,6 +73,9 @@ markdown_extensions:
   - attr_list
   - md_in_html
   - pymdownx.details
+  - pymdownx.snippets:
+      base_path: [docs/includes]
+      check_paths: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
