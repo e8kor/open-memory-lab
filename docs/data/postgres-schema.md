@@ -1156,6 +1156,13 @@ CREATE TABLE artifact_keys (
 );
 ```
 
+As built by migration 0031 (ADR-0060 d6), the lake writer creates the row when it first
+materializes a version, with `created_at` and the check that `wrapped_dek` is NULL exactly
+when `destroyed_at` is set, and on `lifecycle.erase` nulls the key. Its sibling,
+`lake_dead_letter (tenant_id, outbox_seq, lake_table, reason, at, repaired_at)`, records an
+outbox row a lake table skipped (ADR-0060 d14). Both have row security and no serving-role
+grant.
+
 The erase transaction journals the erase event, sets `wrapped_dek` to NULL and `destroyed_at`, and
 removes plaintext-derived index rows (FTS, embeddings) in the same commit. Ciphertext copies
 elsewhere (lake parquet versions, object-store versions, Postgres backups) become unreadable, not

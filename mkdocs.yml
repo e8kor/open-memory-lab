@@ -125,6 +125,7 @@ nav:
       - Disaster recovery: operations/disaster-recovery.md
       - Capacity: operations/capacity.md
       - Releasing: operations/releasing.md
+      - The lake: operations/lake.md
   - Engineering:
       - Workspace plan: engineering/workspace-plan.md
       - Test strategy: engineering/test-strategy.md
@@ -195,5 +196,6 @@ nav:
       - ADR-0054: adr/ADR-0054-recall-is-measured-by-what-readers-do-next-and-only-other-readers-use-moves-a-rank-within-a-bound.md
       - ADR-0055: adr/ADR-0055-a-person-reviews-a-listed-set-of-held-items-in-one-act-each-item-judged-and-signed-as-one-verdict.md
       - ADR-0059: adr/ADR-0059-a-memory-states-when-it-is-true-recall-hides-what-has-ended-and-searches-the-dates-a-query-names-without-a-model.md
+      - ADR-0060: adr/ADR-0060-the-lake-writer-drains-the-outbox-it-has-seals-what-it-materializes-and-answers-only-the-operator.md
       - ADR-0063: adr/ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md
       - ADR-0065: adr/ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md

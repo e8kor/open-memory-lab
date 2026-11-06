@@ -5887,10 +5887,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(
-        applied, 30,
-        "every migration through 0030_origin_kind_validate"
-    );
+    assert_eq!(applied, 31, "every migration through 0031_lake_writer");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7334,10 +7331,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(
-        applied, 30,
-        "every migration through 0030_origin_kind_validate"
-    );
+    assert_eq!(applied, 31, "every migration through 0031_lake_writer");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8212,10 +8206,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .fetch_one(&mut conn)
             .await
             .expect("versions");
-    assert_eq!(
-        applied, 30,
-        "every migration through 0030_origin_kind_validate"
-    );
+    assert_eq!(applied, 31, "every migration through 0031_lake_writer");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;

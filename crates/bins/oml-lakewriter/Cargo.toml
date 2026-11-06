@@ -1,0 +1,35 @@
+[package]
+name = "oml-lakewriter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The lake writer (ADR-0003, ADR-0006 d1, ADR-0060): one process that drains the Postgres outbox into the Delta lake under its own Postgres role, holds the single-writer lease, runs the lake's maintenance, serves its metrics and doctor lines, and answers the operator's named lake queries. No server route and no client reads the lake."
+
+[[bin]]
+name = "oml-lakewriter"
+path = "src/main.rs"
+
+[dependencies]
+oml-lake.workspace = true
+chrono.workspace = true
+clap.workspace = true
+hex.workspace = true
+prometheus-client.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["chrono"] }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["signal", "net", "time", "rt-multi-thread", "io-util"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["json"] }
+uuid.workspace = true
+
+[dev-dependencies]
+deltalake.workspace = true
+oml-app.workspace = true
+oml-pg.workspace = true
+oml-port-contracts.workspace = true
+
+[lints]
+workspace = true

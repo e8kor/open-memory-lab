@@ -78,7 +78,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0057 | `main` |  | a memory carries the source anchor its author declares and oml sync ke | used |
 | adr | 0058 | `docs/production-requirements` | #71 | the public server runs to stated slos with an error budget and without | open |
 | adr | 0059 | `main` |  | a memory states when it is true recall hides what has ended and search | used |
-| adr | 0060 | `feat/lake-writer` | #75 | the lake writer drains the outbox it has seals what it materializes an | open |
+| adr | 0060 | `feat/lake-writer-r2` | #93 | the lake writer drains the outbox it has seals what it materializes an | open |
 | adr | 0061 | `design/rust-adapter` | #70 | oml sync reads a rust workspace as one claim per crate and one per mod | open |
 | adr | 0062 | `design/delta-mapping` | #74 | oml sync maps a delta lakes tables into anchored claims from the log a | open |
 | adr | 0063 | `feat/chat-memory-r2` | #88 | a chat turn becomes memory only when the agent in it writes the fact a | open |
@@ -244,7 +244,7 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0023 | `main` |  | recall telemetry | used |
 | migration | 0024 | `main` |  | review queue order | used |
 | migration | 0025 | `main` |  | source anchors | used |
-| migration | 0031 | `feat/lake-writer` | #75 | lake writer | open |
+| migration | 0031 | `feat/lake-writer-r2` | #93 | lake writer | open |
 | migration | 0027 | `feat/remember-dedup-r2` | #84 | similar keys | open |
 | migration | 0026 | `main` |  | valid time | used |
 | migration | 0028 | `feat/in-progress-r2-r2` | #86 | in progress | open |
