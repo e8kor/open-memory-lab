@@ -20,6 +20,7 @@
 
 pub mod error;
 pub mod mcp;
+mod metering;
 pub mod oauth;
 mod rescan;
 mod search;
@@ -40,7 +41,7 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
-use axum::routing::{MethodRouter, get, post};
+use axum::routing::{MethodRouter, get, post, put};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -99,6 +100,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/memories/{artifact_id}/supersede"),
     ("POST", "/v1/memories/{artifact_id}/source-check"),
     ("GET", "/v1/guardrails"),
+    ("GET", "/v1/account/usage"),
     ("POST", "/v2/review/next"),
     ("POST", "/v2/review/verdicts"),
     ("GET", "/v2/review/held"),
@@ -135,6 +137,10 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/admin/memories/search"),
     ("GET", "/v2/admin/memories/{artifact_id}"),
     ("GET", "/v2/admin/rescan"),
+    ("GET", "/v2/admin/accounts/{account}/usage"),
+    ("PUT", "/v2/admin/accounts/{account}/profile"),
+    ("GET", "/v2/admin/usage"),
+    ("GET", "/v2/admin/usage/drift"),
     ("GET", "/v2/search"),
     ("POST", "/v2/search/default"),
     ("GET", "/v2/usage/settings"),
@@ -346,6 +352,11 @@ where
             ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
             ("GET", "/v2/admin/rescan") => get(Self::rescan_route),
+            ("GET", "/v1/account/usage") => get(Self::account_usage_route),
+            ("GET", "/v2/admin/accounts/{account}/usage") => get(Self::admin_account_usage_route),
+            ("PUT", "/v2/admin/accounts/{account}/profile") => put(Self::set_account_profile_route),
+            ("GET", "/v2/admin/usage") => get(Self::admin_usage_route),
+            ("GET", "/v2/admin/usage/drift") => get(Self::admin_usage_drift_route),
             ("GET", "/v2/search") => get(Self::search_settings),
             ("POST", "/v2/search/default") => post(Self::set_search_default),
             ("GET", "/v2/usage/settings") => get(Self::usage_settings),

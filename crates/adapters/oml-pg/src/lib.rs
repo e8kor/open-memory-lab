@@ -23,6 +23,8 @@ use oml_app::domain::oauth::{
     UNUSED_REGISTRATION_SECONDS, UNUSED_REGISTRATIONS_MAX, cache_lifetime,
 };
 use oml_app::domain::origin::OriginKind;
+use oml_app::domain::signup::QuotaReached;
+use oml_app::domain::usage::{Meter, Month};
 use oml_app::domain::valid_time::{ValidEnd, ValidTime};
 use oml_app::domain::vocab_edges::EdgeState;
 use oml_app::domain::web::{Email, Provider};
@@ -32,7 +34,7 @@ use oml_app::domain::{
 };
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
-    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyRecord, IdempotencyScope,
+    Ceiling, CommitReceipt, CommitRequest, ConnectionStore, IdempotencyRecord, IdempotencyScope,
     JournalStore, MetadataFold, Retriever, StoreError, SubjectRow, TailEvent, TailScan, WebStore,
     claim_subject,
 };
@@ -1432,6 +1434,11 @@ pub struct PgStore {
     /// each migration: the trigram retriever is served only then (ADR-0049
     /// d8). Shared by every clone of the store, as the database is.
     trigram: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Whether the database holds 0038's meters, once a commit found them:
+    /// a database not yet migrated past 0037, which only an upgrade test
+    /// writes to, commits unmetered and is filled by 0038 (ADR-0070
+    /// Consequences). Shared by every clone, as the database is.
+    metered: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// The constants `bm25_postings` prunes by (ADR-0052 d6).
     prune: PruneLimits,
     /// The most readable anchored rows a filtered list reads anchor-first
@@ -1454,6 +1461,7 @@ impl PgStore {
             pool,
             owner_url: None,
             trigram: std::sync::Arc::default(),
+            metered: std::sync::Arc::default(),
             prune: PruneLimits::SERVED,
             anchor_first_max: ANCHOR_FIRST_MAX,
         }
@@ -1467,6 +1475,7 @@ impl PgStore {
             pool,
             owner_url: None,
             trigram: std::sync::Arc::default(),
+            metered: std::sync::Arc::default(),
             prune: PruneLimits::SERVED,
             anchor_first_max: ANCHOR_FIRST_MAX,
         }
@@ -3065,6 +3074,50 @@ async fn apply_fold(
             .await
             .map_err(backend)?;
         }
+        MetadataFold::AccountProfileSet {
+            user_root,
+            profile,
+            overrides,
+        } => {
+            match profile {
+                Some(profile) => sqlx::query(
+                    "INSERT INTO account_profiles (tenant_id, user_root, profile) \
+                     VALUES ($1, $2, $3) ON CONFLICT (tenant_id, user_root) \
+                     DO UPDATE SET profile = EXCLUDED.profile",
+                )
+                .bind(tenant_id)
+                .bind(user_root)
+                .bind(profile),
+                None => sqlx::query(
+                    "DELETE FROM account_profiles WHERE tenant_id = $1 AND user_root = $2",
+                )
+                .bind(tenant_id)
+                .bind(user_root),
+            }
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            // The overrides are replaced whole (ADR-0070 d5).
+            sqlx::query("DELETE FROM user_quotas WHERE tenant_id = $1 AND user_root = $2")
+                .bind(tenant_id)
+                .bind(user_root)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            for (quota, limit) in overrides {
+                sqlx::query(
+                    "INSERT INTO user_quotas (tenant_id, user_root, quota, max_count) \
+                     VALUES ($1, $2, $3, $4)",
+                )
+                .bind(tenant_id)
+                .bind(user_root)
+                .bind(quota.as_str())
+                .bind(i64::try_from(limit).map_err(backend)?)
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            }
+        }
         MetadataFold::UserDisabled { user } => {
             sqlx::query("DELETE FROM web_sessions WHERE tenant_id = $1 AND user_name = $2")
                 .bind(tenant_id)
@@ -3857,6 +3910,278 @@ async fn fold_connection_revoked(
     void_unopened_codes(tx, tenant_id, key_id, seq).await
 }
 
+// ---------------------------------------------------------------------------
+// Usage metering (ADR-0070): the counters a metered fold moves, in the
+// commit's own transaction, and the ceiling the commit carries
+// ---------------------------------------------------------------------------
+
+/// An account's counters as `usage_accounts` reads them: root, profile and
+/// six counts.
+type CounterRow = (Uuid, Option<String>, i64, i64, i64, i64, i64, i64);
+/// A ledger row as read: root, day, profile and six counts.
+type LedgerTuple = (Uuid, String, Option<String>, i64, i64, i64, i64, i64, i64);
+/// A drift row: root, then each compared meter's counter and source value.
+type DriftRow = (Uuid, i64, i64, i64, i64, i64, i64, i64, i64, i64, i64);
+
+/// Six counts in [`Meter::ALL`]'s order as a usage; a negative count,
+/// which only a drifted counter holds, reads as zero.
+fn usage_of(
+    (memories, text_bytes, writes, recalls, keys, connections): (i64, i64, i64, i64, i64, i64),
+) -> oml_app::types::UserUsage {
+    let n = |v: i64| u64::try_from(v).unwrap_or(0);
+    oml_app::types::UserUsage {
+        memories: n(memories),
+        text_bytes: n(text_bytes),
+        writes: n(writes),
+        recalls: n(recalls),
+        keys: n(keys),
+        connections: n(connections),
+    }
+}
+
+/// What a fold moves on the account meters, read before the fold: the
+/// chain whose liveness may change, with its liveness then, and the direct
+/// charges, as (account, meter, delta) (ADR-0070 d2, d3).
+#[derive(Debug, Default)]
+struct MeterPlan {
+    chain: Option<(Uuid, String, bool)>,
+    charges: Vec<(Uuid, Meter, i64)>,
+}
+
+/// The account a key belongs to, if any, and whether it counts on `keys`:
+/// a live bearer or connector key (ADR-0070 d1, d2).
+async fn key_account(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    key_id: Uuid,
+) -> Result<Option<(Uuid, bool)>, StoreError> {
+    let row: Option<(Option<Uuid>, String, bool)> = sqlx::query_as(
+        "SELECT user_root_id, credential, revoked_at IS NULL FROM api_keys \
+         WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(tenant_id)
+    .bind(key_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(row.and_then(|(root, credential, live)| {
+        root.map(|root| (root, live && credential != "session"))
+    }))
+}
+
+/// Whether the chain is live by ADR-0070 d2, through the one SQL
+/// definition 0038 holds.
+async fn chain_live(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    workarea_id: Uuid,
+    claim_key: &str,
+) -> Result<bool, StoreError> {
+    sqlx::query_scalar("SELECT oml_chain_live($1, $2, $3)")
+        .bind(tenant_id)
+        .bind(workarea_id)
+        .bind(claim_key)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(backend)
+}
+
+/// The chain a version belongs to.
+async fn chain_of(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    memory_id: Uuid,
+) -> Result<Option<(Uuid, String)>, StoreError> {
+    sqlx::query_as("SELECT workarea_id, claim_key FROM memories WHERE tenant_id = $1 AND id = $2")
+        .bind(tenant_id)
+        .bind(memory_id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(backend)
+}
+
+async fn meter_plan(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    fold: &MetadataFold,
+) -> Result<MeterPlan, StoreError> {
+    let mut plan = MeterPlan::default();
+    let chain = match fold {
+        MetadataFold::MemoryHeld { memory, .. } => {
+            if let Some((root, _)) = key_account(tx, tenant_id, memory.author_key_id).await? {
+                let bytes = i64::try_from(memory.body_bytes).map_err(backend)?;
+                plan.charges.push((root, Meter::TextBytes, bytes));
+                plan.charges.push((root, Meter::Writes, 1));
+            }
+            Some((memory.workarea_id, memory.claim_key.clone()))
+        }
+        MetadataFold::MemoryPromoted { memory_id } | MetadataFold::MemoryRejected { memory_id } => {
+            chain_of(tx, tenant_id, *memory_id).await?
+        }
+        MetadataFold::TipSuperseded { successor, .. } => {
+            chain_of(tx, tenant_id, *successor).await?
+        }
+        MetadataFold::KeyIssued(k) => {
+            if let Some(root) = k.user
+                && k.credential != Credential::Session
+            {
+                plan.charges.push((root, Meter::Keys, 1));
+            }
+            None
+        }
+        MetadataFold::KeyRevoked { key_id } => {
+            if let Some((root, true)) = key_account(tx, tenant_id, *key_id).await? {
+                plan.charges.push((root, Meter::Keys, -1));
+            }
+            None
+        }
+        MetadataFold::ConnectionOpened {
+            connection_id,
+            replaces: None,
+            ..
+        } => {
+            if let Some(root) = connection_account(tx, tenant_id, *connection_id).await? {
+                plan.charges.push((root, Meter::Connections, 1));
+            }
+            None
+        }
+        MetadataFold::ConnectionRevoked { connection_id, .. } => {
+            let open: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM oauth_connections \
+                 WHERE tenant_id = $1 AND id = $2 AND state = 'open')",
+            )
+            .bind(tenant_id)
+            .bind(connection_id)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if open && let Some(root) = connection_account(tx, tenant_id, *connection_id).await? {
+                plan.charges.push((root, Meter::Connections, -1));
+            }
+            None
+        }
+        _ => None,
+    };
+    if let Some((workarea_id, claim_key)) = chain {
+        let live = chain_live(tx, tenant_id, workarea_id, &claim_key).await?;
+        plan.chain = Some((workarea_id, claim_key, live));
+    }
+    Ok(plan)
+}
+
+/// The account of the key a connection belongs to.
+async fn connection_account(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    connection_id: Uuid,
+) -> Result<Option<Uuid>, StoreError> {
+    let root: Option<Option<Uuid>> = sqlx::query_scalar(
+        "SELECT k.user_root_id FROM oauth_connections c \
+         JOIN api_keys k ON k.tenant_id = c.tenant_id AND k.id = c.key_id \
+         WHERE c.tenant_id = $1 AND c.id = $2",
+    )
+    .bind(tenant_id)
+    .bind(connection_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(root.flatten())
+}
+
+/// After the fold: the chain's liveness again, every charge on its
+/// account's counter, and the ceiling the commit carries held against each
+/// meter it raised. A meter past its limit refuses the commit, which rolls
+/// back with the journal row (ADR-0070 d3).
+async fn apply_meters(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    at: &EventTime,
+    mut plan: MeterPlan,
+    ceiling: Option<&Ceiling>,
+) -> Result<(), StoreError> {
+    if let Some((workarea_id, claim_key, before)) = plan.chain.take() {
+        let after = chain_live(tx, tenant_id, workarea_id, &claim_key).await?;
+        if after != before {
+            let account: Option<Uuid> = sqlx::query_scalar("SELECT oml_chain_account($1, $2, $3)")
+                .bind(tenant_id)
+                .bind(workarea_id)
+                .bind(&claim_key)
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(backend)?;
+            if let Some(root) = account {
+                plan.charges
+                    .push((root, Meter::Memories, if after { 1 } else { -1 }));
+            }
+        }
+    }
+    let day = oml_app::domain::usage::day_of(at);
+    let month = Month::of(at);
+    for (root, meter, delta) in plan.charges {
+        let used: i64 = if meter == Meter::Writes {
+            sqlx::query(
+                "INSERT INTO account_activity (tenant_id, user_root, day, writes) \
+                 VALUES ($1, $2, ($3)::date, $4) ON CONFLICT (tenant_id, user_root, day) \
+                 DO UPDATE SET writes = account_activity.writes + EXCLUDED.writes",
+            )
+            .bind(tenant_id)
+            .bind(root)
+            .bind(day)
+            .bind(delta)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            sqlx::query_scalar(
+                "SELECT coalesce(sum(writes), 0)::bigint FROM account_activity \
+                 WHERE tenant_id = $1 AND user_root = $2 \
+                   AND day >= ($3)::date AND day < ($4)::date",
+            )
+            .bind(tenant_id)
+            .bind(root)
+            .bind(month.first_day())
+            .bind(month.next().first_day())
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(backend)?
+        } else {
+            let column = match meter {
+                Meter::Memories => "memories",
+                Meter::TextBytes => "text_bytes",
+                Meter::Keys => "keys",
+                Meter::Connections => "connections",
+                Meter::Writes | Meter::Recalls => unreachable!("flows are per day"),
+            };
+            sqlx::query_scalar(&format!(
+                "INSERT INTO account_meters (tenant_id, user_root, {column}) VALUES ($1, $2, $3) \
+                 ON CONFLICT (tenant_id, user_root) \
+                 DO UPDATE SET {column} = account_meters.{column} + EXCLUDED.{column} \
+                 RETURNING {column}"
+            ))
+            .bind(tenant_id)
+            .bind(root)
+            .bind(delta)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(backend)?
+        };
+        if delta > 0
+            && let Some(ceiling) = ceiling.filter(|c| c.user_root == root)
+            && let Some(quota) = meter.quota()
+        {
+            let limit = ceiling.quotas.get(quota);
+            let used = u64::try_from(used).unwrap_or(0);
+            if used > limit {
+                return Err(StoreError::QuotaReached(QuotaReached {
+                    quota,
+                    limit,
+                    used: used.saturating_sub(delta.unsigned_abs()),
+                }));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Appends one event inside the commit's transaction if it extends
 /// `expected`, the (seq, prev_hash) the head calls for: the journal row, the
 /// chain-head upsert, the metadata fold, the outbox row and the idempotency
@@ -3865,6 +4190,7 @@ async fn append_event(
     tx: &mut Transaction<'_, Postgres>,
     (expected_seq, expected_prev): (u64, Sha256Hash),
     req: CommitRequest,
+    metered: bool,
 ) -> Result<CommitReceipt, StoreError> {
     let env = &req.event.envelope;
     let tenant_id = env.tenant_id;
@@ -3927,7 +4253,15 @@ async fn append_event(
     .await
     .map_err(backend)?;
 
+    let plan = if metered {
+        Some(meter_plan(tx, tenant_id, &req.fold).await?)
+    } else {
+        None
+    };
     apply_fold(tx, tenant_id, env.event_id, seq, &env.at, req.fold).await?;
+    if let Some(plan) = plan {
+        apply_meters(tx, tenant_id, &env.at, plan, req.ceiling.as_ref()).await?;
+    }
 
     // Outbox: kind 'bronze-event' (0001's drain-kind set); the port
     // row's event id, topic and digest-only payload ride in the jsonb
@@ -3982,6 +4316,69 @@ async fn append_event(
 // ---------------------------------------------------------------------------
 
 impl PgStore {
+    /// The usage rollup of one tenant at `at` (ADR-0070 d4): one ledger row
+    /// per account for every closed UTC day after its last one, at most 62
+    /// days back and from yesterday for an account with none, holding the
+    /// stocks as read now and that day's flows; then the rows past their
+    /// retention deleted. Rows already appended stay as they are, so two
+    /// leads append each once. Returns the rows appended.
+    pub async fn roll_up_usage(&self, tenant_id: Uuid, at: &EventTime) -> Result<u64, StoreError> {
+        let today = oml_app::domain::usage::day_of(at);
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let appended = sqlx::query(
+            "INSERT INTO usage_daily (tenant_id, user_root, day, profile, memories, text_bytes, \
+                                      writes, recalls, keys, connections, recorded_at) \
+             SELECT m.tenant_id, m.user_root, d.day::date, p.profile, m.memories, m.text_bytes, \
+                    coalesce(a.writes, 0), coalesce(a.recalls, 0), m.keys, m.connections, \
+                    ($3)::timestamptz \
+               FROM account_meters m \
+               CROSS JOIN LATERAL generate_series( \
+                   greatest(coalesce((SELECT max(u.day) + 1 FROM usage_daily u \
+                                       WHERE u.tenant_id = m.tenant_id \
+                                         AND u.user_root = m.user_root), \
+                                     ($2)::date - 1), \
+                            ($2)::date - $4::int)::timestamp, \
+                   (($2)::date - 1)::timestamp, interval '1 day') AS d(day) \
+               LEFT JOIN account_profiles p \
+                 ON p.tenant_id = m.tenant_id AND p.user_root = m.user_root \
+               LEFT JOIN account_activity a \
+                 ON a.tenant_id = m.tenant_id AND a.user_root = m.user_root \
+                AND a.day = d.day::date \
+              WHERE m.tenant_id = $1 \
+             ON CONFLICT (tenant_id, user_root, day) DO NOTHING",
+        )
+        .bind(tenant_id)
+        .bind(today)
+        .bind(at.as_str())
+        .bind(i32::try_from(oml_app::domain::usage::ACTIVITY_RETENTION_DAYS).map_err(backend)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?
+        .rows_affected();
+        sqlx::query(
+            "DELETE FROM usage_daily WHERE tenant_id = $1 \
+             AND day < ($2)::date - make_interval(months => $3)",
+        )
+        .bind(tenant_id)
+        .bind(today)
+        .bind(i32::try_from(oml_app::domain::usage::LEDGER_RETENTION_MONTHS).map_err(backend)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        sqlx::query(
+            "DELETE FROM account_activity WHERE tenant_id = $1 AND day < ($2)::date - $3::int",
+        )
+        .bind(tenant_id)
+        .bind(today)
+        .bind(i32::try_from(oml_app::domain::usage::ACTIVITY_RETENTION_DAYS).map_err(backend)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(appended)
+    }
+
     /// `keyword-all`: the v0.5.0 statements, [`RECALL_FTS`] and
     /// [`RECALL_OWN_HELD`], unchanged, their lists merged under the total
     /// order of hits and cut to `k`, as the core merged them before
@@ -5283,33 +5680,225 @@ impl JournalStore for PgStore {
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
+        at: &EventTime,
     ) -> Result<oml_app::types::UserUsage, StoreError> {
+        let month = Month::of(at);
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let (memories, keys, connections): (i64, i64, i64) = sqlx::query_as(
-            "SELECT \
-               (SELECT count(*) FROM (SELECT DISTINCT m.workarea_id, m.claim_key \
-                  FROM memories m JOIN workareas w \
-                    ON w.tenant_id = m.tenant_id AND w.id = m.workarea_id \
-                  WHERE m.tenant_id = $1 AND (w.id = $2 OR w.namespace_root_id = $2)) d), \
-               (SELECT count(*) FROM api_keys k WHERE k.tenant_id = $1 AND k.user_root_id = $2 \
-                  AND k.revoked_at IS NULL AND k.credential <> 'session'), \
-               (SELECT count(*) FROM oauth_connections c JOIN api_keys k \
-                  ON k.tenant_id = c.tenant_id AND k.id = c.key_id \
-                  WHERE c.tenant_id = $1 AND k.user_root_id = $2 AND c.state = 'open')",
+        let row: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+            "SELECT coalesce(m.memories, 0), coalesce(m.text_bytes, 0), \
+                    coalesce(a.writes, 0), coalesce(a.recalls, 0), \
+                    coalesce(m.keys, 0), coalesce(m.connections, 0) \
+               FROM (SELECT 1) one \
+               LEFT JOIN account_meters m ON m.tenant_id = $1 AND m.user_root = $2 \
+               LEFT JOIN (SELECT sum(writes)::bigint AS writes, sum(recalls)::bigint AS recalls \
+                            FROM account_activity \
+                           WHERE tenant_id = $1 AND user_root = $2 \
+                             AND day >= ($3)::date AND day < ($4)::date) a ON true",
         )
         .bind(tenant_id)
         .bind(user_root)
+        .bind(month.first_day())
+        .bind(month.next().first_day())
         .fetch_one(&mut *tx)
         .await
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        let count = |n: i64| u64::try_from(n).unwrap_or(0);
-        Ok(oml_app::types::UserUsage {
-            memories: count(memories),
-            keys: count(keys),
-            connections: count(connections),
-        })
+        Ok(usage_of(row))
+    }
+
+    async fn account_profile(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<Option<String>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let profile = sqlx::query_scalar(
+            "SELECT profile FROM account_profiles WHERE tenant_id = $1 AND user_root = $2",
+        )
+        .bind(tenant_id)
+        .bind(user_root)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(profile)
+    }
+
+    async fn meter_recall(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        at: &EventTime,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // The account's counter row, so the ledger rolls a person up who
+        // has only read (ADR-0070 d4).
+        sqlx::query(
+            "INSERT INTO account_meters (tenant_id, user_root) VALUES ($1, $2) \
+             ON CONFLICT (tenant_id, user_root) DO NOTHING",
+        )
+        .bind(tenant_id)
+        .bind(user_root)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        sqlx::query(
+            "INSERT INTO account_activity (tenant_id, user_root, day, recalls) \
+             VALUES ($1, $2, ($3)::date, 1) ON CONFLICT (tenant_id, user_root, day) \
+             DO UPDATE SET recalls = account_activity.recalls + 1",
+        )
+        .bind(tenant_id)
+        .bind(user_root)
+        .bind(oml_app::domain::usage::day_of(at))
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)
+    }
+
+    async fn usage_accounts(
+        &self,
+        tenant_id: Uuid,
+        month: Month,
+    ) -> Result<Vec<oml_app::types::AccountCounters>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows: Vec<CounterRow> = sqlx::query_as(
+            "SELECT m.user_root, p.profile, m.memories, m.text_bytes, \
+                    coalesce(a.writes, 0), coalesce(a.recalls, 0), m.keys, m.connections \
+               FROM account_meters m \
+               LEFT JOIN account_profiles p \
+                 ON p.tenant_id = m.tenant_id AND p.user_root = m.user_root \
+               LEFT JOIN (SELECT user_root, sum(writes)::bigint AS writes, \
+                                 sum(recalls)::bigint AS recalls \
+                            FROM account_activity \
+                           WHERE tenant_id = $1 AND day >= ($2)::date AND day < ($3)::date \
+                           GROUP BY user_root) a ON a.user_root = m.user_root \
+              WHERE m.tenant_id = $1 ORDER BY m.user_root",
+        )
+        .bind(tenant_id)
+        .bind(month.first_day())
+        .bind(month.next().first_day())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(user_root, profile, a, b, c, d, e, f)| oml_app::types::AccountCounters {
+                    user_root,
+                    profile,
+                    usage: usage_of((a, b, c, d, e, f)),
+                },
+            )
+            .collect())
+    }
+
+    async fn usage_ledger(
+        &self,
+        tenant_id: Uuid,
+        month: Month,
+    ) -> Result<Vec<oml_app::types::LedgerRow>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows: Vec<LedgerTuple> = sqlx::query_as(
+            "SELECT user_root, day::text, profile, memories, text_bytes, writes, recalls, \
+                        keys, connections \
+                   FROM usage_daily \
+                  WHERE tenant_id = $1 AND day >= ($2)::date AND day < ($3)::date \
+                  ORDER BY day, user_root",
+        )
+        .bind(tenant_id)
+        .bind(month.first_day())
+        .bind(month.next().first_day())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(user_root, day, profile, a, b, c, d, e, f)| oml_app::types::LedgerRow {
+                    user_root,
+                    day,
+                    profile,
+                    usage: usage_of((a, b, c, d, e, f)),
+                },
+            )
+            .collect())
+    }
+
+    async fn usage_drift(
+        &self,
+        tenant_id: Uuid,
+        month: Month,
+    ) -> Result<Vec<oml_app::types::MeterDrift>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        // One snapshot for the counters and the rows they are compared with.
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows: Vec<DriftRow> = sqlx::query_as(
+            "WITH src AS (SELECT * FROM oml_account_source($1)), \
+                  held AS (SELECT k.user_root_id AS user_root, count(*)::bigint AS writes \
+                             FROM memories m JOIN api_keys k \
+                               ON k.tenant_id = m.tenant_id AND k.id = m.author_key_id \
+                            WHERE m.tenant_id = $1 AND k.user_root_id IS NOT NULL \
+                              AND m.created_at >= ($2)::date::timestamp AT TIME ZONE 'UTC' \
+                              AND m.created_at < ($3)::date::timestamp AT TIME ZONE 'UTC' \
+                            GROUP BY 1), \
+                  act AS (SELECT user_root, sum(writes)::bigint AS writes FROM account_activity \
+                           WHERE tenant_id = $1 AND day >= ($2)::date AND day < ($3)::date \
+                           GROUP BY 1), \
+                  roots AS (SELECT user_root FROM src UNION SELECT user_root FROM account_meters \
+                             WHERE tenant_id = $1 UNION SELECT user_root FROM held \
+                             UNION SELECT user_root FROM act) \
+             SELECT r.user_root, \
+                    coalesce(c.memories, 0), coalesce(src.memories, 0), \
+                    coalesce(c.text_bytes, 0), coalesce(src.text_bytes, 0), \
+                    coalesce(act.writes, 0), coalesce(held.writes, 0), \
+                    coalesce(c.keys, 0), coalesce(src.keys, 0), \
+                    coalesce(c.connections, 0), coalesce(src.connections, 0) \
+               FROM roots r \
+               LEFT JOIN account_meters c ON c.tenant_id = $1 AND c.user_root = r.user_root \
+               LEFT JOIN src ON src.user_root = r.user_root \
+               LEFT JOIN held ON held.user_root = r.user_root \
+               LEFT JOIN act ON act.user_root = r.user_root \
+              ORDER BY r.user_root",
+        )
+        .bind(tenant_id)
+        .bind(month.first_day())
+        .bind(month.next().first_day())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let mut drift = Vec::new();
+        for (root, cm, sm, cb, sb, cw, sw, ck, sk, cc, sc) in rows {
+            for (meter, counter, source) in [
+                (Meter::Memories, cm, sm),
+                (Meter::TextBytes, cb, sb),
+                (Meter::Writes, cw, sw),
+                (Meter::Keys, ck, sk),
+                (Meter::Connections, cc, sc),
+            ] {
+                if counter != source {
+                    drift.push(oml_app::types::MeterDrift {
+                        user_root: root,
+                        meter,
+                        counter,
+                        rows: source,
+                    });
+                }
+            }
+        }
+        Ok(drift)
     }
 
     async fn user_quota_overrides(
@@ -5378,14 +5967,26 @@ impl JournalStore for PgStore {
         // Each link extends the one before it, under the one lock; a
         // refused link returns before COMMIT, so the transaction rolls back
         // every earlier link with it (ADR-0025 d10).
-        let mut receipt = append_event(&mut tx, expected, first).await?;
+        // The meters exist from 0038 on; once found they stay (ADR-0070).
+        let metered = self.metered.load(std::sync::atomic::Ordering::Relaxed) || {
+            let found: bool = sqlx::query_scalar("SELECT to_regproc('oml_chain_live') IS NOT NULL")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(backend)?;
+            if found {
+                self.metered
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            found
+        };
+        let mut receipt = append_event(&mut tx, expected, first, metered).await?;
         for req in reqs {
             if req.event.envelope.tenant_id != tenant_id {
                 return Err(StoreError::Backend(
                     "a chain commit names one tenant".to_owned(),
                 ));
             }
-            receipt = append_event(&mut tx, (receipt.seq + 1, receipt.hash), req).await?;
+            receipt = append_event(&mut tx, (receipt.seq + 1, receipt.hash), req, metered).await?;
         }
 
         tx.commit().await.map_err(backend)?;

@@ -862,6 +862,7 @@ async fn seal_onto(w: &World, event_type: &str, payload: Value, fold: MetadataFo
             event,
             fold,
             idempotency: None,
+            ceiling: None,
         })
         .await
         .expect("the fixture commit");
@@ -1338,6 +1339,7 @@ async fn the_store_refuses_a_commit_while_its_subtree_holds_a_held_version() {
                 held_free: vec![w.proj],
             },
             idempotency: None,
+            ceiling: None,
         })
         .await;
     assert!(

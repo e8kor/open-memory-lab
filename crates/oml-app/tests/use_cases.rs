@@ -6217,6 +6217,7 @@ async fn seal_onto(
             event,
             fold,
             idempotency: None,
+            ceiling: None,
         })
         .await
         .expect("the fixture commit");
@@ -9811,6 +9812,7 @@ async fn ratify_in_store(
                 ratifier_key_id: ratifier,
             },
             idempotency: None,
+            ceiling: None,
         })
         .await
         .expect("the ratification commits");
@@ -11296,6 +11298,7 @@ fn propose_before_next_head(store: &MemStore, edge: ClaimEdgeRecord) {
             event,
             fold: MetadataFold::ClaimEdgeProposed(edge),
             idempotency: None,
+            ceiling: None,
         }
     });
 }
@@ -11945,6 +11948,7 @@ async fn commit_pending_edge(store: &MemStore, edge: ClaimEdgeRecord, event_id: 
             event,
             fold: MetadataFold::ClaimEdgeProposed(edge),
             idempotency: None,
+            ceiling: None,
         })
         .await
         .expect("commit the pending edge");

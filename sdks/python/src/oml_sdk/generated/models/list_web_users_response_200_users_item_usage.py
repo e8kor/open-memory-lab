@@ -16,17 +16,25 @@ class ListWebUsersResponse200UsersItemUsage:
     """
     Attributes:
         memories (int | Unset):
+        text_bytes (int | Unset):
+        writes (int | Unset): Versions submitted this UTC month (ADR-0070 d2).
         keys (int | Unset):
         connections (int | Unset):
     """
 
     memories: int | Unset = UNSET
+    text_bytes: int | Unset = UNSET
+    writes: int | Unset = UNSET
     keys: int | Unset = UNSET
     connections: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         memories = self.memories
+
+        text_bytes = self.text_bytes
+
+        writes = self.writes
 
         keys = self.keys
 
@@ -37,6 +45,10 @@ class ListWebUsersResponse200UsersItemUsage:
         field_dict.update({})
         if memories is not UNSET:
             field_dict["memories"] = memories
+        if text_bytes is not UNSET:
+            field_dict["text_bytes"] = text_bytes
+        if writes is not UNSET:
+            field_dict["writes"] = writes
         if keys is not UNSET:
             field_dict["keys"] = keys
         if connections is not UNSET:
@@ -49,12 +61,18 @@ class ListWebUsersResponse200UsersItemUsage:
         d = dict(src_dict)
         memories = d.pop("memories", UNSET)
 
+        text_bytes = d.pop("text_bytes", UNSET)
+
+        writes = d.pop("writes", UNSET)
+
         keys = d.pop("keys", UNSET)
 
         connections = d.pop("connections", UNSET)
 
         list_web_users_response_200_users_item_usage = cls(
             memories=memories,
+            text_bytes=text_bytes,
+            writes=writes,
             keys=keys,
             connections=connections,
         )

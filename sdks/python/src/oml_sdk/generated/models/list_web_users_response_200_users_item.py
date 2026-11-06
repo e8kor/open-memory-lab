@@ -27,7 +27,7 @@ class ListWebUsersResponse200UsersItem:
         disabled (bool):
         under_quotas (bool):
         usage (ListWebUsersResponse200UsersItemUsage):
-        quotas (ListWebUsersResponse200UsersItemQuotas):
+        quotas (ListWebUsersResponse200UsersItemQuotas): A null limit is unlimited (ADR-0070 d5).
     """
 
     user: str

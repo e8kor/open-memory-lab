@@ -5,6 +5,7 @@
 //! denials on each request, in the one refusal order of roles-and-keys.md
 //! (ADR-0025 d1).
 
+mod metering;
 mod pages;
 mod rescan;
 mod search;
@@ -12,6 +13,7 @@ mod signup;
 mod sparse;
 mod usage;
 mod web;
+pub use metering::{AccountLimits, UsageDriftReport};
 pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
@@ -223,6 +225,8 @@ pub struct App<J, S, C, I, Sc> {
     /// Open sign-up and its counters; `None` where the deployment has no
     /// sign-up tenant, and then no quotas (ADR-0068 d1, d5).
     signup: Option<Arc<signup::SignupState>>,
+    /// The deployment's quota profiles (ADR-0070 d5).
+    profiles: Arc<crate::types::QuotaProfiles>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -1047,6 +1051,7 @@ fn commit_request(
         fold,
         outbox,
         idempotency,
+        ceiling: None,
     }
 }
 
@@ -1264,6 +1269,7 @@ where
             sparse: None,
             formats: Arc::new(crate::ports::ProseFormats),
             signup: None,
+            profiles: Arc::new(crate::types::QuotaProfiles::default()),
         }
     }
 
@@ -2853,6 +2859,12 @@ where
             Self::key_issued_payload(&record, req.held_by),
         )?;
         let mut last = event.clone();
+        // A key of an account counts on its `keys` meter, a session key
+        // never; the commit holds the account's ceiling (ADR-0070 d2, d3).
+        let charged = record
+            .user
+            .filter(|_| record.credential != Credential::Session);
+        let ceiling = self.ceiling_for(tenant_id, charged).await?;
         if let Some(oauth) = oauth {
             // One chain: a refusal of any link journals none, so no key
             // outlives a failed issuance and none needs revoking.
@@ -2878,7 +2890,12 @@ where
                 code_issued_payload(&code, issuer.key_id, None),
             )?;
             links.push((event, MetadataFold::ConnectCodeIssued { code, voids: None }));
-            self.commit_chain(links).await?;
+            let mut reqs: Vec<CommitRequest> = links
+                .into_iter()
+                .map(|(event, fold)| commit_request(event, fold, None))
+                .collect();
+            reqs[0].ceiling = ceiling;
+            self.journal.commit_chain(reqs).await?;
             return Ok(IssuedKey {
                 key_id,
                 value,
@@ -2900,7 +2917,7 @@ where
             });
         }
         let receipt = self
-            .commit(event, MetadataFold::KeyIssued(record), None)
+            .commit_charged(event, MetadataFold::KeyIssued(record), None, ceiling)
             .await?;
         let mut stored = Vec::with_capacity(grants.len());
         for grant in grants {
@@ -4656,10 +4673,6 @@ where
             }
             return Err(refusal);
         }
-        // A person of the sign-up tenant writes at most their memories
-        // quota; nothing is journalled past it (ADR-0068 d5).
-        self.require_quota(key, oml_domain::signup::Quota::Memories)
-            .await?;
 
         // An omitted claim_key is derived from the author and the text; the
         // `auto-` prefix is the server's alone (ADR-0039 d6). The author id
@@ -4702,6 +4715,24 @@ where
                 replayed: true,
             });
         }
+
+        // An account writes within its memories, bytes and monthly writes;
+        // nothing is journalled past them. After the replay, so a retry of
+        // a write that landed at the limit answers its record. This check
+        // spares the signature; the commit's ceiling is the one that holds
+        // (ADR-0068 d5; ADR-0070 d3).
+        self.require_charge(
+            key,
+            &[
+                (oml_domain::signup::Quota::Memories, 1),
+                (
+                    oml_domain::signup::Quota::TextBytes,
+                    nfc(&req.body).len() as u64,
+                ),
+                (oml_domain::signup::Quota::WritesPerMonth, 1),
+            ],
+        )
+        .await?;
 
         // The head first, then the node's status, the ancestors' closures,
         // which a claim edge's proposal widens, and the claim_key read: a
@@ -4901,13 +4932,15 @@ where
                     .map_err(|e| AppError::StoredResponse(e.to_string()))?,
             },
         });
-        self.commit(
+        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
+        self.commit_charged(
             event,
             MetadataFold::MemoryHeld {
                 memory,
                 enqueue: true,
             },
             idempotency,
+            ceiling,
         )
         .await?;
         // After the commit, off the write's path: the remember side's
@@ -5635,6 +5668,15 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let started = std::time::Instant::now();
         let result = self.recall_as(&caller, req).await?;
+        // One recall on the account's meter, and never what was asked. A
+        // count that fails to write leaves the recall served: reading never
+        // blocks (ADR-0070 d2, d5, d7).
+        if let Some(root) = caller.key.user {
+            let _ = self
+                .journal
+                .meter_recall(caller.key.tenant_id, root, &self.clock.now())
+                .await;
+        }
         // The answer's shape and latency, by pipeline, for the metrics
         // listener; then the event, handed to the writer without waiting,
         // so neither sits on the recall's path (ADR-0054 d1, d2).
@@ -6894,6 +6936,19 @@ where
             self.require_access(&caller, target.workarea_id, Role::Writer, "supersede")
                 .await?;
         }
+        // A new version charges the account's bytes and monthly writes and
+        // never its memories (ADR-0070 d2, d3).
+        self.require_charge(
+            key,
+            &[
+                (
+                    oml_domain::signup::Quota::TextBytes,
+                    nfc(&req.body).len() as u64,
+                ),
+                (oml_domain::signup::Quota::WritesPerMonth, 1),
+            ],
+        )
+        .await?;
 
         // Step 5, in its order: the scope is the target's workarea, the
         // target is the served tip, the kind stays in its class and a
@@ -7165,14 +7220,16 @@ where
                     .map_err(|e| AppError::StoredResponse(e.to_string()))?,
             },
         });
+        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
         let committed = self
-            .commit(
+            .commit_charged(
                 event,
                 MetadataFold::MemoryHeld {
                     memory: successor,
                     enqueue: true,
                 },
                 idempotency,
+                ceiling,
             )
             .await;
         if let Err(AppError::Store(StoreError::IdempotencyRecorded)) = committed {
@@ -9118,7 +9175,8 @@ where
                 "replaces_connection_id": replaces.map(|c| c.to_string()),
             }),
         )?;
-        self.commit(
+        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
+        self.commit_charged(
             event,
             MetadataFold::ConnectionOpened {
                 connection_id: connection.connection_id,
@@ -9127,6 +9185,7 @@ where
                 tokens,
             },
             None,
+            ceiling,
         )
         .await?;
         Ok(issued)

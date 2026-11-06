@@ -108,15 +108,22 @@ where
                     "under_quotas": u.under_quotas,
                     "usage": {
                         "memories": u.usage.memories,
+                        "text_bytes": u.usage.text_bytes,
+                        "writes": u.usage.writes,
                         "keys": u.usage.keys,
                         "connections": u.usage.connections,
                     },
-                    "quotas": {
-                        "memories": u.quotas.memories,
-                        "keys": u.quotas.keys,
-                        "connections": u.quotas.connections,
-                        "requests_per_minute": u.quotas.requests_per_minute,
-                    },
+                    // A null limit is unlimited (ADR-0070 d5).
+                    "quotas": oml_app::domain::signup::Quota::ALL
+                        .iter()
+                        .map(|q| {
+                            let limit = u.quotas.get(*q);
+                            (
+                                q.as_str().to_owned(),
+                                json!((limit != oml_app::domain::signup::UNLIMITED).then_some(limit)),
+                            )
+                        })
+                        .collect::<serde_json::Map<_, _>>(),
                 })).collect::<Vec<_>>(),
                 "deletions": deletions.iter().map(|d| json!({
                     "user": d.user.as_str(),

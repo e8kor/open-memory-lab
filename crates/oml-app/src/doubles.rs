@@ -196,6 +196,12 @@ struct TenantState {
     /// Deletion requests by user: requested and, once closed, closed at
     /// (`web_deletion_requests`; ADR-0068 d6).
     deletion_requests: BTreeMap<Name, (EventTime, Option<EventTime>)>,
+    /// Each account's writes and recalls by UTC day (`account_activity`;
+    /// ADR-0070 d2).
+    activity: BTreeMap<(Uuid, String), (u64, u64)>,
+    /// The profile an admin assigned each account (`account_profiles`;
+    /// ADR-0070 d5).
+    account_profiles: BTreeMap<Uuid, String>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -1095,6 +1101,23 @@ fn apply_fold(
                 }
             }
         }
+        MetadataFold::AccountProfileSet {
+            user_root,
+            profile,
+            overrides,
+        } => {
+            match profile {
+                Some(profile) => {
+                    state.account_profiles.insert(user_root, profile);
+                }
+                None => {
+                    state.account_profiles.remove(&user_root);
+                }
+            }
+            state
+                .user_quotas
+                .insert(user_root, overrides.into_iter().collect());
+        }
         MetadataFold::UserDisabled { user } => {
             let mut ended = Vec::new();
             for entry in state.web_entries.values_mut().filter(|e| e.user == user) {
@@ -1422,6 +1445,10 @@ fn apply_fold(
         }
         MetadataFold::MemoryHeld { memory, enqueue } => {
             require_free_ordinal(state, &memory)?;
+            if let Some(root) = state.keys.get(&memory.author_key_id).and_then(|k| k.user) {
+                let day = oml_domain::usage::day_of(at).to_owned();
+                state.activity.entry((root, day)).or_default().0 += 1;
+            }
             if enqueue {
                 state.queue.push(QueueEntry {
                     memory_id: memory.memory_id,
@@ -1835,6 +1862,103 @@ fn assign_names_fold(
 
 /// Appends one event to `state` if it extends the head, with its fold,
 /// idempotency record and outbox row, or refuses it.
+/// One account's meters recomputed from the rows by ADR-0070 d2's
+/// definitions, the flows of `month`: the double keeps no counters, so it
+/// is the definition the Postgres counters are held to.
+fn account_usage(
+    state: &TenantState,
+    root: Uuid,
+    month: oml_domain::usage::Month,
+) -> crate::types::UserUsage {
+    let account_of = |key_id: &Uuid| state.keys.get(key_id).and_then(|k| k.user);
+    let mut chains: BTreeMap<(Uuid, &str), Vec<&MemoryRecord>> = BTreeMap::new();
+    for m in state.memories.values() {
+        chains
+            .entry((m.workarea_id, m.claim_key.as_str()))
+            .or_default()
+            .push(m);
+    }
+    let memories = chains
+        .values()
+        .filter(|versions| {
+            let first = versions
+                .iter()
+                .min_by(|a, b| {
+                    (a.version, a.created_at.as_str()).cmp(&(b.version, b.created_at.as_str()))
+                })
+                .expect("a chain has a version");
+            account_of(&first.author_key_id) == Some(root)
+                && versions.iter().any(|v| {
+                    matches!(
+                        v.status,
+                        MemoryStatus::Held | MemoryStatus::Promoted | MemoryStatus::Demoted
+                    )
+                })
+                && !versions
+                    .iter()
+                    .any(|v| v.status == MemoryStatus::Promoted && v.is_tip && v.retirement)
+        })
+        .count() as u64;
+    let text_bytes = state
+        .memories
+        .values()
+        .filter(|m| m.status != MemoryStatus::Erased && account_of(&m.author_key_id) == Some(root))
+        .map(|m| m.body_bytes)
+        .sum();
+    let (from, until) = (month.first_day(), month.next().first_day());
+    let (writes, recalls) = state
+        .activity
+        .iter()
+        .filter(|((r, day), _)| {
+            *r == root && day.as_str() >= from.as_str() && day.as_str() < until.as_str()
+        })
+        .fold((0, 0), |(w, r), (_, (dw, dr))| (w + dw, r + dr));
+    let keys: Vec<Uuid> = state
+        .keys
+        .values()
+        .filter(|k| {
+            k.user == Some(root) && k.revoked_at.is_none() && k.credential != Credential::Session
+        })
+        .map(|k| k.key_id)
+        .collect();
+    let connections = state
+        .connections
+        .values()
+        .filter(|c| c.state == ConnectionState::Open && keys.contains(&c.key_id))
+        .count() as u64;
+    crate::types::UserUsage {
+        memories,
+        text_bytes,
+        writes,
+        recalls,
+        keys: keys.len() as u64,
+        connections,
+    }
+}
+
+/// The ceiling a commit carries, held against the staged state: a quota
+/// whose count the commit raised past its limit refuses it (ADR-0070 d3).
+fn hold_ceiling(
+    before: &TenantState,
+    after: &TenantState,
+    ceiling: &crate::ports::Ceiling,
+    month: oml_domain::usage::Month,
+) -> Result<(), StoreError> {
+    let was = account_usage(before, ceiling.user_root, month);
+    let now = account_usage(after, ceiling.user_root, month);
+    for quota in oml_domain::signup::Quota::ALL {
+        let limit = ceiling.quotas.get(quota);
+        if now.get(quota) > was.get(quota) && now.get(quota) > limit {
+            return Err(StoreError::QuotaReached(oml_domain::signup::QuotaReached {
+                quota,
+                limit,
+                used: was.get(quota),
+            }));
+        }
+    }
+    Ok(())
+}
+
 fn append(state: &mut TenantState, req: CommitRequest) -> Result<CommitReceipt, StoreError> {
     let expected_seq = state.events.len() as u64 + 1;
     if req.event.envelope.seq != expected_seq {
@@ -2075,44 +2199,88 @@ impl JournalStore for MemStore {
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
+        at: &EventTime,
     ) -> Result<crate::types::UserUsage, StoreError> {
         let Some(state) = self.tenant_existing(tenant_id) else {
             return Ok(crate::types::UserUsage::default());
         };
         let state = state.lock().expect("tenant lock");
-        let inside = |w: &Uuid| {
-            *w == user_root
-                || state
-                    .workareas
-                    .get(w)
-                    .is_some_and(|w| w.namespace == Some(user_root))
+        Ok(account_usage(
+            &state,
+            user_root,
+            oml_domain::usage::Month::of(at),
+        ))
+    }
+
+    async fn account_profile(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(self.tenant_existing(tenant_id).and_then(|state| {
+            state
+                .lock()
+                .expect("tenant lock")
+                .account_profiles
+                .get(&user_root)
+                .cloned()
+        }))
+    }
+
+    async fn meter_recall(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        at: &EventTime,
+    ) -> Result<(), StoreError> {
+        let state = self.tenant(tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        let day = oml_domain::usage::day_of(at).to_owned();
+        state.activity.entry((user_root, day)).or_default().1 += 1;
+        Ok(())
+    }
+
+    async fn usage_accounts(
+        &self,
+        tenant_id: Uuid,
+        month: oml_domain::usage::Month,
+    ) -> Result<Vec<crate::types::AccountCounters>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
         };
-        let memories: std::collections::BTreeSet<(Uuid, &str)> = state
-            .memories
-            .values()
-            .filter(|m| inside(&m.workarea_id))
-            .map(|m| (m.workarea_id, m.claim_key.as_str()))
-            .collect();
-        let keys: Vec<Uuid> = state
+        let state = state.lock().expect("tenant lock");
+        let roots: std::collections::BTreeSet<Uuid> = state
             .keys
             .values()
-            .filter(|k| {
-                k.user == Some(user_root)
-                    && k.revoked_at.is_none()
-                    && k.credential != Credential::Session
-            })
-            .map(|k| k.key_id)
+            .filter_map(|k| k.user)
+            .chain(state.activity.keys().map(|(r, _)| *r))
             .collect();
-        let connections = state
-            .connections
-            .values()
-            .filter(|c| c.state == ConnectionState::Open && keys.contains(&c.key_id))
-            .count();
-        Ok(crate::types::UserUsage {
-            memories: memories.len() as u64,
-            keys: keys.len() as u64,
-            connections: connections as u64,
-        })
+        Ok(roots
+            .into_iter()
+            .map(|root| crate::types::AccountCounters {
+                user_root: root,
+                profile: state.account_profiles.get(&root).cloned(),
+                usage: account_usage(&state, root, month),
+            })
+            .collect())
+    }
+
+    /// The double rolls nothing up: its ledger is empty.
+    async fn usage_ledger(
+        &self,
+        _tenant_id: Uuid,
+        _month: oml_domain::usage::Month,
+    ) -> Result<Vec<crate::types::LedgerRow>, StoreError> {
+        Ok(Vec::new())
+    }
+
+    /// The double reads its meters from the rows, so nothing drifts.
+    async fn usage_drift(
+        &self,
+        _tenant_id: Uuid,
+        _month: oml_domain::usage::Month,
+    ) -> Result<Vec<crate::types::MeterDrift>, StoreError> {
+        Ok(Vec::new())
     }
 
     async fn user_quota_overrides(
@@ -2183,6 +2351,8 @@ impl JournalStore for MemStore {
         // applied, so a refused link leaves the earlier ones unwritten.
         let mut state = tenant.lock().expect("tenant lock");
         let mut staged = state.clone();
+        let month = oml_domain::usage::Month::of(&first.event.envelope.at);
+        let mut ceilings: Vec<crate::ports::Ceiling> = first.ceiling.into_iter().collect();
         let mut receipt = append(&mut staged, first)?;
         for req in reqs {
             if req.event.envelope.tenant_id != tenant_id {
@@ -2190,7 +2360,11 @@ impl JournalStore for MemStore {
                     "a chain commit names one tenant".to_owned(),
                 ));
             }
+            ceilings.extend(req.ceiling);
             receipt = append(&mut staged, req)?;
+        }
+        for ceiling in &ceilings {
+            hold_ceiling(&state, &staged, ceiling, month)?;
         }
         if !tenant_names.is_empty() {
             let mut names = self.tenant_names.lock().expect("tenant names lock");

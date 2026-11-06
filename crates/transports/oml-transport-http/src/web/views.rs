@@ -237,7 +237,19 @@ where
             ),
             "review" => ("/web?view=review", review_start("/web", &csrf)),
             "guardrails" => ("/web?view=guardrails", self.guardrails_view(&web).await?),
-            _ => ("/web", self.keys_view(&web, session, &csrf).await?),
+            _ => {
+                // The person's usage above their keys, where they are an
+                // account (ADR-0070 d6).
+                let usage = match self.app.own_usage(&web).await {
+                    Ok(usage) => super::start::usage_card(&usage),
+                    Err(oml_app::types::AppError::NotFound) => String::new(),
+                    Err(e) => return Err(app_error(e)),
+                };
+                (
+                    "/web",
+                    format!("{usage}{}", self.keys_view(&web, session, &csrf).await?),
+                )
+            }
         };
         Ok(shell(
             "Your page",
