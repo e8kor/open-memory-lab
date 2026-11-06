@@ -627,6 +627,37 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/workareas/{workarea}/mode:
+    post:
+      tags: [workareas]
+      operationId: setWorkareaMode
+      summary: A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
+      description: 'Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool reaches it.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              mode: in_progress
+            schema: { $ref: '#/components/schemas/WorkareaModeSet' }
+      responses:
+        '200':
+          description: The node as the key reads it.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkareaView' }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/crews:
     get:
       tags: [crews]
@@ -2610,6 +2641,8 @@ components:
         - submission.similar_exists
         - submission.universe_refused
         - workarea.frozen
+        - workarea.in_progress_refused
+        - workarea.held_remaining
         - workarea.transition_refused
         - review.author_in_lineage
         - review.ratifier_is_proposer
@@ -2741,7 +2774,7 @@ components:
 
     MemorySummary:
       type: object
-      required: [artifact_id, claim_key, version, tip, workarea_id, workarea_path, kind, state, tokens, retirement, replaces, held_expires_at, created_at, promoted_at, anchor, stale, source_checked]
+      required: [artifact_id, claim_key, version, tip, workarea_id, workarea_path, kind, state, unreviewed, tokens, retirement, replaces, held_expires_at, created_at, promoted_at, anchor, stale, source_checked]
       properties:
         artifact_id: { type: string }
         claim_key: { type: string }
@@ -2751,6 +2784,7 @@ components:
         workarea_path: { type: [string, 'null'], description: "Derived at read time; grants bind to node ids. Null wherever workarea_id is." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail] }
         state: { type: string, enum: [held, promoted, demoted, rejected, erased] }
+        unreviewed: { type: boolean, description: "True exactly when the served version is held: the caller's own held version, or, inside a workarea a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4)." }
         severity: { type: string, enum: [never, must, should], description: "On kind guardrail alone, except a retirement version (ADR-0037 d2)." }
         rule: { description: "On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8)." }
         load_warning: { type: string, description: "On a held guardrail alone: every reader of it is told that every key reading its workarea will load the rule once it binds (ADR-0037 d10)." }
@@ -2834,13 +2868,14 @@ components:
         anchor_path_prefix: { $ref: '#/components/schemas/AnchorPathPrefix' }
         include_unreviewed:
           type: boolean
-          default: false
           description: >-
             When true, the calling key's own held rows (kind memory or derived_fact, never steering
             or retirement versions) inside subtree(scope) ∩ reader effective access, admitted by
             the kinds filter when one is sent as promoted hits are, join the hits, ranked in the
-            same order, with memory.state held; they count against k and max_tokens.
-            Rules: docs/architecture/retrieval.md.
+            same order, with memory.state held and unreviewed true; they count against k and
+            max_tokens. Inside a workarea a person put in progress, every author's held memories
+            on the served nodes join too, and absent means true there; absent means false
+            everywhere else (ADR-0030 d3, d4). Rules: docs/architecture/retrieval.md.
         max_tokens:
           type: integer
           format: int64
@@ -3261,6 +3296,13 @@ components:
       properties:
         crew: { $ref: '#/components/schemas/CrewRef' }
 
+    WorkareaModeSet:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [in_progress, standard], description: "in_progress puts the node in progress; standard on an in-progress root is its commit (ADR-0030 d1, d6)." }
+
     Workarea:
       type: object
       required: [id, name, parent_id, path, status]
@@ -3276,6 +3318,7 @@ components:
             - { $ref: '#/components/schemas/Crew' }
             - { type: 'null' }
         user_root: { type: boolean, description: "Whether the node is a user root, universe.<user>, which only the issuance of the first key naming its user creates (ADR-0044 d1, d11)." }
+        mode: { type: string, enum: [standard, in_progress], description: "in_progress when a person's key put the node in progress: readers inside recall unreviewed memories, labelled, and nothing inside reaches a read from outside until the commit (ADR-0030 d1, d2)." }
         created_at: { type: string, format: date-time }
 
     WorkareaView:
@@ -3285,6 +3328,11 @@ components:
         - type: object
           required: [children, edges, my_effective_verbs, permission_epoch, policy, pending_transitions, brief, stale_versions]
           properties:
+            in_progress_root:
+              description: "The in-progress workarea this node lies inside, itself for a root, by id and name; null outside every in-progress subtree (ADR-0030 d13)."
+              oneOf:
+                - { $ref: '#/components/schemas/WhoamiRef' }
+                - { type: 'null' }
             stale_versions: { type: integer, minimum: 0, description: "The promoted served tips on this node whose latest source check found the source changed or removed (ADR-0057 d5, d17); 0 for an admin key, which reads no claim. oml doctor reports it for the key's default workarea." }
             children:
               type: array
@@ -3626,6 +3674,7 @@ components:
         label: { type: string, description: A free-text note; unique nowhere. }
         principal: { type: string, description: 'Who acts — the attribution identity, shared across one identity''s keys; free text.' }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
+        profile: { type: string, enum: [curator], description: "curator: a dreamer key held by an agent that may reject, propose retirements and summaries, and flag contradictions inside an in-progress workarea only, and never approves; any other role or held_by is request.validation, details.field /profile (ADR-0030 d8, d9)." }
         connect_code: { type: boolean, default: false, description: "Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role), held_by service (held_by_service), or a deployment without oauth.issuer (not_configured)." }
 
     Key:
@@ -3653,6 +3702,7 @@ components:
         epoch: { type: integer }
         credential: { type: string, enum: [bearer, connection, session], description: "bearer: the key has a value presented as Authorization: Bearer. connection: a connector key with no value, reachable only through a connection at /mcp (ADR-0031 d7). session: a key the server holds for a person and acts with only from their web session, no value (ADR-0045 d6)." }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
+        profile: { type: [string, 'null'], enum: [curator, null], description: "The key's profile as key.issued journals it; null for none (ADR-0030 d8)." }
         connections: { type: array, items: { $ref: '#/components/schemas/Connection' }, description: "A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11)." }
 
     Severity:
@@ -3801,6 +3851,7 @@ components:
             - { type: 'null' }
         grants: { type: array, items: { $ref: '#/components/schemas/WhoamiGrant' }, description: "The key's stored grants, each with its epoch and without its deny masks." }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
+        profile: { type: [string, 'null'], enum: [curator, null], description: "The key's profile; null for none (ADR-0030 d8)." }
 
     KeyIssued:
       allOf:

@@ -50,7 +50,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0026 | `main` |  | names are keys | used |
 | adr | 0028 | `main` |  | agent key issuance | used |
 | adr | 0029 | `main` |  | session start hook | used |
-| adr | 0030 | `feat/in-progress-r2` | #79 | an in progress workarea serves unreviewed memories inside it and nothi | open |
+| adr | 0030 | `feat/in-progress-r2-r2` | #86 | an in progress workarea serves unreviewed memories inside it and nothi | open |
 | adr | 0031 | `main` |  | oauth connections by connect code | used |
 | adr | 0033 | `main` |  | interim helm chart | used |
 | adr | 0034 | `main` |  | the lead serves as a role that owns nothing | used |
@@ -247,6 +247,6 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0031 | `feat/lake-writer` | #75 | lake writer | open |
 | migration | 0027 | `feat/remember-dedup-r2` | #84 | similar keys | open |
 | migration | 0026 | `main` |  | valid time | used |
-| migration | 0028 | `feat/in-progress-r2` | #79 | in progress | open |
+| migration | 0028 | `feat/in-progress-r2-r2` | #86 | in progress | open |
 | migration | 0029 | `feat/chat-memory` | #78 | origin kind | open |
 | migration | 0030 | `feat/chat-memory` | #78 | origin kind validate | open |

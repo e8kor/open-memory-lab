@@ -51,7 +51,7 @@ Nothing in this section is released. Each row is the plan of 2026-11-03 as revis
 
 | Version | Status | What is planned | Decisions |
 |---|---|---|---|
-| **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. On the admin page, demoting a memory, which keeps it. | ADR-0030 (proposed); [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) in part |
+| **v0.6.0** | planned | In-progress workareas: inside a development workarea that opts in, readers recall memories still waiting for review, marked as such, and nothing leaves the workarea until it is committed with nothing waiting. On the admin page, demoting a memory, which keeps it. | [ADR-0030](../adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md); [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) in part |
 | **Parked** | parked | Ontology crews that classify memories and curate shared vocabularies, and the vocabularies themselves. Deliverables: the files a memory chain ends in, beyond the storage component already written on a branch. Time: stating when a memory is true and reading what OML knew at a past moment. A digest that summarises a whole workarea for an agent entering it. | ADR-0027, ADR-0035, ADR-0036 (proposed); [ADR-0021](../adr/ADR-0021-ai-human-ontologies.md) (accepted, not built) |
 
 Proposed records live on branches and draft pull requests until they are accepted:
@@ -178,7 +178,7 @@ which part is still decided, not built.
 | ADR-0027 ontology crews | proposed | Parked. |
 | [ADR-0028](../adr/ADR-0028-agent-key-issuance.md) agent key issuance | accepted | Introduced in v0.2.1; the key's name as its first argument since v0.3.0. |
 | [ADR-0029](../adr/ADR-0029-session-start-hook.md) the session-start hook | accepted | Introduced in v0.2.2. |
-| ADR-0030 in-progress workareas | proposed | Planned for v0.6.0. |
+| [ADR-0030](../adr/ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) in-progress workareas | accepted | Planned for v0.6.0: the workarea mode, unreviewed reads inside, the commit and the curator profile. |
 | [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) OAuth by connect code | accepted | Introduced in v0.4.0. |
 | [ADR-0033](../adr/ADR-0033-interim-helm-chart.md) the interim Helm chart | proposed | Introduced in v0.3.0, while the record is still proposed. |
 | [ADR-0034](../adr/ADR-0034-the-lead-serves-as-a-role-that-owns-nothing.md) the server serves as an account that owns nothing | accepted | Partly in v0.3.1: the two accounts, the startup refusal, the per-organisation search index and the keys that carry the organisation. Its spike groundwork shipped in v0.3.0. The separate bootstrap workload and the health check for the split are not scheduled; one further hardening step waits on search measurements. |

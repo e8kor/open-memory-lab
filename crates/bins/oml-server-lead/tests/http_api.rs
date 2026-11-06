@@ -2363,6 +2363,7 @@ async fn get_v2_keys_by_name_answers_the_key() {
             "connections": [],
             // Sent none, the issuance default (proposed ADR-0037 d4).
             "guardrail_scope": "ancestors",
+            "profile": null,
         })
     );
     let (status, _, by_id) = read(key_id.clone(), admin.clone()).await;
@@ -2749,6 +2750,7 @@ async fn post_v2_workareas_crew_points_a_workarea_at_a_crew_record_by_name() {
             "status": "development",
             "crew": record,
             "user_root": false,
+            "mode": "standard",
         })
     );
     let (status, _, view) = send(
@@ -2798,6 +2800,7 @@ async fn an_admin_keys_workarea_read_lists_every_child_with_my_effective_verbs_e
                 "status": "committed",
                 "crew": null,
                 "user_root": false,
+                "mode": "standard",
                 "children": [
                     { "id": metals, "path_leaf": "metals-crew", "status": "development" },
                     { "id": redline, "path_leaf": "redline", "status": "development" },
@@ -2806,6 +2809,7 @@ async fn an_admin_keys_workarea_read_lists_every_child_with_my_effective_verbs_e
                 "my_effective_verbs": [],
                 "permission_epoch": view["permission_epoch"],
                 "stale_versions": 0,
+                "in_progress_root": null,
                 "policy": { "k": 1, "required_roles": ["dreamer"] },
                 "pending_transitions": [],
                 "brief": empty_brief(),
@@ -5281,6 +5285,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
             "status": "development",
             "crew": crew_record,
             "user_root": false,
+            "mode": "standard",
             "children": [{ "id": quarter, "path_leaf": "q1-2027", "status": "development" }],
             "edges": [],
             "my_effective_verbs": [
@@ -5289,6 +5294,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
             ],
             "permission_epoch": view["permission_epoch"],
             "stale_versions": 0,
+            "in_progress_root": null,
             "policy": { "k": 1, "required_roles": ["dreamer"] },
             "pending_transitions": [],
             "brief": empty_brief(),
@@ -5440,6 +5446,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "status": "development",
                     "crew": null,
                     "user_root": false,
+                    "mode": "standard",
                 },
                 {
                     "id": metals["id"],
@@ -5449,6 +5456,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "status": "development",
                     "crew": crew,
                     "user_root": false,
+                    "mode": "standard",
                 },
                 {
                     "id": q1["id"],
@@ -5458,6 +5466,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "status": "development",
                     "crew": null,
                     "user_root": false,
+                    "mode": "standard",
                 },
                 {
                     "id": q2["id"],
@@ -5467,6 +5476,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "status": "development",
                     "crew": null,
                     "user_root": false,
+                    "mode": "standard",
                 },
                 {
                     "id": review["id"],
@@ -5476,6 +5486,7 @@ async fn get_v2_workareas_tree_by_name_answers_an_admin_key_the_whole_subtree_pa
                     "status": "development",
                     "crew": null,
                     "user_root": false,
+                    "mode": "standard",
                 },
             ],
             "next_cursor": null,
@@ -6923,6 +6934,7 @@ async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_worka
             "grants": whoami_grants(&issued),
             // Sent none, the issuance default (proposed ADR-0037 d4, d5).
             "guardrail_scope": "ancestors",
+            "profile": null,
         })
     );
 
@@ -7241,8 +7253,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        57,
-        "the source check (ADR-0057 d5), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the six OAuth operations and the six web routes"
+        58,
+        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the six OAuth operations and the six web routes"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 

@@ -42,6 +42,7 @@ async fn issue(app: &TestApp, admin: &str, role: Role, grants: Vec<GrantRequest>
     app.issue_key(
         admin,
         &IssueKeyRequest {
+            profile: None,
             role,
             name: name(&format!("similar-key-{n}")),
             principal: format!("principal-{n}"),

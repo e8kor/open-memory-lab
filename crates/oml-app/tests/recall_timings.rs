@@ -50,6 +50,7 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
             app.issue_key(
                 &admin,
                 &IssueKeyRequest {
+                    profile: None,
                     role,
                     name: name(&format!("key-{n}")),
                     principal: format!("p-{n}"),
@@ -111,7 +112,7 @@ fn recall(timings: bool) -> RecallRequest {
         workarea: None,
         kinds: Vec::new(),
         include_text: true,
-        include_unreviewed: false,
+        include_unreviewed: Some(false),
         max_tokens: None,
         search: None,
         match_mode: MatchMode::Any,

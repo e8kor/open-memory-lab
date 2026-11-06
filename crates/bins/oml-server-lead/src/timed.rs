@@ -323,6 +323,14 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn held_count(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send {
+        timed("held_count", self.inner.held_count(tenant_id, nodes))
+    }
+
     fn stale_count(
         &self,
         tenant_id: Uuid,

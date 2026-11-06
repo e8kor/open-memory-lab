@@ -40,6 +40,8 @@ class Memory:
         workarea_path (None | str): Derived at read time; grants bind to node ids. Null wherever workarea_id is.
         kind (MemorySummaryKind):
         state (MemorySummaryState):
+        unreviewed (bool): True exactly when the served version is held: the caller's own held version, or, inside a
+            workarea a person put in progress, another author's held memory served to a reader there (ADR-0030 d3, d4).
         tokens (int): Budget tokens of the body (counter oml-tc/1): ceil(UTF-8 bytes of the NFC body / 4); not any
             model's count (docs/architecture/retrieval.md, Token budgets).
         retirement (bool): True on a retirement version; a claim whose served tip is one is a retired claim, which
@@ -93,6 +95,7 @@ class Memory:
     workarea_path: None | str
     kind: MemorySummaryKind
     state: MemorySummaryState
+    unreviewed: bool
     tokens: int
     replaces: MemorySummaryReplacesType0 | None
     held_expires_at: datetime.datetime | None
@@ -140,6 +143,8 @@ class Memory:
         kind = self.kind.value
 
         state = self.state.value
+
+        unreviewed = self.unreviewed
 
         tokens = self.tokens
 
@@ -250,6 +255,7 @@ class Memory:
                 "workarea_path": workarea_path,
                 "kind": kind,
                 "state": state,
+                "unreviewed": unreviewed,
                 "tokens": tokens,
                 "retirement": retirement,
                 "replaces": replaces,
@@ -325,6 +331,8 @@ class Memory:
         kind = MemorySummaryKind(d.pop("kind"))
 
         state = MemorySummaryState(d.pop("state"))
+
+        unreviewed = d.pop("unreviewed")
 
         tokens = d.pop("tokens")
 
@@ -504,6 +512,7 @@ class Memory:
             workarea_path=workarea_path,
             kind=kind,
             state=state,
+            unreviewed=unreviewed,
             tokens=tokens,
             retirement=retirement,
             replaces=replaces,

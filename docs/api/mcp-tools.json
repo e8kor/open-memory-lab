@@ -191,8 +191,7 @@
           },
           "include_unreviewed": {
             "type": "boolean",
-            "default": false,
-            "description": "Recall, default false. True: the calling key's own held rows that match (kind memory or derived_fact, never steering or retirement versions) join the hits, ranked in the same order and flagged state held; they count against k and max_tokens."
+            "description": "Recall. True: the calling key's own held rows that match (kind memory or derived_fact, never steering or retirement versions) join the hits, ranked in the same order and flagged state held and unreviewed true; they count against k and max_tokens. Inside a workarea a person put in progress, other agents' held memories join too and absent means true; elsewhere absent means false."
           },
           "max_tokens": {
             "type": "integer",

@@ -409,6 +409,11 @@ struct KeysIssueArgs {
     /// (proposed ADR-0037 d4).
     #[arg(long, value_parser = ["workarea", "ancestors"])]
     guardrail_scope: Option<String>,
+    /// The key's profile: `curator`, a dreamer key held by an agent that
+    /// narrows inside an in-progress workarea and never promotes
+    /// (ADR-0030 d8).
+    #[arg(long, value_parser = ["curator"])]
+    profile: Option<String>,
 }
 
 #[derive(Args)]
@@ -496,6 +501,17 @@ enum WorkareasCommand {
     Show {
         /// The workarea's id or name.
         workarea: String,
+    },
+    /// Put a workarea in progress, or commit it back to standard: a
+    /// person's dreamer key only. Inside an in-progress workarea readers
+    /// recall unreviewed memories, labelled; nothing leaves until the
+    /// commit, refused while anything is held (ADR-0030 d1, d6).
+    Mode {
+        /// The workarea, by id or name.
+        workarea: String,
+        /// `in_progress`, or `standard` to commit.
+        #[arg(value_parser = ["in_progress", "standard"])]
+        mode: String,
     },
     /// The crew record a workarea names (admin key role).
     Crew {
@@ -1384,6 +1400,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(l) = &args.label {
                 body["label"] = json!(l);
             }
+            if let Some(profile) = &args.profile {
+                body["profile"] = json!(profile);
+            }
             if let Some(scope) = &args.guardrail_scope {
                 body["guardrail_scope"] = json!(scope);
             }
@@ -1606,6 +1625,14 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    path    : {}", field(&response, "path"));
                 println!("    parent  : {}", field(&response, "parent_id"));
                 println!("    status  : {}", field(&response, "status"));
+                // ADR-0030 d13: the mode, and the root a node inside lies under.
+                println!("    mode    : {}", field(&response, "mode"));
+                if let Some(root) = response["in_progress_root"].as_object() {
+                    println!(
+                        "    inside  : {} (in progress; unreviewed memories are recalled here)",
+                        root.get("name").and_then(Value::as_str).unwrap_or("?")
+                    );
+                }
                 println!("    crew    : {}", crew_line(&response["crew"]));
                 for c in response["children"].as_array().into_iter().flatten() {
                     println!(
@@ -1629,6 +1656,34 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                         verbs.join(", ")
                     }
                 );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Workareas {
+            command: WorkareasCommand::Mode { workarea, mode },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.post(
+                &format!("/v2/workareas/{}/mode", segment(workarea)?),
+                &json!({ "mode": mode }),
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "workarea {} ({}) is {}",
+                    field(&response, "name"),
+                    field(&response, "id"),
+                    field(&response, "mode"),
+                );
+                if mode == "in_progress" {
+                    println!(
+                        "readers inside now recall unreviewed memories; commit with: oml workareas mode {} standard",
+                        field(&response, "name")
+                    );
+                }
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -4073,6 +4128,43 @@ fn review_doctor(me: Option<&Value>) -> Option<String> {
     })
 }
 
+/// The in-progress lines (ADR-0030 d14): whether the default workarea lies
+/// inside an in-progress workarea, so recall serves unreviewed memories
+/// there; for a person's dreamer key, that it may set the mode and how many
+/// held items it can see blocking the commit; for a curator key, that it
+/// acts only inside one.
+fn in_progress_doctor(
+    me: Option<&Value>,
+    default_node: Option<&Value>,
+    held_blocking: Option<usize>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    let Some(me) = me else {
+        return lines;
+    };
+    let root = default_node.and_then(|n| n["in_progress_root"]["name"].as_str());
+    match root {
+        Some(root) => lines.push(format!(
+            "ok in progress: the default workarea lies inside {root}, so recall there also serves memories still waiting for review, labelled unreviewed, and nothing leaves until a person commits it (ADR-0030 d3, d6)"
+        )),
+        None if me["profile"] == "curator" => lines.push(
+            "warn curator: the default workarea is not in progress, and a curator key acts only inside an in-progress workarea (access.verb_ceiling, curator_outside_in_progress; ADR-0030 d9)".to_owned(),
+        ),
+        None => {}
+    }
+    if me["role"] == "dreamer" && me["held_by"] == "human" && me["profile"].is_null() {
+        lines.push("ok mode: this key may put a workarea in progress and commit it (oml workareas mode <workarea> in_progress|standard; ADR-0030 d1)".to_owned());
+        if let (Some(root), Some(n)) = (root, held_blocking)
+            && n > 0
+        {
+            lines.push(format!(
+                "warn commit: {n} held item(s) this key can review block the commit of {root}: oml review list --workarea {root} (workarea.held_remaining; ADR-0030 d6)"
+            ));
+        }
+    }
+    lines
+}
+
 /// `oml doctor` checks the pair alone (ADR-0039 d15): which source set the
 /// URL and which set the key, never the key; `/healthz` and `/readyz` at
 /// the first source's URL, keyless, so a URL alone is enough to probe; and
@@ -4106,6 +4198,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut default_node: Option<Value> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
+    let mut held_blocking: Option<usize> = None;
     if let Some(url) = source.as_ref().and_then(|s| s.url) {
         let keyless = Client::new(url.clone(), None);
         health = Some(keyless.probe("/healthz")?);
@@ -4132,6 +4225,19 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     .get(&format!("/v2/workareas/{segment}"))
                     .ok()
                     .map(|(_, n)| n);
+                // What a person's reviewer key sees held under the
+                // in-progress root, one page (ADR-0030 d14).
+                if v["role"] == "dreamer"
+                    && v["held_by"] == "human"
+                    && let Some(root) = default_node
+                        .as_ref()
+                        .and_then(|n| n["in_progress_root"]["id"].as_str())
+                {
+                    held_blocking = client
+                        .get(&format!("/v2/review/held?workarea={root}&limit=200"))
+                        .ok()
+                        .and_then(|(_, page)| page["items"].as_array().map(Vec::len));
+                }
                 // The claim edges there waiting for a second key, one page
                 // (ADR-0057 d17; ADR-0046 d4).
                 waiting_edges = client
@@ -4180,6 +4286,12 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let search = search_doctor(ready.as_ref(), search_settings.as_ref(), scrape.as_ref());
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
     let review = review_doctor(me.as_ref().and_then(|m| m.as_ref().ok()));
+    let in_progress = in_progress_doctor(
+        me.as_ref().and_then(|m| m.as_ref().ok()),
+        default_node.as_ref(),
+        held_blocking,
+    );
+    let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
     let telemetry = telemetry_doctor(scrape.as_ref());
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
@@ -4215,6 +4327,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || telemetry_warn
         || sync_warn
         || sources_warn
+        || in_progress_warn
     {
         "warn"
     } else {
@@ -4259,6 +4372,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "sync": sync,
             "telemetry": telemetry,
             "sources": sources,
+            "in_progress": in_progress,
             "client_version": env!("CARGO_PKG_VERSION"),
             "server_version": server_version(ready.as_ref()),
             "verdict": outcome,
@@ -4369,6 +4483,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &sources {
             println!("sources     : {line}");
+        }
+        for line in &in_progress {
+            println!("in progress : {line}");
         }
         println!("client      : oml {}", env!("CARGO_PKG_VERSION"));
         match (&ready, server_version(ready.as_ref())) {
