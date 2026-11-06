@@ -629,6 +629,8 @@ where
                     query: None,
                     nodes: Some(nodes),
                     state: None,
+                    origin_kinds: Vec::new(),
+                    author: None,
                     after: None,
                     limit,
                 },

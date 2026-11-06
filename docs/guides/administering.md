@@ -101,6 +101,26 @@ An admin key cannot be cut off today: keep the admin credentials file on one mac
 
 `oml events [--after-seq <seq>] [--workarea <workarea>] [--limit <n>]` prints one digest-only page of `GET /v2/events` within a reader key's access. `oml audit verify-chain` is refused while the server serves no chain export.
 
+## The admin page
+
+At `/web/admin`, an administrator's session acts through its own keys. **Memories** lists every
+memory of the organisation, newest first, 50 a page, filtered by state, workarea, origin,
+author key or text; each page read is one `memory.admin_read` in the journal, the Atlas view's
+included. **Atlas** shows the workareas as a map sized by their rows, with a table twin.
+**Workareas** shows the tree with one dropdown a workarea: status changes as your admin key,
+ratified only by a key other than the proposer's; in progress and commit as your reviewer key.
+Apply asks you to confirm first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
+
+## The admin page
+
+At `/web/admin`, an administrator's session acts through its own keys. **Memories** lists every
+memory of the organisation, newest first, 50 a page, filtered by state, workarea, origin,
+author key or text; each page read is one `memory.admin_read` in the journal, the Atlas view's
+included. **Atlas** shows the workareas as a map sized by their rows, with a table twin.
+**Workareas** shows the tree with one dropdown a workarea: status changes as your admin key,
+ratified only by a key other than the proposer's; in progress and commit as your reviewer key.
+Apply asks you to confirm first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d22–d30).
+
 ## Rules no admin key bypasses
 
 An admin verdict is refused, and a verdict from any key in a memory's lineage is refused as `review.author_in_lineage` ([roles and keys](../architecture/roles-and-keys.md#review-independence)). A person who administers and reviews holds two keys. There is no `oml promote` and no `oml delete`: only a different reviewer's verdict approves, and rejected and retired memories keep their bytes. Names are permanent, and the server reads the tenant off the key. `--guardrail-scope workarea|ancestors` sets a key's guardrail scope at issuance ([guardrails](../use/guardrails.md)).

@@ -7255,8 +7255,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        67,
-        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan (ADR-0065 d13), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the six web routes and open sign-up's seven (ADR-0068 d10)"
+        69,
+        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan (ADR-0065 d13), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the eight web routes (ADR-0045 d25) and open sign-up's seven (ADR-0068 d10)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
