@@ -459,6 +459,7 @@ pub fn held_memory(
         valid: Default::default(),
         anchor: None,
         source_check: None,
+        format: Box::default(),
     }
 }
 

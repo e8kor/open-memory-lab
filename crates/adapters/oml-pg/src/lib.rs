@@ -42,12 +42,12 @@ use oml_app::types::{
     AdminSearch, AdminState, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
-    DenialRecord, DocumentCaching, GrantRecord, GuardrailFields, HIT_KINDS, HeldFilter, HeldRow,
-    KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
-    MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, QueueDepth,
-    RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord,
-    TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
-    WorkareaRef,
+    DenialRecord, DocumentCaching, FormatFields, GrantRecord, GuardrailFields, HIT_KINDS,
+    HeldFilter, HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition,
+    ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome,
+    QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair,
+    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord,
+    WorkareaRecord, WorkareaRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -624,13 +624,13 @@ async fn ensure_postings_partitions(owner: &PgPool) -> Result<u64, sqlx::Error> 
 /// starts; row security stays the fence (ADR-0034 d11). Exported so the
 /// suite plans the statement the adapter runs.
 pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
-            ts_rank(to_tsvector('simple', m.claim), \
+            ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), \
                     plainto_tsquery('simple', $3), 0) AS score \
      FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
        AND NOT m.retirement AND m.kind = ANY($4::text[]) \
        AND m.workarea_id = ANY($2::uuid[]) /*anchor*/ \
-       AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3) \
+       AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $3) \
      ORDER BY score DESC, m.id ASC \
      LIMIT $5";
 
@@ -639,14 +639,14 @@ pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
 /// `$5` the kinds and `$6` `k`; pruned to the tenant's partition as
 /// [`RECALL_FTS`] is (ADR-0034 d11).
 pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
-            ts_rank(to_tsvector('simple', m.claim), \
+            ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), \
                     plainto_tsquery('simple', $4), 0) AS score \
      FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
        AND m.author_key_id = ANY($2::uuid[]) \
        AND NOT m.retirement AND m.kind = ANY($5::text[]) \
        AND m.workarea_id = ANY($3::uuid[]) /*anchor*/ \
-       AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $4) \
+       AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $4) \
      ORDER BY score DESC, m.id ASC \
      LIMIT $6";
 
@@ -770,13 +770,13 @@ fn keyword_any_sql(anchor: &str) -> String {
         &format!(
             "WITH q AS (SELECT NULLIF(replace(plainto_tsquery('simple', $6)::text, ' & ', ' | '), '')::tsquery AS tq, \
                     tsvector_to_array(to_tsvector('simple', $6)) AS terms) \
-         SELECT m.id, m.body_bytes, ts_rank(to_tsvector('simple', m.claim), q.tq, 0) AS score, \
+         SELECT m.id, m.body_bytes, ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), q.tq, 0) AS score, \
                 ARRAY(SELECT t FROM unnest(q.terms) t \
-                      WHERE t = ANY(tsvector_to_array(to_tsvector('simple', m.claim))) ORDER BY t) AS matched \
+                      WHERE t = ANY(tsvector_to_array(to_tsvector('simple', COALESCE(m.search_text, m.claim)))) ORDER BY t) AS matched \
          FROM memories m CROSS JOIN q \
          WHERE {SEARCH_SCOPE}{anchor} \
-           AND to_tsvector('simple', m.claim) @@ q.tq \
-           AND (NOT $8 OR to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $6)) \
+           AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ q.tq \
+           AND (NOT $8 OR to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $6)) \
          ORDER BY score DESC, m.id ASC \
          LIMIT $7"
         ),
@@ -1085,7 +1085,7 @@ const SPARSE_PENDING: &str = "WITH due AS ( \
                    SET next_at = clock_timestamp() + make_interval(secs => $3) \
                   FROM due WHERE q.tenant_id = $1 AND q.memory_id = due.memory_id \
                 RETURNING q.memory_id, q.enqueued_at) \
-     SELECT l.memory_id, m.claim, (extract(epoch FROM l.enqueued_at) * 1000000)::int8 \
+     SELECT l.memory_id, COALESCE(m.search_text, m.claim), (extract(epoch FROM l.enqueued_at) * 1000000)::int8 \
        FROM leased l JOIN memories m ON m.tenant_id = $1 AND m.id = l.memory_id \
       ORDER BY l.enqueued_at, l.memory_id";
 
@@ -1262,9 +1262,9 @@ impl PruneLimits {
 fn trigram_sql(anchor: &str) -> String {
     with_now(
         &format!(
-            "SELECT m.id, m.body_bytes, word_similarity($6, oml_search_text(m.claim)) AS score \
+            "SELECT m.id, m.body_bytes, word_similarity($6, oml_search_text(COALESCE(m.search_text, m.claim))) AS score \
          FROM memories m \
-         WHERE {SEARCH_SCOPE}{anchor} AND $6 <% oml_search_text(m.claim) \
+         WHERE {SEARCH_SCOPE}{anchor} AND $6 <% oml_search_text(COALESCE(m.search_text, m.claim)) \
          ORDER BY score DESC, m.id ASC \
          LIMIT $7"
         ),
@@ -1741,6 +1741,7 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.v
      m.anchor_repo, m.anchor_uri, m.anchor_rev, m.anchor_path, m.anchor_fragment, \
      m.anchor_hash, m.anchor_hasher, m.source_check_rev, m.source_check_result, \
      m.source_check_hash, m.source_check_path, m.source_check_fragment, m.source_check_at, \
+     m.format, m.title, m.search_text, m.search_text_by, \
      to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS created_at_signed, \
      to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -1792,6 +1793,12 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         valid: Box::new(valid_from_row(row)?),
         anchor: anchor_from_row(row)?.map(Box::new),
         source_check: source_check_from_row(row)?.map(Box::new),
+        format: Box::new(FormatFields {
+            media_type: row.try_get("format").map_err(backend)?,
+            title: row.try_get("title").map_err(backend)?,
+            search_text: row.try_get("search_text").map_err(backend)?,
+            search_text_by: row.try_get("search_text_by").map_err(backend)?,
+        }),
     })
 }
 
@@ -2213,7 +2220,7 @@ async fn insert_memory(
         (
             ", anchor_repo, anchor_uri, anchor_rev, anchor_path, anchor_fragment, \
              anchor_hash, anchor_hasher",
-            ", $25, $26, $27, $28, $29, $30, $31",
+            ", $29, $30, $31, $32, $33, $34, $35",
         )
     } else {
         ("", "")
@@ -2223,9 +2230,9 @@ async fn insert_memory(
          created_event_id, created_at, claim_key, author_principal, \
          author_key_id, derives_from, lineage_principals, lineage_key_ids, scan_finding, \
          version, kind, body_bytes, is_tip, promoted_at, retirement, replaces_artifact_id, \
-         severity, rule{columns}) \
+         severity, rule, format, title, search_text, search_text_by{columns}) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, ($8)::timestamptz, $9, $10, $11, $12, $13, $14, \
-         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24{values})"
+         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24, $25, $26, $27, $28{values})"
     );
     let mut insert = sqlx::query(&sql)
         .bind(m.memory_id)
@@ -2251,7 +2258,11 @@ async fn insert_memory(
         .bind(m.retirement)
         .bind(m.replaces)
         .bind(m.guardrail.as_ref().map(|g| g.severity.as_str()))
-        .bind(m.guardrail.as_ref().and_then(|g| g.rule.clone()));
+        .bind(m.guardrail.as_ref().and_then(|g| g.rule.clone()))
+        .bind(&m.format.media_type)
+        .bind(m.format.title.as_deref())
+        .bind(m.format.search_text.as_deref())
+        .bind(m.format.search_text_by.as_deref());
     if let Some(anchor) = anchor {
         insert = insert
             .bind(anchor.repo())
@@ -6814,7 +6825,7 @@ impl WebStore for PgStore {
         };
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = $1 \
-             AND ($2::text IS NULL OR to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $2)) \
+             AND ($2::text IS NULL OR to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $2)) \
              AND ($3::uuid[] IS NULL OR m.workarea_id = ANY($3)) \
              AND {state} \
              AND ($4::timestamptz IS NULL OR (m.created_at, m.id) < ($4::timestamptz, $5::uuid)) \

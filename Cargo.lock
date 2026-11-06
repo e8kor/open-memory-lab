@@ -2031,6 +2031,7 @@ dependencies = [
  "hex",
  "oml-app",
  "oml-fetch",
+ "oml-format",
  "oml-guardrail",
  "oml-pg",
  "oml-rerank",

@@ -69,8 +69,8 @@ use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
     DocumentFetchFailure, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord, IdempotencyScope,
-    JournalStore, MetadataFold, NoObserver, OutboxRow, RequestObserver, Reranker, ScanOutcome,
-    Scanner, Signer, SparseEncoder, StoreError, SubjectRow, TailEvent,
+    JournalStore, MetadataFold, NoObserver, OutboxRow, Parsed, RequestObserver, Reranker,
+    ScanOutcome, Scanner, Signer, SparseEncoder, StoreError, SubjectRow, TailEvent,
 };
 use crate::telemetry::{HITS_STORED, Label, RecallEvent, Remembered, Telemetry, TelemetryItem};
 use crate::types::{
@@ -82,18 +82,18 @@ use crate::types::{
     ClientDescription, ClientKind, CodeEntryOutcome, ConfirmAction, ConfirmOutcome,
     ConfirmationGrant, ConfirmationView, ConnectCode, ConnectCodeIssued, ConnectCodeRecord,
     ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest,
-    CrewPage, CrewRecord, CrewUpdate, DenialRecord, EdgeRatification, ExchangeForm, GrantRecord,
-    GuardrailFields, GuardrailRequest, GuardrailSet, GuardrailVerdict, HIT_KINDS, IssueKeyRequest,
-    IssuedKey, IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter,
-    ListingPosition, ListingScope, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
-    OAuthClientRecord, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge,
-    RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient,
-    RerankOutcome, ServedGuardrail, ServedMemory, SourceCheck, SourceCheckReceipt,
-    SourceCheckRequest, SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb, SupersedeOutcome,
-    SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow, TokenPair,
-    TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows, Verdict,
-    VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
-    WorkareaStatusView,
+    CrewPage, CrewRecord, CrewUpdate, DenialRecord, EdgeRatification, ExchangeForm, FormatFields,
+    GrantRecord, GuardrailFields, GuardrailRequest, GuardrailSet, GuardrailVerdict, HIT_KINDS,
+    IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest,
+    ListingFilter, ListingPosition, ListingScope, MemoryPage, MemoryRecord, MintedToken, NamedRef,
+    NamingRefusal, OAuthClientRecord, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge,
+    ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
+    RegisteredClient, RerankOutcome, ServedGuardrail, ServedMemory, SourceCheck,
+    SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt, SubmitRequest,
+    SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent,
+    TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage,
+    UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo,
+    WorkareaRecord, WorkareaStatusView,
 };
 use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, HELD_PAGE_MAX, HeldFilter, HeldItem,
@@ -199,6 +199,9 @@ pub struct App<J, S, C, I, Sc> {
     /// and the encoder task writes kind 2 with; `None` where the deployment
     /// serves no sparse pipeline (ADR-0052 d14, d16).
     sparse: Option<Arc<dyn SparseEncoder>>,
+    /// The claim formats this deployment serves (ADR-0056 d1, d3): prose
+    /// alone until the composition gives it the compiled-in adapters.
+    formats: Arc<dyn crate::ports::Formats>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -458,7 +461,23 @@ fn submit_request_digest(
         }
     }
     let doc = with_anchor(doc, req.anchor.as_ref());
+    let doc = with_format(doc, req.format.as_deref(), req.title.as_deref());
     sha256_digest_string(doc.to_string().as_bytes())
+}
+
+/// A request digest's document with the format and the title when sent, and
+/// unchanged otherwise, so a request that sends neither digests as it did
+/// before formats (ADR-0056 d13).
+fn with_format(mut doc: Value, format: Option<&str>, title: Option<&str>) -> Value {
+    if let Some(members) = doc.as_object_mut() {
+        if let Some(format) = format {
+            members.insert("format".to_owned(), Value::from(format));
+        }
+        if let Some(title) = title {
+            members.insert("title".to_owned(), Value::from(title));
+        }
+    }
+    doc
 }
 
 /// A request digest's document with the anchor when sent, and unchanged
@@ -579,6 +598,18 @@ fn with_valid_time(doc: &mut Value, valid: &ValidTime) {
     }
 }
 
+/// The submission payload's `format`, always, and its `title` when the
+/// version has one: both are signed with the version, and an event without
+/// them reads as `text/plain` with no title (ADR-0056 d2).
+fn with_format_fields(payload: &mut Value, fields: &FormatFields) {
+    if let Some(members) = payload.as_object_mut() {
+        members.insert("format".to_owned(), Value::from(fields.media_type.as_str()));
+        if let Some(title) = &fields.title {
+            members.insert("title".to_owned(), Value::from(title.as_str()));
+        }
+    }
+}
+
 /// The request digest of a supersession: SHA-256 over the RFC 8785 JSON of
 /// the method, the route template, the path parameters and the parsed body,
 /// so one Idempotency-Key reused for two targets never replays the first
@@ -601,6 +632,7 @@ fn supersede_request_digest(req: &SupersedeRequest) -> Result<String, AppError> 
     if let Some(body) = doc.get_mut("body") {
         *body = with_guardrail_fields(body.take(), req.severity, req.rule.as_ref());
         *body = with_anchor(body.take(), req.anchor.as_ref());
+        *body = with_format(body.take(), req.format.as_deref(), req.title.as_deref());
         if let Some(members) = body.as_object_mut() {
             for (name, value) in [
                 ("valid_from", &req.valid_from),
@@ -1123,7 +1155,21 @@ where
             telemetry: None,
             feedback_counts: std::sync::Mutex::default(),
             sparse: None,
+            formats: Arc::new(crate::ports::ProseFormats),
         }
+    }
+
+    /// The app that serves `formats`, the compiled-in adapters of ADR-0056
+    /// d3.
+    #[must_use]
+    pub fn with_formats(self, formats: Arc<dyn crate::ports::Formats>) -> Self {
+        Self { formats, ..self }
+    }
+
+    /// The formats this app serves, for `/readyz` and doctor (ADR-0056 d14).
+    #[must_use]
+    pub fn formats(&self) -> &dyn crate::ports::Formats {
+        self.formats.as_ref()
     }
 
     /// The app whose reranking pipelines call `reranker` (ADR-0053 d2). The
@@ -4031,6 +4077,13 @@ where
         // Capture normalizes first: the digest, the scan and the byte count
         // all see the NFC text (admission.md capture; ADR-0025 d6).
         let body = nfc(&req.body);
+        let (format, parsed) = self.capture_format(
+            req.kind,
+            req.format.as_deref(),
+            req.title.as_deref(),
+            &body,
+            false,
+        )?;
         // A guardrail's fields, then its two scan classes, before the
         // scanner port: a veto journals nothing (proposed ADR-0037 d10).
         let guardrail = guardrail_fields(req.kind, false, req.severity, req.rule.as_ref(), &body)?;
@@ -4054,6 +4107,8 @@ where
             ScanOutcome::Hold(reason) => Some(reason),
             ScanOutcome::Veto(reason) => return Err(AppError::ScanVeto(reason)),
         };
+        let mut scan_finding = scan_finding;
+        self.scan_derived(key.tenant_id, req.kind, &format, &parsed, &mut scan_finding)?;
 
         // The lineage closure: the author plus every declared ancestor's
         // closure — R2 runs over the whole of it (roles-and-keys.md). An
@@ -4111,6 +4166,7 @@ where
             valid: Box::new(valid),
             anchor: req.anchor.clone().map(Box::new),
             source_check: None,
+            format: Box::new(format),
         };
 
         // The catalog payload of submission.remember: digest-only, body
@@ -4142,6 +4198,7 @@ where
         });
         guardrail_payload(&mut payload, memory.guardrail.as_deref())?;
         with_valid_time(&mut payload, &memory.valid);
+        with_format_fields(&mut payload, &memory.format);
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
@@ -5058,7 +5115,7 @@ where
                 .collect();
             let passages: Vec<String> = head
                 .iter()
-                .filter_map(|c| rows.get(&c.memory_id).map(|m| m.body.clone()))
+                .filter_map(|c| rows.get(&c.memory_id).map(|m| m.searched().to_owned()))
                 .collect();
             let scored = reranker.score(query.clone(), passages).await;
             let scored = match scored {
@@ -5621,6 +5678,128 @@ where
         }
     }
 
+    /// The format checks of a capture (ADR-0056 d1, d10, d13): the media type
+    /// resolved against the closed list, the kinds that read prose held to
+    /// prose, the title checked, and the source accepted by its adapter
+    /// before the scan. Returns the fields to store and what the adapter
+    /// parsed.
+    fn capture_format(
+        &self,
+        kind: MemoryKind,
+        requested: Option<&str>,
+        title: Option<&str>,
+        body: &str,
+        retirement: bool,
+    ) -> Result<(FormatFields, Parsed), AppError> {
+        let resolved = self
+            .formats
+            .resolve(requested.unwrap_or("text/plain"))
+            .map_err(|allowed| AppError::FormatUnknown { allowed })?;
+        let prose_kind = matches!(kind, MemoryKind::Memory | MemoryKind::DerivedFact);
+        if !resolved.prose && (!prose_kind || retirement) {
+            return Err(AppError::FormatKindRefused { kind });
+        }
+        let title = match title {
+            None => None,
+            Some(raw) => {
+                let t = nfc(raw);
+                let t = t.trim();
+                if t.is_empty() {
+                    return Err(AppError::TitleInvalid("a title is not empty"));
+                }
+                if t.chars()
+                    .any(|c| matches!(c, '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}'))
+                {
+                    return Err(AppError::TitleInvalid("a title is one line"));
+                }
+                if t.chars().count() > 100 {
+                    return Err(AppError::TitleInvalid("a title is at most 100 characters"));
+                }
+                Some(t.to_owned())
+            }
+        };
+        if !resolved.prose && title.is_none() {
+            return Err(AppError::TitleInvalid(
+                "a claim that is not prose carries a title stating the one fact its source shows",
+            ));
+        }
+        let parsed = if retirement {
+            Parsed::default()
+        } else {
+            resolved
+                .adapter
+                .validate(body)
+                .map_err(AppError::FormatInvalid)?
+        };
+        let derived = resolved.adapter.search_text(&parsed);
+        let search_text = match (&title, resolved.prose) {
+            (None, true) => None,
+            (Some(t), _) => Some(format!("{t}\n{derived}")),
+            (None, false) => Some(derived),
+        };
+        let search_text_by = search_text
+            .as_ref()
+            .map(|_| resolved.adapter.id().to_owned());
+        Ok((
+            FormatFields {
+                media_type: resolved.media_type,
+                title,
+                search_text,
+                search_text_by,
+            },
+            parsed,
+        ))
+    }
+
+    /// The scan over what a format adds to the source: the title, the
+    /// format's own finding and every decoded view. A veto names the key
+    /// path, never the value; it can add a finding and never remove one
+    /// (ADR-0056 d6). A hold on a view is the row's finding when the source
+    /// raised none.
+    fn scan_derived(
+        &self,
+        tenant_id: Uuid,
+        kind: MemoryKind,
+        fields: &FormatFields,
+        parsed: &Parsed,
+        hold: &mut Option<String>,
+    ) -> Result<(), AppError> {
+        let mut note = |outcome: ScanOutcome, at: &str| -> Result<(), AppError> {
+            match outcome {
+                ScanOutcome::Pass => Ok(()),
+                ScanOutcome::Hold(reason) => {
+                    hold.get_or_insert(format!("{reason} at {at}"));
+                    Ok(())
+                }
+                ScanOutcome::Veto(reason) => Err(AppError::ScanVeto(format!("{reason} at {at}"))),
+            }
+        };
+        if let Some(title) = &fields.title {
+            note(
+                self.scanner.scan(&AdmissionEnvelope {
+                    tenant_id,
+                    kind: "title",
+                    body: title,
+                }),
+                "title",
+            )?;
+        }
+        if let Some(finding) = &parsed.veto {
+            return Err(AppError::ScanVeto(finding.clone()));
+        }
+        for view in &parsed.views {
+            note(
+                self.scanner.scan(&AdmissionEnvelope {
+                    tenant_id,
+                    kind: kind.as_str(),
+                    body: &view.text,
+                }),
+                &view.path,
+            )?;
+        }
+        Ok(())
+    }
+
     /// The scan over an anchor's `repo`, `uri`, `path` and `fragment`
     /// (ADR-0057 d2): a path whose file name has a secret's shape, and any
     /// finding of the deterministic scanner, hold or veto alike, refuses the
@@ -5995,6 +6174,13 @@ where
         // re-sends its fields, which run their checks first (proposed
         // ADR-0037 d10).
         let body = nfc(&req.body);
+        let (format, parsed) = self.capture_format(
+            kind,
+            req.format.as_deref(),
+            req.title.as_deref(),
+            &body,
+            req.retirement,
+        )?;
         let guardrail =
             guardrail_fields(kind, req.retirement, req.severity, req.rule.as_ref(), &body)?;
         // The successor's own valid time: it inherits none (proposed
@@ -6015,6 +6201,8 @@ where
             ScanOutcome::Hold(reason) => Some(reason),
             ScanOutcome::Veto(reason) => return Err(AppError::ScanVeto(reason)),
         };
+        let mut scan_finding = scan_finding;
+        self.scan_derived(key.tenant_id, kind, &format, &parsed, &mut scan_finding)?;
         // derives_from ⊇ {target}; the lineage closure is the proposer plus
         // every ancestor's closure, the target's included (roles-and-keys.md).
         let mut derives_from = vec![target.memory_id];
@@ -6088,6 +6276,7 @@ where
             valid: Box::new(valid),
             anchor: req.anchor.clone().map(Box::new),
             source_check: None,
+            format: Box::new(format),
         };
 
         // The catalog payload of the submission, digest-only, plus what it
@@ -6125,6 +6314,7 @@ where
         });
         guardrail_payload(&mut payload, successor.guardrail.as_deref())?;
         with_valid_time(&mut payload, &successor.valid);
+        with_format_fields(&mut payload, &successor.format);
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,

@@ -198,6 +198,8 @@ fn submit_req(idem: &str, body: &str) -> SubmitRequest {
         rule: None,
         valid_from: None,
         valid_until: None,
+        format: None,
+        title: None,
     }
 }
 
@@ -244,6 +246,8 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
         rule: None,
         valid_from: None,
         valid_until: None,
+        format: None,
+        title: None,
     }
 }
 

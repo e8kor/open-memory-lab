@@ -402,6 +402,28 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("the claim's latest version is {current}: read it again before superseding"),
         )
         .with_details(json!({ "current_version": current })),
+        AppError::FormatUnknown { allowed } => ApiError::validation(
+            "format is not one of the accepted values: send one of details.allowed",
+        )
+        .with_details(json!({ "field": "format", "allowed": allowed })),
+        AppError::FormatKindRefused { kind } => ApiError::validation(format!(
+            "a {} claim is read by rules that expect prose: format is text/plain or text/markdown",
+            kind.as_str()
+        ))
+        .with_details(json!({ "field": "format", "allowed": ["text/plain", "text/markdown"] })),
+        AppError::TitleInvalid(reason) => ApiError::validation(format!("title: {reason}"))
+            .with_details(json!({ "field": "title" })),
+        AppError::FormatInvalid(refusal) => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "submission.format_invalid",
+            "The source is the signed text, so it must be a document its format accepts; the refusal names the rule and where it was found (ADR-0056 d13).",
+            format!("the source is not valid {}", refusal),
+        )
+        .with_details(json!({
+            "reason": refusal.reason,
+            "line": refusal.line,
+            "column": refusal.column,
+        })),
         AppError::AnchorScanVeto { field, finding } => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "submission.scan_veto",

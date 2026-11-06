@@ -1333,6 +1333,7 @@ pub fn lead_app(store: &PgStore, signing_key: SigningKey) -> LeadApp {
     )
     .with_observer(Arc::new(ScopeObserver))
     .with_search(search)
+    .with_formats(oml_format::compiled())
 }
 
 /// The lead composition: one store handle drives the app and the transport's

@@ -1317,6 +1317,8 @@ async fn agent_writes(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
                 rule: None,
                 valid_from: None,
                 valid_until: None,
+                format: None,
+                title: None,
             },
         )
         .await
@@ -1951,6 +1953,8 @@ async fn agent_guardrail(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
                 rule: None,
                 valid_from: None,
                 valid_until: None,
+                format: None,
+                title: None,
             },
         )
         .await
@@ -2134,6 +2138,8 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
                 rule: None,
                 valid_from: Some("2025".to_owned()),
                 valid_until: None,
+                format: None,
+                title: None,
             },
         )
         .await
@@ -2172,6 +2178,8 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
                 valid_until: None,
                 anchor: None,
                 expected_version: 1,
+                format: None,
+                title: None,
             },
         )
         .await
