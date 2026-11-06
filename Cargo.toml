@@ -105,6 +105,9 @@ ring = "0.17"
 # the hexagon only over the network).
 ureq = { version = "2.12", features = ["json"] }
 toml = "0.8"
+# The test oracle of the `rust` adapter's prefix lexer (ADR-0061 d3): a
+# dev-dependency of oml-cli, which never links into the shipped binary.
+syn = { version = "2.0", default-features = false, features = ["full", "parsing"] }
 # `oml login` reads the key without echo from the terminal (ADR-0039 d15): std
 # has no no-echo read, and no crate in the graph offers one. Its libc and
 # windows-sys 0.61 are already in the graph.

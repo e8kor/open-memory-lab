@@ -79,7 +79,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0058 | `docs/production-requirements-r2` | #94 | the public server runs to stated slos with an error budget and without | open |
 | adr | 0059 | `main` |  | a memory states when it is true recall hides what has ended and search | used |
 | adr | 0060 | `feat/lake-writer-r2` | #93 | the lake writer drains the outbox it has seals what it materializes an | open |
-| adr | 0061 | `design/rust-adapter` | #70 | oml sync reads a rust workspace as one claim per crate and one per mod | open |
+| adr | 0061 | `feat/rust-adapter` | #88 | oml sync reads a rust workspace as one claim per crate and one per mod | open |
 | adr | 0062 | `design/delta-mapping` | #74 | oml sync maps a delta lakes tables into anchored claims from the log a | open |
 | adr | 0063 | `feat/chat-memory-r2` | #88 | a chat turn becomes memory only when the agent in it writes the fact a | open |
 | adr | 0064 | `design/implicit-code-capture` | #80 | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
@@ -195,10 +195,10 @@ is a collision: the branch that reserved later renumbers.
 | fr | 117 | `main` |  | A claim edge whose statement leaves the documents (an `Amends:` line e | used |
 | fr | 118 | `main` |  | The learned sparse leg reads every posting of each query token among t | used |
 | fr | 119 | `feat/remember-dedup-r2` | #84 | Migration 0027 fills the near-copy check's keys of every existing version in one statement per tenant | open |
-| fr | 130 | `design/rust-adapter` | #70 | The proposed ADR-0061 loads OML's crates as 92 claims (9 crates, 83 mo | open |
-| fr | 131 | `design/rust-adapter` | #70 | A module claim goes stale only when its doc changes (ADR-0061 d8), so  | open |
-| fr | 132 | `design/rust-adapter` | #70 | Crate dependencies are stated in each crate claim's text and not as `d | open |
-| fr | 133 | `design/rust-adapter` | #70 | Whether syn in the shipped `oml` binary would change its build time or | open |
+| fr | 130 | `feat/rust-adapter` |     | The proposed ADR-0061 loads OML's crates as 92 claims (9 crates, 83 mo | open |
+| fr | 131 | `feat/rust-adapter` |     | A module claim goes stale only when its doc changes (ADR-0061 d8), so  | open |
+| fr | 132 | `feat/rust-adapter` |     | Crate dependencies are stated in each crate claim's text and not as `d | open |
+| fr | 133 | `feat/rust-adapter` |     | Whether syn in the shipped `oml` binary would change its build time or | open |
 | fr | 140 | `design/delta-mapping` | #74 | The proposed ADR-0062 d3 ships `--adapter delta` in a second `oml` art | open |
 | fr | 141 | `design/delta-mapping` | #74 | The minimal Delta log reader (ADR-0062 d3, d4) is checked against delt | open |
 | fr | 142 | `design/delta-mapping` | #74 | The review burden of a lake (ADR-0062 d18) depends on how many columns | open |

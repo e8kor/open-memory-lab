@@ -37,7 +37,10 @@ class Anchor:
             hash_ (str | Unset): Digest of the fragment's text, or the file's, under hasher.
             hasher (AnchorHasher | Unset): oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7).
                 oml-turn/1: HMAC-SHA-256 of the person's prompt as the harness passed it, UTF-8 after NFC, keyed by the person's
-                chat salt, which never leaves their machine; with a chat uri alone (ADR-0063 d4).
+                chat salt, which never leaves their machine; with a chat uri alone (ADR-0063 d4). oml-rustdoc/1: a module doc
+                block without its //! markers, then oml-md/1 (ADR-0061 d7). oml-crate/1: SHA-256 of one line per fact of a
+                crate: name, description, root doc, binaries, internal dependencies and dependents (ADR-0061 d7). The server
+                computes neither.
     """
 
     repo: str | Unset = UNSET

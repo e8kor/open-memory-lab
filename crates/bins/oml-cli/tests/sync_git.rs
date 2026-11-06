@@ -441,3 +441,30 @@ fn a_changed_exclude_set_on_this_clone_is_refused_unless_explicit() {
         .is_ok()
     );
 }
+
+#[test]
+fn a_rust_source_loads_rs_files_and_manifests_only_when_the_rust_adapter_is_named() {
+    let dir = clone_with("rust-load", "git@github.com:e8kor/Code.git");
+    write(&dir, "crates/a/Cargo.toml", "[package]\nname = \"a\"\n");
+    write(&dir, "crates/a/src/lib.rs", "//! A.\n");
+    write(&dir, "crates/a/README.md", "# A\n\n## One\n\nText.\n");
+    git(&dir, &["add", "-f", "."]);
+    git(&dir, &["commit", "-q", "-m", "one"]);
+    // The working tree is not read: an uncommitted edit is not in the load.
+    write(&dir, "crates/a/src/lib.rs", "//! Uncommitted.\n");
+    let named = load(
+        &dir,
+        &Options {
+            adapter: Some(Kind::Rust),
+            ..opts("crates")
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        named.paths(),
+        ["crates/a/Cargo.toml", "crates/a/src/lib.rs"]
+    );
+    assert_eq!(named.files[1].1, b"//! A.\n");
+    let unnamed = load(&dir, &opts("crates")).unwrap();
+    assert_eq!(unnamed.paths(), ["crates/a/README.md"]);
+}
