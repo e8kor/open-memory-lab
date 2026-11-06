@@ -1584,6 +1584,9 @@ are fixed, word for word:
 - Above the code field: "Enter the code only if you opened this page yourself,
   by adding the connector in Claude, in the last few minutes. If someone sent you this link, close
   it."
+- Below it: "Get a connect code from your account page: Connect Claude on the web or a phone."
+  with the phrase linked to `/web` on the same origin, then "Codes are shown once; use New connect
+  code on the key's row if you lost it."
 - A wrong code — unknown, expired, voided, spent, or a revoked or expired key's alike — with the attempts left: "This code
   is not valid. Check it, or ask your administrator for a new one."
 
