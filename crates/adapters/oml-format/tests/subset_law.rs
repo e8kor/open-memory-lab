@@ -4,11 +4,11 @@
 //! format added.
 
 use oml_app::App;
-use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
+use oml_app::domain::HeldBy;
+use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
 use oml_app::domain::{MemoryKind, Role};
-use oml_app::domain::access::Covers;
-use oml_app::domain::HeldBy;
+use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::types::{BootstrapRequest, GrantRequest, IssueKeyRequest, SubmitRequest};
 use proptest::prelude::*;
 
@@ -125,4 +125,3 @@ proptest! {
         })?;
     }
 }
-

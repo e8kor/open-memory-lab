@@ -3,11 +3,11 @@
 //! in different source are the same claim, and the check names the first.
 
 use oml_app::App;
-use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
+use oml_app::domain::HeldBy;
+use oml_app::domain::access::Covers;
 use oml_app::domain::name::Name;
 use oml_app::domain::{MemoryKind, Role};
-use oml_app::domain::access::Covers;
-use oml_app::domain::HeldBy;
+use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen};
 use oml_app::types::{
     AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, OnSimilar, SubmitRequest,
 };
@@ -88,12 +88,15 @@ async fn writer(app: &TestApp) -> String {
     issued.value
 }
 
-
 #[tokio::test]
 async fn two_diagrams_with_one_search_text_are_named_as_the_same_claim_whatever_their_source() {
     let app = app();
     let key = writer(&app).await;
-    let first = request("one", "flowchart LR\n  A --> B", Some("text/vnd.oml.mermaid"));
+    let first = request(
+        "one",
+        "flowchart LR\n  A --> B",
+        Some("text/vnd.oml.mermaid"),
+    );
     app.submit_memory(&key, &first).await.expect("first");
     let second = SubmitRequest {
         on_similar: OnSimilar::Refuse,
@@ -141,27 +144,48 @@ async fn the_verdict_event_covers_the_format_the_version_was_signed_with() {
     };
     let admin = &boot.admin_key.value;
     let w = app
-        .issue_key(admin, &issue("w-key", R::Writer, vec![grant(R::Writer), grant(R::Reader)]))
+        .issue_key(
+            admin,
+            &issue("w-key", R::Writer, vec![grant(R::Writer), grant(R::Reader)]),
+        )
         .await
         .expect("writer");
     let d = app
-        .issue_key(admin, &issue("d-key", R::Dreamer, vec![grant(R::Dreamer), grant(R::Reader)]))
+        .issue_key(
+            admin,
+            &issue(
+                "d-key",
+                R::Dreamer,
+                vec![grant(R::Dreamer), grant(R::Reader)],
+            ),
+        )
         .await
         .expect("dreamer");
     let sent = app
         .submit_memory(
             &w.value,
-            &request("one", "flowchart LR\n  A --> B", Some("text/vnd.oml.mermaid")),
+            &request(
+                "one",
+                "flowchart LR\n  A --> B",
+                Some("text/vnd.oml.mermaid"),
+            ),
         )
         .await
         .expect("submit");
     app.post_verdict(&d.value, sent.receipt.memory_id, Verdict::Approve, None)
         .await
         .expect("verdict");
-    let events = store.events_range(boot.tenant_id, 1, 1000).await.expect("journal");
+    let events = store
+        .events_range(boot.tenant_id, 1, 1000)
+        .await
+        .expect("journal");
     let verdict = events
         .iter()
         .find(|e| e.envelope.event_type == event_types::REVIEW_APPROVE)
         .expect("an approval");
-    assert_eq!(verdict.envelope.payload["format"], "text/vnd.oml.mermaid", "{:?}", verdict.envelope.payload);
+    assert_eq!(
+        verdict.envelope.payload["format"], "text/vnd.oml.mermaid",
+        "{:?}",
+        verdict.envelope.payload
+    );
 }

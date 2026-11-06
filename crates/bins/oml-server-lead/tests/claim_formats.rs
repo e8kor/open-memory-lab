@@ -745,7 +745,10 @@ async fn the_near_copy_keys_of_a_diagram_are_the_keys_of_its_search_text() {
     .await
     .expect("row");
     assert!(held > 0, "a held diagram holds keys");
-    assert!(same, "the keys are those of the search text, never of the arrow syntax");
+    assert!(
+        same,
+        "the keys are those of the search text, never of the arrow syntax"
+    );
     drop(admin);
     w.done().await;
 }

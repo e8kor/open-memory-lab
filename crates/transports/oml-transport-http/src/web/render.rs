@@ -50,12 +50,15 @@ pub const RENDER_TTL_SECS: u64 = 300;
 /// measured (FR-109).
 pub const RENDER_SOURCES_MAX: usize = 256;
 
+/// A held source's key (session, memory) and its value (expiry, source).
+type Held = HashMap<(String, String), (u64, Arc<str>)>;
+
 /// The sources the frame route draws from, keyed by session and memory, each
 /// with its expiry. A restart or an eviction answers `not_found`; the card
 /// still shows the source.
 #[derive(Default)]
 pub struct Sources {
-    held: Mutex<HashMap<(String, String), (u64, Arc<str>)>>,
+    held: Mutex<Held>,
 }
 
 impl Sources {

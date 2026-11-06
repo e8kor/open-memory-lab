@@ -4471,7 +4471,9 @@ where
                     && SIMILAR_KINDS.contains(&m.kind)
                     && !(exclude == Some(m.claim_key.as_str()) && m.workarea_id == workarea)
             })
-            .filter_map(|m| relate(&written, &Fingerprint::of(m.searched())).map(|(r, j)| (r, j, m)))
+            .filter_map(|m| {
+                relate(&written, &Fingerprint::of(m.searched())).map(|(r, j)| (r, j, m))
+            })
             .collect();
         named.sort_by(|a, b| {
             a.0.cmp(&b.0)
