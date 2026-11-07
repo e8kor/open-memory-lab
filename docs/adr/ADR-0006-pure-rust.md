@@ -9,7 +9,7 @@ answers: why the implementation is pure Rust; what named trigger would admit Sca
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
-**Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.1.0; the rest not built ([releases](../changelog.md))
 
 ## Context
 
@@ -69,7 +69,7 @@ smallest possible runtime. The hot-path rules the stack must obey are recorded i
   against delta-rs documentation with a fetch date at writing time; until then it
   is a design assumption, and the exactly-once claim that rests on it is written
   only as "exactly-once, verified by conformance test" — the test is
-  [FR-3](../product/roadmap.md).* One capability is already known to constrain
+  #101.* One capability is already known to constrain
   the design the other way: **deletion vectors are read-only in delta-rs**, so no
   OML design may assume DV-based deletes; retracts are MERGE operations in outbox
   order ([storage](../architecture/storage.md)).
@@ -129,11 +129,11 @@ smallest possible runtime. The hot-path rules the stack must obey are recorded i
   operation (deletion vectors for writes, today), the design routes around it
   rather than shelling out to Spark — d4's trigger is deliberately narrow so the
   coupling is confronted, not laundered through a side channel.
-- [FR-3](../product/roadmap.md) (delta-rs exactly-once conformance) and the
+- #101 (delta-rs exactly-once conformance) and the
   fetch-dated capability citation in d2 are blocking items for the storage
   documentation's claims: until they land, every exactly-once sentence in the
   doc set carries its marker.
-- The embedding model choice ([RS-1](../product/roadmap.md)) may yet pull a
+- The embedding model choice (#153) may yet pull a
   non-Rust component into the deployment as an external endpoint; that decision
   is open there and nothing in this record forecloses it — it constrains only
   what runs inside the TCB.

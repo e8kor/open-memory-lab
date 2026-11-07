@@ -83,6 +83,13 @@ impl ClientIpSource {
 pub struct TrustedProxies(Vec<Net>);
 
 impl TrustedProxies {
+    /// Whether no proxy is trusted, so every client address is the
+    /// socket peer's (ADR-0068 d9's doctor line).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// The list from its entries; one that does not parse is refused, and
     /// the lead stops at start (ADR-0042 d7).
     pub fn parse<S: AsRef<str>>(entries: &[S]) -> Result<Self, String> {

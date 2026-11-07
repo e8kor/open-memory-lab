@@ -26,6 +26,7 @@ pub struct Listed {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ListedAnchor {
     pub repo: Option<String>,
+    pub uri: Option<String>,
     pub rev: Option<String>,
     pub path: Option<String>,
     pub fragment: Option<String>,
@@ -50,6 +51,7 @@ impl Listed {
             let o = |k: &str| a[k].as_str().map(ToOwned::to_owned);
             ListedAnchor {
                 repo: o("repo"),
+                uri: o("uri"),
                 rev: o("rev"),
                 path: o("path"),
                 fragment: o("fragment"),

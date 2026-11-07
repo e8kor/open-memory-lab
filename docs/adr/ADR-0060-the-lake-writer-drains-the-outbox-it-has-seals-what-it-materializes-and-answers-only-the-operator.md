@@ -9,7 +9,7 @@ answers: how ADR-0003's lake writer is built against the code as it stands; whic
 
 **Status:** accepted design · 2026-11-06 (was accepted) · introduced in v0.6.0 · first recorded 2026-11-05 (d17 and d19 decided by the operator, 2026-11-05) · amends [ADR-0003](ADR-0003-delta-lake-derived-lakehouse.md) (d3, d4, d6), [ADR-0005](ADR-0005-erasure-by-crypto-shredding.md) (d1, d2), [ADR-0006](ADR-0006-pure-rust.md) (d1)
 
-**Release:** introduced in v0.6.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.6.0 ([releases](../changelog.md))
 
 **Amends:** ADR-0003 (d3, d4, d6), ADR-0005 (d1, d2), ADR-0006 (d1)
 
@@ -136,8 +136,8 @@ Read against `origin/main` at v0.5.7, these parts of it and its pages are stale:
   moves on. A commit failure is retried next tick and never skipped. The journalled
   `materialize-skipped` event waits for a lead verb. Amends ADR-0003 d6.
 
-- **d15 — Storage is a local path.** `OML_LAKE_URL` is an absolute path or `file://` URL (on
-  this host `/srv/data/oml/lake`). Another scheme is refused by name until ADR-0035's object
+- **d15 — Storage is a local path.** `OML_LAKE_URL` is an absolute path or `file://` URL (for example
+  `/srv/oml/lake`). Another scheme is refused by name until ADR-0035's object
   store lands; nothing logs a URL or a credential.
 
 - **d16 — Doctor lines and metrics.** `oml-lakewriter doctor` prints `lake.writer` (no lease

@@ -1,5 +1,5 @@
 //! The learned sparse encoder over a file of texts, for the scale bench and
-//! the encode throughput figure (ADR-0052 d14, FR-101): one JSON line per
+//! the encode throughput figure (ADR-0052 d14, #104): one JSON line per
 //! text on stdin, `{"text": …}`, and one JSON line out per text, its
 //! postings `[[token, weight, in_text]…]` (`docs`) or its query terms
 //! `[[token, weight, piece]…]` (`queries`). The throughput goes to stderr.

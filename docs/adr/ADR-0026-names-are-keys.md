@@ -9,7 +9,7 @@ answers: which records carry a unique name, what a name may spell, how a name is
 
 **Status:** accepted design · 2026-10-31 · amended by [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
-**Release:** partly in v0.3.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.3.0; the rest not built ([releases](../changelog.md))
 
 **Amends:** ADR-0008 (d3, d7), ADR-0010 (d6, d7), ADR-0012 (d4), ADR-0018 (d4), ADR-0022 (d4), ADR-0025 (d1, d2, d14), ADR-0028 (d1, d3)
 
@@ -60,7 +60,7 @@ accepted ADR-0025 and reverses
 none of its rules: the refusal order (d1), the issuance order (d2), own (d3) and the events-tail
 visibility (d15) apply to a named request exactly as to the same request by id. It adds fields to
 d2's issuance body and changes what d14's `crew` holds, which is why the Amends line names them. The existing PoC
-data, and the live v0.1.0 deployment on oml.doublegate.io (one tenant named `oml`, a root workarea
+data, and a live v0.1.0 deployment (one tenant named `oml`, a root workarea
 the PoC created with the name `root` at crates/oml-app/src/app.rs:573-579, and keys with
 principals), must survive with its journal untouched.
 
@@ -431,11 +431,11 @@ Everything this record decides is design; nothing below is built.
     and every crew record it creates ([event catalog](../data/event-catalog.md)). The folds take
     the name of every row that predates names from it alone, never from a creation event, and a
     re-fold of a chain reads it before the creation events it names
-    ([folds](../data/postgres-schema.md#folds-of-the-journal-vs-operational-tables)). `prior_name`
+    ([folds](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). `prior_name`
     is read from the journal, the name the row's creation event carried; the migration that adds
     names carries no creation-time name into `name`, and keeps the PoC's `tenants.name` and
     `workareas.name` columns as `prior_name`, history no reference reads
-    ([schema](../data/postgres-schema.md#names-and-tenants)). Every earlier event stays as it was
+    ([schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). Every earlier event stays as it was
     signed, its original name or crew object included, so the journal shows both what a row was
     called and what it is named now.
 
@@ -559,7 +559,7 @@ Everything this record decides is design; nothing below is built.
 - `/v1` changes on the request side only: `X-OML-Workarea` and the listing's `workarea_id` accept
   names, and a value that is neither an id (d3) nor a name, which 0.2.0-design answered
   `access.not_found`, now answers `request.validation`. That narrowing is permitted only because
-  `/v1` is not frozen ([FR-21](../product/roadmap.md)). Example ids of the four kinds in the OpenAPI
+  `/v1` is not frozen (#150). Example ids of the four kinds in the OpenAPI
   document, the agent plugin, the reviewer-crews pages and the CLI sessions are rewritten to UUID
   text, shortened with `…` where a transcript displays them, so that no example contradicts d3; the
   other example ids are untouched. `info.version` moves from `0.2.0-design` to `0.3.0-design`:
@@ -587,10 +587,10 @@ Everything this record decides is design; nothing below is built.
 **Costs that are not measured**
 
 - Resolving a name is one indexed lookup per named value on the request path; its cost is
-  unmeasured, like every request-path cost, and is tracked against [FR-25](../product/roadmap.md).
+  unmeasured, like every request-path cost, and is tracked against #150.
   No number is stated.
 - Immutable, never-released names grow without bound with the rows that hold them; the growth is
-  the growth of those rows, which [capacity](../operations/capacity.md) already sizes.
+  the growth of those rows, which [capacity](../operations/deployment.md#capacity) already sizes.
 
 **What stays unbuilt after this iteration** (stated divergences in the README and code comments):
 key rotation, and so `new_name`; the operator tier, and so tenant and operator-key names beyond

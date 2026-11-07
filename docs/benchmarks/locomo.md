@@ -1,0 +1,165 @@
+---
+status: Measured
+verified: 2026-11-06
+answers: "what each search pipeline measured on LoCoMo: quality, per-category results, latency, the reference numbers and the limits of the run"
+---
+
+# LoCoMo
+
+*These are measurements by the OML maintainers on their own hardware, not independent results. Generated from the committed `oml-bench/1` results.*
+
+Suite `locomo`, data `locomo10.json sha256:79fa87e90f040813`: 5,882 memories, 1,535 queries; a method marked sampled asked a seeded subset, named in its row.
+
+??? note "Run details"
+
+    Measured 2026-11-05 on commits `2123e90`, `66979b4`, `a1ad0c9`, `d3fdb72`, `f86c31c`; build release, host 8 vCPU / 15 GB, postgres 17.9; build release, host 8 vCPU / 15 GB, postgres 18.6; build release, host 8 vCPU / 15 GB, load average 3.6 to 14 from other lanes, postgres 18.6; build release, host 8 vCPU / 15 GB, shared, load 8-12, postgres 18.
+
+**How to reproduce.** Build `oml` and `oml-server-lead` in release mode, install `eval/bench/requirements.txt` in a scratch virtual environment, then run `eval/bench/run.sh <out-dir> locomo` against a throwaway PostgreSQL superuser cluster. The harness loads the data over HTTP, promotes it with reviewer keys, asks every query through `oml_read` and writes the result files listed below.
+
+[All suites](index.md)
+
+## Quality
+
+| method | queries | nDCG@10 | R@10 | R@20 | R@100 | RR@10 | S@1 | S@5 | zero |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| keyword-all | 1,535 | 0.001 | 0.001 | – | 0.001 | 0.001 | 0.001 | 0.001 | 0.996 |
+| keyword-any | 1,535 | 0.345 | 0.456 | – | 0.744 | 0.330 | 0.249 | 0.437 | 0.000 |
+| bm25 | 1,535 | 0.503 | 0.635 | 0.697 | 0.813 | 0.488 | 0.384 | 0.628 | 0.000 |
+| bm25-trigram | 1,535 | 0.483 | 0.618 | – | 0.822 | 0.467 | 0.372 | 0.587 | 0.000 |
+| bm25-postings | 1,535 | 0.503 | 0.635 | 0.697 | 0.813 | 0.488 | 0.384 | 0.628 | 0.000 |
+| sparse | 1,535 | 0.530 | 0.662 | 0.722 | 0.867 | 0.517 | 0.414 | 0.649 | 0.000 |
+| bm25-sparse | 1,535 | 0.550 | 0.683 | 0.753 | 0.885 | 0.536 | 0.428 | 0.673 | 0.000 |
+| bm25-sparse-rrf | 1,535 | 0.534 | 0.660 | 0.724 | 0.878 | 0.522 | 0.423 | 0.649 | 0.000 |
+| bm25-rerank-d20 | 302 (sampled) | 0.635 | 0.717 | – | 0.824 | 0.641 | 0.553 | 0.762 | 0.000 |
+| bm25-sampled | 302 (sampled) | 0.534 | 0.679 | – | 0.824 | 0.511 | 0.401 | 0.662 | 0.000 |
+| reference-bm25s-k1-0.9-b-0.4 | 1,535 | 0.468 | 0.591 | – | 0.812 | 0.451 | 0.354 | 0.585 | 0.000 |
+| reference-bm25s-k1-1.2-b-0.75 | 1,535 | 0.446 | 0.579 | – | 0.806 | 0.425 | 0.323 | 0.566 | 0.000 |
+
+??? note "Chart: nDCG@10 by pipeline"
+
+    <svg role="img" aria-label="nDCG@10 on LoCoMo" viewBox="0 0 680 342" width="100%" style="max-width:680px" xmlns="http://www.w3.org/2000/svg">
+    <title>nDCG@10 on LoCoMo</title>
+    <text x="0" y="16" font-size="13" fill="currentColor">nDCG@10 on LoCoMo</text>
+    <text x="232" y="41" font-size="11" text-anchor="end" fill="currentColor">keyword-all</text>
+    <rect x="240" y="28" width="1.0" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="247.0" y="41" font-size="12" fill="currentColor">0.001</text>
+    <text x="232" y="67" font-size="11" text-anchor="end" fill="currentColor">keyword-any</text>
+    <rect x="240" y="54" width="201.1" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="447.1" y="67" font-size="12" fill="currentColor">0.345</text>
+    <text x="232" y="93" font-size="11" text-anchor="end" fill="currentColor">bm25</text>
+    <rect x="240" y="80" width="293.3" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="539.3" y="93" font-size="12" fill="currentColor">0.503</text>
+    <text x="232" y="119" font-size="11" text-anchor="end" fill="currentColor">bm25-trigram</text>
+    <rect x="240" y="106" width="281.6" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="527.6" y="119" font-size="12" fill="currentColor">0.483</text>
+    <text x="232" y="145" font-size="11" text-anchor="end" fill="currentColor">bm25-postings</text>
+    <rect x="240" y="132" width="293.3" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="539.3" y="145" font-size="12" fill="currentColor">0.503</text>
+    <text x="232" y="171" font-size="11" text-anchor="end" fill="currentColor">sparse</text>
+    <rect x="240" y="158" width="308.7" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="554.7" y="171" font-size="12" fill="currentColor">0.530</text>
+    <text x="232" y="197" font-size="11" text-anchor="end" fill="currentColor">bm25-sparse</text>
+    <rect x="240" y="184" width="320.4" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="566.4" y="197" font-size="12" fill="currentColor">0.550</text>
+    <text x="232" y="223" font-size="11" text-anchor="end" fill="currentColor">bm25-sparse-rrf</text>
+    <rect x="240" y="210" width="311.1" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="557.1" y="223" font-size="12" fill="currentColor">0.534</text>
+    <text x="232" y="249" font-size="11" text-anchor="end" fill="currentColor">bm25-rerank-d20</text>
+    <rect x="240" y="236" width="370.0" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="616.0" y="249" font-size="12" fill="currentColor">0.635</text>
+    <text x="232" y="275" font-size="11" text-anchor="end" fill="currentColor">bm25-sampled</text>
+    <rect x="240" y="262" width="311.1" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="557.1" y="275" font-size="12" fill="currentColor">0.534</text>
+    <text x="232" y="301" font-size="11" text-anchor="end" fill="currentColor">reference-bm25s-k1-0.9-b-0.4</text>
+    <rect x="240" y="288" width="272.5" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="518.5" y="301" font-size="12" fill="currentColor">0.468</text>
+    <text x="232" y="327" font-size="11" text-anchor="end" fill="currentColor">reference-bm25s-k1-1.2-b-0.75</text>
+    <rect x="240" y="314" width="259.8" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="505.8" y="327" font-size="12" fill="currentColor">0.446</text>
+    </svg>
+
+## By category
+
+??? note "Results by category"
+
+    nDCG@10 / S@5 for each category, with its query count.
+
+    | category | n | keyword-all | keyword-any | bm25 | bm25-trigram | bm25-postings | sparse | bm25-sparse | bm25-sparse-rrf | bm25-rerank-d20 | bm25-sampled | reference-bm25s-k1-0.9-b-0.4 | reference-bm25s-k1-1.2-b-0.75 |
+    |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+    | adversarial | 446 | 0.00 / 0.00 | 0.34 / 0.39 | 0.56 / 0.67 | 0.53 / 0.61 | 0.56 / 0.67 | 0.39 / 0.47 | 0.46 / 0.55 | 0.45 / 0.51 | 0.59 / 0.68 | 0.57 / 0.68 | 0.52 / 0.62 | 0.50 / 0.58 |
+    | all-categories | 1981 | 0.00 / 0.00 | 0.34 / 0.43 | 0.52 / 0.64 | 0.49 / 0.59 | 0.52 / 0.64 | 0.50 / 0.61 | 0.53 / 0.65 | 0.51 / 0.62 | 0.62 / 0.74 | 0.54 / 0.67 | 0.48 / 0.59 | 0.46 / 0.57 |
+    | multi-hop | 282 | 0.00 / 0.00 | 0.15 / 0.32 | 0.29 / 0.51 | 0.25 / 0.45 | 0.29 / 0.51 | 0.33 / 0.55 | 0.34 / 0.57 | 0.32 / 0.55 | 0.38 / 0.58 | 0.27 / 0.45 | 0.24 / 0.44 | 0.22 / 0.41 |
+    | open-domain | 92 | 0.00 / 0.01 | 0.15 / 0.24 | 0.23 / 0.37 | 0.18 / 0.26 | 0.23 / 0.37 | 0.29 / 0.39 | 0.31 / 0.43 | 0.27 / 0.41 | 0.20 / 0.31 | 0.08 / 0.19 | 0.23 / 0.36 | 0.21 / 0.35 |
+    | single-hop | 841 | 0.00 / 0.00 | 0.40 / 0.48 | 0.57 / 0.67 | 0.56 / 0.64 | 0.57 / 0.67 | 0.58 / 0.68 | 0.61 / 0.70 | 0.60 / 0.68 | 0.75 / 0.85 | 0.65 / 0.75 | 0.53 / 0.63 | 0.52 / 0.61 |
+    | temporal | 320 | 0.00 / 0.00 | 0.41 / 0.49 | 0.59 / 0.69 | 0.57 / 0.68 | 0.59 / 0.69 | 0.63 / 0.73 | 0.65 / 0.75 | 0.63 / 0.73 | 0.72 / 0.84 | 0.63 / 0.78 | 0.56 / 0.66 | 0.53 / 0.63 |
+
+## Latency
+
+Client wall time per recall, in milliseconds, nearest-rank percentiles.
+
+| method | p50 | p95 | p99 |
+|---|---:|---:|---:|
+| keyword-all | 31.4 | 41.3 | 44.8 |
+| keyword-any | 62.2 | 86.4 | 101 |
+| bm25 | 31.6 | 39.2 | 42.8 |
+| bm25-trigram | 89.1 | 112 | 119 |
+| bm25-postings | 29.9 | 37.0 | 40.3 |
+| sparse | 16.0 | 24.6 | 34.6 |
+| bm25-sparse | 23.5 | 32.6 | 40.9 |
+| bm25-sparse-rrf | 45.4 | 72.2 | 120 |
+| bm25-rerank-d20 | 2,522 | 3,367 | 7,406 |
+| bm25-sampled | 57.6 | 77.5 | 96.9 |
+| reference-bm25s-k1-0.9-b-0.4 | offline | offline | offline |
+| reference-bm25s-k1-1.2-b-0.75 | offline | offline | offline |
+
+??? note "Chart: p95 latency by pipeline"
+
+    <svg role="img" aria-label="p95 latency on LoCoMo" viewBox="0 0 680 290" width="100%" style="max-width:680px" xmlns="http://www.w3.org/2000/svg">
+    <title>p95 latency on LoCoMo</title>
+    <text x="0" y="16" font-size="13" fill="currentColor">p95 latency on LoCoMo</text>
+    <text x="232" y="41" font-size="11" text-anchor="end" fill="currentColor">keyword-all</text>
+    <rect x="240" y="28" width="4.5" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="250.5" y="41" font-size="12" fill="currentColor">41.3 ms</text>
+    <text x="232" y="67" font-size="11" text-anchor="end" fill="currentColor">keyword-any</text>
+    <rect x="240" y="54" width="9.5" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="255.5" y="67" font-size="12" fill="currentColor">86.4 ms</text>
+    <text x="232" y="93" font-size="11" text-anchor="end" fill="currentColor">bm25</text>
+    <rect x="240" y="80" width="4.3" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="250.3" y="93" font-size="12" fill="currentColor">39.2 ms</text>
+    <text x="232" y="119" font-size="11" text-anchor="end" fill="currentColor">bm25-trigram</text>
+    <rect x="240" y="106" width="12.3" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="258.3" y="119" font-size="12" fill="currentColor">112 ms</text>
+    <text x="232" y="145" font-size="11" text-anchor="end" fill="currentColor">bm25-postings</text>
+    <rect x="240" y="132" width="4.1" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="250.1" y="145" font-size="12" fill="currentColor">37.0 ms</text>
+    <text x="232" y="171" font-size="11" text-anchor="end" fill="currentColor">sparse</text>
+    <rect x="240" y="158" width="2.7" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="248.7" y="171" font-size="12" fill="currentColor">24.6 ms</text>
+    <text x="232" y="197" font-size="11" text-anchor="end" fill="currentColor">bm25-sparse</text>
+    <rect x="240" y="184" width="3.6" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="249.6" y="197" font-size="12" fill="currentColor">32.6 ms</text>
+    <text x="232" y="223" font-size="11" text-anchor="end" fill="currentColor">bm25-sparse-rrf</text>
+    <rect x="240" y="210" width="7.9" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="253.9" y="223" font-size="12" fill="currentColor">72.2 ms</text>
+    <text x="232" y="249" font-size="11" text-anchor="end" fill="currentColor">bm25-rerank-d20</text>
+    <rect x="240" y="236" width="370.0" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="616.0" y="249" font-size="12" fill="currentColor">3,367 ms</text>
+    <text x="232" y="275" font-size="11" text-anchor="end" fill="currentColor">bm25-sampled</text>
+    <rect x="240" y="262" width="8.5" height="18" fill="currentColor" fill-opacity="0.55"/>
+    <text x="254.5" y="275" font-size="12" fill="currentColor">77.5 ms</text>
+    </svg>
+
+## What this result does not show
+
+Dialogue turns are short and English only. The result does not predict recall over long documents. These are retrieval metrics: they are not the answer-accuracy scores other memory products publish for LoCoMo, which a language model judges, and cannot be compared with them.
+
+## Limits of this run
+
+One dialogue turn per memory, each conversation its own workarea; metrics over categories 1-4, adversarial in per_category; English only.
+
+- Offline bm25s over the same memories (Lucene BM25, English stop words, Snowball stems), not a served path;
+- Served bm25 over the same seeded sample, on the same host in the same hour, for comparison with bm25-rerank-d20; the full-set bm25 row is the reference run.
+- English only. bm25's list reranked by ms-marco-MiniLM-L6-v2 through candle on the CPU at depth 20 (the default became 10 after this run), with a cap of 8 and a 60 s deadline so no rerank was skipped; the host carried a load average of 9 to 29 from other work, and the LoCoMo run shared it with the NFCorpus run, so its latency is an upper bound (.
+- English only. bm25-postings takes its candidates from the postings of the query forms it reads; when a query's readable postings pass POSTING_BUDGET (10,000) it leaves out the forms held by more than 10% of the readable rows, so a row holding only those is no candidate, and below the budget it reads every form and ranks as bm25.
+
+Sources: `eval/bench/results/locomo/keyword-all.json`, `eval/bench/results/locomo/keyword-any.json`, `eval/bench/results/locomo/bm25.json`, `eval/bench/results/locomo/bm25-trigram.json`, `eval/bench/results/locomo/bm25-postings.json`, `eval/bench/results/locomo/sparse.json`, `eval/bench/results/locomo/bm25-sparse.json`, `eval/bench/results/locomo/bm25-sparse-rrf.json`, `eval/bench/results/locomo/bm25-rerank-d20.json`, `eval/bench/results/locomo/bm25-sampled.json`, `eval/bench/results/locomo/reference-bm25s-k1-0.9-b-0.4.json`, `eval/bench/results/locomo/reference-bm25s-k1-1.2-b-0.75.json`.

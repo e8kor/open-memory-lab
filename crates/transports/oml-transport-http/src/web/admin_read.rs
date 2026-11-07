@@ -33,13 +33,13 @@ struct SearchBody {
 
 /// The cursor: the last item's `created_at` and id, as
 /// `<rfc3339>_<uuid>`.
-fn cursor_of(next: Option<&(EventTime, Uuid)>) -> Value {
+pub(crate) fn cursor_of(next: Option<&(EventTime, Uuid)>) -> Value {
     next.map_or(Value::Null, |(at, id)| {
         json!(format!("{}_{id}", at.as_str()))
     })
 }
 
-fn parse_cursor(cursor: &str) -> Result<(EventTime, Uuid), ApiError> {
+pub(crate) fn parse_cursor(cursor: &str) -> Result<(EventTime, Uuid), ApiError> {
     let refused = || {
         ApiError::validation("cursor is not a cursor this search served")
             .with_details(json!({ "field": "/cursor" }))
@@ -60,6 +60,8 @@ pub(crate) fn admin_memory_json(m: &AdminMemory, full: bool) -> Value {
         "state": m.state.as_str(),
         "workarea_path": m.workarea_path,
         "text": m.memory.body,
+        "format": m.memory.format.media_type,
+        "title": m.memory.format.title,
         "key": m.author.as_ref().and_then(|k| k.name.as_ref()).map(|n| n.as_str()),
         "principal": m.memory.author_principal,
         "user": m.author_user.as_ref().map(|n| n.as_str()),

@@ -9,7 +9,7 @@ answers: what OML stores about a client project's code (a small structural skele
 
 **Status:** proposed · 2026-11-04 · its eleven questions answered on 2026-11-05 at their recommendations ([the answers](#the-maintainers-answers-of-2026-11-05)) · amended by [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md) (d3, d12, d15 a, d17)
 
-**Release:** planned, not assigned; gated on the evaluation harness (d17) and ADR-0030 ([releases](../product/releases.md#decisions)). Its first slice, an anchor on every memory and `oml sync` for markdown documents, is [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), accepted and introduced in v0.5.8; the parts it took over (d3, d12, d15 a, d17 and the eleven answers, as it records) are decided there, and the rest of this record stays proposed
+**Release:** not built; gated on the evaluation harness (d17) and ADR-0030 ([releases](../changelog.md)). Its first slice, an anchor on every memory and `oml sync` for markdown documents, is [ADR-0057](ADR-0057-a-memory-carries-the-source-anchor-its-author-declares-and-oml-sync-keeps-a-workarea-in-step-with-a-repositorys-documents.md), accepted and introduced in v0.5.8; the parts it took over (d3, d12, d15 a, d17 and the eleven answers, as it records) are decided there, and the rest of this record stays proposed
 
 **Amends:** ADR-0025 (d10, d12), ADR-0029 (d2, d7), ADR-0039 (d3); and, on their branches,
 ADR-0030 (d1), ADR-0044 (d6), ADR-0045 (d9)
@@ -18,7 +18,7 @@ ADR-0030 (d1), ADR-0044 (d6), ADR-0045 (d9)
 for the anchor and kind filters on reads.
 
 The design mockups for this record and ADR-0048 are on one page:
-[the mockups](../design/code-map/mockups.html) (the lifecycle flow, a pull request's knowledge
+the mockups (the lifecycle flow, a pull request's knowledge
 review, the CI gate, a Claude Code session, the hybrid search result, the user page's Project
 knowledge view and stored entries).
 
@@ -140,7 +140,7 @@ have that shape. Decided, not built.
   posted to the forge only with `--post-text`, since a pull request may be more widely read than
   the workarea. The reviewer approves or rejects each entry under their own `<user>-review` key
   (R2 per key and principal, ADR-0044 d8). A batch over `pr.max_entries`, 20 unless set, chosen
-  and unmeasured (FR-79), fails the check: past that, review stops meaning anything.
+  and unmeasured (#142), fails the check: past that, review stops meaning anything.
 
 - **d7 — A merge is the branch workarea's commit; an abandoned branch leaves nothing promoted.**
   The commit is ADR-0030 d12's `development` → `committed` transition, refused while any version
@@ -209,7 +209,7 @@ have that shape. Decided, not built.
   repository file says, nor task status. Before a write, `code-anchor` shows the entries already on
   that anchor and refuses the write once, so the agent supersedes instead of duplicating, unless
   it marks the write `distinct`. A session writes at most `capture.max_per_session` entries, 5
-  unless set (FR-79). No hook writes, and no hook asks for capture: a prompt at every Stop is how
+  unless set (#142). No hook writes, and no hook asks for capture: a prompt at every Stop is how
   noise gets in, and noise is what empties review of meaning.
 
 - **d14 — Churn stays in the branch, and a merge promotes one version.** An agent revising its
@@ -233,7 +233,7 @@ have that shape. Decided, not built.
       admits creation by a user key in its own root only, and ADR-0030 d1, under which only an
       admin marks a workarea in progress.
     - **c. The author may supersede or withdraw its own held version (closes
-      [RS-17](../product/roadmap.md)).** The held predecessor moves to `superseded`, leaves the
+      #156).** The held predecessor moves to `superseded`, leaves the
       review queue and never promotes; an open serve of it answers `review.serve_invalid`; the
       supersession event carries `while_held: true`. A retirement of one's own never-promoted
       version withdraws it without review, since no one outside an in-progress area has read it.
@@ -246,7 +246,7 @@ have that shape. Decided, not built.
 
 - **d16 — Preconditions, stated as scope.** Client code is mapped only on a server the client
   runs, or in an organisation of its own on a shared one, which waits on organisations beyond
-  the first, not scheduled ([releases](../product/releases.md#not-scheduled)); `oml code init`
+  the first, not scheduled ([releases](../changelog.md)); `oml code init`
   refuses `https://memory.doublegate.io`
   ([ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)) unless
   `--allow-public-server` is given, after printing that the server's admins read every entry
@@ -265,7 +265,7 @@ have that shape. Decided, not built.
   each run at the fix's parent commit with the merged test as the oracle; entries are those
   captured while solving earlier tasks of the same repository. It records task success, tokens and
   wall time per task, and the share of served entries that were stale. Sample size and runs per
-  task are unmeasured (FR-78). The build continues past step 1 only when the maintainer accepts the
+  task are unmeasured (#142). The build continues past step 1 only when the maintainer accepts the
   result under question 8's criterion.
 
 - **d18 — The build, each step closed by named tests.**
@@ -314,7 +314,7 @@ have that shape. Decided, not built.
 | Benefit is unproven | argument | Implies the gate (d17). |
 | Parser maintenance | argument, reduced | No grammar of OML's own (d4); ctags or a language server is a dependency the user installs, and its absence degrades to whole-file hashes. Implies a doctor line, not a crate. |
 | Keyword-only recall misses paraphrase | opportunity | ADR-0048; anchors already find entries by location, not words. |
-| Workareas accumulate, one per merged branch | argument | Nothing deletes a workarea; the count is unmeasured (FR-80). Implies question 2's alternative of one workarea per repository if the count proves costly. |
+| Workareas accumulate, one per merged branch | argument | Nothing deletes a workarea; the count is unmeasured (#142). Implies question 2's alternative of one workarea per repository if the count proves costly. |
 
 **What must not degrade, and how it is protected.** R1: no agent key proposes, ratifies,
 approves or rejects; the CI key is not in the plugin (d7, d8). R2: every verdict and every
@@ -327,15 +327,15 @@ meaning because it is capped, human for prose, and done where the code is read (
 
 ## Consequences
 
-- **Roadmap rows.** RS-17 is answered by d15 c. FR-78 opens (the evaluation's sample size and the
-  benefit), FR-79 (the capture cap and the batch cap, chosen not measured), FR-80 (the count of
+- **Issues.** #156 is answered by d15 c. #142 opens (the evaluation's sample size and the
+  benefit), #142 (the capture cap and the batch cap, chosen not measured), #142 (the count of
   branch workareas a repository accumulates and its cost to tree reads).
 - **Dependencies.** ADR-0030 (in-progress), ADR-0044 and ADR-0045 (user roots and the Review
   view), ADR-0046 (the brief, for the skeleton at session start), ADR-0048 (the filters).
 - **Pages to change at acceptance.** The HTTP API and openapi.yaml (kind `code`, `anchor`, the
   branch-parent create, `while_held`); the agent plugin and mcp-tools.json; the CLI reference
   (`oml code init|skeleton|pr|check|import|export`, `oml anchor`, the hooks); workareas (the
-  branch parent); admission (RS-17); and each amended record's Status line.
+  branch parent); admission (#156); and each amended record's Status line.
 
 ## The maintainer's answers of 2026-11-05
 
@@ -344,7 +344,7 @@ The operator answered all eleven on 2026-11-05 by taking each recommendation, wi
 | # | Question | Options | Answer | Exercised by v0.5.8 |
 |---|---|---|---|---|
 | 1 | How is a correct fact on a changed symbol confirmed? | a. a supersession with the same text and a fresh anchor, reviewed; b. a re-anchor act without review; c. left stale until wrong | a: no unreviewed change reaches a promoted entry | yes: ADR-0057 d11 |
-| 2 | One workarea per branch, or per repository? | a. per branch, merge = commit; b. one in-progress workarea per repository, merge = approving the batch, no commit | a (d5, d7), revisited if FR-80 shows the count costly | no |
+| 2 | One workarea per branch, or per repository? | a. per branch, merge = commit; b. one in-progress workarea per repository, merge = approving the batch, no commit | a (d5, d7), revisited if #142 shows the count costly | no |
 | 3 | What does a release validate? | a. a release-record child per release; b. the merged branch workareas themselves; c. nothing | a (d10): b freezes living knowledge for good | no |
 | 4 | Who proposes and who ratifies the merge commit? | a. the reviewer proposes, the CI key ratifies at merge; b. the CI key proposes, the reviewer ratifies; c. two reviewers | a (d7): one act by the person, in the sitting | no |
 | 5 | May a writer create branch workareas? | a. under an admin-marked branch parent only; b. the CI key creates them on first push; c. an admin creates each | a (d15 b): the agent writes before any push | no |
@@ -352,7 +352,7 @@ The operator answered all eleven on 2026-11-05 by taking each recommendation, wi
 | 7 | Is fact text posted to the forge? | a. counts and a link only, text on `--post-text`; b. text always; c. nothing | a (d6) | no |
 | 8 | What does the gate require? | a. OML beats no memory and is no worse than the `AGENTS.md` export, at no more tokens; b. beats no memory; c. the maintainer's judgement | a (d17) | no; the gate's scope is narrowed by ADR-0057 d13 |
 | 9 | Where does the skeleton's purpose line come from? | a. the agent writes it, a person approves; b. a person writes it; c. none | a (d9) | no |
-| 10 | What is the batch cap? | a. 20 entries per pull request; b. 10; c. none | a for a pull request's model-written knowledge (d6); for a document sync, 200 items a run, ADR-0055's request cap (ADR-0057 d9, d12); both revisited with FR-79 | yes: ADR-0057 d9 |
+| 10 | What is the batch cap? | a. 20 entries per pull request; b. 10; c. none | a for a pull request's model-written knowledge (d6); for a document sync, 200 items a run, ADR-0055's request cap (ADR-0057 d9, d12); both revisited with #142 | yes: ADR-0057 d9 |
 | 11 | Should the public server be allowed at all for client code? | a. only with `--allow-public-server`; b. never | a (d16) | yes: ADR-0057 d6 |
 
 ## Rejected alternatives

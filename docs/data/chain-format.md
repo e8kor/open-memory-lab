@@ -1,33 +1,18 @@
-<!--
-id: data/chain-format
-tier: engineering
-status: design draft for review · decided, not built
-answers: the byte-level chain spec — the signed envelope fields, JCS signed_bytes, SHA-256 hash, Ed25519 signature, the genesis rule, and the verification procedure an auditor can implement from this page alone
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "the byte-level chain spec: the signed envelope fields, canonical JSON, SHA-256 hash, Ed25519 signature, the genesis rule and the verification procedure an auditor can implement from this page alone"
+---
 
 # Journal chain format
 
-**Status:** design draft for review · decided, not built
-
-This page is the normative byte-level specification of the per-tenant signed hash chain: which
-envelope fields are signed, how `signed_bytes` is constructed, how `hash` and `sig` are computed,
-how events chain, how a recipient obtains and authenticates the deployment public key, and the
-verification procedure an auditor can implement from this page alone. It is the byte-level annex
-of D1 ([ADR-0002](../adr/ADR-0002-postgresql-system-of-record.md)); the commit point, the
-chain-head lock and key custody are declared in
-[storage](../architecture/storage.md#the-per-tenant-hash-chain) and
-[security](../architecture/security.md); the journal DDL is in
-[postgres-schema](postgres-schema.md); event payload shapes are in
-[event-catalog](event-catalog.md). The test vectors at the end are computed, not sketched: every
-digest and signature below was produced over the exact bytes shown.
+This page specifies the per-tenant signed hash chain byte by byte. An auditor can implement verification from it alone. For the commit point and key custody, see [storage](../architecture/storage.md#the-per-tenant-hash-chain) and [security](../architecture/security.md). For event payloads, see the [event catalog](event-catalog.md).
 
 ## The signed fields
 
-The [envelope](event-catalog.md#the-envelope) has eleven fields. Nine are signed; two are derived
-from the signed bytes and therefore excluded. The decision is stated for every field — an
-implementer never guesses:
+The [envelope](event-catalog.md#the-envelope) has eleven fields. Nine are signed. Two are derived from the signed bytes, so they are excluded.
 
-| Envelope field | Signed | Canonical encoding in `signed_bytes` |
+| Envelope field | Signed | Encoding in `signed_bytes` |
 |---|---|---|
 | `tenant_id` | yes | lowercase hyphenated UUID string |
 | `seq` | yes | JSON integer |
@@ -37,159 +22,72 @@ implementer never guesses:
 | `principal` | yes | string |
 | `api_key_id` | yes | lowercase hyphenated UUID string, or JSON `null` |
 | `at` | yes | RFC 3339 UTC, exactly six fractional digits, `Z` suffix |
-| `payload` | yes | the event's payload object, canonicalized as part of the same document |
-| `hash` | **no** | derived: SHA-256 of `signed_bytes` — including it would be circular |
-| `sig` | **no** | derived: the signature over `signed_bytes` — including it would be circular |
+| `payload` | yes | the event's payload object, canonicalized in the same document |
+| `hash` | no | SHA-256 of `signed_bytes` |
+| `sig` | no | the signature over `signed_bytes` |
 
-Rules that make the set unambiguous:
+- **All nine signed fields are always present.** A field with no value is JSON `null`, never omitted.
+- **Digests are strings.** Every digest is `sha256:` + 64 lowercase hex characters, the spelling the API serves.
+- **Numbers are integers below 2^53.** RFC 8785 serializes numbers as doubles, so larger values would canonicalize lossily. No float appears in an envelope or payload.
+- **`at` is fixed-width.** UTC, `Z`, exactly six fractional digits, for example `2026-10-29T14:03:17.000000Z`.
 
-- **The nine signed fields are always present.** A field with no value is JSON `null`
-  (`api_key_id` for events no API key authored), never omitted. A fixed member set means a
-  verifier checks one shape, not a family of shapes.
-- **Digests are strings, everywhere.** Every digest in the envelope and in payloads is the string
-  `sha256:` + 64 lowercase hex characters — the same spelling the API serves, so the signed form
-  and the displayed form never need a translation step.
-- **Numbers are integers below 2⁵³.** RFC 8785 serializes numbers as IEEE-754 doubles, so a
-  value at or above 2⁵³ would canonicalize lossily. `seq`, `version`, `body_bytes` and every
-  other numeric field are JSON integers and must stay below 2⁵³; for `seq` that is a stated
-  bound of roughly 9×10¹⁵ events per tenant, accepted rather than worked around. No float ever
-  appears in an envelope or payload.
-- **`at` is fixed-width.** Always UTC, always `Z`, always exactly six fractional digits
-  (microseconds, Postgres `timestamptz` precision) — e.g. `2026-10-29T14:03:17.000000Z`. A
-  canonical byte form cannot tolerate optional precision. Display surfaces may trim; the signed
-  form never does. The clock that produces it is declared in
-  [storage](../architecture/storage.md#time).
+## signed_bytes: canonical JSON
 
-## signed_bytes: RFC 8785 canonical JSON
+`signed_bytes` is the [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) canonicalization of the JSON object that holds exactly the nine signed fields. Members sort by code point. There is no insignificant whitespace. Encoding is UTF-8.
 
-`signed_bytes` is the [RFC 8785 (JCS)](https://www.rfc-editor.org/rfc/rfc8785) canonicalization
-of the JSON object holding exactly the nine signed fields: members sorted by code point, no
-insignificant whitespace, UTF-8, JCS string escaping, JCS number serialization. The `payload`
-object is canonicalized as part of the same document — payload members sort by the same rule.
-
-The stored `signed_bytes` column ([postgres-schema](postgres-schema.md)) is the authoritative
-byte string: the signature is verified over the stored bytes, never over a re-serialization of
-the row. The construction rule above is the writer's obligation; the verifier's corresponding
-check is that the stored bytes re-canonicalize to themselves and that their parsed fields match
-the row's columns (steps 6–7 [below](#verification)). This split is deliberate: verification
-survives any future serializer change, and a writer that drifts from canonical form is caught as
-a verification failure, not absorbed silently.
+The stored `signed_bytes` column is authoritative. The signature is verified over the stored bytes, never over a re-serialization of the row. A verifier also checks that the stored bytes re-canonicalize to themselves and that their parsed fields match the row (steps 6 and 7 below).
 
 ## hash and sig
 
-- **`hash` = SHA-256(`signed_bytes`)** — 32 bytes, displayed as `sha256:` + 64 lowercase hex.
-  The hash exists for chaining: it is what the next event's `prev_hash` names.
-- **`sig` = pure Ed25519 per [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) over
-  `signed_bytes`** — over the full canonical bytes, **not** over the hash, and not Ed25519ph.
-  Pure Ed25519 hashes the message internally, so signing the message itself leaves exactly one
-  answer to "what was signed", verifiable with every mainstream raw-input Ed25519 verify call
-  (`openssl pkeyutl -verify -rawin` among them). Signing the 32-byte hash instead would make the
-  signature attest a digest rather than the bytes, adding a construction a verifier must get
-  right for no gain. 64 bytes, displayed as `ed25519:` + 128 lowercase hex.
+- **`hash`** is SHA-256 of `signed_bytes`, displayed as `sha256:` + 64 lowercase hex characters. The next event's `prev_hash` names it.
+- **`sig`** is pure Ed25519 ([RFC 8032](https://www.rfc-editor.org/rfc/rfc8032)) over the full `signed_bytes`. It is not over the hash, and it is not Ed25519ph. Any raw-input Ed25519 verify call checks it, `openssl pkeyutl -verify -rawin` among them. It is displayed as `ed25519:` + 128 lowercase hex characters.
 
-Both are stored as `bytea`; the `sha256:` / `ed25519:` prefixes are the display and API spelling
-of the same bytes.
+Both are stored as `bytea`. The prefixes are the display and API spelling.
 
-## The chaining rule
+## Chaining
 
-- `prev_hash` = the previous event's `hash` — the previous `seq` in the **same tenant's** chain.
-  Nothing links across tenants; cross-chain anchoring is by reference inside payloads
-  (`tenant.genesis` → `tenant.created`), never by hash linkage.
-- `seq` starts at 1 and increments by exactly 1 — a gap is a verification failure, which is what
-  makes omission detectable, not just edits.
-- **Genesis:** the first event of every tenant chain is `tenant.genesis` at `seq` 1 with
-  `prev_hash` = 32 zero bytes (`sha256:` + 64 `0` characters). A non-provider tenant's genesis
-  payload references the provider-chain `tenant.created` event that created it; the reserved
-  provider tenant's own chain opens the same way with that reference null — the deployment root
-  anchors to nothing because nothing precedes it ([event-catalog](event-catalog.md#tenantgenesis)).
+- `prev_hash` is the previous event's `hash` in the same tenant's chain. Nothing links across tenants.
+- `seq` starts at 1 and increases by exactly 1. A gap is a verification failure.
+- **Genesis.** The first event of every chain is `tenant.genesis` at `seq` 1 with `prev_hash` of 32 zero bytes (`sha256:` + 64 `0` characters). A tenant's genesis payload references the provider chain's `tenant.created` event. The provider tenant's own genesis has a null reference. See [event catalog](event-catalog.md).
 
-## The signing key, rotation, and the verifier's key set
+## The signing key and rotation
 
-The deployment signing key's custody — lead-only, takeover journalled — is
-[storage](../architecture/storage.md#the-per-tenant-hash-chain)'s and
-[security](../architecture/security.md)'s. This page owns its identity and rotation as the
-verifier sees them:
+A signing key's id is the lowercase hex SHA-256 of its 32 raw public key bytes.
 
-- **A signing key's id is its fingerprint:** the lowercase hex SHA-256 of the 32 raw public key
-  bytes. Key id and fingerprint are one value, so the id printed in a ceremony and the id in a
-  rotation event cannot disagree about which key they name.
-- **Rotation is journalled** as `system.signing_key_rotated` in the reserved provider tenant's
-  chain — the first event the **new** key signs
-  ([event-catalog](event-catalog.md#systemsigning_key_rotated)). A planned rotation carries a
-  cross-signature: `cross_sig` = pure Ed25519 by the **old** key over the ASCII bytes of
-  `oml-signing-key-rotation:<new_key_id>:<new_public_key_hex>` — old attests new, so trust
-  extends forward without a new ceremony. An unplanned rotation (old key compromised or lost)
-  has no cross-signature by definition; it carries a ceremony reference instead, and trust in
-  the new key re-roots in that out-of-band ceremony. This asymmetry is the honest one: a lost
-  key cannot vouch for its successor.
-- **The verifier holds a key set, not a key.** The journal rows carry no per-event signing-key
-  id (the envelope's fields are closed, above), so per-event key attribution is by trial
-  verification: an event verifies iff its `sig` verifies under some key in the authenticated
-  set. The rotation events bound which key was current when, and the set is small — one key per
-  rotation. What this proves, stated plainly: every event was signed by a deployment signing
-  key, in the chained order; which specific key signed a given event is established by trial
-  verification, and the rotation history itself is chained evidence.
+- **Rotation is journaled** as `system.signing_key_rotated` in the provider tenant's chain. It is the first event the new key signs. See [event catalog](event-catalog.md).
+- **Planned rotation** carries `cross_sig`: a pure Ed25519 signature by the old key over the ASCII bytes `oml-signing-key-rotation:<new_key_id>:<new_public_key_hex>`. The old key vouches for the new one.
+- **Unplanned rotation** (old key lost or compromised) has no cross-signature. It carries a ceremony reference, and trust in the new key restarts out of band.
+- **The verifier holds a key set.** Events carry no key id. An event verifies if its `sig` verifies under some key in the authenticated set. The rotation events bound which key was current when.
 
-## How the public key reaches an export recipient
+## Authenticating the public key
 
-An [evidence export](../architecture/audit-and-lineage.md#the-evidence-export) embeds the
-deployment's signing key set: each key's 32 raw public key bytes (hex), its fingerprint-id, and
-every `system.signing_key_rotated` event with its cross-signature. These are the evidence-export
-terms for key authentication:
+A bundle that embeds its own key authenticates nothing by itself. Confirm one key fingerprint over a channel independent of the bundle. `oml audit verify-chain` takes the confirmed key with `--signing-key`.
 
-1. **An embedded key authenticates nothing by itself.** A tamperer who can rewrite the bundle
-   can rewrite the embedded key. The recipient must confirm one key fingerprint over a channel
-   independent of the bundle — the operator reads the fingerprint from the deployment
-   (`oml audit verify-chain` prints the key set; the verb is the
-   [CLI reference](../cli/reference.md)'s) and the recipient compares. One confirmed fingerprint
-   is enough.
-2. **Cross-signatures extend the confirmed key across planned rotations**, in either direction:
-   from any confirmed key, every cross-signed successor is authenticated by verifying the
-   rotation events' `cross_sig` chain.
-3. **An unplanned rotation breaks the extension deliberately.** The recipient must confirm the
-   post-incident key's fingerprint out of band again, against the ceremony the rotation event
-   references. A bundle spanning an unplanned rotation says so rather than implying one
-   confirmation covered it.
+1. One confirmed fingerprint is enough.
+2. Cross-signatures extend the confirmed key across planned rotations, in either direction.
+3. An unplanned rotation breaks the extension. Confirm the new key out of band again.
 
 ## Verification
 
-The procedure, numbered so an auditor can implement it from this page. Input: one tenant's
-events ordered by `seq` ascending (each with its stored `signed_bytes`, `hash`, `sig` and
-envelope columns), the stated chain head, and the authenticated key set (above).
+Input: one tenant's events by ascending `seq`, each with its stored `signed_bytes`, `hash`, `sig` and envelope columns; the stated chain head; and the authenticated key set.
 
-1. Check `seq` starts at 1 and increments by exactly 1 — no gaps, no duplicates.
-2. Check event 1 has `event_type` `tenant.genesis` and `prev_hash` = 32 zero bytes.
-3. For each event, verify `sig` over the stored `signed_bytes` with pure Ed25519 (RFC 8032)
-   against the authenticated key set; the event passes iff some key in the set verifies it.
-4. For each event, compute SHA-256(`signed_bytes`) and check it equals the stored `hash`.
-5. For each event after the first, check `prev_hash` equals the previous event's hash as
-   computed in step 4 — the recomputed value, not the stored column.
-6. Parse `signed_bytes` as JSON and check it is in RFC 8785 canonical form: re-canonicalize the
-   parsed value and byte-compare with the stored bytes.
-7. Check the nine parsed fields match the row's served envelope — `tenant_id`, `seq`,
-   `event_id`, `event_type`, `prev_hash`, `principal`, `api_key_id`, `at`, `payload` — so the
-   displayed record and the signed record cannot diverge.
-8. For a non-provider tenant, check the genesis payload's `created_event_id` names a
-   `tenant.created` event in the provider chain whose payload `tenant_id` matches — which
-   requires the provider chain (or that referenced event with its own verified linkage) in the
-   bundle.
-9. Check the stated chain head equals the last event's (`seq`, hash from step 4), and verify
-   the head's signature.
+1. Check `seq` starts at 1 and increases by exactly 1.
+2. Check event 1 is `tenant.genesis` with `prev_hash` of 32 zero bytes.
+3. Verify each `sig` over the stored `signed_bytes` with pure Ed25519 against the key set. The event passes if some key verifies it.
+4. Compute SHA-256 of each `signed_bytes` and check it equals the stored `hash`.
+5. For each event after the first, check `prev_hash` equals the previous event's recomputed hash from step 4.
+6. Parse `signed_bytes` and check it is canonical: re-canonicalize and byte-compare.
+7. Check the nine parsed fields match the row's envelope.
+8. For a non-provider tenant, check the genesis payload's `created_event_id` names a `tenant.created` event in the provider chain whose `tenant_id` matches.
+9. Check the stated chain head equals the last event's `seq` and step 4 hash, and verify the head's signature.
 
-The result names the verified head (tenant, seq, hash). What passing proves — and does not —
-is stated in [audit-and-lineage](../architecture/audit-and-lineage.md): integrity and order of
-the record under the deployment's key, not the truth of what agents wrote, and not which
-process held the key beyond the journalled lead record. Ordering is proven by `seq` alone;
-timestamps are informational ([storage](../architecture/storage.md#time)).
+The result names the verified head: tenant, `seq` and hash. Passing proves the integrity and order of the record under the deployment's key. It does not prove that what agents wrote is true. Order is proven by `seq` alone. Timestamps are informational.
 
 ## Test vectors
 
-A three-event chain — genesis, a submission, an erasure — with every byte shown. Digests and
-signatures were computed over exactly these bytes (python3 `hashlib` and OpenSSL 3.5.5,
-2026-10-29); the M0 reference implementation must reproduce them byte-for-byte.
+A three-event chain with every byte shown: genesis, a submission, an erasure. Digests and signatures were computed over exactly these bytes with python3 `hashlib` and OpenSSL 3.5.5 on 2026-10-29. An implementation must reproduce them byte for byte.
 
-**TEST KEY — never deployed.** This key pair exists only for these vectors. Its private half is
-published here on purpose, which disqualifies it from ever signing a real chain.
+**Test key. Never deployed.** Its private half is published here, so it can never sign a real chain.
 
 ```text
 -----BEGIN PRIVATE KEY-----
@@ -223,13 +121,7 @@ sig  = ed25519:3d22e7cf20b6db79eeb11479c505aeafab69209198fc2d8649c37032297150c56
 
 ### Vector 2 — a submission
 
-`submission.remember` at seq 2; its `prev_hash` is vector 1's hash. The content digests are
-real: the body plaintext is the 53 ASCII bytes
-`The deploy runbook: drain, upgrade, verify, undrain.` + `\n`, so
-`plaintext_digest` = SHA-256 of those bytes. The vector exercises the chain format, not a
-cipher, so the "ciphertext" is a defined stand-in: the 32 bytes SHA-256(`vector-ciphertext:` +
-body bytes), and `ciphertext_digest` is the SHA-256 of those 32 bytes — every value below is
-reproducible from this paragraph. `signed_bytes` (one line, 870 bytes):
+`submission.remember` at seq 2. Its `prev_hash` is vector 1's hash, and the body plaintext is the 53 ASCII bytes `The deploy runbook: drain, upgrade, verify, undrain.` + `\n`, and `plaintext_digest` is the SHA-256 of those bytes. The vector tests the chain format, not a cipher, so the "ciphertext" is a stand-in: the 32 bytes SHA-256(`vector-ciphertext:` + body bytes). `ciphertext_digest` is the SHA-256 of those 32 bytes. `signed_bytes` (one line, 870 bytes):
 
 ```json
 {"api_key_id":"00000000-0000-4000-8000-0000000000c2","at":"2026-10-29T14:05:00.250000Z","event_id":"00000000-0000-4000-8000-0000000000e2","event_type":"submission.remember","payload":{"artifact_id":"00000000-0000-4000-8000-0000000000a1","attachments":[],"body_bytes":53,"ciphertext_digest":"sha256:505007c2183a32f9a29b6635dc1a56d89711b658d0624eb662dc986141213688","claim_key":"deploy-runbook","derives_from":[],"kind":"memory","plaintext_digest":"sha256:6e04a033aab31ee48e5bf89a4a6ef03e658f25f9b428de3e45c2ac7519dd2532","provenance":"agent","scan":{"result":"pass","scanner_version":"vector-scanner/1"},"simulation_id":null,"version":1,"workarea_id":"00000000-0000-4000-8000-0000000000b1"},"prev_hash":"sha256:c3f4bfb6ef9e00dfd7ae8d8fcc5ddfc2bf69f40ceaa1de4a165f77f8a4a3982a","principal":"crew-redline/agent-3","seq":2,"tenant_id":"00000000-0000-4000-8000-0000000000aa"}
@@ -242,12 +134,7 @@ sig  = ed25519:068b0527c06897539882dfd22dc1970adbef83ca955559f80d529b76f7f26df64
 
 ### Vector 3 — an erasure, verifying after the DEK is gone
 
-`lifecycle.erase` at seq 3 erases vector 2's artifact; its DEK is destroyed. Nothing in this
-vector — or in re-verifying vectors 1–2 — needs a DEK or any plaintext: the signed bytes carry
-digests only (D1), so the full three-event chain verifies after shredding exactly as before.
-That is the property the digest-only rule buys
-([storage](../architecture/storage.md#digest-only-journal-payloads)). `signed_bytes` (one line,
-550 bytes):
+`lifecycle.erase` at seq 3 erases vector 2's artifact and destroys its key. Verifying the chain needs no key and no plaintext, because the signed bytes carry digests only. The chain verifies after erasure exactly as before. `signed_bytes` (one line, 550 bytes):
 
 ```json
 {"api_key_id":"00000000-0000-4000-8000-0000000000c3","at":"2026-10-29T16:00:00.000000Z","event_id":"00000000-0000-4000-8000-0000000000e3","event_type":"lifecycle.erase","payload":{"artifact_id":"00000000-0000-4000-8000-0000000000a1","copy_classes":["silver.body","object_store","fts","embeddings"],"dek_destroyed":true,"erased_by_key_id":"00000000-0000-4000-8000-0000000000c3"},"prev_hash":"sha256:72f61452f67a618a46fd98948708e39d9bc8bf281ad86693ed4e78dd18a368c1","principal":"acme/admin-1","seq":3,"tenant_id":"00000000-0000-4000-8000-0000000000aa"}
@@ -265,14 +152,6 @@ not include; the referenced `created_event_id` is a placeholder). Any single cha
 last, fails step 1 or step 5; omitting the last event fails step 9 alone, against the stated
 head.
 
-On 2026-10-31 these vectors were reproduced byte for byte outside Rust, by two RFC 8785 and two
-Ed25519 implementations, and `scripts/check_chain_vectors.py` keeps them reproduced; the
-[recorded finding](../engineering/spikes/chain-vectors.md) names the implementations and
-versions.
+Running the [verification procedure](#verification) over these events against the test public key passes steps 1 to 7 and 9. Step 8 needs a provider chain the vectors do not include. Any changed byte in any `signed_bytes` fails steps 3 and 4. Any reordering, or omitting any event but the last, fails step 1 or 5. Omitting the last event fails step 9 alone.
 
-## Decision record
-
-This page is the byte-level annex of D1, registered as
-[ADR-0002](../adr/ADR-0002-postgresql-system-of-record.md) in the
-[decision register](../adr/index.md); chain custody and the commit point remain declared in
-[storage](../architecture/storage.md).
+`scripts/check_chain_vectors.py` reproduces these vectors byte for byte with independent RFC 8785 and Ed25519 implementations.

@@ -44,12 +44,12 @@ use oml_app::types::{
     AdminSearch, AdminState, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
-    DenialRecord, DocumentCaching, GrantRecord, GuardrailFields, HIT_KINDS, HeldFilter, HeldRow,
-    KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, ListingScope,
-    MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome, QueueDepth,
-    RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord,
-    TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
-    WorkareaRef,
+    DenialRecord, DocumentCaching, FormatFields, GrantRecord, GuardrailFields, HIT_KINDS,
+    HeldFilter, HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition,
+    ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome,
+    QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair,
+    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord,
+    WorkareaRecord, WorkareaRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -712,13 +712,13 @@ async fn ensure_postings_partitions(owner: &PgPool) -> Result<u64, sqlx::Error> 
 /// starts; row security stays the fence (ADR-0034 d11). Exported so the
 /// suite plans the statement the adapter runs.
 pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
-            ts_rank(to_tsvector('simple', m.claim), \
+            ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), \
                     plainto_tsquery('simple', $3), 0) AS score \
      FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
        AND NOT m.retirement AND m.kind = ANY($4::text[]) \
        AND m.workarea_id = ANY($2::uuid[]) /*anchor*/ \
-       AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $3) \
+       AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $3) \
      ORDER BY score DESC, m.id ASC \
      LIMIT $5";
 
@@ -727,14 +727,14 @@ pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
 /// `$5` the kinds and `$6` `k`; pruned to the tenant's partition as
 /// [`RECALL_FTS`] is (ADR-0034 d11).
 pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
-            ts_rank(to_tsvector('simple', m.claim), \
+            ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), \
                     plainto_tsquery('simple', $4), 0) AS score \
      FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
        AND ($2::uuid[] IS NULL OR m.author_key_id = ANY($2::uuid[])) \
        AND NOT m.retirement AND m.kind = ANY($5::text[]) \
        AND m.workarea_id = ANY($3::uuid[]) /*anchor*/ \
-       AND to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $4) \
+       AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $4) \
      ORDER BY score DESC, m.id ASC \
      LIMIT $6";
 
@@ -858,13 +858,13 @@ fn keyword_any_sql(anchor: &str) -> String {
         &format!(
             "WITH q AS (SELECT NULLIF(replace(plainto_tsquery('simple', $6)::text, ' & ', ' | '), '')::tsquery AS tq, \
                     tsvector_to_array(to_tsvector('simple', $6)) AS terms) \
-         SELECT m.id, m.body_bytes, ts_rank(to_tsvector('simple', m.claim), q.tq, 0) AS score, \
+         SELECT m.id, m.body_bytes, ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), q.tq, 0) AS score, \
                 ARRAY(SELECT t FROM unnest(q.terms) t \
-                      WHERE t = ANY(tsvector_to_array(to_tsvector('simple', m.claim))) ORDER BY t) AS matched \
+                      WHERE t = ANY(tsvector_to_array(to_tsvector('simple', COALESCE(m.search_text, m.claim)))) ORDER BY t) AS matched \
          FROM memories m CROSS JOIN q \
          WHERE {SEARCH_SCOPE}{anchor} \
-           AND to_tsvector('simple', m.claim) @@ q.tq \
-           AND (NOT $8 OR to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $6)) \
+           AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ q.tq \
+           AND (NOT $8 OR to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $6)) \
          ORDER BY score DESC, m.id ASC \
          LIMIT $7"
         ),
@@ -1174,7 +1174,7 @@ const SPARSE_PENDING: &str = "WITH due AS ( \
                    SET next_at = clock_timestamp() + make_interval(secs => $3) \
                   FROM due WHERE q.tenant_id = $1 AND q.memory_id = due.memory_id \
                 RETURNING q.memory_id, q.enqueued_at) \
-     SELECT l.memory_id, m.claim, (extract(epoch FROM l.enqueued_at) * 1000000)::int8 \
+     SELECT l.memory_id, COALESCE(m.search_text, m.claim), (extract(epoch FROM l.enqueued_at) * 1000000)::int8 \
        FROM leased l JOIN memories m ON m.tenant_id = $1 AND m.id = l.memory_id \
       ORDER BY l.enqueued_at, l.memory_id";
 
@@ -1351,9 +1351,9 @@ impl PruneLimits {
 fn trigram_sql(anchor: &str) -> String {
     with_now(
         &format!(
-            "SELECT m.id, m.body_bytes, word_similarity($6, oml_search_text(m.claim)) AS score \
+            "SELECT m.id, m.body_bytes, word_similarity($6, oml_search_text(COALESCE(m.search_text, m.claim))) AS score \
          FROM memories m \
-         WHERE {SEARCH_SCOPE}{anchor} AND $6 <% oml_search_text(m.claim) \
+         WHERE {SEARCH_SCOPE}{anchor} AND $6 <% oml_search_text(COALESCE(m.search_text, m.claim)) \
          ORDER BY score DESC, m.id ASC \
          LIMIT $7"
         ),
@@ -1408,12 +1408,12 @@ const SIMILAR_HEALTH_SAMPLE: i64 = 2000;
 /// the word split runs on the sample alone. A key whose version is gone
 /// altogether is outside the sample; the delete trigger removes it.
 const SIMILAR_HEALTH: &str = "WITH start AS MATERIALIZED (SELECT gen_random_uuid() AS s), v AS ( \
-         SELECT x.id, x.state, cardinality(oml_similar_words(x.claim)) > 0 AS worded FROM ( \
-           (SELECT 0 AS lap, m.id, m.claim, \
+         SELECT x.id, x.state, cardinality(oml_similar_words(coalesce(x.search_text, x.claim))) > 0 AS worded FROM ( \
+           (SELECT 0 AS lap, m.id, m.claim, m.search_text, \
                    oml_similar_state(m.status, m.is_tip, m.retirement, m.kind) AS state \
               FROM memories m WHERE m.tenant_id = $1 AND m.id >= (SELECT s FROM start) ORDER BY m.id LIMIT $3) \
            UNION ALL \
-           (SELECT 1, m.id, m.claim, \
+           (SELECT 1, m.id, m.claim, m.search_text, \
                    oml_similar_state(m.status, m.is_tip, m.retirement, m.kind) \
               FROM memories m WHERE m.tenant_id = $1 AND m.id < (SELECT s FROM start) ORDER BY m.id LIMIT $3)) x \
          ORDER BY x.lap, x.id LIMIT $3) \
@@ -1880,7 +1880,7 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.v
      m.anchor_repo, m.anchor_uri, m.anchor_rev, m.anchor_path, m.anchor_fragment, \
      m.anchor_hash, m.anchor_hasher, m.source_check_rev, m.source_check_result, \
      m.source_check_hash, m.source_check_path, m.source_check_fragment, m.source_check_at, \
-     m.origin_kind, \
+     m.format, m.title, m.search_text, m.search_text_by, m.origin_kind, \
      to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS created_at_signed, \
      to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
@@ -1933,6 +1933,12 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         anchor: anchor_from_row(row)?.map(Box::new),
         origin_kind: origin_kind_from_row(row)?,
         source_check: source_check_from_row(row)?.map(Box::new),
+        format: Box::new(FormatFields {
+            media_type: row.try_get("format").map_err(backend)?,
+            title: row.try_get("title").map_err(backend)?,
+            search_text: row.try_get("search_text").map_err(backend)?,
+            search_text_by: row.try_get("search_text_by").map_err(backend)?,
+        }),
     })
 }
 
@@ -2441,6 +2447,25 @@ async fn insert_memory(
         insert = insert.bind(kind.as_str());
     }
     insert.execute(&mut **tx).await.map_err(backend)?;
+    // The format, the title and the derived search text in the same
+    // transaction, only when the version carries any, so a schema before 0032
+    // still takes every prose row without one; the lexemes and the postings
+    // follow the update (ADR-0056 d4).
+    if *m.format != FormatFields::default() {
+        sqlx::query(
+            "UPDATE memories SET format = $3, title = $4, search_text = $5, search_text_by = $6 \
+             WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(m.tenant_id)
+        .bind(m.memory_id)
+        .bind(&m.format.media_type)
+        .bind(m.format.title.as_deref())
+        .bind(m.format.search_text.as_deref())
+        .bind(m.format.search_text_by.as_deref())
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
     // Declared valid time in the same transaction, only when declared, so a
     // schema before 0026 still takes every row that declares none (proposed
     // ADR-0059 d11).
@@ -2956,7 +2981,8 @@ async fn apply_fold(
         MetadataFold::WebEmailAllowed(entry) => {
             sqlx::query(
                 "INSERT INTO web_emails (tenant_id, email_hash, email, user_name, admin, \
-                 created_at, added_by) VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, $7)",
+                 created_at, added_by, terms_version) \
+                 VALUES ($1, $2, $3, $4, $5, ($6)::timestamptz, $7, $8)",
             )
             .bind(tenant_id)
             .bind(entry.email.digest().0.to_vec())
@@ -2965,6 +2991,7 @@ async fn apply_fold(
             .bind(entry.admin)
             .bind(at.as_str())
             .bind(entry.added_by)
+            .bind(entry.terms_version.as_deref())
             .execute(&mut **tx)
             .await
             .map_err(|e| match &e {
@@ -3015,6 +3042,76 @@ async fn apply_fold(
                     "web.email_removed names an entry the tenant does not hold".to_owned(),
                 ));
             }
+        }
+        MetadataFold::QuotaSet {
+            user_root,
+            quota,
+            limit,
+        } => {
+            match limit {
+                Some(limit) => sqlx::query(
+                    "INSERT INTO user_quotas (tenant_id, user_root, quota, max_count) \
+                     VALUES ($1, $2, $3, $4) ON CONFLICT (tenant_id, user_root, quota) \
+                     DO UPDATE SET max_count = EXCLUDED.max_count",
+                )
+                .bind(tenant_id)
+                .bind(user_root)
+                .bind(quota.as_str())
+                .bind(i64::try_from(limit).map_err(backend)?),
+                None => sqlx::query(
+                    "DELETE FROM user_quotas WHERE tenant_id = $1 AND user_root = $2 \
+                     AND quota = $3",
+                )
+                .bind(tenant_id)
+                .bind(user_root)
+                .bind(quota.as_str()),
+            }
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::UserDisabled { user } => {
+            sqlx::query("DELETE FROM web_sessions WHERE tenant_id = $1 AND user_name = $2")
+                .bind(tenant_id)
+                .bind(user.as_str())
+                .execute(&mut **tx)
+                .await
+                .map_err(backend)?;
+            sqlx::query(
+                "UPDATE web_emails SET disabled_at = ($3)::timestamptz \
+                 WHERE tenant_id = $1 AND user_name = $2",
+            )
+            .bind(tenant_id)
+            .bind(user.as_str())
+            .bind(at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::DeletionRequested { user } => {
+            sqlx::query(
+                "INSERT INTO web_deletion_requests (tenant_id, user_name, requested_at) \
+                 VALUES ($1, $2, ($3)::timestamptz) \
+                 ON CONFLICT (tenant_id, user_name) WHERE closed_at IS NULL DO NOTHING",
+            )
+            .bind(tenant_id)
+            .bind(user.as_str())
+            .bind(at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::DeletionClosed { user } => {
+            sqlx::query(
+                "UPDATE web_deletion_requests SET closed_at = ($3)::timestamptz \
+                 WHERE tenant_id = $1 AND user_name = $2 AND closed_at IS NULL",
+            )
+            .bind(tenant_id)
+            .bind(user.as_str())
+            .bind(at.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
         }
         MetadataFold::CrewCreated(c) => {
             sqlx::query(
@@ -3970,7 +4067,7 @@ impl PgStore {
 /// The most readable anchored rows a filtered recall reads anchor-first:
 /// their ids from the anchor index, then their postings by id; above it the
 /// filter is joined to the postings on the indexed columns (ADR-0057 d4;
-/// FR-115 measures both).
+/// #138 measures both).
 pub const ANCHOR_FIRST_MAX: usize = 2_000;
 
 /// How a filtered list narrows its candidates (ADR-0057 d4).
@@ -5206,6 +5303,65 @@ pub const SPARSE_MAX_ATTEMPTS: i32 = 5;
 pub const SPARSE_LEASE_SECS: i64 = 300;
 
 impl JournalStore for PgStore {
+    async fn user_usage(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<oml_app::types::UserUsage, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let (memories, keys, connections): (i64, i64, i64) = sqlx::query_as(
+            "SELECT \
+               (SELECT count(*) FROM (SELECT DISTINCT m.workarea_id, m.claim_key \
+                  FROM memories m JOIN workareas w \
+                    ON w.tenant_id = m.tenant_id AND w.id = m.workarea_id \
+                  WHERE m.tenant_id = $1 AND (w.id = $2 OR w.namespace_root_id = $2)) d), \
+               (SELECT count(*) FROM api_keys k WHERE k.tenant_id = $1 AND k.user_root_id = $2 \
+                  AND k.revoked_at IS NULL AND k.credential <> 'session'), \
+               (SELECT count(*) FROM oauth_connections c JOIN api_keys k \
+                  ON k.tenant_id = c.tenant_id AND k.id = c.key_id \
+                  WHERE c.tenant_id = $1 AND k.user_root_id = $2 AND c.state = 'open')",
+        )
+        .bind(tenant_id)
+        .bind(user_root)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let count = |n: i64| u64::try_from(n).unwrap_or(0);
+        Ok(oml_app::types::UserUsage {
+            memories: count(memories),
+            keys: count(keys),
+            connections: count(connections),
+        })
+    }
+
+    async fn user_quota_overrides(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<Vec<(oml_app::domain::signup::Quota, u64)>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT quota, max_count FROM user_quotas WHERE tenant_id = $1 AND user_root = $2",
+        )
+        .bind(tenant_id)
+        .bind(user_root)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.into_iter()
+            .map(|(quota, limit)| {
+                let quota = oml_app::domain::signup::Quota::parse(&quota).ok_or_else(|| {
+                    StoreError::Backend(format!("user_quotas.quota {quota:?} is not a quota"))
+                })?;
+                Ok((quota, u64::try_from(limit).map_err(backend)?))
+            })
+            .collect()
+    }
+
     async fn commit_chain(&self, reqs: Vec<CommitRequest>) -> Result<CommitReceipt, StoreError> {
         // Everything networked happened before BEGIN (ADR-0024): the events
         // arrive signed; inside the transaction nothing waits on anything
@@ -5613,6 +5769,12 @@ impl JournalStore for PgStore {
             sql.push(" AND m.origin_kind = ANY(")
                 .push_bind(origin_kind_strings(&filter.anchor.origin_kinds))
                 .push("::text[])");
+        }
+        if let Some(author) = filter.author {
+            sql.push(" AND m.author_key_id = ").push_bind(author);
+        }
+        if let Some(tip) = filter.tip {
+            sql.push(" AND m.is_tip = ").push_bind(tip);
         }
         if let Some(since) = &filter.since {
             sql.push(" AND m.created_at >= (")
@@ -6907,8 +7069,12 @@ async fn end_entry_sessions(
     Ok(())
 }
 
-const WEB_ENTRY_COLUMNS: &str =
-    "tenant_id, email, user_name, admin, google_subject, github_subject, added_by";
+const WEB_ENTRY_COLUMNS: &str = concat!(
+    "tenant_id, email, user_name, admin, google_subject, github_subject, added_by, ",
+    "terms_version, ",
+    utc!("disabled_at"),
+    " AS disabled_at_signed"
+);
 
 fn web_entry_from_row(row: &PgRow) -> Result<WebEntry, StoreError> {
     let email: String = row.try_get("email").map_err(backend)?;
@@ -6921,6 +7087,8 @@ fn web_entry_from_row(row: &PgRow) -> Result<WebEntry, StoreError> {
         google_subject: row.try_get("google_subject").map_err(backend)?,
         github_subject: row.try_get("github_subject").map_err(backend)?,
         added_by: row.try_get("added_by").map_err(backend)?,
+        terms_version: row.try_get("terms_version").map_err(backend)?,
+        disabled_at: event_time_column(row, "disabled_at_signed")?,
     })
 }
 
@@ -7197,10 +7365,12 @@ impl WebStore for PgStore {
         };
         let sql = format!(
             "SELECT {MEMORY_COLUMNS} FROM memories m WHERE m.tenant_id = $1 \
-             AND ($2::text IS NULL OR to_tsvector('simple', m.claim) @@ plainto_tsquery('simple', $2)) \
+             AND ($2::text IS NULL OR to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $2)) \
              AND ($3::uuid[] IS NULL OR m.workarea_id = ANY($3)) \
              AND {state} \
              AND ($4::timestamptz IS NULL OR (m.created_at, m.id) < ($4::timestamptz, $5::uuid)) \
+             AND (cardinality($7::text[]) = 0 OR m.origin_kind = ANY($7)) \
+             AND ($8::uuid IS NULL OR m.author_key_id = $8) \
              ORDER BY m.created_at DESC, m.id DESC LIMIT $6"
         );
         let mut tx = self.pool.begin().await.map_err(backend)?;
@@ -7217,11 +7387,42 @@ impl WebStore for PgStore {
             )
             .bind(search.after.as_ref().map(|a| a.artifact_id))
             .bind(i64::try_from(search.limit).unwrap_or(i64::MAX))
+            .bind(origin_kind_strings(&search.origin_kinds))
+            .bind(search.author)
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
         rows.iter().map(memory_from_row).collect()
+    }
+
+    async fn web_deletion_requests(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Vec<oml_app::types::DeletionRequest>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(concat!(
+            "SELECT user_name, ",
+            utc!("requested_at"),
+            " AS requested_at_signed FROM web_deletion_requests \
+             WHERE tenant_id = $1 AND closed_at IS NULL ORDER BY requested_at"
+        ))
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter()
+            .map(|row| {
+                let user: String = row.try_get("user_name").map_err(backend)?;
+                Ok(oml_app::types::DeletionRequest {
+                    user: Name::parse_reference(&user).map_err(backend)?,
+                    requested_at: event_time_column(row, "requested_at_signed")?
+                        .ok_or_else(|| StoreError::Backend("requested_at is null".to_owned()))?,
+                })
+            })
+            .collect()
     }
 
     async fn web_sessions_sweep(&self, tenant_id: Uuid, at: &EventTime) -> Result<u64, StoreError> {

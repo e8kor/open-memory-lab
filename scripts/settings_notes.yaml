@@ -1,0 +1,154 @@
+# What each server setting does. The key names come from the KEY_* constants in
+# crates/bins/oml-server-lead/src/lib.rs; scripts/gen_settings_reference.py fails when a key in the
+# code has no entry here, or an entry here names a key the code no longer has.
+# `default` is the value a deployment gets when it sets nothing.
+server:
+  postgres.url:
+    default: none (required)
+    note: The connection string of the serving role, a Postgres role that owns nothing and holds only the privileges the server's statements need.
+  postgres.owner_url:
+    default: none (required)
+    note: The connection string of the owner role. The server runs its migrations under it at start and serves under `postgres.url`. A start without it is refused as `postgres.role_split`.
+  server.listen:
+    default: "`127.0.0.1:8080`"
+    note: The address of the API listener.
+  kms.adapter:
+    default: the file keyring
+    note: Which key store wraps each memory's encryption key. This build has one, `file`, the keyring file; any other value stops the server at start.
+  kms.keyring_path:
+    default: "`oml-keyring`"
+    note: The keyring file, for the `file` adapter. Back it up with the database; a database restored without it cannot be read.
+  oauth.issuer:
+    default: unset (connections off)
+    note: The public origin of the server, `https` with no path and no trailing slash, such as `https://memory.example.com`. It turns on OAuth connections for claude.ai and the web pages. Set it to the address people reach, not the address the process binds behind its proxy.
+  server.trusted_proxies:
+    default: empty (no proxy trusted)
+    note: Addresses and CIDR ranges of reverse proxies, a TOML array in the file and comma-separated in the environment. Only a request from a listed peer has its client address read from `X-Forwarded-For`. Behind a proxy on the same host, set loopback.
+  server.metrics_listen:
+    default: unset (no metrics listener)
+    note: The address of a second listener that serves `GET /metrics` and nothing else, unauthenticated. Bind it where only the scraper reaches. The API listener never serves `/metrics`.
+  server.otlp_endpoint:
+    default: unset (no trace export)
+    note: The `http` or `https` base URL of an OpenTelemetry collector. The server posts spans to `<endpoint>/v1/traces` over OTLP with protobuf and sends no authentication header.
+  web.google.client_id:
+    default: unset (Google sign-in off)
+    note: The OAuth client ID of your Google application. Register the redirect URI `<oauth.issuer>/web/callback/google`.
+  web.google.client_secret:
+    default: unset
+    note: The matching secret. The server never logs it. Set both or neither.
+  web.github.client_id:
+    default: unset (GitHub sign-in off)
+    note: The client ID of your GitHub OAuth app. Its callback is `<oauth.issuer>/web/callback/github`.
+  web.github.client_secret:
+    default: unset
+    note: The matching secret. Set both or neither. The web pages need `oauth.issuer` and at least one provider.
+  signup.mode:
+    default: "`allowlist`: the sign-in allowlist, unchanged"
+    note: "`open` lets a person whose provider-verified email no entry holds create an account after accepting the terms: a drawn user, a private root, `<user>-web` and `<user>-review` (ADR-0068 d1). `open` requires `oauth.issuer`, a sign-in provider (`web.google.*` or `web.github.*`) and every `signup.*` setting except `per_ip_per_hour`. A missing one, a tenant id that does not parse, or an issuer that is not a live admin key of that tenant stops the process at start, naming the setting."
+  signup.tenant:
+    default: unset
+    note: The tenant id sign-ups land in. Every person of that tenant is under the `quota.*` limits.
+  signup.issuer:
+    default: unset
+    note: The name of an admin key of the sign-up tenant that adds each entry and issues its session keys.
+  signup.terms_version:
+    default: unset
+    note: The terms version a person accepts, recorded on their entry and in `web.signed_up`. Changing it makes an open terms page refuse with `terms_version`.
+  signup.terms_url:
+    default: unset
+    note: The terms page the terms checkbox links.
+  signup.privacy_url:
+    default: unset
+    note: The privacy page the terms checkbox links.
+  signup.per_ip_per_hour:
+    default: "`5`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
+    note: New accounts from one client address in a rolling hour, counted per process; an IPv6 address counts by its /64 and an IPv4 address by itself. The address is the request line's, so behind a proxy set `server.trusted_proxies`, or every sign-up shares one bucket (`oml doctor` warns).
+  quota.memories:
+    default: "`1000`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
+    note: Live memories in a person's root, counted as chains, so a new version of a memory is not a new memory. Past it, `limit.quota`. An admin overrides one person's limit on `/web/admin/users`, journaled as `web.quota_set`. A value above 1,000,000 stops the start.
+  quota.keys:
+    default: "`5`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
+    note: Live agent keys of a person. Past it, `limit.quota`.
+  quota.connections:
+    default: "`5`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
+    note: Open connections of a person. Past it, `limit.quota`.
+  quota.requests_per_minute:
+    default: "`120`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
+    note: Requests per key per UTC minute, counted per process. Past it, `limit.rate`.
+  brief.max_tokens:
+    default: "`400`"
+    note: The token budget a workarea's brief is cut to when an agent reads the workarea. The first member that does not fit ends the brief.
+  search.enabled:
+    default: "`keyword-any`, `bm25`, `bm25-postings`"
+    note: The search pipelines the server offers, a TOML array in the file and comma-separated in the environment. A pipeline that is not listed answers `search.unavailable`.
+  search.default:
+    default: "`bm25-postings`"
+    note: The pipeline a recall uses when neither the request nor the tenant names one. It must be in `search.enabled`.
+  search.timings:
+    default: "`false`"
+    note: "`true` lets a recall ask for each stage's milliseconds. Off by default because stage times over rows a key cannot read reveal how many there are."
+  search.rerank.model:
+    default: "`ms-marco-MiniLM-L6-v2`"
+    note: The cross-encoder the reranking pipeline loads. This build pins `ms-marco-MiniLM-L6-v2` and `ms-marco-MiniLM-L4-v2`, both Apache-2.0.
+  search.rerank.model_dir:
+    default: "`<state>/models/<model>`"
+    note: An absolute directory holding `config.json`, `tokenizer.json` and `model.safetensors`. The server checks each file against a pinned SHA-256 and stops at start on a mismatch.
+  search.rerank.fetch:
+    default: "`false`"
+    note: "`true` lets the server download missing model files at start from the pinned revision on Hugging Face and check each digest. `false` never uses the network."
+  search.rerank.depth:
+    default: "`10`"
+    note: How many of the best candidates the cross-encoder reorders, 1 to 100.
+  search.rerank.floor:
+    default: "`off`"
+    note: A relevance between 0 and 1 below which a reranked hit is withheld. A recall whose candidates all fall below it answers no hit and reports how many it withheld.
+  search.rerank.max_concurrent:
+    default: "`2`"
+    note: Reranks that run at once. A recall that waits past its deadline for a slot serves the unreranked order and says why.
+  search.rerank.timeout_ms:
+    default: "`1000`"
+    note: The deadline of one rerank in milliseconds, waiting for a slot included. Past it the recall serves the unreranked order.
+  search.rerank.threads:
+    default: "`2`"
+    note: The threads of the reranker's own pool, shared by every rerank.
+  search.rerank.max_tokens:
+    default: "`256`"
+    note: The longest query-and-passage pair the model reads, 64 to 512 tokens.
+  search.sparse.model_dir:
+    default: "`<state>/models/opensearch-neural-sparse-encoding-doc-v3-distill`"
+    note: An absolute directory holding the sparse model's `config.json`, `tokenizer.json`, `model.safetensors` and `idf.json`. Read only when `search.enabled` names a sparse pipeline.
+  search.sparse.fetch:
+    default: "`false`"
+    note: "`true` lets the server download missing sparse-model files at start and check each digest."
+  search.sparse.threads:
+    default: "`2`"
+    note: The threads of the sparse encoder's own pool. It writes each version's postings after the write commits, off the commit path.
+lakewriter:
+  OML_LAKE_URL:
+    note: The root of the lake, such as `file:///var/lib/oml/lake` or an object-store URL. Also the `--lake` flag.
+  OML_LAKE_DATABASE_URL:
+    note: The connection string of the reader role the lake writer drains the outbox through.
+  OML_LAKE_OWNER_URL:
+    note: The owner-role connection string, for the command that prepares the lake roles.
+  OML_LAKE_KEK_FILE:
+    note: The key-encryption key file. The writer checks its permissions and age and warns when it is not given.
+  OML_LAKE_METRICS_ADDR:
+    default: "`127.0.0.1:9466`"
+    note: The address of the lake writer's metrics listener.
+client:
+  OML_URL:
+    note: The server's URL, without `/mcp`. Set with `OML_API_KEY` or not at all; a source that sets one alone is refused.
+  OML_API_KEY:
+    note: The API key. Prefer it, or the credentials file `oml login` writes, to the `--api-key` flag, because argv is visible to other processes.
+  OML_CLI_CREDENTIALS:
+    note: The path of the credentials file, for tests and for keeping several servers apart.
+  OML_SESSION_CONTEXT:
+    note: "`off` stops the session-start hook from loading the workarea's memory into a session. It takes `on` or `off`."
+  OML_SESSION_CONTEXT_MAX_TOKENS:
+    note: The token budget of the session-start recall, an integer from 1 up.
+  OML_FAILURE_RECALL:
+    note: "`1` makes the plugin recall memories matching the error words after a failed command. Off by default."
+  OML_TURN_RECALL:
+    note: "`1` makes the plugin recall on every prompt, within its budget. Off by default."
+  OML_METRICS_URL:
+    note: The lead's metrics listener, so that `oml doctor` can read rerank skips, scan findings and recall telemetry.

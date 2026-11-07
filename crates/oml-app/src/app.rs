@@ -8,12 +8,17 @@
 mod pages;
 mod rescan;
 mod search;
+mod signup;
 mod sparse;
 mod usage;
 mod web;
-pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
+pub use pages::{
+    AdminMemory, AdminPage, AdminSearchRequest, Capacity, OwnKey, QueueRow, REGION_COUNT_MAX,
+    Region, Regions, VerdictTrail, WebListRequest, WorkareaOffer, WorkareaOffers,
+};
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
+pub use signup::{DRAWS_MAX, SignupState, StartStatus, UserRow};
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
@@ -80,8 +85,8 @@ use crate::cursor::{ClaimEdgeCursor, ListingCursor, NameCursor, PathCursor};
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
     DocumentFetchFailure, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord, IdempotencyScope,
-    JournalStore, MetadataFold, NoObserver, OutboxRow, RequestObserver, Reranker, ScanOutcome,
-    Scanner, Signer, SparseEncoder, StoreError, SubjectRow, TailEvent,
+    JournalStore, MetadataFold, NoObserver, OutboxRow, Parsed, RequestObserver, Reranker,
+    ScanOutcome, Scanner, Signer, SparseEncoder, StoreError, SubjectRow, TailEvent,
 };
 use crate::telemetry::{HITS_STORED, Label, RecallEvent, Remembered, Telemetry, TelemetryItem};
 use crate::types::{
@@ -93,17 +98,17 @@ use crate::types::{
     ClientDescription, ClientKind, CodeEntryOutcome, ConfirmAction, ConfirmOutcome,
     ConfirmationGrant, ConfirmationView, ConnectCode, ConnectCodeIssued, ConnectCodeRecord,
     ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest,
-    CrewPage, CrewRecord, CrewUpdate, DenialRecord, EdgeRatification, ExchangeForm, GrantRecord,
-    GuardrailFields, GuardrailRequest, GuardrailSet, GuardrailVerdict, HIT_KINDS, IssueKeyRequest,
-    IssuedKey, IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest, ListingFilter,
-    ListingPosition, ListingScope, MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal,
-    OAuthClientRecord, OnSimilar, OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge,
-    ProposeClaimEdge, RecallHit, RecallRequest, RecallResult, RefreshFacts, RefreshForm,
-    RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem,
-    SourceCheck, SourceCheckReceipt, SourceCheckRequest, SubmitOutcome, SubmitReceipt,
-    SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest, TailPage,
-    TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView, TreeNode,
-    TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
+    CrewPage, CrewRecord, CrewUpdate, DenialRecord, EdgeRatification, ExchangeForm, FormatFields,
+    GrantRecord, GuardrailFields, GuardrailRequest, GuardrailSet, GuardrailVerdict, HIT_KINDS,
+    IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest,
+    ListingFilter, ListingPosition, ListingScope, LiveConnectCode, MemoryPage, MemoryRecord,
+    MintedToken, NamedRef, NamingRefusal, OAuthClientRecord, OnSimilar, OwnHeldGuardrail,
+    PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge, RecallHit, RecallRequest, RecallResult,
+    RefreshFacts, RefreshForm, RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail,
+    ServedMemory, SimilarItem, SourceCheck, SourceCheckReceipt, SourceCheckRequest, SubmitOutcome,
+    SubmitReceipt, SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest,
+    TailPage, TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView,
+    TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
     WorkareaInfo, WorkareaRecord, WorkareaStatusView,
 };
 use crate::types::{
@@ -155,20 +160,25 @@ const NAMES_RULE: &str = "ADR-0026 d11";
 const ADMIN_DENIAL_LIFT_REASON: &str = "adr-0026-d15";
 
 /// `oauth.connect_code_ttl`'s shipped default, 10 minutes, in seconds
-/// (configuration.md; ADR-0031 d8). FR-22: until journalled settings are
+/// (configuration.md; ADR-0031 d8). #117: until journalled settings are
 /// built, this code constant is the lifetime of every connect code this
 /// build mints, as [`CURSOR_TTL_SECS`](crate::cursor::CURSOR_TTL_SECS) is a
 /// cursor's.
 pub const CONNECT_CODE_TTL_SECS: i64 = 600;
 
+/// The longest an admin may ask a connect code to live, 30 days, in seconds:
+/// the reviewer code of a directory listing, minted only for a key confined
+/// to one workarea (ADR-0067 d3).
+pub const CONNECT_CODE_TTL_MAX_SECS: i64 = 30 * 24 * 3600;
+
 /// `oauth.access_token_ttl`'s shipped default, 1 hour, in seconds: the
 /// lifetime of every access token this build mints until settings are
-/// built (configuration.md; FR-22; ADR-0031 d10).
+/// built (configuration.md; #117; ADR-0031 d10).
 pub const ACCESS_TOKEN_TTL_SECS: i64 = 3_600;
 
 /// `oauth.refresh_token_ttl`'s shipped default, 30 days, in seconds: the
 /// lifetime of every refresh token this build mints until settings are
-/// built (configuration.md; FR-22; ADR-0031 d10).
+/// built (configuration.md; #117; ADR-0031 d10).
 pub const REFRESH_TOKEN_TTL_SECS: i64 = 30 * 86_400;
 
 /// An authorization code lives 60 seconds from Connect, a design constant
@@ -192,7 +202,7 @@ pub struct App<J, S, C, I, Sc> {
     /// nothing (ADR-0042 d2, d14).
     observer: Arc<dyn RequestObserver>,
     /// `brief.max_tokens`: the budget a workarea's brief is cut to
-    /// (ADR-0046 d8; FR-77).
+    /// (ADR-0046 d8; #145).
     brief_max_tokens: u64,
     /// The pipelines this deployment serves and its default (ADR-0049 d4).
     search: SearchConfig,
@@ -210,6 +220,12 @@ pub struct App<J, S, C, I, Sc> {
     /// and the encoder task writes kind 2 with; `None` where the deployment
     /// serves no sparse pipeline (ADR-0052 d14, d16).
     sparse: Option<Arc<dyn SparseEncoder>>,
+    /// The claim formats this deployment serves (ADR-0056 d1, d3): prose
+    /// alone until the composition gives it the compiled-in adapters.
+    formats: Arc<dyn crate::ports::Formats>,
+    /// Open sign-up and its counters; `None` where the deployment has no
+    /// sign-up tenant, and then no quotas (ADR-0068 d1, d5).
+    signup: Option<Arc<signup::SignupState>>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -261,6 +277,16 @@ impl Caller {
             vec![self.key.key_id]
         } else {
             self.own_keys.clone()
+        }
+    }
+
+    /// Whether `author_key_id` belongs to this caller's own-key set, without
+    /// cloning that set for each row.
+    fn owns(&self, author_key_id: Uuid) -> bool {
+        if self.own_keys.is_empty() {
+            self.key.key_id == author_key_id
+        } else {
+            self.own_keys.contains(&author_key_id)
         }
     }
 
@@ -503,8 +529,24 @@ fn submit_request_digest(
         }
     }
     let doc = with_anchor(doc, req.anchor.as_ref());
+    let doc = with_format(doc, req.format.as_deref(), req.title.as_deref());
     let doc = with_origin(doc, req.origin);
     sha256_digest_string(doc.to_string().as_bytes())
+}
+
+/// A request digest's document with the format and the title when sent, and
+/// unchanged otherwise, so a request that sends neither digests as it did
+/// before formats (ADR-0056 d13).
+fn with_format(mut doc: Value, format: Option<&str>, title: Option<&str>) -> Value {
+    if let Some(members) = doc.as_object_mut() {
+        if let Some(format) = format {
+            members.insert("format".to_owned(), Value::from(format));
+        }
+        if let Some(title) = title {
+            members.insert("title".to_owned(), Value::from(title));
+        }
+    }
+    doc
 }
 
 /// The name of a person's chat workarea under their user root (ADR-0063
@@ -654,6 +696,18 @@ fn with_valid_time(doc: &mut Value, valid: &ValidTime) {
     }
 }
 
+/// The submission payload's `format`, always, and its `title` when the
+/// version has one: both are signed with the version, and an event without
+/// them reads as `text/plain` with no title (ADR-0056 d2).
+fn with_format_fields(payload: &mut Value, fields: &FormatFields) {
+    if let Some(members) = payload.as_object_mut() {
+        members.insert("format".to_owned(), Value::from(fields.media_type.as_str()));
+        if let Some(title) = &fields.title {
+            members.insert("title".to_owned(), Value::from(title.as_str()));
+        }
+    }
+}
+
 /// The request digest of a supersession: SHA-256 over the RFC 8785 JSON of
 /// the method, the route template, the path parameters and the parsed body,
 /// so one Idempotency-Key reused for two targets never replays the first
@@ -676,6 +730,7 @@ fn supersede_request_digest(req: &SupersedeRequest) -> Result<String, AppError> 
     if let Some(body) = doc.get_mut("body") {
         *body = with_guardrail_fields(body.take(), req.severity, req.rule.as_ref());
         *body = with_anchor(body.take(), req.anchor.as_ref());
+        *body = with_format(body.take(), req.format.as_deref(), req.title.as_deref());
         *body = with_origin(body.take(), req.origin);
         if let Some(members) = body.as_object_mut() {
             for (name, value) in [
@@ -777,6 +832,18 @@ impl RecordedVerdict {
 
 /// What `node` is to the ladder (ADR-0046 d1): the universe root, a user
 /// root (ADR-0044 d1), or an ordinary node.
+/// What `set_workarea_mode` admits (ADR-0030 d1, d6): the node already in
+/// the mode, which journals nothing, or a change with the mode it leaves
+/// and, for a commit, the nodes it frees.
+pub(crate) enum ModeAdmitted {
+    Already(WorkareaRecord),
+    Change {
+        node: WorkareaRecord,
+        current: WorkareaMode,
+        held_free: Vec<Uuid>,
+    },
+}
+
 fn ladder_node(node: &WorkareaRecord) -> LadderNode {
     if node.parent_id.is_none() {
         LadderNode::Universe
@@ -1220,7 +1287,22 @@ where
             telemetry: None,
             feedback_counts: std::sync::Mutex::default(),
             sparse: None,
+            formats: Arc::new(crate::ports::ProseFormats),
+            signup: None,
         }
+    }
+
+    /// The app that serves `formats`, the compiled-in adapters of ADR-0056
+    /// d3.
+    #[must_use]
+    pub fn with_formats(self, formats: Arc<dyn crate::ports::Formats>) -> Self {
+        Self { formats, ..self }
+    }
+
+    /// The formats this app serves, for `/readyz` and doctor (ADR-0056 d14).
+    #[must_use]
+    pub fn formats(&self) -> &dyn crate::ports::Formats {
+        self.formats.as_ref()
     }
 
     /// The app whose reranking pipelines call `reranker` (ADR-0053 d2). The
@@ -1269,7 +1351,7 @@ where
     }
 
     /// The app whose workarea briefs are cut to `max_tokens`, the
-    /// deployment's `brief.max_tokens` (ADR-0046 d8; FR-77).
+    /// deployment's `brief.max_tokens` (ADR-0046 d8; #145).
     #[must_use]
     pub fn with_brief_max_tokens(self, max_tokens: u64) -> Self {
         Self {
@@ -1342,6 +1424,9 @@ where
     /// effective access; ADR-0025 d1).
     async fn authenticate(&self, api_key: &str) -> Result<Caller, AppError> {
         let key = self.key_of_value(api_key).await?;
+        // A person of the sign-up tenant's key under its request rate
+        // (ADR-0068 d5).
+        self.admit_request(&key).await?;
         self.caller_of(key).await
     }
 
@@ -1351,7 +1436,10 @@ where
     async fn authenticate_bearer(&self, bearer: Bearer<'_>) -> Result<Caller, AppError> {
         match bearer {
             Bearer::Key(value) => self.authenticate(value).await,
-            Bearer::Connection(caller) => self.caller_of(caller.key.clone()).await,
+            Bearer::Connection(caller) => {
+                self.admit_request(&caller.key).await?;
+                self.caller_of(caller.key.clone()).await
+            }
             Bearer::Session(caller) => {
                 let mut fresh = self.caller_of(caller.key.clone()).await?;
                 fresh.own_keys.clone_from(&caller.own_keys);
@@ -1623,12 +1711,13 @@ where
     /// Whether the caller can read `memory`: its own row in any state,
     /// unless a global denial masks the row's workarea, or a promoted version
     /// within its reader effective access (roles-and-keys.md#own; ADR-0025
-    /// d3). Own is the authoring key, never the principal.
+    /// d3). Own is the authoring key for a bearer caller, and every key in the
+    /// session caller's own-key set for the user page (ADR-0045 d16).
     async fn readable(&self, caller: &Caller, memory: &MemoryRecord) -> Result<bool, AppError> {
         let ancestry = self
             .ancestry(caller.key.tenant_id, memory.workarea_id)
             .await?;
-        if memory.author_key_id == caller.key.key_id {
+        if caller.owns(memory.author_key_id) {
             return Ok(!caller.denied(&ancestry));
         }
         let reader = caller.effective(&ancestry).contains(&Role::Reader);
@@ -1679,7 +1768,7 @@ where
     /// per served row, against ADR-0024 d4 ("never N+1"); recall reads the
     /// path once per workarea ([`Self::served_in`]). Only the rows
     /// themselves hydrate set-wise (`JournalStore::memories`). Measured at
-    /// `k` 100 in ADR-0049 d12; elsewhere unmeasured (FR-7, FR-25).
+    /// `k` 100 in ADR-0049 d12; elsewhere unmeasured (#99, #150).
     ///
     /// A version in `universe` is served to every key outside its authoring
     /// key set without its source: no principal, no `derives_from`, its
@@ -2195,16 +2284,22 @@ where
     /// folds it, holding only the code's digest, and the answer that shows
     /// the code once, with its connector URL `<issuer>/mcp`. The code is 60
     /// bits of the id generator's secret, and lives
-    /// [`CONNECT_CODE_TTL_SECS`] from now (ADR-0031 d8).
-    fn new_connect_code(&self, oauth: &Issuer, key_id: Uuid) -> (ConnectCode, ConnectCodeIssued) {
+    /// `ttl_secs` from now: [`CONNECT_CODE_TTL_SECS`] unless an admin asked
+    /// for longer (ADR-0031 d8, ADR-0067 d3).
+    fn new_connect_code(
+        &self,
+        oauth: &Issuer,
+        key_id: Uuid,
+        ttl_secs: i64,
+    ) -> (ConnectCode, ConnectCodeIssued) {
         let secret = self.ids.new_secret();
         let mut random = [0_u8; 8];
         random.copy_from_slice(&secret[24..]);
         let symbols = CodeSymbols::from_random(random);
         let expires_at = EventTime::from_unix_micros(
-            self.clock.now().unix_micros() + CONNECT_CODE_TTL_SECS * 1_000_000,
+            self.clock.now().unix_micros() + ttl_secs * 1_000_000,
         )
-        .expect("ten minutes after a clock reading is a time the fixed-width form writes");
+        .expect("at most thirty days after a clock reading is a time the fixed-width form writes");
         let code = ConnectCode {
             code_id: self.ids.new_id(),
             key_id,
@@ -2802,7 +2897,7 @@ where
                 last = event.clone();
                 links.push((event, MetadataFold::GrantIssued { key_id, grant }));
             }
-            let (code, shown) = self.new_connect_code(oauth, key_id);
+            let (code, shown) = self.new_connect_code(oauth, key_id, CONNECT_CODE_TTL_SECS);
             let event = self.seal(
                 Some(&last),
                 tenant_id,
@@ -3607,7 +3702,6 @@ where
         workarea: Reference,
         mode: WorkareaMode,
     ) -> Result<WorkareaRecord, AppError> {
-        const VERB: &str = "workarea_mode";
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         if !may_set_mode(key.role, key.held_by, key.profile) {
@@ -3619,9 +3713,73 @@ where
         let tenant_id = key.tenant_id;
         let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
         self.observer.workarea(workarea_id);
-        self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
-            .await?;
         let prev = self.head_event(tenant_id).await?;
+        let (node, current, held_free) =
+            match self.mode_admitted(&caller, workarea_id, mode).await? {
+                ModeAdmitted::Already(node) => return Ok(node),
+                ModeAdmitted::Change {
+                    node,
+                    current,
+                    held_free,
+                } => (node, current, held_free),
+            };
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::WORKAREA_MODE_SET,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "mode": mode.as_str(),
+                "from": current.as_str(),
+            }),
+        )?;
+        // The commit's zero-held test runs again inside the committing
+        // transaction, so no held row created without a chain event slips
+        // past it (ADR-0030 d6).
+        self.commit(
+            event,
+            MetadataFold::WorkareaModeSet {
+                workarea_id,
+                in_progress: mode == WorkareaMode::InProgress,
+                held_free,
+            },
+            None,
+        )
+        .await
+        .map_err(|e| match e {
+            AppError::Store(StoreError::HeldRemaining) => AppError::HeldRemaining { workarea_id },
+            other => other,
+        })?;
+        self.observer.mode_set(mode.as_str());
+        Ok(WorkareaRecord {
+            in_progress: mode == WorkareaMode::InProgress,
+            ..node
+        })
+    }
+
+    /// Whether `set_workarea_mode` admits `mode` on the node for the
+    /// caller now, every check but the commit's, in its order: the key's
+    /// shape, dreamer access, then the mark's or the commit's test. The
+    /// verb and the pages' offer call this one function (ADR-0045 d28).
+    pub(crate) async fn mode_admitted(
+        &self,
+        caller: &Caller,
+        workarea_id: Uuid,
+        mode: WorkareaMode,
+    ) -> Result<ModeAdmitted, AppError> {
+        const VERB: &str = "workarea_mode";
+        let key = &caller.key;
+        if !may_set_mode(key.role, key.held_by, key.profile) {
+            return Err(AppError::ModeHumanOnly {
+                role: key.role,
+                held_by: key.held_by,
+            });
+        }
+        let tenant_id = key.tenant_id;
+        self.require_access(caller, workarea_id, Role::Dreamer, VERB)
+            .await?;
         let ancestry = self
             .journal
             .workarea_ancestry(tenant_id, workarea_id)
@@ -3634,7 +3792,7 @@ where
             WorkareaMode::Standard
         };
         if current == mode {
-            return Ok(node);
+            return Ok(ModeAdmitted::Already(node));
         }
         let subtree = self
             .journal
@@ -3676,39 +3834,10 @@ where
                 held_free = nodes;
             }
         }
-        let event = self.seal(
-            prev.as_ref(),
-            tenant_id,
-            event_types::WORKAREA_MODE_SET,
-            &key.principal,
-            Some(key.key_id),
-            json!({
-                "workarea_id": workarea_id.to_string(),
-                "mode": mode.as_str(),
-                "from": current.as_str(),
-            }),
-        )?;
-        // The commit's zero-held test runs again inside the committing
-        // transaction, so no held row created without a chain event slips
-        // past it (ADR-0030 d6).
-        self.commit(
-            event,
-            MetadataFold::WorkareaModeSet {
-                workarea_id,
-                in_progress: mode == WorkareaMode::InProgress,
-                held_free,
-            },
-            None,
-        )
-        .await
-        .map_err(|e| match e {
-            AppError::Store(StoreError::HeldRemaining) => AppError::HeldRemaining { workarea_id },
-            other => other,
-        })?;
-        self.observer.mode_set(mode.as_str());
-        Ok(WorkareaRecord {
-            in_progress: mode == WorkareaMode::InProgress,
-            ..node
+        Ok(ModeAdmitted::Change {
+            node,
+            current,
+            held_free,
         })
     }
 
@@ -4006,11 +4135,11 @@ where
     /// (roles-and-keys.md permission matrix, footnote 6; ADR-0026 d15).
     pub async fn workarea_status(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         workarea: Reference,
     ) -> Result<WorkareaStatusView, AppError> {
         const VERB: &str = "workarea_status";
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         let structure = key.role == Role::Admin;
         if !structure {
@@ -4053,45 +4182,18 @@ where
     /// (workareas.md, ratification re-checks).
     pub async fn propose_transition(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         workarea: Reference,
         to: WorkareaStatus,
     ) -> Result<TransitionRecord, AppError> {
         const VERB: &str = "propose_transition";
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         if key.role != Role::Admin {
             require_admissible(key, Role::Dreamer, VERB)?;
         }
         let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
-        if key.role != Role::Admin {
-            self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
-                .await?;
-        }
-        let node = self
-            .journal
-            .workarea(key.tenant_id, workarea_id)
-            .await?
-            .ok_or(AppError::NotFound)?;
-        self.refuse_inside(key.tenant_id, workarea_id).await?;
-        let children: Vec<WorkareaStatus> = self
-            .journal
-            .workarea_children(key.tenant_id, workarea_id)
-            .await?
-            .iter()
-            .map(|child| child.status)
-            .collect();
-        // "No simulation is fenced on the subtree" holds vacuously while
-        // simulations are unbuilt, and lands in the ladder's preconditions
-        // with them (workareas.md, readings the build takes).
-        propose_check(ladder_node(&node), node.status, to, &children).map_err(|reason| {
-            AppError::TransitionRefused {
-                workarea_id,
-                from: node.status,
-                to,
-                reason,
-            }
-        })?;
+        let node = self.propose_admitted(&caller, workarea_id, to).await?;
         let proposal = TransitionRecord {
             transition_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
@@ -4127,6 +4229,50 @@ where
         Ok(proposal)
     }
 
+    /// Whether `propose_transition` admits `to` on the node for the caller
+    /// now, every check after the name resolves and before the commit, in
+    /// its order. The verb and the pages' offer call this one function
+    /// (ADR-0045 d28).
+    pub(crate) async fn propose_admitted(
+        &self,
+        caller: &Caller,
+        workarea_id: Uuid,
+        to: WorkareaStatus,
+    ) -> Result<WorkareaRecord, AppError> {
+        const VERB: &str = "propose_transition";
+        let key = &caller.key;
+        if key.role != Role::Admin {
+            require_admissible(key, Role::Dreamer, VERB)?;
+            self.require_access(caller, workarea_id, Role::Dreamer, VERB)
+                .await?;
+        }
+        let node = self
+            .journal
+            .workarea(key.tenant_id, workarea_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        self.refuse_inside(key.tenant_id, workarea_id).await?;
+        let children: Vec<WorkareaStatus> = self
+            .journal
+            .workarea_children(key.tenant_id, workarea_id)
+            .await?
+            .iter()
+            .map(|child| child.status)
+            .collect();
+        // "No simulation is fenced on the subtree" holds vacuously while
+        // simulations are unbuilt, and lands in the ladder's preconditions
+        // with them (workareas.md, readings the build takes).
+        propose_check(ladder_node(&node), node.status, to, &children).map_err(|reason| {
+            AppError::TransitionRefused {
+                workarea_id,
+                from: node.status,
+                to,
+                reason,
+            }
+        })?;
+        Ok(node)
+    }
+
     /// Ratifies the pending proposal `transition_id` on the node, by id or
     /// name, as a second identity: the node's status becomes the proposal's
     /// `to`, journalled as one `workarea.status_transition` signed by the
@@ -4150,23 +4296,82 @@ where
     /// (workareas.md, ratification re-checks).
     pub async fn ratify_transition(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         workarea: Reference,
         transition_id: Uuid,
     ) -> Result<WorkareaRecord, AppError> {
         const VERB: &str = "ratify_transition";
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         if key.role != Role::Admin {
             require_admissible(key, Role::Dreamer, VERB)?;
         }
         refuse_service(key, VERB)?;
         let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        let prev = self.head_event(key.tenant_id).await?;
+        let (proposal, node) = self
+            .ratify_admitted(&caller, workarea_id, transition_id)
+            .await?;
+        let mut policy_snapshot = review_policy();
+        if proposal.to == WorkareaStatus::Validated {
+            // A false one was refused above and is never journalled.
+            policy_snapshot["children_all_validated"] = Value::Bool(true);
+        }
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::WORKAREA_STATUS_TRANSITION,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "from": proposal.from.as_str(),
+                "to": proposal.to.as_str(),
+                "transition_id": transition_id.to_string(),
+                "proposed_by_key_id": proposal.proposer_key_id.to_string(),
+                "ratified_by_key_id": key.key_id.to_string(),
+                "policy_snapshot": policy_snapshot,
+                "same_user": self.same_person(key.tenant_id, proposal.proposer_key_id, key).await?,
+            }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::TransitionRatified {
+                transition_id,
+                workarea_id,
+                to: proposal.to,
+                ratifier_key_id: key.key_id,
+            },
+            None,
+        )
+        .await?;
+        Ok(WorkareaRecord {
+            status: proposal.to,
+            ..node
+        })
+    }
+
+    /// Whether `ratify_transition` admits the proposal on the node for the
+    /// caller now, every check after the name resolves and before the
+    /// commit, in its order; R2 among them, so a proposing key or
+    /// principal is never admitted. The verb and the pages' offer call this
+    /// one function (ADR-0045 d28).
+    pub(crate) async fn ratify_admitted(
+        &self,
+        caller: &Caller,
+        workarea_id: Uuid,
+        transition_id: Uuid,
+    ) -> Result<(TransitionRecord, WorkareaRecord), AppError> {
+        const VERB: &str = "ratify_transition";
+        let key = &caller.key;
         if key.role != Role::Admin {
-            self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
+            require_admissible(key, Role::Dreamer, VERB)?;
+        }
+        refuse_service(key, VERB)?;
+        if key.role != Role::Admin {
+            self.require_access(caller, workarea_id, Role::Dreamer, VERB)
                 .await?;
         }
-        let prev = self.head_event(key.tenant_id).await?;
         self.refuse_inside(key.tenant_id, workarea_id).await?;
         let proposal = self
             .journal
@@ -4217,43 +4422,7 @@ where
             &children,
         )
         .map_err(refused)?;
-        let mut policy_snapshot = review_policy();
-        if proposal.to == WorkareaStatus::Validated {
-            // A false one was refused above and is never journalled.
-            policy_snapshot["children_all_validated"] = Value::Bool(true);
-        }
-        let event = self.seal(
-            prev.as_ref(),
-            key.tenant_id,
-            event_types::WORKAREA_STATUS_TRANSITION,
-            &key.principal,
-            Some(key.key_id),
-            json!({
-                "workarea_id": workarea_id.to_string(),
-                "from": proposal.from.as_str(),
-                "to": proposal.to.as_str(),
-                "transition_id": transition_id.to_string(),
-                "proposed_by_key_id": proposal.proposer_key_id.to_string(),
-                "ratified_by_key_id": key.key_id.to_string(),
-                "policy_snapshot": policy_snapshot,
-                "same_user": self.same_person(key.tenant_id, proposal.proposer_key_id, key).await?,
-            }),
-        )?;
-        self.commit(
-            event,
-            MetadataFold::TransitionRatified {
-                transition_id,
-                workarea_id,
-                to: proposal.to,
-                ratifier_key_id: key.key_id,
-            },
-            None,
-        )
-        .await?;
-        Ok(WorkareaRecord {
-            status: proposal.to,
-            ..node
-        })
+        Ok((proposal, node))
     }
 
     /// The lead's start on the names schema, before it serves: each chain of
@@ -4442,6 +4611,8 @@ where
             since: req.since.clone(),
             until: req.until.clone(),
             anchor: req.anchor.clone(),
+            author: req.author,
+            tip: req.tip,
         };
         // One row past the page says whether another page exists.
         let mut rows = self
@@ -4540,6 +4711,8 @@ where
         exclude: Option<&str>,
     ) -> Result<Vec<SimilarItem>, AppError> {
         let key = &caller.key;
+        // Both sides are the text search reads, so two sources that say one
+        // thing are one claim (ADR-0056 d4; ADR-0050 d1).
         let written = Fingerprint::of(body);
         let keys: Vec<i64> = written.query_keys().into_iter().map(|(_, k)| k).collect();
         if keys.is_empty() {
@@ -4592,7 +4765,9 @@ where
                     && SIMILAR_KINDS.contains(&m.kind)
                     && !(exclude == Some(m.claim_key.as_str()) && m.workarea_id == workarea)
             })
-            .filter_map(|m| relate(&written, &Fingerprint::of(&m.body)).map(|(r, j)| (r, j, m)))
+            .filter_map(|m| {
+                relate(&written, &Fingerprint::of(m.searched())).map(|(r, j)| (r, j, m))
+            })
             .collect();
         named.sort_by(|a, b| {
             a.0.cmp(&b.0)
@@ -4698,7 +4873,6 @@ where
             }
             return Err(refusal);
         }
-
         // An omitted claim_key is derived from the author and the text; the
         // `auto-` prefix is the server's alone (ADR-0039 d6). The author id
         // is the key's own id while rotation is unbuilt; once it is, d6 names
@@ -4753,6 +4927,13 @@ where
         // Capture normalizes first: the digest, the scan and the byte count
         // all see the NFC text (admission.md capture; ADR-0025 d6).
         let body = nfc(&req.body);
+        let (format, parsed) = self.capture_format(
+            req.kind,
+            req.format.as_deref(),
+            req.title.as_deref(),
+            &body,
+            false,
+        )?;
         // A guardrail's fields, then its two scan classes, before the
         // scanner port: a veto journals nothing (proposed ADR-0037 d10).
         let guardrail = guardrail_fields(req.kind, false, req.severity, req.rule.as_ref(), &body)?;
@@ -4782,6 +4963,8 @@ where
             ScanOutcome::Hold(reason) => Some(reason),
             ScanOutcome::Veto(reason) => return Err(AppError::ScanVeto(reason)),
         };
+        let mut scan_finding = scan_finding;
+        self.scan_derived(key.tenant_id, req.kind, &format, &parsed, &mut scan_finding)?;
 
         // The lineage closure: the author plus every declared ancestor's
         // closure — R2 runs over the whole of it (roles-and-keys.md). An
@@ -4821,11 +5004,27 @@ where
             return Err(AppError::ClaimKeyConflict);
         }
 
+        // A person of the sign-up tenant writes at most their memories
+        // quota; nothing is journalled past it. The check follows the
+        // idempotency replay and the live claim_key refusal, so a retry
+        // gets its stored receipt and a write under a live claim is the
+        // conflict it was; a new version goes through `supersede`, which
+        // adds no memory (ADR-0068 d5).
+        self.require_quota(key, oml_domain::signup::Quota::Memories)
+            .await?;
+
         // The similar check, after every other refusal and before the
         // commit: a refusal here journals nothing and claims no idempotency
         // record, so the same key may be resent with `hold` (ADR-0050 d1).
         let similar = self
-            .similar_gate(&caller, workarea_id, req.kind, &body, None, req.on_similar)
+            .similar_gate(
+                &caller,
+                workarea_id,
+                req.kind,
+                format.search_text.as_deref().unwrap_or(&body),
+                None,
+                req.on_similar,
+            )
             .await?;
 
         let memory_id = self.ids.new_id();
@@ -4858,6 +5057,7 @@ where
             anchor: req.anchor.clone().map(Box::new),
             origin_kind: Some(origin),
             source_check: None,
+            format: Box::new(format),
         };
 
         // The catalog payload of submission.remember: digest-only, body
@@ -4890,6 +5090,7 @@ where
         });
         guardrail_payload(&mut payload, memory.guardrail.as_deref())?;
         with_valid_time(&mut payload, &memory.valid);
+        with_format_fields(&mut payload, &memory.format);
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
@@ -5044,7 +5245,7 @@ where
             None => {
                 // The default rests on the claimed queue row (review_queue's
                 // held_by_key), not on a serve record: the serve binding
-                // stays FR-66 (ADR-0039 Consequences, "The serve binding is
+                // stays #130 (ADR-0039 Consequences, "The serve binding is
                 // not fixed here").
                 let claimed = self
                     .journal
@@ -5448,6 +5649,7 @@ where
                 "verdict": match verdict { Verdict::Approve => "approve", Verdict::Reject => "reject" },
                 "reason": reason,
                 "served_body_digest": memory.body_digest,
+                "format": memory.format.media_type,
             }),
         )?;
         let verdict_event_id = verdict_event.envelope.event_id;
@@ -5808,13 +6010,15 @@ where
         // The candidate scope is the core's, never an adapter's: the
         // readable hit nodes, the kinds, and the own held rows only when
         // asked — the own key set is the calling key alone until rotation is
-        // built (roles-and-keys.md#own), on the readable set, which already
-        // excludes the key's global denials (ADR-0025 d4; ADR-0049 d2).
+        // built (roles-and-keys.md#own), and for a session user key every key
+        // naming its user, ADR-0045 d16's reading that the user page's text
+        // search uses (d22); on the readable set, which already excludes the
+        // key's global denials (ADR-0025 d4; ADR-0049 d2).
         let candidate_scope = CandidateScope {
             promoted_nodes: hit_nodes.clone(),
             kinds: kinds.clone(),
             own_held: include_unreviewed.then(|| OwnHeldScope {
-                author_key_ids: vec![key.key_id],
+                author_key_ids: caller.own_key_ids(),
                 // Every author's held rows on the nodes inside alone; the
                 // key's own on every served node otherwise (ADR-0030 d3).
                 nodes: if any_author {
@@ -5854,12 +6058,13 @@ where
         // or any version of a retired claim is promoted history, never a
         // hit; a retirement version is never in force (ADR-0025 d4, d8).
         // The reranker is handed only rows this admits (ADR-0053 d2).
+        let own = caller.own_key_ids();
         let admits = |m: &MemoryRecord| {
             let admitted = match m.status {
                 MemoryStatus::Promoted => m.is_tip && hit_nodes.contains(&m.workarea_id),
                 MemoryStatus::Held => {
                     include_unreviewed
-                        && ((m.author_key_id == key.key_id && readable.contains(&m.workarea_id))
+                        && ((own.contains(&m.author_key_id) && readable.contains(&m.workarea_id))
                             || (any_author
                                 && served_unreviewed(m)
                                 && inside.contains(&m.workarea_id)))
@@ -5900,7 +6105,7 @@ where
                 .collect();
             let passages: Vec<String> = head
                 .iter()
-                .filter_map(|c| rows.get(&c.memory_id).map(|m| m.body.clone()))
+                .filter_map(|c| rows.get(&c.memory_id).map(|m| m.searched().to_owned()))
                 .collect();
             let scored = reranker.score(query.clone(), passages).await;
             lap = timings.lap(Stage::Rerank, lap);
@@ -6481,6 +6686,128 @@ where
         }
     }
 
+    /// The format checks of a capture (ADR-0056 d1, d10, d13): the media type
+    /// resolved against the closed list, the kinds that read prose held to
+    /// prose, the title checked, and the source accepted by its adapter
+    /// before the scan. Returns the fields to store and what the adapter
+    /// parsed.
+    fn capture_format(
+        &self,
+        kind: MemoryKind,
+        requested: Option<&str>,
+        title: Option<&str>,
+        body: &str,
+        retirement: bool,
+    ) -> Result<(FormatFields, Parsed), AppError> {
+        let resolved = self
+            .formats
+            .resolve(requested.unwrap_or("text/plain"))
+            .map_err(|allowed| AppError::FormatUnknown { allowed })?;
+        let prose_kind = matches!(kind, MemoryKind::Memory | MemoryKind::DerivedFact);
+        if !resolved.prose && (!prose_kind || retirement) {
+            return Err(AppError::FormatKindRefused { kind });
+        }
+        let title = match title {
+            None => None,
+            Some(raw) => {
+                let t = nfc(raw);
+                let t = t.trim();
+                if t.is_empty() {
+                    return Err(AppError::TitleInvalid("a title is not empty"));
+                }
+                if t.chars()
+                    .any(|c| matches!(c, '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}'))
+                {
+                    return Err(AppError::TitleInvalid("a title is one line"));
+                }
+                if t.chars().count() > 100 {
+                    return Err(AppError::TitleInvalid("a title is at most 100 characters"));
+                }
+                Some(t.to_owned())
+            }
+        };
+        if !resolved.prose && title.is_none() {
+            return Err(AppError::TitleInvalid(
+                "a claim that is not prose carries a title stating the one fact its source shows",
+            ));
+        }
+        let parsed = if retirement {
+            Parsed::default()
+        } else {
+            resolved
+                .adapter
+                .validate(body)
+                .map_err(AppError::FormatInvalid)?
+        };
+        let derived = resolved.adapter.search_text(&parsed);
+        let search_text = match (&title, resolved.prose) {
+            (None, true) => None,
+            (Some(t), _) => Some(format!("{t}\n{derived}")),
+            (None, false) => Some(derived),
+        };
+        let search_text_by = search_text
+            .as_ref()
+            .map(|_| resolved.adapter.id().to_owned());
+        Ok((
+            FormatFields {
+                media_type: resolved.media_type,
+                title,
+                search_text,
+                search_text_by,
+            },
+            parsed,
+        ))
+    }
+
+    /// The scan over what a format adds to the source: the title, the
+    /// format's own finding and every decoded view. A veto names the key
+    /// path, never the value; it can add a finding and never remove one
+    /// (ADR-0056 d6). A hold on a view is the row's finding when the source
+    /// raised none.
+    fn scan_derived(
+        &self,
+        tenant_id: Uuid,
+        kind: MemoryKind,
+        fields: &FormatFields,
+        parsed: &Parsed,
+        hold: &mut Option<String>,
+    ) -> Result<(), AppError> {
+        let mut note = |outcome: ScanOutcome, at: &str| -> Result<(), AppError> {
+            match outcome {
+                ScanOutcome::Pass => Ok(()),
+                ScanOutcome::Hold(reason) => {
+                    hold.get_or_insert(format!("{reason} at {at}"));
+                    Ok(())
+                }
+                ScanOutcome::Veto(reason) => Err(AppError::ScanVeto(format!("{reason} at {at}"))),
+            }
+        };
+        if let Some(title) = &fields.title {
+            note(
+                self.scanner.scan(&AdmissionEnvelope {
+                    tenant_id,
+                    kind: "title",
+                    body: title,
+                }),
+                "title",
+            )?;
+        }
+        if let Some(finding) = &parsed.veto {
+            return Err(AppError::ScanVeto(finding.clone()));
+        }
+        for view in &parsed.views {
+            note(
+                self.scanner.scan(&AdmissionEnvelope {
+                    tenant_id,
+                    kind: kind.as_str(),
+                    body: &view.text,
+                }),
+                &view.path,
+            )?;
+        }
+        Ok(())
+    }
+
     /// The scan over an anchor's `repo`, `uri`, `path` and `fragment`
     /// (ADR-0057 d2): a path whose file name has a secret's shape, and any
     /// finding of the deterministic scanner, hold or veto alike, refuses the
@@ -6873,6 +7200,13 @@ where
         // re-sends its fields, which run their checks first (proposed
         // ADR-0037 d10).
         let body = nfc(&req.body);
+        let (format, parsed) = self.capture_format(
+            kind,
+            req.format.as_deref(),
+            req.title.as_deref(),
+            &body,
+            req.retirement,
+        )?;
         let guardrail =
             guardrail_fields(kind, req.retirement, req.severity, req.rule.as_ref(), &body)?;
         // The successor's own valid time: it inherits none (proposed
@@ -6894,6 +7228,8 @@ where
             ScanOutcome::Hold(reason) => Some(reason),
             ScanOutcome::Veto(reason) => return Err(AppError::ScanVeto(reason)),
         };
+        let mut scan_finding = scan_finding;
+        self.scan_derived(key.tenant_id, kind, &format, &parsed, &mut scan_finding)?;
         // derives_from ⊇ {target}; the lineage closure is the proposer plus
         // every ancestor's closure, the target's included (roles-and-keys.md).
         let mut derives_from = vec![target.memory_id];
@@ -6944,7 +7280,7 @@ where
                 &caller,
                 target.workarea_id,
                 kind,
-                &body,
+                format.search_text.as_deref().unwrap_or(&body),
                 Some(&target.claim_key),
                 req.on_similar,
             )
@@ -6985,6 +7321,7 @@ where
             anchor: req.anchor.clone().map(Box::new),
             origin_kind: Some(origin),
             source_check: None,
+            format: Box::new(format),
         };
 
         // The catalog payload of the submission, digest-only, plus what it
@@ -7023,6 +7360,7 @@ where
         });
         guardrail_payload(&mut payload, successor.guardrail.as_deref())?;
         with_valid_time(&mut payload, &successor.valid);
+        with_format_fields(&mut payload, &successor.format);
         let event = self.seal(
             prev.as_ref(),
             key.tenant_id,
@@ -7891,8 +8229,8 @@ where
         // and a page is one bounded store read whatever the tenant holds.
         // The cost left is the scope itself: every reader node of the key,
         // one subtree read per reader grant, bound into the query as an
-        // array that grows with the tenant's workareas, unmeasured (FR-7,
-        // FR-25).
+        // array that grows with the tenant's workareas, unmeasured (#99,
+        // #150).
         let readable_nodes = self.nodes_holding(&caller, Role::Reader).await?;
         // A scoped read: at `workarea`, else the key's default workarea, an
         // edge with an endpoint inside an in-progress subtree the scope is
@@ -8118,9 +8456,25 @@ where
         api_key: &str,
         key: Reference,
     ) -> Result<ConnectCodeIssued, AppError> {
+        self.mint_connect_code_with_ttl(api_key, key, None).await
+    }
+
+    /// [`App::mint_connect_code`] with a lifetime: `None` is the ten-minute
+    /// default, and `Some(seconds)` is one second to
+    /// [`CONNECT_CODE_TTL_MAX_SECS`], outside which it is refused by name
+    /// ([`AppError::ConnectCodeLifetime`]). A lifetime past the default is
+    /// minted only for a key confined to one workarea (`oauth.connect_refused`,
+    /// `not_confined`; ADR-0067 d3).
+    pub async fn mint_connect_code_with_ttl(
+        &self,
+        api_key: &str,
+        key: Reference,
+        ttl_secs: Option<i64>,
+    ) -> Result<ConnectCodeIssued, AppError> {
         let admin = self.authenticate(api_key).await?.key;
         require_role(&admin, Role::Admin, "mint_connect_code")?;
-        self.mint_connect_code_by(&admin, key).await
+        self.mint_connect_code_by_with_ttl(&admin, key, ttl_secs)
+            .await
     }
 
     /// [`App::mint_connect_code`] once the issuer is known: an admin key, or
@@ -8131,6 +8485,25 @@ where
         admin: &KeyRecord,
         key: Reference,
     ) -> Result<ConnectCodeIssued, AppError> {
+        self.mint_connect_code_by_with_ttl(admin, key, None).await
+    }
+
+    async fn mint_connect_code_by_with_ttl(
+        &self,
+        admin: &KeyRecord,
+        key: Reference,
+        ttl_secs: Option<i64>,
+    ) -> Result<ConnectCodeIssued, AppError> {
+        let ttl_secs = match ttl_secs {
+            None => CONNECT_CODE_TTL_SECS,
+            Some(seconds) if (1..=CONNECT_CODE_TTL_MAX_SECS).contains(&seconds) => seconds,
+            Some(seconds) => {
+                return Err(AppError::ConnectCodeLifetime {
+                    seconds,
+                    max: CONNECT_CODE_TTL_MAX_SECS,
+                });
+            }
+        };
         let admin = admin.clone();
         let tenant_id = admin.tenant_id;
         let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
@@ -8152,6 +8525,9 @@ where
             .oauth_issuer
             .as_ref()
             .ok_or_else(|| connect_refused(ConnectRefused::NotConfigured))?;
+        if ttl_secs > CONNECT_CODE_TTL_SECS {
+            self.require_confined(&target).await?;
+        }
         let voids = self
             .journal
             .connect_codes(tenant_id, key_id)
@@ -8159,7 +8535,7 @@ where
             .into_iter()
             .find(|c| c.redeemed_at.is_none() && c.voided_seq.is_none())
             .map(|c| c.code_id);
-        let (code, shown) = self.new_connect_code(oauth, key_id);
+        let (code, shown) = self.new_connect_code(oauth, key_id, ttl_secs);
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
@@ -8172,6 +8548,68 @@ where
         self.commit(event, MetadataFold::ConnectCodeIssued { code, voids }, None)
             .await?;
         Ok(shown)
+    }
+
+    /// Whether `target` is confined to one workarea: no user root, and every
+    /// grant on one node that is not the universe. A connect code that lives
+    /// longer than ten minutes is a standing credential, so it is minted only
+    /// for a key whose reach is that one node's subtree (ADR-0067 d3). The
+    /// roles that cannot hold a connection at all, admin and operator, never
+    /// get here.
+    async fn require_confined(&self, target: &KeyRecord) -> Result<(), AppError> {
+        let not_confined = || connect_refused(ConnectRefused::NotConfined);
+        if target.user.is_some() {
+            return Err(not_confined());
+        }
+        let access = self
+            .journal
+            .key_access(target.tenant_id, target.key_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let universe = self.universe(target.tenant_id).await?;
+        let mut nodes = access.grants.iter().map(|g| g.grant.node);
+        let Some(first) = nodes.next() else {
+            return Err(not_confined());
+        };
+        if first == universe || nodes.any(|node| node != first) {
+            return Err(not_confined());
+        }
+        Ok(())
+    }
+
+    /// The one connect code of a key that can still open a connection (not
+    /// redeemed, not voided, not lapsed), by id or name: admin key role only.
+    /// `extended` is true when it outlives the ten-minute default, so a
+    /// reviewer code is named on `oml keys show` (ADR-0067 d3). The code
+    /// itself is never returned; none is stored.
+    pub async fn live_connect_code(
+        &self,
+        api_key: &str,
+        key: Reference,
+    ) -> Result<Option<LiveConnectCode>, AppError> {
+        let admin = self.authenticate(api_key).await?.key;
+        require_role(&admin, Role::Admin, "live_connect_code")?;
+        let key_id = self.resolve(&admin, NamedKind::Key, &key).await?;
+        if self.journal.key(admin.tenant_id, key_id).await?.is_none() {
+            return Err(AppError::NotFound);
+        }
+        let now = self.clock.now().unix_micros();
+        let horizon = now + CONNECT_CODE_TTL_SECS * 1_000_000;
+        Ok(self
+            .journal
+            .connect_codes(admin.tenant_id, key_id)
+            .await?
+            .into_iter()
+            .find(|c| {
+                c.redeemed_at.is_none()
+                    && c.voided_seq.is_none()
+                    && c.expires_at.unix_micros() > now
+            })
+            .map(|c| LiveConnectCode {
+                code_id: c.code_id,
+                extended: c.expires_at.unix_micros() > horizon,
+                expires_at: c.expires_at,
+            }))
     }
 
     /// A key's open and revoked connections in creation order, the key by
@@ -8878,6 +9316,12 @@ where
             .into_iter()
             .find(|c| c.state == ConnectionState::Open)
             .map(|c| c.connection_id);
+        // A new connection, not a replacement, counts against the person's
+        // connections quota (ADR-0068 d5).
+        if replaces.is_none() {
+            self.require_quota(key, oml_domain::signup::Quota::Connections)
+                .await?;
+        }
         let (issued, tokens) = self.mint_token_pair(now);
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(

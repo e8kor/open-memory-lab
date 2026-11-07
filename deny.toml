@@ -56,7 +56,8 @@ exceptions = [
     { allow = ["bzip2-1.0.6"], crate = "libbz2-rs-sys" },
     # operator-approved 2026-11-05 for oml-lakewriter (ADR-0060): CC0-1.0 is a
     # public-domain dedication with no copyleft term; tiny-keccak is reached
-    # through the lake writer's dependencies.
+    # through the lake writer's dependencies, and through parquet's ahash and
+    # const-random in the CLI's optional lake-sync feature (ADR-0062 d3).
     { allow = ["CC0-1.0"], crate = "tiny-keccak" },
 ]
 

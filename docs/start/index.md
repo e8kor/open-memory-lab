@@ -1,117 +1,39 @@
-<!--
-id: start/index
-tier: client
-status: draft for review · describes v0.4.0
-answers: the three ways to start with Open Memory Lab, each led by one command: use OML with a server and a key, run OML on a machine with Docker, and add an agent as an administrator; what each needs, what it prints, its target time, and when a first memory becomes visible to others
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "which page to open first: connect an agent, run a server or administer one"
+---
 
 # Get started
 
-**Status:** draft for review · describes v0.4.0
+Every client needs two settings: the server's address and a key. The server derives everything else from the key.
 
-There are three ways in, one for each role. Each starts with one command. Every client needs
-exactly two settings, the server's address and a key, and the server works out everything else
-from the key. Since v0.4.1 the Claude Code plugin and the other tools' configurations default the
-address to the maintainer's public server, `https://memory.doublegate.io`, so with a key from that
-server the key is the only setting.
+| You are | You have | Open |
+|---|---|---|
+| Trying OML | PostgreSQL or Docker | [Quickstart](quickstart.md) |
+| Deciding whether to adopt OML | nothing | [Evaluate OML](../product/evaluate.md) |
+| An agent user | an agent key ([get one](../guides/get-an-agent-key.md)) | [Install the CLI](install.md), then [Claude Code](../guides/claude-code.md), [claude.ai and your phone](../guides/claude-ai-and-mobile.md) or [another tool](../guides/other-harnesses.md) |
+| Running a server | a machine with Docker, or a PostgreSQL host | [Run your own server](run-your-own.md) |
+| An administrator | an admin key | [Administer a server](../guides/administering.md) |
 
-The commands on this page are for v0.6.0; the default server dates from v0.4.1 and sign-in from
-v0.5.0 ([releases](../product/releases.md)).
+Something failed? Run `oml doctor`, then see [troubleshoot the client](../help/troubleshooting-client.md) or the [FAQ](../faq.md).
 
-## Use OML: you have a key, and perhaps a server address
+## Sign up on the public server: no key yet
 
-You need Claude Code on your machine and an agent key from your administrator. With a key from
-the maintainer's public server, that is all; in Claude Code run `/plugin marketplace add
-e8kor/open-memory-lab` and `/plugin install oml@open-memory-lab`, paste the key, and leave the
-URL as it is (since v0.4.1). For your own server you also need its address, such as
-`https://oml.example.com`:
+Once the operator opens sign-up on the public server ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md), proposed), you need only a Google or GitHub account. Sign in at `https://memory.doublegate.io/web`, accept the terms, and you land on `/web/start`:
 
-```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.0/scripts/install/install.sh | sh
-oml login https://oml.example.com
-oml setup claude-code
-```
+1. Choose your client: claude.ai, Claude Desktop or the phone app; Claude Code; or another MCP tool.
+2. One button issues the right credential, shown once: a connect code and the connector URL for claude.ai, a key and the plugin's install commands for Claude Code, or the URL and a key for the rest.
+3. The page waits for your agent's first connection, then for its first memory, which you review on the same site.
 
-1. The installer puts the `oml` command in your home directory without administrator rights, and
-   says what it checked ([install](install.md)).
-2. `oml login` asks for the key without showing it, checks it with the server, and only then
-   stores the address and the key in a file only you can read. `oml doctor` shows what it
-   stored, never the key.
-3. `oml setup claude-code` installs the OML plugin in Claude Code at the same release and hands it
-   the same two settings. It refuses an administrator's key. Run `/reload-plugins` in Claude
-   Code, or restart it. Since v0.4.1, given a key file and no address, as in `oml setup
-   claude-code --key-file <file>`, it uses the public server and says so before it sends the key.
+You get a private space nobody else can read, up to 1,000 memories, 5 keys and 5 connections; the operator can raise a limit. Your agents' writes wait for your review. The operator of the server can read what you store. Export everything as JSON, or ask for your account to be deleted, from `/web/start`.
 
-Ask your agent to remember something. The answer is **held**: the agent can read it back at once,
-and everyone else in the workarea finds it only after a reviewer approves it. The target is about
-two minutes from the first line to that held save; no run has timed it yet
-([roadmap](../product/roadmap.md)).
+## Integrations at a glance
 
-The [Claude Code guide](../guides/claude-code.md) covers the same path step by step. For claude.ai
-or a phone, see [claude.ai and mobile](../guides/claude-ai-and-mobile.md); for Codex, Cursor,
-Gemini CLI, VS Code or Claude Desktop, see [other tools](../guides/other-harnesses.md).
-
-## Run OML: you have a machine with Docker
-
-You need Docker with compose v2. Install `oml` as above, then:
-
-```sh
-oml quickstart
-```
-
-It writes a compose file and private passwords into `./oml`, starts the database and the server
-on `127.0.0.1:8080` only, claims the new server, creates the workarea `crew`, and issues an agent
-key and a reviewer key into private files under `./oml/keys`. It then saves one memory as the
-agent, approves it as the reviewer and finds it as the agent, and stops naming the step that
-failed if one does. Last, it prints the line that connects Claude Code on this machine and the
-`oml login` line for another one.
-
-**Unverified.** The verb's own suite runs against a fake `docker`; its compose file has no
-recorded green run under Docker yet ([self-hosting](../guides/self-hosting.md)).
-
-The target is about five minutes on a machine with Docker, most of it the image download; no run
-has timed it yet. A second run in the same directory is refused, so nothing is overwritten. The
-laptop setup is one trust domain: anyone with root on the machine can read every file of it. The
-[self-hosting guide](../guides/self-hosting.md) goes from here to a server for a team.
-
-## Add an agent: you administer a server
-
-With the administrator's key stored by `oml login`:
-
-```sh
-oml keys issue-agent agent-7 --principal crew/agent-7 --workarea crew --out "$HOME/.config/oml/keys/crew-agent-7"
-```
-
-The quick start keeps its administrator pair in `./oml/credentials`, not in the file `oml login`
-writes, so against that stack name the file, as the quick start prints it:
-
-```sh
-OML_CLI_CREDENTIALS=./oml/credentials oml keys issue-agent agent-7 --principal crew/agent-7 --workarea crew --out "$HOME/.config/oml/keys/crew-agent-7"
-```
-
-It issues one key for one agent: it may save in the workarea and read it, and the workarea is its
-default. The key goes into a new file only you can read, and never onto the screen. The command
-prints, among its lines, the one to run where the agent works:
-
-```sh
-oml setup claude-code --url 'https://oml.example.com' --key-file '/home/you/.config/oml/keys/crew-agent-7'
-```
-
-Send that person the line and the file over a channel you trust, and delete the file once the line
-has run. The target is under a minute per key; no run has timed it yet. Give each agent its own
-key: attribution, and the rule that nobody reviews their own work, both depend on it. Inside
-Claude Code, the `oml-admin` plugin runs the same command without the key entering the
-conversation ([CLI reference](../cli/reference.md#the-oml-admin-plugin)).
-
-## What every path has in common
-
-- **Two settings.** The address and the key. The command line reads them from its flags, then
-  from `OML_URL` and `OML_API_KEY`, then from the file `oml login` wrote, and needs both: apart
-  from `oml setup claude-code`, no command has a default address, so an administrator's command
-  never reaches the public server unasked. A key sent to the wrong server is refused there, and
-  that server's operator has seen it.
-- **Held first.** Nothing an agent saves reaches anyone else until a different identity approves
-  it. That is the point of OML, and it is why a fact your agent just stored does not show up for
-  a teammate yet.
-- **Targets, not measurements.** Every time on this page is a target that the
-  [roadmap](../product/roadmap.md) tracks until a timed run replaces it.
+| Tool | How it connects | You get | Page |
+|---|---|---|---|
+| Claude Code | plugin over MCP, installed by `oml setup claude-code` | the three tools, a session-start hook, a librarian agent | [Connect Claude Code](../guides/claude-code.md) |
+| claude.ai, Claude Desktop connectors, Claude phone apps | custom connector with a one-time connect code | the three tools | [claude.ai and your phone](../guides/claude-ai-and-mobile.md) |
+| Codex CLI, Cursor, Gemini CLI, VS Code, Claude Desktop | files from the agent kit | the three tools over MCP | [Other agent tools](../guides/other-harnesses.md) |
+| Your own code | Python and TypeScript SDKs | write, read and review calls | [Client SDKs](../engineering/sdks.md) |
+| A reviewer crew | HTTP review loop | a crew that approves or rejects | [Reviewer crews](../api/reviewer-crews.md) |

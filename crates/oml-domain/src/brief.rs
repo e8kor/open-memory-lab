@@ -12,7 +12,7 @@ use crate::budget::{Budget, cut};
 pub const BRIEF_LABEL: &str = "brief";
 
 /// `brief.max_tokens`'s default, in budget tokens of counter `oml-tc/1`.
-/// Unmeasured: no session has been timed against it (FR-77).
+/// Unmeasured: no session has been timed against it (#145).
 pub const BRIEF_MAX_TOKENS_DEFAULT: u64 = 400;
 
 /// Orders a brief's members by the seq of the `review.ratify` that admitted

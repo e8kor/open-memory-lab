@@ -9,7 +9,9 @@ members = [
     "crates/oml-app",
     "crates/adapters/oml-pg",
     "crates/adapters/oml-fetch",
+    "crates/adapters/oml-delta-log",
     "crates/adapters/oml-rerank",
+    "crates/adapters/oml-format",
     "crates/adapters/oml-lake",
     "crates/transports/oml-transport-http",
     "crates/bins/oml-server-lead",
@@ -19,7 +21,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.6.2"
 edition = "2024"
 # MSRV = pinned stable minus two minor releases (ci-and-toolchain.md MSRV window)
 rust-version = "1.97"
@@ -40,6 +42,14 @@ oml-pg = { path = "crates/adapters/oml-pg" }
 # neither the lead nor the CLI builds delta-rs (ADR-0060 d1).
 oml-lake = { path = "crates/adapters/oml-lake" }
 oml-fetch = { path = "crates/adapters/oml-fetch" }
+# The claim format adapters (ADR-0056 d3): pure, no I/O.
+oml-format = { path = "crates/adapters/oml-format" }
+# The minimal Delta `_delta_log` reader (ADR-0062 d3): linked into the CLI only
+# under its `lake-sync` feature, which the default `oml` never enables.
+oml-delta-log = { path = "crates/adapters/oml-delta-log" }
+# Checkpoint reading by column projection, without arrow and without any codec
+# but snappy (ADR-0062 d3): only oml-delta-log names it.
+parquet = { version = "59", default-features = false, features = ["snap"] }
 # Without its `model` feature unless a member asks for it (the lead does,
 # by its `rerank` feature), so no graph builds candle by inheritance.
 oml-rerank = { path = "crates/adapters/oml-rerank", default-features = false }
@@ -105,6 +115,9 @@ ring = "0.17"
 # the hexagon only over the network).
 ureq = { version = "2.12", features = ["json"] }
 toml = "0.8"
+# The test oracle of the `rust` adapter's prefix lexer (ADR-0061 d3): a
+# dev-dependency of oml-cli, which never links into the shipped binary.
+syn = { version = "2.0", default-features = false, features = ["full", "parsing"] }
 # `oml login` reads the key without echo from the terminal (ADR-0039 d15): std
 # has no no-echo read, and no crate in the graph offers one. Its libc and
 # windows-sys 0.61 are already in the graph.

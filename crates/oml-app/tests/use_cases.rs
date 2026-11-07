@@ -6,6 +6,7 @@
 //! structure reads (ADR-0026 d4–d6, d8, d9, d11, d15).
 
 use oml_app::App;
+use oml_app::app::CONNECT_CODE_TTL_SECS;
 use oml_app::cursor::CursorError;
 use oml_app::domain::access::{Covers, admissible_grant_roles, issuable_key_roles};
 use oml_app::domain::budget::{Budget, budget_tokens};
@@ -201,6 +202,8 @@ fn submit_req(idem: &str, body: &str) -> SubmitRequest {
         rule: None,
         valid_from: None,
         valid_until: None,
+        format: None,
+        title: None,
     }
 }
 
@@ -251,6 +254,8 @@ fn supersede_req(idem: &str, target: Uuid, body: &str) -> SupersedeRequest {
         rule: None,
         valid_from: None,
         valid_until: None,
+        format: None,
+        title: None,
     }
 }
 
@@ -5791,6 +5796,8 @@ async fn an_admin_key_reading_a_workarea_sees_no_claim_content() {
                 until: None,
                 limit: 10,
                 cursor: None,
+                author: None,
+                tip: None,
             },
         )
         .await
@@ -6678,6 +6685,118 @@ async fn minting_a_code_for_a_revoked_key_or_without_oauth_issuer_is_refused() {
         "{err:?}"
     );
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+/// A directory reviewer's code outlives the ten-minute default: on a connector key whose grants
+/// reach one workarea and not the universe, a code minted with a lifetime lives that long, the
+/// key shows it as an extended code, and an ordinary code is not named so (ADR-0067 d3).
+#[tokio::test]
+async fn a_connect_code_minted_with_a_lifetime_lives_that_long_on_a_key_confined_to_one_workarea() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let issued = app
+        .issue_key(
+            admin,
+            &connector_req("crew/reviewer", vec![grant(crew, Role::Writer)]),
+        )
+        .await
+        .expect("a connector key");
+    let ordinary = issued.connect_code.expect("the issuance code");
+    let shown = app
+        .live_connect_code(admin, issued.key_id.into())
+        .await
+        .expect("the live code")
+        .expect("the issuance code is live");
+    assert_eq!(shown.code_id, ordinary.code_id);
+    assert!(!shown.extended, "an ordinary code is not an extended one");
+
+    let seven_days = 7 * 24 * 3600;
+    let reviewer = app
+        .mint_connect_code_with_ttl(admin, issued.key_id.into(), Some(seven_days))
+        .await
+        .expect("a reviewer code");
+    let lives = reviewer.expires_at.unix_micros() - ordinary.expires_at.unix_micros();
+    let asked = (seven_days - CONNECT_CODE_TTL_SECS) * 1_000_000;
+    assert!(
+        (lives - asked).abs() < 1_000_000,
+        "the code lives the lifetime asked, not the default: {lives} vs {asked}"
+    );
+    let shown = app
+        .live_connect_code(admin, by_name(issued.name.as_str()))
+        .await
+        .expect("the live code")
+        .expect("the reviewer code is live");
+    assert_eq!(shown.code_id, reviewer.code_id);
+    assert!(shown.extended, "a code that outlives the default is named");
+}
+
+/// A long-lived code is a standing credential, so it is minted only for a key that can reach one
+/// workarea: a key naming a user root, a key granted on the universe and a key granted on two
+/// workareas are each refused `not_confined`, a lifetime past thirty days is refused whatever
+/// the key, and none of them journals anything (ADR-0067 d3).
+#[tokio::test]
+async fn a_long_lived_code_is_refused_for_a_key_that_reaches_more_than_one_workarea() {
+    let store = MemStore::new();
+    let app = oauth_app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = &boot.admin_key.value;
+    let other = workarea(&app, admin, "other", boot.root_workarea_id).await;
+    let two = app
+        .issue_key(
+            admin,
+            &connector_req(
+                "crew/two",
+                vec![grant(crew, Role::Writer), grant(other, Role::Reader)],
+            ),
+        )
+        .await
+        .expect("a connector key");
+    let universe = app
+        .issue_key(
+            admin,
+            &connector_req(
+                "crew/universe",
+                vec![grant(boot.root_workarea_id, Role::Writer)],
+            ),
+        )
+        .await
+        .expect("a connector key");
+    let one = app
+        .issue_key(
+            admin,
+            &connector_req("crew/one", vec![grant(crew, Role::Writer)]),
+        )
+        .await
+        .expect("a connector key");
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    for key in [&two, &universe] {
+        let err = app
+            .mint_connect_code_with_ttl(admin, key.key_id.into(), Some(24 * 3600))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            connect_refused(&err),
+            Some(ConnectRefused::NotConfined),
+            "{err:?}"
+        );
+    }
+    let err = app
+        .mint_connect_code_with_ttl(admin, one.key_id.into(), Some(31 * 24 * 3600))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AppError::ConnectCodeLifetime { .. }),
+        "a lifetime past thirty days is refused by name: {err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+
+    // The same keys still take an ordinary code: the restriction is on the long life.
+    app.mint_connect_code(admin, two.key_id.into())
+        .await
+        .expect("an ordinary code for a key that reaches two workareas");
 }
 
 /// A key has at most one live code: minting one names the key's unredeemed

@@ -310,6 +310,8 @@ impl World {
                     rule: None,
                     valid_from: None,
                     valid_until: None,
+                    format: None,
+                    title: None,
                 },
             )
             .await
@@ -1151,7 +1153,7 @@ async fn every_quality_metric_label_is_from_its_declared_set() {
 
 /// The event write's cost on a recall: the same recalls, through the
 /// router, with the writer on and with it off, p50 and p95 printed
-/// (FR-104). Run by hand: `cargo test -p oml-server-lead --test
+/// (#110). Run by hand: `cargo test -p oml-server-lead --test
 /// recall_telemetry -- --ignored --nocapture`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "a measurement, run by hand"]

@@ -1,0 +1,16 @@
+# The test lake's generator (ADR-0062 d3, d19): its own workspace, so delta-rs
+# never enters the main lock. It writes the committed fixture tables and the
+# oracle.json the reader's tests compare against; CI never builds it.
+[workspace]
+
+[package]
+name = "oml-lake-generator"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+deltalake = { version = "1.1.2" }
+serde_json = "1"
+url = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

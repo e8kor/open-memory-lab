@@ -154,6 +154,17 @@ pub struct ConnectCodeRecord {
     pub voided_seq: Option<u64>,
 }
 
+/// A key's one live connect code as `oml keys show` names it: its id, its
+/// expiry, and whether it outlives the ten-minute default, which only an
+/// admin's explicit lifetime on a key confined to one workarea can do
+/// (ADR-0067 d3). The code itself is never here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveConnectCode {
+    pub code_id: Uuid,
+    pub expires_at: EventTime,
+    pub extended: bool,
+}
+
 /// How a connection's client was identified (postgres-schema.md
 /// `oauth_connections.client_kind`; ADR-0031 d5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1070,6 +1081,45 @@ pub struct MemoryRecord {
     /// The version's latest source check, kept only on a promoted version
     /// (ADR-0057 d5, d18); `stale` is computed from it alone.
     pub source_check: Option<Box<SourceCheck>>,
+    /// The version's format, title and derived search text (ADR-0056 d1, d2,
+    /// d4). Boxed: every row carries it, and every fold carries the record.
+    pub format: Box<FormatFields>,
+}
+
+/// What a version says about its format: the media type signed with it, its
+/// title, and the text search reads in place of its source when that
+/// differs (ADR-0056 d1, d4; ADR-0050 d5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatFields {
+    /// The media type from the closed list, `text/plain` by default.
+    pub media_type: String,
+    /// The one-line title, signed with the version; required of a non-prose
+    /// claim (ADR-0056 d10).
+    pub title: Option<String>,
+    /// The derived search text; `None` when it equals the source.
+    pub search_text: Option<String>,
+    /// The adapter and version that derived it.
+    pub search_text_by: Option<String>,
+}
+
+impl Default for FormatFields {
+    fn default() -> Self {
+        Self {
+            media_type: "text/plain".to_owned(),
+            title: None,
+            search_text: None,
+            search_text_by: None,
+        }
+    }
+}
+
+impl MemoryRecord {
+    /// The text the search stages read: the derived search text, or the
+    /// source when none was derived (ADR-0056 d4).
+    #[must_use]
+    pub fn searched(&self) -> &str {
+        self.format.search_text.as_deref().unwrap_or(&self.body)
+    }
 }
 
 /// A source check as stored on its version: the latest `source.checked`
@@ -1452,6 +1502,11 @@ pub struct SubmitRequest {
     /// The origin the author declares, grammar-checked by the transport
     /// (ADR-0057 d1-d3).
     pub anchor: Option<Anchor>,
+    /// The media type of `body`; `None` is `text/plain` (ADR-0056 d1).
+    pub format: Option<String>,
+    /// One line of at most 100 characters; required of a non-prose claim
+    /// (ADR-0056 d10; ADR-0050 d5).
+    pub title: Option<String>,
     /// `origin.kind` as declared; `None` is recorded `manual` (ADR-0063 d2).
     pub origin: Option<OriginKind>,
 }
@@ -1881,6 +1936,11 @@ pub struct ListingFilter {
     pub until: Option<EventTime>,
     /// The origin filters (ADR-0057 d4).
     pub anchor: AnchorFilter,
+    /// Only rows this key wrote; `None` narrows nothing (ADR-0045 d23).
+    pub author: Option<Uuid>,
+    /// Only tips, or only replaced versions; `None` narrows nothing
+    /// (ADR-0045 d22).
+    pub tip: Option<bool>,
 }
 
 /// Where a listing page resumes: the `created_at` and id of the last row
@@ -2012,6 +2072,13 @@ pub struct ListRequest {
     pub cursor: Option<String>,
     /// `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4).
     pub anchor: AnchorFilter,
+    /// Only rows this key wrote, inside the listing's scope; the web
+    /// pages' `author` filter (ADR-0045 d22, d23). The API sets none.
+    pub author: Option<Uuid>,
+    /// Only tips (`true`) or only versions a successor replaced (`false`);
+    /// the web pages' `promoted` and `superseded` (ADR-0045 d22). The API
+    /// sets none.
+    pub tip: Option<bool>,
 }
 
 /// One listing page: summaries as the calling key is served them, and the
@@ -2136,6 +2203,10 @@ pub struct SupersedeRequest {
     pub valid_until: Option<String>,
     /// The successor's own anchor; nothing is inherited (ADR-0057 d2).
     pub anchor: Option<Anchor>,
+    /// The successor's own format and title; nothing is inherited, so a
+    /// format changes by supersession alone (ADR-0056 d2).
+    pub format: Option<String>,
+    pub title: Option<String>,
     /// The successor's own `origin.kind`; `None` is recorded `manual`,
     /// never inherited (ADR-0063 d2).
     pub origin: Option<OriginKind>,
@@ -2411,9 +2482,69 @@ impl<'a> From<&'a String> for Bearer<'a> {
     }
 }
 
+/// Open sign-up as the composition configured it (ADR-0068 d1): the mode,
+/// the tenant sign-ups land in and whose people are under quotas, the admin
+/// key that adds each entry, the terms a person accepts, the per-address
+/// limit and the per-person defaults.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignupPolicy {
+    pub mode: oml_domain::signup::SignupMode,
+    pub tenant_id: Uuid,
+    pub issuer: Name,
+    pub terms_version: String,
+    pub terms_url: String,
+    pub privacy_url: String,
+    pub per_ip_per_hour: u64,
+    pub quotas: oml_domain::signup::Quotas,
+}
+
+/// What one person holds against their quotas (ADR-0068 d5).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UserUsage {
+    /// Distinct memories in the root or below it, every state.
+    pub memories: u64,
+    /// The root's live bearer and connector keys.
+    pub keys: u64,
+    /// Open connections of the root's connector keys.
+    pub connections: u64,
+}
+
+impl UserUsage {
+    #[must_use]
+    pub fn get(&self, quota: oml_domain::signup::Quota) -> u64 {
+        use oml_domain::signup::Quota;
+        match quota {
+            Quota::Memories => self.memories,
+            Quota::Keys => self.keys,
+            Quota::Connections => self.connections,
+            Quota::RequestsPerMinute => 0,
+        }
+    }
+}
+
+/// A person's request to have their account deleted, pending until an admin
+/// closes it (ADR-0068 d6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeletionRequest {
+    pub user: Name,
+    pub requested_at: EventTime,
+}
+
 /// A typed application refusal; every variant names the rule it enforces.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    /// One of a person's quotas is reached; nothing was journalled
+    /// (`limit.quota`, `details: {quota, limit, used}`; ADR-0068 d5).
+    #[error("the {} quota of {} is reached", .0.quota.as_str(), .0.limit)]
+    QuotaReached(oml_domain::signup::QuotaReached),
+    /// A key of a person under quotas made more requests this minute than
+    /// its limit (`limit.rate`, `Retry-After`; ADR-0068 d5).
+    #[error("this key made {limit} requests this minute, its limit")]
+    KeyRateLimited { limit: u64, retry_after_secs: u64 },
+    /// A sign-up from an address past its hourly limit (`limit.rate`,
+    /// `Retry-After`; ADR-0068 d9).
+    #[error("too many sign-ups from this address; try again later")]
+    SignupRateLimited { retry_after_secs: u64 },
     #[error("unknown api key (reads fail closed — http-api.md authentication)")]
     Unauthorized,
     #[error(
@@ -2497,6 +2628,12 @@ pub enum AppError {
         "max_tokens counts text that include_text false would not send (retrieval.md token budgets, request.validation)"
     )]
     BudgetWithoutBodies,
+    /// A connect code asked to live outside one second to thirty days
+    /// (request.validation, field `/ttl_seconds`; ADR-0067 d3).
+    #[error(
+        "ttl_seconds {seconds} is outside 1 to {max}, the span a connect code may live (request.validation; ADR-0067 d3)"
+    )]
+    ConnectCodeLifetime { seconds: i64, max: i64 },
     /// `search` names a pipeline this deployment does not serve: unknown to
     /// the build, or not in `search.enabled` (ADR-0049 d4). `served` lists
     /// the names it does serve.
@@ -2535,6 +2672,22 @@ pub enum AppError {
         field: &'static str,
         finding: String,
     },
+    /// The `format` is not on the closed list (request.validation, field
+    /// `format`, details `allowed`; ADR-0056 d13).
+    #[error("format is not one of the accepted values (request.validation)")]
+    FormatUnknown { allowed: Vec<String> },
+    /// A kind that rules read as prose takes only a prose format
+    /// (request.validation, field `format`; ADR-0056 d1).
+    #[error("a {kind:?} claim takes only text/plain or text/markdown (request.validation)")]
+    FormatKindRefused { kind: MemoryKind },
+    /// A title the write may not carry (request.validation, field `title`;
+    /// ADR-0056 d10, ADR-0050 d5).
+    #[error("title: {0} (request.validation)")]
+    TitleInvalid(&'static str),
+    /// The source fails its format's adapter (`submission.format_invalid`,
+    /// 422, nothing journalled; ADR-0056 d13).
+    #[error("{0} (submission.format_invalid)")]
+    FormatInvalid(crate::ports::FormatRefusal),
     /// A source check names a version it may not check: held, unanchored or
     /// superseded, or a body outside its anchor's grammar (request.validation;
     /// ADR-0057 d5).
@@ -2865,6 +3018,12 @@ pub struct WebEntry {
     /// The admin key that added the entry: the entry's first sign-in issues
     /// the person's session keys under it (ADR-0045 d6).
     pub added_by: Uuid,
+    /// The terms version the person accepted when they signed up
+    /// themselves; `None` for an entry an admin added (ADR-0068 d2).
+    pub terms_version: Option<String>,
+    /// When an admin disabled the entry's person; a disabled entry signs
+    /// in to nothing and cannot sign up again (ADR-0068 d8).
+    pub disabled_at: Option<EventTime>,
 }
 
 impl WebEntry {
@@ -2973,6 +3132,11 @@ pub struct AdminSearch {
     pub query: Option<String>,
     pub nodes: Option<Vec<Uuid>>,
     pub state: Option<AdminState>,
+    /// Only rows of these `origin.kind`s; empty narrows nothing
+    /// (ADR-0045 d24).
+    pub origin_kinds: Vec<OriginKind>,
+    /// Only rows this key wrote (ADR-0045 d24).
+    pub author: Option<Uuid>,
     pub after: Option<ListingPosition>,
     pub limit: usize,
 }

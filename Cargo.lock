@@ -143,6 +143,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arraydeque"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3800,7 +3806,7 @@ dependencies = [
 
 [[package]]
 name = "oml-app"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "ed25519-dalek",
  "oml-domain",
@@ -3813,7 +3819,7 @@ dependencies = [
 
 [[package]]
 name = "oml-cli"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "axum",
  "clap",
@@ -3821,6 +3827,7 @@ dependencies = [
  "getrandom 0.2.17",
  "hex",
  "oml-app",
+ "oml-delta-log",
  "oml-guardrail",
  "oml-pg",
  "oml-scan",
@@ -3831,6 +3838,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sqlx",
+ "syn 2.0.119",
  "tokio",
  "toml",
  "unicode-normalization",
@@ -3840,8 +3848,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oml-delta-log"
+version = "0.6.2"
+dependencies = [
+ "bytes",
+ "parquet",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oml-domain"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -3857,7 +3875,7 @@ dependencies = [
 
 [[package]]
 name = "oml-fetch"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "oml-app",
  "serde_json",
@@ -3866,8 +3884,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oml-format"
+version = "0.6.2"
+dependencies = [
+ "oml-app",
+ "proptest",
+ "saphyr-parser",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "oml-guardrail"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "hex",
  "proptest",
@@ -3879,7 +3909,7 @@ dependencies = [
 
 [[package]]
 name = "oml-lake"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "chrono",
  "deltalake",
@@ -3896,7 +3926,7 @@ dependencies = [
 
 [[package]]
 name = "oml-lakewriter"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "chrono",
  "clap",
@@ -3919,7 +3949,7 @@ dependencies = [
 
 [[package]]
 name = "oml-pg"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "hex",
  "oml-app",
@@ -3933,7 +3963,7 @@ dependencies = [
 
 [[package]]
 name = "oml-port-contracts"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "oml-app",
  "serde_json",
@@ -3943,7 +3973,7 @@ dependencies = [
 
 [[package]]
 name = "oml-rerank"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -3962,7 +3992,7 @@ dependencies = [
 
 [[package]]
 name = "oml-scan"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "regex",
  "serde_json",
@@ -3971,13 +4001,14 @@ dependencies = [
 
 [[package]]
 name = "oml-server-lead"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
  "hex",
  "oml-app",
  "oml-fetch",
+ "oml-format",
  "oml-guardrail",
  "oml-pg",
  "oml-rerank",
@@ -4004,13 +4035,14 @@ dependencies = [
 
 [[package]]
 name = "oml-transport-http"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
  "hex",
  "http-body",
  "oml-app",
+ "oml-format",
  "prometheus-client",
  "ring",
  "serde",
@@ -5053,6 +5085,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "saphyr-parser"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48cf5a82d41247a625f040af08e91008fec945bce3b0bffba992c44af092caa2"
+dependencies = [
+ "arraydeque",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

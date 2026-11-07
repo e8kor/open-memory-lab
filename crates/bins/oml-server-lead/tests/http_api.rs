@@ -2361,6 +2361,8 @@ async fn get_v2_keys_by_name_answers_the_key() {
             // A bearer key, which holds no connection (ADR-0031 d7, d11).
             "credential": "bearer",
             "connections": [],
+            // No connector key, no connect code to name (ADR-0067 d3).
+            "live_connect_code": null,
             // Sent none, the issuance default (proposed ADR-0037 d4).
             "guardrail_scope": "ancestors",
             "profile": null,
@@ -7261,8 +7263,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        59,
-        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan (ADR-0065 d13), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the six OAuth operations and the six web routes"
+        69,
+        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan (ADR-0065 d13), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the eight web routes (ADR-0045 d25) and open sign-up's seven (ADR-0068 d10)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 

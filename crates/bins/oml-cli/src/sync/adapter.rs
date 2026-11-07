@@ -5,7 +5,7 @@
 
 use serde::Serialize;
 
-use super::hash::{md_hash, nfc, sha256};
+use super::hash::{HASHER, md_hash, nfc, sha256};
 
 /// One extracted item: a claim the source states.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -18,8 +18,11 @@ pub struct Item {
     pub text: String,
     /// The span's first and last line, 1-based and inclusive.
     pub lines: (usize, usize),
-    /// `oml-md/1` of the span's source text.
+    /// The hash of the span under `hasher`.
     pub hash: String,
+    /// The hasher that produced `hash`: `oml-md/1` unless the adapter names
+    /// another of the closed set (ADR-0061 d7).
+    pub hasher: &'static str,
 }
 
 /// One edge a document states, by claim key (ADR-0057 d10).
@@ -39,6 +42,41 @@ pub struct Extraction {
     pub warnings: Vec<String>,
 }
 
+/// Source-to-claim mapping produced by an adapter that can derive one,
+/// without changing the claims themselves.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct SourceMap {
+    /// "crate", "module", or adapter-defined
+    pub kind: &'static str,
+    /// OML claim key, when one was produced.
+    pub claim_key: String,
+    /// The module or component's logical name.
+    pub module: String,
+    /// The repository-relative file path read.
+    pub path: String,
+    /// The doc span's fragment, as for an `Item`.
+    pub fragment: Option<String>,
+    /// First and last line of the span read.
+    pub lines: (usize, usize),
+    /// Internal dependency package names (rust adapter).
+    pub internal_dependencies: Vec<String>,
+}
+
+/// What a set of files yields: each file's extraction, in path order, and
+/// the files an adapter could not read or chose not to read (ADR-0061 d4).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SetExtraction {
+    pub files: Vec<(String, Extraction)>,
+    /// A file read and found unreadable or unsupported: reported, fails the
+    /// run, its claims neither written nor retired.
+    pub unreadable: Vec<(String, String)>,
+    /// A file deliberately left out (undeclared, generated): reported, does
+    /// not fail the run, its claims neither written nor retired.
+    pub skipped: Vec<(String, String)>,
+    /// Additional non-memory mapping produced by the adapter.
+    pub map: Vec<SourceMap>,
+}
+
 /// An adapter: `extract` is pure; `accepts` chooses its files by path.
 pub trait Adapter {
     fn name(&self) -> &'static str;
@@ -46,14 +84,30 @@ pub trait Adapter {
     /// # Errors
     /// The reason a file is `unreadable`: invalid UTF-8, for one.
     fn extract(&self, path: &str, bytes: &[u8]) -> Result<Extraction, String>;
+    /// An adapter may be a pure function of every `(path, bytes)` under the
+    /// source (ADR-0061 d4); the default extracts each file alone, in path
+    /// order, so `adr`, `headings` and `lines` are unchanged.
+    fn extract_set(&self, files: &[(String, Vec<u8>)]) -> SetExtraction {
+        let mut sorted: Vec<&(String, Vec<u8>)> = files.iter().collect();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut out = SetExtraction::default();
+        for (file, bytes) in sorted {
+            match self.extract(file, bytes) {
+                Ok(x) => out.files.push((file.clone(), x)),
+                Err(why) => out.unreadable.push((file.clone(), why)),
+            }
+        }
+        out
+    }
 }
 
-/// The adapters v0.5.8 builds (ADR-0057 d7, d21).
+/// The adapters (ADR-0057 d7, d21; ADR-0061).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     Adr,
     Headings,
     Lines,
+    Rust,
 }
 
 impl Kind {
@@ -64,8 +118,14 @@ impl Kind {
             "adr" => Ok(Self::Adr),
             "headings" => Ok(Self::Headings),
             "lines" => Ok(Self::Lines),
+            "delta" => Err(
+                "--adapter delta requires the oml-lake build; run `oml sync <lake> --adapter \
+                 delta` there"
+                    .to_owned(),
+            ),
+            "rust" => Ok(Self::Rust),
             other => Err(format!(
-                "--adapter {other:?} is not one of adr, headings, lines (ADR-0057 d7, d21)"
+                "--adapter {other:?} is invalid; choose adr, headings, lines, or rust"
             )),
         }
     }
@@ -76,6 +136,7 @@ impl Kind {
             Self::Adr => "adr",
             Self::Headings => "headings",
             Self::Lines => "lines",
+            Self::Rust => "rust",
         }
     }
 
@@ -84,6 +145,9 @@ impl Kind {
     /// `headings`. A key in none (an agent's memory) is no sync's.
     #[must_use]
     pub fn of_key(key: &str) -> Option<Self> {
+        if key.starts_with("rust/") {
+            return Some(Self::Rust);
+        }
         if let Some(rest) = key.strip_prefix("adr-") {
             let num = rest.get(..5)?;
             return (num[..4].chars().all(|c| c.is_ascii_digit()) && num.ends_with('-'))
@@ -109,6 +173,7 @@ impl Kind {
             Self::Adr => Box::new(super::adr::AdrAdapter),
             Self::Headings => Box::new(super::headings::HeadingsAdapter),
             Self::Lines => Box::new(super::lines::LinesAdapter),
+            Self::Rust => Box::new(super::rust::RustAdapter),
         }
     }
 
@@ -150,6 +215,7 @@ pub fn item(
         text: nfc(text),
         lines,
         hash: md_hash(span),
+        hasher: HASHER,
     }
 }
 

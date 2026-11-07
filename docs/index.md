@@ -1,104 +1,69 @@
-<!--
-id: index
-tier: client
-status: design draft for review · decided, not built
-answers: what Open Memory Lab is, the problem it solves, what it guarantees in plain words, and where to read next
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "what Open Memory Lab is, which door to take, and the commands that reach a first recall"
+---
 
 # Open Memory Lab
 
-Design revision **0.6.0-design** — see the [changelog](changelog.md).
-**See it move:** the [Live Atlas](atlas/index.html) is an interactive 3D tour of how crews work
-memory through OML — recall along grants, remember, review, supersede, and the grants a freeze
-opens — over mocked data.
+Agents write memories. A different identity reviews them before anyone else can recall them.
 
-**Status:** design draft for review · decided — and since 2026-10-30 the critical path's M1
-slice runs in this repository, and v0.4.0 is the current release ([releases](product/releases.md))
+OML is an open-source memory server for AI agents. Agents reach it over MCP from Claude Code, Codex, Cursor and other tools, and you run the server yourself or use the public one.
 
-Open Memory Lab (OML) is an external memory provider for AI agents and crews, built on one
-premise: **what an agent learns is a claim, not a fact.** A memory written by an agent is held
-until someone who did not write it has looked at it. Only then does it become visible to anyone
-else.
+<div class="grid cards" markdown>
 
-## The problem
+- **Try it in a few commands**
 
-Agents and crews accumulate memory as they work — conclusions, summaries, learned facts, files
-they produced or were given. Today that memory is written straight into whatever store the crew
-uses, and nothing checks it. A wrong conclusion, a hallucinated fact, or a poisoned input becomes
-part of the record the moment an agent writes it, and every agent that reads the store afterwards
-treats it as true. Nobody reviewed it, nobody can say later who approved it, and when something
-has to be removed, removal is usually silent and unverifiable.
+    Start a server, write a memory, see it held and approve it as a second key.
 
-## What you get
+    [Quickstart](start/quickstart.md)
 
-OML sits between your crews and their memory and makes the write path accountable:
+- **Wire an agent**
 
-- **Held, then reviewed, then visible.** Every new memory arrives in a held state, is scanned,
-  and must be approved by an identity that did not write it before anyone else can read it. The
-  reviewer sees everything the claim carries — including every attached file — before their
-  verdict counts. Approval changes visibility, not ranking: nothing is quietly reordered, and
-  nothing unreviewed is served to others.
-- **Files, images and PDFs, not just text.** Attachments travel with the claim, are named by
-  their content so they cannot be swapped after the fact, and are stored encrypted. Where a
-  file's text can be extracted deterministically, that text is scanned and reviewed too; where it
-  cannot, the record says honestly that what was reviewed is the file's origin, fingerprint and
-  scan result.
-- **Workareas that mirror your crews.** Memory is organized into workareas — one per crew,
-  nested under a single root per organization. A workarea matures from open development, through
-  a committed phase with full review, to a validated state that is frozen: no new writes, but
-  everything in it stays readable and the few changes still allowed — removing a memory, and
-  updating the crew's recorded details — each leave a record.
-- **An evidence trail an auditor can ask for.** Every write, review verdict, approval, removal
-  and key issuance is recorded in a tamper-evident journal. An export produces, per memory, the
-  full decision trail: who wrote it, who reviewed it, who approved it, when, and under what
-  policy. Reads are logged too, within a retention window your organization sets. The trade is
-  stated plainly: this ceremony costs write latency and review effort; what it buys is a record
-  you can hand to someone who asks "who approved this and on what basis."
-- **No silent deletion.** Removing a memory is itself a recorded act. Content can be made
-  permanently unreadable by destroying its encryption key, and the record of *that the removal
-  happened* survives. The boundary is stated honestly: destruction takes effect immediately on
-  the live system and, for copies held in backups, no later than a named retention-and-rotation
-  window; and some traces (such as who-wrote-what metadata) are not destroyed yet — open work,
-  tracked.
+    Connect Claude Code, claude.ai or another tool to a server.
 
-Agents connect over a standard HTTP plugin interface; humans administer the system entirely from
-a command-line tool, beside two web pages since v0.5.0: one where people sign in to manage their
-own keys and memories and one for administrators. A web console beyond them is declined, a
-deliberate choice examined in the [review guide](review-guide.md) ([releases](product/releases.md)).
+    [Get an agent key](guides/get-an-agent-key.md), then [connect Claude Code](guides/claude-code.md)
 
-## Honest status
+- **Run your own server**
 
-This is a design under review with one proof-of-concept behind it. **The M1 slice is built
-(the signed chain, the commit point, submit → review → promote → recall, standalone profile),
-and so is the part of M2 that lets an agent keep its whole memory in OML: one key that both
-stores and searches, reading back its own writes while they wait for review, searching within a
-budget, and replacing or proposing to retire a memory through review, served by the agent
-plugin's three tools, `oml_write`, `oml_read` and `oml_workarea`, since v0.4.0. Everything else described here is not built, and nothing has been
-measured.** Every page in this
-documentation is a design commitment with a tracked exit criterion, not a description of
-running software; where the PoC diverges from a page, the page wins and the code says so. Where a claim depends on a measurement
-(throughput, latency, recall quality), the page says so and points at the roadmap item that will
-produce the number. No measurement of OML exists, and no number is quoted anywhere in this
-documentation as a property of OML.
+    One command starts the database and server on your machine; then deploy for a team.
 
-## Deployment
+    [Run your own server](start/run-your-own.md)
 
-OML deploys to Kubernetes from a single Helm chart in two profiles: a production profile with a
-managed PostgreSQL and an S3-compatible object store, and a local profile that runs the whole
-system on one machine using a lightweight local cluster. Nothing in the design names or depends
-on a particular machine. (Design commitment, not yet exercised.)
+- **Decide whether to adopt it**
 
-## Where to go next
+    Why writes are held, what it costs, its limits, benchmarks and security, on one page.
 
-- **New here?** Start with [Get started](start/index.md): use OML with a server and a key, run
-  it with Docker, or add an agent, each in one command. The [guides](guides/claude-code.md) and
-  the [quick scenarios](product/scenarios.md) follow from there, and the
-  [use cases](product/use-cases.md) list every use case with its status.
-- **New to the design?** Start with [Concepts](concepts.md) — the vocabulary, one concept at a
-  time, each linked to the page that decides it.
-- **Reviewing this design?** Start with the [review guide](review-guide.md) — the decisions that
-  matter most, in the order to examine them.
-- **Engineering?** Start with the [architecture overview](architecture/overview.md) — system
-  context, containers, the module structure (one pure core holds every rule, and everything
-  that touches the world sits behind an explicit boundary around it), and the main runtime
-  scenarios.
+    [Evaluate OML](product/evaluate.md)
+
+</div>
+
+## See the held state
+
+With the `oml` CLI and Docker, these lines run as pasted. The [quickstart](start/quickstart.md) shows each command's output and has a variant without Docker.
+
+```sh
+oml quickstart                       # a local server, a workarea, an agent key and a reviewer key
+export OML_URL=http://127.0.0.1:8080
+A=$(cat oml/keys/agent); R=$(cat oml/keys/reviewer)
+OML_API_KEY=$A oml write "We deploy on Tuesdays."
+OML_API_KEY=$A oml read --query "deploy"                       # 0 hits: the memory is held
+OML_API_KEY=$A oml read --query "deploy" --include-unreviewed  # your own held memory
+ID=$(OML_API_KEY=$A oml read --query "deploy" --include-unreviewed --json | jq -r '.. | .artifact_id? // empty' | head -1)
+OML_API_KEY=$R oml review approve --ids $ID                    # a different key approves
+OML_API_KEY=$A oml read --query "deploy"                       # found
+```
+
+## Where things are
+
+| Tab | What it holds |
+|---|---|
+| [Get started](start/index.md) | install, quickstart, connect an agent |
+| [Guides](guides/index.md) | tasks: remember, review, organize, sync |
+| [Operate](operations/index.md) | run a server: deploy, monitor, upgrade, back up |
+| [Reference](reference/index.md) | CLI, HTTP API, MCP tools, settings, errors, limits, glossary |
+| [Concepts](concepts.md) | why a write is held, roles, workareas, search, security |
+| [Benchmarks](benchmarks/index.md) | recall quality and latency, with method |
+| [Help](faq.md) | FAQ, troubleshooting, release notes |
+
+The current release is v0.6.2 ([release notes](changelog.md)). Open issues are on [GitHub](https://github.com/e8kor/open-memory-lab/issues). Code is Apache-2.0; this documentation is CC BY 4.0.

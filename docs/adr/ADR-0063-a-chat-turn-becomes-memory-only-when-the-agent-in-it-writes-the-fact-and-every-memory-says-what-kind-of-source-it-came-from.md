@@ -9,7 +9,7 @@ answers: what origin.kind is, which values it takes, who declares or derives it,
 
 **Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05
 
-**Release:** introduced in v0.6.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.6.0 ([releases](../changelog.md))
 
 **Amends:** ADR-0057 (d1, d3, d4) — the anchor's `uri` admits a `chat` scheme with its own
 grammar, `hasher` gains `oml-turn/1`, and the origin filters gain `origin_kinds`. ADR-0038
@@ -224,7 +224,7 @@ a use case, and a capability is a parameter before it is a tool.
   is held, under ADR-0029 d6's framing line and the line `Recalled from OML for this prompt; it
   may be irrelevant — ignore it if so.`; an artifact already injected in the session is not
   repeated. Off by default because the prompt's words leave the machine on every turn, and
-  because no labelled set yet shows that injected hits help (FR-162).
+  because no labelled set yet shows that injected hits help (#111).
 
 - **d11 — Chat memory reaches a team only by a person's review.** A chat fact is held when it is
   written (R1). It becomes readable outside the chat workarea only when a person approves it
@@ -250,7 +250,7 @@ a use case, and a capability is a parameter before it is a tool.
        without one it stops after the proxy and says so.
 
     Turn-level ingestion is the floor the agent's own extraction must beat. Replaying the
-    capture skill over a dataset needs a model run per session and is not built here; FR-160
+    capture skill over a dataset needs a model run per session and is not built here; #111
     tracks the comparison. Results are written in `oml-bench/1` and enter the bench pages only
     when `scripts/gen_bench_pages.py` is taught their suites.
 
@@ -290,16 +290,16 @@ a use case, and a capability is a parameter before it is a tool.
 - `docs/api/openapi.yaml` (`info.version` `0.6.0-design`), `docs/api/mcp-tools.json`, the
   generated SDKs, the [HTTP API](../api/http-api.md), the [CLI reference](../cli/reference.md),
   the [event catalog](../data/event-catalog.md) (`submission.remember` and `submission.learn`
-  carry `origin`) and the [Postgres schema](../data/postgres-schema.md) (`memories.origin_kind`,
+  carry `origin`) and the [Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations) (`memories.origin_kind`,
   migrations 0029 and 0030, numbered after the other lanes' 0026 to 0028; 0030 validates and indexes outside any transaction) change in the same change as the code. The error enum is unchanged:
   `request.validation`, `submission.scan_veto` and `access.verb_ceiling` carry the new refusals.
 - The plugin gains three hook entries and one skill; `scripts/check_plugin.py` holds them. The
   plugin README names the three switches.
-- [Roadmap](../product/roadmap.md): FR-160, whether the agent's extraction beats turn-level
-  ingestion on QA accuracy; FR-161, the last turns of a session that ends between captures are
-  lost; FR-162, a labelled set for per-turn recall's relevance, the condition for turning it on
-  by default; FR-163, a person's chat facts on two machines are two pseudonymous sessions that
-  cannot be joined; FR-164, the benchmark's QA numbers wait for an API key in the environment
+- [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap): #111, whether the agent's extraction beats turn-level
+  ingestion on QA accuracy; #139, the last turns of a session that ends between captures are
+  lost; #111, a labelled set for per-turn recall's relevance, the condition for turning it on
+  by default; #139, a person's chat facts on two machines are two pseudonymous sessions that
+  cannot be joined; #111, the benchmark's QA numbers wait for an API key in the environment
   that runs it.
 - Costs carried openly: capture spends the session's tokens; an opted-in per-turn recall sends
   prompt words to the server on every turn; a kind is the author's statement and is not
@@ -313,7 +313,7 @@ a use case, and a capability is a parameter before it is a tool.
 | **Extraction by a separate model in the hook** | A second model reads the transcript off disk, outside the harness's permission model, and needs its own key. | — |
 | **Storing the transcript by default** | It keeps everything a person said, secrets included, for facts that fit in a sentence; the scanner sees bodies, not files on disk. | — |
 | **Automatic promotion of chat facts** | R1: an agent's write never releases itself; and chat facts are the least reviewed text OML would hold. | — |
-| **Per-turn recall on by default** | Every prompt's words leave the machine, and no labelled set shows the hits help (FR-162). | FR-162's set shows at least half of injected hits relevant at a p95 under the budget. |
+| **Per-turn recall on by default** | Every prompt's words leave the machine, and no labelled set shows the hits help (#111). | #111's set shows at least half of injected hits relevant at a p95 under the budget. |
 | **Capture at `SessionEnd` or `PreCompact`** | Neither can put text in front of the model (Context); only `Stop` can. | The harness lets either inject context. |
 | **Capture on every `Stop`** | A continuation per turn doubles the turns a session spends; every fifth turn bounds it. | — |
 | **`origin.kind` inferred by the server from the anchor** | The anchor says where, not what kind: a repository file may be a document or code; inference would be a guess signed as a statement. | — |
@@ -323,7 +323,7 @@ a use case, and a capability is a parameter before it is a tool.
 ## Open questions
 
 1. Whether `turn=<n>` numbering survives `/clear` and resume in Claude Code; the session id
-   may change, which starts a new pseudonymous session (FR-161).
+   may change, which starts a new pseudonymous session (#139).
 2. Whether the curator should also merge a run of small facts into one, which ADR-0030 d9's
    `write` act allows but no signal proposes yet.
 3. Which answering and judge models the published QA numbers use; d12 records whatever the run

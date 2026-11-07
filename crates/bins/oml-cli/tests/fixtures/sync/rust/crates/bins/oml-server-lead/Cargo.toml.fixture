@@ -1,0 +1,48 @@
+[package]
+name = "oml-server-lead"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The lead server composition (ADR-0023 d13): signer + kms-file keyring + Postgres journal store + the pinned client document fetcher + the HTTP transport, with migrate-on-boot, the ADR-0002 d7 startup fork check and the standalone bootstrap ceremony."
+
+[dependencies]
+oml-app.workspace = true
+oml-fetch.workspace = true
+oml-pg.workspace = true
+oml-rerank.workspace = true
+oml-transport-http.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry-proto.workspace = true
+prost.workspace = true
+tracing-opentelemetry.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+axum.workspace = true
+getrandom.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["signal", "net", "time", "rt-multi-thread"] }
+toml.workspace = true
+ureq.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["json"] }
+uuid.workspace = true
+
+[features]
+# The local cross-encoder (ADR-0053 d2): on in every lead the release and the
+# image build. The CLI's end-to-end tests compose the lead without it (the
+# workspace names this crate with default-features = false), so the CLI's
+# targets, aarch64 musl among them, never compile candle or gemm.
+default = ["rerank"]
+rerank = ["oml-rerank/model"]
+
+[dev-dependencies]
+hex.workspace = true
+oml-guardrail.workspace = true
+tower.workspace = true
+
+[lints]
+workspace = true

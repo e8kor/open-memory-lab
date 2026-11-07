@@ -147,7 +147,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   any held row and R3 holds unread. It is the HTTP API and the CLI only; no MCP argument records
   one. Where held versions matter, `oml sync --check` reports `pending` from the key's own rows,
   which only that key lists (ADR-0025 d13). The mark is as fresh as the last check: between a
-  commit and the next sync or check nothing is marked, and FR-114 tracks that gap. A newer
+  commit and the next sync or check nothing is marked, and #138 tracks that gap. A newer
   check supersedes an older one's mark, so a source reverted to the anchored text reads `fresh`
   again.
 
@@ -160,8 +160,11 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   `id_*`, `*credentials*`, `*secret*`), and, as ADR-0047 d16 and question 11 have it for client
   code, the maintainer's public server `https://memory.doublegate.io`
   ([ADR-0043](ADR-0043-what-oml-releases-defaults-to-the-maintainers-public-server.md)) unless
-  `--allow-public-server` is given, after printing that the server's admins read every memory
-  and that a written anchor and text are never erased. It writes kind `memory` only; ADR-0047's
+  `--allow-public-server` is given or this clone recorded that flag's earlier opt-in. The first
+  opt-in prints that the server's admins can read submitted memories and that supersession or
+  retirement does not erase submitted text or anchors, then records consent in the source clone's
+  local git config; later runs print no repeated warning. A source outside a clone needs the flag
+  each run. It writes kind `memory` only; ADR-0047's
   `code` kind is a later flag. It writes through `POST /v1/memories` and
   `…/{artifact_id}/supersede`, one request per memory, honouring `Retry-After`; the batch route
   stays unbuilt (ADR-0047 d15).
@@ -264,7 +267,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
   no longer serves, and the next `--edges` proposes the edge between the new tips: each changed
   endpoint costs one proposal and one ratification per edge. An edge whose statement leaves the
   documents is reported `unstated` by `--check` and is not withdrawn, since no route withdraws an
-  edge (FR-117).
+  edge (#138).
 
 - **d11 — Staleness is checked against a commit; a confirmation is a reviewed supersession, never
   a silent re-anchor; and an equivalent change refreshes nothing.** `oml sync <source> --workarea
@@ -313,7 +316,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
     deterministically from documents already reviewed in their own pull requests, so the reviewer
     checks that an extraction is faithful, not that a claim is true, and ADR-0055's listing lets
     a person read 200 and judge them in one request. Both caps remain chosen, not measured
-    (FR-79, FR-116).
+    (FR-79, #138).
 
 - **d13 — v0.5.8 builds anchors, markdown sync, staleness and the ADR load; code waits.** Built:
   d1–d11, `oml anchor <path>[#fragment]` (prints the anchor of a committed file or fragment at
@@ -338,7 +341,7 @@ Accepted for build in v0.5.8 on 2026-11-05, and introduced with release v0.5.8.
        for `docs/adr` with the `adr` adapter; `oml-design-pr-<n>` for a draft pull request's
        records (item 3), also `adr`; `oml-docs` for `docs` with `--exclude 'docs/adr/**'` and the
        `headings` adapter; and `oml-code` for the Rust sources with the `rust` adapter, from
-       v0.5.9 ([ADR-0061](https://github.com/e8kor/open-memory-lab/pull/70)).
+       v0.6.1 ([ADR-0061](https://github.com/e8kor/open-memory-lab/pull/70)).
        `oml workareas create e8kor oml-knowledge`, then `oml workareas create oml-knowledge
        oml-design` and the same for `oml-docs`; a draft's `oml-design-pr-<n>` is created under
        `oml-knowledge` when its pull request is first loaded. Recall at `oml-knowledge` reads all
@@ -631,13 +634,13 @@ diverged  adr-0012-d4          the tip has no anchor; --adopt supersedes it
 
 - **Costs.** One migration and seven nullable columns on `memories`, with one index; the anchor's
   bytes in every anchored submission event; one route and one event, `source.checked`, a check
-  per anchored tip per sync; one lookup per served hit for its latest check; the filters' cost inside `bm25-postings`, unmeasured (FR-115). Review:
+  per anchored tip per sync; one lookup per served hit for its latest check; the filters' cost inside `bm25-postings`, unmeasured (#138). Review:
   523 items to load OML's ADRs, and at least two per edited record afterwards (the decision and
   the summary); every renamed file or moved heading costs a review per span; every superseded
   endpoint costs a proposal and a ratification per edge. Paths are kept for good (d2).
-- **Roadmap rows.** FR-114 (the stale mark's gap between a commit and the next sync), FR-115 (the
-  filters' latency and the recall eval's filtered queries), FR-116 (the review cost of a sync,
-  and its cap of 200), FR-117 (an edge whose statement leaves the documents cannot be withdrawn).
+- **Open work.** #138 (the stale mark's gap between a commit and the next sync, the filters'
+  latency and the recall eval's filtered queries, the review cost of a sync and its cap of 200,
+  an edge whose statement leaves the documents cannot be withdrawn).
   FR-79 continues for ADR-0047's caps. RS-17 stays open; this slice avoids it (d8 `pending`).
 - **Pages to change at the build.** The HTTP API and openapi.yaml; mcp-tools.json and the MCP
   plugin page; the CLI reference (`oml sync`, `oml anchor`, the new flags); the event catalog
@@ -645,8 +648,8 @@ diverged  adr-0012-d4          the tip has no anchor; --adopt supersedes it
   `stale`); admission (the scan over the anchor); the erasure inventory (the anchor as clear
   metadata, beside terms); the plugin's skill (when to send an anchor); and at acceptance the
   Status lines of ADR-0039, ADR-0047, ADR-0048 and ADR-0055.
-- **Concurrent branches.** ADR-0056 (claim formats, #63) holds FR-109 to FR-113, so this record's
-  rows are FR-114 to FR-117.
+- **Concurrent branches.** ADR-0056 (claim formats, #63) tracks its open work in #159 and
+  this record in #138.
 
 ## Rejected alternatives
 

@@ -7,9 +7,9 @@ answers: how an agent gets the memory a turn needs beyond what the session-start
 
 # ADR-0038 — The agent recalls for itself, and a failed command recalls only when the user opted in
 
-**Status:** accepted design · 2026-11-04
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0067](ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) (d1, d2: the instructions describe recall and no longer tell the model to call it)
 
-**Release:** introduced in v0.4.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.4.0 ([releases](../changelog.md))
 
 **Amends:** ADR-0029 (d6, d7) — the session-start context gains one line asking Claude to recall (d3 below), and the plugin's hook file gains two entries beside SessionStart (d9 below).
 
@@ -25,7 +25,7 @@ d3). No decision below changes beyond those names.
 ([ADR-0029](ADR-0029-session-start-hook.md)) loads steering, the key's own recent work and the
 memories that name every word of the working directory's name. Nothing loads the memory a later
 turn needs: the lesson about the term the user just used, or the pitfall behind the command that
-just failed. [FR-57](../product/roadmap.md) tracks that gap.
+just failed. #135 tracks that gap.
 
 **Recall cannot rank a prompt yet.** The PoC matches with `plainto_tsquery('simple')`, which
 inserts "the `&` (AND) `tsquery` operator … between surviving words"
@@ -75,7 +75,7 @@ change merges.
 - **d2 — The `oml_read` description and the `oml-memory` skill open with when to recall and
   which words to pass.** `docs/api/mcp-tools.json` stays the description's one declaration site,
   and `plugins/oml/skills/oml-memory/SKILL.md` the skill's. How often agents call
-  `oml_read` with a query with and without d1–d3 is unmeasured, tracked as [FR-64](../product/roadmap.md).
+  `oml_read` with a query with and without d1–d3 is unmeasured, tracked as #112.
 
 - **d3 — The session-start context gains one line, after the record line: recall with 2–4 exact
   keywords before non-trivial work, on an unknown term and after a failed command.** The exact
@@ -88,7 +88,7 @@ change merges.
   does, with the pair ADR-0040 d3 resolves: the plugin's two options, else `OML_URL` and
   `OML_API_KEY`, never the CLI's stored credentials. A failure Claude Code reports with
   `is_interrupt: true` is skipped. Opt-in because the error's words leave the machine for the server and, once built, its
-  read log ([FR-57](../product/roadmap.md)); Bash only because its errors carry the exact tokens d5
+  read log (#135); Bash only because its errors carry the exact tokens d5
   needs, and other tools' error formats are, in the reference's words, "display text, not a stable
   format".
 
@@ -111,7 +111,7 @@ change merges.
   and digits that mixes upper case, lower case and digits; any OML key (`oml_` and 43 base62
   characters); and the `HOME` directory. The cost: a secret of another shape that also looks like
   an identifier can still reach the server, and a long mixed-case name with digits is dropped as
-  if it were random; [FR-63](../product/roadmap.md) asks for the labelled check before the matcher
+  if it were random; #114 asks for the labelled check before the matcher
   widens.
 
 - **d6 — No score gates the recall; the words do.** Matching every word under AND is the gate.
@@ -183,14 +183,14 @@ change merges.
 - No HTTP operation, error code, event type or claim state is added: `docs/api/openapi.yaml` and
   `docs/api/errors.md` are unchanged. The MCP `initialize` result gains `instructions`, a field
   the specification defines. No package version moves until the release.
-- [Roadmap](../product/roadmap.md): FR-57 moves to decided for a failed command, still open for
-  recall from what the user asked; FR-63 tracks that Claude Code runs the two new hooks and the
-  labelled relevance of E; FR-64 tracks whether d1–d3 change how often agents recall. Hook and
-  recall latency is measured under [FR-25](../product/roadmap.md); the hook's p95 must stay under
+- [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap): #135 moves to decided for a failed command, still open for
+  recall from what the user asked; #114 tracks that Claude Code runs the two new hooks and the
+  labelled relevance of E; #112 tracks whether d1–d3 change how often agents recall. Hook and
+  recall latency is measured under #150; the hook's p95 must stay under
   1 second.
 - Widening rule, the maintainer's proposal and not a measured finding: E becomes on by default,
   and its matcher widens past `Bash`, after at least 30 labelled injections show at least half
-  relevant, no secret leaked and a p95 under 1 second (FR-63).
+  relevant, no secret leaked and a p95 under 1 second (#114).
 - Costs carried openly: an opted-in session sends error words to the server; a cache file per
   session lives on disk until SessionEnd runs, and a crash leaves it; a slow server never helps;
   the breaker can end recall for a session after one transient failure.
@@ -206,11 +206,11 @@ change merges.
 |---|---|---|
 | **C — The raw prompt as the recall query on every turn** | Under AND matching a whole prompt matches almost nothing, and what it matches is unranked; every prompt would leave the machine, the hook would block every turn, and injected text stays in the transcript, where irrelevant context costs accuracy (Shi et al.). | Vector or fused scores exist and a labelled per-prompt set shows acceptable precision at k=3. |
 | **D — Per-prompt recall gated by a score or keyword filter** | No fair normalization of `ts_rank` exists (PostgreSQL), so a threshold lets through the high-scoring near-misses that do the most harm; it keeps C's per-turn cost and transcript residue. | The same as C, and its labelled precision at k=3 beats E's. |
-| **A now — Session-start recall with git words (FR-62)** | Under AND semantics more words shrink recall; it needs `match: "any"` and an own-area-only search on the server first, and then an uncalibrated `ts_rank` lets one-word matches fill the hits. | `match: "any"` lands together with an FR-4 with-and-without measurement. |
-| **B now — The workarea brief and digest (FR-60, FR-61)** | They need edges, ratification and a reviewing crew, and start empty; worth more than A while recall is full-text only, but not buildable as the next small change. | Someone will curate a brief; B comes next after this record. |
+| **A now — Session-start recall with git words (#135)** | Under AND semantics more words shrink recall; it needs `match: "any"` and an own-area-only search on the server first, and then an uncalibrated `ts_rank` lets one-word matches fill the hits. | `match: "any"` lands together with an #102 with-and-without measurement. |
+| **B now — The workarea brief and digest (#136, #136)** | They need edges, ratification and a reviewing crew, and start empty; worth more than A while recall is full-text only, but not buildable as the next small change. | Someone will curate a brief; B comes next after this record. |
 | **H — A start-of-session index of keys and titles** | Needs a workarea listing this record has not verified exists. | Alongside B. |
 | **I — Exact glossary match on the prompt** | No glossary claim kind exists. | A glossary kind is decided. |
-| **d4 — E on by default** | The error's words leave the machine unasked, and FR-57 requires opt-in. | The widening rule above is met. |
+| **d4 — E on by default** | The error's words leave the machine unasked, and #135 requires opt-in. | The widening rule above is met. |
 | **d5 — The whole first error line as the query** | Its stop words and numbers must all match, so it recalls nothing, and it carries whatever secret the line printed. | — |
 | **d7 — Include the key's own held rows** | An unreviewed pitfall would be injected without the agent asking. | — |
 | **d8 — Repeat the steering with every hit** | Session start already injected it; repeating it spends the budget on text the session holds. | — |

@@ -1,5 +1,5 @@
 //! The connect flow end to end over HTTP against the real lead (ADR-0031 d1,
-//! d2, d7–d11, d14; FR-34's continuous-integration criterion). The lead is
+//! d2, d7–d11, d14; #115's continuous-integration criterion). The lead is
 //! `start_lead` over a migrated Postgres store, served on an ephemeral TCP
 //! port; every step is an HTTP request to it: the bootstrap claim, the
 //! `oml` binary's `keys issue-agent --connect-code`, `keys show`,
@@ -428,7 +428,7 @@ async fn connect(url: &str, code: &str) -> Connected {
         );
         assert_eq!(status, 200, "{page}");
         assert!(
-            page.as_str().expect("a page").contains("claude-mobile"),
+            page.as_str().expect("a page").contains("<dt>Key</dt>"),
             "{page}"
         );
         let (status, headers, _) = http(
@@ -771,6 +771,89 @@ async fn doctor_reports_oauth_failing_not_off_when_the_public_origin_answers_404
         "{doctor}"
     );
     assert_eq!(doctor["verdict"], "fail", "{doctor}");
+
+    lead.stop().await;
+}
+
+/// A directory reviewer's path (ADR-0067 d3, d4): the demo workarea is seeded,
+/// a connector key confined to it is issued, `keys connect-code --ttl 14d`
+/// mints a code that outlives ten minutes and `keys show` names it without
+/// showing it, the code connects, and a key that reaches the universe is
+/// refused a long code by name, as is a lifetime past thirty days.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_reviewer_code_connects_a_key_confined_to_the_demo_workarea_and_is_named_on_the_key() {
+    let Some(lead) = Lead::start(Some(ISSUER)).await else {
+        return;
+    };
+    let (code, stdout, stderr) = lead.oml(&["demo", "seed", "reviewer-demo"]).await;
+    assert_eq!(code, 0, "{stdout}{stderr}");
+
+    let issue = |name: &'static str, workarea: &'static str| {
+        let principal = format!("crew/{name}");
+        let lead = &lead;
+        async move {
+            lead.oml(&[
+                "keys",
+                "issue-agent",
+                name,
+                "--principal",
+                &principal,
+                "--workarea",
+                workarea,
+                "--connect-code",
+            ])
+            .await
+        }
+    };
+    let (code, stdout, stderr) = issue("claude-reviewer", "reviewer-demo").await;
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    let (code, stdout, stderr) = lead
+        .oml(&["keys", "connect-code", "claude-reviewer", "--ttl", "14d"])
+        .await;
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    let (_, reviewer_code) = connector_url_and_code(&stdout);
+
+    // Named on the key, never shown.
+    let (code, shown, out) = lead.oml_json(&["keys", "show", "claude-reviewer"]).await;
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(shown["live_connect_code"]["extended"], true, "{shown}");
+    assert!(!shown.to_string().contains(&reviewer_code.replace('-', "")));
+    let (code, text, out) = lead.oml(&["keys", "show", "claude-reviewer"]).await;
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        text.contains("reviewer code, outlives ten minutes"),
+        "{text}"
+    );
+
+    // The code connects, and the connection acts at /mcp.
+    let connected = connect(&lead.url, &reviewer_code).await;
+    let (status, _, body) = mcp(
+        &lead.url,
+        Some(&connected.access_token),
+        "tools/list",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+
+    // A lifetime past thirty days is refused before anything is sent.
+    let (code, _, stderr) = lead
+        .oml(&["keys", "connect-code", "claude-reviewer", "--ttl", "31d"])
+        .await;
+    assert_ne!(code, 0);
+    assert!(stderr.contains("--ttl"), "{stderr}");
+
+    // A key that reaches the universe is refused a long code, and an ordinary
+    // one still works.
+    let (code, stdout, stderr) = issue("claude-wide", "universe").await;
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    let (code, _, stderr) = lead
+        .oml(&["keys", "connect-code", "claude-wide", "--ttl", "14d"])
+        .await;
+    assert_ne!(code, 0);
+    assert!(stderr.contains("not_confined"), "{stderr}");
+    let (code, stdout, stderr) = lead.oml(&["keys", "connect-code", "claude-wide"]).await;
+    assert_eq!(code, 0, "{stdout}{stderr}");
 
     lead.stop().await;
 }

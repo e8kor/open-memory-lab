@@ -26,8 +26,45 @@ env:
   DATABASE_URL: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev
 
 jobs:
+  # Which categories of path the pull request changed (scripts/ci_paths.py;
+  # docs/contributing/ci-and-toolchain.md, "Which jobs a change runs"). A push,
+  # a merge group, a pull request into another branch, a change to .github/,
+  # Cargo.lock, rust-toolchain.toml or scripts/, and a path in no category all
+  # turn every category on.
+  changes:
+    name: changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.paths.outputs.rust }}
+      migrations: ${{ steps.paths.outputs.migrations }}
+      api: ${{ steps.paths.outputs.api }}
+      docs: ${{ steps.paths.outputs.docs }}
+      cli_ref: ${{ steps.paths.outputs.cli_ref }}
+      plugins: ${{ steps.paths.outputs.plugins }}
+      sdk: ${{ steps.paths.outputs.sdk }}
+      eval: ${{ steps.paths.outputs.eval }}
+      release: ${{ steps.paths.outputs.release }}
+      spikes: ${{ steps.paths.outputs.spikes }}
+      ci: ${{ steps.paths.outputs.ci }}
+      cargo: ${{ steps.paths.outputs.cargo }}
+      docs_tests: ${{ steps.paths.outputs.docs_tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: paths
+        shell: bash  # -eo pipefail: a crashing classifier fails this job and so "ci ok"
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci_paths.py --event "$EVENT" --base-ref "$BASE_REF" --base "$BASE_SHA" --head "$HEAD_SHA" | tee -a "$GITHUB_OUTPUT"
+
   lint:
     name: fmt, clippy, doc
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +78,8 @@ jobs:
 
   test:
     name: cargo test (Postgres)
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -86,8 +125,41 @@ jobs:
           OML_RERANK_MODEL_DIR: ${{ github.workspace }}/.tmp/oml-models/ms-marco-MiniLM-L6-v2
           OML_SPARSE_MODEL_DIR: ${{ github.workspace }}/.tmp/oml-models/doc-v3-distill
 
+  # What a change to docs/ or eval/ alone still owes the Rust tests: the
+  # targets that read those files, and nothing else. The full workspace run
+  # (job test) covers them whenever the Rust build's own inputs changed too.
+  #   oml-scan scan                          every page of docs/ and eval/recall/corpus.json
+  #   oml-transport-http a_denial_on_an_admin_key  docs/architecture/roles-and-keys.md
+  #   oml-server-lead oauth_endpoints        docs/reference/connect-page.md, word for word
+  #   oml-cli cli_e2e the_cli_reference_...  docs/cli/reference.md
+  #   oml-cli sync_extraction every_record   every record of docs/adr/
+  #   oml-domain near_duplicates             eval/remember/near-duplicates/data.json
+  #   oml-lakewriter lake_laws bench_results eval/bench/results
+  # None of them starts Postgres. The files outside docs/ and eval/ that Rust
+  # reads (docs/api/*.yaml and *.json, migrations/, testing/lake) are in the
+  # categories that run job test.
+  docs-reading-tests:
+    name: cargo test, the targets that read docs and eval
+    needs: changes
+    if: needs.changes.outputs.docs_tests == 'true' && needs.changes.outputs.cargo != 'true'
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ""  # none of these targets starts Postgres; a future one that does fails here, not hangs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo test --locked -p oml-scan --test scan
+      - run: cargo test --locked -p oml-transport-http --lib a_denial_on_an_admin_key_names_the_key_field
+      - run: cargo test --locked -p oml-server-lead --test oauth_endpoints the_pages_sentences_match_connect_page_md_word_for_word
+      - run: cargo test --locked -p oml-cli --test cli_e2e the_cli_reference_lists_every_built_verb
+      - run: cargo test --locked -p oml-cli --test sync_extraction every_record_in_docs_adr_extracts_every_decision
+      - run: cargo test --locked -p oml-domain --test near_duplicates
+      - run: cargo test --locked -p oml-lakewriter --test lake_laws bench_results_load_once_however_often_they_are_loaded
+
   e2e:
     name: demo and quickstart (release binaries)
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -144,6 +216,8 @@ jobs:
   # a pull.
   compose:
     name: docker profile (compose up, quickstart, oml quickstart)
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true' || needs.changes.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -165,7 +239,11 @@ jobs:
           docker tag ghcr.io/e8kor/open-memory-lab:latest "ghcr.io/e8kor/open-memory-lab:$version"
       - name: oml quickstart, then a second run refused as quickstart.exists
         run: |
+          # Timed: the Docker tab of docs/start/quickstart.md, start (this step's
+          # first command), first held write, first recall (next step).
+          date +%s.%N > "$RUNNER_TEMP/qs_t0"
           ./target/release/oml quickstart --dir "$RUNNER_TEMP/oml"
+          date +%s.%N > "$RUNNER_TEMP/qs_t1"
           for f in .env keys keys/agent keys/reviewer credentials; do
             stat -c '%a %n' "$RUNNER_TEMP/oml/$f"
           done
@@ -173,6 +251,27 @@ jobs:
             echo "a second quickstart was not refused" >&2; exit 1
           fi
           grep -q quickstart.exists "$RUNNER_TEMP/again"
+      - name: Docker quickstart timing, first held write and first recall
+        run: |
+          export OML_URL=http://127.0.0.1:8080
+          A="$(cat "$RUNNER_TEMP/oml/keys/agent")"
+          t2=$(date +%s.%N)
+          OML_API_KEY=$A ./target/release/oml write "We deploy on Tuesdays; Friday deploys need two approvals." | tee "$RUNNER_TEMP/write.out"
+          grep -q held "$RUNNER_TEMP/write.out"
+          OML_API_KEY=$A ./target/release/oml read --query "deploy Friday" --include-unreviewed | tee "$RUNNER_TEMP/read.out"
+          grep -q "(held)" "$RUNNER_TEMP/read.out"
+          t3=$(date +%s.%N)
+          t0=$(cat "$RUNNER_TEMP/qs_t0"); t1=$(cat "$RUNNER_TEMP/qs_t1")
+          start=$(echo "$t1 - $t0" | bc -l)
+          rest=$(echo "$t3 - $t2" | bc -l)
+          total=$(printf '%.0f' "$(echo "$start + $rest" | bc -l)")
+          echo "QUICKSTART_DOCKER_SECONDS=$total"
+          {
+            echo "### Docker quickstart timing"
+            echo "- start (oml quickstart, image already built): $(printf '%.1f' "$start") s"
+            echo "- first held write and first recall: $(printf '%.1f' "$rest") s"
+            echo "- total: ${total} s (QUICKSTART_DOCKER_SECONDS=${total})"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: oml quickstart's logs on failure
         if: failure()
         run: docker compose --project-directory "$RUNNER_TEMP/oml" logs
@@ -182,6 +281,8 @@ jobs:
 
   image:
     name: release image (${{ matrix.platform }})
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true' || needs.changes.outputs.release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -225,6 +326,8 @@ jobs:
   # Linux runners serve (job test runs it).
   cli-matrix:
     name: oml CLI (${{ matrix.target }})
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -272,6 +375,17 @@ jobs:
           [ "$got" = "$want" ] || { echo "expected '$want'" >&2; exit 1; }
       - name: The CLI's unit tests
         run: cargo test --locked -p oml-cli --lib --bins --target "$TARGET"
+      # The lake build (ADR-0062 d3): the reader and its parquet link on every
+      # target the CLI ships for, its tests run on the fixture lake, and the
+      # size it adds is printed for #161 against the default build's.
+      - name: The lake build builds and reads the fixture lake
+        run: |
+          exe=""
+          [ "${TARGET%-windows-msvc}" != "$TARGET" ] && exe=".exe"
+          default_size="$(wc -c < "target/$TARGET/debug/oml$exe")"
+          cargo build --locked --bin oml --features lake-sync --target "$TARGET"
+          echo "$TARGET: default $default_size bytes, lake build $(wc -c < "target/$TARGET/debug/oml$exe") bytes (debug)"
+          cargo test --locked -p oml-cli --features lake-sync --test lake_sync --test lake_build --target "$TARGET"
 
   # The installers of ADR-0041 against a real, published release, as a user
   # runs them: install.sh piped to sh on Linux and macOS, install.ps1 under
@@ -281,6 +395,8 @@ jobs:
   # the checksum-only path.
   install-smoke:
     name: installer (${{ matrix.runner }}${{ matrix.cosign && ', cosign' || '' }})
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -329,6 +445,8 @@ jobs:
 
   deny:
     name: cargo deny
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -338,6 +456,8 @@ jobs:
 
   plugin:
     name: agent plugin agrees with the server
+    needs: changes
+    if: needs.changes.outputs.plugins == 'true' || needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -364,6 +484,8 @@ jobs:
     # its gate or a category of it falls by more than one query against the
     # committed results, or when keyword-all does not reproduce v0.5.0.
     name: recall eval per search pipeline (served)
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true' || needs.changes.outputs.eval == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -420,6 +542,8 @@ jobs:
 
   recall-eval-data:
     name: recall eval data parses and its labels resolve
+    needs: changes
+    if: needs.changes.outputs.eval == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -435,6 +559,8 @@ jobs:
     # it, driven by the quickstart, then restarted, uninstalled and
     # reinstalled to show the keyring claim keeps the signing key.
     name: kubernetes chart (kind, helm install, quickstart)
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true' || needs.changes.outputs.release == 'true'
     runs-on: ubuntu-latest
     env:
       IMAGE: ghcr.io/e8kor/open-memory-lab
@@ -619,6 +745,8 @@ jobs:
   # (ADR-0034 d8).
   sdk-python:
     name: Python SDK against the release server
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true' || needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -652,6 +780,8 @@ jobs:
 
   sdk-typescript:
     name: TypeScript SDK against the release server
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true' || needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -688,6 +818,8 @@ jobs:
 
   sdk-generated:
     name: generated SDK code is current with openapi.yaml
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true' || needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -701,3 +833,20 @@ jobs:
       - run: npm ci
         working-directory: sdks/typescript
       - run: python scripts/generate_sdks.py --check
+
+  # The one check to require: it succeeds when every job above succeeded or was
+  # skipped by the filter, and fails when one failed or was cancelled.
+  ci-ok:
+    name: ci ok (ci)
+    if: always()
+    needs: [changes, lint, test, docs-reading-tests, e2e, compose, image, cli-matrix, install-smoke, deny, plugin, recall-eval, recall-eval-data, chart, sdk-python, sdk-typescript, sdk-generated]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in success|skipped) ;; *) echo "a job finished: $r" >&2; exit 1 ;; esac
+          done

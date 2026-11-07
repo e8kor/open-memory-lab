@@ -9,7 +9,7 @@ answers: why workareas are one algebra — per-tenant universe tree, node-id gra
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)
 
-**Release:** partly in v0.1.0, v0.2.0 and v0.3.0; links and the brief introduced in v0.5.2; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.1.0, v0.2.0 and v0.3.0; links and the brief introduced in v0.5.2; the rest not built ([releases](../changelog.md))
 
 ## Context
 
@@ -36,7 +36,7 @@ what was rejected. Nothing here is built.
   live in crew workareas beneath it. It exists so that paths, subtree grants and subtree denies
   have a well-defined top, not so that anything is stored at the top. The tree never crosses a
   tenant boundary; cross-tenant "whole world" mapping is explicitly future (federation,
-  RS-3 in the [roadmap](../product/roadmap.md)).
+  #151 in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap)).
 
 - **d2 — Inclusion is single-parent.** Every node except the universe has exactly one parent.
   Cycles are impossible by construction, every node has one derivable path from the root, and
@@ -89,7 +89,7 @@ what was rejected. Nothing here is built.
 - The schema realizes d1–d7 as `workareas` (id, tenant, parent_id, derived `ltree` path, status,
   crew jsonb), `workarea_edges` (pending/ratified, proposer, ratifier), `grants` (key, role,
   workarea node id, deny entries, epoch) and `key_denials` (global per-key deny objects) —
-  [data/postgres-schema.md](../data/postgres-schema.md). RLS by tenant applies to all of them
+  [data/postgres-schema.md](https://github.com/e8kor/open-memory-lab/tree/main/migrations). RLS by tenant applies to all of them
   (ADR-0007).
 - Every access check in the system — write admission, recall scoping, graph reads, edge acts —
   computes d4's formula and nothing else. There is no second access mechanism to keep consistent,
@@ -106,7 +106,7 @@ what was rejected. Nothing here is built.
   grants stay self-contained statements of scope at the cost of one more object kind.
 - d1 defers the stated end goal: relating what separate tenants' crews learned requires a design
   for claims crossing a tenant boundary — review, attribution, erasure — and is tracked as
-  RS-3 in the [roadmap](../product/roadmap.md). Until that row closes, every page that mentions
+  #151 in the [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap). Until that row closes, every page that mentions
   the whole-world goal marks it future.
 
 ## Rejected alternatives
@@ -130,5 +130,5 @@ what was rejected. Nothing here is built.
   tenancy as designed: RLS keys every row by `tenant_id` (ADR-0007), and a tree whose root spans
   tenants is a row no tenant's policy can own — every subtree computation at the root would read
   across boundaries that D6's isolation exists to make uncrossable. The whole-world goal is real
-  and stays stated, as federation between per-tenant universes, explicitly future: RS-3 in the
-  [roadmap](../product/roadmap.md).
+  and stays stated, as federation between per-tenant universes, explicitly future: #151 in the
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap).

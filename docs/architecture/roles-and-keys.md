@@ -1,892 +1,166 @@
-<!--
-id: architecture/roles-and-keys
-tier: engineering
-status: design draft for review · decided, not built
-answers: which verbs each of the five roles may perform; how keys are issued, scoped, denied and banned; how the independence axis is enforced at promotion; which grant roles each key role admits and the refusal order; what own means; which verbs each grant role confers; how a key's name differs from its principal and label; how a key's crew feeds the independence axis; what workarea structure an admin key reads without grants; what a connector key, a connect code and a connection are, and why a connection's token is never more than its key
--->
+---
+status: Stable
+verified: 2026-11-06
+answers: "which verbs each of the five roles may perform; how a key is issued, scoped and denied; how the reviewer is kept from being the author; what a connector key, a connect code and a connection are, and why a connection is never more than its key"
+---
 
 # Roles and keys
 
-**Status:** design draft for review · decided, not built
+An agent holds a key with one role. Grants give that key access to workarea subtrees. OML works out what the key may do from its effective access at call time.
 
-**Release:** reader, writer, dreamer and admin keys since v0.1.0; one key with grants since v0.2.0; names since v0.3.0 ([releases](../product/releases.md)).
+Two rules shape everything below.
 
-This page owns decision **D9**: the role vocabulary, the verb ceiling per role, the dreamer's two
-capability classes, the admin and operator verbs, key issuance and lifecycle, and the independence
-axis that review policies apply at promotion time. Workarea grants and deny semantics are declared
-in [workareas.md](workareas.md); the admission pipeline that consumes these roles is declared in
-[admission.md](admission.md); what the journal and evidence export record about keys is declared in
-[audit-and-lineage.md](audit-and-lineage.md).
-
-Two rules of the constitution shape everything below. R1: the surface an agent can call never
-promotes, signs, demotes or deletes — the verb ceiling is per role, and no agent-facing role
-crosses it. R2: the reviewer is never the author — enforced at promotion time against the author
-and the row's derivation lineage closure, not just at key issuance.
+1. An agent never approves, signs, demotes or deletes.
+2. The reviewer is never the author. OML checks this when a memory is approved, against the author and the memory's derivation lineage.
 
 ## The five roles
 
-| Role | One line |
+| Role | What it does |
 |---|---|
-| `reader` | Recall, read, search and graph-read within scope. Every read is logged ([retrieval.md](retrieval.md)). |
-| `writer` | Remember and learn — every write is held on arrival — plus attachments, supersession proposals on its own claims, and steering rows. Never a verdict. |
-| `dreamer` | One role name, two capability classes: **propose** (edit-as-proposal, connection proposals) and **review** (verdicts, ratification of connection proposals). The review class is refused per row by lineage-closure exclusion (below). |
-| `admin` | Tenant governance: keys, workareas, reassignment, bans, erasure, crew metadata, simulations. Admin verdicts on content are refused: admin ≠ reviewer. |
-| `operator` | Provider level: creates tenants and issues each tenant's first admin key. Never writes, reads or reviews content. |
+| `reader` | Recalls, reads, searches and reads the graph within its scope. Every read is logged. |
+| `writer` | Writes memories, held on arrival, and proposes a new version of its own. Never gives a verdict. |
+| `dreamer` | The reviewer role. Proposes edits and connections to other keys' memories, gives verdicts, ratifies connection proposals. |
+| `admin` | Governs a tenant: keys, workareas, crews, grants and denials. Its verdicts on content are refused. |
+| `operator` | Runs the provider level: creates tenants and issues each tenant's first admin key. Never writes, reads or reviews content. |
 
-Roles do not imply one another. A key is issued with exactly one role, which names the grant
-roles it may carry ([grant admissibility](#grant-admissibility-and-refusal-order)); each grant
-confers one of those roles over one workarea subtree (grant mechanics, including deny entries and
-the permission epoch, are declared in [workareas.md](workareas.md)). A crew member that must both write and recall holds a writer key
-whose grants include reader scope — not a writer key with implied read. Which verb a key may
-exercise in a given workarea is therefore resolved from effective access at call time, never from
-the role name alone.
+Roles do not imply one another: a crew member who writes and recalls holds a writer key with a reader grant beside the writer grant. The grant decides, not the role name.
 
-Every role above is designed to be held by an agent, and human principals hold the same roles
-through the same keys — there is no human-only role and no agent-only ceiling. Where a policy
-requires a *human* verdict (`human_required_classes`, [admission.md](admission.md)), the
-requirement is satisfied through a journalled, issuance-time attestation: a key attribute
-`held_by: human`, attested by the issuing admin, carried in the issuance event and shown in
-evidence exports. The honesty boundary is the same sentence: the server verifies the
-attestation, never the humanness — a mis-attested key is an admin's journalled misstatement, not
-a server failure. `human_required_classes` consumes exactly this attribute: only verdicts from
-keys attested `held_by: human` satisfy it ([ontologies](ontologies.md),
-[ADR-0021](../adr/ADR-0021-ai-human-ontologies.md)). The attestation has a third member,
-`held_by: service`, which a tenant admin issues under the ordinary
-[issuer ceiling](#issuer-ceiling) for infrastructure processes — the reconciler's repair key, a
-forwarding follower's zero-grant hop key ([security](security.md)) — never for review. Only an
-admin key sets `held_by`; the operator issues no service key. A service key is refused every
-review-class verb ([the role each verb needs](#grant-admissibility-and-refusal-order)), can
-never satisfy `human_required_classes` and never counts as review capacity.
+`held_by` records who holds a key: `agent`, `human` or `service`. The issuing admin attests it; the server cannot check. A `service` key is for infrastructure and is refused every review verb.
 
 ## Permission matrix
 
-Verbs are journalled acts; the matrix states which role's keys may invoke each one. A dash means
-the verb is refused with a typed error naming this rule ([errors.md](../api/errors.md)). For a
-content verb — recall, read, graph read, workarea info, events tail, remember, learn, attach,
-supersession, steering, propose, review, status-transition propose and ratify, and dead-letter
-re-enqueue — a column names the grant role that effective access must confer on the workarea the
-verb touches, resolved in the [refusal order](#grant-admissibility-and-refusal-order) below; the
-admin column of workarea structure and of the last three names the key's role. For a key-level verb — keys,
-grants, denials, workarea create and re-parent, crews, reassignment, bans, demote, erase, exports,
-settings, tenants — a column names the key's role itself.
+A dash means OML refuses the verb with a typed error. For content verbs, the column names the grant role effective access must confer on the workarea. For key-level verbs, it names the key's own role.
 
 | Verb | reader | writer | dreamer | admin | operator |
 |---|---|---|---|---|---|
-| recall / search (FTS, vector) — logged | ✓ | — | — | — | — |
-| read body / fetch — logged | ✓ ⁵ | — | — | — | — |
-| graph and lineage read (serialize, don't compute) | ✓ | — | — | — | — |
-| workarea structure: workarea info (the workarea read, the lookup by path), tree, workarea edges, status | ✓ | — | — | ✓ ⁶ | — |
-| events tail | ✓ | — | — | — | — |
-| own-work status (own submissions only) | ✓ | ✓ | ✓ | ✓ | — |
-| remember / learn (held on arrival) | — | ✓ | — | — ¹ | — |
-| attach (resumable upload session) | — | ✓ | — | — ¹ | — |
-| propose supersession of own claim (including retirement) | — | ✓ | — | — ¹ | — |
-| write steering row (held + reviewed) | — | ✓ | — | — ¹ | — |
-| edit-as-proposal (new attributed submission with `derives_from`, including retirement) | — | — | ✓ propose | — | — |
-| propose a connection edge, claim↔claim or workarea↔workarea | — | — | ✓ propose ² | — | — |
-| verdict on a held item | — | — | ✓ review ³ | — (refused) | — |
-| ratify a connection proposal | — | — | ✓ review ³ | — | — |
-| reopen a rejection (non-author) | — | — | ✓ review ³ | — | — |
-| re-enqueue a dead-lettered held item (journalled; [admission.md](admission.md)) | — | — | ✓ | ✓ | — |
-| propose workarea status transition | — | — | ✓ | ✓ | — |
-| ratify status transition (non-proposer) | — | — | ✓ | ✓ | — |
-| issue / revoke / rotate keys (issuer ceiling) | — | — | — | ✓ | ✓ ⁴ |
-| mint a connect code / revoke a connection ([connections](#connections)) | — | — | — | ✓ | — |
-| create / re-parent workareas | — | ⁷ | — | ✓ | — |
-| reassign claims between workareas | — | — | — | ✓ | — |
-| ban / lift-ban an author or source | — | — | — | ✓ | — |
-| demote (journalled; bytes kept, R4) | — | — | — | ✓ | — |
-| erase (crypto-shred, journalled) | — | — | — | ✓ | — |
-| crew records (create, update) and a workarea's crew-metadata update | — | — | — | ✓ | — |
-| create / end simulations | — | — | — | ✓ | — |
-| tip override (designate served tip, journalled) | — | — | — | ✓ | — |
-| evidence export / chain verification | — | — | — | ✓ | — |
-| settings show / validate / apply | — | — | — | ✓ | — |
-| grants and denials on keys (epoch bump) | — | — | — | ✓ | — |
-| create tenant / issue first admin key | — | — | — | — | ✓ |
-| read, write or review content | — | — | — | — | — (refused) |
+| Recall, search, read, graph read, events tail | yes | — | — | — | — |
+| Workarea info, tree and edges | yes | — | — | yes (see below) | — |
+| Own-work status | yes | yes | yes | yes | — |
+| Remember, learn | — | yes | — | — | — |
+| Propose a new version of your own memory | — | yes | — | — | — |
+| Edit another key's memory (as a proposal) | — | — | yes | — | — |
+| Propose a connection edge | — | — | yes | — | — |
+| Verdict on a held memory | — | — | yes | refused | — |
+| Ratify a connection proposal | — | — | yes | — | — |
+| Propose or ratify a workarea status change | — | — | yes | yes | — |
+| Issue keys, set grants and denials | — | — | — | yes | yes (operator and first admin keys only) |
+| Mint a connect code, revoke a connection | — | — | — | yes | — |
+| Create workareas and crews | — | writer in its own user root only | — | yes | — |
+| Create a tenant, issue its first admin key | — | — | — | — | yes |
+| Read, write or review content | — | — | — | — | refused |
 
-¹ An admin writing an ordinary claim uses a writer-scoped key — see
-[Admin verbs](#admin-verbs).
-² A workarea-edge proposal additionally requires dreamer(propose) effective access on at least one
-endpoint and reader on both; ratification requires dreamer(review) on both endpoints, ratifier ≠
-proposer. The edge-authority rule is declared in [workareas.md](workareas.md).
-³ Refused per row when the key or its principal appears in the row's lineage closure — see the
-next section.
-⁴ The operator issues only each tenant's first admin key, and operator keys (see
-[issuer ceiling](#issuer-ceiling)).
-⁵ The calling key may fetch its [own](#own) rows in any state (own-work path); everyone else
-sees promoted rows only ([http-api](../api/http-api.md)).
-⁶ **Admin structure reads.** This footnote is the single declaration site of what an admin key
-reads without grants ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d15). An admin key reads the
-structure of every workarea in its tenant by its key role: the workarea read and the lookup by
-path, the tree, a node's workarea edges and its status read — names, ids, parents, paths,
-statuses, crew records, children, workarea edges, review policy objects, pending transitions —
-beside the crew records, keys, grants and denials its own rows of this matrix already let it read.
-No grant and no denial enters: denials attenuate grants, and an admin key can hold neither. A
-global denial on an admin key is refused, `request.validation` with `details.field: key`
-([http-api](../api/http-api.md#keys-grants-denials)), so no denial is accepted, journalled and
-then ignored by a structure read, and one journalled before names is lifted by the lead at the
-upgrade ([rows created before names](../api/http-api.md#rows-created-before-names), rule 5). On
-the workarea read it sees every child and every workarea edge of the node, `my_effective_verbs`
-empty, since that field lists grant-role verbs, and its own permission epoch. It never reads claim
-content: recall, read, graph and lineage reads, the events tail, vocabulary reads and attachment
-fetch need reader, which no admin key can carry ([admissibility](#grant-admissibility-and-refusal-order)),
-so each answers `access.verb_ceiling` at step 1 of the refusal order. The content ceiling of the
-two-key rule is therefore unchanged — an admin key carries no grant role, receives no serve,
-records no verdict and reads no claim's content — and "admin is never a reviewer" holds as
-before.
+Approve, sign and delete appear in no column: approval is an effect of review, `oml-server` signs, and deletion does not exist.
 
-⁷ *Since v0.5.0* ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d6): a writer
-[user key](#user-keys) creates a workarea under a parent inside its own user root where its
-effective access confers `writer`; it never re-parents, and a tenant writer key creates nothing.
+- **A memory you wrote is your own.** A bearer key reads its own memories in any state. The signed-in user page also reads every key belonging to that user (ADR-0045 d16). Everyone else sees `promoted` memories only.
+- **An admin key reads workarea structure without grants**: names, ids, parents, statuses, crews, children and edges in its tenant. Never a memory's content.
+- **A global denial on an admin key is refused, `request.validation` with `details.field: key`.**
+- **Only a reader grant reads content, and no admin key can carry one.** An admin key that calls recall gets `access.verb_ceiling`.
 
-Promote, sign and delete appear in no column: promotion is an effect of ratification inside the
-admission pipeline, signing is done by `oml-server` with the deployment key
-([storage.md](storage.md)), and deletion does not exist — demotion keeps bytes and erasure is a
-journalled crypto-shred ([audit-and-lineage.md](audit-and-lineage.md)).
+A development workarea can let a writer approve its own memories, marked `self_signed` ([workareas](workareas.md)).
 
-One bounded exception is inherited from the constitution: a `development` workarea may, by
-journalled tenant policy, permit a writer to self-sign its own rows. Such rows are marked
-`self_signed`, are served only to reads whose scope node is that workarea
-([retrieval](retrieval.md#the-rule-postgres-serves-the-lake-never-does)), and never promote
-beyond it. How a
-`self_signed` version may take a claim's tip is declared in
-[audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip). The
-exception is declared in [workareas.md](workareas.md) and ADR-0001; it does not change this
-matrix — it changes the review policy a development workarea applies.
+## Issuing keys
 
-## Grant admissibility and refusal order
+A key is issued with a role no higher than its issuer's. Only admin and operator keys issue.
 
-*Available since v0.2.0; `tenant` and `default_workarea` in place of `tenant_id` and `default_workarea_id` since v0.4.0 · [releases](../product/releases.md)*
+- A tenant admin issues reader, writer, dreamer and admin keys inside its tenant. No tenant key can mint an operator key.
+- An operator key issues operator keys and each tenant's first admin key, only for a tenant that has never held a key.
 
-This section is the single declaration site for which grant roles a key may carry and for the
-order in which a workarea-scoped verb is refused
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d1, d2).
-
-**Admissibility.** A key's role names exactly the grant roles the key may carry:
-
-| Key role | Admissible grant roles |
+| Key role | Grant roles it may carry |
 |---|---|
 | `reader` | `reader` |
 | `writer` | `reader`, `writer` |
-| `dreamer` | `reader`, `dreamer` |
-| `admin` | none |
-| `operator` | none |
+| `dreamer` | `reader`, `dreamer`; an agent-held `curator` profile may also carry `writer` inside an in-progress scope (ADR-0030 d8) |
+| `admin`, `operator` | none |
 
-A grant role is never `admin` or `operator`. A grant whose role falls outside its key role's set
-is refused with `access.issuer_ceiling`, details `{role, admissible}`, plus `grant_index` at
-issuance (step 3 of the issuance order below). A key of role `admin` carrying any dreamer grant
-is refused with `access.role_exclusive` — the two-key rule — and that check runs first, at
-issuance and at every grant amendment. An admin who must write or recall
-holds a separate writer-role key ([Admin verbs](#admin-verbs)).
+A grant outside that set is refused with `access.issuer_ceiling`. An admin key with a dreamer grant is refused with `access.role_exclusive`: the two-key rule. A person who administers and reviews holds two keys, so the journal shows which capacity acted.
 
-**Issuance validation order.** `POST /v2/keys` ([http-api](../api/http-api.md#keys-grants-denials))
-first checks that `tenant` is present if and only if the issuer is an operator key and the
-requested role is `admin` — else `request.validation` (step 0) — and then validates in this
-order, and the first failure answers:
+Checks run in this order, first failure answers: role exclusivity, issuer ceiling, grant admissibility, node existence, name free (`name.taken`).
 
-1. `access.role_exclusive`;
-2. the [issuer ceiling](#issuer-ceiling) on the key role — `access.issuer_ceiling`, including an
-   admin minting an operator key, with details `{role, admissible}`: `role` the requested key
-   role, `admissible` the key roles this issuer may issue; and, on an operator key's issuance of
-   an admin key, the tenant `tenant` names already holds a key of any role, revoked or expired
-   included — `access.issuer_ceiling`, `admissible` empty
-   ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d5);
-3. grant admissibility (the table above) — `access.issuer_ceiling`, with details `{role,
-   admissible, grant_index}`: `role` the first refused grant's role, `admissible` the key role's
-   admissible set, `grant_index` that grant's 0-based position in `grants`;
-4. for an operator's admin key, `tenant` names a tenant; every grant node and deny node
-   exists in the tenant; and the `crew`, when present, names a crew record of the tenant — else
-   `access.not_found`;
-5. each deny node lies inside its own grant's subtree — else `request.validation`;
-6. a `default_workarea`, when present, is covered by some grant of the key — else
-   `request.validation`. When it is absent, the default is the first grant's node; a zero-grant
-   key has none, and a key never inherits its issuer's default;
-7. with `connect_code: true`, the key can hold a connection — a role other than `admin` or
-   `operator`, `held_by` other than `service`, and a deployment that sets `oauth.issuer` — else
-   `oauth.connect_refused` ([connections](#connections));
-8. the key's `name` is not taken — else [`name.taken`](../api/errors.md).
+`oml keys issue` and `oml keys issue-agent` print the key value once. OML stores a SHA-256 hash only, so there is no "show me the key again". `oml keys show` displays grants, denials, crew and connections, never the value.
 
-Every workarea, crew and tenant reference in the body — a grant's node, a deny's subtree, the
-default workarea, `crew`, `tenant` — takes an id or a [name](../api/http-api.md#names-and-ids),
-and each name is replaced by its row's id, or by its unresolved value when no row holds it, before
-step 1, in the caller's namespace ([names](../api/http-api.md#names-and-ids)), so an unknown name
-fails step 4 exactly as an unknown id does, an unknown `tenant` included. Step 2 refuses an
-operator's admin key for a tenant that has held a key before any check answers from that
-tenant's names, so that issuance reaches step 4 and step 8 only in a tenant that has never held a
-key, whose key and crew namespaces are empty, apart from a concurrent issuance of its own. `name`
-is checked against the [creation grammar](../api/http-api.md#names-and-ids) with the rest of the
-body, before step 0. The
-server takes exactly the grants it is sent; the CLI's reader grant beside a writer grant is a
-[CLI default](../cli/reference.md#oml-keys-issuance-revocation-rotation) the body carries like
-any other grant.
+Not available: revoking, rotating or expiring a key. To cut a key off today, add a global denial with `oml deny set`.
 
-`held_by` is the issuing admin's attestation, so an operator key's issuance that carries it is
-`request.validation`; `held_by: service` keys are issued by a tenant admin like every other
-working key.
+### Names, principals and labels
 
-`key.issued` is journalled first and one `grant.issued` per grant follows; the key value is
-returned only after the last `grant.issued` commits. A connector key has no value: its
-`connection.code_issued` follows the last `grant.issued`, and its connect code is returned only
-after that commits. If issuance fails after `key.issued`, the
-server journals `key.revoked` for the key in a following commit, with `reason_digest` over the
-fixed reason `issuance_incomplete`, and the key is listed as revoked. Its value was never
-disclosed, so it authenticates no request either way, including before that commit lands.
+A key has a `name` (unique in its namespace; admin verbs address it wherever an id works), a `principal` (who acts; in every journal envelope; the independence check compares it; two keys of one person share it) and a free-text `label`. None changes after issuance. A key can name a [crew](workareas.md) at issuance, fixed for its life and read by the independence check.
 
-**Refusal order.** A verb that needs grant role R on node N resolves in this order, where
-`effective_roles(N)` is the [effective-access](workareas.md#effective-access-union-of-attenuated-grants-then-deny-wins)
-formula evaluated at N, on every request:
+### Key format
 
-1. R is not admissible under the key's role → `access.verb_ceiling`;
-2. R is in `effective_roles(N)` → allowed;
-3. `reader` is in `effective_roles(N)` → `access.grant_refused`, details `{workarea_id, needed_role}`;
-4. otherwise → `access.not_found`.
+An API key is `oml_` plus 43 base62 characters (256 random bits). The value encodes no role or tenant; a row looked up by its hash holds everything. The fixed prefix lets secret scanners find keys.
 
-Step 1 depends only on the key's role and needs no node, so it runs before the workarea is
-resolved: `request.workarea_unresolved` is answered only to a call that has passed step 1, and a
-reader key submitting answers `access.verb_ceiling` whether or not it has a default workarea.
+Send it only in the `Authorization: Bearer` header. `oml keys issue-agent --out` writes the value to a new owner-only file (mode 0600, never overwritten).
 
-**The role each verb needs.**
+## Refusal order
 
-- **writer** — submit and steering writes, on the resolved node, which must exist.
-- **reader** — recall, on the scope node (the search runs over subtree(scope) ∩ the nodes where
-  reader is effective); get of a row that is not the caller's own, on the row's workarea; a listing
-  without `own`; the events tail; workarea info, which an admin key also reads by its key role
-  ([matrix](#permission-matrix), footnote 6).
-- **supersede, retirement included** — [own](#own) is read on the target version, the current
-  tip, never on the claim's first version; the rule runs in this order:
+For a verb that needs a grant role on a workarea:
 
-    1. a key whose role admits neither writer nor dreamer → `access.verb_ceiling`, before any
-       lookup;
-    2. the target must be readable — the caller's own row in any state, or promoted within its
-       reader effective access — else `access.not_found`;
-    3. a writer key needs writer on the target's workarea when the target is its own, resolved by
-       the refusal order; a readable target another key authored answers `access.author_only`;
-    4. a dreamer key needs dreamer and reader on the target's workarea, resolved by the refusal
-       order, whoever authored the target, its own ratified edits included (edit-as-proposal);
-    5. only then the refusals that depend on the target, in this order: a sent `workarea`
-       equal to the target's workarea, else `request.validation`; the target is the current
-       served tip, else `submission.tip_conflict`; the kind and retirement checks, and on
-       `oml_write` with `replaces` the vocabulary-kind check, else `request.validation`
-       ([kind changes](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)); the
-       workarea is not `validated`, else `workarea.frozen`. The checks every submit runs follow.
+1. The key's role cannot carry that grant role: `access.verb_ceiling`. This depends only on the role and runs before the workarea is resolved.
+2. The needed role is in the key's effective access: allowed.
+3. The key can read the workarea but lacks the needed role: `access.grant_refused`, naming the missing role.
+4. Otherwise `access.not_found`, the same answer as for a workarea that does not exist.
 
-    No target-dependent refusal is answered before step 2, so none of them tells a caller that an
-    unreadable target exists. The idempotency record, scoped to the key alone, is looked up
-    between steps 1 and 2, so a committed supersession replays whatever the target's state now,
-    and it is claimed only after step 2 ([http-api](../api/http-api.md#idempotency)).
+OML works this out again on every request and caches nothing. The permission epoch labels the grant state each answer used.
 
-    A claim whose tip another key authored is that key's to supersede: a writer whose version
-    was superseded by another key's ratified version no longer owns the claim and answers
-    `access.author_only`, and a dreamer may still propose its revision or retirement.
+A writer supersedes only its own memory; another key's readable memory answers `access.author_only`. A dreamer edit also needs reader on the node.
 
-- **dreamer** — status-transition propose and ratify, and dead-letter re-enqueue, on the node;
-  admin keys act on these verbs by their key role.
-- **review next and verdict** — dreamer on the row's workarea, in addition to the
-  [lineage-closure exclusion](#the-dreamer-split): a row outside dreamer effective access is never
-  served, and a verdict on one resolves by the refusal order like every other verb —
-  `access.grant_refused` with `needed_role: dreamer` where reader is effective on the row's
-  workarea, `access.not_found` otherwise.
-- **service keys** — a `held_by: service` key is refused every review-class verb — the
-  [matrix](#permission-matrix)'s review rows (verdict, reopen, claim-edge ratify and
-  workarea-edge ratify) and the review queue and review next that lead to a verdict — and
-  status-transition ratify with `access.verb_ceiling`, before any
-  lookup, as at step 1 of the refusal order. A service key's dreamer grant confers those verbs
-  like any dreamer grant; this rule, not the grant, keeps it out of review and out of every
-  ratification ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d1).
-- **admin and operator verbs** — the key's own role, as the [matrix](#permission-matrix) states.
-
-## Own
-
-*Available since v0.2.0; the names `include_unreviewed` and `workarea` since v0.4.0 · [releases](../product/releases.md)*
-
-A row is the caller's **own** when its authoring key (`memories.author_key_id`) is the calling
-key; once rotation is built, own also covers a key in the caller's journalled `rotated_from`
-chain. Principal equality never makes a row own. This definition governs get of held or rejected
-versions, recall with `include_unreviewed` ([retrieval](retrieval.md#own-held-rows-in-recall)), the
-own-work listing, and the `access.author_only` check on supersession, which reads it on the
-target version. Wherever a store enforces own, it compares against the caller's whole key set —
-the calling key and its journalled `rotated_from` chain — never against one key id
-([held text containment](retrieval.md#held-text-containment)).
-
-Own-work reads admit every tenant role except operator and need no grant, but a global per-key
-denial covering the row's workarea still masks the row — deny-wins, as everywhere else
-([workareas](workareas.md)). An own row that is a simulation row or sim-derived is read only while
-the calling key is in that simulation's audience; outside it the row is absent
-(`access.not_found`), like any fenced row
-([the simulation read predicate](retrieval.md#the-simulation-read-predicate)). Both conditions
-hold on get, the own-work listing, `include_unreviewed` and the
-[events tail's](../api/http-api.md#events-tail) author clause. R2 is unaffected: a reviewer is
-still excluded by both key id and principal
-([lineage-closure exclusion](#the-dreamer-split)).
-
-**Naming a node.** An own row can sit on a node where the calling key holds no role — an admin's
-reassignment can move it there. A response names a claim's node to a key only where
-`effective_roles(node)` is not empty for that key, and serves null in its place elsewhere: the
-`workarea_id` and `workarea_path` of a get or a listing item, a claim-subject workarea id
-(`workarea_id`, `from_workarea_id`, `to_workarea_id`) in an
-[events-tail](../api/http-api.md#events-tail) payload, and `workarea` and `workarea_path` on the
-[agent plugin](../api/mcp-plugin.md#the-claim-item); a listing's `workarea` accepts only
-a node the rule names to the key ([Search](../api/http-api.md#search-get-v1memories)). A key never
-learns the id of a node it holds nothing on, except the ancestors of a node it can read, whose ids
-(`parent_id`) and names (path segments) the [workarea read](../api/http-api.md#workareas) and every
-derived path already disclose, and a re-parented node's former parent, which `workarea.reparent`
-names as the workarea read did before the move; the workarea read omits the children the key
-cannot read ([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d3).
-
-## Effective verbs
-
-The single declaration site for the verb names a key's effective access confers, as
-`my_effective_verbs` reports them ([http-api](../api/http-api.md#workareas)): the union over the
-grant roles effective on the node.
-
-| Effective grant role | Verbs conferred |
+| Effective grant role | Verbs (`my_effective_verbs`) |
 |---|---|
 | `reader` | `recall`, `read`, `graph_read`, `events_tail` |
-| `writer` | `remember`, `learn`, `attach`, `supersede` |
+| `writer` | `remember`, `learn`, `supersede` |
 | `dreamer` | `propose`, `review`, `supersede` |
 
-A dreamer's `supersede` is edit-as-proposal and also needs `reader` on the node, under the
-supersede rule [above](#grant-admissibility-and-refusal-order). The array lists verbs in table
-order — the `reader`, `writer` and `dreamer` rows, each left to right — without duplicates; for a
-`held_by: service` key it omits `review`, which that key is refused whatever its grants. The
-set states the access conferred, not what a given server build serves; `tools/list` on the
-[agent plugin](../api/mcp-plugin.md) states that.
+A `service` key omits `review`.
 
-## The dreamer split
+## Review independence
 
-*Not scheduled · [releases](../product/releases.md)*
+OML limits which rows a dreamer may review, and checks it when approving.
 
-A dreamer key carries one role name and two capability classes:
+- **Lineage exclusion.** If the reviewing key or its principal appears in the memory's lineage closure (every memory it derives from, through declared `derives_from` and connection edges, pending or ratified), the verdict is refused with `review.author_in_lineage`. A reviewer cannot propose an edit and then approve it.
+- **Rival successors.** While several successors of one memory are held, each author is excluded from reviewing the others.
+- **Different principals.** A `committed` workarea can require more: a reviewer crew or external manager that differs from the author's crew. OML uses the metadata journaled at approval. A verdict that cannot establish the requirement does not count, and the memory stays held.
 
-- **propose** — edit-as-proposal: a change to someone else's claim is a new, attributed submission
-  carrying `derives_from`, which enters the pipeline held like any write. Connection proposals,
-  claim↔claim and workarea↔workarea, follow the same shape: proposed, then separately ratified.
-- **review** — verdicts on held items and ratification of connection proposals. A verdict counts
-  only against a valid serve: the reviewer was served the full item — all attachments, and for a
-  supersession the version it replaces — under a server-side serve binding
-  ([cli/reference.md](../cli/reference.md)).
+OML cannot see undeclared derivation or prove two principals do not collude.
 
-The split is not two key types and is **not enforced at issuance**. Every dreamer key may propose
-and may review; what is enforced is *which rows* it may review, and that check runs at promotion
-time:
+## Admin limits
 
-**Lineage-closure exclusion.** At promotion, the service computes the row's lineage closure — the
-transitive closure over `derives_from` edges and claim↔claim connection edges, pending **and**
-ratified alike ([audit-and-lineage.md](audit-and-lineage.md) owns the definition) — and refuses
-the verdict if the
-reviewing key or its principal appears anywhere in that closure. "I edited an ancestor of this
-claim" disqualifies a reviewer exactly as "I wrote this claim" does. Because the closure includes
-pending edges, a dreamer cannot launder authorship by proposing an edit and reviewing the result
-before the edit is ratified. A dreamer's own proposals always need another reviewer.
+An admin who needs to write uses a separate writer key; the write is held and reviewed like any other. Not available: bans, reassignment between workareas, demotion and erasure verbs.
 
-*Since v0.5.0 ([ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d8):* the
-exclusion stays per key and principal for [user keys](#user-keys) too: `user` is not in
-it, so a person may review their own agents' writes through a separate dreamer key in their root,
-and the journal shows that both keys name the same user.
+## The operator and the first admin key
 
-**Rival successors.** While a successor is held, the reviewer-exclusion set of every other held
-successor of the same target (same workarea, `claim_key` and `replaces`) also contains its
-author's key and principal; review next never serves such a row to that key, and a verdict from
-it answers `review.author_in_lineage`
-([ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md) d10). Competing successors of one
-tip are decided by the tip compare-and-set
-([audit and lineage](audit-and-lineage.md#supersession-chains-claim_key-and-the-tip)), so a rival's
-author judging the other successor would be deciding its own row's fate. A row's
-**reviewer-exclusion set** is therefore the keys and principals in its lineage closure plus, for a
-held successor, the authors of its held rivals.
-
-The honest boundary: **undeclared derivation is not detectable.** If a writer reconstructs
-someone's content without declaring `derives_from`, the service has no way to know; lineage
-exclusion is exactly as good as the declared graph. The service does not claim to detect
-plagiarized or laundered derivation — it makes declared derivation disqualifying, and it makes
-suspicious review patterns visible after the fact (see
-[Review independence](#review-independence-and-the-evidence-of-collusion)).
-
-In a simulation, the reviewer pool narrows further: simulation writes are reviewed only by dreamer
-keys in the simulation's journalled audience, and a simulation with no dreamer in its audience can
-promote nothing ([simulations.md](simulations.md)).
-
-## Admin verbs
-
-The admin governs; it does not judge content. Admin verdicts are refused server-side — the gate's
-integrity rests on the reviewer never being the author *or* the authority that issued the author's
-key acting as reviewer by fiat.
-
-**Keys.** Issue, revoke and rotate, under the [issuer ceiling](#issuer-ceiling) and the
-[lifecycle](#key-lifecycle) below. Issuance, revocation and rotation are journalled; grants
-history is part of the evidence export. One combination the service refuses to mint or amend:
-a key holding the admin role never carries dreamer-class grants
-(`access.role_exclusive`, [errors.md](../api/errors.md)) — the two-key rule. A person who both
-administers and does dreamer work holds two keys, so the journal shows which capacity acted
-([ADR-0010](../adr/ADR-0010-roles-and-keys.md)).
-
-**Workareas.** Create, re-parent, and propose/ratify status transitions; workarea edges are not
-an admin fiat — they go through the dreamer propose/ratify ceremony declared in
-[workareas.md](workareas.md), and an admin key never participates in it: a person who must both
-administer and propose or ratify edges holds two keys, because a key never combines the admin
-role with dreamer-class grants (the two-key rule above). Semantics, including the universe root
-and the forward-only ladder, are declared in [workareas.md](workareas.md).
-
-**Crews.** Create crew records, update their charter URI and external manager, and point a
-workarea at a crew record — journalled acts on recorded, not operated, metadata
-([crews](workareas.md#crews-recorded-not-operated)). No agent role reaches them.
-
-**Reassignment.** Moving a claim between workareas is a journalled act whose event records both
-workareas' policy snapshots; a claim moved to a stricter-policy destination re-enters `held`, and
-reassignment into a `validated` workarea is refused. This paragraph is the declaration site for
-the move semantics; the status-dependent refusals (into or out of `validated`) are rows in
-[workareas.md](workareas.md)'s refusal matrix.
-
-**Ban and lift-ban.** A ban names an author or a source and is journalled, as is its lifting. The
-check runs **at admission**: a banned author's or source's new submissions are refused at capture
-with a typed error. A ban is not a demotion — rows that already passed the gate stay as they are;
-removing them is a separate, separately journalled demote or erase. Because a ban's blast radius
-is easy to misjudge, the CLI previews it: `oml ban --dry-run` enumerates the reach — the keys and
-principals the ban matches and the currently held submissions it would stop — before anything is
-journalled, per the preview-every-mass-act rule ([cli/reference.md](../cli/reference.md)).
-
-**Erasure.** Journalled crypto-shred with the honest boundary stated in
-[audit-and-lineage.md](audit-and-lineage.md): the guarantee is scoped to body and attachment
-bytes; attribution metadata is not erased by shredding (tracked roadmap FR,
-[roadmap](../product/roadmap.md)).
-
-**Demotion.** Journalled; bytes are kept (R4). The lifecycle states and what a frozen workarea
-still admits are declared in [admission.md](admission.md) and [workareas.md](workareas.md).
-
-**Simulations.** Creating, ending, and auditing the fenced provenance channel —
-[simulations.md](simulations.md).
-
-**The writer-scoped-key path.** An admin who needs to write an ordinary claim does not get a
-back door: they use a key issued with the writer role, and the write is held on arrival and
-non-author-reviewed like any other. "Edit or create by hand" is this path and only this path;
-free-form manipulation exists only inside the simulation channel, where every row carries
-indelible `provenance: simulation`. The cost is deliberate friction: an admin fixing a typo waits
-on a reviewer like everyone else. The benefit is that the evidence export never has to explain an
-unreviewed admin write, because none can exist.
-
-## Operator and the bootstrap ceremony
-
-*Available since v0.1.0, as the first admin key; the operator not scheduled · [releases](../product/releases.md)*
-
-The operator is the provider-level role. Its verbs are creating tenants, issuing operator keys and
-issuing each tenant's first admin key. It holds no grant inside any tenant: it never writes, reads
-or reviews content, and the matrix above gives it no content verb to misuse. Tenant isolation
-mechanics are declared in [security.md](security.md).
-
-**Bootstrap.** On first start, a Helm job mints a **single-use, expiring enrollment secret**
-(stored as a Kubernetes Secret; the job's logs carry progress only, never key material). The
-operator exchanges it over TLS — `oml bootstrap claim` — for the root operator key, shown exactly
-once in the operator's terminal and journalled as **issued-without-value**: `key.issued` carries
-the key id, never the value or its hash, which lives only in `api_keys.hash`. The enrollment
-secret is consumed on first use. A
-lost root operator key is therefore not recoverable from the system; it is replaced by the
-rotation path below, or, if no operator key survives, by re-running the bootstrap ceremony — a
-deliberate ceremony, not an everyday verb. The mockup transcript lives in
-[cli/sessions.md](../cli/sessions.md).
-
-From the root operator key the chain of custody is: operator creates a tenant and issues its
-first admin key (show-once, journalled issued-without-value); that admin issues the tenant's
-working keys under the issuer ceiling. Every link in that chain is a journalled event, so the
-provenance of any key in the system folds out of the journal.
-
-## Issuer ceiling
-
-A key is issued with a role no higher than the issuer's. Concretely:
-
-- Only admin and operator keys hold the issue verb at all.
-- A tenant admin issues reader, writer, dreamer and admin keys within its tenant — admin is the
-  top tenant role, so the ceiling binds where it matters: **no tenant key can ever mint an
-  operator key.**
-- An operator key issues operator keys (its own rotation path), which carry no `tenant`, and
-  each tenant's first admin key: an admin key for a tenant that has never held a key (step 2 of
-  the [issuance order](#grant-admissibility-and-refusal-order)).
-
-The ceiling is checked at issuance and journalled with the issuance event, so the evidence export
-can show, for every key, that its role was within its issuer's at the moment of issue. The ceiling
-does not prevent an admin from issuing another admin key — tenant administration is delegable by
-design — it prevents escalation above the issuer.
-
-## Key names, principals and labels
-
-*Available since v0.3.0 · [releases](../product/releases.md)*
-
-A key carries three identifying fields, and they are independent: none is derived from another on
-the server ([ADR-0026](../adr/ADR-0026-names-are-keys.md) d9). This section is their single
-declaration site.
-
-| Field | What it is | Unique | Changes |
-|---|---|---|---|
-| `name` | What admin verbs address the key by — show, revoke, rotate, grants, denials, effective access, a simulation audience — wherever its id is accepted ([names](../api/http-api.md#names-and-ids)) | in its [namespace](../api/http-api.md#names-and-ids) | never, and never [released](../api/http-api.md#names-and-ids) |
-| `principal` | Who acts: the attribution identity in every journal envelope, shared by design across the keys one identity holds, compared by R2 and matched by bans | no | never |
-| `label` | An optional free-text note for the people who administer the key | no | never |
-
-A principal is not a name: the two keys of the two-key rule share one principal, and a principal
-may carry `/` (`crew-procure/agent-7`). Rotation mints a new key, so the successor takes a new name
-of its own, given in the rotation request. `oml keys issue-agent` takes the key's name and its
-principal as separate, required arguments, and never derives one from the other
-([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)).
-
-A key may also name a [crew](workareas.md#crews-recorded-not-operated) at issuance: journalled in
-`key.issued` as `crew_id`, fixed for the key's life and carried to a rotation's successor. It is
-the key→crew link the [independence axis](#review-independence-and-the-evidence-of-collusion)
-reads.
+The operator creates tenants, issues operator keys and each tenant's first admin key, and holds no grant inside any tenant. A single-use enrollment token starts a new server. `oml bootstrap claim` exchanges it for the first key and stores the URL and key in an owner-only file (mode 0600).
 
 ## User keys
 
-*Available since v0.5.0 · [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) · [releases](../product/releases.md)*
+A key with the field `user` (the person an admin attests it acts for) is a **user key**; one without is a **tenant key**.
 
-This section is the single declaration site for user keys. A key
-carries a fourth identifying field, `user`: the person an admin attests the key acts for, named as
-that person's [user root](workareas.md#user-roots) is named. A key with it is a **user
-key**; a key without it is a **tenant key**, which every key issued before the build is.
-
-- **Who may carry it.** `reader`, `writer` and `dreamer` keys, `held_by` `agent` or `human`,
-  connector keys included. `admin`, `operator` and `held_by: service` keys may not
-  (`request.validation`, `details.field: user`). It is given explicitly and never derived from the
-  principal, the name or the label, which keep the meanings
-  [above](#key-names-principals-and-labels). It is fixed for the key's life, journalled in
-  `key.issued` as the root's id, carried to a rotation's successor once rotation is built, and
-  served by `GET /v2/whoami` and `GET /v2/keys/{key}` as `{id, name}`.
-- **The first key naming a user creates the root** (`universe.<user>`), in a commit of its own
-  before `key.issued`; a name a shared workarea holds is `name.taken`.
-- **Grants.** Every grant of a user key lies inside its own root; any other is refused with
-  `access.issuer_ceiling`, details `{role, admissible, grant_index, user}`, at issuance, and at
-  every later grant act once one is built. Issuance adds one grant the request did not send: `reader` on `universe`
-  with `covers: node` ([node grants](workareas.md#node-grants)), so a user key reads
-  universe's own claims and never another user's root, a crew's workareas or any shared workarea
-  beneath `universe`. A person who also works in a crew holds a tenant key for it.
-- **Names.** A user key's bare workarea names resolve in its own root, plus `universe` and its
-  root's name; tenant keys, admin keys included, resolve the shared namespace, and every tenant
-  key resolves a qualified name `<user>.<name>` ([names](../api/http-api.md#names-and-ids)).
-- **Writes into `universe`.** A user key's write there is refused with
-  `submission.universe_refused`, answered in place of step 3's `access.grant_refused`. Only a
-  **curator** — a tenant writer key an admin granted writer on the `universe` node — writes there,
-  each write held and reviewed by a dreamer on `universe` outside its lineage closure
-  ([admission](admission.md)).
-- **Review.** The [reviewer-exclusion set](#the-dreamer-split) stays per key and principal: `user`
-  is not in it, so a user's own dreamer key may review that user's agents' writes (ADR-0044 d8).
-- **The row names a user root.** A key whose stored `user` names a node that is not a user root is
-  served nothing: `auth.invalid` with `details.reason: user_root`, which `oml doctor` under the key
-  reports (ADR-0044 d14).
+- **Who may carry it:** reader, writer and dreamer keys, connector keys included. Admin, operator and `service` keys cannot. OML never derives it from principal, name or label.
+- The first key naming a user creates that user's root, `universe.<user>`.
+- **Grants stay inside the user's root.** Any other grant is refused with `access.issuer_ceiling`. Issuance adds one reader grant on the `universe` node only.
+- A user key's bare workarea names resolve in its root; tenant keys use `<user>.<name>`.
+- **Writes into `universe` are refused** (`submission.universe_refused`). Only a curator writes there: a tenant writer key granted writer on `universe`, reviewed by a dreamer outside the memory's lineage.
 
 ## Session keys
 
-*Since v0.5.0 · [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) · [releases](../product/releases.md)*
-
-A **session key** is a key with `credential: session`, beside `bearer` and `connection`: issued
-`held_by: human` with no value and no connection, held by the server for one person and acted
-with only from that person's web session, which the server re-checks on every request
-([HTTP API](../api/http-api.md#web-pages-the-user-page-and-the-admin-page)). It cannot be sent as
-a bearer key and never gets a connect code (`oauth.connect_refused`, `details.reason:
-session_key`). A person holds at most four, one per capacity, under the two-key rule
-([admin verbs](#admin-verbs)):
+A **session key** has the credential `session`: no value, no connection. It acts only from one person's web session, which every request re-checks. It cannot be sent as a bearer key and never gets a connect code. A person holds up to four:
 
 | Key | Role and grants |
 |---|---|
-| `<user>-web` | a [user key](#user-keys): writer and reader on `universe.<user>`, and the node read on `universe` |
-| `<user>-review` | a tenant dreamer key with dreamer and reader on `universe.<user>` from the first sign-in, and any further grants an admin gives it |
-| `<user>-curate` | a tenant writer key with writer `covers: node` on `universe` and reader on the user roots an admin chooses |
-| `<user>-admin` | a tenant admin key, no grants |
+| `<user>-web` | User key: writer and reader on `universe.<user>`, node read on `universe` |
+| `<user>-review` | Dreamer key: dreamer and reader on `universe.<user>` |
+| `<user>-curate` | Tenant writer key: writer on the `universe` node |
+| `<user>-admin` | Tenant admin key, no grants |
 
-`<user>-web`, and no bearer key, may issue reader, writer and connector keys naming its own user
-with grants inside its root, mint their connect codes and deny them on `universe`; for it, own
-means every key naming its user. `<user>-web` and `<user>-review` are created at the first
-sign-in, so a person reviews their own agents' held writes on the user page without an admin step.
-Each session key's principal is its own name, so R2, checked on the reviewing key and the row's
-lineage closure, lets `<user>-review` approve the person's agents' writes and never a version it
-proposed itself. `<user>-admin` reads every memory's text and attribution through the
-[admin read](../api/http-api.md#admin-read), journalled; it still records no verdict.
-
-## Key format
-
-This section is normative for the key value itself: what crosses the wire, what is stored, and
-where the value may never appear.
-
-**Wire format.** An API key is the fixed prefix `oml_` followed by 43 base62 characters
-(`[A-Za-z0-9]`) encoding 256 bits drawn from a cryptographically secure random generator —
-47 characters in total. The value encodes nothing: no role, no tenant, no key id. Everything
-about a key is a row looked up by the value's hash, so a leaked value discloses only that it is
-an OML key — which is the prefix's purpose: a fixed, greppable prefix lets secret scanners
-(including OML's own [deterministic scan](admission.md) rules) match key material in submitted
-content, logs and repositories with a low false-positive rate.
-
-**Hash at rest.** The system stores `SHA-256(full key string, prefix included)` in
-`api_keys.hash` ([postgres-schema.md](../data/postgres-schema.md)) and never the value. The hash
-is plain — unsalted, single-round — and that choice is defended rather than assumed: a password
-hash's salt and work factor exist to protect low-entropy, human-chosen secrets from dictionary
-and rainbow-table attacks, and a 256-bit uniformly random key has no dictionary to resist —
-brute force against the hash is brute force against the keyspace. What the plain deterministic
-hash buys is the request path: every authenticated call resolves the bearer value by one
-equality lookup on the `UNIQUE` hash index, with no per-request key-stretching cost and no
-secondary lookup identifier. The defense holds only while keys are generated as specified above;
-a deployment that minted guessable keys would forfeit it, which is why the generation rule is
-part of this normative section, not an implementation detail.
-
-**Presentation.** Every request carries the key as
-`Authorization: Bearer <key>` ([http-api.md](../api/http-api.md#authentication-and-authorization))
-— never in a query string, path segment or body field, so the value cannot land in URL-position
-logs or referrer headers.
-
-**Where the value never appears.** The value is shown exactly once, at issuance (the show-once
-rule below); after that moment no component holds or reproduces it. The journal records
-`key.issued` as issued-without-value; log lines name keys by `key_id` only, never by value or
-hash ([observability](../operations/observability.md) owns the logging rules); journal payloads
-carry key ids, never key material. A key value found anywhere but the issuance terminal and the
-caller's `Authorization` header is a defect. The one exception is the file `oml keys issue-agent
---out` creates for it, the one place a key value may rest outside the show-once response: new,
-owner-only (mode 0600), written once, never overwritten, and the operator's to delete once the key
-is in the environment that needs it ([CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation),
-[ADR-0028](../adr/ADR-0028-agent-key-issuance.md) d1). The stored response in the idempotency
-record of an issuance or a rotation is a copy this rule does not yet exclude
-([FR-36](../product/roadmap.md)). A connector key has no value anywhere: the server mints none,
-and `api_keys.hash` is null ([connections](#connections)).
-
-## Key lifecycle
-
-*Available since v0.1.0 (issuance); revocation, rotation and expiry not scheduled · [releases](../product/releases.md)*
-
-```mermaid
-stateDiagram-v2
-    [*] --> active : issue (show-once,\njournalled issued-without-value)
-    active --> expired : expiry reached
-    active --> revoked : revoke (journalled,\npermission epoch bump)
-    expired --> [*]
-    revoked --> [*]
-```
-
-**Issue.** Show-once: the value is returned exactly once at issuance; the system stores only the
-hash (`api_keys.hash`, [postgres-schema.md](../data/postgres-schema.md)) and the journal records
-issued-without-value. There is no "show me the key again" verb anywhere in the system.
-
-**Expiry.** Every key carries an expiry set at issuance. An expired key fails closed with a typed
-error; nothing is deleted — the key row and its journalled history remain for the evidence export.
-
-**Rotation.** There is no in-place re-key. Rotation is one journalled act (`key.rotated`,
-[event catalog](../data/event-catalog.md)) that mints a successor key — a **new** `key_id` and a
-new [name](#key-names-principals-and-labels), linked to the old one by `rotated_from`, its grants
-and crew reproduced from the journalled records — and starts a bounded grace window on the old key, its length the admin's choice
-(`oml keys rotate --grace`, [cli/reference.md](../cli/reference.md)). The event carries both key
-ids and the grace deadline; the holder switches credentials inside the window, and at the
-deadline the old key is revoked — a journalled `key.revoked` citing the rotation as cause — so
-the export shows exactly when each credential could act. An admin who wants different grants on
-the successor amends them afterward, as ordinary journalled grant acts. A connector key is not
-rotated ([connections](#connections)). Bulk rotation ergonomics
-for whole crews (re-issue many keys in one ceremony) is unbuilt and tracked as a roadmap FR
-([roadmap](../product/roadmap.md): key rotation ergonomics for crews).
-
-**Revocation and the permission epoch.** Revocation is a journalled act that takes effect at the
-key's next request served by the lead: keys and effective access are resolved on every request and
-no resolution is cached. A follower resolves them from its local replica, so on follower-served
-reads a revocation takes effect after replication lag — the window
-[workareas.md](workareas.md#grants-bind-to-node-ids-paths-are-derived) states and
-[security](security.md) carries as a residual. Grant changes and denials apply the same way, and the permission epoch labels the
-journalled state each answer was computed against, so "when did this key stop being able to do
-X" is answerable from journalled grants plus epochs — reproducibly, which is the property the
-evidence export leans on.
+`<user>-web` and `<user>-review` are created at first sign-in. Each session key's principal is its own name. `<user>-admin` reads memory text through the journaled admin read and gives no verdicts.
 
 ## Connections
 
-This section is the single declaration site for connector keys, connect codes, connections and
-their tokens ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d7, d8, d10, d11).
-The HTTP side — the `/mcp` challenge, the discovery documents, the OAuth endpoints and the
-authorization page — is declared on the
-[HTTP API](../api/http-api.md#connections-oauth-for-hosted-mcp-clients). A **connection** is one
-OAuth client's standing authority to act as one connector key at `/mcp`; it exists so that
-Claude's hosted apps, which cannot hold a key, can use the [agent plugin](../api/mcp-plugin.md)
-without a key value being pasted anywhere. **Built:** connector keys, connect codes, connections
-and their tokens as this section declares them, in the store and the use cases, with the OAuth
-endpoints and the authorization page over them; an access token accepted at `/mcp`, where the
-facade resolves it to its connection's key once per request and runs every tool under that key;
-the `/v2` connect-code and connection-revoke routes and a key's connections on its read; the CLI's
-`--connect-code`, `oml keys connect-code`, `oml keys disconnect` and the connections in
-`oml keys show`; and doctor's `oauth_discovery`. **Not built:** whether a listed connection is
-live, the doctor checks `connect_codes` and `connections`, and the cluster lease's issuer. No live
-claude.ai connection has run ([FR-34](../product/roadmap.md)).
+A **connection** is one OAuth client's standing authority to act as one connector key at `/mcp`, so Claude's hosted apps use the [agent plugin](../api/mcp-plugin.md) without a pasted key. Connections need `oauth.issuer` set on the server.
 
-**Connector keys.** A key issued with `connect_code: true` (`oml keys issue-agent …
---connect-code`, [CLI](../cli/reference.md#oml-keys-issuance-revocation-rotation)) is a connector
-key. The server mints no value for it — `api_keys.credential` is `connection` and
-`api_keys.hash` is null — so it authenticates no request by itself; its one credential path is a
-connection, and a connection reaches only `/mcp`. Its role is `reader`, `writer` or `dreamer` and
-it is not `held_by: service`, which step 7 of the
-[issuance order](#grant-admissibility-and-refusal-order) checks; the order is otherwise unchanged. A key is a bearer key or a connector key, never both, and a connector key has
-at most one connection open: opening one revokes the earlier open one, live or not, in the same
-commit. The key id on
-every journal event therefore names exactly one credential path. A connector key is not rotated:
-`POST /v2/keys/{key_id}/rotate` on one answers `422 oauth.connect_refused`
-(`details.reason: connector_key`), because a rotated successor's value would make it a bearer key.
-A fresh connection is a new code (`oml keys connect-code`); a fresh identity is a new connector
-key, and the old one is revoked.
+- **Connector keys.** `oml keys issue-agent … --connect-code` issues one. It has no value and authenticates only through a connection, which reaches only `/mcp`. It has at most one open connection; opening a new one revokes the earlier.
+- **Connect codes.** Twelve Crockford base32 symbols (60 bits), shown once as `7KQ2-M9XD-4TPA`, never in a log, URL or journal payload. Lives 10 minutes, or the `--ttl` an admin asks for, up to 30 days, for a connector key confined to one workarea ([ADR-0067](../adr/ADR-0067-a-directory-reviewer-reaches-a-demo-workarea-through-a-connect-code-that-lives-longer-and-the-tools-and-instructions-describe-instead-of-command.md) d3); the first correct entry spends it. A newer code, a revoked connection or a revoked key voids it.
+- **Tokens.** Access token `oml_at_` plus 43 characters, 1 hour. Refresh token `oml_rt_` plus 43 characters, 30 days unused. Only digests are stored. Each refresh rotates the pair; a rotated refresh token presented again revokes the connection and all its tokens. Tokens travel only in the `Authorization` header and work only at `/mcp`.
+- **A token is no more than its key.** Verb ceiling, grants, denials, own-memory rules and the permission epoch apply on every request.
 
-**Connect codes.** A connect code is twelve symbols of Crockford's base32 alphabet (`0`–`9`,
-`A`–`Z` without `I`, `L`, `O`, `U`), 60 bits from a cryptographically secure generator, shown as
-three groups of four, `7KQ2-M9XD-4TPA`. An entry is decoded by Crockford's rule — case, hyphens
-and spaces ignored, `O` read as `0`, `I` and `L` as `1`. The code is shown once, in the issuance
-or minting response, and appears in no log line, no URL and no journal payload; `connect_codes`
-holds the SHA-256 of the decoded symbols, and `connection.code_issued` carries only the code's id
-and expiry ([event catalog](../data/event-catalog.md#connectioncode_issued)). It lives
-`oauth.connect_code_ttl` ([configuration](../operations/configuration.md); shipped 10 minutes, 1
-to 60), is spent by its first correct entry on the authorization page, and is voided when a newer
-code is minted for the same key or when the key is revoked, in that `key.revoked`'s commit.
-Minting a code, or revoking a connection of the key (`connection.revoked`, whatever its cause),
-also ends every live authorization request
-holding a code of that key and every `authorized` connection of it, in the same commit: it voids
-every code of the key from which no connection has opened, spent or not, and code entry, Connect and
-the token exchange refuse a voided code, so a later Connect answers `oauth.authorization_expired`
-and a later exchange `invalid_grant` (`oauth.authorization_code_invalid`). A page holding a code someone else
-entered therefore cannot open a connection after the admin mints a new one. The
-idempotency record of an issuance or a minting stores its response without the code, so a replay
-returns no code ([HTTP API — idempotency](../api/http-api.md#idempotency)). With L live codes and G wrong entries
-during their life, the chance that any entry finds one is at most L·G / 2⁶⁰; L counts every
-tenant's live codes, since a code is looked up before its tenant is known.
+A revoked connection never reopens. `oml keys disconnect <key> <connection-id>` ends one; `oml keys show` lists them.
 
-**Lifecycle.**
-
-```mermaid
-stateDiagram-v2
-    [*] --> code_live : connector key issued, or code minted\n(connection.code_issued)
-    code_live --> code_voided : newer code minted,\na connection of the key revoked,\nor key revoked
-    code_live --> code_lapsed : expiry reached
-    code_live --> code_spent : correct entry on the page
-    code_spent --> authorized : Connect\n(authorization code, 60 s)
-    code_spent --> [*] : Cancel, the page lapses after 10 minutes,\nor a newer code or a connection revoke voids it
-    authorized --> open : token exchange\n(connection.opened)
-    authorized --> [*] : authorization code expires unexchanged,\nor a newer code or a connection revoke voids it
-    open --> revoked : admin revoke, refresh or code reuse,\nor a newer connection for the key\n(connection.revoked, or the newer connection.opened)
-    code_voided --> [*]
-    code_lapsed --> [*]
-    revoked --> [*]
-```
-
-Code entry, the token exchange and every refresh read the key's state as `/mcp` does: a revoked or
-expired key's code answers `oauth.connect_code_invalid`, the one message for a code that is not
-valid, and its authorization code or refresh token answers `invalid_grant`
-(`oauth.authorization_code_invalid`, `oauth.refresh_invalid`). The token exchange reads it in the
-transaction that commits `connection.opened`, so no connection opens after its key's
-`key.revoked`. The connection row is created at Connect, `authorized`; until then the
-authorization request's row, written when the code verified, holds the code's id, and Connect and
-Cancel each delete that row, so one code yields at most one connection. An
-`authorized` connection is not journalled and not listed: `oml keys disconnect` names an open
-connection, and naming an `authorized` one answers `access.not_found`, as an unknown id does; a
-newer code or the revocation of the key's open connection ends it.
-
-A connection is **live** while it is open, its key is neither revoked nor expired, its newest
-refresh token is unexpired, and its resource is the current `<issuer>/mcp`. An open connection
-that is not live stays `open` in the table, with no event, because nothing an actor did ended it:
-
-- one whose key was revoked or expired is refused at every request, because each token lookup
-  reads the key's state, and `key.revoked` records when;
-- one whose newest refresh token lapsed is dead: its next refresh answers `oauth.refresh_invalid`,
-  and a new code's connection replaces it;
-- one whose resource is not the current `<issuer>/mcp`, after `oauth.issuer` was changed or unset,
-  is refused at every request, and works again only if that origin is set again before its
-  refresh token lapses ([ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md) d1).
-
-An open connection that is not live is still replaced, and so never revives, once a newer
-connection of its key opens. A revoked connection never reopens: the key needs a new code.
-
-**Tokens.** An access token is `oml_at_` and a refresh token `oml_rt_`, each followed by 43 base62
-characters under the generation rule of the [key format](#key-format). The second underscore
-keeps a token from parsing as a key, and so from matching the scan's key pattern; the scan's
-`secret.api_token` row names both token formats beside the key format
-([admission](admission.md)). `oauth_tokens` stores the SHA-256 of each, never the token, by the
-same argument as a key's hash. An access token lives `oauth.access_token_ttl` and a refresh token
-unused for `oauth.refresh_token_ttl` expires; both are journalled settings whose defaults and
-admissible ranges are declared on [configuration](../operations/configuration.md). An access token
-is bound to its connection's resource, `<issuer>/mcp` when the connection was created. Every
-refresh answers a new pair and marks the presented refresh token rotated, in one conditional
-update that two racing refreshes cannot both pass
-([Postgres schema](../data/postgres-schema.md#connections-adr-0031)). A rotated refresh token
-presented again revokes the connection and every token it holds. A redeemed authorization code
-presented again does the same only when the request's `client_id` is the connection's and the
-S256 of its `code_verifier` is the stored challenge, because only the holder of the verifier can
-have redeemed first; any other presentation of a redeemed code answers `invalid_grant`
-(`oauth.authorization_code_invalid`) and revokes nothing, and a failed exchange — a wrong
-verifier, client or `redirect_uri` — does not consume the code. The evidence outlives the first
-use: an authorization code's digest is kept after
-redemption, marked redeemed, until the connection is revoked, and a rotated refresh token's row
-keeps its own expiry and stays until that expiry or the revocation, so a reuse inside either window
-is always recognized. Tokens are read from the `Authorization` header only, never from a body or a
-query string.
-
-**Where a connection secret never appears.** No access token, refresh token, authorization code,
-PKCE code verifier, authorization-request handle or connect code, nor any digest of one, appears
-in a log line at any level, a metric label, an `error_description`, a `details` field or a journal
-payload. Log lines name a connection by `connection_id`, a code by `code_id` and an authorization
-request by its row id, and the `/oauth/authorize` response's log line omits the `Location` query,
-which carries the authorization code. [Observability](../operations/observability.md) owns the
-logging rules and lists these among what a log line never carries.
-
-**A token is exactly its key.** At `/mcp` an access token resolves to its connection, which must
-be open and whose `resource` must equal the current `<issuer>/mcp`, else `auth.invalid`
-(`reason: unknown`), and to that connection's key, which must be neither revoked nor expired; from
-there the request is the key's request. At `/mcp` only an `oauth_tokens` row of kind `access`
-authenticates. A refresh token presented there answers `auth.invalid` (`reason: unknown`) and is
-neither rotated nor counted as reuse. At `/oauth/token` only a row of kind `refresh` is a
-`refresh_token`, and any other token answers `invalid_grant` (`oauth.refresh_invalid`). A refresh
-refuses the same resource mismatch as
-`oauth.refresh_invalid`. The verb ceiling, [grant admissibility and the refusal
-order](#grant-admissibility-and-refusal-order), grants, denials, [own](#own) and the permission
-epoch apply to the key, on every request, with no cache. The scope `mcp` adds and narrows nothing.
-A token is accepted nowhere but `/mcp`, so it reaches only the agent-safe subset: a connection can
-do at most what its key can, never more. The MCP facade dispatches its ring calls under the key it
-resolved and never forwards the token. For the same reason a connection cannot upload: an upload's
-parts travel on `/v1` under a key value, and `oml_attach` `open` under a connection answers
-`oauth.attach_refused` before any session is created
-([agent plugin](../api/mcp-plugin.md#oml_attach)).
-
-**Revocation.** `oml keys disconnect <key> <connection-id>`
-(`POST /v2/keys/{key_id}/connections/{connection_id}/revoke`) ends a connection: the lead refuses
-its tokens at their next request, and a follower after replication lag, as for a revoked key
-([key lifecycle](#key-lifecycle)); the same commit voids the key's codes from which no connection
-has opened, as minting does. Revoking or expiring the key ends every connection of it the same way.
-Revoking a connection and listing a key's connections are served whether or not `oauth.issuer` is
-set, so an admin can clean up while the surface is off.
-
-## Review independence and the evidence of collusion
-
-*Available since v0.1.0 (the lineage check); crew and manager comparisons not scheduled · [releases](../product/releases.md)*
-
-Lineage-closure exclusion stops a key from reviewing its own declared work. The **independence
-axis** in per-workarea review policies ([admission.md](admission.md)) goes further, and is
-resolved at promotion time from journalled key→crew→external-manager metadata:
-
-- always: reviewer principal ≠ author principal — two keys held by the same principal cannot play
-  author and reviewer for one row;
-- optionally, for `committed` workareas by policy: reviewer crew or external manager ≠ author crew
-  — the second opinion must come from outside the authoring crew.
-
-A key's crew is the [crew record](workareas.md#crews-recorded-not-operated) it named at issuance
-([key names](#key-names-principals-and-labels)), and a crew's external manager is that record's
-`external_manager`. A key that names no crew satisfies neither optional requirement, and a crew
-that records no external manager satisfies no manager-inequality requirement: such a verdict does
-not count toward the requirement it cannot establish, and the row stays held until one that does
-— failing closed by holding, as admission does everywhere
-([ADR-0026](../adr/ADR-0026-names-are-keys.md) d8).
-
-Both checks use metadata as journalled at promotion time, so a later crew reshuffle does not
-rewrite what was independent when the verdict landed.
-
-What no check can do is prove the absence of collusion between distinct principals. The design's
-answer is visibility, not a claim of impossibility: the evidence export
-([audit-and-lineage.md](audit-and-lineage.md), `oml audit export` in
-[cli/reference.md](../cli/reference.md)) surfaces **reciprocal-approval statistics per key pair**
-— how often key A approved key B's work and vice versa — alongside the grants history and
-per-memory decision trails. A pair of keys rubber-stamping each other shows up as a skewed pair in
-the export for a human or an auditing crew to judge. The statistics are evidence, not a verdict;
-no threshold auto-demotes anything.
-
-## Decision record
-
-This page's decisions are registered as ADR-0010 ([decision register](../adr/index.md)); grant
-admissibility, the refusal order, the issuance order, own and the effective verbs are
-[ADR-0025](../adr/ADR-0025-the-agent-only-memory-surface.md)'s (d1–d3, d14); key names and the
-key's crew and the admin structure reads are the proposed
-[ADR-0026](../adr/ADR-0026-names-are-keys.md)'s (d8, d9, d15). One
-adjacent decision is named elsewhere: programs hold keys and humans hold ceremonies. Connector
-keys, connect codes and connections are
-[ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md)'s (d7, d8, d10, d11). User keys, user
-roots, curators and the user in the reviewer exclusion are the proposed
-[ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)'s.
+Design record: [ADR-0010](../adr/ADR-0010-roles-and-keys.md), [ADR-0031](../adr/ADR-0031-oauth-connections-by-connect-code.md), [ADR-0044](../adr/ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](../adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md).

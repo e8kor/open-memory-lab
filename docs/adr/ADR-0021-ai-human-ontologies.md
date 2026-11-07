@@ -9,10 +9,10 @@ answers: why shared vocabularies are governed claims on the existing pipeline ra
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)
 
-**Release:** claim edges introduced in v0.5.2; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** claim edges introduced in v0.5.2; the rest not built ([releases](../changelog.md))
 
 Everything this record decides is design — no code exists. The v1 slice is
-[FR-19](../product/roadmap.md); every other commitment below carries its own roadmap handle.
+#149; every other commitment below carries its own issue.
 
 ## Context
 
@@ -32,7 +32,7 @@ Two stances bind every decision below:
   policy — `human_required_classes` ([admission](../architecture/admission.md)) — never by a
   parallel mechanism.
 - **On top of the provider floor.** Every vocabulary feature defaults off; with all of them off,
-  OML is a full memory provider (the FR-10..12 floor, [roadmap](../product/roadmap.md)). The
+  OML is a full memory provider (own-held recall, get and supersede on MCP, token-budget recall). The
   features only ever extend that base: ordinary writes gain zero latency and zero new obligations
   unless a workarea's policy opts in. A memory provider on steroids — the steroids are additive.
 
@@ -69,7 +69,7 @@ Two stances bind every decision below:
   authority of d6 is trivially satisfied). `oml:` is a reserved prefix in every tenant's
   namespace: the provider-published upper vocabulary (`is_a`, `part_of`, `replaced_by`,
   `consider`, …) is shipped product data versioned with the release, not journal content
-  ([RS-10](../product/roadmap.md)) — and the docs say so plainly.
+  (#149) — and the docs say so plainly.
 
 - **d3 — Deprecation, never deletion — with the successor declared in the deprecating
   submission.** A term retires by supersession with a deprecation version
@@ -87,7 +87,7 @@ Two stances bind every decision below:
   the body carries the vocabulary workarea id, the pinned `seq` (≤ the release submission's own
   seq), and a Merkle root over the then-active term set — leaf = (`claim_key`, version,
   `term_status`, plaintext_digest), so the pin covers definition bytes, not just identity. The
-  Merkle construction is RS-4's one specification, shared with
+  Merkle construction is #148's one specification, shared with
   [ADR-0020](ADR-0020-dataset-onboarding.md). Trunk vocabulary lives at `committed`; releases
   accumulate as claims; `validated` (frozen) is vocabulary retirement — a freeze, not a
   revocation: terms stay resolvable forever, and nothing retro-invalidates past verdicts, because
@@ -120,7 +120,7 @@ Two stances bind every decision below:
   claim edges — an extension, not a reuse — because a ratified mapping becomes shared structure of
   two vocabularies: ratification requires dreamer(review) on **both** endpoints' vocabularies and
   ratifier ≠ proposer. Both terms persist; a mapping is revocable by supersession. Cross-tenant
-  mappings are [RS-3](../product/roadmap.md), future.
+  mappings are #151, future.
 
 - **d7 — AI-first, human-in-the-loop, placed by policy — and "human" is an attestation.** Any
   writer key proposes (agent or human; provenance distinguishes); dreamer crews review at AI
@@ -189,7 +189,7 @@ Two stances bind every decision below:
   `oml_remember` (kind `term`). Recall gains a `terms: [CURIE, …]` filter and
   `expand_terms: none | descendants` (default `none`); expansion resolves per CURIE against the
   release pinned by the vocabulary that owns the expanded prefix; steering order, `k` and
-  `max_tokens` (FR-11) are untouched — expansion widens a filter before retrieval, never reorders
+  `max_tokens` (#106) are untouched — expansion widens a filter before retrieval, never reorders
   results. Term, term_mapping and vocab_release rows are **excluded** from the shared FTS and
   vector indexes by default (a vocabulary workarea's policy may opt in, mirroring ADR-0020 d11);
   `RecallRequest.kinds` already excludes them — kept deliberate and stated.
@@ -199,16 +199,16 @@ Two stances bind every decision below:
   semantics, only the materialized transitive closure of ratified `is_a`. No auto-import of
   external ontologies in v1: an external ontology enters as an
   [ADR-0020](ADR-0020-dataset-onboarding.md) dataset import whose mapping spec declares
-  `kind=term` (the spec gains a kind mapping as a cheap reservation) — post-v1, after FR-13; the
-  import profile is [RS-11](../product/roadmap.md). Cross-tenant vocabularies:
-  [RS-3](../product/roadmap.md).
+  `kind=term` (the spec gains a kind mapping as a cheap reservation) — post-v1, after #148; the
+  import profile is #148. Cross-tenant vocabularies:
+  #151.
 
 - **d11 — Curation economics are structural.** A vocabulary workarea requires a named curator
   crew at creation. `oml doctor` flags a vocabulary with no active dreamer grant — the orphaned
   vocabulary is the junk-drawer failure mode, surfaced, and the flag names "propose freeze" as the
   next action. Doctor also warns on review availability: a workarea whose policy names
   `human_required_classes` with no attested-human dreamer key in scope is flagged before the queue
-  silently fills. Vocabulary review load lands on [FR-2](../product/roadmap.md)'s measured
+  silently fills. Vocabulary review load lands on #98's measured
   throughput. Proposal floods are bounded by what already exists, not by a new mechanism:
   journalled rate and quota grant attributes, `held_item_expiry`, and queue depth in `oml status`
   and `oml doctor`. And simulations cannot mint vocabulary: vocabulary workareas refuse
@@ -230,7 +230,7 @@ Two stances bind every decision below:
   `memories.terms text[]`; the structural `term_status` payload field; the per-release closure
   table; kinds enums gain `term`, `term_mapping`, `vocab_release` at every enumeration site
   (OpenAPI enums ×4 with `RecallRequest.kinds` deliberately unextended, MCP `oml_remember` kinds, schema comment, silver comment —
-  [postgres-schema](../data/postgres-schema.md)). Events: `workarea.create` payload gains
+  [postgres-schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)). Events: `workarea.create` payload gains
   `prefix`; submission kinds extend; **no new event families**
   ([event catalog](../data/event-catalog.md)). Errors: a new `vocab` family —
   `vocab.cycle_refused` (409), `vocab.prefix_conflict` (409), `vocab.unknown_curie` (422),
@@ -244,23 +244,23 @@ Two stances bind every decision below:
   is **+1 MCP tool** in every `tools/list` — on the order of 100 tokens — accepted and stated:
   tenant-conditional catalogs would break ADR-0014's `tools/list` contract. With shipped defaults,
   an active vocabulary generates **≈7 human verdicts per week** — a design estimate, not a
-  measurement; the measured figure is FR-20's to produce. The campaign path
+  measurement; the measured figure is #149's to produce. The campaign path
   for bursts is a journalled temporary policy change (for example, tuning
   `vocab.mapping_exactMatch` out of `human_required_classes`), reverted after; batch-serve
-  ergonomics for mapping campaigns is a possible future FR, not v1. The `exactMatch` blast radius
+  ergonomics for mapping campaigns is a possible future issue, not v1. The `exactMatch` blast radius
   in v1 is **client-side only** — expansion is descendants-only, so a wrong mapping misleads
   clients that chose to follow it, not recall itself — stated honestly; it stays human-required
   anyway, because a ratified mapping is shared structure of two vocabularies and future features
   build on it.
 
-- **Roadmap rows opened**: [FR-19](../product/roadmap.md) (vocabulary v1 slice: prefixes, terms,
+- **Issues opened**: #149 (vocabulary v1 slice: prefixes, terms,
   deprecation edges, suggest, the validation scanner, releases + closure);
-  [FR-20](../product/roadmap.md) (expansion and mapping quality measurement, including the verdict
-  load); [RS-10](../product/roadmap.md) (the `oml:` upper vocabulary content);
-  [RS-11](../product/roadmap.md) (the external-ontology import profile over ADR-0020, plus the
+  #149 (expansion and mapping quality measurement, including the verdict
+  load); #149 (the `oml:` upper vocabulary content);
+  #148 (the external-ontology import profile over ADR-0020, plus the
   mapping spec's kind field).
 
-- **ADR-0020 touch**: the import mapping spec gains a `kind` mapping; RS-4's Merkle specification
+- **ADR-0020 touch**: the import mapping spec gains a `kind` mapping; #148's Merkle specification
   now also covers release pins.
 
 ## Rejected alternatives
@@ -281,7 +281,7 @@ Two stances bind every decision below:
   explicit ratified acts.
 - **Global prefix uniqueness.** A cross-tenant UNIQUE on prefixes leaks namespace existence
   across tenants through registration failures. Uniqueness is per tenant; cross-tenant meaning is
-  RS-3's problem.
+  #151's problem.
 - **Per-row vocabulary without identifier permanence.** Terms as ordinary claims with erasable,
   re-mintable keys would let `PREFIX:name` change meaning silently — the one failure an identifier
   system exists to prevent. Permanence-at-first-promotion is the smallest rule that closes it.

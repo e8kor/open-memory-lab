@@ -162,6 +162,8 @@ fn submit(idem: &str, body: &str, from: Option<&str>, until: Option<&str>) -> Su
         valid_from: from.map(str::to_owned),
         valid_until: until.map(str::to_owned),
         anchor: None,
+        format: None,
+        title: None,
     }
 }
 
@@ -485,6 +487,8 @@ async fn valid_time_is_refused_on_steering_and_on_a_retirement() {
         rule: None,
         valid_from: None,
         valid_until: Some("2026".to_owned()),
+        format: None,
+        title: None,
     };
     let err = w.app.supersede(&w.writer, &retire).await.unwrap_err();
     assert!(matches!(err, AppError::ValidTime(_)), "{err:?}");
@@ -514,6 +518,8 @@ async fn a_fact_ends_by_a_reviewed_supersession_and_a_successor_inherits_no_vali
         rule: None,
         valid_from: None,
         valid_until: until.map(str::to_owned),
+        format: None,
+        title: None,
     };
     let v2 = w
         .app
@@ -613,6 +619,8 @@ async fn a_ratified_supersession_ends_the_replaced_version_where_the_successor_b
         rule: None,
         valid_from: Some("2026-06-01".to_owned()),
         valid_until: None,
+        format: None,
+        title: None,
     };
     let v2 = w
         .app

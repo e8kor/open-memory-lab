@@ -9,7 +9,7 @@ answers: why review capacity is external crews rather than provider model calls;
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
-**Release:** partly in v0.1.0; the rest not scheduled ([releases](../product/releases.md#decisions))
+**Release:** partly in v0.1.0; the rest not built ([releases](../changelog.md))
 
 ## Context
 
@@ -22,7 +22,7 @@ answer, and the review policy must be a journalled object per workarea rather th
 configuration, because the status ladder ([workareas](../architecture/workareas.md)) works by
 swapping the policy, never the write-eligibility rule. The lifecycle state machine and scan
 contract are owned by [admission](../architecture/admission.md); the review ceremony transcript
-by [CLI sessions](../cli/sessions.md). Everything here is decided, not built.
+by [CLI sessions](../cli/reference.md). Everything here is decided, not built.
 
 One boundary this record draws deliberately: **declaring lineage is attribution, not an act of
 connection-edge establishment**, so submitting a claim whose `derives_from` names another author's
@@ -47,7 +47,7 @@ other defect of the claim.
   deterministic, runs in the same call as capture, and can veto — a scan veto is a typed
   refusal, not a silent drop; it journals nothing, being reproducible from the journalled
   rule-set pin (wording amended 2026-10-30 — the catalog's refusals-journal-nothing rule
-  governs, and a durable veto trace is RS-16). Ratification journals a snapshot of the policy it was
+  governs, and a durable veto trace is #140). Ratification journals a snapshot of the policy it was
   taken under; release is the outbox row the lake-writer drains
   ([storage](../architecture/storage.md)). Only promoted rows ever reach silver.
 
@@ -56,7 +56,7 @@ other defect of the claim.
   review through the CLI is the exception path, not the default. What the provider sells is the
   structure — held-until-reviewed, non-author, evidence-bearing — and that is only credible if
   the provider is absent from the verdict. Review throughput is unmeasured; the
-  [roadmap](../product/roadmap.md) carries it as an FR with an exit criterion.
+  [open issues](https://github.com/e8kor/open-memory-lab/issues?q=label%3Aroadmap) carries it as an issue with an exit criterion.
 
 - **d3 — Review policy is a journalled object per workarea.** Fields: k (verdicts required),
   required roles, human-required classes, the independence axis, and held-item expiry. k is
@@ -99,7 +99,7 @@ other defect of the claim.
 ## Consequences
 
 - d1 commits the schema to a held state with a quarantine body reference distinct from the
-  promoted body path ([Postgres schema](../data/postgres-schema.md)), and commits the lake to
+  promoted body path ([Postgres schema](https://github.com/e8kor/open-memory-lab/tree/main/migrations)), and commits the lake to
   never seeing a held body ([storage](../architecture/storage.md)).
 - d2 puts the tenant's review latency in the tenant's hands: a tenant whose crews stop reviewing
   stops promoting. That is the designed failure mode (d6), and `oml doctor` reports review

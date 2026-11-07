@@ -9,7 +9,7 @@ answers: what a guardrail is and how it differs from steering; how it composes w
 
 **Status:** accepted design · 2026-11-04 · proposed 2026-10-31, revised 2026-11-04 onto the v0.4.0 API, ADR-0044 and ADR-0045, and accepted with release v0.5.1
 
-**Release:** introduced in v0.5.1 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.5.1 ([releases](../changelog.md))
 
 **Amends:** ADR-0001 (d5), ADR-0006 (d6), ADR-0012 (d5), ADR-0013 (d5), ADR-0014 (d2), ADR-0018 (d4), ADR-0022 (d2), ADR-0025 (d2, d11), ADR-0026 (d9), ADR-0028 (d1), ADR-0029 (d7), ADR-0039 (d2, d3, d15); ADR-0044 (d10) and ADR-0045 (d9)
 
@@ -21,7 +21,7 @@ on settings"; guardrails are "special kind of claims". Steering already applies 
 ([ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d8) and `oml hook session-start` injects
 it ([ADR-0029](ADR-0029-session-start-hook.md) d1, d2), but as "data to check, not instructions
 to follow" (its d6), with no severity and no check at the tool call, where every harness
-surveyed enforces; [session claims](../engineering/session-claims.md#sources) quotes each source
+surveyed enforces; [session claims](https://github.com/e8kor/open-memory-lab/blob/main/design/session-claims.md) quotes each source
 this record leans on and catalogues the other claim kinds these hook points could carry.
 Accepted and introduced in v0.5.1; what it leaves unbuilt is named in d15.
 
@@ -212,7 +212,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
   JSON line and a line holding its SHA-256 in hex, to `$XDG_STATE_HOME/oml/guardrails/<session_id>.json`
   (default `~/.local/state`; directory 0700, file 0600) by write-and-rename, refusing a
   `session_id` outside `[A-Za-z0-9-]`, and removes files there older than 30 days, a design
-  constant. The cache is a client copy class outside erasure (FR-54); no tool argument leaves
+  constant. The cache is a client copy class outside erasure (#137); no tool argument leaves
   the machine; a built-in rule asks before any `edit` under the cache directory and any `shell`
   word containing `oml/guardrails`.
 
@@ -280,14 +280,14 @@ answered all ten on 2026-11-04, and d18 records the answers.
   markers in the named file, refusing any other count. Its header names the origin, scope node,
   guardrail scope, count and `set_digest`, and "text, not enforcement; do not edit"; `--check`
   exits 1 when the live digest differs. The costs: a copy no erasure or demotion reaches
-  (FR-54), read by the repository's readers, stale until re-exported. An MCP prompt,
+  (#137), read by the repository's readers, stale until re-exported. An MCP prompt,
   `guardrails`, renders d6's text for the key's default workarea; prompts are "designed to be
   user-controlled" ([prompts](https://modelcontextprotocol.io/specification/2025-06-18/server/prompts),
   fetched 2026-10-31), so it reaches Claude's apps only when a person invokes it (amends ADR-0014
   d2 with the prompts capability, and ADR-0039 d2 by one prompt beside its three tools, which
   its d8 admits: a prompt is not a tool). No
-  adapter for the [other harnesses](../engineering/session-claims.md#hook-points-by-harness) is
-  built here (FR-53).
+  adapter for the [other harnesses](https://github.com/e8kor/open-memory-lab/blob/main/design/session-claims.md) is
+  built here (#116).
 
 - **d12 — A change freeze is a guardrail with ADR-0036's validity interval, once that record is
   accepted.** Until then a freeze ends by a reviewed retirement. On acceptance of both, kind
@@ -331,7 +331,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
     | S3 | d6, d7: `oml hook guardrails` and its SessionStart and SubagentStart entries | `every_line_names_its_workarea_claim_key_version_and_reviewer_count`, `a_conflict_line_names_the_other_artifact_ids`, `over_the_cap_no_guardrail_line_is_printed_and_the_user_is_told`, `a_compact_source_prints_the_whole_set_again`, `the_header_names_the_guardrail_scope_the_server_applied`, `the_key_value_is_redacted_in_every_line`; `check_plugin.py` holds both entries as ADR-0029 d7 holds its own |
     | S4 | d8, d9: the rule cache, `oml hook pre-tool-use` and its PreToolUse entry | `a_matching_deny_rule_answers_deny_with_the_guardrail_id_and_body`, `deny_wins_over_ask`, `no_input_ever_answers_allow`, `the_check_sends_no_request`, `an_unreadable_cache_denies_every_call`, `a_cache_whose_digest_line_does_not_match_denies_every_call`, `a_session_with_no_cache_decides_nothing_and_warns_in_one_line`, `a_cache_not_written_prints_no_line_as_checked_and_names_the_cause`, `a_subagent_start_writes_no_cache`, `a_cache_file_older_than_thirty_days_is_removed_at_start`, `an_edit_of_the_cache_directory_or_a_shell_word_naming_it_asks`, `each_mapped_tool_is_matched_on_its_argument_and_no_other_tool_by_any_rule`, `a_shell_segment_after_a_control_operator_is_matched`, `a_quoted_operator_splits_no_segment`, `a_command_that_does_not_tokenise_or_holds_a_substitution_asks`, `a_final_star_word_matches_zero_or_more_words_from_the_first_word_on`, `a_path_and_its_glob_are_normalised_against_the_input_cwd`, `a_star_stops_at_a_slash_and_a_double_star_does_not`, `a_fetch_host_is_the_whatwg_host_lower_cased_without_a_trailing_dot`, `a_glob_of_many_stars_matches_a_long_command_in_linear_time`; `check_plugin.py` holds the PreToolUse matcher equal to d8's tools, the timeout, `onFailure` and the status message, and runs the command under `/bin/sh` with no `oml`, with a stand-in older `oml` and with one whose verb fails: the first two exit 0 with no output, the third exits non-zero |
     | S5 | d11: export and the MCP prompt; d12 | `export_writes_promoted_guardrails_only`, `export_refuses_a_scope_inside_an_in_progress_subtree`, `the_header_carries_origin_scope_node_guardrail_scope_and_set_digest`, `check_exits_one_when_the_set_changed`, `agents_md_refuses_a_file_without_exactly_one_marker_pair`, `the_prompt_renders_the_hook_text`, `a_freeze_applies_only_inside_its_interval` |
-    | S6 | d16, d17: user roots and the pages, after ADR-0044 and ADR-0045 W3 | `a_user_key_with_scope_ancestors_loads_universes_guardrails_through_its_node_grant`, `a_user_key_with_scope_workarea_loads_no_universe_guardrail`, `no_guardrail_of_another_users_root_is_ever_served`, `a_user_keys_guardrail_write_into_universe_is_refused_as_universe_curated`, `a_universe_guardrail_is_served_with_origin_universe_and_no_source`, `the_users_reviewer_key_ratifies_a_guardrail_its_agents_propose_in_its_root`, `the_user_page_shows_the_guardrails_in_force_at_the_users_root_and_writes_none` |
+    | S6 | d16, d17: user roots and the pages, after ADR-0044 and ADR-0045 W3 | `a_user_key_with_scope_ancestors_loads_universes_guardrails_through_its_node_grant`, `a_user_key_with_scope_workarea_loads_no_universe_guardrail`, `no_guardrail_of_another_users_root_is_ever_served`, `a_user_keys_guardrail_write_into_universe_is_refused_as_universe_curated`, `a_universe_guardrail_is_served_with_origin_universe_and_no_source`, `the_users_reviewer_key_ratifies_a_guardrail_its_agents_propose_in_its_root`, `the_user_page_shows_guardrail_scope_and_selects_nested_workareas` |
 
 - **d16 — Under user roots, `ancestors` walks from the scope node through the user's root to
   `universe`, under the same reader test, and `universe`'s guardrails are the curators'.** This
@@ -368,11 +368,12 @@ answered all ten on 2026-11-04, and d18 records the answers.
     - **Session keys load nothing.** A session key has no value, so it never reaches `/v1` or
       `/mcp` (ADR-0045 d6), and no hook ever runs under one; its `guardrail_scope` matters only
       to a page that reads the set through it.
-    - **The user page may show the set in force at the person's root**, read-only: d5's use case
-      under `<user>-web` at `universe.<user>`, rendered as d6's lines with their provenance. Its
-      own-held list is `<user>-web`'s, which writes no guardrail, so the person's agents' held
-      guardrails show where every held row does, on the memories view. It reads no rule cache
-      and checks no call.
+    - **The user page shows the set in force at a selected workarea**, read-only: a selector
+      lists the person's root and its descendants, defaulting to the root. The page names the
+      selected path, whether the key reads it alone or its readable parents too, and each rule's
+      source workarea. Its own-held list is `<user>-web`'s, which writes no guardrail, so the
+      person's agents' held guardrails show on the memories view. It reads no rule cache and
+      checks no call.
     - **Review shows the load warning.** A held guardrail served on either page's review view
       carries d10's sentence, since the page serves the same ceremony (ADR-0045 d11).
     - **No page writes, supersedes, retires or exports a guardrail** in v0.5.1: a guardrail is
@@ -405,7 +406,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
       measure, the set's order, conflicts and digest. `oml-cli` links `oml-guardrail` and no
       other inward crate, so the hooks and the server cannot disagree on what a rule means.
       This amends [ADR-0006](ADR-0006-pure-rust.md) d6's "no inward edge" for `oml-cli` by this
-      one leaf, and the [workspace plan](../engineering/workspace-plan.md) states it.
+      one leaf, and the workspace plan states it.
 
 ## Consequences
 
@@ -413,10 +414,10 @@ answered all ten on 2026-11-04, and d18 records the answers.
   lineage (the rule cache and the export as client copy classes), the agent plugin and its
   README, the event catalog, the Postgres schema, the test strategy, and the D11 to D14 cells of
   the [register](index.md). Each cost is stated in its decision (d1, d4, d5, d6, d9, d10, d11).
-- **Roadmap rows, each proposed**: [FR-50](../product/roadmap.md) to FR-54 for this record, and
-  FR-55 to FR-59 for the kinds catalogued on [session claims](../engineering/session-claims.md).
+- **Open issues**: #137 for lazy-loaded rules and exported copies, and
+  #136 for the kinds catalogued on [session claims](https://github.com/e8kor/open-memory-lab/blob/main/design/session-claims.md).
 - **Process.** With the proposal: this file, a register row, a nav entry, `llms.txt`, one
-  [changelog](../changelog.md) entry and the roadmap rows. The contract pages, `openapi.yaml`
+  [changelog](../changelog.md) entry and the issues. The contract pages, `openapi.yaml`
   and the designed annex change with the build step that serves each field (ADR-0039 d9), and
   `info.version` with them (d18, Q9).
   At acceptance, on 2026-11-04 with release v0.5.1: the record and its row became `accepted
@@ -439,7 +440,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
 | **d4 — Closest wins, as AGENTS.md does** | A descendant could loosen an ancestor's rule by restating it. |
 | **d5 — A guardrail segment in every recall, or an `oml_guardrails` MCP tool** | The first repeats up to 9,600 characters per recall under a cap and provenance unlike steering's; the second lets the model choose when to read its own rules. |
 | **d6 — A first section of `oml hook session-start`** | One 10,000-character cap shared with never-cut steering, over which Claude gets a 2,000-character preview; and one fail-silent mode for rules a user must know did not load. |
-| **d6 — A per-turn reminder at UserPromptSubmit** | The set does not change within a session; its effect is unmeasured (FR-52). |
+| **d6 — A per-turn reminder at UserPromptSubmit** | The set does not change within a session; its effect is unmeasured (#112). |
 | **d8 — Regular expressions, or an `allow` effect** | The first can run away and differs across engines; the second lets a stored claim widen what an agent may do. |
 | **d9 — Fetch the set on every tool call** | A request per tool call, the tool's arguments sent to the server, and a down server stops all work. |
 | **d9 — An `exit 0` fallback after the check, as ADR-0029 d7 has** | A crash of the verb would allow the call, so `onFailure: "block"` would cover a timeout alone. |

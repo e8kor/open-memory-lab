@@ -427,7 +427,7 @@ export interface paths {
         put?: never;
         /**
          * Verdict against a valid serve; the journalled verdict records the served digests.
-         * @description Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row's workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (FR-66; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item.
+         * @description Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row's workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item.
          */
         post: operations["postVerdict"];
         delete?: never;
@@ -567,7 +567,7 @@ export interface paths {
         put?: never;
         /**
          * Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
-         * @description Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl setting.
+         * @description Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
          */
         post: operations["mintConnectCode"];
         delete?: never;
@@ -798,6 +798,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/web/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The people of the tenant with their quota use and limits, and the pending deletion requests.
+         * @description Requires: admin key role (ADR-0068 d5, d6, d11). mode is signup.mode; address_limit_shared is true when no proxy is trusted, so every sign-up shares one address limit. under_quotas marks the people of the sign-up tenant. oml doctor reads it for its quota and signup lines. Journals nothing. Proposed.
+         */
+        get: operations["listWebUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/search": {
         parameters: {
             query?: never;
@@ -966,6 +986,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/web/data/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The user page's page of memories as JSON.
+         * @description The Memories view's query (state, workarea, origin, author, q, limit, cursor) and its scope, as <user>-web: the rows the list shows with the card's fields alone, and the workareas the key may read under the filter with their rows counted by state and their dropdown's acts. The session cookie alone; an Authorization header is access.verb_ceiling web_is_human_only, no session access.not_found; no-store, nosniff, no CORS (ADR-0045 d25, d30).
+         */
+        get: operations["userPageMemoriesData"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/admin/data/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The admin page's page of memories as JSON.
+         * @description As /web/data/memories, as <user>-admin through the admin read: the page is one memory.admin_read; the workareas are the tenant's tree, counted as structure (ADR-0045 d24, d25, d30).
+         */
+        get: operations["adminPageMemoriesData"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/web/admin": {
         parameters: {
             query?: never;
@@ -981,9 +1041,117 @@ export interface paths {
         put?: never;
         /**
          * One act of the admin page, named by action, run as the capacity it needs.
-         * @description Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as <user>-curate; demote, planned for v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
+         * @description Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
          */
         post: operations["adminPageAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/sign-up": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept the terms and create the account, in open sign-up.
+         * @description Only where signup.mode is open (ADR-0068 d2, d9). The same-origin check; the sealed __Host-oml_signup cookie the callback set for an unlisted, verified identity; accept_terms=yes and the current terms_version. Takes one slot of the client address's hourly limit (limit.rate past it). Creates the entry under a drawn user, journalled as web.signed_up with the terms version, issues <user>-web and <user>-review, opens a session and answers 303 /web/start. Proposed.
+         */
+        post: operations["webSignUp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The onboarding page; the sign-in page without a session.
+         * @description Three steps: choose a client (query client: claude-ai, claude-code, other), get its credential, and wait for the first connection and the first memory. The only page with a script, hashed in its CSP with connect-src self, for its copy buttons and its status poll (ADR-0068 d10). Proposed.
+         */
+        get: operations["startPage"];
+        put?: never;
+        /**
+         * One act of the onboarding page, named by action.
+         * @description Requires a session, csrf_token and the same-origin check. issue_claude_ai issues a connector key <user>-claude-ai and shows its connect code once; issue_claude_code and issue_other issue <user>-claude-code and <user>-agent and show the value once; a taken name gains -2 to -9. Past the keys quota, limit.quota. request_deletion with confirm=delete journals web.deletion_requested (ADR-0068 d6, d10). Proposed.
+         */
+        post: operations["startPageAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/start/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether the person's agent has connected and the state of their newest memory.
+         * @description A session only; without one access.not_found (ADR-0068 d7, d10). connected is true once any of the person's agent keys authenticated since the process started or a connector key has an open connection. Proposed.
+         */
+        get: operations["startStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/start/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything the person holds, as a JSON download.
+         * @description A session only. Every memory in the person's root and below, every state, with its workarea path, claim key, version, state, text and times; the person's keys (ADR-0068 d6). Proposed.
+         */
+        get: operations["startExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The admin's users page — quota use, quotas and pending deletion requests.
+         * @description For an admin session; any other answers access.not_found (ADR-0068 d5, d6, d8). Proposed.
+         */
+        get: operations["usersPage"];
+        put?: never;
+        /**
+         * One act of the users page, named by action, run as <user>-admin.
+         * @description set_quota (user, quota, limit; empty limit returns to the default) journals web.quota_set; disable_user journals web.user_disabled and cuts off every agent key of the person; close_deletion disables the person and journals web.deletion_closed (ADR-0068 d5, d6, d8). Proposed.
+         */
+        post: operations["usersPageAct"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1103,7 +1271,7 @@ export interface components {
          * @description The closed error vocabulary; identical to docs/api/errors.md by construction. The oauth codes other than oauth.connect_refused and oauth.attach_refused travel inside RFC error bodies on the OAuth endpoints, at the start of error_description, or on the authorization page; oauth.connect_refused answers on /v2 in this envelope, and oauth.attach_refused, an /mcp tool result, is answered by no served tool since oml_attach left the catalog (ADR-0031, ADR-0039 d2, d9).
          * @enum {string}
          */
-        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "workarea.frozen" | "workarea.in_progress_refused" | "workarea.held_remaining" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
+        ErrorCode: "auth.missing" | "auth.invalid" | "access.verb_ceiling" | "access.grant_refused" | "access.not_found" | "access.author_only" | "access.issuer_ceiling" | "access.role_exclusive" | "access.banned" | "request.validation" | "request.idempotency_key_required" | "request.payload_too_large" | "request.workarea_unresolved" | "request.unsupported_media" | "oauth.client_invalid" | "oauth.redirect_refused" | "oauth.pkce_required" | "oauth.resource_mismatch" | "oauth.authorization_expired" | "oauth.connect_code_invalid" | "oauth.authorization_code_invalid" | "oauth.refresh_invalid" | "oauth.origin_refused" | "oauth.attach_refused" | "oauth.connect_refused" | "idempotency.in_progress" | "idempotency.digest_mismatch" | "submission.scan_veto" | "submission.format_invalid" | "submission.attachment_missing" | "submission.simulation_id_required" | "submission.lineage_required" | "submission.tip_conflict" | "submission.version_conflict" | "submission.claim_key_conflict" | "submission.similar_exists" | "submission.universe_refused" | "workarea.frozen" | "workarea.in_progress_refused" | "workarea.held_remaining" | "workarea.transition_refused" | "review.author_in_lineage" | "review.ratifier_is_proposer" | "review.serve_invalid" | "simulation.audience_refused" | "simulation.ended" | "simulation.taint_refused" | "simulation.tip_refused" | "vocab.cycle_refused" | "vocab.prefix_conflict" | "vocab.unknown_curie" | "vocab.inactive_curie" | "upload.session_invalid" | "upload.digest_mismatch" | "lifecycle.erased" | "name.taken" | "limit.rate" | "limit.quota" | "export.not_ready" | "settings.retired_key" | "settings.invalid" | "system.internal" | "system.unavailable";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -1153,12 +1321,16 @@ export interface components {
              */
             on_similar?: "hold" | "refuse";
             anchor?: components["schemas"]["Anchor"];
+            /** @description The media type of body, signed with the version and fixed for it: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. An unknown value is request.validation with details.field format and details.allowed; a source its format refuses is 422 submission.format_invalid; kinds other than memory and derived_fact take text/plain or text/markdown only (ADR-0056 d1, d13). */
+            format?: string;
+            /** @description One line stating the one fact the body shows, NFC, at most 100 characters, signed with the version. Required with a format other than text/plain and text/markdown: request.validation with details.field title otherwise (ADR-0056 d10). */
+            title?: string;
             origin?: components["schemas"]["Origin"];
         };
         SubmitAccepted: {
             artifact_id: string;
             claim_key: string;
-            /** @description The ordinal within the claim_key; for a successor, 1 + the greatest version of the claim_key in any state, so it counts versions the key may not read — a stated residual, FR-31 (docs/architecture/audit-and-lineage.md). */
+            /** @description The ordinal within the claim_key; for a successor, 1 + the greatest version of the claim_key in any state, so it counts versions the key may not read — a stated residual, #129 (docs/architecture/audit-and-lineage.md). */
             version: number;
             /** @constant */
             state: "held";
@@ -1285,6 +1457,10 @@ export interface components {
             valid_from?: string | null;
             /** @description When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (proposed ADR-0059 d2, d4). */
             valid_until?: string | null;
+            /** @description The media type signed with the version; text/plain for every version written before formats (ADR-0056 d1, d12). */
+            format?: string;
+            /** @description The title signed with the version, or null (ADR-0056 d10). */
+            title?: string | null;
             /** @description On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (proposed ADR-0059 d4). */
             replaces_valid_until?: string;
         };
@@ -1607,25 +1783,29 @@ export interface components {
             valid_from?: components["schemas"]["ValidEnd"];
             /** @description When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3). */
             valid_until?: components["schemas"]["ValidEnd"];
+            /** @description The media type of body, signed with the successor and fixed for it; nothing is inherited from the target, so a format changes by supersession alone: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. An unknown value is request.validation with details.field format and details.allowed; a source its format refuses is 422 submission.format_invalid; kinds other than memory and derived_fact take text/plain or text/markdown only (ADR-0056 d1, d13). */
+            format?: string;
+            /** @description One line stating the one fact the body shows, NFC, at most 100 characters, signed with the version. Required with a format other than text/plain and text/markdown: request.validation with details.field title otherwise (ADR-0056 d10). */
+            title?: string;
         };
         /** @description The origin the author declares (ADR-0057 d1-d3, d21): signed in the submission event, immutable per version, shown to the reviewer, never fetched by the server, and clear metadata that crypto-shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither. Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path or fragment is submission.scan_veto. */
         Anchor: {
             repo?: components["schemas"]["AnchorRepo"];
-            /** @description A page outside a repository: an absolute https URL with no user information and no fragment. Or a chat turn's session, chat://<harness>/<session>, the session 32 lower-case hex digits derived by the plugin, never the harness's own id; then rev is refused and fragment, hash and hasher oml-turn/1 are required (ADR-0063 d4, d5). */
+            /** @description A page outside a repository, a Delta table (ADR-0062 d5) or a chat turn's session (ADR-0063 d4, d5): an absolute https, s3, gs or file URL with no user information, no query and no fragment; an s3 or gs bucket is a DNS-safe name, and an s3, gs or file path has no trailing slash. A chat uri is chat://<harness>/<session>, the session 32 lower-case hex digits derived by the plugin, never the harness's own id; then rev is refused and fragment, hash and hasher oml-turn/1 are required. */
             uri?: string;
-            /** @description With repo, required: a full git object id, 40 or 64 lower-case hex digits. With uri, optional: a page version, printable ASCII without whitespace. */
+            /** @description With repo, required: a full git object id, 40 or 64 lower-case hex digits. With uri, optional: a page version or a Delta table version in decimal, printable ASCII without whitespace. */
             rev?: string;
             /** @description With repo, required; with uri, refused. NFC, relative POSIX, at most 1,024 UTF-8 bytes, no empty, . or .. segment, no leading /, no backslash or control character. */
             path?: string;
-            /** @description The part of the file or page: a heading slug, an ADR decision handle dN, or a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file or page (ADR-0057 d3, d21). With a chat uri, required: turn=<n> or turn=<n>-<m>, 1 <= n <= m <= 100000, the person's prompts counted from 1; turn= is refused with any other anchor (ADR-0063 d4). */
+            /** @description The part of the file or page: a heading slug, an ADR decision handle dN, a line span L<n> or L<n>-L<m> (1 <= n <= m <= 10000000), or a Delta column col=<path> (ADR-0062 d5); page=<n> is reserved and refused. NFC, no whitespace, control character or #. Absent, the whole file, page or table (ADR-0057 d3, d21). With a chat uri, required: turn=<n> or turn=<n>-<m>, 1 <= n <= m <= 100000, the person's prompts counted from 1; turn= is refused with any other anchor (ADR-0063 d4). */
             fragment?: string;
             /** @description Digest of the fragment's text, or the file's, under hasher. */
             hash?: string;
             /**
-             * @description oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7). oml-turn/1: HMAC-SHA-256 of the person's prompt as the harness passed it, UTF-8 after NFC, keyed by the person's chat salt, which never leaves their machine; with a chat uri alone (ADR-0063 d4).
+             * @description oml-md/1: NFC, LF, whitespace runs to one space, trimmed, SHA-256 (ADR-0057 d7). oml-turn/1: HMAC-SHA-256 of the person's prompt as the harness passed it, UTF-8 after NFC, keyed by the person's chat salt, which never leaves their machine; with a chat uri alone (ADR-0063 d4). oml-rustdoc/1: a module doc block without its //! markers, then oml-md/1 (ADR-0061 d7). oml-crate/1: SHA-256 of one line per fact of a crate: name, description, root doc, binaries, internal dependencies and dependents (ADR-0061 d7).  oml-delta-table/1, oml-delta-schema/1 and oml-delta-col/1 hash the facts a Delta table claim, its schema claim and a column claim state (ADR-0062 d7). The server computes none of the rust or delta hashes.
              * @enum {string}
              */
-            hasher?: "oml-md/1" | "oml-turn/1";
+            hasher?: "oml-md/1" | "oml-turn/1" | "oml-rustdoc/1" | "oml-crate/1" | "oml-delta-table/1" | "oml-delta-schema/1" | "oml-delta-col/1";
         };
         /** @description What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission event, immutable per version, never inherited by a successor. Omitted on a write, it is recorded manual. chat requires a chat anchor and a chat anchor requires chat; either mismatch is request.validation naming /origin/kind. */
         Origin: {
@@ -2102,6 +2282,13 @@ export interface components {
              * @enum {string|null}
              */
             profile?: "curator" | null;
+            /** @description The key's one connect code that can still open a connection, named and never shown: its id, its expiry, and whether it outlives the ten-minute default (a reviewer code, ADR-0067 d3). Null when none is live and for a bearer key. */
+            live_connect_code?: null | {
+                code_id: string;
+                /** Format: date-time */
+                expires_at: string;
+                extended: boolean;
+            };
             /** @description A connector key's open and revoked connections in creation order, at most one open; an authorized one, between Connect and the token exchange, is not listed. Empty for a bearer key (ADR-0031 d11). */
             connections?: components["schemas"]["Connection"][];
         };
@@ -4346,7 +4533,14 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description How long the code lives, 1 second to 30 days; omitted, the ten-minute default. A lifetime past ten minutes is minted only for a connector key whose grants all sit on one workarea other than the universe and that names no user root; otherwise 422 oauth.connect_refused with details.reason not_confined. Outside 1 to 2592000 is request.validation naming /ttl_seconds (ADR-0067 d3). */
+                    ttl_seconds?: number;
+                };
+            };
+        };
         responses: {
             /** @description The connect code, shown once. */
             201: {
@@ -5135,6 +5329,63 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listWebUsers: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The people and the pending requests. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        mode: "allowlist" | "open";
+                        address_limit_shared: boolean;
+                        users: {
+                            user: string;
+                            signed_up: boolean;
+                            disabled: boolean;
+                            under_quotas: boolean;
+                            usage: {
+                                memories?: number;
+                                keys?: number;
+                                connections?: number;
+                            };
+                            quotas: {
+                                memories?: number;
+                                keys?: number;
+                                connections?: number;
+                                requests_per_minute?: number;
+                            };
+                        }[];
+                        deletions: {
+                            user: string;
+                            /** Format: date-time */
+                            requested_at: string;
+                        }[];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
     searchSettings: {
         parameters: {
             query?: never;
@@ -5442,7 +5693,7 @@ export interface operations {
             content: {
                 "application/x-www-form-urlencoded": {
                     /** @enum {string} */
-                    action: "issue_key" | "connect_key" | "connect_code" | "cut_off" | "create_workarea" | "review_next" | "verdict" | "sign_out";
+                    action: "issue_key" | "connect_key" | "connect_code" | "cut_off" | "create_workarea" | "workarea_mode" | "workarea_transition" | "workarea_ratify" | "review_next" | "verdict" | "sign_out";
                     csrf_token: string;
                 };
             };
@@ -5541,10 +5792,68 @@ export interface operations {
             };
         };
     };
+    userPageMemoriesData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description {items, next_cursor, workareas, base}. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description access.not_found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPageMemoriesData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description {items, next_cursor, workareas, base}. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description access.not_found, for a session that is not an admin's. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminPage: {
         parameters: {
             query?: {
-                view?: "people" | "queue" | "review" | "curate" | "memories";
+                view?: "people" | "queue" | "review" | "held" | "curate" | "memories" | "workarea";
                 q?: string;
                 memory?: string;
             };
@@ -5585,7 +5894,7 @@ export interface operations {
             content: {
                 "application/x-www-form-urlencoded": {
                     /** @enum {string} */
-                    action: "allow_email" | "remove_email" | "set_admin" | "grant_review" | "grant_curation" | "review_next" | "verdict" | "curate" | "supersede" | "cut_off";
+                    action: "allow_email" | "remove_email" | "set_admin" | "grant_review" | "grant_curation" | "review_next" | "verdict" | "bulk_confirm" | "bulk_verdict" | "curate" | "supersede" | "cut_off" | "workarea_mode" | "workarea_transition" | "workarea_ratify";
                     csrf_token: string;
                 };
             };
@@ -5599,6 +5908,229 @@ export interface operations {
                 content: {
                     "text/html": string;
                 };
+            };
+        };
+    };
+    webSignUp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    /** @enum {string} */
+                    accept_terms: "yes";
+                    terms_version: string;
+                };
+            };
+        };
+        responses: {
+            /** @description To /web/start, setting the __Host-oml_session cookie. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description request.validation (accept_terms or terms_version), on a page. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description limit.rate, on a page. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    startPage: {
+        parameters: {
+            query?: {
+                client?: "claude-ai" | "claude-code" | "other";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    startPageAct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    /** @enum {string} */
+                    action: "issue_claude_ai" | "issue_claude_code" | "issue_other" | "request_deletion";
+                    csrf_token: string;
+                    confirm?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The page with the credential, shown once. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description After request_deletion, to /web/start. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    startStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        connected: boolean;
+                        /** @enum {string|null} */
+                        first_memory: "held" | "promoted" | null;
+                    };
+                };
+            };
+            /** @description access.not_found, on a page. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    startExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export, Content-Disposition attachment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description access.not_found, on a page. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    usersPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description access.not_found, on a page. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    usersPageAct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    /** @enum {string} */
+                    action: "set_quota" | "disable_user" | "close_deletion";
+                    csrf_token: string;
+                    user: string;
+                    /** @enum {string} */
+                    quota?: "memories" | "keys" | "connections" | "requests_per_minute";
+                    limit?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Back to /web/admin/users. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

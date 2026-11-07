@@ -69,6 +69,14 @@ class SubmitRequest:
                 shredding never erases. Exactly one of repo (with rev and path) and uri; hash and hasher together or neither.
                 Any other shape is request.validation naming the field, such as /anchor/path; a scan finding in repo, uri, path
                 or fragment is submission.scan_veto.
+            format_ (str | Unset): The media type of body, signed with the version and fixed for it: text/plain (the
+                default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code;
+                lang=<language>. An unknown value is request.validation with details.field format and details.allowed; a source
+                its format refuses is 422 submission.format_invalid; kinds other than memory and derived_fact take text/plain or
+                text/markdown only (ADR-0056 d1, d13).
+            title (str | Unset): One line stating the one fact the body shows, NFC, at most 100 characters, signed with the
+                version. Required with a format other than text/plain and text/markdown: request.validation with details.field
+                title otherwise (ADR-0056 d10).
             origin (Origin | Unset): What kind of source the text was taken from (ADR-0063 d1, d2): signed in the submission
                 event, immutable per version, never inherited by a successor. Omitted on a write, it is recorded manual. chat
                 requires a chat anchor and a chat anchor requires chat; either mismatch is request.validation naming
@@ -87,6 +95,8 @@ class SubmitRequest:
     derives_from: list[str] | Unset = UNSET
     on_similar: SubmitRequestOnSimilar | Unset = UNSET
     anchor: Anchor | Unset = UNSET
+    format_: str | Unset = UNSET
+    title: str | Unset = UNSET
     origin: Origin | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -133,6 +143,10 @@ class SubmitRequest:
         if not isinstance(self.anchor, Unset):
             anchor = self.anchor.to_dict()
 
+        format_ = self.format_
+
+        title = self.title
+
         origin: dict[str, Any] | Unset = UNSET
         if not isinstance(self.origin, Unset):
             origin = self.origin.to_dict()
@@ -166,6 +180,10 @@ class SubmitRequest:
             field_dict["on_similar"] = on_similar
         if anchor is not UNSET:
             field_dict["anchor"] = anchor
+        if format_ is not UNSET:
+            field_dict["format"] = format_
+        if title is not UNSET:
+            field_dict["title"] = title
         if origin is not UNSET:
             field_dict["origin"] = origin
 
@@ -237,6 +255,10 @@ class SubmitRequest:
         else:
             anchor = Anchor.from_dict(_anchor)
 
+        format_ = d.pop("format", UNSET)
+
+        title = d.pop("title", UNSET)
+
         _origin = d.pop("origin", UNSET)
         origin: Origin | Unset
         if isinstance(_origin, Unset):
@@ -257,6 +279,8 @@ class SubmitRequest:
             derives_from=derives_from,
             on_similar=on_similar,
             anchor=anchor,
+            format_=format_,
+            title=title,
             origin=origin,
         )
 

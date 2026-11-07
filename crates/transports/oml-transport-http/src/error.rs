@@ -7,7 +7,9 @@ use axum::response::Response;
 use serde_json::{Value, json};
 
 use oml_app::domain::VerdictError;
-use oml_app::domain::oauth::{AuthorizationCodeInvalid, ClientInvalid, Refusal, Validation};
+use oml_app::domain::oauth::{
+    AuthorizationCodeInvalid, ClientInvalid, ConnectRefused, Refusal, Validation,
+};
 use oml_app::ports::StoreError;
 use oml_app::types::AppError;
 
@@ -21,6 +23,9 @@ pub struct ApiError {
     pub rule: &'static str,
     pub retryable: bool,
     pub details: Option<Value>,
+    /// The seconds `Retry-After` names, where a refusal knows them; a
+    /// retryable refusal without them names 1 (ADR-0068 d5, d9).
+    pub retry_after: Option<u64>,
 }
 
 impl ApiError {
@@ -37,7 +42,33 @@ impl ApiError {
             rule,
             retryable: false,
             details: None,
+            retry_after: None,
         }
+    }
+
+    /// Marks `response` with the quota this refusal names, if any, for
+    /// `oml_quota_refused_total`; a page's refusal marks its page too
+    /// (ADR-0068 d5).
+    pub fn mark_quota(&self, response: &mut Response) {
+        if let Some(quota) = self
+            .details
+            .as_ref()
+            .and_then(|d| d.get("quota"))
+            .and_then(Value::as_str)
+            .and_then(oml_app::domain::signup::Quota::parse)
+        {
+            response
+                .extensions_mut()
+                .insert(crate::traffic::QuotaRefused(quota.as_str()));
+        }
+    }
+
+    /// Retryable after `secs` seconds, which `Retry-After` names.
+    #[must_use]
+    pub fn retry_after(mut self, secs: u64) -> Self {
+        self.retryable = true;
+        self.retry_after = Some(secs.max(1));
+        self
     }
 
     #[must_use]
@@ -154,6 +185,13 @@ impl ApiError {
         .retryable()
     }
 
+    /// A handler panicked and the panic guard turned it into this answer;
+    /// the panic's text stays in the log (`event=handler_panic`).
+    pub fn handler_panic() -> Self {
+        Self::internal("the request hit a defect; the request_id names it in the lead's log")
+            .with_details(json!({ "reason": "handler_panic" }))
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -190,11 +228,15 @@ impl ApiError {
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/json; charset=utf-8"),
         );
+        // A refusal naming a quota is counted by the request layer
+        // (ADR-0068 d5).
+        self.mark_quota(&mut response);
         if self.retryable {
             // Retryable refusals carry Retry-After (errors.md envelope table).
-            response
-                .headers_mut()
-                .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+            let secs = self.retry_after.unwrap_or(1).to_string();
+            if let Ok(value) = HeaderValue::from_str(&secs) {
+                response.headers_mut().insert(header::RETRY_AFTER, value);
+            }
         }
         response
     }
@@ -354,6 +396,10 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "search {name:?} is not served here; served: {served}"
         ))
         .with_details(json!({ "field": "/search", "served": served.split(", ").collect::<Vec<_>>() })),
+        AppError::ConnectCodeLifetime { seconds, max } => ApiError::validation(format!(
+            "ttl_seconds {seconds} is outside 1 to {max}, the span a connect code may live"
+        ))
+        .with_details(json!({ "field": "/ttl_seconds", "max": max })),
         AppError::BudgetWithoutBodies => ApiError::validation(
             "max_tokens is refused with include_text false: a budget counts text that would not be sent",
         ),
@@ -402,6 +448,28 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("the claim's latest version is {current}: read it again before superseding"),
         )
         .with_details(json!({ "current_version": current })),
+        AppError::FormatUnknown { allowed } => ApiError::validation(
+            "format is not one of the accepted values: send one of details.allowed",
+        )
+        .with_details(json!({ "field": "format", "allowed": allowed })),
+        AppError::FormatKindRefused { kind } => ApiError::validation(format!(
+            "a {} claim is read by rules that expect prose: format is text/plain or text/markdown",
+            kind.as_str()
+        ))
+        .with_details(json!({ "field": "format", "allowed": ["text/plain", "text/markdown"] })),
+        AppError::TitleInvalid(reason) => ApiError::validation(format!("title: {reason}"))
+            .with_details(json!({ "field": "title" })),
+        AppError::FormatInvalid(refusal) => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "submission.format_invalid",
+            "The source is the signed text, so it must be a document its format accepts; the refusal names the rule and where it was found (ADR-0056 d13).",
+            format!("the source is not valid {}", refusal),
+        )
+        .with_details(json!({
+            "reason": refusal.reason,
+            "line": refusal.line,
+            "column": refusal.column,
+        })),
         AppError::AnchorScanVeto { field, finding } => ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "submission.scan_veto",
@@ -818,6 +886,41 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         )
         .retryable(),
         AppError::TelemetryOff => ApiError::unavailable("telemetry_off"),
+        // A person's quota of the sign-up tenant; nothing was journalled
+        // (errors.md `limit.quota`; ADR-0068 d5).
+        AppError::QuotaReached(reached) => ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "limit.quota",
+            "A person who signed up holds at most their quotas of memories, keys and connections; an administrator can raise one (ADR-0068 d5).",
+            format!(
+                "your {} quota of {} is reached",
+                reached.quota.as_str(),
+                reached.limit
+            ),
+        )
+        .with_details(json!({
+            "quota": reached.quota.as_str(),
+            "limit": reached.limit,
+            "used": reached.used,
+        })),
+        AppError::KeyRateLimited {
+            limit,
+            retry_after_secs,
+        } => ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "limit.rate",
+            "A key of a person who signed up makes at most its requests per minute (ADR-0068 d5).",
+            format!("this key made {limit} requests this minute, its limit"),
+        )
+        .with_details(json!({ "quota": "requests_per_minute", "limit": limit }))
+        .retry_after(retry_after_secs),
+        AppError::SignupRateLimited { retry_after_secs } => ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "limit.rate",
+            "Sign-ups from one address are limited per hour (ADR-0068 d9).",
+            "too many accounts were created from this address in the last hour",
+        )
+        .retry_after(retry_after_secs),
         AppError::ReplayReranks { name } => ApiError::validation(format!(
             "the replay runs no reranking pipeline, so it never takes a live recall's reranker slot: {name}"
         ))
@@ -910,7 +1013,18 @@ fn oauth_refusal(refusal: Refusal) -> ApiError {
         Refusal::ClientInvalid(reason) => reason.details_reason(),
         _ => None,
     };
-    let error = ApiError::new(status, refusal.code(), rule, refusal.to_string());
+    // A refused connection names its reason in the sentence as well as in
+    // `details.reason`, since a terminal prints the sentence (ADR-0067 d3).
+    let message = match refusal {
+        Refusal::ConnectRefused(ConnectRefused::NotConfined) => format!(
+            "{refusal} (reason: not_confined; a code that outlives ten minutes is minted only \
+             for a key whose grants sit on one workarea other than the universe and that names \
+             no user root)"
+        ),
+        Refusal::ConnectRefused(why) => format!("{refusal} (reason: {})", why.as_str()),
+        _ => refusal.to_string(),
+    };
+    let error = ApiError::new(status, refusal.code(), rule, message);
     match reason {
         Some(reason) => error.with_details(json!({ "reason": reason })),
         None => error,

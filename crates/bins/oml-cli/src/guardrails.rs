@@ -371,7 +371,7 @@ pub fn export(
             let parts: Vec<&str> = text.split(MARKER).collect();
             if parts.len() != 3 {
                 return Err(format!(
-                    "refused: {} holds {} {MARKER} markers, not exactly one pair; nothing was written (ADR-0037 d11)",
+                    "refused: {} has {} {MARKER} markers; exactly one pair is required; nothing was written",
                     out.display(),
                     parts.len() - 1
                 ));

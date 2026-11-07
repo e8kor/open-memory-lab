@@ -664,6 +664,8 @@ impl Lab {
                     valid_until: None,
                     on_similar: Default::default(),
                     origin: None,
+                    format: None,
+                    title: None,
                     valid_from: None,
                     idempotency_key: format!("seed-{claim_key}"),
                     claim_key: Some(claim_key.to_owned()),
@@ -949,6 +951,58 @@ async fn issue_agent_prints_exactly_the_oml_url_and_oml_api_key_lines() {
     assert_eq!(code, 0, "{log}");
     assert_eq!(accepted["state"], "held", "{log}");
     assert_eq!(accepted["workarea_id"].as_str(), Some(wa.as_str()), "{log}");
+    lab.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn write_reads_a_diagram_from_standard_input_and_signs_its_format() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("metals");
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "agent-7",
+        "--principal",
+        "crew/agent-7",
+        "--workarea",
+        &wa,
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let value = stdout
+        .lines()
+        .nth(1)
+        .and_then(|l| l.strip_prefix("export OML_API_KEY='"))
+        .and_then(|l| l.strip_suffix('\''))
+        .expect("the second line exports the key value")
+        .to_owned();
+    let (code, accepted, log) = oml_in(
+        &lab.server,
+        &lab.creds,
+        Some(&value),
+        &[
+            "write",
+            "-",
+            "--format",
+            "text/vnd.oml.mermaid",
+            "--title",
+            "The payment flow",
+        ],
+        "flowchart LR\n  A[Checkout] --> B[Payments]\n",
+    );
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(accepted["state"], "held", "{log}");
+    // Without the title, the diagram is refused before anything is stored.
+    let (code, _, log) = oml_in(
+        &lab.server,
+        &lab.creds,
+        Some(&value),
+        &["write", "-", "--format", "text/vnd.oml.mermaid"],
+        "flowchart LR\n  A --> B\n",
+    );
+    assert_ne!(code, 0, "{log}");
+    assert!(log.contains("title"), "the refusal names title: {log}");
     lab.stop().await;
 }
 
@@ -1886,8 +1940,8 @@ async fn crews_create_and_show_by_name() {
 }
 
 /// Under the admin context `oml bootstrap claim` stores, `oml workareas
-/// tree` lists the tenant tree from `universe` down, or from a `--root`
-/// given by name, in one tree read, with each node's name, path, status and
+/// tree` lists the tenant tree from `universe` down, or from a positional
+/// root or `--root` given by name, in one tree read, with each node's name, path, status and
 /// crew record or null, and `oml workareas show` reads one node by name,
 /// while recall under the same key
 /// still answers `access.verb_ceiling` (cli/reference.md `oml workareas`;
@@ -1968,6 +2022,16 @@ async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
         routes(&lab.take_requests()),
         ["GET /v2/workareas/metals/tree"]
     );
+    let (code, positional, log) = lab.json(None, &["workareas", "tree", "metals"]);
+    assert_eq!(code, 0, "workareas tree with positional root: {log}");
+    assert_eq!(positional, subtree);
+    assert_eq!(
+        routes(&lab.take_requests()),
+        ["GET /v2/workareas/metals/tree"]
+    );
+    let (code, _, err) = lab.text(&["workareas", "tree", "metals", "--root", "metals"]);
+    assert_eq!(code, 2, "the two root forms conflict: {err}");
+    assert!(err.contains("cannot be used with"), "{err}");
     let paths: Vec<&str> = subtree["items"]
         .as_array()
         .expect("items")
@@ -6288,7 +6352,7 @@ async fn doctor_warns_on_the_scan_share_and_each_postings_fault_and_is_quiet_whe
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("warn search: bm25-postings answered 6 of 100")),
+            .any(|l| l.starts_with("warn search: bm25-postings scanned 6 of 100")),
         "{log}"
     );
     task.abort();
@@ -6323,7 +6387,7 @@ async fn doctor_warns_on_the_scan_share_and_each_postings_fault_and_is_quiet_whe
     let (_, lines, log) = run(url);
     assert!(
         lines.iter().any(|l| l.starts_with(
-            "warn search: this tenant has no postings partition, so every memory write for it fails"
+            "warn search: this tenant has no postings partition, so every memory write fails"
         ) && l.contains("restart")),
         "{log}"
     );
@@ -6685,5 +6749,192 @@ async fn oml_sync_keeps_a_workarea_in_step_with_a_clones_records() {
     let (code, ratified, log) = run(&ratifier, &["--edges", "--ratify"]);
     assert_eq!(code, 0, "ratify: {log}");
     assert_eq!(ratified["edges"][0]["state"], "ratified", "{log}");
+    lab.stop().await;
+}
+
+const CODE_MANIFEST: &str = "[package]\nname = \"oml-demo\"\ndescription = \"A demo crate.\"\n";
+const CODE_LIB: &str = "//! The demo root.\n\npub mod area;\n";
+const CODE_AREA: &str = "//! The area module.\n\npub fn f() {}\n";
+
+/// `oml sync --adapter rust` end to end (ADR-0061 d5-d8, d14): a scratch
+/// clone's crate and module docs load as held claims under `oml-crate/1` and
+/// `oml-rustdoc/1`, a person reviews them, a code edit writes nothing and a
+/// doc edit supersedes exactly its claim; and a dry run over this repository
+/// itself plans a claim per crate and per module doc.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn oml_sync_loads_a_crates_docs_and_a_code_edit_writes_nothing() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("oml-code");
+    let issue = |name: &str, role: &str, held_by: &str, principal: &str| {
+        lab.issue(
+            name,
+            &[
+                "--role",
+                role,
+                "--held-by",
+                held_by,
+                "--principal",
+                principal,
+                "--grant",
+                &format!("{wa}:{role}"),
+                "--grant",
+                &format!("{wa}:reader"),
+            ],
+        )["value"]
+            .as_str()
+            .expect("value")
+            .to_owned()
+    };
+    let sync = issue("code-sync", "writer", "service", "crew/code-sync");
+    let reviewer = issue("eugene-code-review", "dreamer", "human", "eugene");
+    let clone = lab.dir.join("code-clone");
+    std::fs::create_dir_all(clone.join("crates/demo/src")).expect("clone dir");
+    git_in(&clone, &["init", "-q", "-b", "main"]);
+    git_in(
+        &clone,
+        &["remote", "add", "origin", "git@github.com:e8kor/Code.git"],
+    );
+    let put = |path: &str, text: &str| std::fs::write(clone.join(path), text).expect("write");
+    put("crates/demo/Cargo.toml", CODE_MANIFEST);
+    put("crates/demo/src/lib.rs", CODE_LIB);
+    put("crates/demo/src/area.rs", CODE_AREA);
+    git_in(&clone, &["add", "."]);
+    git_in(&clone, &["commit", "-q", "-m", "crate"]);
+    let run = |extra: &[&str]| {
+        let mut args = vec![
+            "sync",
+            "crates",
+            "--workarea",
+            "oml-code",
+            "--adapter",
+            "rust",
+        ];
+        args.extend_from_slice(extra);
+        oml_at(&lab, &sync, &clone, &args)
+    };
+    let approve_all = || {
+        let (code, listed, log) = oml_text(
+            &lab.server,
+            &lab.creds,
+            Some(&reviewer),
+            &[
+                "review",
+                "list",
+                "--workarea",
+                "oml-code",
+                "--author-key",
+                "code-sync",
+                "--ids-only",
+                "--all",
+            ],
+        );
+        assert_eq!(code, 0, "review list: {log}");
+        let file = lab.dir.join("code-ids.txt");
+        std::fs::write(&file, &listed).expect("ids");
+        let (code, verdicts, log) = lab.json(
+            Some(&reviewer),
+            &["review", "approve", "--ids", file.to_str().expect("path")],
+        );
+        assert_eq!(code, 0, "approve: {log}");
+        verdicts["summary"]["approved"].as_u64().expect("approved")
+    };
+
+    let (code, dry, log) = run(&["--dry-run"]);
+    assert_eq!(code, 0, "dry run: {log}");
+    assert_eq!(dry["summary"]["new"], 2, "{log}");
+    let (code, first, log) = run(&[]);
+    assert_eq!(code, 0, "sync: {log}");
+    assert_eq!(
+        first["items"], dry["items"],
+        "the dry run's plan is the run's"
+    );
+    let (code, held, log) = lab.json(Some(&sync), &["read", "--own", "--workarea", "oml-code"]);
+    assert_eq!(code, 0, "{log}");
+    let tip = |key: &str| -> Value {
+        held["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|i| i["claim_key"] == key)
+            .unwrap_or_else(|| panic!("no {key}: {held}"))
+            .clone()
+    };
+    assert_eq!(
+        tip("rust/crate/oml-demo")["anchor"]["hasher"],
+        "oml-crate/1"
+    );
+    assert_eq!(
+        tip("rust/crate/oml-demo")["anchor"]["path"],
+        "crates/demo/Cargo.toml"
+    );
+    assert_eq!(
+        tip("rust/mod/oml_demo::area")["anchor"]["hasher"],
+        "oml-rustdoc/1"
+    );
+    assert_eq!(
+        tip("rust/mod/oml_demo::area")["anchor"]["fragment"],
+        "L1-L1"
+    );
+    assert_eq!(approve_all(), 2);
+
+    // A code edit below the doc writes nothing; a doc edit supersedes its claim.
+    put(
+        "crates/demo/src/area.rs",
+        &format!("{CODE_AREA}\npub fn g() {{}}\n"),
+    );
+    git_in(&clone, &["commit", "-q", "-am", "code"]);
+    let (code, code_edit, log) = run(&[]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(code_edit["summary"]["unchanged"], 2, "{log}");
+    assert_eq!(code_edit["summary"]["writes_this_run"], 0, "{log}");
+    let (code, _, log) = run(&["--check"]);
+    assert_eq!(code, 0, "check: {log}");
+    put(
+        "crates/demo/src/area.rs",
+        &CODE_AREA.replace("The area", "The whole area"),
+    );
+    git_in(&clone, &["commit", "-q", "-am", "doc"]);
+    let (code, doc_edit, log) = run(&[]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(doc_edit["summary"]["changed"], 1, "{log}");
+    assert_eq!(doc_edit["summary"]["unchanged"], 1, "{log}");
+
+    // A dry run over this repository: a claim per crate and per module doc.
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    if repo.join(".git").exists() {
+        let (code, whole, log) = oml_at(
+            &lab,
+            &sync,
+            &repo,
+            &[
+                "sync",
+                ".",
+                "--workarea",
+                "oml-code",
+                "--adapter",
+                "rust",
+                "--repo",
+                "github.com/e8kor/open-memory-lab",
+                "--dry-run",
+            ],
+        );
+        assert_eq!(code, 0, "dry run over the repository: {log}");
+        let keys: Vec<&str> = whole["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .filter_map(|i| i["claim_key"].as_str())
+            .collect();
+        let crates = keys.iter().filter(|k| k.starts_with("rust/crate/")).count();
+        let modules = keys.iter().filter(|k| k.starts_with("rust/mod/")).count();
+        eprintln!("dry run over this repository: {crates} crates, {modules} modules");
+        assert!(
+            crates >= 9 && modules >= 98,
+            "{crates} crates, {modules} modules"
+        );
+        assert_eq!(whole["summary"]["removed"], 0, "{log}");
+    }
     lab.stop().await;
 }

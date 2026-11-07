@@ -158,6 +158,8 @@ fn submit(idem: &str, body: &str, workarea: Option<Uuid>) -> SubmitRequest {
         rule: None,
         valid_from: None,
         valid_until: None,
+        format: None,
+        title: None,
     }
 }
 

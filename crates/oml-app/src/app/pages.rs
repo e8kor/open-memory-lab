@@ -21,11 +21,17 @@ use oml_domain::{EventTime, HeldBy, Role, Sha256Hash, event_types};
 
 use super::{App, Caller, Issuance, issuance_refusal, require_role};
 use crate::ports::{Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, WebStore};
+use oml_domain::in_progress::WorkareaMode;
+use oml_domain::origin::OriginKind;
+use oml_domain::{MemoryStatus, WorkareaStatus};
+
+use crate::cursor::ListingCursor;
 use crate::types::{
     AdminSearch, AdminState, AppError, Bearer, ConnectCodeIssued, Credential, DenialRecord,
     GrantRequest, IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, MemoryRecord, QueueDepth,
-    WebEntry, WebSessionRecord,
+    WebEntry, WebSessionRecord, WorkareaRecord,
 };
+use crate::types::{AnchorFilter, ListRequest, ListingPosition, MemoryPage, ServedMemory};
 
 /// The capacity a page act needs: one session key each (ADR-0045 d6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +105,124 @@ pub struct AdminMemory {
 pub struct AdminPage {
     pub items: Vec<AdminMemory>,
     pub next: Option<(EventTime, Uuid)>,
+}
+
+/// The admin read's search as the admin page asks it (ADR-0045 d22, d24).
+#[derive(Debug, Clone)]
+pub struct AdminSearchRequest<'a> {
+    pub query: Option<&'a str>,
+    pub workarea: Option<Reference>,
+    pub state: Option<AdminState>,
+    pub origin: Option<OriginKind>,
+    /// The authoring key, by name or id.
+    pub author: Option<Reference>,
+    pub after: Option<(EventTime, Uuid)>,
+    pub limit: usize,
+}
+
+/// The user page's Memories list as the person filters it (ADR-0045 d22,
+/// d23); the states are the admin read's words.
+#[derive(Debug, Clone, Default)]
+pub struct WebListRequest {
+    pub workarea: Option<Reference>,
+    pub state: Option<AdminState>,
+    pub origin: Option<OriginKind>,
+    /// One of the person's own keys, by name.
+    pub author: Option<Name>,
+    pub cursor: Option<String>,
+    pub limit: usize,
+}
+
+/// How many rows the Atlas counts per view before it says "at least"
+/// (ADR-0045 d30): ten pages of the largest list page, chosen, not measured.
+pub const REGION_COUNT_MAX: usize = 2_000;
+
+/// One workarea of the Atlas (ADR-0045 d30): the node, its path, and its
+/// rows the viewer may read by state: approved (promoted tips), held,
+/// unreviewed inside an in-progress scope, and every other state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Region {
+    pub workarea: WorkareaRecord,
+    pub path: String,
+    pub approved: u64,
+    pub held: u64,
+    pub in_progress: u64,
+    pub other: u64,
+}
+
+/// The Atlas's workareas and whether the count stopped at
+/// [`REGION_COUNT_MAX`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Regions {
+    pub regions: Vec<Region>,
+    pub partial: bool,
+    /// The first region's ancestors, `universe` first, each its id and
+    /// name: the breadcrumb out of a zoomed Atlas.
+    pub ancestors: Vec<(Uuid, Name)>,
+}
+
+/// One act a workarea's dropdown may offer (ADR-0045 d28).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkareaOffer {
+    /// Propose the next rung (ADR-0009 d3).
+    Propose(WorkareaStatus),
+    /// Ratify a live proposal another key made.
+    Ratify {
+        transition_id: Uuid,
+        from: WorkareaStatus,
+        to: WorkareaStatus,
+    },
+    /// Put the workarea in progress (ADR-0030 d1).
+    InProgress,
+    /// Commit an in-progress root (ADR-0030 d6).
+    Commit,
+}
+
+/// What a workarea's dropdown shows: the node's status and mode, the acts
+/// its verbs admit now, and a commit withheld with the held rows that stop
+/// it (ADR-0045 d28).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkareaOffers {
+    pub workarea_id: Uuid,
+    pub status: WorkareaStatus,
+    pub in_progress: bool,
+    pub offers: Vec<WorkareaOffer>,
+    /// `Some(held)` when the node is an in-progress root whose commit the
+    /// held rows refuse.
+    pub commit_withheld: Option<u64>,
+}
+
+/// Counts `m` on its region by state; a held row is in progress when its
+/// node or an ancestor on the page's tree is in progress (ADR-0030 d1). A
+/// row on a node the tree did not serve is not counted.
+fn count_into(regions: &mut [Region], m: &MemoryRecord) {
+    let inside = {
+        let mut node = Some(m.workarea_id);
+        let mut found = false;
+        while let Some(id) = node {
+            match regions.iter().find(|r| r.workarea.workarea_id == id) {
+                Some(r) if r.workarea.in_progress => {
+                    found = true;
+                    break;
+                }
+                Some(r) => node = r.workarea.parent_id,
+                None => break,
+            }
+        }
+        found
+    };
+    let Some(region) = regions
+        .iter_mut()
+        .find(|r| r.workarea.workarea_id == m.workarea_id)
+    else {
+        return;
+    };
+    match AdminState::of(m) {
+        AdminState::Promoted => region.approved += 1,
+        AdminState::Held if inside => region.in_progress += 1,
+        AdminState::Held => region.held += 1,
+        _ => region.other += 1,
+    }
 }
 
 fn field(field: &'static str, message: &'static str) -> AppError {
@@ -298,6 +422,10 @@ where
         connector: bool,
     ) -> Result<IssuedKey, AppError> {
         let user_name = self.web_user_of(web).await?;
+        // A person of the sign-up tenant holds at most their keys quota
+        // (ADR-0068 d5).
+        self.require_quota(&web.key, oml_domain::signup::Quota::Keys)
+            .await?;
         if SESSION_KEY_SUFFIXES.contains(&suffix) {
             return Err(field(
                 "name",
@@ -677,6 +805,450 @@ where
         Ok(entries)
     }
 
+    // -- the Memories list and the workarea dropdowns ------------------------
+
+    /// The user page's Memories list (ADR-0045 d22, d23): the scoped
+    /// listing `<user>-web` is served at `universe` (or at the filter's
+    /// workarea) and the own-work listing of every key naming the user,
+    /// each read after the same position and merged newest first, a row in
+    /// both shown once. `author` narrows to one of the person's keys and
+    /// drops the scoped listing; a key that is not theirs is not found.
+    pub async fn web_memories(
+        &self,
+        web: &Caller,
+        req: &WebListRequest,
+    ) -> Result<MemoryPage, AppError> {
+        let tenant_id = web.key.tenant_id;
+        let author = match &req.author {
+            None => None,
+            Some(name) => Some(
+                self.journal
+                    .resolve_name(tenant_id, NamedKind::Key, name)
+                    .await?
+                    .filter(|id| web.own_key_ids().contains(id))
+                    .ok_or(AppError::NotFound)?,
+            ),
+        };
+        let (state, tip) = match req.state {
+            None => (None, None),
+            Some(AdminState::Held) => (Some(MemoryStatus::Held), None),
+            Some(AdminState::Promoted) => (Some(MemoryStatus::Promoted), Some(true)),
+            Some(AdminState::Superseded) => (Some(MemoryStatus::Promoted), Some(false)),
+            Some(AdminState::Rejected) => (Some(MemoryStatus::Rejected), None),
+            Some(AdminState::Demoted) => (Some(MemoryStatus::Demoted), None),
+        };
+        let listing = |own: bool, workarea: Option<Reference>| ListRequest {
+            own,
+            workarea,
+            state,
+            kind: None,
+            claim_key: None,
+            since: None,
+            until: None,
+            limit: req.limit,
+            cursor: req.cursor.clone(),
+            anchor: AnchorFilter {
+                repo: None,
+                path_prefix: None,
+                origin_kinds: req.origin.into_iter().collect(),
+            },
+            author,
+            tip,
+        };
+        let own = self
+            .list_memories(Bearer::Session(web), &listing(true, req.workarea.clone()))
+            .await?;
+        let scoped = if author.is_some() {
+            None
+        } else {
+            let scope = req.workarea.clone().unwrap_or_else(|| {
+                Reference::Name(Name::parse(UNIVERSE).expect("universe is a name"))
+            });
+            Some(
+                self.list_memories(Bearer::Session(web), &listing(false, Some(scope)))
+                    .await?,
+            )
+        };
+        let more =
+            own.next_cursor.is_some() || scoped.as_ref().is_some_and(|p| p.next_cursor.is_some());
+        let mut rows: Vec<ServedMemory> = own.items;
+        rows.extend(scoped.into_iter().flat_map(|p| p.items));
+        let position =
+            |m: &ServedMemory| (m.memory.created_at.as_str().to_owned(), m.memory.memory_id);
+        rows.sort_by_key(|m| std::cmp::Reverse(position(m)));
+        rows.dedup_by_key(|m| m.memory.memory_id);
+        let more = more || rows.len() > req.limit;
+        rows.truncate(req.limit);
+        let next_cursor = rows.last().filter(|_| more).map(|last| {
+            ListingCursor {
+                key_id: web.key.key_id,
+                position: ListingPosition {
+                    created_at: last.memory.created_at.clone(),
+                    artifact_id: last.memory.memory_id,
+                },
+                issued_at: self.clock.now(),
+            }
+            .encode()
+        });
+        Ok(MemoryPage {
+            items: rows,
+            next_cursor,
+        })
+    }
+
+    /// The user page's Atlas workareas (ADR-0045 d30): the nodes the
+    /// tree read serves `<user>-web` under `workarea` (by default
+    /// `universe`, which a user key reads as its root and the `universe`
+    /// node), each with the rows of [`Self::web_memories`] on it counted by
+    /// state, so a region and a count exist only where the list would show
+    /// the row; a held row outside an in-progress scope counts only for its
+    /// author's person.
+    pub async fn web_regions(
+        &self,
+        web: &Caller,
+        workarea: Option<Reference>,
+    ) -> Result<Regions, AppError> {
+        let scope = workarea
+            .clone()
+            .unwrap_or_else(|| Reference::Name(Name::parse(UNIVERSE).expect("universe is a name")));
+        let (mut regions, tree_cut) = self.tree_regions(web, scope).await?;
+        // The page's own scope first; then each in-progress root on the
+        // tree read as its own scope, where every author's held rows are
+        // served (ADR-0030 d3), its subtree's counts replaced by that read.
+        let mut partial = self
+            .count_listing(web, workarea, &mut regions, &BTreeSet::new())
+            .await?;
+        partial |= tree_cut;
+        let roots: Vec<Uuid> = regions
+            .iter()
+            .filter(|r| r.workarea.in_progress)
+            .map(|r| r.workarea.workarea_id)
+            .collect();
+        for root in roots {
+            let subtree: BTreeSet<Uuid> = self
+                .journal
+                .workarea_subtree(web.key.tenant_id, root)
+                .await?
+                .into_iter()
+                .map(|w| w.workarea_id)
+                .collect();
+            for r in regions
+                .iter_mut()
+                .filter(|r| subtree.contains(&r.workarea.workarea_id))
+            {
+                (r.approved, r.held, r.in_progress, r.other) = (0, 0, 0, 0);
+            }
+            let outside: BTreeSet<Uuid> = regions
+                .iter()
+                .map(|r| r.workarea.workarea_id)
+                .filter(|id| !subtree.contains(id))
+                .collect();
+            partial |= self
+                .count_listing(web, Some(Reference::Id(root)), &mut regions, &outside)
+                .await?;
+        }
+        let ancestors = self.ancestors_of(web.key.tenant_id, &regions).await?;
+        Ok(Regions {
+            regions,
+            partial,
+            ancestors,
+        })
+    }
+
+    /// The ancestors of the first region, `universe` first.
+    async fn ancestors_of(
+        &self,
+        tenant_id: Uuid,
+        regions: &[Region],
+    ) -> Result<Vec<(Uuid, Name)>, AppError> {
+        let Some(top) = regions.first() else {
+            return Ok(Vec::new());
+        };
+        let ancestry = self
+            .journal
+            .workarea_ancestry(tenant_id, top.workarea.workarea_id)
+            .await?
+            .unwrap_or_default();
+        Ok(ancestry
+            .iter()
+            .skip(1)
+            .rev()
+            .map(|w| (w.workarea_id, w.name.clone()))
+            .collect())
+    }
+
+    /// Counts the rows [`Self::web_memories`] lists under `workarea` onto
+    /// `regions`, skipping rows on `skip`; whether it stopped at
+    /// [`REGION_COUNT_MAX`].
+    async fn count_listing(
+        &self,
+        web: &Caller,
+        workarea: Option<Reference>,
+        regions: &mut [Region],
+        skip: &BTreeSet<Uuid>,
+    ) -> Result<bool, AppError> {
+        let mut cursor = None;
+        let mut counted = 0;
+        loop {
+            let page = self
+                .web_memories(
+                    web,
+                    &WebListRequest {
+                        workarea: workarea.clone(),
+                        cursor: cursor.take(),
+                        limit: 200,
+                        ..WebListRequest::default()
+                    },
+                )
+                .await?;
+            counted += page.items.len();
+            for m in page
+                .items
+                .iter()
+                .filter(|m| !skip.contains(&m.memory.workarea_id))
+            {
+                count_into(regions, &m.memory);
+            }
+            match page.next_cursor {
+                Some(next) if counted < REGION_COUNT_MAX => cursor = Some(next),
+                Some(_) => return Ok(true),
+                None => return Ok(false),
+            }
+        }
+    }
+
+    /// The admin page's Atlas workareas (ADR-0045 d30): the tenant's tree
+    /// under `workarea`, which an admin key reads as structure, with every
+    /// row on each node counted by state, the admin read's scope and no
+    /// wider. Counts carry no content, so they are read as the queue's
+    /// depth is (d16) and journal nothing; the page of rows beside them is
+    /// the one `memory.admin_read`.
+    pub async fn admin_regions(
+        &self,
+        admin: &Caller,
+        workarea: Option<Reference>,
+    ) -> Result<Regions, AppError> {
+        require_role(&admin.key, Role::Admin, "admin_read")?;
+        let tenant_id = admin.key.tenant_id;
+        let scope = workarea
+            .unwrap_or_else(|| Reference::Name(Name::parse(UNIVERSE).expect("universe is a name")));
+        let (mut regions, tree_cut) = self.tree_regions(admin, scope).await?;
+        let nodes: Vec<Uuid> = regions.iter().map(|r| r.workarea.workarea_id).collect();
+        let mut after = None;
+        let mut counted = 0;
+        let partial = loop {
+            let rows = self
+                .journal
+                .web_admin_search(
+                    tenant_id,
+                    &AdminSearch {
+                        nodes: Some(nodes.clone()),
+                        after: after.take(),
+                        limit: 201,
+                        ..AdminSearch::default()
+                    },
+                )
+                .await?;
+            let more = rows.len() > 200;
+            for m in rows.iter().take(200) {
+                count_into(&mut regions, m);
+            }
+            counted += rows.len().min(200);
+            match rows.get(199).filter(|_| more) {
+                Some(last) if counted < REGION_COUNT_MAX => {
+                    after = Some(ListingPosition {
+                        created_at: last.created_at.clone(),
+                        artifact_id: last.memory_id,
+                    });
+                }
+                Some(_) => break true,
+                None => break false,
+            }
+        };
+        let ancestors = self.ancestors_of(tenant_id, &regions).await?;
+        Ok(Regions {
+            regions,
+            partial: partial || tree_cut,
+            ancestors,
+        })
+    }
+
+    /// The nodes the tree read serves `caller` under `scope`, uncounted.
+    async fn tree_regions(
+        &self,
+        caller: &Caller,
+        scope: Reference,
+    ) -> Result<(Vec<Region>, bool), AppError> {
+        let mut regions = Vec::new();
+        let mut truncated = false;
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = self
+                .workarea_tree(
+                    Bearer::Session(caller),
+                    scope.clone(),
+                    cursor.as_deref(),
+                    200,
+                )
+                .await?;
+            regions.extend(page.items.into_iter().map(|node| Region {
+                workarea: node.workarea,
+                path: node.path,
+                approved: 0,
+                held: 0,
+                in_progress: 0,
+                other: 0,
+            }));
+            match page.next_cursor {
+                Some(next) if regions.len() < REGION_COUNT_MAX => cursor = Some(next),
+                Some(_) => {
+                    truncated = true;
+                    break;
+                }
+                None => break,
+            }
+        }
+        Ok((regions, truncated))
+    }
+
+    /// The acts a workarea's dropdown offers (ADR-0045 d28): a status
+    /// transition as `transitions`, the mode and the commit as `mode`, each
+    /// offered only where the verb's own check admits it now; a commit the
+    /// held rows refuse is withheld with their count. A refusal hides an
+    /// act; a store failure is answered.
+    pub async fn workarea_offers(
+        &self,
+        transitions: &Caller,
+        mode: &Caller,
+        workarea_id: Uuid,
+    ) -> Result<WorkareaOffers, AppError> {
+        let tenant_id = transitions.key.tenant_id;
+        let node = self
+            .journal
+            .workarea(tenant_id, workarea_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        let admitted = |result: Result<(), AppError>| match result {
+            Ok(()) => Ok(true),
+            Err(AppError::Store(e)) => Err(AppError::Store(e)),
+            Err(_) => Ok(false),
+        };
+        let mut offers = Vec::new();
+        for to in [WorkareaStatus::Committed, WorkareaStatus::Validated] {
+            let check = self
+                .propose_admitted(transitions, workarea_id, to)
+                .await
+                .map(|_| ());
+            if admitted(check)? {
+                offers.push(WorkareaOffer::Propose(to));
+            }
+        }
+        for t in self
+            .journal
+            .pending_transitions(tenant_id, workarea_id)
+            .await?
+            .into_iter()
+            .filter(|t| t.from == node.status)
+        {
+            let check = self
+                .ratify_admitted(transitions, workarea_id, t.transition_id)
+                .await
+                .map(|_| ());
+            if admitted(check)? {
+                offers.push(WorkareaOffer::Ratify {
+                    transition_id: t.transition_id,
+                    from: t.from,
+                    to: t.to,
+                });
+            }
+        }
+        let mut commit_withheld = None;
+        let wanted = if node.in_progress {
+            WorkareaMode::Standard
+        } else {
+            WorkareaMode::InProgress
+        };
+        match self.mode_admitted(mode, workarea_id, wanted).await {
+            Ok(super::ModeAdmitted::Change { .. }) => offers.push(if node.in_progress {
+                WorkareaOffer::Commit
+            } else {
+                WorkareaOffer::InProgress
+            }),
+            Ok(super::ModeAdmitted::Already(_)) => {}
+            Err(AppError::HeldRemaining { .. }) => {
+                let nodes: Vec<Uuid> = self
+                    .journal
+                    .workarea_subtree(tenant_id, workarea_id)
+                    .await?
+                    .iter()
+                    .map(|w| w.workarea_id)
+                    .collect();
+                commit_withheld = Some(self.journal.held_count(tenant_id, &nodes).await?);
+            }
+            Err(e) => {
+                admitted(Err(e))?;
+            }
+        }
+        Ok(WorkareaOffers {
+            workarea_id,
+            status: node.status,
+            in_progress: node.in_progress,
+            offers,
+            commit_withheld,
+        })
+    }
+
+    /// Whether one act of the dropdown is admitted now, by the same check
+    /// as [`Self::workarea_offers`]: `Ok` exactly when it is offered, else
+    /// the refusal its verb would answer (ADR-0045 d28). Setting the mode a
+    /// node already holds is no act, refused naming `op`.
+    pub async fn workarea_offer_check(
+        &self,
+        transitions: &Caller,
+        mode: &Caller,
+        workarea_id: Uuid,
+        offer: WorkareaOffer,
+    ) -> Result<(), AppError> {
+        match offer {
+            WorkareaOffer::Propose(to) => self
+                .propose_admitted(transitions, workarea_id, to)
+                .await
+                .map(|_| ()),
+            WorkareaOffer::Ratify { transition_id, .. } => self
+                .ratify_admitted(transitions, workarea_id, transition_id)
+                .await
+                .map(|_| ()),
+            WorkareaOffer::InProgress | WorkareaOffer::Commit => {
+                let wanted = if offer == WorkareaOffer::Commit {
+                    WorkareaMode::Standard
+                } else {
+                    WorkareaMode::InProgress
+                };
+                match self.mode_admitted(mode, workarea_id, wanted).await? {
+                    super::ModeAdmitted::Change { .. } => Ok(()),
+                    super::ModeAdmitted::Already(_) => Err(field(
+                        "op",
+                        "the workarea is already in that mode, so there is nothing to do",
+                    )),
+                }
+            }
+        }
+    }
+
+    /// [`Self::workarea_offers`] for one key acting in both capacities, by
+    /// its value or a session: what a dropdown would offer that key.
+    pub async fn workarea_offers_for(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        workarea: Reference,
+    ) -> Result<WorkareaOffers, AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let workarea_id = self
+            .resolve(&caller.key, NamedKind::Workarea, &workarea)
+            .await?;
+        self.workarea_offers(&caller, &caller, workarea_id).await
+    }
+
     // -- the admin read -----------------------------------------------------
 
     /// `POST /v2/admin/memories/search` (ADR-0045 d21): admin key role
@@ -692,9 +1264,46 @@ where
         after: Option<(EventTime, Uuid)>,
         limit: usize,
     ) -> Result<AdminPage, AppError> {
+        self.admin_search_filtered(
+            bearer,
+            &AdminSearchRequest {
+                query,
+                workarea,
+                state,
+                origin: None,
+                author: None,
+                after,
+                limit,
+            },
+        )
+        .await
+    }
+
+    /// The admin read's search with the admin page's every filter
+    /// (ADR-0045 d22, d24): [`Self::admin_search`] narrowed besides to one
+    /// `origin.kind` and one authoring key, by name or id, of the tenant. One
+    /// `memory.admin_read` per page served, as there.
+    pub async fn admin_search_filtered(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &AdminSearchRequest<'_>,
+    ) -> Result<AdminPage, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         require_role(&caller.key, Role::Admin, "admin_read")?;
         let tenant_id = caller.key.tenant_id;
+        let AdminSearchRequest {
+            query,
+            workarea,
+            state,
+            origin,
+            author,
+            after,
+            limit,
+        } = req.clone();
+        let author = match &author {
+            None => None,
+            Some(reference) => Some(self.resolve(&caller.key, NamedKind::Key, reference).await?),
+        };
         let nodes = match &workarea {
             None => None,
             Some(reference) => {
@@ -715,6 +1324,8 @@ where
                 .map(ToOwned::to_owned),
             nodes,
             state,
+            origin_kinds: origin.into_iter().collect(),
+            author,
             after: after.map(|(created_at, artifact_id)| crate::types::ListingPosition {
                 created_at,
                 artifact_id,

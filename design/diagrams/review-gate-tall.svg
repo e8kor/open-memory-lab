@@ -1,0 +1,30 @@
+<!-- The design system's ReviewGateDiagram (tall, below 720px). Colours are var(--token); scripts/gen_design_tokens.py resolves them per theme. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="620" role="img" aria-label="Review gate: an agent key writes; the memory is held and scanned; a reviewer outside its lineage approves; every key the grant covers recalls it" viewBox="0 0 320 620">
+  <title>Review gate: an agent key writes; the memory is held and scanned; a reviewer outside its lineage approves; every key the grant covers recalls it</title><style>
+.bg{fill:var(--ground)} .zone{fill:var(--ground-alt);stroke:var(--rule)} .held{stroke:var(--held);fill:none} .prom{fill:var(--promoted)} .ink{fill:var(--ink)} .icef{fill:var(--ice)}
+.scan{fill:var(--ink-dim)} .gateline{stroke:var(--ice);stroke-width:var(--stroke-strong)} .post{fill:var(--ice)} .id{stroke:var(--ink-dim);fill:none;stroke-width:1.2px}
+.ne{stroke:var(--edge);stroke-width:var(--stroke);fill:none;stroke-dasharray:3 3} .neb{fill:var(--ground);stroke:var(--edge);stroke-width:var(--stroke)}
+.edge{stroke:var(--edge);fill:none;stroke-width:var(--stroke)} .edge-head{fill:var(--edge)}
+.t{fill:var(--ink);font:var(--t-state-weight) var(--t-state-size) var(--font-mono)}
+.t-dim{fill:var(--ink-dim);font:var(--t-meta-weight) var(--t-state-size) var(--font-mono)}
+.t-faint{fill:var(--ink-faint);font:var(--t-meta-weight) var(--t-state-size) var(--font-mono)}
+.t-num{fill:var(--star);font:var(--t-label-weight) var(--t-label-size) var(--font-mono);letter-spacing:var(--t-label-tracking)}
+</style><rect class="bg" width="320" height="620" rx="8"/><defs><marker id="gt" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path class="edge-head" d="M0 0L8 4L0 8z"/></marker></defs>
+  <rect class="zone" x="1" y="24" width="318" height="300" rx="8"/><rect class="zone" x="1" y="324" width="318" height="290" rx="8"/>
+  <text class="t-num" x="16" y="14">01 WRITE</text><text class="t-faint" x="16" y="46">author and reviewers read it</text>
+  <circle class="ink" cx="60" cy="80" r="6"/><text class="t-dim" x="80" y="84">write</text>
+  <path class="edge" d="M60 88V126" marker-end="url(#gt)"/>
+  <circle class="held" cx="60" cy="150" r="18" stroke-width="4.5" stroke-linecap="round" stroke-dasharray="86.0 27.1" transform="rotate(-20 60 150)"/><text class="t" x="90" y="154">held</text>
+  <path class="edge" d="M60 174V400" marker-end="url(#gt)"/>
+  <rect class="scan" x="44" y="226" width="32" height="6" rx="2"/><text class="t-dim" x="86" y="226">scan</text><text class="t-faint" x="86" y="242">secrets</text>
+  <path class="gateline" d="M2 324H40M80 324H318"/><rect class="post" x="34" y="318" width="6" height="12" rx="2"/><rect class="post" x="80" y="318" width="6" height="12" rx="2"/>
+  <text class="t-num" x="16" y="348">02 REVIEW</text><text class="t-faint" x="16" y="364">its readers read it</text>
+  <circle class="prom" cx="60" cy="424" r="18"/><text class="t" x="90" y="428">promoted</text>
+  <path class="edge" d="M60 446V496" marker-end="url(#gt)"/>
+  <text class="t-num" x="16" y="528">03 RECALL</text>
+  <circle class="icef" cx="54" cy="548" r="5"/><circle class="icef" cx="68" cy="560" r="5"/><circle class="icef" cx="52" cy="572" r="5"/><text class="t" x="90" y="564">recall</text>
+  <g class="id" transform="translate(196 68) scale(1.5)"><circle cx="5" cy="8" r="3"/><path d="M8 8H14.5M12.2 8V10.6M14.5 8V10" stroke-linecap="round"/></g><text class="t-faint" x="226" y="76">author</text><text class="t" x="198" y="104">crew/scout</text>
+  <g class="id" transform="translate(196 388) scale(1.5)"><circle cx="8" cy="5" r="2.7"/><path d="M2.8 14.2a5.2 5.2 0 0 1 10.4 0" stroke-linecap="round"/></g><text class="t-faint" x="226" y="396">reviewer</text><text class="t" x="198" y="424">eugene</text>
+  <path class="ne" d="M212 112V376"/><circle class="neb" cx="212" cy="240" r="11"/><text class="t" x="212" y="244" text-anchor="middle">≠</text>
+  <text class="t-faint" x="230" y="268">not its</text><text class="t-faint" x="230" y="284">author</text>
+</svg>
