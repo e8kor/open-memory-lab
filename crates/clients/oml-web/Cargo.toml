@@ -1,0 +1,31 @@
+[package]
+name = "oml-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The web console as a client of the public HTTP API. ADR-0070 d1."
+
+[dependencies]
+oml-page = { path = "../../shared/oml-page" }
+axum = { workspace = true }
+http = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tower = { workspace = true }
+bytes = "1.11"
+sha2 = { workspace = true }
+
+[dev-dependencies]
+# The parity suite composes the lead as a dev-dependency (ADR-0070 d7).
+oml-server-lead = { workspace = true, default-features = false }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[lib]
+name = "oml_web"
+path = "src/lib.rs"
+
+[[test]]
+name = "dependencies"
+path = "tests/dependencies.rs"
+harness = true
