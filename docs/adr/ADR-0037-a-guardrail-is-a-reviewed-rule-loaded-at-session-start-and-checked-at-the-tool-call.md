@@ -331,7 +331,7 @@ answered all ten on 2026-11-04, and d18 records the answers.
     | S3 | d6, d7: `oml hook guardrails` and its SessionStart and SubagentStart entries | `every_line_names_its_workarea_claim_key_version_and_reviewer_count`, `a_conflict_line_names_the_other_artifact_ids`, `over_the_cap_no_guardrail_line_is_printed_and_the_user_is_told`, `a_compact_source_prints_the_whole_set_again`, `the_header_names_the_guardrail_scope_the_server_applied`, `the_key_value_is_redacted_in_every_line`; `check_plugin.py` holds both entries as ADR-0029 d7 holds its own |
     | S4 | d8, d9: the rule cache, `oml hook pre-tool-use` and its PreToolUse entry | `a_matching_deny_rule_answers_deny_with_the_guardrail_id_and_body`, `deny_wins_over_ask`, `no_input_ever_answers_allow`, `the_check_sends_no_request`, `an_unreadable_cache_denies_every_call`, `a_cache_whose_digest_line_does_not_match_denies_every_call`, `a_session_with_no_cache_decides_nothing_and_warns_in_one_line`, `a_cache_not_written_prints_no_line_as_checked_and_names_the_cause`, `a_subagent_start_writes_no_cache`, `a_cache_file_older_than_thirty_days_is_removed_at_start`, `an_edit_of_the_cache_directory_or_a_shell_word_naming_it_asks`, `each_mapped_tool_is_matched_on_its_argument_and_no_other_tool_by_any_rule`, `a_shell_segment_after_a_control_operator_is_matched`, `a_quoted_operator_splits_no_segment`, `a_command_that_does_not_tokenise_or_holds_a_substitution_asks`, `a_final_star_word_matches_zero_or_more_words_from_the_first_word_on`, `a_path_and_its_glob_are_normalised_against_the_input_cwd`, `a_star_stops_at_a_slash_and_a_double_star_does_not`, `a_fetch_host_is_the_whatwg_host_lower_cased_without_a_trailing_dot`, `a_glob_of_many_stars_matches_a_long_command_in_linear_time`; `check_plugin.py` holds the PreToolUse matcher equal to d8's tools, the timeout, `onFailure` and the status message, and runs the command under `/bin/sh` with no `oml`, with a stand-in older `oml` and with one whose verb fails: the first two exit 0 with no output, the third exits non-zero |
     | S5 | d11: export and the MCP prompt; d12 | `export_writes_promoted_guardrails_only`, `export_refuses_a_scope_inside_an_in_progress_subtree`, `the_header_carries_origin_scope_node_guardrail_scope_and_set_digest`, `check_exits_one_when_the_set_changed`, `agents_md_refuses_a_file_without_exactly_one_marker_pair`, `the_prompt_renders_the_hook_text`, `a_freeze_applies_only_inside_its_interval` |
-    | S6 | d16, d17: user roots and the pages, after ADR-0044 and ADR-0045 W3 | `a_user_key_with_scope_ancestors_loads_universes_guardrails_through_its_node_grant`, `a_user_key_with_scope_workarea_loads_no_universe_guardrail`, `no_guardrail_of_another_users_root_is_ever_served`, `a_user_keys_guardrail_write_into_universe_is_refused_as_universe_curated`, `a_universe_guardrail_is_served_with_origin_universe_and_no_source`, `the_users_reviewer_key_ratifies_a_guardrail_its_agents_propose_in_its_root`, `the_user_page_shows_the_guardrails_in_force_at_the_users_root_and_writes_none` |
+    | S6 | d16, d17: user roots and the pages, after ADR-0044 and ADR-0045 W3 | `a_user_key_with_scope_ancestors_loads_universes_guardrails_through_its_node_grant`, `a_user_key_with_scope_workarea_loads_no_universe_guardrail`, `no_guardrail_of_another_users_root_is_ever_served`, `a_user_keys_guardrail_write_into_universe_is_refused_as_universe_curated`, `a_universe_guardrail_is_served_with_origin_universe_and_no_source`, `the_users_reviewer_key_ratifies_a_guardrail_its_agents_propose_in_its_root`, `the_user_page_shows_guardrail_scope_and_selects_nested_workareas` |
 
 - **d16 — Under user roots, `ancestors` walks from the scope node through the user's root to
   `universe`, under the same reader test, and `universe`'s guardrails are the curators'.** This
@@ -368,11 +368,12 @@ answered all ten on 2026-11-04, and d18 records the answers.
     - **Session keys load nothing.** A session key has no value, so it never reaches `/v1` or
       `/mcp` (ADR-0045 d6), and no hook ever runs under one; its `guardrail_scope` matters only
       to a page that reads the set through it.
-    - **The user page may show the set in force at the person's root**, read-only: d5's use case
-      under `<user>-web` at `universe.<user>`, rendered as d6's lines with their provenance. Its
-      own-held list is `<user>-web`'s, which writes no guardrail, so the person's agents' held
-      guardrails show where every held row does, on the memories view. It reads no rule cache
-      and checks no call.
+    - **The user page shows the set in force at a selected workarea**, read-only: a selector
+      lists the person's root and its descendants, defaulting to the root. The page names the
+      selected path, whether the key reads it alone or its readable parents too, and each rule's
+      source workarea. Its own-held list is `<user>-web`'s, which writes no guardrail, so the
+      person's agents' held guardrails show on the memories view. It reads no rule cache and
+      checks no call.
     - **Review shows the load warning.** A held guardrail served on either page's review view
       carries d10's sentence, since the page serves the same ceremony (ADR-0045 d11).
     - **No page writes, supersedes, retires or exports a guardrail** in v0.5.1: a guardrail is

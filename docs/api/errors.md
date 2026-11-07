@@ -188,7 +188,7 @@ Reserved. This build serves no attachment uploads.
 | Code | HTTP | Fires when |
 |---|---|---|
 | `limit.rate` | 429 | Unused OAuth client registrations passed 10,000, or a read's `feedback` would pass 1,000 labels in a UTC day. Retryable, with `Retry-After`. |
-| `limit.quota` | 429 | A person of the sign-up tenant is past a quota of memories, keys or connections, with `details: {quota, limit, used}`. Nothing is journaled, and an admin raises the limit on `/web/admin/users` ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d5). |
+| `limit.quota` | 429 | A person of the sign-up tenant is past a quota of memories, keys or connections, with `details: {quota, limit, used}`. Nothing is journaled, and an admin raises the limit on `/web/admin/users` ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d5). Any account on a quota profile past `memories`, `text_bytes`, `writes_per_month`, `keys` or `connections` is refused by the write's own commit, so two writers at the limit never both pass ([ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d3, d5). |
 
 ## `export` and `settings`
 

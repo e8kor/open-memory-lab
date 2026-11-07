@@ -1511,7 +1511,7 @@ async fn a_connector_key_shows_its_connect_code_once() {
 }
 
 #[tokio::test]
-async fn the_user_page_shows_its_agents_held_rows_and_a_person_approves_their_own_agents_write() {
+async fn the_user_page_opens_its_agents_held_rows_and_a_person_approves_their_own_agents_write() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let (_, _, page) = act(
@@ -1530,6 +1530,25 @@ async fn the_user_page_shows_its_agents_held_rows_and_a_person_approves_their_ow
     let (_, _, page) = send(&rig.router, get("/web?view=memories", Some(&cookie))).await;
     assert!(page.contains("the deploy window is tuesday"), "{page}");
     assert!(page.contains(">held<"), "{page}");
+    let (status, _, opened) = send(
+        &rig.router,
+        get(
+            &format!("/web?view=memories&memory={memory}"),
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{opened}");
+    assert!(opened.contains("the deploy window is tuesday"), "{opened}");
+    rig.allow("bob@example.com", "bob", false).await;
+    let bob = signed_in(&rig, "sub-bob", "bob@example.com").await;
+    let (status, _, hidden) = send(
+        &rig.router,
+        get(&format!("/web?view=memories&memory={memory}"), Some(&bob)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{hidden}");
+    assert!(!hidden.contains("the deploy window is tuesday"), "{hidden}");
     // Review on the user page acts as alice-review, which is not the author.
     let (status, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
     assert_eq!(status, StatusCode::OK);
@@ -2024,13 +2043,22 @@ async fn a_key_issued_on_the_user_page_takes_the_default_guardrail_scope_and_the
 }
 
 #[tokio::test]
-async fn the_user_page_shows_the_guardrails_in_force_at_the_users_root_and_writes_none() {
+async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let value = laptop_key(&rig, &cookie).await;
     let id = agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
     let (_, _, page) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
     assert!(page.contains("Guardrails"), "{page}");
+    assert!(
+        page.contains("Rules in force at <code>universe.alice</code>"),
+        "{page}"
+    );
+    assert!(
+        page.contains("This workarea and its readable parent workareas."),
+        "{page}"
+    );
+    assert!(page.contains("<select name=\"workarea\">"), "{page}");
     // Held, it is no rule yet: the set holds none (d3); the memories view
     // lists the agents' held rows.
     assert!(page.contains("No guardrail applies here."), "{page}");
@@ -2055,6 +2083,66 @@ async fn the_user_page_shows_the_guardrails_in_force_at_the_users_root_and_write
         "{page}"
     );
     assert!(page.contains("universe.alice"), "{page}");
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web",
+        &[("action", "create_workarea"), ("name", "proj")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web",
+        &[
+            ("action", "create_workarea"),
+            ("name", "docs"),
+            ("parent", "alice.proj"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let root = key_named(&rig, "alice-web").await.user.expect("a root");
+    let proj = rig
+        .store
+        .workarea_children(rig.boot.tenant_id, root)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|w| w.name.as_str() == "proj")
+        .expect("proj")
+        .workarea_id;
+    let docs = rig
+        .store
+        .workarea_children(rig.boot.tenant_id, proj)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|w| w.name.as_str() == "docs")
+        .expect("docs")
+        .workarea_id;
+    let (status, _, nested) = send(
+        &rig.router,
+        get(
+            &format!("/web?view=guardrails&workarea={docs}"),
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{nested}");
+    assert!(
+        nested.contains("Rules in force at <code>universe.alice.proj.docs</code>"),
+        "{nested}"
+    );
+    assert!(
+        nested.contains(&format!("value=\"{docs}\" selected")),
+        "{nested}"
+    );
+    assert!(
+        nested.contains("[must] Run the tests before every commit."),
+        "the parent's root rule applies to the nested workarea: {nested}"
+    );
     // No page act writes, supersedes or retires a guardrail (d17).
     let (status, _, body) = act(
         &rig,
@@ -2064,6 +2152,46 @@ async fn the_user_page_shows_the_guardrails_in_force_at_the_users_root_and_write
     )
     .await;
     assert!(status.is_client_error(), "{status}: {body}");
+}
+
+#[tokio::test]
+async fn the_guardrail_selector_includes_workareas_after_the_first_tree_page() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    for n in 0..200 {
+        let name = format!("w{n:03}");
+        let (status, _, body) = act(
+            &rig,
+            &cookie,
+            "/web",
+            &[("action", "create_workarea"), ("name", &name)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{name}: {body}");
+    }
+    let root = key_named(&rig, "alice-web").await.user.expect("a root");
+    let last = rig
+        .store
+        .workarea_children(rig.boot.tenant_id, root)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|w| w.name.as_str() == "w199")
+        .expect("the child after the first 200-node page")
+        .workarea_id;
+    let (status, _, page) = send(
+        &rig.router,
+        get(
+            &format!("/web?view=guardrails&workarea={last}"),
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains(&format!("value=\"{last}\" selected")),
+        "the selected workarea is present beyond the first page: {page}"
+    );
 }
 
 #[tokio::test]
@@ -3077,6 +3205,15 @@ async fn the_filters_narrow_the_list() {
         assert_eq!(status, StatusCode::OK, "{query}: {page}");
         assert_eq!(ids(&page), expected, "{query}: {page}");
     }
+    // The widened own-key set also opens a rejected agent row by id.
+    let (status, _, rejected) = send(
+        &rig.router,
+        get(&format!("/web?view=memories&memory={held}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rejected}");
+    assert!(rejected.contains("a held kestrel"), "{rejected}");
+    assert!(rejected.contains(">rejected<"), "{rejected}");
     // A key that is not the person's is not found; a value outside its
     // grammar names its field.
     let (status, _, page) = send(
@@ -3143,7 +3280,22 @@ async fn a_workarea_act_is_confirmed_before_it_runs() {
         .find(|w| w.name.as_str() == "proj")
         .expect("proj")
         .workarea_id;
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web",
+        &[
+            ("action", "create_workarea"),
+            ("name", "child"),
+            ("parent", "alice.proj"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
     let (_, _, page) = send(&rig.router, get("/web?view=workarea", Some(&cookie))).await;
+    assert!(page.contains("universe.alice.proj.child"), "{page}");
+    assert!(page.contains(">alice.proj.child<"), "{page}");
+    assert!(!page.contains(">alice.child<"), "{page}");
     assert!(page.contains("<select name=\"op\""), "{page}");
     assert!(page.contains("value=\"propose:committed\""), "{page}");
     assert!(page.contains("value=\"mode:in_progress\""), "{page}");

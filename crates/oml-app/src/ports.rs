@@ -39,6 +39,11 @@ use crate::search::{
 /// surfaces to a concurrent writer (ADR-0002: one chain head, one assigner).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
+    /// A metered commit would pass one of its account's limits, checked in
+    /// the committing transaction against the counter it moved; the commit
+    /// wrote nothing (ADR-0071 d3).
+    #[error("quota {} reached: {} of {}", .0.quota.as_str(), .0.used, .0.limit)]
+    QuotaReached(oml_domain::signup::QuotaReached),
     /// An in-progress commit found a held version on its subtree inside
     /// the committing transaction; the commit wrote nothing (ADR-0030 d6).
     #[error("a version in the committed subtree is still held")]
@@ -366,6 +371,14 @@ pub enum MetadataFold {
         quota: oml_domain::signup::Quota,
         limit: Option<u64>,
     },
+    /// `account.profile_set`: the account's quota profile and its overrides,
+    /// replacing the ones it had; `None` returns it to the deployment's
+    /// default profile (ADR-0071 d5).
+    AccountProfileSet {
+        user_root: Uuid,
+        profile: Option<String>,
+        overrides: Vec<(oml_domain::signup::Quota, u64)>,
+    },
     /// `web.user_disabled`: every entry naming `user` is disabled at the
     /// commit's time and their sessions end in the same commit (ADR-0068
     /// d8). The key cut-offs are their own `key.denied` commits.
@@ -531,6 +544,18 @@ pub struct CommitRequest {
     pub fold: MetadataFold,
     pub outbox: OutboxRow,
     pub idempotency: Option<IdempotencyPut>,
+    /// The limits of the account this commit charges, which the store holds
+    /// every meter the fold raises to in the committing transaction; `None`
+    /// for an account under no limits and for every unmetered fold
+    /// (ADR-0071 d3). Metering itself happens either way.
+    pub ceiling: Option<Ceiling>,
+}
+
+/// One account's limits, carried by a metered commit (ADR-0071 d3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ceiling {
+    pub user_root: Uuid,
+    pub quotas: oml_domain::signup::Quotas,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -750,15 +775,55 @@ pub trait Retriever: Send + Sync {
 /// on another store, as an embedder's index would be, gets its own (ADR-0049
 /// d2).
 pub trait JournalStore: Retriever + Send + Sync {
-    /// What the person whose root is `user_root` holds against their
-    /// quotas: distinct memories in the root and below, live bearer and
-    /// connector keys naming the root, and open connections of those keys
-    /// (ADR-0068 d5).
+    /// The account's meters, read from its counters (ADR-0071 d2, d3): the
+    /// four stocks and the flows of the UTC month `at` falls in.
     fn user_usage(
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
+        at: &EventTime,
     ) -> impl Future<Output = Result<crate::types::UserUsage, StoreError>> + Send;
+
+    /// The profile an admin assigned the account, if any (ADR-0071 d5).
+    fn account_profile(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
+
+    /// One recall by a key of the account, counted in `at`'s UTC day; the
+    /// query is never recorded (ADR-0071 d2, d7).
+    fn meter_recall(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// Every account of the tenant that has a counter row, with its
+    /// counters and the flows of `month` (ADR-0071 d6).
+    fn usage_accounts(
+        &self,
+        tenant_id: Uuid,
+        month: oml_domain::usage::Month,
+    ) -> impl Future<Output = Result<Vec<crate::types::AccountCounters>, StoreError>> + Send;
+
+    /// The ledger rows of `month`, every account, by day then account
+    /// (ADR-0071 d4, d6).
+    fn usage_ledger(
+        &self,
+        tenant_id: Uuid,
+        month: oml_domain::usage::Month,
+    ) -> impl Future<Output = Result<Vec<crate::types::LedgerRow>, StoreError>> + Send;
+
+    /// Each account whose counters differ from its rows, recomputed by
+    /// ADR-0071 d2's definitions, with the month of `month`'s flows summed
+    /// (ADR-0071 d3).
+    fn usage_drift(
+        &self,
+        tenant_id: Uuid,
+        month: oml_domain::usage::Month,
+    ) -> impl Future<Output = Result<Vec<crate::types::MeterDrift>, StoreError>> + Send;
 
     /// The person's quota overrides an admin set, each replacing its
     /// default (ADR-0068 d5).

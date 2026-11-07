@@ -128,6 +128,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/account/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The calling key's own account's meters against its limits this UTC month.
+         * @description Requires: any key of an account, a user root's key (ADR-0071 d1, d6). The account is the key's own and no parameter names another, so no request reads another account's usage; a tenant key, which belongs to no account, answers access.not_found. Each meter carries its count, its limit (null where none holds), the whole percentage and its state: warning at 80% of the limit, reached at it (ADR-0071 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses this or any other read. Proposed.
+         */
+        get: operations["getAccountUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/workareas": {
         parameters: {
             query?: never;
@@ -1210,6 +1230,86 @@ export interface paths {
          * @description Requires: admin key role (ADR-0065 d13); every other role answers access.verb_ceiling. Reads the submissions journalled after after_seq, at most limit journal events, and scans each stored version but an erased one, body and anchor, as admission does. Changes nothing and journals nothing: a version it would veto stays where it is for a person to retire (ADR-0001 R4). A finding names its class, rule and place, never the matched text. Since v0.6.0.
          */
         get: operations["adminRescan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/accounts/{account}/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One account's meters against its limits this UTC month.
+         * @description Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the root workarea's id or the user's name, in the admin's tenant; anything else answers access.not_found. The same shape as GET /v1/account/usage. Journals nothing. Proposed.
+         */
+        get: operations["adminAccountUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/accounts/{account}/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set an account's quota profile and its overrides, replacing the ones it had.
+         * @description Requires: admin key role (ADR-0071 d5, d6). profile names a profile the configuration declares, or request.validation with details.field profile; overrides maps a quota to its limit, each from 0 to that quota's maximum (1,000,000, or 1,000,000,000,000 for text_bytes), and an unknown quota is request.validation with details.field overrides. Omitted overrides clear the account's. Journalled as account.profile_set; the new limits hold from the next write. Answers the account's usage under them. Idempotent by its replace semantics; no Idempotency-Key. Proposed.
+         */
+        put: operations["setAccountProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The usage ledger of one UTC month, every account, one row per account per closed day, as JSON or CSV.
+         * @description Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is json, the default, or csv, whose header is day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks as the hourly rollup read them after the day closed and that day's flows; profile is the one an admin assigned, null for the deployment's default. Rows are kept 25 months. Counts only (d7). Journals nothing. Proposed.
+         */
+        get: operations["adminUsageLedger"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/admin/usage/drift": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Each account whose counters differ from the rows they count, and each account on a profile the configuration does not declare.
+         * @description Requires: admin key role (ADR-0071 d3, d5). Recomputes every account's stocks from the stored rows by ADR-0071 d2's definitions, and this month's writes from its held versions, in one snapshot, and lists each meter that differs. Repairs nothing. oml doctor reads it for its usage lines. Journals nothing. Proposed.
+         */
+        get: operations["adminUsageDrift"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2534,6 +2634,65 @@ export interface components {
                 pii?: boolean;
             } | null;
         };
+        /** @description An account's six meters against its limits in one UTC month (ADR-0071 d2, d5, d6). Counts only. */
+        AccountUsage: {
+            /** @description The id of the root workarea the account is. */
+            account: string;
+            user: string | null;
+            /** @description The quota profile the limits come from; null for an account under no limits. */
+            profile: string | null;
+            /** @description false when the configuration no longer declares the profile, which holds every limit at zero. */
+            profile_declared: boolean;
+            /** @description The UTC month the flows count, YYYY-MM. */
+            period: string;
+            meters: {
+                /** @enum {string} */
+                meter: "memories" | "text_bytes" | "writes" | "recalls" | "keys" | "connections";
+                used: number;
+                limit: number | null;
+                percent: number | null;
+                /** @enum {string} */
+                state: "ok" | "warning" | "reached";
+            }[];
+        };
+        AccountProfileRequest: {
+            profile: string;
+            /** @description A quota's limit for this account alone: memories, text_bytes, writes_per_month, keys, connections or requests_per_minute. */
+            overrides?: {
+                [key: string]: number;
+            };
+        };
+        UsageLedger: {
+            period: string;
+            rows: {
+                /** Format: date */
+                day: string;
+                account: string;
+                user: string | null;
+                profile: string | null;
+                memories: number;
+                text_bytes: number;
+                writes: number;
+                recalls: number;
+                keys: number;
+                connections: number;
+            }[];
+        };
+        UsageDrift: {
+            drift: {
+                account: string;
+                user: string | null;
+                /** @enum {string} */
+                meter: "memories" | "text_bytes" | "writes" | "keys" | "connections";
+                counter: number;
+                rows: number;
+            }[];
+            undeclared_profiles: {
+                account: string;
+                user: string | null;
+                profile: string;
+            }[];
+        };
         /** @description One rescan window (ADR-0065 d13). No field carries a version's text, claim key or anchor value. */
         RescanReport: {
             scanner_version: string | null;
@@ -3182,6 +3341,91 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getAccountUsage: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's usage. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "account": "00000000-0000-4000-8000-0000000000c1",
+                     *       "user": "u7k2m9q4x1z",
+                     *       "profile": "free",
+                     *       "profile_declared": true,
+                     *       "period": "2026-11",
+                     *       "meters": [
+                     *         {
+                     *           "meter": "memories",
+                     *           "used": 812,
+                     *           "limit": 1000,
+                     *           "percent": 81,
+                     *           "state": "warning"
+                     *         },
+                     *         {
+                     *           "meter": "text_bytes",
+                     *           "used": 204800,
+                     *           "limit": null,
+                     *           "percent": null,
+                     *           "state": "ok"
+                     *         },
+                     *         {
+                     *           "meter": "writes",
+                     *           "used": 120,
+                     *           "limit": null,
+                     *           "percent": null,
+                     *           "state": "ok"
+                     *         },
+                     *         {
+                     *           "meter": "recalls",
+                     *           "used": 431,
+                     *           "limit": null,
+                     *           "percent": null,
+                     *           "state": "ok"
+                     *         },
+                     *         {
+                     *           "meter": "keys",
+                     *           "used": 2,
+                     *           "limit": 5,
+                     *           "percent": 40,
+                     *           "state": "ok"
+                     *         },
+                     *         {
+                     *           "meter": "connections",
+                     *           "used": 1,
+                     *           "limit": 5,
+                     *           "percent": 20,
+                     *           "state": "ok"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AccountUsage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };
@@ -5352,14 +5596,20 @@ export interface operations {
                             under_quotas: boolean;
                             usage: {
                                 memories?: number;
+                                text_bytes?: number;
+                                /** @description Versions submitted this UTC month (ADR-0071 d2). */
+                                writes?: number;
                                 keys?: number;
                                 connections?: number;
                             };
+                            /** @description A null limit is unlimited (ADR-0071 d5). */
                             quotas: {
-                                memories?: number;
-                                keys?: number;
-                                connections?: number;
-                                requests_per_minute?: number;
+                                memories?: number | null;
+                                text_bytes?: number | null;
+                                writes_per_month?: number | null;
+                                keys?: number | null;
+                                connections?: number | null;
+                                requests_per_minute?: number | null;
                             };
                         }[];
                         deletions: {
@@ -6277,6 +6527,157 @@ export interface operations {
                      *     }
                      */
                     "application/json": components["schemas"]["RescanReport"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    adminAccountUsage: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                /** @description The account: its root workarea id or its user name. */
+                account: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's usage. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountUsage"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    setAccountProfile: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                /** @description The account: its root workarea id or its user name. */
+                account: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "profile": "free",
+                 *       "overrides": {
+                 *         "memories": 5000
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["AccountProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description The account's usage under its new limits. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountUsage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    adminUsageLedger: {
+        parameters: {
+            query: {
+                /** @description The UTC month, YYYY-MM. */
+                period: string;
+                format?: "json" | "csv";
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The month's rows, by day then account. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageLedger"];
+                    "text/csv": string;
+                };
+            };
+            400: components["responses"]["Error"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    adminUsageDrift: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The drift report; two empty lists when every counter matches. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageDrift"];
                 };
             };
             403: components["responses"]["Forbidden"];

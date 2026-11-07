@@ -47,7 +47,7 @@ server:
     note: "`open` lets a person whose provider-verified email no entry holds create an account after accepting the terms: a drawn user, a private root, `<user>-web` and `<user>-review` (ADR-0068 d1). `open` requires `oauth.issuer`, a sign-in provider (`web.google.*` or `web.github.*`) and every `signup.*` setting except `per_ip_per_hour`. A missing one, a tenant id that does not parse, or an issuer that is not a live admin key of that tenant stops the process at start, naming the setting."
   signup.tenant:
     default: unset
-    note: The tenant id sign-ups land in. Every person of that tenant is under the `quota.*` limits.
+    note: The tenant id sign-ups land in. Every person of that tenant is under the limits of its quota profile.
   signup.issuer:
     default: unset
     note: The name of an admin key of the sign-up tenant that adds each entry and issues its session keys.
@@ -63,18 +63,12 @@ server:
   signup.per_ip_per_hour:
     default: "`5`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
     note: New accounts from one client address in a rolling hour, counted per process; an IPv6 address counts by its /64 and an IPv4 address by itself. The address is the request line's, so behind a proxy set `server.trusted_proxies`, or every sign-up shares one bucket (`oml doctor` warns).
-  quota.memories:
-    default: "`1000`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
-    note: Live memories in a person's root, counted as chains, so a new version of a memory is not a new memory. Past it, `limit.quota`. An admin overrides one person's limit on `/web/admin/users`, journaled as `web.quota_set`. A value above 1,000,000 stops the start.
-  quota.keys:
-    default: "`5`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
-    note: Live agent keys of a person. Past it, `limit.quota`.
-  quota.connections:
-    default: "`5`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
-    note: Open connections of a person. Past it, `limit.quota`.
-  quota.requests_per_minute:
-    default: "`120`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164))"
-    note: Requests per key per UTC minute, counted per process. Past it, `limit.rate`.
+  quota.profiles:
+    default: unset
+    note: "Comma-separated names of the quota profiles beside `default`, such as `free, pro`. The `default` profile reads `quota.<quota>` (`OML_QUOTA__<QUOTA>`) and each named profile `quota.profile.<name>.<quota>` (`OML_QUOTA__PROFILE__<NAME>__<QUOTA>`), for `memories`, `text_bytes`, `writes_per_month`, `keys`, `connections` and `requests_per_minute`; a limit a profile leaves unset is `default`'s. `default` limits memories, keys, connections and requests per minute at `1000`, `5`, `5` and `120`, the operator's choice, unmeasured ([#164](https://github.com/e8kor/open-memory-lab/issues/164)); `text_bytes` (up to 10^12) and `writes_per_month` start unlimited. Any other limit above 1 000 000 stops the start, as does a name that is not a name or is `default` again. Past a limit, `limit.quota`, or `limit.rate` for requests per minute. An admin assigns an account a profile with `PUT /v2/admin/accounts/{account}/profile`, journaled as `account.profile_set`, and overrides one person's limit on `/web/admin/users`, journaled as `web.quota_set` ([ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d5)."
+  quota.signup_profile:
+    default: "`default`"
+    note: "The profile an account of the sign-up tenant is on until an admin assigns one. A name `quota.profiles` does not declare stops the start ([ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d5)."
   brief.max_tokens:
     default: "`400`"
     note: The token budget a workarea's brief is cut to when an agent reads the workarea. The first member that does not fit ends the brief.

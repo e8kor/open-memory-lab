@@ -45,7 +45,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
-      - run: python scripts/check_numbers.py --base origin/main
+      - run: python scripts/check_numbers.py --base "origin/${{ github.base_ref }}"
         env:
           GH_TOKEN: ${{ github.token }}
 

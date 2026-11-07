@@ -172,8 +172,7 @@ pub fn lex(src: &str) -> Result<Lexed, String> {
                     .unwrap_or(attr.len());
                 if &attr[..name_end] == "doc" && attr[name_end..].trim_start().starts_with('=') {
                     return Err(format!(
-                        "unsupported: a #![doc = …] attribute at line {line}, whose text this adapter \
-                         does not read (ADR-0061 d3)"
+                        "unsupported: #![doc = …] at line {line}; use a doc comment instead"
                     ));
                 }
                 line += src[start..i].matches('\n').count();

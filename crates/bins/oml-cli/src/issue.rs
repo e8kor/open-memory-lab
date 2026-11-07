@@ -111,16 +111,16 @@ impl KeyFile {
             .to_str()
             .ok_or_else(|| {
                 format!(
-                    "refused: the --out path {} is not UTF-8, so the line that reads it back \
-                     cannot be printed; nothing was sent (ADR-0028 d1)",
+                    "refused: --out path {} is not UTF-8, so its read-back command cannot be \
+                     printed; choose a UTF-8 path; nothing was sent",
                     path.display()
                 )
             })?
             .to_owned();
         if shown.contains(['\'', '"', '\n', '\r']) {
             return Err(format!(
-                "refused: the --out path {shown:?} holds a quote or a newline, so the line that \
-                 reads it back would not be safe to run; nothing was sent (ADR-0028 d1)"
+                "refused: --out path {shown:?} contains a quote or a newline; choose a plain path \
+                 so its read-back command is safe to run; nothing was sent"
             ));
         }
         let mut options = std::fs::OpenOptions::new();
@@ -129,8 +129,8 @@ impl KeyFile {
         let file = options.open(&path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::AlreadyExists {
                 format!(
-                    "refused: {shown} already exists, and --out never overwrites a file; \
-                     nothing was sent (ADR-0028 d1)"
+                    "refused: {shown} already exists; choose another --out path because existing \
+                     files are never overwritten; nothing was sent"
                 )
             } else {
                 format!("cannot create {shown}: {e}; nothing was sent")
@@ -229,7 +229,7 @@ pub fn connect_code_printed(answer: &Value, replayed: bool, json: bool) -> Print
             stdout,
             stderr: vec![format!(
                 "connector key {key_name} ({key_id}) was issued, but {why}; \
-                 `oml keys connect-code {key_name}` mints a new one (ADR-0031 d7)"
+                 run `oml keys connect-code {key_name}` to mint a new code"
             )],
             exit: 2,
         };
@@ -330,7 +330,7 @@ pub fn minted_code_printed(key: &str, answer: &Value, replayed: bool, json: bool
             stdout,
             stderr: vec![format!(
                 "a connect code for connector key {key} was minted, but {why}; \
-                 `oml keys connect-code {key}` mints a new one (ADR-0031 d7)"
+                 run `oml keys connect-code {key}` to mint a new code"
             )],
             exit: 2,
         };

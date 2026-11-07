@@ -18,12 +18,13 @@ use serde_json::{Value, json};
 use oml_app::app::{CallbackRefusal, Capacity, StartStatus, UserRow};
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::signup::Quota;
+use oml_app::domain::usage::{Meter, MeterState};
 use oml_app::domain::web::{
     Email, Provider, ProviderIdentity, SIGN_IN_TTL_SECS, SignInRefusal, csrf_matches, csrf_token,
 };
 use oml_app::domain::{MemoryStatus, Role};
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
-use oml_app::types::{AppError, IssuedKey, WebSessionRecord};
+use oml_app::types::{AccountUsage, AppError, IssuedKey, MeterReading, WebSessionRecord};
 
 use super::page::{STYLESHEET, attr, glyph_svg, shell, short};
 use super::{
@@ -627,7 +628,11 @@ where
             .web_deletion_pending(&web)
             .await
             .map_err(app_error)?;
-        let limits = self.app.web_own_limits(&web).await.map_err(app_error)?;
+        let usage = match self.app.own_usage(&web).await {
+            Ok(usage) => Some(usage),
+            Err(AppError::NotFound) => None,
+            Err(e) => return Err(app_error(e)),
+        };
         let csrf = csrf_token(token);
         let issuer = self
             .app
@@ -724,30 +729,10 @@ where
             hide(status.first_memory == Some(MemoryStatus::Promoted)),
             glyph_svg("promoted"),
         );
-        // The limits (d5).
-        if let Some((usage, quotas)) = limits {
-            body.push_str(r#"<section class="card">"#);
-            body.push_str(&head(
-                "Your limits",
-                "h2",
-                "Default limits; an administrator can raise one for you.",
-            ));
-            body.push_str("<table><tr><th>limit</th><th>used</th><th></th></tr>");
-            for (name, used, limit) in [
-                ("Memories", usage.memories, quotas.memories),
-                ("Keys", usage.keys, quotas.keys),
-                ("Connections", usage.connections, quotas.connections),
-            ] {
-                let _ = write!(
-                    body,
-                    r#"<tr><td>{name}</td><td class="mono">{used} / {limit}</td><td><meter min="0" max="{limit}" value="{used}" aria-label="{name}: {used} of {limit} used"></meter></td></tr>"#
-                );
-            }
-            let _ = write!(
-                body,
-                r#"<tr><td>Requests, per key</td><td class="mono">{} / min</td><td></td></tr></table></section>"#,
-                quotas.requests_per_minute
-            );
+        // The account's meters against its limits (ADR-0068 d5; ADR-0071
+        // d6), read through the use case GET /v1/account/usage serves.
+        if let Some(usage) = usage {
+            body.push_str(&usage_card(&usage));
         }
         // The account (d6).
         let policy = self.app.signup_policy();
@@ -1070,6 +1055,14 @@ where
             .await
             .map_err(app_error)?;
         let users = self.app.web_users(&admin).await.map_err(app_error)?;
+        let accounts: BTreeMap<uuid::Uuid, AccountUsage> = self
+            .app
+            .admin_accounts(&admin)
+            .await
+            .map_err(app_error)?
+            .into_iter()
+            .map(|a| (a.user_root, a))
+            .collect();
         let deletions = self.app.web_deletions(&admin).await.map_err(app_error)?;
         let csrf = csrf_token(token);
         let mut body = String::from(
@@ -1095,9 +1088,10 @@ where
             }
             body.push_str("</table><p class=\"dim\">Closing disables the person and cuts off their keys; their memories stay until they are erased with <code>oml erase</code>.</p>");
         }
-        body.push_str("<h2>People</h2><table><tr><th>user</th><th>memories</th><th>keys</th><th>connections</th><th>requests/min</th><th></th></tr>");
+        body.push_str("<h2>People</h2><p class=\"dim\">This month's meters against each person's profile. A meter at 80% of its limit is marked; at its limit the next write is refused.</p><table><tr><th>user</th><th>profile</th><th>memories</th><th>text</th><th>writes</th><th>recalls</th><th>keys</th><th>connections</th><th>requests/min</th><th></th></tr>");
         for u in &users {
-            body.push_str(&user_row(u, &csrf));
+            let account = u.root.and_then(|r| accounts.get(&r));
+            body.push_str(&user_row(u, account, &csrf));
         }
         body.push_str("</table>");
         let quotas: Vec<(&str, &str)> = Quota::ALL
@@ -1156,7 +1150,7 @@ where
                     .ok_or_else(|| {
                         field_error(
                             "quota",
-                            "quota is one of memories, keys, connections, requests_per_minute",
+                            "quota is one of memories, text_bytes, writes_per_month, keys, connections, requests_per_minute",
                         )
                     })?;
                 let limit = match fields
@@ -1209,8 +1203,7 @@ where
     }
 }
 
-fn user_row(u: &UserRow, csrf: &str) -> String {
-    let cell = |used: u64, limit: u64| format!("{used} / {limit}");
+fn user_row(u: &UserRow, account: Option<&AccountUsage>, csrf: &str) -> String {
     let flags = match (u.signed_up, u.disabled) {
         (_, true) => r#" <span class="tag dim">disabled</span>"#,
         (true, false) => r#" <span class="tag ok">signed up</span>"#,
@@ -1225,14 +1218,114 @@ fn user_row(u: &UserRow, csrf: &str) -> String {
             attr(u.user.as_str())
         )
     };
+    let mut cells = String::new();
+    match account {
+        Some(a) => {
+            let _ = write!(
+                cells,
+                "<td>{}</td>",
+                escape(a.profile.as_deref().unwrap_or("none"))
+            );
+            for m in &a.meters {
+                let _ = write!(cells, "<td>{}</td>", meter_cell(m));
+            }
+        }
+        None => cells.push_str(&"<td class=\"dim\">—</td>".repeat(7)),
+    }
+    let rate = if u.quotas.requests_per_minute == oml_app::domain::signup::UNLIMITED {
+        "—".to_owned()
+    } else {
+        u.quotas.requests_per_minute.to_string()
+    };
     format!(
-        r#"<tr><td class="mono">{}{flags}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{disable}</td></tr>"#,
+        r#"<tr><td class="mono">{}{flags}</td>{cells}<td>{rate}</td><td>{disable}</td></tr>"#,
         short(u.user.as_str()),
-        cell(u.usage.memories, u.quotas.memories),
-        cell(u.usage.keys, u.quotas.keys),
-        cell(u.usage.connections, u.quotas.connections),
-        u.quotas.requests_per_minute,
     )
+}
+
+/// One meter's count, its limit where one holds, and its state marked
+/// at 80% and at the limit (ADR-0071 d5).
+fn meter_cell(m: &MeterReading) -> String {
+    let used = if m.meter == Meter::TextBytes {
+        bytes(m.used)
+    } else {
+        m.used.to_string()
+    };
+    let limit = m.limit.map(|l| {
+        if m.meter == Meter::TextBytes {
+            bytes(l)
+        } else {
+            l.to_string()
+        }
+    });
+    let mark = match m.state {
+        MeterState::Ok => "",
+        MeterState::Warning => r#" <span class="oml-chip is-held">80%</span>"#,
+        MeterState::Reached => r#" <span class="oml-chip is-rejected">limit</span>"#,
+    };
+    match limit {
+        Some(limit) => format!(r#"<span class="mono">{used} / {limit}</span>{mark}"#),
+        None => format!(r#"<span class="mono">{used}</span>"#),
+    }
+}
+
+/// A byte count in the unit a person reads: B, kB, MB or GB, decimal.
+fn bytes(n: u64) -> String {
+    match n {
+        0..1_000 => format!("{n} B"),
+        1_000..1_000_000 => format!("{:.1} kB", n as f64 / 1e3),
+        1_000_000..1_000_000_000 => format!("{:.1} MB", n as f64 / 1e6),
+        _ => format!("{:.1} GB", n as f64 / 1e9),
+    }
+}
+
+/// The account's meters as a card (ADR-0071 d6): each against its limit,
+/// a `<meter>` where a limit holds, and its state; `/web/start` and the
+/// person's page show it.
+#[must_use]
+pub fn usage_card(usage: &AccountUsage) -> String {
+    let mut out = String::from(r#"<section class="card" id="usage">"#);
+    let profile = match (&usage.profile, usage.profile_declared) {
+        (Some(p), true) => format!("Profile {p}; an administrator can raise a limit for you."),
+        (Some(p), false) => format!(
+            "Profile {p} is no longer offered, so every limit is zero until an administrator moves you."
+        ),
+        (None, _) => "No limits hold for this account.".to_owned(),
+    };
+    let _ = write!(
+        out,
+        r#"<header class="oml-section-head"><div class="top"><h2>Your usage</h2></div><p class="desc">{} · {}</p></header>"#,
+        escape(&usage.month.as_string()),
+        escape(&profile)
+    );
+    out.push_str("<table><tr><th>meter</th><th>used</th><th></th></tr>");
+    for m in &usage.meters {
+        let name = match m.meter {
+            Meter::Memories => "Memories",
+            Meter::TextBytes => "Text stored",
+            Meter::Writes => "Writes this month",
+            Meter::Recalls => "Recalls this month",
+            Meter::Keys => "Keys",
+            Meter::Connections => "Connections",
+        };
+        let bar = match m.limit {
+            Some(limit) if limit > 0 => format!(
+                r#"<meter min="0" max="{limit}" low="{}" high="{}" optimum="0" value="{}" aria-label="{name}: {} of {limit}"></meter>"#,
+                limit.saturating_mul(8) / 10,
+                limit.saturating_mul(8) / 10,
+                m.used.min(limit),
+                m.used
+            ),
+            _ => String::new(),
+        };
+        let _ = write!(
+            out,
+            "<tr><td>{name}</td><td>{}</td><td>{bar}</td></tr>",
+            meter_cell(m)
+        );
+    }
+    out.push_str("</table></section>");
+    out
 }
 
 /// Step 2's answer: the credential, shown once, with what to do with it.

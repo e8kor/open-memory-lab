@@ -29,9 +29,8 @@ pub fn lines(url: Option<&str>, cwd: &Path) -> Vec<String> {
         && git.config(ALLOW_PUBLIC_CONFIG).as_deref() != Some("true")
     {
         out.push(format!(
-            "warn sync_public_server: the URL is the public server {url}, and \
-             --allow-public-server is not recorded for this clone; oml sync refuses it until a \
-             run passes the flag (ADR-0057 d6)"
+            "warn sync_public_server: {url} is the maintainer's public server, but consent is \
+             not recorded for this clone; run oml sync with --allow-public-server to opt in"
         ));
     }
     out

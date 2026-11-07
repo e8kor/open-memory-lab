@@ -8,6 +8,20 @@ answers: "what each OML release changed for users and operators, newest first"
 
 Newest first. Each release is a signed tag on the [releases page](https://github.com/e8kor/open-memory-lab/releases).
 
+## 0.6.2
+
+Released 2026-11-06.
+
+- Added memory cards to the web pages: `/web` and `/web/admin` list memories as paged cards you can filter by state, workarea, origin, author key and text, and draw the workareas you may read as an Atlas, a treemap the server draws with no script.
+- Added a dropdown on each workarea in the web pages for its acts, each confirmed before it runs.
+- Added open sign-up, off by default. With `signup.mode = open`, a person who signs in with Google or GitHub and holds no entry reaches a terms page, then gets a private root under quotas, a reviewer key of their own and a `/web/start` page that walks them through the first memory. A person can ask for their account to be deleted. Migration 0037 runs at upgrade. Nothing changes for you unless you set the mode.
+- Changed the web pages, the documentation site and the README to one design system, with the same colours, type and state marks everywhere.
+- Changed the landing page to lead with one memory across your AI tools, with a page for teams and one for individuals.
+- Changed the documentation to be grouped by what a reader does, with open work tracked as GitHub issues.
+- Changed continuous integration to run only the jobs a pull request's changed paths reach.
+
+Upgrade notes: Migration 0037 runs at upgrade. Open sign-up stays off until you set `signup.mode = open`.
+
 ## 0.6.1
 
 Released 2026-11-06.

@@ -443,6 +443,7 @@ async fn commit_at(
                 payload: json!({ "seq": seq }),
             },
             idempotency: None,
+            ceiling: None,
         })
         .await
 }
@@ -567,6 +568,7 @@ async fn open_at(
                 payload: json!({ "seq": event.envelope.seq }),
             },
             idempotency: None,
+            ceiling: None,
         })
         .await
 }
@@ -3710,6 +3712,7 @@ async fn an_operator_key_with_tenant_id_null_still_issues_a_tenants_first_admin_
                     payload: json!({ "seq": event.envelope.seq }),
                 },
                 idempotency: None,
+                ceiling: None,
             })
             .await
             .expect("the operator's commit");
@@ -3853,6 +3856,7 @@ async fn a_tenants_fenced_partition_exists_before_its_row_commits() {
                 payload: json!({ "seq": 1 }),
             },
             idempotency: None,
+            ceiling: None,
         })
         .await
         .expect("the genesis commits");
@@ -4286,6 +4290,7 @@ async fn the_widening_statement_names_its_tenant_and_touches_no_other_tenants_ro
             event,
             fold: MetadataFold::ClaimEdgeProposed(edge),
             idempotency: None,
+            ceiling: None,
         })
         .await
         .expect("the proposal commits");
@@ -5891,7 +5896,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 37, "every migration through 0037_open_signup");
+    assert_eq!(applied, 38, "every migration through 0038_usage_metering");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7336,7 +7341,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 37, "every migration through 0037_open_signup");
+    assert_eq!(applied, 38, "every migration through 0038_usage_metering");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8212,7 +8217,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 37, "every migration through 0037_open_signup");
+    assert_eq!(applied, 38, "every migration through 0038_usage_metering");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;

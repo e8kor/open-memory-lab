@@ -473,7 +473,7 @@ fn decision_prose_outside_a_dn_bullet_is_warned_not_loaded() {
     assert_eq!(x.items.len(), 2, "the summary and d1");
     assert_eq!(x.warnings.len(), 1, "{:?}", x.warnings);
     assert!(
-        x.warnings[0].contains("3 line(s) under ## Decision outside a dN bullet"),
+        x.warnings[0].contains("3 line(s) under ## Decision outside a decision bullet"),
         "{:?}",
         x.warnings
     );

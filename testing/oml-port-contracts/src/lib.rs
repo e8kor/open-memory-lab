@@ -32,9 +32,9 @@ use oml_app::domain::{
 use oml_app::doubles::FakeSparseEncoder;
 use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
-    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen, IdempotencyPut,
-    IdempotencyRecord, IdempotencyScope, JournalStore, KeyringStore, MetadataFold, OutboxRow,
-    Reranker, Retriever, Scanner, Signer, StoreError, SubjectRow,
+    AdmissionEnvelope, Ceiling, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen,
+    IdempotencyPut, IdempotencyRecord, IdempotencyScope, JournalStore, KeyringStore, MetadataFold,
+    OutboxRow, Reranker, Retriever, Scanner, Signer, StoreError, SubjectRow,
 };
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, OwnHeldScope, PostingsHealth, RetrievalQuery,
@@ -131,6 +131,21 @@ impl ChainRig {
         fold: MetadataFold,
         idempotency: Option<IdempotencyPut>,
     ) -> Result<CommitReceipt, StoreError> {
+        self.commit_charged(store, event_type, payload, fold, idempotency, None)
+            .await
+    }
+
+    /// [`Self::commit`] carrying the ceiling of the account it charges
+    /// (ADR-0071 d3).
+    pub async fn commit_charged<S: JournalStore>(
+        &mut self,
+        store: &S,
+        event_type: &str,
+        payload: Value,
+        fold: MetadataFold,
+        idempotency: Option<IdempotencyPut>,
+        ceiling: Option<Ceiling>,
+    ) -> Result<CommitReceipt, StoreError> {
         if !self.partitioned && event_type == event_types::TENANT_GENESIS {
             store.create_tenant_partitions(self.tenant_id).await?;
             self.partitioned = true;
@@ -146,6 +161,7 @@ impl ChainRig {
                     payload: json!({ "seq": event.envelope.seq }),
                 },
                 idempotency,
+                ceiling,
             })
             .await;
         match receipt {
@@ -182,6 +198,7 @@ impl ChainRig {
                 event,
                 fold,
                 idempotency: None,
+                ceiling: None,
             });
         }
         let receipt = store.commit_chain(reqs).await;
@@ -658,6 +675,7 @@ async fn commit_raw<S: JournalStore>(
                 payload: json!({}),
             },
             idempotency: None,
+            ceiling: None,
         })
         .await
 }
@@ -4115,6 +4133,7 @@ pub async fn a_chain_whose_ratification_loses_the_compare_and_set_journals_no_ve
         event,
         fold: filler_fold.clone(),
         idempotency: None,
+        ceiling: None,
     };
     let filler = || json!({ "body_digest": "sha256:00" });
     let (a, b) = (
@@ -7061,6 +7080,166 @@ pub async fn a_ratified_end_is_written_with_the_tip_move_or_not_at_all<S: Journa
     assert!(tip.is_tip);
 }
 
+// ---------------------------------------------------------------------------
+// Usage metering (ADR-0071)
+// ---------------------------------------------------------------------------
+
+/// A commit whose fold raises one of its account's meters past the ceiling
+/// it carries is refused and writes nothing; the usage the store reads is
+/// what the rows say, through holds, a rejection and a key revocation; and
+/// no counter drifts from its rows (ADR-0071 d2, d3).
+pub async fn a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_rows<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::signup::{Quota, QuotaReached, Quotas};
+    use oml_app::domain::usage::Month;
+    let mut rig = ChainRig::new(70);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0x7010), None, "universe");
+    let root = WorkareaRecord {
+        user_root: true,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0x7011),
+            Some(universe.workarea_id),
+            "ada",
+        )
+    };
+    for w in [universe, root.clone()] {
+        rig.create_workarea(store, w).await;
+    }
+    let account = root.workarea_id;
+    let key_id = Uuid::from_u128(0x7020);
+    rig.issue_key(
+        store,
+        KeyRecord {
+            user: Some(account),
+            ..key_record(t, key_id, Role::Writer, None)
+        },
+    )
+    .await;
+    let ceiling = Ceiling {
+        user_root: account,
+        quotas: Quotas::default()
+            .with(Quota::Memories, 2)
+            .with(Quota::TextBytes, 40),
+    };
+    let memory = |n: u128, body: &str| {
+        held_memory(t, account, Uuid::from_u128(0x7030 + n), "ada", key_id, body)
+    };
+    let at = EventTime::parse("2026-10-29T13:00:00.000000Z").expect("a time");
+    for (n, body) in [(1, "first fact"), (2, "second fact")] {
+        rig.commit_charged(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": memory(n, body).memory_id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: memory(n, body),
+                enqueue: true,
+            },
+            None,
+            Some(ceiling),
+        )
+        .await
+        .expect("within the ceiling");
+    }
+    let head = store.chain_head(t).await.expect("head");
+    let third = memory(3, "third");
+    assert_eq!(
+        rig.commit_charged(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": third.memory_id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: third.clone(),
+                enqueue: true,
+            },
+            None,
+            Some(ceiling),
+        )
+        .await,
+        Err(StoreError::QuotaReached(QuotaReached {
+            quota: Quota::Memories,
+            limit: 2,
+            used: 2,
+        })),
+        "the third live chain passes the memories ceiling"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "nothing journalled"
+    );
+    assert_eq!(
+        store.memory(t, third.memory_id).await.expect("read"),
+        None,
+        "nothing folded"
+    );
+    let usage = store.user_usage(t, account, &at).await.expect("usage");
+    assert_eq!(
+        (usage.memories, usage.text_bytes, usage.writes, usage.keys),
+        (2, 21, 2, 1),
+        "two live chains, their bytes, two writes, one key"
+    );
+    // A rejected chain leaves the memories meter and keeps its bytes.
+    reject(&mut rig, store, memory(1, "first fact").memory_id)
+        .await
+        .expect("reject");
+    let usage = store.user_usage(t, account, &at).await.expect("usage");
+    assert_eq!((usage.memories, usage.text_bytes), (1, 21));
+    // The freed memory admits the third; bytes past their ceiling refuse.
+    rig.commit_charged(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": third.memory_id.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory: third,
+            enqueue: true,
+        },
+        None,
+        Some(ceiling),
+    )
+    .await
+    .expect("one memory free");
+    let long = memory(4, "a body longer than what is left");
+    assert!(matches!(
+        rig.commit_charged(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": long.memory_id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: long,
+                enqueue: true,
+            },
+            None,
+            Some(Ceiling {
+                quotas: ceiling.quotas.with(Quota::Memories, 10),
+                ..ceiling
+            }),
+        )
+        .await,
+        Err(StoreError::QuotaReached(QuotaReached {
+            quota: Quota::TextBytes,
+            limit: 40,
+            ..
+        }))
+    ));
+    // A revoked key leaves the keys meter; nothing drifts.
+    rig.revoke_key(store, key_id).await.expect("revoke");
+    let usage = store.user_usage(t, account, &at).await.expect("usage");
+    assert_eq!(
+        (usage.memories, usage.text_bytes, usage.writes, usage.keys),
+        (2, 26, 3, 0)
+    );
+    assert_eq!(
+        store.usage_drift(t, Month::of(&at)).await.expect("drift"),
+        Vec::new()
+    );
+}
+
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -7071,6 +7250,10 @@ where
     // rather than the largest law's state inline, and an unoptimized test
     // build stays inside a test thread's default stack.
     Box::pin(journal_commit_and_head(&new_store().await)).await;
+    Box::pin(
+        a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_rows(&new_store().await),
+    )
+    .await;
     Box::pin(journal_commit_refuses_conflicts(&new_store().await)).await;
     Box::pin(journal_events_range_pages(&new_store().await)).await;
     Box::pin(

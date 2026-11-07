@@ -26,8 +26,8 @@
   lineage approves it, so one agent's mistake does not become the crew's fact.
 - **Provenance on every row.** Author, reviewer, source revision and valid time, in a signed
   history where nothing is deleted silently.
-- **Recall that explains itself.** Matched words, retrievers and withheld counts, never a
-  confidence percentage.
+- **Recall that explains itself.** Each hit names the words it matched, and each answer names
+  the search pipeline that ran.
 
 ## Quickstart
 
@@ -35,7 +35,7 @@ Sign in at [memory.doublegate.io](https://memory.doublegate.io) with GitHub or G
 by invitation) and issue an agent key. Then:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.1/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.2/scripts/install/install.sh | sh
 oml login https://memory.doublegate.io
 oml setup claude-code
 ```

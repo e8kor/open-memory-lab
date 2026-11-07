@@ -2448,6 +2448,7 @@ async fn revoke_in_the_store(rig: &Rig, tenant: Uuid, revoker: &Value, key_id: U
             event,
             fold: MetadataFold::KeyRevoked { key_id },
             idempotency: None,
+            ceiling: None,
         })
         .await
         .expect("the revocation commits");
@@ -7255,8 +7256,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        69,
-        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan (ADR-0065 d13), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the eight web routes (ADR-0045 d25) and open sign-up's seven (ADR-0068 d10)"
+        74,
+        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan (ADR-0065 d13), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the six web routes, open sign-up's seven (ADR-0068 d10) and usage metering's five (ADR-0071 d6)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 

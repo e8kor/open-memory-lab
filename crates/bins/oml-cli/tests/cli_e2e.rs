@@ -631,6 +631,7 @@ impl Lab {
                 event,
                 fold: MetadataFold::KeyRevoked { key_id },
                 idempotency: None,
+                ceiling: None,
             })
             .await
             .expect("the revocation commits");
@@ -1940,8 +1941,8 @@ async fn crews_create_and_show_by_name() {
 }
 
 /// Under the admin context `oml bootstrap claim` stores, `oml workareas
-/// tree` lists the tenant tree from `universe` down, or from a `--root`
-/// given by name, in one tree read, with each node's name, path, status and
+/// tree` lists the tenant tree from `universe` down, or from a positional
+/// root or `--root` given by name, in one tree read, with each node's name, path, status and
 /// crew record or null, and `oml workareas show` reads one node by name,
 /// while recall under the same key
 /// still answers `access.verb_ceiling` (cli/reference.md `oml workareas`;
@@ -2022,6 +2023,16 @@ async fn workareas_tree_under_an_admin_context_lists_the_tree_by_name() {
         routes(&lab.take_requests()),
         ["GET /v2/workareas/metals/tree"]
     );
+    let (code, positional, log) = lab.json(None, &["workareas", "tree", "metals"]);
+    assert_eq!(code, 0, "workareas tree with positional root: {log}");
+    assert_eq!(positional, subtree);
+    assert_eq!(
+        routes(&lab.take_requests()),
+        ["GET /v2/workareas/metals/tree"]
+    );
+    let (code, _, err) = lab.text(&["workareas", "tree", "metals", "--root", "metals"]);
+    assert_eq!(code, 2, "the two root forms conflict: {err}");
+    assert!(err.contains("cannot be used with"), "{err}");
     let paths: Vec<&str> = subtree["items"]
         .as_array()
         .expect("items")
@@ -6342,7 +6353,7 @@ async fn doctor_warns_on_the_scan_share_and_each_postings_fault_and_is_quiet_whe
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("warn search: bm25-postings answered 6 of 100")),
+            .any(|l| l.starts_with("warn search: bm25-postings scanned 6 of 100")),
         "{log}"
     );
     task.abort();
@@ -6377,7 +6388,7 @@ async fn doctor_warns_on_the_scan_share_and_each_postings_fault_and_is_quiet_whe
     let (_, lines, log) = run(url);
     assert!(
         lines.iter().any(|l| l.starts_with(
-            "warn search: this tenant has no postings partition, so every memory write for it fails"
+            "warn search: this tenant has no postings partition, so every memory write fails"
         ) && l.contains("restart")),
         "{log}"
     );
