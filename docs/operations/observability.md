@@ -128,3 +128,18 @@ histogram_quantile(0.95, sum(rate(oml_review_wait_seconds_bucket[1d])) by (le))
 Alert when the 95th percentile of the wait passes the time you promised your agents. Then run `oml review list` to see what is held.
 
 A fully down server exports nothing, so a metrics-only alert misses a total outage. Add a blackbox probe against `/readyz`. For service-level targets, see [operating](operating.md).
+
+## First-party web traffic
+
+OML ships `docs/operations/dashboards/oml-web-traffic.json`, a first-party template that imports into Grafana with the Prometheus datasource scraping `server.metrics_listen`.
+
+It uses:
+
+- `oml_http_request_duration_seconds_count` for request rate, status outcomes, and latency;
+- `oml_web_exchanges_failed_total` for sign-in provider failures.
+
+Queries filter matched web routes. The metrics exposed use closed labels only: route and status. There are no tenant, account, key, or address labels, so this is aggregate traffic rather than visitor identification.
+
+Example route filter:
+
+`route=~"^/web"`
