@@ -47,7 +47,7 @@ pub fn anchor(
         None => {
             let url = git
                 .origin_url()
-                .ok_or("the clone has no origin remote; pass --repo (ADR-0057 d3)")?;
+                .ok_or("this clone has no origin remote; pass --repo <repository>")?;
             repo_of_remote(&url)?.repo
         }
     };

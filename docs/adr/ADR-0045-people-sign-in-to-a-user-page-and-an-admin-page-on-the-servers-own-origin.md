@@ -2,12 +2,12 @@
 id: adr/ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin
 tier: engineering
 status: accepted design · 2026-11-04
-answers: why OML now serves a web console after ADR-0015 declined one, and how each of ADR-0015's reasons is answered; which pages and routes the lead serves and why so few; how a person signs in with Google or GitHub and what the server checks; what the email allowlist holds, who maintains it, how the first admin gets in and what removing an email ends; how a signed-in person maps to ADR-0044's user; which identity signs each act a page performs and how R1 keeps the pages out of every agent's reach; what the user page and the admin page do; how review, curation, demotion and supersession run from a page without the admin key; what the admin reads and how that read is journalled; the session, CSRF, clickjacking, CSP, rate-limit and logging rules; the request-line fields for web requests; the doctor lines; what it amends in ADR-0010, ADR-0015, ADR-0025, ADR-0026, ADR-0031, ADR-0042 and ADR-0044
+answers: why OML now serves a web console after ADR-0015 declined one, and how each of ADR-0015's reasons is answered; which pages and routes the lead serves and why so few; how a person signs in with Google or GitHub and what the server checks; what the email allowlist holds, who maintains it, how the first admin gets in and what removing an email ends; how a signed-in person maps to ADR-0044's user; which identity signs each act a page performs and how R1 keeps the pages out of every agent's reach; what the user page and the admin page do; how review, curation, demotion and supersession run from a page without the admin key; what the admin reads and how that read is journalled; the session, CSRF, clickjacking, CSP, rate-limit and logging rules; the request-line fields for web requests; the doctor lines; how the Memories view lists, filters and pages, what each page's list may show, how the Atlas view draws the same page from a JSON route and what its script changes in the CSP and in risk, and how a workarea's acts become a dropdown of what the key may do; what it amends in ADR-0010, ADR-0015, ADR-0025, ADR-0026, ADR-0031, ADR-0042 and ADR-0044
 -->
 
 # ADR-0045 — People sign in with Google or GitHub to a user page and an admin page that the lead serves on its own origin, and every act there is a session key's
 
-**Status:** accepted design · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20) · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+**Status:** accepted design · 2026-11-04 · revised the same day with the maintainer's answers to its open choices (d20) · amended by [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md) · amended 2026-11-06 with the Memories list, the Atlas view, the workarea dropdowns and the pages' copy (d22–d32)
 
 **Release:** introduced in v0.5.0 — sign-in, sessions, the email allowlist, the user page with review of the person's own agents' work, and on the admin page review, curation, supersession and the admin read of every memory's text and attribution; demotion is planned for v0.6.0, since it rests on a verb not built ([releases](../changelog.md))
 
@@ -615,6 +615,204 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
     people whose agents write into the tenant must be told so; the pages and the security model
     say it plainly, and the journal shows every read.
 
+- **d22 — The Memories view on both pages is a list of cards, server-rendered, paged by keyset
+  and filtered by five fields; the maintainer's decision of 2026-11-06.** The view `memories` of
+  `GET /web` and of `GET /web/admin` renders one page of memories as cards in the review card's
+  form (d11), compact as d32 draws it: the state, the version, the text and the author, with
+  the provenance and the facts (workarea, claim key, anchor, format, valid time) behind Details.
+  A held row says so in its state. The page carries no script (d8).
+    - **Paging.** Rows run newest first by `(created_at, artifact_id)` descending, the order every
+      listing of http-api.md already uses, and a page resumes strictly after the last row shown,
+      never at an offset. A row written while a person pages lands before the first page and is
+      never shown twice or pushed off a later one. The page size is `limit`, 50 by default and
+      at most 200, `api.page_limit_max`'s shipped value; a value outside 1 to 200 is
+      `request.validation` with that field. The next page's link carries the opaque `cursor`
+      the listing issues, bound to the acting key and to `api.cursor_ttl` (ADR-0025 d13); the
+      view shows no count of matching rows, since a count would be a second read and, on the
+      user page, a number the person's keys could not otherwise learn.
+    - **Filters,** each a query parameter kept across pages: `state` (`held`, `promoted`,
+      `rejected`, `superseded`, `demoted`), `workarea` (by name or id, the subtree it roots),
+      `origin` (one `origin.kind` of [ADR-0063](ADR-0063-a-chat-turn-becomes-memory-only-when-the-agent-in-it-writes-the-fact-and-every-memory-says-what-kind-of-source-it-came-from.md)
+      d1), `author` (a key name) and `q` (text). A filter value outside its grammar is
+      `request.validation` naming the field; a workarea or key the acting key may not name is
+      `access.not_found`, as on the API.
+    - **Text.** On the user page `q` runs the recall path itself (`POST /v1/recall`'s use case
+      as `<user>-web`, unreviewed rows included, where "own" is every key naming the person's
+      user as d16 reads it for a session user key), so the view finds what the person's agents
+      would find and nothing more; its answer is one ranked page of at most 100 rows, recall's
+      own bound, with no next page, and the other filters narrow that page. On the admin page
+      `q` is the admin read's full-text match (d21), which keeps keyset order and pages.
+    - **One memory** still opens by `memory=<artifact_id>`, as d9 and d10 state.
+
+- **d23 — The user page lists what the person's session key may read and the held rows of the
+  person's own keys, and nothing else.** The page runs as `<user>-web` (d6) and merges two
+  listings the API already serves to that key, each re-applying its scope on every page:
+    - the scoped listing at `universe` (ADR-0039 d4): the promoted tips on the nodes where the
+      key's reader access is effective, which for `<user>-web` is the person's root and the
+      `universe` node ADR-0044 d3 adds, with ADR-0044 d9's anonymous view of a universe claim;
+      inside an in-progress workarea it also holds every author's held rows there, as
+      [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
+      d2 and d3 serve them to a reader inside;
+    - the own-work listing, every state, of every key naming the person's user (d16's reading
+      of ADR-0025 d3 for a session user key).
+
+    Both are read after the same position and merged in the listing order, a row in both shown
+    once, so one cursor pages the union with no gap and no repeat. A held row of another
+    author outside an in-progress workarea is in neither listing, and neither is any row of
+    another tenant ([ADR-0001](ADR-0001-the-constitution.md) R3, ADR-0007). `author` narrows the
+    own-work listing to one of the person's keys and drops the scoped listing, so it never
+    names an author the anonymous view hides; a key name that is not the person's is
+    `access.not_found`. The view journals nothing: it is a read of the person's own keys, as
+    the API's listing is.
+
+- **d24 — The admin page lists through the admin read, and every page it serves is one
+  `memory.admin_read` event.** The view runs `POST /v2/admin/memories/search`'s use case as
+  `<user>-admin` (d21) with the filters of d22, `origin` and `author` joining `query`,
+  `workarea` and `state` in the use case; the lab route and the CLI's `oml admin read` keep
+  their fields, and gain the two when a client asks for them.
+  Each page served, a list page or a JSON page (d25), writes exactly one `memory.admin_read`
+  event naming the page's `artifact_ids` and, for a text query, its `query_digest`; an empty
+  page included, since the search was the admin's act, and never one per row. Opening one memory stays d21's single read.
+  The admin page's list is the tenant's every memory, every state and every root, as d10 says.
+
+- **d25 — The Atlas view draws the workareas of a scope as a treemap on the server, and the
+  same page of memories is served as JSON from a same-origin route under `/web` with the list's
+  scope and journal.** Beside the list, a link `display=atlas` opens the Atlas of the page's
+  `workarea` (the person's root on the user page, `universe` on the admin page, when none): the
+  design system's AtlasScreen, its workareas as one squarified treemap (Bruls, Huizing and van
+  Wijk) whose areas are readable counts (d30), drawn by the server as SVG. Each region is a
+  plain link that zooms the Atlas to it; a breadcrumb leads back out; the scope's panel shows
+  its counts, a link to its memories and d28's dropdown. Two routes join `WEB_ROUTES`:
+
+    | Route | Answers |
+    |---|---|
+    | `GET /web/data/memories` | the user page's page of d22 and d23 as JSON |
+    | `GET /web/admin/data/memories` | the admin page's page of d22 and d24 as JSON |
+
+    Each takes the view's query parameters and runs the same use case as the list with the same
+    session key: the user route journals nothing, and the admin route writes the one
+    `memory.admin_read` of d24 for the page it serves. Each answers `{items, next_cursor,
+    workareas, base}`, every item holding only fields the card shows (`artifact_id`, `state`,
+    `workarea`, `version`, `title`, `text`, `claim_key`, `author`, `author_kind`, `anchor`,
+    `format`, `valid`), with `author` null wherever the card shows the shared area, and
+    `workareas` the regions of d30, each with its counts, and the scope node alone with its dropdown's offers (one offer is several store reads, so a region is zoomed to for its own; the Workareas table computes one per listed node, at most 200, which is a scaling limit to batch if a tenant's tree grows past it). The Atlas page itself reads no memory, only counts, so it
+    journals nothing. The routes take the session cookie alone: an `Authorization` header is
+    `access.verb_ceiling` `web_is_human_only` (d7), no session is `access.not_found` as JSON,
+    and every answer carries `Cache-Control: no-store` and `nosniff`. A `GET` changes nothing,
+    so it needs no CSRF token; a cross-site page cannot read the answer without CORS, which the
+    routes never send, and `SameSite=Lax` withholds the cookie from a cross-site `fetch` (d5).
+
+- **d26 — No view runs script: the CSP of d8 is unchanged.** The treemap, its labels and its
+  state bars are SVG elements and attributes the server writes, styled by classes of the one
+  hashed stylesheet; positions are SVG geometry, never inline `style`, so `default-src 'none'`
+  holds on every view, the Atlas included, and nothing is added to `script-src`, `connect-src`
+  or any other directive. The size of the map follows the viewport by CSS alone: a 16:9 map,
+  and a 4:3 one below 600px. **Risk:** none added; injected markup still runs nothing anywhere,
+  and the session's origin serves no script but the Mermaid frame's sandboxed one (ADR-0056 d9).
+
+- **d27 — The list is the accessible default, and the Atlas has a table twin.** The view opens
+  as the list; the Atlas is reached only by its link. Every region carries a `title` and an
+  `aria-label` that spell its name, count and states, and keeps at least a cut name when it is
+  too small for its whole name; below the map a table holds the same rows (workarea, status,
+  readable count right-aligned in tabular figures, and the counts by state as a bar and as
+  words). Each state is a word, a glyph and a colour, never colour alone.
+
+- **d28 — On both pages a workarea's acts are one dropdown of exactly what the acting key may do
+  there now, applied through a confirmation; the operator's decision of 2026-11-06.** The
+  Workareas view of the user page, and a new Workareas view of the admin page over the tenant's
+  tree, which an admin key reads as structure (ADR-0026 d15), give each workarea one `select`
+  and one Apply button. The options are computed by the server from the same checks the verbs
+  run, factored so that the verb and the offer call one function, and an option is offered
+  only where that function admits it now:
+    - **status** ([ADR-0009](ADR-0009-status-ladder.md)): "propose committed" or "propose
+      validated", only the one legal next rung, where `propose_transition` admits it; and for
+      each live proposal "ratify development → committed", only where `ratify_transition` admits
+      the acting key, so never to the proposing key or principal (R2,
+      `review.ratifier_is_proposer`). On the user page they run as `<user>-review`, the person's
+      dreamer key; on the admin page as `<user>-admin`, which ADR-0009 admits by role. A
+      proposal is shown as proposed until another key ratifies it.
+    - **in progress** ([ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
+      d1): "put in progress" where `set_workarea_mode` admits it, as `<user>-review` on both
+      pages, a dreamer key a person holds; never offered to another key.
+    - **commit** (ADR-0030 d6): "commit" on an in-progress root, as `<user>-review`. While held
+      rows remain it is shown disabled with their count, "commit — 3 memories still held", and
+      cannot be submitted.
+    - **code parent** ([ADR-0064](https://github.com/e8kor/open-memory-lab/pull/97) d3, open):
+      marking or unmarking a code parent joins the dropdown as `<user>-review` once ADR-0064's
+      mark lands on main; this build has no such verb and offers nothing for it.
+
+    Apply is a `GET` of the view with `confirm=<option>`: it changes nothing, recomputes the
+    options and, if the chosen one is still offered, shows what it will do and one `POST` form
+    with the CSRF token that runs it; if not, it shows the named refusal the verb would answer.
+    The `POST`s are web actions over existing use cases, so no verb is new:
+    `workarea_transition` (`{workarea, to}`, `propose_transition`), `workarea_ratify`
+    (`{workarea, transition}`, `ratify_transition`) and the existing `workarea_mode`; each joins
+    both pages' closed action sets. A refusal at the `POST`, from a race since the confirmation,
+    is the verb's named refusal on the page. `propose_transition`, `ratify_transition` and
+    `workarea_status` take a session key's caller as every other use case the pages call does;
+    their checks and refusals are unchanged.
+
+- **d29 — What this amends and adds.** `WEB_ROUTES` grows from six to eight (d25), and their JSON route also answers the Atlas's workareas (d30); the user
+  page's actions gain `workarea_transition` and `workarea_ratify`, and the admin page's gain
+  those two and `workarea_mode` (d28); the admin page gains a Workareas view; the admin read's use case gains `origin` and
+  `author` (d24), its lab route unchanged. d1's decline of "graph pictures"
+  is narrowed to everything but the Atlas of d25; d7's and d8's "no script" stands on every
+  view (d26). No MCP tool, verb, journal event or table is added, and no migration.
+  No new failure is the operator's: the map is drawn by the server with its table twin (d27),
+  and every refusal is an existing one, so no doctor line is added. Built in the same change, tested
+  by `the_web_memories_list_pages_by_keyset_with_no_duplicate_or_gap_under_inserts`,
+  `the_user_page_never_lists_another_authors_held_row_outside_in_progress_or_another_tenants_row`,
+  `the_json_route_answers_exactly_the_lists_rows`, `every_admin_page_of_memories_is_one_admin_read_event`,
+  `the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script`, `the_filters_narrow_the_list`,
+  `the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium`,
+  `the_workarea_options_offered_are_exactly_the_acts_allowed`,
+  `a_workarea_act_is_confirmed_before_it_runs` and
+  `the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_read` (d30).
+
+- **d30 — The Atlas draws the workareas the viewer may read as nested regions, and only those;
+  the operator's decision of 2026-11-06.** The JSON route of d25 also answers `workareas`: the
+  nodes the tree read serves the page's reading key under the page's `workarea` filter
+  (`universe` when none), so `<user>-web`'s root, its children and the `universe` node on the
+  user page, and the tenant's tree, which an admin key reads as structure, on the admin page.
+  Each carries its id, parent, name, path, status, whether it is in progress, and its rows by
+  state: approved (promoted tips), held, in progress (held inside an in-progress scope) and
+  other. The counts are taken from the same listing the list pages through, as the same key,
+  so a region and a count exist only where the list would show the row: a held row of another
+  author is counted only inside an in-progress scope (ADR-0001 R3; ADR-0030 d3), and a node
+  the key may not read is neither drawn nor counted, and filtering to it is `access.not_found`.
+  On the admin page the counts are the admin read's scope and no wider; they carry no content
+  and journal nothing, as the queue's depth does (d16), while the page of rows beside them is
+  d24's one `memory.admin_read`. Counting stops after 2,000 rows a view (chosen, not measured)
+  and says the counts are at least those shown. The map shows the scope's children, each
+  sized by its subtree's readable rows, and the scope's own rows as one more region; zooming
+  into a region makes it the scope. Labels drop by priority as a region shrinks: name and count,
+  then its state bar, then its in-progress mark; the table twin of d27 holds every row,
+  regions with no readable row included. An in-progress workarea is drawn with its mark and
+  counted from a read scoped inside it, where the person reads every author's held rows
+  (ADR-0030 d3). An `ontology` mark joins when a workarea can say it is an ontology crew's
+  (ADR-0027, not on main yet).
+
+- **d31 — Each section of both pages is a short heading, its control and at most one muted line;
+  the operator's decision of 2026-11-06.** Explanations that change no decision move behind a
+  `?` disclosure or to the guides. The lines kept are the ones a person acts on: shown once,
+  held until someone else reviews it, works once until a time, what removing an address ends.
+  Buttons are verbs, headings nouns. The pages' words fall by about a third (counted on the
+  views of the Chromium test).
+
+- **d32 — The pages take the design system's forms; the operator's decision of 2026-11-06.** The
+  Memories card is the design system's Round 3 compact row ([ADR-0069](ADR-0069-oml-s-design-system-is-the-source-of-truth-for-every-surface.md)
+  d3): its state as glyph and one word and its text, clamped, then its author's kind (`agent`,
+  `person`) and key and its version bar; the provenance timeline (written, held, reviewed,
+  served, a step not yet taken marked waiting) and the facts (id, workarea, claim key, source,
+  format, valid time) fold inside it, closed by default. The filters are labelled in plain
+  words (Text, State, Workarea, Source, Author). The Atlas is AtlasScreen's treemap (d25, d30)
+  in the shared rail layout. The shared stylesheet (`tokens.css`, `web.css`) styles the row,
+  the rail, the panel, the lifebar and the legend; the filters and the treemap have their own
+  `memories.css` after it, `var(--…)` only. The user page's nav is the design system's (Start,
+  Memories, Review, Atlas, Keys), then Workareas and Guardrails. The design system
+  places no lifecycle acts on the Atlas; the operator's d30 does, so the scope's panel carries
+  d28's dropdown.
+
 ## Consequences
 
 - **ADR-0015's reasons, answered one by one.** *Accretion:* the route set and each page's actions
@@ -657,6 +855,13 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
   is narrowed by d21 to every route but the admin read; the guides, the security page and
   positioning say so wherever they repeat it.
 
+- **The Memories list, the Atlas view and the workarea dropdowns (d22–d32).** The pages gain
+  two JSON routes and the Atlas, which runs no script; the user page's scope is unchanged, being
+  two listings the API already serves to `<user>-web`, and the admin page's list journals per
+  page as d21 does. The
+  workarea dropdowns add no verb: they offer what the verbs would admit, and the verbs still
+  decide.
+
 ## Rejected alternatives
 
 | Alternative | Why not |
@@ -688,6 +893,15 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
 | **Per-address rate limits** | Behind a proxy every request has the proxy's address; the connect page made the same choice. |
 | **A web route or MCP tool for agents to drive the pages** | The pages exist for people; an agent's surface is the three MCP tools and the API under its own key (R1). |
 | **A dashboard, a recall view, graph pictures or an assistant on the pages** | Each is the accretion ADR-0015 warned of; none is a duty a person cannot do without, and each would need its own record. |
+| **Rendering the whole list in the browser from one JSON answer (d22)** | It would put every row the person may read into one script-readable answer and make script the default view, against d8; the server-rendered page keeps the list scriptless and pages it. |
+| **A separate single-page application for the Memories view and the Atlas (d25)** | A bundle with its own build, router and token handling, and script on every view; the Atlas needs no script at all. |
+| **The docs atlas's three.js orbit view over real data (this amendment's first build), vendored or from a CDN (d25, d26)** | Script on the origin that holds the session, a 600 KB library to pin and audit, and circles that encode nothing; the operator chose the design system's treemap, whose areas are counts and which the server draws with no script. |
+| **`script-src 'self'`, or a nonce on an inline script (d26)** | Nothing on the pages needs script once the map is SVG. |
+| **Offset pagination, `page=3` (d22)** | A row written while the person pages shifts every later page by one, showing a row twice or skipping one; the keyset resumes after the last row shown. |
+| **The treemap laid out by a script in the browser, as the design system's preview does (d26)** | It would bring script back for a layout the server computes once; SVG geometry needs no inline style. |
+| **A dropdown of every act, refused by the server when not allowed (d28)** | A person would pick acts the page knew would fail; computing the offer from the verb's own check costs one read per workarea and offers only what runs. |
+| **A count of matching rows above the list (d22)** | A second query per page, and on the user page a number about rows the person's keys may not otherwise count. |
+
 
 ## Threat table moved from the security page (2026-11-06)
 

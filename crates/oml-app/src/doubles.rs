@@ -2616,6 +2616,8 @@ impl JournalStore for MemStore {
             .filter(|m| filter.kind.is_none_or(|k| m.kind == k))
             .filter(|m| filter.claim_key.as_ref().is_none_or(|c| &m.claim_key == c))
             .filter(|m| filter.anchor.admits_row(m.anchor.as_deref(), m.origin_kind))
+            .filter(|m| filter.author.is_none_or(|a| m.author_key_id == a))
+            .filter(|m| filter.tip.is_none_or(|t| m.is_tip == t))
             .filter(|m| {
                 filter
                     .since
@@ -3563,6 +3565,12 @@ impl WebStore for MemStore {
                     .is_none_or(|n| n.contains(&m.workarea_id))
             })
             .filter(|m| search.state.is_none_or(|s| AdminState::of(m) == s))
+            .filter(|m| {
+                search.origin_kinds.is_empty()
+                    || m.origin_kind
+                        .is_some_and(|k| search.origin_kinds.contains(&k))
+            })
+            .filter(|m| search.author.is_none_or(|a| m.author_key_id == a))
             .filter(|m| {
                 search.after.as_ref().is_none_or(|a| {
                     (m.created_at.unix_micros(), m.memory_id)

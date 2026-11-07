@@ -3593,6 +3593,8 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
         limit: PAGE_LIMIT_DEFAULT,
         cursor: None,
         anchor: AnchorFilter::default(),
+        author: None,
+        tip: None,
     };
     let mut anchor_repo = None;
     let mut anchor_path_prefix = None;

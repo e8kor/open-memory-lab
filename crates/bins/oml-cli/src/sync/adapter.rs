@@ -42,6 +42,26 @@ pub struct Extraction {
     pub warnings: Vec<String>,
 }
 
+/// Source-to-claim mapping produced by an adapter that can derive one,
+/// without changing the claims themselves.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct SourceMap {
+    /// "crate", "module", or adapter-defined
+    pub kind: &'static str,
+    /// OML claim key, when one was produced.
+    pub claim_key: String,
+    /// The module or component's logical name.
+    pub module: String,
+    /// The repository-relative file path read.
+    pub path: String,
+    /// The doc span's fragment, as for an `Item`.
+    pub fragment: Option<String>,
+    /// First and last line of the span read.
+    pub lines: (usize, usize),
+    /// Internal dependency package names (rust adapter).
+    pub internal_dependencies: Vec<String>,
+}
+
 /// What a set of files yields: each file's extraction, in path order, and
 /// the files an adapter could not read or chose not to read (ADR-0061 d4).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -53,6 +73,8 @@ pub struct SetExtraction {
     /// A file deliberately left out (undeclared, generated): reported, does
     /// not fail the run, its claims neither written nor retired.
     pub skipped: Vec<(String, String)>,
+    /// Additional non-memory mapping produced by the adapter.
+    pub map: Vec<SourceMap>,
 }
 
 /// An adapter: `extract` is pure; `accepts` chooses its files by path.
@@ -97,13 +119,13 @@ impl Kind {
             "headings" => Ok(Self::Headings),
             "lines" => Ok(Self::Lines),
             "delta" => Err(
-                "--adapter delta reads a Delta Lake and syncs it with `oml sync <lake> --adapter \
-                 delta`, in the lake build, oml-lake (ADR-0062 d3)"
+                "--adapter delta requires the oml-lake build; run `oml sync <lake> --adapter \
+                 delta` there"
                     .to_owned(),
             ),
             "rust" => Ok(Self::Rust),
             other => Err(format!(
-                "--adapter {other:?} is not one of adr, headings, lines, rust (ADR-0057 d7, d21; ADR-0061)"
+                "--adapter {other:?} is invalid; choose adr, headings, lines, or rust"
             )),
         }
     }

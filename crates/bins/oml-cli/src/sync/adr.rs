@@ -221,8 +221,8 @@ impl<'a> Record<'a> {
         let uncovered = self.uncovered(&decisions);
         if uncovered > 0 {
             out.warnings.push(format!(
-                "ADR-{num}: {uncovered} line(s) under ## Decision outside a dN bullet are not \
-                 loaded (ADR-0057 d7)"
+                "ADR-{num}: skipped {uncovered} line(s) under ## Decision outside a decision \
+                 bullet; indent them under a bullet to load them"
             ));
         }
         let mut headlines = Vec::new();

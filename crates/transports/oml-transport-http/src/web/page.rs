@@ -26,8 +26,14 @@ use crate::oauth::page::{base64_32, client_string, escape, sha256};
 
 /// The pages' one stylesheet, inline (ADR-0069 d3): the design system's
 /// tokens, generated into `tokens.css` by `scripts/gen_design_tokens.py`,
-/// followed by the hand-written `web.css`, which uses only `var(--…)`.
-pub const STYLESHEET: &str = concat!(include_str!("tokens.css"), include_str!("web.css"));
+/// followed by the hand-written `web.css`, which uses only `var(--…)`, and
+/// the Memories list's and the Atlas's own `memories.css`, likewise
+/// (ADR-0045 d32).
+pub const STYLESHEET: &str = concat!(
+    include_str!("tokens.css"),
+    include_str!("web.css"),
+    include_str!("memories.css")
+);
 
 // The stylesheet is long enough that hashing it runs past the compiler's
 // const-evaluation lint; the work is bounded by the file's size.

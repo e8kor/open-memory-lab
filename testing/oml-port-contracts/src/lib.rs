@@ -4357,6 +4357,8 @@ fn listing(scope: ListingScope) -> ListingFilter {
         claim_key: None,
         since: None,
         until: None,
+        author: None,
+        tip: None,
     }
 }
 
@@ -4491,6 +4493,38 @@ pub async fn an_own_listing_holds_every_state_of_the_key_sets_rows_off_masked_no
         .await,
         vec![promoted.memory_id],
         "the claim_key narrows"
+    );
+    assert_eq!(
+        list(listing(ListingScope::Own {
+            key_ids: vec![author, other],
+            masked: vec![denied],
+        }))
+        .await
+        .len(),
+        4,
+        "a key set of two lists both keys' rows"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            author: Some(other),
+            ..listing(ListingScope::Own {
+                key_ids: vec![author, other],
+                masked: vec![denied],
+            })
+        })
+        .await,
+        vec![foreign.memory_id],
+        "the author narrows to one key of the set (ADR-0045 d23)"
+    );
+    assert_eq!(
+        list(ListingFilter {
+            tip: Some(true),
+            state: Some(MemoryStatus::Promoted),
+            ..own(vec![denied])
+        })
+        .await,
+        vec![promoted.memory_id],
+        "the tip narrows (ADR-0045 d22)"
     );
 }
 

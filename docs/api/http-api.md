@@ -845,6 +845,8 @@ The sign-in, user and admin pages, and the email allowlist.
 | `POST /web` | One act of the user page, named by action. |
 | `POST /web/sign-in` | Start a provider's sign-in — the code flow with S256 PKCE, state and, for Google, a nonce. |
 | `GET /web/callback/{provider}` | The provider's redirect; admits a listed, verified email and starts a session. |
+| `GET /web/data/memories` | The user page's page of memories as JSON. |
+| `GET /web/admin/data/memories` | The admin page's page of memories as JSON. |
 | `GET /web/admin` | The admin page, for a session whose allowlist entry is an admin's. |
 | `POST /web/admin` | One act of the admin page, named by action, run as the capacity it needs. |
 | `POST /web/sign-up` | Accept the terms and create the account, in open sign-up. |
@@ -939,7 +941,7 @@ One act of the user page, named by action.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `action` | `issue_key` \| `connect_key` \| `connect_code` \| `cut_off` \| `create_workarea` \| `review_next` \| `verdict` \| `sign_out` | yes |  |
+| `action` | `issue_key` \| `connect_key` \| `connect_code` \| `cut_off` \| `create_workarea` \| `workarea_mode` \| `workarea_transition` \| `workarea_ratify` \| `review_next` \| `verdict` \| `sign_out` | yes |  |
 | `csrf_token` | string | yes |  |
 
 **Responses.** `200` The page after the act.; `303` After sign_out, to /web.
@@ -971,13 +973,27 @@ The provider's redirect; admits a listed, verified email and starts a session.
 **Responses.** `303` To /web, setting the __Host-oml_session cookie.; `401` A sign-in refusal page.; `429` limit.rate on a page.
 
 
+### `GET /web/data/memories`
+
+The user page's page of memories as JSON.
+
+**Responses.** `200` {items, next_cursor, workareas, base}.; `404` access.not_found.
+
+
+### `GET /web/admin/data/memories`
+
+The admin page's page of memories as JSON.
+
+**Responses.** `200` {items, next_cursor, workareas, base}.; `404` access.not_found, for a session that is not an admin's.
+
+
 ### `GET /web/admin`
 
 The admin page, for a session whose allowlist entry is an admin's.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
-| `view` | query | `people` \| `queue` \| `review` \| `curate` \| `memories` | no |  |
+| `view` | query | `people` \| `queue` \| `review` \| `held` \| `curate` \| `memories` \| `workarea` | no |  |
 | `q` | query | string | no |  |
 | `memory` | query | string | no |  |
 
@@ -992,7 +1008,7 @@ One act of the admin page, named by action, run as the capacity it needs.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `action` | `allow_email` \| `remove_email` \| `set_admin` \| `grant_review` \| `grant_curation` \| `review_next` \| `verdict` \| `curate` \| `supersede` \| `cut_off` | yes |  |
+| `action` | `allow_email` \| `remove_email` \| `set_admin` \| `grant_review` \| `grant_curation` \| `review_next` \| `verdict` \| `bulk_confirm` \| `bulk_verdict` \| `curate` \| `supersede` \| `cut_off` \| `workarea_mode` \| `workarea_transition` \| `workarea_ratify` | yes |  |
 | `csrf_token` | string | yes |  |
 
 **Responses.** `200` The page after the act.

@@ -1221,7 +1221,7 @@ fn a_run_from_an_older_checkout_is_refused_before_any_write() {
         &opts(),
     )
     .unwrap_err();
-    assert!(err.contains("unknown to this clone"), "{err}");
+    assert!(err.contains("missing from this clone"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&other);
 }

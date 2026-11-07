@@ -275,6 +275,8 @@ impl World {
                     limit: 50,
                     cursor: None,
                     anchor: oml_app::types::AnchorFilter::default(),
+                    author: None,
+                    tip: None,
                 },
             )
             .await

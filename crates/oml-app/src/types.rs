@@ -1932,6 +1932,11 @@ pub struct ListingFilter {
     pub until: Option<EventTime>,
     /// The origin filters (ADR-0057 d4).
     pub anchor: AnchorFilter,
+    /// Only rows this key wrote; `None` narrows nothing (ADR-0045 d23).
+    pub author: Option<Uuid>,
+    /// Only tips, or only replaced versions; `None` narrows nothing
+    /// (ADR-0045 d22).
+    pub tip: Option<bool>,
 }
 
 /// Where a listing page resumes: the `created_at` and id of the last row
@@ -2063,6 +2068,13 @@ pub struct ListRequest {
     pub cursor: Option<String>,
     /// `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4).
     pub anchor: AnchorFilter,
+    /// Only rows this key wrote, inside the listing's scope; the web
+    /// pages' `author` filter (ADR-0045 d22, d23). The API sets none.
+    pub author: Option<Uuid>,
+    /// Only tips (`true`) or only versions a successor replaced (`false`);
+    /// the web pages' `promoted` and `superseded` (ADR-0045 d22). The API
+    /// sets none.
+    pub tip: Option<bool>,
 }
 
 /// One listing page: summaries as the calling key is served them, and the
@@ -3234,6 +3246,11 @@ pub struct AdminSearch {
     pub query: Option<String>,
     pub nodes: Option<Vec<Uuid>>,
     pub state: Option<AdminState>,
+    /// Only rows of these `origin.kind`s; empty narrows nothing
+    /// (ADR-0045 d24).
+    pub origin_kinds: Vec<OriginKind>,
+    /// Only rows this key wrote (ADR-0045 d24).
+    pub author: Option<Uuid>,
     pub after: Option<ListingPosition>,
     pub limit: usize,
 }

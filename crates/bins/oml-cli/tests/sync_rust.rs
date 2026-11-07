@@ -101,6 +101,22 @@ fn with(edit: &str, text: &str) -> SetExtraction {
 }
 
 #[test]
+fn the_rust_adapter_records_a_source_map_for_each_claim() {
+    let x = RustAdapter.extract_set(&fixture_files());
+    assert_eq!(x.map.len(), items(&x).len(), "{:?}", x.map);
+    assert!(
+        x.map
+            .iter()
+            .any(|m| m.kind == "crate" && m.claim_key == "rust/crate/oml-domain")
+    );
+    assert!(
+        x.map
+            .iter()
+            .any(|m| m.kind == "module" && m.claim_key == "rust/mod/oml_app::ports")
+    );
+}
+
+#[test]
 fn the_rust_adapter_at_aee5b28_yields_9_crates_and_98_modules() {
     // The counts come from a script that walks `mod` declarations from each
     // crate root with a regular expression, never from the adapter.

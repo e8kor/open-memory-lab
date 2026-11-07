@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::adapter::{Adapter, Extraction, Item, SetExtraction, fit_key};
+use super::adapter::{Adapter, Extraction, Item, SetExtraction, SourceMap, fit_key};
 use super::hash::{
     HASHER_CRATE, HASHER_RUSTDOC, crate_hash, md_normal, nfc, rustdoc_hash, rustdoc_text,
 };
@@ -33,7 +33,7 @@ impl Adapter for RustAdapter {
 
     fn extract(&self, path: &str, _bytes: &[u8]) -> Result<Extraction, String> {
         Err(format!(
-            "{path}: the rust adapter reads a set of files, not one (ADR-0061 d4)"
+            "{path}: the rust adapter requires a source directory, not a single file"
         ))
     }
 
@@ -85,6 +85,7 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
         .map(|(p, b)| (p.as_str(), b.as_slice()))
         .collect();
     let mut out = SetExtraction::default();
+    let mut source_map: Vec<SourceMap> = Vec::new();
     let mut per_file: BTreeMap<String, Extraction> = BTreeMap::new();
 
     // Manifests.
@@ -171,7 +172,7 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
         if !members.contains(path) {
             out.skipped.push((
                 path.clone(),
-                "not a workspace member: its workspace's members and exclude leave it out, so it is not a crate of this source (ADR-0061 d1)".to_owned(),
+                "not a workspace member: the workspace's members or exclude settings omit it; add it to the workspace to sync it".to_owned(),
             ));
             continue;
         }
@@ -274,8 +275,7 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
     if packages.is_empty() && out.unreadable.is_empty() {
         out.unreadable.push((
             ".".to_owned(),
-            "the source holds no [package] Cargo.toml, so there is no crate to read; \
-             name a directory under a Cargo workspace (ADR-0061 d1)"
+            "no [package] Cargo.toml found; pass a crate directory within a Cargo workspace"
                 .to_owned(),
         ));
     }
@@ -348,7 +348,7 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
                     .find(|d| d.attrs.iter().any(|a| is_path_attr(a)))
                 {
                     crate_bad[idx] = Some(format!(
-                        "unsupported: #[path = …] on `mod {}` in {file}, which this adapter does not follow (ADR-0061 d3)",
+                        "unsupported: #[path = …] on `mod {}` in {file}; this adapter cannot follow it",
                         d.name
                     ));
                 }
@@ -491,6 +491,15 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
         if !tail.is_empty() {
             text.push_str(&format!("\n\n{}", tail.join("\n")));
         }
+        source_map.push(SourceMap {
+            kind: "crate",
+            claim_key: format!("rust/crate/{}", pkg.name),
+            module: pkg.name.clone(),
+            path: manifest.clone(),
+            fragment: None,
+            lines: (1, 1),
+            internal_dependencies: deps.iter().cloned().collect(),
+        });
         let mut facts = vec![
             pkg.name.clone(),
             md_normal(pkg.description.as_deref().unwrap_or_default()),
@@ -547,6 +556,15 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
                 if doc.is_empty() {
                     continue;
                 }
+                source_map.push(SourceMap {
+                    kind: "module",
+                    claim_key: fit_key(&format!("rust/mod/{mpath}")).to_owned(),
+                    module: mpath.clone(),
+                    path: file.clone(),
+                    fragment: Some(format!("L{}-L{}", d.first, d.last)),
+                    lines: (d.first, d.last),
+                    internal_dependencies: Vec::new(),
+                });
                 per_file.entry(file.clone()).or_default().items.push(Item {
                     claim_key: fit_key(&format!("rust/mod/{mpath}")),
                     fragment: Some(format!("L{}-L{}", d.first, d.last)),
@@ -585,10 +603,11 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
         }
         out.skipped.push((
             path,
-            "undeclared: no `mod` declaration reaches it, so it is not compiled (ADR-0061 d1)"
+            "undeclared: no `mod` declaration reaches this file, so Rust does not compile it"
                 .to_owned(),
         ));
     }
+    out.map = source_map;
     out.files = per_file.into_iter().collect();
     out.unreadable.sort();
     out.unreadable.dedup();
