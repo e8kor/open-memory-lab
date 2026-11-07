@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-07
 answers: why the web pages stop calling oml-app's use cases and call the public HTTP API instead; which crate serves the pages and what it may depend on; how a signed-in person's session becomes an API credential without a key value at rest or in the browser; which middleware layer owns the request id, the session, CSRF, CSP, rate limits, audit and error mapping; how oml-web reaches the API in the lead and when it runs on its own; which existing operation serves each web call and which operations are new; what stays in the auth context; the bounded contexts; the migration phases and the test that proves parity; the overhead budget; what it amends in ADR-0042 and ADR-0045
 -->
 
 # ADR-0070 — The web console is a client of the public HTTP API, in a crate that cannot reach the application core
 
-**Status:** proposed · 2026-11-06
+**Status:** accepted design · 2026-11-07
 
 **Amends:** ADR-0045 (d1: the page routes move to `oml-web` and the sign-in routes to the auth
 context; d6: a session key gains a per-session credential; d7: that credential, never the
