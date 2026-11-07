@@ -194,7 +194,7 @@ Decided, not built. The build follows #163, #166 and #167.
     | `admin_read` (main) | `GET /v2/admin/memories/{artifact_id}` | admin |
     | `admin_search` (main) | `POST /v2/admin/memories/search` | admin |
     | `web_users`, `web_deletions`, `signup_overview` (#167) | `GET /v2/web/users` (served by #167) | admin |
-    | `web_start_status`, `web_has_agent_key` (#167) | `GET /v2/keys` (new, below) and `GET /v1/memories?own=true&limit=1` | web |
+    | `web_start_status`, `web_has_agent_key` (#167) | `GET /v2/keys` (new, below) and `GET /v1/memories?with_own=true&limit=1` | web |
 
     **Changed operations: a parameter or a field joins an existing operation.**
 
@@ -248,9 +248,9 @@ Decided, not built. The build follows #163, #166 and #167.
   `POST /web/sign-in`, `GET /web/callback/{provider}`, #167's `POST /web/sign-up` and its
   terms page, and the sign-in page itself. It owns session rows, the capacity credentials of
   d2 and the provider exchanges. It stays in `oml-transport-http`, in one `auth` module that
-  gathers today's `oauth/` and the sign-in half of `web/`. `GET /web` without a live session
-  answers the sign-in page by passing the request through the transport to the auth
-  context's renderer, so the URL and its answer stay what they are today.
+  gathers today's `oauth/` and the sign-in half of `web/`. The auth route's renderer
+  produces the sign-in page under the fixed URL `/web`; `oml-web` does not render it and
+  has no dependency on the auth module, so the wall holds even for the unauthenticated page.
 
     ```mermaid
     flowchart LR
@@ -278,7 +278,7 @@ Decided, not built. The build follows #163, #166 and #167.
     | Memory | write, read, recall, supersede, review, the admin read | `/v1/memories*`, `/v2/review/*`, `/v2/admin/memories*` |
     | Workareas | the tree, modes, transitions, offers, edges | `/v2/workareas*`, `/v2/edges*` |
     | Keys and grants | issuance, listing, denials, connect codes, connections, capacities | `/v2/keys*`, `/v2/web/users/{user}/capacities` |
-    | Admin | the allowlist, users and quotas, the queue, search and usage settings, rescans | `/v2/web/*`, `/v2/review/queue`, `/v2/search*`, `/v2/usage/*`, `/v2/admin/rescan` |
+    | Admin | the allowlist, users and quotas, the queue, search and usage settings, rescans | `/v2/web/*` except the capacities update, `/v2/review/queue`, `/v2/search*`, `/v2/usage/*`, `/v2/admin/rescan` |
     | Observability | the request line, `/metrics` on its own listener, OTLP, doctor | `oml-transport-http::traffic`, `oml doctor` |
     | Web | presentation: pages, forms, CSRF, CSP, the frame route; no rule, no store | `oml-web` |
 
@@ -289,10 +289,10 @@ Decided, not built. The build follows #163, #166 and #167.
     |---|---|---|
     | (a) | `omls_` credentials and the web client secret (d2); the ten new operations and six changes (d5), each with its use case, its contract entries and its tests; `oml-sdk` (d9) | `check_contract_sync.py`, `generate_sdks.py --check`, and per operation a test named after its sentence, among them `an_omls_credential_without_the_web_client_is_auth_invalid`, `an_omls_credential_on_mcp_is_refused`, `a_capacity_credential_ends_with_its_session`, `the_admin_capacity_ends_when_the_entry_loses_admin`, `a_bearer_user_key_cannot_export_or_request_deletion` |
     | (b) | `oml-page`, `oml-web` with the layers of d3, mounted by the lead in front of the old handlers; pages move one at a time behind the same URLs, the old handler deleted in the commit that moves its page | the page suites, unchanged (below), green after each page moves; `oml_web_reaches_no_application_crate` |
-    | (c) | the `web_*` use cases deleted: the logic behind a new operation is renamed to that operation's use case, the sign-in ones move to `oml-app`'s auth module, the rest go | `grep -rn 'pub async fn web_' crates/oml-app` finds nothing outside the auth module; the workspace builds and every suite passes |
+    | (c) | the `web_*` use cases deleted: the logic behind a new operation is renamed to that operation's use case, the sign-in ones move to `oml-app`'s auth module, the rest go | `grep -rn 'pub async fn web_' crates/oml-app --include='*.rs' | grep -v 'crates/oml-app/src/app/auth.rs'` is empty; the workspace builds and every suite passes |
     | (d) | the walls: the dependency test is a required CI check, and `the_lead_serves_no_page_route_outside_oml_web_and_auth` asserts the route table | both tests required on `main` |
 
-    **Parity** is `crates/transports/oml-transport-http/tests/web_pages.rs` (52 tests on
+    **Parity** is `crates/transports/oml-transport-http/tests/web_pages.rs` (51 tests on
     `main` before the `web_pages.rs` additions in this change), #167's `open_signup_pg.rs` page cases and the Chromium
     scripts (`tests/chromium/atlas.py`, `render_frame_chromium.rs`), moved to
     `crates/clients/oml-web/tests/` with their assertions untouched. Only the rig changes: it
