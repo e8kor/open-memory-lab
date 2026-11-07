@@ -21,9 +21,10 @@ lines share a correlation id; d16: the new and changed operations below), ADR-00
 The user page and the admin page of
 [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
 live in `crates/transports/oml-transport-http/src/web/`, beside the API's handlers, and call
-`oml-app` in-process: 37 distinct `App` methods on `main` (`views.rs`, `mod.rs`,
-`admin_read.rs`), 18 of them from the `web_*` family in `oml-app/src/app/pages.rs` and
-`web.rs` that exists for the pages alone. Three open pull requests add more: #163 adds
+`oml-app` in-process: 39 distinct `App` method call sites across the web modules
+(`admin_read.rs`, `atlas.rs`, `emails.rs`, `memories.rs`, `mod.rs`, `page.rs`,
+`start.rs`, `views.rs`, `workareas.rs`), 20 of them from the `web_*` family
+(15 in `oml-app/src/app/pages.rs` and 5 in `web.rs`). Three open pull requests add more: #163 adds
 `web_memories`, `web_regions`, `admin_regions`, `workarea_offers` and `admin_search_filtered`
 and two JSON routes, `/web/data/memories` and `/web/admin/data/memories`; #167 adds fourteen
 use cases in `signup.rs` and seven routes; #166 changes the stylesheet. Each page feature
@@ -32,6 +33,11 @@ make a page act safe (which key acts, which verb it may run) are enforced partly
 and partly in page code that no other client exercises. The `oml-cli` is already a thin HTTP
 client that depends on no server crate (`crates/bins/oml-cli/Cargo.toml`); the pages are the
 one first-party surface that is not.
+
+The precedent is only partial. `oml-cli` neither owns nor links application
+crates (`oml-app`, `oml-domain`, `oml-scan` may still satisfy non-application
+helpers), and the ADR's wall is specifically against application-domain code.
+The benchmark the cargo metadata test should compare against is described below.
 
 **The operator decided on 2026-11-06 that the pages become a client of the public API.** Their
 words: "A new crate oml-web depends only on the generated Rust SDK and calls the public /v1
@@ -286,8 +292,8 @@ Decided, not built. The build follows #163, #166 and #167.
     | (c) | the `web_*` use cases deleted: the logic behind a new operation is renamed to that operation's use case, the sign-in ones move to `oml-app`'s auth module, the rest go | `grep -rn 'pub async fn web_' crates/oml-app` finds nothing outside the auth module; the workspace builds and every suite passes |
     | (d) | the walls: the dependency test is a required CI check, and `the_lead_serves_no_page_route_outside_oml_web_and_auth` asserts the route table | both tests required on `main` |
 
-    **Parity** is `crates/transports/oml-transport-http/tests/web_pages.rs` (68 tests on
-    `main`, more after #163 and #167), #167's `open_signup_pg.rs` page cases and the Chromium
+    **Parity** is `crates/transports/oml-transport-http/tests/web_pages.rs` (52 tests on
+    `main` before the `web_pages.rs` additions in this change), #167's `open_signup_pg.rs` page cases and the Chromium
     scripts (`tests/chromium/atlas.py`, `render_frame_chromium.rs`), moved to
     `crates/clients/oml-web/tests/` with their assertions untouched. Only the rig changes: it
     builds the lead's composed router, `oml-web` included, and seeds through the app as today
