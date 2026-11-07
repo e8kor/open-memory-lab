@@ -15,6 +15,7 @@ use super::hash::{HASHER, HASHER_CRATE, HASHER_RUSTDOC};
 use super::plan::{Context, EdgeLine, Entry, Outcome, Plan, Scope, SourceItem, diff, edge_lines};
 use super::source::{Git, check_repo, glob_match, is_secret_shaped, repo_of_remote};
 use crate::client::CliError;
+use crate::sync::adapter::SourceMap;
 
 /// The request cap of a bulk verdict, and so a run's default write cap
 /// (ADR-0055 d3, ADR-0057 d9).
@@ -105,6 +106,7 @@ pub struct Extracted {
     /// claims are never retired, and they do not fail the run.
     pub skipped: Vec<(String, String)>,
     pub warnings: Vec<String>,
+    pub map: Vec<SourceMap>,
 }
 
 /// The items and edges `kind` extracts from `loaded`.
@@ -118,6 +120,7 @@ pub fn extract(loaded: &Loaded, kind: Kind) -> Extracted {
         unreadable: Vec::new(),
         skipped: Vec::new(),
         warnings: Vec::new(),
+        map: Vec::new(),
     };
     let mut first: HashMap<String, String> = HashMap::new();
     let excluded = |f: &str| loaded.exclude.iter().any(|g| glob_match(g, f));
@@ -128,6 +131,7 @@ pub fn extract(loaded: &Loaded, kind: Kind) -> Extracted {
         .cloned()
         .collect();
     let set = adapter.extract_set(&accepted);
+    out.map.extend(set.map);
     let per_file = set.files;
     out.unreadable.extend(set.unreadable);
     out.skipped.extend(set.skipped);
@@ -371,6 +375,7 @@ pub fn execute(
             unreadable: Vec::new(),
             skipped: Vec::new(),
             warnings: Vec::new(),
+            map: Vec::new(),
         }
     } else {
         extract(loaded, kind)
@@ -997,7 +1002,7 @@ fn hashers_line(kind: Kind) -> String {
 }
 
 fn source_json(loaded: &Loaded, x: &Extracted) -> Value {
-    json!({
+    let mut out = json!({
         "repo": loaded.repo,
         "rev": loaded.commit,
         "path": loaded.path,
@@ -1006,7 +1011,11 @@ fn source_json(loaded: &Loaded, x: &Extracted) -> Value {
             Kind::Rust => format!("{HASHER_CRATE}, {HASHER_RUSTDOC}"),
             _ => HASHER.to_owned(),
         },
-    })
+    });
+    if x.adapter == Kind::Rust {
+        out["source_map"] = json!(x.map);
+    }
+    out
 }
 
 fn plan_json(

@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::adapter::{Adapter, Extraction, Item, SetExtraction, fit_key};
+use super::adapter::{Adapter, Extraction, Item, SetExtraction, SourceMap, fit_key};
 use super::hash::{
     HASHER_CRATE, HASHER_RUSTDOC, crate_hash, md_normal, nfc, rustdoc_hash, rustdoc_text,
 };
@@ -85,6 +85,7 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
         .map(|(p, b)| (p.as_str(), b.as_slice()))
         .collect();
     let mut out = SetExtraction::default();
+    let mut source_map: Vec<SourceMap> = Vec::new();
     let mut per_file: BTreeMap<String, Extraction> = BTreeMap::new();
 
     // Manifests.
@@ -490,6 +491,15 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
         if !tail.is_empty() {
             text.push_str(&format!("\n\n{}", tail.join("\n")));
         }
+        source_map.push(SourceMap {
+            kind: "crate",
+            claim_key: format!("rust/crate/{}", pkg.name),
+            module: pkg.name.clone(),
+            path: manifest.clone(),
+            fragment: None,
+            lines: (1, 1),
+            internal_dependencies: deps.iter().cloned().collect(),
+        });
         let mut facts = vec![
             pkg.name.clone(),
             md_normal(pkg.description.as_deref().unwrap_or_default()),
@@ -546,6 +556,15 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
                 if doc.is_empty() {
                     continue;
                 }
+                source_map.push(SourceMap {
+                    kind: "module",
+                    claim_key: fit_key(&format!("rust/mod/{mpath}")).to_owned(),
+                    module: mpath.clone(),
+                    path: file.clone(),
+                    fragment: Some(format!("L{}-L{}", d.first, d.last)),
+                    lines: (d.first, d.last),
+                    internal_dependencies: Vec::new(),
+                });
                 per_file.entry(file.clone()).or_default().items.push(Item {
                     claim_key: fit_key(&format!("rust/mod/{mpath}")),
                     fragment: Some(format!("L{}-L{}", d.first, d.last)),
@@ -588,6 +607,7 @@ fn extract_set(files: &[(String, Vec<u8>)]) -> SetExtraction {
                 .to_owned(),
         ));
     }
+    out.map = source_map;
     out.files = per_file.into_iter().collect();
     out.unreadable.sort();
     out.unreadable.dedup();
