@@ -2082,8 +2082,7 @@ fn hit_kinds(kinds: &[MemoryKind]) -> Vec<&'static str> {
 
 /// The workarea columns every workarea read selects (unqualified: the
 /// recursive walks select them from their CTE).
-const WORKAREA_COLUMNS: &str =
-    "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id, mode";
+const WORKAREA_COLUMNS: &str = "id, tenant_id, parent_id, name, status, crew, crew_id, user_root, namespace_root_id, mode, children_agent";
 
 /// A workarea row as the port's record. A row with no name yet predates
 /// names and is served to no one: the lead names every such row before it
@@ -2117,6 +2116,7 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
         user_root: row.try_get("user_root").map_err(backend)?,
         namespace: row.try_get("namespace_root_id").map_err(backend)?,
         in_progress: row.try_get::<String, _>("mode").map_err(backend)? == "in_progress",
+        children_agent: row.try_get("children_agent").map_err(backend)?,
     })
 }
 
@@ -2938,11 +2938,11 @@ async fn apply_fold(
                 .map_err(backend)?;
             sqlx::query(
                 "INSERT INTO workareas (id, tenant_id, parent_id, name, path, status, crew, \
-                 crew_id, user_root, namespace_root_id) VALUES ($1, $2, $3, $4, \
+                 crew_id, user_root, namespace_root_id, mode) VALUES ($1, $2, $3, $4, \
                  CASE WHEN $3::uuid IS NULL THEN text2ltree($4) \
                       ELSE (SELECT p.path FROM workareas p \
                              WHERE p.tenant_id = $2 AND p.id = $3) || text2ltree($4) END, \
-                 $5, $6, $7, $8, $9)",
+                 $5, $6, $7, $8, $9, $10)",
             )
             .bind(w.workarea_id)
             .bind(w.tenant_id)
@@ -2953,6 +2953,11 @@ async fn apply_fold(
             .bind(w.crew_id)
             .bind(w.user_root)
             .bind(w.namespace)
+            .bind(if w.in_progress {
+                "in_progress"
+            } else {
+                "standard"
+            })
             .execute(&mut **tx)
             .await
             .map_err(|e| {
@@ -3201,6 +3206,25 @@ async fn apply_fold(
                     .execute(&mut **tx)
                     .await
                     .map_err(backend)?;
+            if updated.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "workarea {workarea_id} is not held by this tenant"
+                )));
+            }
+        }
+        MetadataFold::CodeParentSet {
+            workarea_id,
+            children_agent,
+        } => {
+            let updated = sqlx::query(
+                "UPDATE workareas SET children_agent = $3 WHERE tenant_id = $1 AND id = $2",
+            )
+            .bind(tenant_id)
+            .bind(workarea_id)
+            .bind(children_agent)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
             if updated.rows_affected() != 1 {
                 return Err(StoreError::Backend(format!(
                     "workarea {workarea_id} is not held by this tenant"
@@ -6498,7 +6522,7 @@ impl JournalStore for PgStore {
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
                  SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
-                        w.user_root, w.namespace_root_id, w.mode, up.depth + 1 \
+                        w.user_root, w.namespace_root_id, w.mode, w.children_agent, up.depth + 1 \
                    FROM workareas w JOIN up ON w.id = up.parent_id \
                   WHERE w.tenant_id = $1 \
              ) SELECT {WORKAREA_COLUMNS} FROM up ORDER BY depth ASC"
@@ -6532,7 +6556,7 @@ impl JournalStore for PgStore {
                   WHERE tenant_id = $1 AND id = $2 \
                  UNION ALL \
                  SELECT w.id, w.tenant_id, w.parent_id, w.name, w.status, w.crew, w.crew_id, \
-                        w.user_root, w.namespace_root_id, w.mode, down.depth + 1 \
+                        w.user_root, w.namespace_root_id, w.mode, w.children_agent, down.depth + 1 \
                    FROM workareas w JOIN down ON w.parent_id = down.id \
                   WHERE w.tenant_id = $1 \
              ) SELECT {WORKAREA_COLUMNS} FROM down ORDER BY depth ASC, id ASC"

@@ -292,9 +292,11 @@ from .whoami_ref import WhoamiRef
 from .whoami_workarea import WhoamiWorkarea
 from .workarea import Workarea
 from .workarea_create import WorkareaCreate
+from .workarea_create_mode import WorkareaCreateMode
 from .workarea_crew_update import WorkareaCrewUpdate
 from .workarea_mode import WorkareaMode
 from .workarea_mode_set import WorkareaModeSet
+from .workarea_mode_set_children import WorkareaModeSetChildren
 from .workarea_mode_set_mode import WorkareaModeSetMode
 from .workarea_page import WorkareaPage
 from .workarea_status import WorkareaStatus
@@ -563,9 +565,11 @@ __all__ = (
     "WhoamiWorkarea",
     "Workarea",
     "WorkareaCreate",
+    "WorkareaCreateMode",
     "WorkareaCrewUpdate",
     "WorkareaMode",
     "WorkareaModeSet",
+    "WorkareaModeSetChildren",
     "WorkareaModeSetMode",
     "WorkareaPage",
     "WorkareaStatus",

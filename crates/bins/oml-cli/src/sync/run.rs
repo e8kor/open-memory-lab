@@ -39,6 +39,11 @@ pub struct Options {
     pub edges: bool,
     pub ratify: bool,
     pub allow_rollback: bool,
+    /// Refuse unless every commit the workarea's claims were read at is an
+    /// ancestor of `--rev`: a fast-forward only (ADR-0064 d8).
+    pub ff_only: bool,
+    /// Only these paths' claims are listed and diffed (ADR-0064 d8).
+    pub paths: Vec<String>,
     /// `--exclude` globs: matching paths are out of the source.
     pub exclude: Vec<String>,
     /// Allow an exclude set other than the one recorded for this source.
@@ -216,6 +221,26 @@ pub fn load(cwd: &Path, opts: &Options) -> Result<Loaded, String> {
         Some(_) if !opts.retire_all => {
             let files = git.changed_files(&opts.base, &commit, &path)?;
             (files.clone(), Scope::Files(files))
+        }
+        _ if !opts.paths.is_empty() => {
+            // The changed paths under the source, a deleted one included:
+            // its claims are in scope and retire (ADR-0064 d8).
+            let present: std::collections::BTreeSet<String> =
+                git.files(&commit, &path)?.into_iter().collect();
+            let under: Vec<String> = opts
+                .paths
+                .iter()
+                .filter(|p| Scope::Prefix(path.clone()).contains(p))
+                .cloned()
+                .collect();
+            (
+                under
+                    .iter()
+                    .filter(|p| present.contains(*p))
+                    .cloned()
+                    .collect(),
+                Scope::Files(under),
+            )
         }
         _ => (git.files(&commit, &path)?, Scope::Prefix(path.clone())),
     };
@@ -613,6 +638,16 @@ fn guard_rev(
             return Err(CliError::local(format!(
                 "commit {} from the previous sync is missing from this clone; fetch it, or pass \
                  --allow-rollback to revert deliberately; nothing was written",
+                short(rev)
+            )));
+        }
+        if opts.ff_only && !git.is_strict_ancestor(rev, &loaded.commit) {
+            return Err(CliError::local(format!(
+                "--ff-only: {} is not a fast-forward of {}, which the workarea's claims of this \
+                 source were read at (a rebase, a forced pull or another branch); run oml sync \
+                 by hand, with --allow-rollback for a deliberate revert; nothing was written \
+                 (ADR-0064 d8)",
+                short(&loaded.commit),
                 short(rev)
             )));
         }

@@ -5,6 +5,7 @@ from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.workarea_create_mode import WorkareaCreateMode
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="WorkareaCreate")
@@ -26,11 +27,15 @@ class WorkareaCreate:
             is neither, and is refused (request.validation).
         crew (str | Unset): A crew record, by its id or its name, resolved server-side like every reference (ADR-0026
             d4).
+        mode (WorkareaCreateMode | Unset): in_progress, from a writer user key under a code parent only: the child is
+            development and in progress from its first instant. Anywhere else the field is refused request.validation naming
+            /mode (ADR-0064 d3).
     """
 
     name: str
     parent: str | Unset = UNSET
     crew: str | Unset = UNSET
+    mode: WorkareaCreateMode | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
@@ -47,6 +52,10 @@ class WorkareaCreate:
         else:
             crew = self.crew
 
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode.value
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -58,6 +67,8 @@ class WorkareaCreate:
             field_dict["parent"] = parent
         if crew is not UNSET:
             field_dict["crew"] = crew
+        if mode is not UNSET:
+            field_dict["mode"] = mode
 
         return field_dict
 
@@ -80,10 +91,18 @@ class WorkareaCreate:
 
         crew = _parse_crew(d.pop("crew", UNSET))
 
+        _mode = d.pop("mode", UNSET)
+        mode: WorkareaCreateMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = WorkareaCreateMode(_mode)
+
         workarea_create = cls(
             name=name,
             parent=parent,
             crew=crew,
+            mode=mode,
         )
 
         return workarea_create

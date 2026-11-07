@@ -1582,9 +1582,19 @@ where
         let name = creation_name("/name", &req.name)?;
         // A crew record's id or name (ADR-0026 d8).
         let crew = optional_reference("/crew", req.crew.as_deref())?;
+        let mode = req
+            .mode
+            .as_deref()
+            .map(|m| {
+                WorkareaMode::parse(m).ok_or_else(|| {
+                    ApiError::validation(format!("mode must be in_progress or standard, not {m:?}"))
+                        .with_details(json!({ "field": "/mode" }))
+                })
+            })
+            .transpose()?;
         let created = retry_chain(|| {
             st.app
-                .create_workarea(&token, &name, parent.clone(), crew.clone())
+                .create_workarea_in(&token, &name, parent.clone(), crew.clone(), mode)
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
@@ -2461,18 +2471,40 @@ where
         let _idem = idempotency_key(headers)?;
         let workarea = reference("workarea", workarea_id)?;
         let req: WorkareaModeBody = parse_json(headers, body)?;
-        let mode = WorkareaMode::parse(&req.mode).ok_or_else(|| {
-            ApiError::validation(format!(
-                "mode must be in_progress or standard, not {:?}",
-                req.mode
-            ))
-            .with_details(json!({ "field": "/mode" }))
-        })?;
-        let updated = retry_chain(|| {
-            st.app
-                .set_workarea_mode(token.as_str(), workarea.clone(), mode)
-        })
-        .await
+        let updated = match (req.mode.as_deref(), req.children.as_deref()) {
+            (Some(mode), None) => {
+                let mode = WorkareaMode::parse(mode).ok_or_else(|| {
+                    ApiError::validation(format!(
+                        "mode must be in_progress or standard, not {mode:?}"
+                    ))
+                    .with_details(json!({ "field": "/mode" }))
+                })?;
+                retry_chain(|| {
+                    st.app
+                        .set_workarea_mode(token.as_str(), workarea.clone(), mode)
+                })
+                .await
+            }
+            (None, Some(children)) => {
+                let on = match children {
+                    "agent" => true,
+                    "none" => false,
+                    other => {
+                        return Err(ApiError::validation(format!(
+                            "children must be agent or none, not {other:?}"
+                        ))
+                        .with_details(json!({ "field": "/children" })));
+                    }
+                };
+                retry_chain(|| st.app.set_code_parent(token.as_str(), workarea.clone(), on)).await
+            }
+            _ => {
+                return Err(ApiError::validation(
+                    "send exactly one of mode and children".to_owned(),
+                )
+                .with_details(json!({ "field": "/mode" })));
+            }
+        }
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let info = st
             .app
@@ -2988,6 +3020,10 @@ struct WorkareaCreateBody {
     crew: Option<String>,
     #[serde(default)]
     prefix: Option<String>,
+    /// `in_progress`, admitted only from a writer user key under a code
+    /// parent (ADR-0064 d3); `standard` names the default.
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 /// openapi.yaml `WorkareaCrewUpdate`, closed.
@@ -3001,7 +3037,12 @@ struct WorkareaCrewBody {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkareaModeBody {
-    mode: String,
+    /// `in_progress` or `standard` (ADR-0030 d1).
+    #[serde(default)]
+    mode: Option<String>,
+    /// `agent` marks a code parent; `none` unmarks it (ADR-0064 d3).
+    #[serde(default)]
+    children: Option<String>,
 }
 
 /// openapi.yaml `CrewCreate`, closed (ADR-0026 d8).
@@ -4093,6 +4134,8 @@ fn workarea_json(workarea: &WorkareaRecord, path: &str, crew: Option<&CrewRecord
         "user_root": workarea.user_root,
         // A person's key puts a workarea in progress (ADR-0030 d1, d13).
         "mode": if workarea.in_progress { "in_progress" } else { "standard" },
+        // A person's key marked the node a code parent (ADR-0064 d3).
+        "code_parent": workarea.children_agent,
     })
 }
 

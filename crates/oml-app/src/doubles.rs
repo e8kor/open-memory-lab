@@ -1174,6 +1174,17 @@ fn apply_fold(
             };
             workarea.in_progress = in_progress;
         }
+        MetadataFold::CodeParentSet {
+            workarea_id,
+            children_agent,
+        } => {
+            let Some(workarea) = state.workareas.get_mut(&workarea_id) else {
+                return Err(StoreError::Backend(format!(
+                    "workarea {workarea_id} is not held by this tenant"
+                )));
+            };
+            workarea.children_agent = children_agent;
+        }
         MetadataFold::NamesAssigned(naming) => {
             assign_names_fold(state, tenant_id, &naming)?;
         }
@@ -1782,6 +1793,7 @@ fn assign_names_fold(
                 };
                 let workarea = WorkareaRecord {
                     in_progress: false,
+                    children_agent: false,
                     workarea_id: id,
                     tenant_id,
                     parent_id: unnamed.parent_id,

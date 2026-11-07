@@ -2433,6 +2433,7 @@ where
     async fn create_user_root(&self, issuer: &KeyRecord, user: &UserRoot) -> Result<(), AppError> {
         let workarea = WorkareaRecord {
             in_progress: false,
+            children_agent: false,
             workarea_id: user.id,
             tenant_id: issuer.tenant_id,
             parent_id: Some(user.universe),
@@ -2468,6 +2469,7 @@ where
             "crew_id": workarea.crew_id.map(|c| c.to_string()),
             "prefix": Value::Null,
             "user_root": workarea.user_root,
+            "mode": if workarea.in_progress { "in_progress" } else { "standard" },
         })
     }
 
@@ -2539,6 +2541,7 @@ where
         let root_workarea_id = self.ids.new_id();
         let workarea = WorkareaRecord {
             in_progress: false,
+            children_agent: false,
             workarea_id: root_workarea_id,
             tenant_id,
             parent_id: None,
@@ -3065,6 +3068,25 @@ where
         parent: Option<Reference>,
         crew: Option<Reference>,
     ) -> Result<CreatedWorkarea, AppError> {
+        self.create_workarea_in(bearer, name, parent, crew, None)
+            .await
+    }
+
+    /// [`Self::create_workarea`] with the create body's `mode` (ADR-0064
+    /// d3). `in_progress` is admitted from a writer user key whose parent is
+    /// a code parent, the person's mark, and nowhere else: the child is
+    /// `development` and in progress from its first instant, journalled as
+    /// one `workarea.create` carrying the mode. Any other `mode` but the
+    /// default `standard` is [`AppError::ModeNotAllowedHere`], refused before
+    /// anything is journalled.
+    pub async fn create_workarea_in(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        name: &Name,
+        parent: Option<Reference>,
+        crew: Option<Reference>,
+        mode: Option<WorkareaMode>,
+    ) -> Result<CreatedWorkarea, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         // A user key with the writer role creates inside its own root, by
@@ -3107,6 +3129,15 @@ where
                 .ok_or(AppError::NotFound)?,
             None => Vec::new(),
         };
+        // ADR-0064 d3: only a writer user key, directly under a code parent.
+        let born_in_progress = mode == Some(WorkareaMode::InProgress);
+        if born_in_progress
+            && !(key.role == Role::Writer
+                && key.user.is_some()
+                && ancestors.first().is_some_and(|p| p.children_agent))
+        {
+            return Err(AppError::ModeNotAllowedHere);
+        }
         let crew = match crew_id {
             Some(crew_id) => Some(
                 self.journal
@@ -3152,7 +3183,8 @@ where
             });
         }
         let workarea = WorkareaRecord {
-            in_progress: false,
+            in_progress: born_in_progress,
+            children_agent: false,
             workarea_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
             parent_id,
@@ -3779,6 +3811,12 @@ where
                 let development = subtree
                     .iter()
                     .all(|w| w.status == WorkareaStatus::Development);
+                if node.children_agent {
+                    return Err(AppError::InProgressRefused {
+                        workarea_id,
+                        reason: InProgressReason::Nested,
+                    });
+                }
                 in_progress::check_mark(&marks, below, development).map_err(|reason| {
                     AppError::InProgressRefused {
                         workarea_id,
@@ -3800,6 +3838,83 @@ where
             node,
             current,
             held_free,
+        })
+    }
+
+    /// Mark a workarea a code parent, or unmark it (ADR-0064 d3): the same
+    /// predicate as [`Self::set_workarea_mode`], a dreamer key a person holds
+    /// with dreamer effective access on the node, and no other key. A code
+    /// parent is itself `standard`: an in-progress node, and `universe`, are
+    /// refused. Marking the mark a node already holds journals nothing.
+    /// Journalled as `workarea.mode_set` with `children`.
+    pub async fn set_code_parent(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        workarea: Reference,
+        children_agent: bool,
+    ) -> Result<WorkareaRecord, AppError> {
+        const VERB: &str = "workarea_mode";
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let key = &caller.key;
+        if !may_set_mode(key.role, key.held_by, key.profile) {
+            return Err(AppError::ModeHumanOnly {
+                role: key.role,
+                held_by: key.held_by,
+            });
+        }
+        let tenant_id = key.tenant_id;
+        let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        self.observer.workarea(workarea_id);
+        self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
+            .await?;
+        let prev = self.head_event(tenant_id).await?;
+        let ancestry = self
+            .journal
+            .workarea_ancestry(tenant_id, workarea_id)
+            .await?
+            .unwrap_or_default();
+        let node = ancestry.first().cloned().ok_or(AppError::NotFound)?;
+        if node.children_agent == children_agent {
+            return Ok(node);
+        }
+        if children_agent && (ancestry.len() == 1 || node.in_progress) {
+            return Err(AppError::InProgressRefused {
+                workarea_id,
+                reason: if node.in_progress {
+                    InProgressReason::Nested
+                } else {
+                    InProgressReason::Universe
+                },
+            });
+        }
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::WORKAREA_MODE_SET,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "children": if children_agent { "agent" } else { "none" },
+            }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::CodeParentSet {
+                workarea_id,
+                children_agent,
+            },
+            None,
+        )
+        .await?;
+        self.observer.mode_set(if children_agent {
+            "code_parent"
+        } else {
+            "standard"
+        });
+        Ok(WorkareaRecord {
+            children_agent,
+            ..node
         })
     }
 

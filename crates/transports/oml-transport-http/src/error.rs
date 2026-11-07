@@ -591,6 +591,11 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "role": role.as_str(),
             "held_by": held_by.as_str(),
         })),
+        // ADR-0064 d3: a create body names a mode only under a code parent.
+        AppError::ModeNotAllowedHere => ApiError::validation(
+            "mode in a create body is admitted only as in_progress, from a writer user key, under a code parent a person marked",
+        )
+        .with_details(json!({ "field": "/mode" })),
         // A curator narrows inside an in-progress scope only (ADR-0030 d9).
         AppError::Curator { verb, refusal } => ApiError::new(
             StatusCode::FORBIDDEN,

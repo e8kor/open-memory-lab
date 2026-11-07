@@ -93,6 +93,7 @@ HOOKS = "hooks/hooks.json"
 # check, exits 0 only when `oml` is missing or older than its verb, so a
 # failing check blocks the call (proposed ADR-0037 d6, d9).
 GUARDRAIL_MATCHER = "^(Bash|PowerShell|Write|.*Edit|Read|Grep|Glob|WebFetch|mcp__.*)$"
+POST_TOOL_MATCHER = "^(Write|Edit|MultiEdit|NotebookEdit|Read)$"
 HOOK_EVENTS = {
     "SessionStart": [
         (None, 10, "Loading OML memory", ["hook", "session-start"], "guarded"),
@@ -105,6 +106,9 @@ HOOK_EVENTS = {
         (GUARDRAIL_MATCHER, 5, "Checking OML guardrails", ["hook", "pre-tool-use"], "checked"),
     ],
     "PostToolUseFailure": [("Bash", 3, None, ["hook", "tool-failure"], "guarded")],
+    # ADR-0064 d11, d13: records the paths an edit or a read touched; sends
+    # and prints nothing, and does nothing in a clone not set up for it.
+    "PostToolUse": [(POST_TOOL_MATCHER, 2, None, ["hook", "post-tool-use"], "guarded")],
     "SessionEnd": [(None, 1, None, ["hook", "session-end"], "guarded")],
     # ADR-0063 d6, d10: each above its verb's deadline (2 s for user-prompt,
     # 1 s for stop and pre-compact), each a no-op until switched on.

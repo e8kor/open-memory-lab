@@ -1,5 +1,5 @@
 {
-  "description": "Start every session from what Open Memory Lab holds for this agent's key, load its reviewed guardrails and check each matching tool call against them, when opted in recall what it holds about a failed command, and when opted in ask the agent to write what a conversation established and recall on each prompt.",
+  "description": "Start every session from what Open Memory Lab holds for this agent's key, load its reviewed guardrails and check each matching tool call against them, when opted in recall what it holds about a failed command, and when opted in ask the agent to write what a conversation established and recall on each prompt, and in a clone set up with oml setup repo fill the anchor of a fact about code, record the files an edit touched, and ask the agent to confirm a fact whose code changed.",
   "hooks": {
     "SessionStart": [
       {
@@ -100,6 +100,18 @@
           {
             "type": "command",
             "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook pre-compact || exit 0",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Write|Edit|MultiEdit|NotebookEdit|Read)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v oml >/dev/null 2>&1 || exit 0; oml hook post-tool-use || exit 0",
             "timeout": 2
           }
         ]
