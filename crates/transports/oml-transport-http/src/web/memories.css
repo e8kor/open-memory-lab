@@ -1,0 +1,26 @@
+/* The Memories filters and the Atlas treemap (ADR-0045 d32): only
+   var(--…) from tokens.css; the shared classes are web.css's. */
+.filters{display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:flex-end;margin:0 0 var(--space-3)}
+.filters label{font:var(--t-caption-weight) var(--t-caption-size)/var(--t-caption-line) var(--font-body);letter-spacing:normal;text-transform:none;color:var(--ink-dim)}
+.tm-fig{margin:0}
+.tm{width:100%;height:auto;display:block}
+.tm a,.tm text{text-decoration:none}
+.tm.narrow{display:none}
+@media (max-width:599px){.tm.wide{display:none}.tm.narrow{display:block}}
+.tm-r{fill:var(--panel);stroke:var(--rule);stroke-width:var(--stroke)}
+.tm a:hover .tm-r,.tm a:focus-visible .tm-r{stroke:var(--focus);stroke-width:var(--stroke-strong)}
+.tm-r.ip{stroke:var(--in-progress);stroke-dasharray:var(--space-1) var(--space-0\.5)}
+.tm-nm{fill:var(--ink);font-family:var(--font-mono)}
+.tm-n{fill:var(--ink-dim);font-family:var(--font-body);font-variant-numeric:tabular-nums}
+.tm-ip{fill:var(--in-progress);font-family:var(--font-body)}
+.bar.promoted{fill:var(--promoted)}
+.bar.held{fill:var(--held)}
+.bar.unreviewed{fill:var(--unreviewed)}
+.bar.superseded{fill:var(--superseded)}
+.twin{margin-top:var(--space-4)}
+.twin .num{text-align:right;font-variant-numeric:tabular-nums}
+.twin .cap{font:var(--t-meta-weight) var(--t-meta-size)/var(--t-meta-line) var(--font-body);color:var(--ink-faint)}
+.oml-rail-side h2{margin:0;overflow-wrap:anywhere}
+.oml-lifebar .f-1{flex:1}.oml-lifebar .f-2{flex:2}.oml-lifebar .f-3{flex:3}.oml-lifebar .f-4{flex:4}.oml-lifebar .f-5{flex:5}.oml-lifebar .f-6{flex:6}.oml-lifebar .f-7{flex:7}.oml-lifebar .f-8{flex:8}.oml-lifebar .f-9{flex:9}.oml-lifebar .f-10{flex:10}.oml-lifebar .f-11{flex:11}.oml-lifebar .f-12{flex:12}.oml-lifebar .f-13{flex:13}.oml-lifebar .f-14{flex:14}.oml-lifebar .f-15{flex:15}.oml-lifebar .f-16{flex:16}.oml-lifebar .f-17{flex:17}.oml-lifebar .f-18{flex:18}.oml-lifebar .f-19{flex:19}.oml-lifebar .f-20{flex:20}
+.twin .oml-lifebar{margin:var(--space-1) 0}
+@media (max-width:599px){.twin th:nth-child(2),.twin td:nth-child(2){display:none}}

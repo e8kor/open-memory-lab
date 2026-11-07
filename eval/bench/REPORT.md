@@ -8,7 +8,7 @@ Every memory went in through the HTTP API and was promoted by a reviewer key of 
 principal; every query went out through `oml_read` over `/mcp` with `k` 100 and no token budget
 unless stated. Metrics are ir_measures'. The committed numbers are in
 `results/<suite>/<method>.json` (schema `oml-bench/1`) and render as the API docs' benchmark
-pages (`docs/api/benchmarks/`); the first run (`0ff5c9e`) and the run before the review's fixes
+pages (`docs/benchmarks/`); the first run (`0ff5c9e`) and the run before the review's fixes
 (`4a8f5ba`, `9a6a0d0`) are kept under `results/archive/` and shown beside the current one.
 
 ## Before and after
@@ -198,7 +198,7 @@ supersede them.
     it took about 2 s over SciFact's scope under load, and is why `keyword-all` took 652 ms
     to return nothing while its own statement ran in 4.7 ms.
 
-  FR-84 marks 10,000 and 100,000 rows as unmeasured; at 5,000 rows of abstract-length text
+  #102 marks 10,000 and 100,000 rows as unmeasured; at 5,000 rows of abstract-length text
   the default pipeline already takes seconds per query.
 - **Statistics stay inside the scope.** The synthetic set returned the same metrics with 200
   rows in the tenant and again with 14,898, and no LoCoMo question received a turn from
@@ -225,10 +225,10 @@ twice per write, wrote SciFact at 62 a second. Two findings, now roadmap rows:
 
 - At 8 concurrent writers, writes and verdicts meet `503 system.unavailable`, "chain head
   contention", marked retryable: 534 to 775 retries per 5,000-row set. The loader retries them.
-  The server's request log showed 144 store calls per write (FR-86).
+  The server's request log showed 144 store calls per write (#100).
 - `review next` serves a key its own claimed row again until it is judged, so one key
   reviews one row at a time; parallel review needs several reviewer keys, as a crew would
-  have (FR-87).
+  have (#98).
 
 ## What the harness needs next (S4-S7)
 

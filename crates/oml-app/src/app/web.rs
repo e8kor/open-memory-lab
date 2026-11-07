@@ -47,6 +47,9 @@ pub struct Callback<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallbackRefusal {
     Refused(SignInRefusal),
+    /// In open mode, a verified identity no entry holds: the terms page
+    /// comes next, and nothing is written yet (ADR-0068 d2).
+    Unlisted(ProviderIdentity),
     Provider(ProviderFailure),
     Store(String),
 }
@@ -99,6 +102,8 @@ where
             google_subject: existing.as_ref().and_then(|e| e.google_subject.clone()),
             github_subject: existing.as_ref().and_then(|e| e.github_subject.clone()),
             added_by: existing.as_ref().map_or(admin.key_id, |e| e.added_by),
+            terms_version: existing.as_ref().and_then(|e| e.terms_version.clone()),
+            disabled_at: existing.as_ref().and_then(|e| e.disabled_at.clone()),
         };
         let (event_type, fold) = match outcome {
             WebEmailOutcome::Changed => (
@@ -245,12 +250,29 @@ where
         };
         let email_hash = identity.email.digest();
         let store = |e: StoreError| CallbackRefusal::Store(e.to_string());
-        let entry = self
+        let Some(entry) = self
             .journal
             .web_entry_by_email(&email_hash)
             .await
             .map_err(store)?
-            .ok_or(refused(SignInRefusal::NotAllowed))?;
+        else {
+            // Open mode takes an unlisted, verified identity to the terms
+            // page (ADR-0068 d2); allowlist mode refuses it as before.
+            return Err(
+                if self
+                    .signup_policy()
+                    .is_some_and(|p| p.mode == oml_domain::signup::SignupMode::Open)
+                {
+                    CallbackRefusal::Unlisted(identity)
+                } else {
+                    refused(SignInRefusal::NotAllowed)
+                },
+            );
+        };
+        // A disabled person signs in to nothing (ADR-0068 d8).
+        if entry.disabled_at.is_some() {
+            return Err(refused(SignInRefusal::Disabled));
+        }
         match self
             .journal
             .web_pin(

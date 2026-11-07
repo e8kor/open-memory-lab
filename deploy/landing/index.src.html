@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Memory Lab</title>
+<meta name="description" content="One memory across your AI tools: your decisions and project facts, recalled from Claude, Codex, Cursor or any MCP tool once someone approves them.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="{{GROUND_DARK}}" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="{{GROUND_LIGHT}}" media="(prefers-color-scheme: light)">
+<link rel="canonical" href="https://memory.doublegate.io/">
+<meta property="og:title" content="Open Memory Lab">
+<meta property="og:description" content="One memory across your AI tools, approved before it is shared.">
+<meta property="og:url" content="https://memory.doublegate.io/">
+<link rel="icon" type="image/svg+xml" href="{{FAVICON}}">
+<style>
+{{STYLE}}
+</style>
+</head>
+<body>
+{{HEADER}}
+
+<main class="site">
+  <div class="hero">
+    <div class="hero-copy">
+      <h1>One memory across your AI tools.</h1>
+      <p class="lede">Your decisions and project facts, recalled from Claude, Codex, Cursor or any MCP tool. Nothing is shared until someone who didn't write it approves it.</p>
+      <ul class="tools" aria-label="MCP clients"><li>Claude Code</li><li>claude.ai</li><li>Claude Desktop</li><li>Claude mobile</li><li>Codex</li><li>Cursor</li><li>Gemini CLI</li><li>VS Code</li></ul>
+      <p class="caption">Each connects over MCP, the open protocol AI tools use to reach other services. The Claude Code plugin is in daily use against this server; the others connect through each tool's own MCP settings (<a href="{{DOCS_URL}}reference/limits/#not-verified-against-a-live-client">what we have not tested live</a>).</p>
+      <div class="row"><a class="btn primary" href="#start">Get started</a><a class="btn" href="{{CONTACT_URL}}">Ask about access</a></div>
+    </div>
+    <article class="card proof" aria-label="An example memory, waiting for approval">
+      <div class="head"><span class="chip is-held">{{GLYPH:held}}waiting</span><span class="end">new memory</span></div>
+      <p class="text">Staging database passwords live in Vault. Never put them in a .env file.</p>
+      <ol class="timeline" aria-label="Where it stands">
+        <li><span>{{GLYPH:agent}}</span><span class="step">Saved</span><span>by <span class="who">Claude Code</span></span></li>
+        <li><span class="held-c">{{GLYPH:held}}</span><span class="step">Checked</span><span>no secrets found</span></li>
+        <li class="wait"><span>{{GLYPH:person}}</span><span class="step">Approved</span><span>waits for someone who didn't write it</span></li>
+        <li class="wait"><span>{{GLYPH:promoted}}</span><span class="step">Shared</span><span>not yet</span></li>
+      </ol>
+      <p class="consequence">Approve it, and your other AI tools can recall it.</p>
+      <div class="row" aria-hidden="true"><span class="btn primary">Approve</span><span class="btn">Reject…</span></div>
+    </article>
+  </div>
+
+  <nav class="aud" aria-label="Who it is for">
+    <a class="aud-card" href="/teams">{{GLYPH:shared}}<span class="stack"><h2 class="h3">For teams</h2><span class="caption">Memory your agents and teammates share, with an author and an approver on every memory.</span><span class="go">See it for teams →</span></span></a>
+    <a class="aud-card" href="/personal">{{GLYPH:person}}<span class="stack"><h2 class="h3">Personal</h2><span class="caption">Stop re-explaining your work: one memory across Claude, your phone and your other AI tools.</span><span class="go">See it for personal use →</span></span></a>
+  </nav>
+
+  <section id="how" aria-labelledby="how-h">
+    <h2 id="how-h">How a memory gets approved</h2>
+    <figure class="gate" aria-labelledby="gate-cap">
+      <figcaption id="gate-cap" class="sr-only">How a memory gets approved</figcaption>
+      {{GATE_WIDE}}
+      {{GATE_TALL}}
+      <details class="astext"><summary>As text</summary><ol>
+        <li>An agent, here <code>crew/scout</code>, saves a memory.</li>
+        <li>The memory waits, <code>held</code>: only its author and its reviewers can read it. It is scanned for leaked secrets, such as private keys, known providers' API tokens and passwords set in config (<code>DB_PASSWORD=…</code>), and a match refuses the write.</li>
+        <li>Someone who did not write it, nor what it builds on, approves it: a person, here <code>eugene</code>, or a reviewer agent. The key that wrote a memory never approves it.</li>
+        <li>The memory is <code>promoted</code>, approved and shared: every agent with access to its workarea recalls it. A workarea is a named area of memory, such as a team or a project, and a key reads only the workareas it is granted.</li>
+        <li>Two opt-in exceptions, each confined to one workarea, are described under <a href="{{DOCS_URL}}use/workareas/">workareas</a>.</li>
+      </ol></details>
+    </figure>
+    <div class="vals">
+      <div><span class="v-held">{{GLYPH:held}}</span><h3>Nothing shared unapproved</h3><p class="caption">An agent's memory waits until a person, or a reviewer agent, who didn't write it approves it.</p></div>
+      <div><span class="v-gate">{{GLYPH:gate}}</span><h3>Every memory shows its source</h3><p class="caption">Who wrote it, who approved it and, where given, the repository, commit and file it came from.</p></div>
+      <div><span class="v-prom">{{GLYPH:promoted}}</span><h3>Answers say why they matched</h3><p class="caption">Each hit names the words it matched, so you can see why it came back.</p></div>
+    </div>
+  </section>
+
+  <section id="start" aria-labelledby="start-h">
+    <div class="start">
+      <div class="hero-copy">
+        <h2 id="start-h">Get started</h2>
+        <p class="caption">The public server is by invitation: email <a href="{{CONTACT_URL}}">{{CONTACT_EMAIL}}</a>. Invited? <a href="/web">Sign in</a> with GitHub or Google, and issue a key for your agent on your account page, <code>/web</code>. Then:</p>
+        <ol>
+          <li><b>Install <code>oml</code> on Linux.</b> The installer checks the download against the release's signed checksums. On a Mac, build it from source; on Windows, use PowerShell (<a href="{{DOCS_URL}}start/install/">install options</a>).</li>
+          <li><b>Store your key.</b> <code>oml login</code> asks for it, checks it with the server and keeps it in a file only you can read.</li>
+          <li><b>Set up Claude Code.</b> <code>oml setup claude-code</code> installs the plugin with that key. Then run <code>/reload-plugins</code> in Claude Code, or restart it.</li>
+          <li><b>claude.ai or the Claude app?</b> On your account page, under Connect Claude on the web or a phone, issue a connector key and copy its code. On claude.ai, open Customize &gt; Connectors, add <code>https://memory.doublegate.io/mcp</code> and paste the code. Your phone gets it too.</li>
+        </ol>
+        <p class="caption">No invitation? <a href="{{DOCS_URL}}start/quickstart/">Try a local server</a> in about five minutes. claude.ai and phones cannot reach a server on your laptop; they need one on a public HTTPS address.</p>
+        <p class="caption">Your memories stay on the server you choose. On the public server its operator can read them; its request logs hold no memory text and are kept 30 days (<a href="{{DOCS_URL}}operations/observability/">what is logged</a>).</p>
+        <p class="links"><a href="{{DOCS_URL}}guides/claude-code/">Claude Code guide</a><a href="{{DOCS_URL}}guides/claude-ai-and-mobile/">claude.ai and phone guide</a><a href="{{DOCS_URL}}guides/other-harnesses/">Connect Codex, Cursor or Gemini</a><a href="{{DOCS_URL}}start/run-your-own/">Run your own</a><a href="{{DOCS_URL}}changelog/">Release notes (pre-1.0)</a></p>
+      </div>
+      <div class="term">
+        <div class="bar"><span>Linux</span><button class="btn sm" type="button" data-copy="cmd-unix">Copy</button></div>
+<pre id="cmd-unix"><span class="c"># install the CLI (Linux)</span>
+<span class="p">$ </span>r=https://raw.githubusercontent.com/e8kor
+<span class="p">$ </span>u=$r/open-memory-lab/v{{VERSION}}/scripts/install
+<span class="p">$ </span>curl -fsSL --proto '=https' --tlsv1.2 \
+    "$u/install.sh" | sh
+
+<span class="c"># store your key; paste it when asked</span>
+<span class="p">$ </span>oml login https://memory.doublegate.io
+
+<span class="c"># install the Claude Code plugin</span>
+<span class="p">$ </span>oml setup claude-code
+<span class="c"># then, in Claude Code: /reload-plugins</span></pre>
+      </div>
+    </div>
+  </section>
+</main>
+
+{{FOOTER}}
+
+<script>
+document.querySelectorAll('button[data-copy]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var pre = document.getElementById(b.dataset.copy);
+    var text = Array.prototype.filter.call(pre.childNodes, function (n) {
+      return !(n.nodeType === 1 && (n.classList.contains('c') || n.classList.contains('p')));
+    }).map(function (n) { return n.textContent; }).join('').replace(/\n{2,}/g, '\n').trim();
+    function done() { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1600); }
+    if (navigator.clipboard) { navigator.clipboard.writeText(text).then(done, function () {}); }
+  });
+});
+</script>
+</body>
+</html>

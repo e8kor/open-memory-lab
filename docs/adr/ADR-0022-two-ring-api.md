@@ -9,7 +9,7 @@ answers: why the one API surface gains two stability rings — /v1 memory provid
 
 **Status:** accepted design · 2026-10-29 · amended by [ADR-0025](ADR-0025-the-agent-only-memory-surface.md), [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
 
-**Release:** introduced in v0.1.0 ([releases](../product/releases.md#decisions))
+**Release:** introduced in v0.1.0 ([releases](../changelog.md))
 
 Everything this record decides is design — no code exists. It refines
 [ADR-0014](ADR-0014-http-api-and-mcp-facade.md) (one transport, one keyed listener, one OpenAPI
@@ -42,10 +42,10 @@ category while the workarea machinery keeps working underneath, by default, for 
 
 - **d2 — `/v1` is the provider foundation, under a compatibility covenant.** Its verbs are what
   an agent needs to use OML as its only memory and nothing else: submit
-  (`POST /v1/memories`, the reserved `POST /v1/memories:batch` of FR-12), read own and promoted
+  (`POST /v1/memories`, the reserved `POST /v1/memories:batch` of #122), read own and promoted
   (`GET /v1/memories/{artifact_id}`, the own-work listing), recall, supersede, and the
   attachment upload/fetch flow; `/healthz` and `/readyz` stay unversioned. **The covenant:**
-  once FR-21 declares v1 stable, v1 changes are additive only — no field removed, no semantic
+  once #150 declares v1 stable, v1 changes are additive only — no field removed, no semantic
   changed, no status code repurposed; anything that would break a v1 client is, by definition, a
   v2 capability. The gate still applies on v1 — a v1 write is held until review like any write;
   what v1 hides is the machinery, not the constitution.
@@ -95,7 +95,7 @@ category while the workarea machinery keeps working underneath, by default, for 
 - The CLI is a `/v2` client for every ceremony and a `/v1` client for nothing — administration
   is the lab ([ADR-0015](ADR-0015-cli-administration.md) wording unchanged in substance: one
   API family, no verb the API lacks).
-- FR-21 (roadmap) owns the v1-stable declaration: the covenant binds from the moment that row
+- #150 owns the v1-stable declaration: the covenant binds from the moment that row
   closes; until then v1 is as unstable as everything else in a design with no code.
 - The docs name the rings exactly: "the provider ring (`/v1`)" and "the lab ring (`/v2`)";
   "memory provider on steroids" is the product sentence this record makes structural.
@@ -111,6 +111,6 @@ category while the workarea machinery keeps working underneath, by default, for 
 - **Structured self-describing keys (JWT-style embedded claims).** Embedding tenant, role or
   workarea in key cleartext moves authorization data onto the wire and into client custody;
   the bearer-hash + server-side-resolution model keeps the key a pure capability reference.
-  Revisit trigger: a federation design (RS-3) that needs cross-deployment key verification.
+  Revisit trigger: a federation design (#151) that needs cross-deployment key verification.
 - **Versioning the whole API as one ring.** Freezing the lab to protect the loop, or breaking
   the loop to grow the lab.

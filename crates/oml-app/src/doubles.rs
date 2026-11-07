@@ -191,6 +191,11 @@ struct TenantState {
     /// The tenant's journalled default search pipeline (ADR-0049 d4).
     search_default: Option<String>,
     query_text_since: Option<EventTime>,
+    /// One person's quota overrides by root (`user_quotas`; ADR-0068 d5).
+    user_quotas: BTreeMap<Uuid, BTreeMap<oml_domain::signup::Quota, u64>>,
+    /// Deletion requests by user: requested and, once closed, closed at
+    /// (`web_deletion_requests`; ADR-0068 d6).
+    deletion_requests: BTreeMap<Name, (EventTime, Option<EventTime>)>,
 }
 
 /// BTreeMap journal-and-metadata store with a real lock per tenant: chain
@@ -1074,6 +1079,45 @@ fn apply_fold(
                 ));
             }
             state.web_sessions.retain(|_, s| s.email_hash != email_hash);
+        }
+        MetadataFold::QuotaSet {
+            user_root,
+            quota,
+            limit,
+        } => {
+            let overrides = state.user_quotas.entry(user_root).or_default();
+            match limit {
+                Some(limit) => {
+                    overrides.insert(quota, limit);
+                }
+                None => {
+                    overrides.remove(&quota);
+                }
+            }
+        }
+        MetadataFold::UserDisabled { user } => {
+            let mut ended = Vec::new();
+            for entry in state.web_entries.values_mut().filter(|e| e.user == user) {
+                entry.disabled_at = Some(at.clone());
+                ended.push(entry.email.digest());
+            }
+            state
+                .web_sessions
+                .retain(|_, s| !ended.contains(&s.email_hash));
+        }
+        MetadataFold::DeletionRequested { user } => {
+            let pending = state
+                .deletion_requests
+                .get(&user)
+                .is_some_and(|(_, closed)| closed.is_none());
+            if !pending {
+                state.deletion_requests.insert(user, (at.clone(), None));
+            }
+        }
+        MetadataFold::DeletionClosed { user } => {
+            if let Some((_, closed)) = state.deletion_requests.get_mut(&user) {
+                *closed = Some(at.clone());
+            }
         }
         MetadataFold::CrewCreated(crew) => {
             require_free_name(
@@ -2027,6 +2071,66 @@ impl Retriever for MemStore {
 }
 
 impl JournalStore for MemStore {
+    async fn user_usage(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<crate::types::UserUsage, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(crate::types::UserUsage::default());
+        };
+        let state = state.lock().expect("tenant lock");
+        let inside = |w: &Uuid| {
+            *w == user_root
+                || state
+                    .workareas
+                    .get(w)
+                    .is_some_and(|w| w.namespace == Some(user_root))
+        };
+        let memories: std::collections::BTreeSet<(Uuid, &str)> = state
+            .memories
+            .values()
+            .filter(|m| inside(&m.workarea_id))
+            .map(|m| (m.workarea_id, m.claim_key.as_str()))
+            .collect();
+        let keys: Vec<Uuid> = state
+            .keys
+            .values()
+            .filter(|k| {
+                k.user == Some(user_root)
+                    && k.revoked_at.is_none()
+                    && k.credential != Credential::Session
+            })
+            .map(|k| k.key_id)
+            .collect();
+        let connections = state
+            .connections
+            .values()
+            .filter(|c| c.state == ConnectionState::Open && keys.contains(&c.key_id))
+            .count();
+        Ok(crate::types::UserUsage {
+            memories: memories.len() as u64,
+            keys: keys.len() as u64,
+            connections: connections as u64,
+        })
+    }
+
+    async fn user_quota_overrides(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> Result<Vec<(oml_domain::signup::Quota, u64)>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        Ok(state
+            .user_quotas
+            .get(&user_root)
+            .map(|o| o.iter().map(|(q, l)| (*q, *l)).collect())
+            .unwrap_or_default())
+    }
+
     async fn commit_chain(&self, reqs: Vec<CommitRequest>) -> Result<CommitReceipt, StoreError> {
         {
             let mut refuse = self.refuse_next.lock().expect("refusal lock");
@@ -2338,6 +2442,8 @@ impl JournalStore for MemStore {
             .filter(|m| filter.kind.is_none_or(|k| m.kind == k))
             .filter(|m| filter.claim_key.as_ref().is_none_or(|c| &m.claim_key == c))
             .filter(|m| filter.anchor.admits_row(m.anchor.as_deref(), m.origin_kind))
+            .filter(|m| filter.author.is_none_or(|a| m.author_key_id == a))
+            .filter(|m| filter.tip.is_none_or(|t| m.is_tip == t))
             .filter(|m| {
                 filter
                     .since
@@ -3286,6 +3392,12 @@ impl WebStore for MemStore {
             })
             .filter(|m| search.state.is_none_or(|s| AdminState::of(m) == s))
             .filter(|m| {
+                search.origin_kinds.is_empty()
+                    || m.origin_kind
+                        .is_some_and(|k| search.origin_kinds.contains(&k))
+            })
+            .filter(|m| search.author.is_none_or(|a| m.author_key_id == a))
+            .filter(|m| {
                 search.after.as_ref().is_none_or(|a| {
                     (m.created_at.unix_micros(), m.memory_id)
                         < (a.created_at.unix_micros(), a.artifact_id)
@@ -3299,6 +3411,27 @@ impl WebStore for MemStore {
         });
         rows.truncate(search.limit);
         Ok(rows)
+    }
+
+    async fn web_deletion_requests(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<Vec<crate::types::DeletionRequest>, StoreError> {
+        let Some(state) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = state.lock().expect("tenant lock");
+        let mut pending: Vec<crate::types::DeletionRequest> = state
+            .deletion_requests
+            .iter()
+            .filter(|(_, (_, closed))| closed.is_none())
+            .map(|(user, (at, _))| crate::types::DeletionRequest {
+                user: user.clone(),
+                requested_at: at.clone(),
+            })
+            .collect();
+        pending.sort_by_key(|r| r.requested_at.unix_micros());
+        Ok(pending)
     }
 
     async fn web_sessions_sweep(&self, tenant_id: Uuid, at: &EventTime) -> Result<u64, StoreError> {

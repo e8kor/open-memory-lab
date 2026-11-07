@@ -1,11 +1,26 @@
 site_name: Open Memory Lab
-site_description: An external memory provider for AI agents — every memory is a claim under test.
+site_description: An external memory provider for AI agents. Every write is held until a different identity reviews it.
 site_url: https://e8kor.github.io/open-memory-lab/
 repo_url: https://github.com/e8kor/open-memory-lab
 edit_uri: edit/main/docs/
 docs_dir: docs
 exclude_docs: |
+  includes/
   assets/brand/tokens.md
+  contributing/
+  NUMBERS.md
+  adr/
+  legal/
+hooks:
+  - hooks/status_line.py
+
+extra:
+  oml_series: "0.6"
+
+extra_css:
+  - stylesheets/oml.css
+  - assets/status.css
+
 copyright: >
   Code licensed <a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE">Apache-2.0</a> ·
   documentation licensed <a href="https://github.com/e8kor/open-memory-lab/blob/main/LICENSE-docs">CC BY 4.0</a>
@@ -13,37 +28,54 @@ copyright: >
 validation:
   nav:
     omitted_files: warn
+  anchors: warn
 
 theme:
   name: material
   logo: assets/brand/oml-mark.svg
+  font: false
   favicon: assets/brand/favicon.svg
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: deep purple
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
+    # Colours come from docs/stylesheets/oml.css, generated from design/tokens.json (ADR-0069).
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: deep purple
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
-        name: Switch to light mode
+        name: Switch to paper
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to night
   features:
-    - navigation.sections
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.indexes
+    - navigation.path
+    - navigation.footer
     - navigation.top
+    - navigation.instant
+    - search.suggest
+    - search.highlight
+    - toc.follow
+    - content.tabs.link
     - content.code.copy
     - content.action.edit
     - content.action.view
-    - toc.integrate
 
 markdown_extensions:
   - admonition
   - tables
   - attr_list
+  - md_in_html
   - pymdownx.details
+  - pymdownx.snippets:
+      base_path: [docs/includes]
+      check_paths: true
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -53,49 +85,52 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
 
+
 nav:
   - Home: index.md
   - Get started:
-      - Three paths: start/index.md
-      - Install: start/install.md
+      - start/index.md
+      - Install the CLI: start/install.md
+      - Quickstart: start/quickstart.md
+      - Get an agent key: guides/get-an-agent-key.md
+      - Connect Claude Code: guides/claude-code.md
+      - Connect claude.ai and your phone: guides/claude-ai-and-mobile.md
+      - Connect other agent tools: guides/other-harnesses.md
+      - Run your own server: start/run-your-own.md
   - Guides:
-      - Claude Code: guides/claude-code.md
-      - claude.ai and mobile: guides/claude-ai-and-mobile.md
-      - Other agent tools: guides/other-harnesses.md
-      - Reviewing memories: guides/reviewing.md
-      - Administering a server: guides/administering.md
-      - Self-hosting: guides/self-hosting.md
-      - Kubernetes: guides/kubernetes.md
-      - Upgrading from v0.3: guides/upgrading.md
-      - Troubleshooting: guides/troubleshooting.md
-  - Concepts: concepts.md
-  - Review guide: review-guide.md
-  - Spec changelog: changelog.md
-  - Live atlas: https://e8kor.github.io/open-memory-lab/atlas/
-  - Product:
-      - Positioning: product/positioning.md
-      - Use cases: product/use-cases.md
-      - Quick scenarios: product/scenarios.md
-      - Releases: product/releases.md
-      - Roadmap: product/roadmap.md
-      - Commitments: product/commitments.md
-      - Critical path: product/critical-path.md
-      - Compliance: product/compliance.md
-  - Architecture:
-      - Overview: architecture/overview.md
-      - Admission: architecture/admission.md
-      - Workareas: architecture/workareas.md
-      - Roles and keys: architecture/roles-and-keys.md
-      - Simulations: architecture/simulations.md
-      - Ontologies: architecture/ontologies.md
-      - Storage: architecture/storage.md
-      - Retrieval: architecture/retrieval.md
-      - Reconciliation: architecture/reconciliation.md
-      - Audit and lineage: architecture/audit-and-lineage.md
-      - Security: architecture/security.md
-  - Data:
-      - PostgreSQL schema: data/postgres-schema.md
-      - Delta tables: data/delta-tables.md
+      - guides/index.md
+      - Use:
+          - Write and read memories: use/remember-and-recall.md
+          - Review held memories: guides/reviewing.md
+          - Organize memory in workareas: use/workareas.md
+          - Capture chat memory: use/chat-memory.md
+          - Sync docs and code: use/sync.md
+          - Give agents rules: use/guardrails.md
+      - Integrate:
+          - Integrate a reviewer crew over HTTP: api/reviewer-crews.md
+          - Use the client SDKs: engineering/sdks.md
+  - Operate:
+      - operations/index.md
+      - Administer a server: guides/administering.md
+      - Deploy: operations/deployment.md
+      - Install on Kubernetes: guides/kubernetes.md
+      - Monitor: operations/observability.md
+      - Upgrade: operations/upgrades.md
+      - Back up and restore: operations/restore.md
+      - Operational alerts: operations/runbooks.md
+      - Failure modes: operations/failure-modes.md
+      - Run the lake writer: operations/lake.md
+      - Capacity and SLOs: operations/operating.md
+  - Reference:
+      - reference/index.md
+      - CLI: cli/reference.md
+      - HTTP API: api/http-api.md
+      - MCP tools: api/mcp-plugin.md
+      - Settings: operations/configuration.md
+      - Error codes: api/errors.md
+      - Connect page: reference/connect-page.md
+      - Limits: reference/limits.md
+      - Metrics: reference/metrics.md
       - Event catalog: data/event-catalog.md
       - Chain format: data/chain-format.md
   - API:

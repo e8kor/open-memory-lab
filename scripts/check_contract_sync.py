@@ -8,7 +8,8 @@ The API contract is declared on three surfaces that must agree by construction:
                                    x-oml-designed-fields, the designed fields of
                                    served operations (ADR-0039 d9)
   2. docs/api/errors.md          — the per-family code tables and the status-code index
-  3. docs/api/http-api.md        — the endpoint surface (tables, bullets, headings)
+  3. docs/api/http-api.md        — generated from openapi.yaml by gen_http_api_reference.py,
+                                   whose --check mode keeps it in step; not parsed here
 
 This script extracts each surface and fails with a diff on any disagreement:
 
@@ -65,7 +66,7 @@ Parsing rules (kept deliberately dumb and documented):
   * An error code is a backticked token shaped family.name (lowercase + underscores).
   * An endpoint is a backticked span "METHOD /path" anywhere in http-api.md.
     Query strings are stripped. A span whose path contains ":" (e.g. the reserved
-    POST /v1/memories:batch, FR-12) is a future reservation, not current contract,
+    POST /v1/memories:batch, #122) is a future reservation, not current contract,
     and is skipped.
   * http-api.md groups endpoints as `GET /a/{id}` · `/tree` · `/edges`: a bare
     "/suffix" span joined by the "·" separator continues the previous span —
@@ -541,7 +542,6 @@ def main() -> int:
     failures: list[tuple[str, list[str]]] = []
 
     errors_text = ERRORS_MD.read_text(encoding="utf-8")
-    http_text = HTTP_API_MD.read_text(encoding="utf-8")
     spec = yaml.safe_load(OPENAPI_YAML.read_text(encoding="utf-8"))
     designed = yaml.safe_load(DESIGNED_YAML.read_text(encoding="utf-8"))
 
@@ -551,11 +551,7 @@ def main() -> int:
     served_ops = openapi_ops(spec)
     designed_ops = openapi_ops(designed)
     spec_ops = served_ops | designed_ops
-    doc_ops = http_api_md_ops(http_text)
-    marks, mark_problems = http_api_md_marks(http_text)
 
-    if mark_problems:
-        failures.append(("http-api.md surface tables: parse problems", mark_problems))
     if family_problems:
         failures.append(("errors.md family tables: parse problems", family_problems))
     if index_problems:
@@ -569,8 +565,6 @@ def main() -> int:
         ("openapi.yaml ErrorCode enum", len(enum_codes)),
         ("openapi.yaml path+method ops", len(served_ops)),
         ("openapi-designed.yaml path+method ops", len(designed_ops)),
-        ("http-api.md Contract-marked ops", len(marks)),
-        ("http-api.md documented ops", len(doc_ops)),
     ]:
         if size < 10:
             failures.append(
@@ -611,18 +605,6 @@ def main() -> int:
         failures.append(
             ("paths declared in both openapi.yaml and openapi-designed.yaml", format_ops(in_both))
         )
-    only_spec = spec_ops - doc_ops
-    only_docs = doc_ops - spec_ops
-    if only_spec:
-        failures.append(
-            ("paths in the OpenAPI documents never documented on http-api.md", format_ops(only_spec))
-        )
-    if only_docs:
-        failures.append(
-            ("paths documented on http-api.md but absent from both OpenAPI documents",
-             format_ops(only_docs))
-        )
-
     for name, document in (("openapi.yaml", spec), ("openapi-designed.yaml", designed)):
         nulls = null_keys(document)
         if nulls:
@@ -652,17 +634,6 @@ def main() -> int:
     catalog_problems = mcp_catalog_problems()
     if catalog_problems:
         failures.append(("the MCP catalog disagrees with the served tools/list", catalog_problems))
-
-    mark_lines = []
-    for op, op_marks in sorted(marks.items(), key=lambda t: (t[0][1], t[0][0])):
-        want = {"served"} if op in served_ops else {"designed"} if op in designed_ops else set()
-        if want and op_marks != want:
-            mark_lines.append(
-                f"{op[0]} {op[1]}: http-api.md marks it {sorted(op_marks)}, "
-                f"the OpenAPI documents declare it {sorted(want)[0]}"
-            )
-    if mark_lines:
-        failures.append(("http-api.md Contract marks disagree with the OpenAPI documents", mark_lines))
 
     if failures:
         print("contract-sync check FAILED\n")

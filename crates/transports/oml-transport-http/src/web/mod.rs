@@ -16,10 +16,16 @@
 //! `sign_out` answers the app's `not_built` refusal.
 
 pub mod admin_read;
+pub mod atlas;
+#[rustfmt::skip]
+mod brand;
 pub mod emails;
+pub mod memories;
 pub mod page;
 pub mod render;
+pub mod start;
 pub mod views;
+pub mod workareas;
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -50,8 +56,8 @@ use crate::traffic::{Resolved, Rid, WebLine};
 use crate::{ApiState, finish_coded};
 use oml_app::ports::HandleSealer as _;
 
-/// The web pages' routes, as `(METHOD, path)` (ADR-0045 d1): a closed set
-/// the router serves exactly where the pages are on.
+/// The web pages' routes, as `(METHOD, path)` (ADR-0045 d1, d25): a
+/// closed set the router serves exactly where the pages are on.
 pub const WEB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/web"),
     ("POST", "/web"),
@@ -59,9 +65,19 @@ pub const WEB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/web/callback/{provider}"),
     ("GET", "/web/admin"),
     ("POST", "/web/admin"),
+    // Open sign-up and onboarding (ADR-0068 d10).
+    ("POST", "/web/sign-up"),
+    ("GET", "/web/start"),
+    ("POST", "/web/start"),
+    ("GET", "/web/start/status"),
+    ("GET", "/web/start/export"),
+    ("GET", "/web/admin/users"),
+    ("POST", "/web/admin/users"),
+    ("GET", "/web/data/memories"),
+    ("GET", "/web/admin/data/memories"),
 ];
 
-/// The user page's closed `action` set (ADR-0045 d1, d9).
+/// The user page's closed `action` set (ADR-0045 d1, d9, d28).
 pub const USER_ACTIONS: &[&str] = &[
     "issue_key",
     "connect_key",
@@ -69,12 +85,14 @@ pub const USER_ACTIONS: &[&str] = &[
     "cut_off",
     "create_workarea",
     "workarea_mode",
+    "workarea_transition",
+    "workarea_ratify",
     "review_next",
     "verdict",
     "sign_out",
 ];
 
-/// The admin page's closed `action` set (ADR-0045 d1, d10, d11, d12;
+/// The admin page's closed `action` set (ADR-0045 d1, d10, d11, d12, d28;
 /// ADR-0055 d10); `demote` joins it with its verb in v0.6.0.
 pub const ADMIN_ACTIONS: &[&str] = &[
     "allow_email",
@@ -89,7 +107,14 @@ pub const ADMIN_ACTIONS: &[&str] = &[
     "curate",
     "supersede",
     "cut_off",
+    "workarea_mode",
+    "workarea_transition",
+    "workarea_ratify",
 ];
+
+/// The purpose a pending sign-up is sealed under, so no other sealed
+/// value opens as one (ADR-0068 d2).
+const SIGN_UP_PURPOSE: &[u8] = b"oml web sign-up";
 
 /// The session cookie (ADR-0045 d5).
 pub const SESSION_COOKIE: &str = "__Host-oml_session";
@@ -98,7 +123,7 @@ pub const SIGN_IN_COOKIE: &str = "__Host-oml_signin";
 
 /// How many exchanges with one provider run at once; past it a callback
 /// answers `limit.rate` (ADR-0045 d15). Stated by the build, unmeasured
-/// (FR-76).
+/// (#119).
 pub const PROVIDER_CALLS_MAX: usize = 8;
 
 /// The `details.reason` of an `Authorization` header on a web route.
@@ -116,12 +141,19 @@ pub struct WebPages {
     exchange: Arc<dyn DynExchange>,
     session_ttl_secs: i64,
     sealer: AeadSealer,
+    /// Seals a pending sign-up's identity for the terms page (ADR-0068 d2).
+    signup_sealer: AeadSealer,
+    /// Sign-ups per client address in the last hour (ADR-0068 d9).
+    signups: start::SignupLimiter,
     /// Seals the frame route's tokens, which open for no other purpose
     /// (ADR-0056 d9).
     render_sealer: AeadSealer,
     /// The sources the frame route draws, held here and never in a token.
     render_sources: render::Sources,
     counters: [ProviderCounter; 2],
+    /// Open sign-up as configured, which the composition hands the app
+    /// (ADR-0068 d1).
+    signup: Option<oml_app::types::SignupPolicy>,
 }
 
 #[derive(Default)]
@@ -151,10 +183,26 @@ impl WebPages {
             exchange: Arc::new(exchange),
             session_ttl_secs: WEB_SESSION_TTL_SECS,
             sealer: AeadSealer::generate_for(WEB_SIGN_IN_PURPOSE),
+            signup_sealer: AeadSealer::generate_for(SIGN_UP_PURPOSE),
+            signups: start::SignupLimiter::default(),
             render_sealer: AeadSealer::generate_for(render::RENDER_PURPOSE),
             render_sources: render::Sources::default(),
             counters: Default::default(),
+            signup: None,
         }
+    }
+
+    /// The pages with open sign-up configured (ADR-0068 d1).
+    #[must_use]
+    pub fn with_signup(mut self, policy: oml_app::types::SignupPolicy) -> Self {
+        self.signup = Some(policy);
+        self
+    }
+
+    /// The configured sign-up, which the composition hands the app.
+    #[must_use]
+    pub fn signup_policy(&self) -> Option<&oml_app::types::SignupPolicy> {
+        self.signup.as_ref()
     }
 
     /// A session lifetime other than the shipped default.
@@ -372,6 +420,15 @@ where
             ("GET", "/web/callback/{provider}") => get(Self::callback),
             ("GET", "/web/admin") => get(Self::admin_page),
             ("POST", "/web/admin") => post(Self::admin_act),
+            ("POST", "/web/sign-up") => post(Self::sign_up),
+            ("GET", "/web/start") => get(Self::start_page),
+            ("POST", "/web/start") => post(Self::start_act),
+            ("GET", "/web/start/status") => get(Self::start_status),
+            ("GET", "/web/start/export") => get(Self::start_export),
+            ("GET", "/web/admin/users") => get(Self::users_page),
+            ("POST", "/web/admin/users") => post(Self::users_act),
+            ("GET", "/web/data/memories") => get(Self::user_data),
+            ("GET", "/web/admin/data/memories") => get(Self::admin_data),
             _ => panic!("{method} {path} is in WEB_ROUTES with no handler"),
         }
     }
@@ -407,8 +464,10 @@ where
     }
 
     fn refused(&self, error: &ApiError, line: WebLine) -> Answer {
+        let mut response = self.refusal_page(error);
+        error.mark_quota(&mut response);
         Answer {
-            response: self.refusal_page(error),
+            response,
             error_code: Some(error.code),
             line,
         }
@@ -468,13 +527,14 @@ where
             },
             Ok(Some((token, session))) => {
                 line.session(&session);
-                let html = match Self::query_fields(query) {
+                let fields = Self::query_fields(query);
+                let html = match fields {
                     Ok(q) => self.user_view(&token, &session, &q).await,
                     Err(e) => Err(e),
                 };
                 match html {
                     Ok(html) => Answer {
-                        response: self.page(StatusCode::OK, html),
+                        response: self.view_response(html),
                         error_code: None,
                         line,
                     },
@@ -510,13 +570,14 @@ where
             Err(e) => self.refused(&e, line),
             Ok(Some((token, session))) if session.admin => {
                 line.session(&session);
-                let html = match Self::query_fields(query) {
+                let fields = Self::query_fields(query);
+                let html = match fields {
                     Ok(q) => self.admin_view(&token, &session, &q).await,
                     Err(e) => Err(e),
                 };
                 match html {
                     Ok(html) => Answer {
-                        response: self.page(StatusCode::OK, html),
+                        response: self.view_response(html),
                         error_code: None,
                         line,
                     },
@@ -529,6 +590,98 @@ where
                 }
                 self.refused(&ApiError::not_found(), line)
             }
+        }
+    }
+
+    /// A view's page under d8's policy: no view runs script (ADR-0045
+    /// d32), the Atlas included.
+    fn view_response(&self, html: String) -> Response {
+        self.page(StatusCode::OK, html)
+    }
+
+    // -- GET /web/data/memories and GET /web/admin/data/memories --------------
+
+    async fn user_data(State(st): State<Self>, rid: Rid, headers: HeaderMap, uri: Uri) -> Response {
+        let answer = st
+            .data_inner(&rid, &headers, uri.query().unwrap_or(""), false)
+            .await;
+        Self::web_finish(&rid, answer)
+    }
+
+    async fn admin_data(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        uri: Uri,
+    ) -> Response {
+        let answer = st
+            .data_inner(&rid, &headers, uri.query().unwrap_or(""), true)
+            .await;
+        Self::web_finish(&rid, answer)
+    }
+
+    /// The Atlas view's data (ADR-0045 d25): the same page of the same
+    /// list, by the same session key, with the card's fields alone. No
+    /// `Authorization` header, a live session (an admin's on the admin
+    /// route), else `access.not_found` as JSON; the admin route's page is
+    /// one `memory.admin_read`, as the list's is.
+    async fn data_inner(
+        &self,
+        request_id: &str,
+        headers: &HeaderMap,
+        query: &str,
+        admin: bool,
+    ) -> Answer {
+        let mut line = WebLine::default();
+        let refused = |e: ApiError, line: WebLine| Answer {
+            error_code: Some(e.code),
+            response: memories::json_answer(
+                e.status,
+                &json!({ "error": e.error_object(), "request_id": request_id }),
+            ),
+            line,
+        };
+        if let Some(e) = human_only(headers) {
+            return refused(e, line);
+        }
+        let session = match self.session_of(headers).await {
+            Err(e) => return refused(e, line),
+            Ok(None) => return refused(ApiError::not_found(), line),
+            Ok(Some((_, session))) => session,
+        };
+        line.session(&session);
+        if admin && !session.admin {
+            return refused(ApiError::not_found(), line);
+        }
+        let page = async {
+            let fields = Self::query_fields(query)?;
+            let list = memories::ListQuery::parse(&fields)?;
+            let review = self
+                .caller(&session, oml_app::app::Capacity::Review)
+                .await?;
+            let mut answer = if admin {
+                self.require_writes_open()?;
+                let caller = self.caller(&session, oml_app::app::Capacity::Admin).await?;
+                let mut answer = self.admin_cards(&caller, &list).await?.json();
+                answer["workareas"] = self.regions_json(&caller, &review, &list, true).await?;
+                answer
+            } else {
+                let caller = self.caller(&session, oml_app::app::Capacity::Web).await?;
+                let mut answer = self.user_cards(&caller, &list).await?.json();
+                answer["workareas"] = self.regions_json(&caller, &review, &list, false).await?;
+                answer
+            };
+            answer["base"] = json!(if admin { "/web/admin" } else { "/web" });
+            Ok::<Value, ApiError>(answer)
+        }
+        .await;
+        match page {
+            Ok(page) => Answer {
+                response: memories::json_answer(StatusCode::OK, &page),
+                error_code: None,
+                line,
+            },
+            Err(e) => refused(e, line),
         }
     }
 
@@ -824,7 +977,19 @@ where
         let entry = match admitted {
             Ok(entry) => entry,
             Err(refusal) => {
+                // Open mode: a verified identity no entry holds goes to the
+                // terms page, with nothing written (ADR-0068 d2).
+                if let Some(mut response) = self.unlisted(&refusal) {
+                    sign_in_line(request_id, provider, "terms", None);
+                    append_cookie(&mut response, &clear_cookie(SIGN_IN_COOKIE));
+                    return Answer {
+                        response,
+                        error_code: None,
+                        line,
+                    };
+                }
                 let (error, outcome) = match refusal {
+                    CallbackRefusal::Unlisted(_) => unreachable!("answered above"),
                     CallbackRefusal::Refused(r) => (
                         map_app_error(AppError::WebSignIn(r), ErrorContext::Write),
                         r.reason(),
@@ -898,8 +1063,11 @@ where
         };
         line.session(&opened.record);
         sign_in_line(request_id, provider, "signed_in", Some(&opened.record));
+        // A person with no agent key yet lands on the onboarding page
+        // (ADR-0068 d10).
+        let landing = self.landing(&entry).await;
         let mut response = self.redirect(
-            "/web",
+            landing,
             Some(set_cookie(
                 SESSION_COOKIE,
                 &opened.token,

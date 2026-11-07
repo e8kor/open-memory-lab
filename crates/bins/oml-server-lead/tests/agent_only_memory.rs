@@ -1,5 +1,4 @@
-//! The agent-only-memory scenario of M2 (docs/product/critical-path.md;
-//! FR-10, FR-11) over the lead composition against a throwaway database: an
+//! The agent-only-memory scenario of M2 (ADR-0025) over the lead composition against a throwaway database: an
 //! agent that stores only to OML reads back what it wrote, searches it under a
 //! budget, updates it and proposes retiring it — holding one key and calling
 //! only the three tools the agent plugin lists, oml_write, oml_read and

@@ -3,7 +3,9 @@ name: Docs checks
 # PR gate for the documentation set: the site must build clean under --strict,
 # the generated benchmark pages must match the committed results, the three
 # API contract surfaces (errors.md, openapi.yaml, http-api.md) must agree, and
-# openapi.yaml must be a valid OpenAPI document. Deploy stays in
+# openapi.yaml must be a valid OpenAPI document, and the reference pages generated from
+# the code and the contracts (CLI, HTTP API, MCP tools, settings, design records) must match
+# their sources. Deploy stays in
 # pages.yml; this workflow never publishes anything.
 
 on:
@@ -20,8 +22,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Which categories of path the pull request changed (scripts/ci_paths.py;
+  # docs/contributing/ci-and-toolchain.md, "Which jobs a change runs"). A push,
+  # a merge group, a pull request into another branch, a change to .github/,
+  # Cargo.lock, rust-toolchain.toml or scripts/, and a path in no category all
+  # turn every category on.
+  changes:
+    name: changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.paths.outputs.rust }}
+      migrations: ${{ steps.paths.outputs.migrations }}
+      api: ${{ steps.paths.outputs.api }}
+      docs: ${{ steps.paths.outputs.docs }}
+      cli_ref: ${{ steps.paths.outputs.cli_ref }}
+      plugins: ${{ steps.paths.outputs.plugins }}
+      sdk: ${{ steps.paths.outputs.sdk }}
+      eval: ${{ steps.paths.outputs.eval }}
+      release: ${{ steps.paths.outputs.release }}
+      spikes: ${{ steps.paths.outputs.spikes }}
+      ci: ${{ steps.paths.outputs.ci }}
+      cargo: ${{ steps.paths.outputs.cargo }}
+      docs_tests: ${{ steps.paths.outputs.docs_tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: paths
+        shell: bash  # -eo pipefail: a crashing classifier fails this job and so "ci ok"
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci_paths.py --event "$EVENT" --base-ref "$BASE_REF" --base "$BASE_SHA" --head "$HEAD_SHA" | tee -a "$GITHUB_OUTPUT"
+
   build-strict:
     name: mkdocs build --strict
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +74,8 @@ jobs:
 
   bench-pages:
     name: benchmark pages match their results
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.eval == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +88,8 @@ jobs:
 
   contract-sync:
     name: contract surfaces agree
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.cargo == 'true' || needs.changes.outputs.plugins == 'true' || needs.changes.outputs.sdk == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,6 +101,8 @@ jobs:
 
   openapi-valid:
     name: openapi.yaml validates
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +114,8 @@ jobs:
 
   remember-eval-data:
     name: remember eval data and offline run
+    needs: changes
+    if: needs.changes.outputs.eval == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,3 +124,52 @@ jobs:
           python-version: "3.12"
       - run: python -I eval/remember/run.py --check
       - run: python -I eval/remember/run.py
+
+  generated-references:
+    name: generated reference pages match their sources
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.cargo == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      # openapi.yaml, mcp-tools.json, the KEY_* constants and the design records.
+      - run: python scripts/gen_http_api_reference.py --check
+      - run: python scripts/gen_mcp_reference.py --check
+      - run: python scripts/gen_settings_reference.py --check
+      - run: python scripts/gen_design_records.py --check
+
+  cli-reference:
+    name: CLI reference matches the oml binary's help
+    needs: changes
+    if: needs.changes.outputs.cargo == 'true' || needs.changes.outputs.cli_ref == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Reads rust-toolchain.toml: the one pinned toolchain.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: cargo build -p oml-cli --locked
+      - run: python scripts/gen_cli_reference.py --oml target/debug/oml --check
+
+  # The one check to require: it succeeds when every job above succeeded or was
+  # skipped by the filter, and fails when one failed or was cancelled.
+  ci-ok:
+    name: ci ok (docs)
+    if: always()
+    needs: [changes, build-strict, bench-pages, contract-sync, openapi-valid, remember-eval-data, generated-references, cli-reference]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in success|skipped) ;; *) echo "a job finished: $r" >&2; exit 1 ;; esac
+          done

@@ -8,12 +8,17 @@
 mod pages;
 mod rescan;
 mod search;
+mod signup;
 mod sparse;
 mod usage;
 mod web;
-pub use pages::{AdminMemory, AdminPage, Capacity, OwnKey, QueueRow, VerdictTrail};
+pub use pages::{
+    AdminMemory, AdminPage, AdminSearchRequest, Capacity, OwnKey, QueueRow, REGION_COUNT_MAX,
+    Region, Regions, VerdictTrail, WebListRequest, WorkareaOffer, WorkareaOffers,
+};
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
+pub use signup::{DRAWS_MAX, SignupState, StartStatus, UserRow};
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
@@ -155,7 +160,7 @@ const NAMES_RULE: &str = "ADR-0026 d11";
 const ADMIN_DENIAL_LIFT_REASON: &str = "adr-0026-d15";
 
 /// `oauth.connect_code_ttl`'s shipped default, 10 minutes, in seconds
-/// (configuration.md; ADR-0031 d8). FR-22: until journalled settings are
+/// (configuration.md; ADR-0031 d8). #117: until journalled settings are
 /// built, this code constant is the lifetime of every connect code this
 /// build mints, as [`CURSOR_TTL_SECS`](crate::cursor::CURSOR_TTL_SECS) is a
 /// cursor's.
@@ -168,12 +173,12 @@ pub const CONNECT_CODE_TTL_MAX_SECS: i64 = 30 * 24 * 3600;
 
 /// `oauth.access_token_ttl`'s shipped default, 1 hour, in seconds: the
 /// lifetime of every access token this build mints until settings are
-/// built (configuration.md; FR-22; ADR-0031 d10).
+/// built (configuration.md; #117; ADR-0031 d10).
 pub const ACCESS_TOKEN_TTL_SECS: i64 = 3_600;
 
 /// `oauth.refresh_token_ttl`'s shipped default, 30 days, in seconds: the
 /// lifetime of every refresh token this build mints until settings are
-/// built (configuration.md; FR-22; ADR-0031 d10).
+/// built (configuration.md; #117; ADR-0031 d10).
 pub const REFRESH_TOKEN_TTL_SECS: i64 = 30 * 86_400;
 
 /// An authorization code lives 60 seconds from Connect, a design constant
@@ -197,7 +202,7 @@ pub struct App<J, S, C, I, Sc> {
     /// nothing (ADR-0042 d2, d14).
     observer: Arc<dyn RequestObserver>,
     /// `brief.max_tokens`: the budget a workarea's brief is cut to
-    /// (ADR-0046 d8; FR-77).
+    /// (ADR-0046 d8; #145).
     brief_max_tokens: u64,
     /// The pipelines this deployment serves and its default (ADR-0049 d4).
     search: SearchConfig,
@@ -218,6 +223,9 @@ pub struct App<J, S, C, I, Sc> {
     /// The claim formats this deployment serves (ADR-0056 d1, d3): prose
     /// alone until the composition gives it the compiled-in adapters.
     formats: Arc<dyn crate::ports::Formats>,
+    /// Open sign-up and its counters; `None` where the deployment has no
+    /// sign-up tenant, and then no quotas (ADR-0068 d1, d5).
+    signup: Option<Arc<signup::SignupState>>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -269,6 +277,16 @@ impl Caller {
             vec![self.key.key_id]
         } else {
             self.own_keys.clone()
+        }
+    }
+
+    /// Whether `author_key_id` belongs to this caller's own-key set, without
+    /// cloning that set for each row.
+    fn owns(&self, author_key_id: Uuid) -> bool {
+        if self.own_keys.is_empty() {
+            self.key.key_id == author_key_id
+        } else {
+            self.own_keys.contains(&author_key_id)
         }
     }
 
@@ -814,6 +832,18 @@ impl RecordedVerdict {
 
 /// What `node` is to the ladder (ADR-0046 d1): the universe root, a user
 /// root (ADR-0044 d1), or an ordinary node.
+/// What `set_workarea_mode` admits (ADR-0030 d1, d6): the node already in
+/// the mode, which journals nothing, or a change with the mode it leaves
+/// and, for a commit, the nodes it frees.
+pub(crate) enum ModeAdmitted {
+    Already(WorkareaRecord),
+    Change {
+        node: WorkareaRecord,
+        current: WorkareaMode,
+        held_free: Vec<Uuid>,
+    },
+}
+
 fn ladder_node(node: &WorkareaRecord) -> LadderNode {
     if node.parent_id.is_none() {
         LadderNode::Universe
@@ -1258,6 +1288,7 @@ where
             feedback_counts: std::sync::Mutex::default(),
             sparse: None,
             formats: Arc::new(crate::ports::ProseFormats),
+            signup: None,
         }
     }
 
@@ -1320,7 +1351,7 @@ where
     }
 
     /// The app whose workarea briefs are cut to `max_tokens`, the
-    /// deployment's `brief.max_tokens` (ADR-0046 d8; FR-77).
+    /// deployment's `brief.max_tokens` (ADR-0046 d8; #145).
     #[must_use]
     pub fn with_brief_max_tokens(self, max_tokens: u64) -> Self {
         Self {
@@ -1393,6 +1424,9 @@ where
     /// effective access; ADR-0025 d1).
     async fn authenticate(&self, api_key: &str) -> Result<Caller, AppError> {
         let key = self.key_of_value(api_key).await?;
+        // A person of the sign-up tenant's key under its request rate
+        // (ADR-0068 d5).
+        self.admit_request(&key).await?;
         self.caller_of(key).await
     }
 
@@ -1402,7 +1436,10 @@ where
     async fn authenticate_bearer(&self, bearer: Bearer<'_>) -> Result<Caller, AppError> {
         match bearer {
             Bearer::Key(value) => self.authenticate(value).await,
-            Bearer::Connection(caller) => self.caller_of(caller.key.clone()).await,
+            Bearer::Connection(caller) => {
+                self.admit_request(&caller.key).await?;
+                self.caller_of(caller.key.clone()).await
+            }
             Bearer::Session(caller) => {
                 let mut fresh = self.caller_of(caller.key.clone()).await?;
                 fresh.own_keys.clone_from(&caller.own_keys);
@@ -1674,12 +1711,13 @@ where
     /// Whether the caller can read `memory`: its own row in any state,
     /// unless a global denial masks the row's workarea, or a promoted version
     /// within its reader effective access (roles-and-keys.md#own; ADR-0025
-    /// d3). Own is the authoring key, never the principal.
+    /// d3). Own is the authoring key for a bearer caller, and every key in the
+    /// session caller's own-key set for the user page (ADR-0045 d16).
     async fn readable(&self, caller: &Caller, memory: &MemoryRecord) -> Result<bool, AppError> {
         let ancestry = self
             .ancestry(caller.key.tenant_id, memory.workarea_id)
             .await?;
-        if memory.author_key_id == caller.key.key_id {
+        if caller.owns(memory.author_key_id) {
             return Ok(!caller.denied(&ancestry));
         }
         let reader = caller.effective(&ancestry).contains(&Role::Reader);
@@ -1730,7 +1768,7 @@ where
     /// per served row, against ADR-0024 d4 ("never N+1"); recall reads the
     /// path once per workarea ([`Self::served_in`]). Only the rows
     /// themselves hydrate set-wise (`JournalStore::memories`). Measured at
-    /// `k` 100 in ADR-0049 d12; elsewhere unmeasured (FR-7, FR-25).
+    /// `k` 100 in ADR-0049 d12; elsewhere unmeasured (#99, #150).
     ///
     /// A version in `universe` is served to every key outside its authoring
     /// key set without its source: no principal, no `derives_from`, its
@@ -3632,7 +3670,6 @@ where
         workarea: Reference,
         mode: WorkareaMode,
     ) -> Result<WorkareaRecord, AppError> {
-        const VERB: &str = "workarea_mode";
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         if !may_set_mode(key.role, key.held_by, key.profile) {
@@ -3644,9 +3681,73 @@ where
         let tenant_id = key.tenant_id;
         let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
         self.observer.workarea(workarea_id);
-        self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
-            .await?;
         let prev = self.head_event(tenant_id).await?;
+        let (node, current, held_free) =
+            match self.mode_admitted(&caller, workarea_id, mode).await? {
+                ModeAdmitted::Already(node) => return Ok(node),
+                ModeAdmitted::Change {
+                    node,
+                    current,
+                    held_free,
+                } => (node, current, held_free),
+            };
+        let event = self.seal(
+            prev.as_ref(),
+            tenant_id,
+            event_types::WORKAREA_MODE_SET,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "mode": mode.as_str(),
+                "from": current.as_str(),
+            }),
+        )?;
+        // The commit's zero-held test runs again inside the committing
+        // transaction, so no held row created without a chain event slips
+        // past it (ADR-0030 d6).
+        self.commit(
+            event,
+            MetadataFold::WorkareaModeSet {
+                workarea_id,
+                in_progress: mode == WorkareaMode::InProgress,
+                held_free,
+            },
+            None,
+        )
+        .await
+        .map_err(|e| match e {
+            AppError::Store(StoreError::HeldRemaining) => AppError::HeldRemaining { workarea_id },
+            other => other,
+        })?;
+        self.observer.mode_set(mode.as_str());
+        Ok(WorkareaRecord {
+            in_progress: mode == WorkareaMode::InProgress,
+            ..node
+        })
+    }
+
+    /// Whether `set_workarea_mode` admits `mode` on the node for the
+    /// caller now, every check but the commit's, in its order: the key's
+    /// shape, dreamer access, then the mark's or the commit's test. The
+    /// verb and the pages' offer call this one function (ADR-0045 d28).
+    pub(crate) async fn mode_admitted(
+        &self,
+        caller: &Caller,
+        workarea_id: Uuid,
+        mode: WorkareaMode,
+    ) -> Result<ModeAdmitted, AppError> {
+        const VERB: &str = "workarea_mode";
+        let key = &caller.key;
+        if !may_set_mode(key.role, key.held_by, key.profile) {
+            return Err(AppError::ModeHumanOnly {
+                role: key.role,
+                held_by: key.held_by,
+            });
+        }
+        let tenant_id = key.tenant_id;
+        self.require_access(caller, workarea_id, Role::Dreamer, VERB)
+            .await?;
         let ancestry = self
             .journal
             .workarea_ancestry(tenant_id, workarea_id)
@@ -3659,7 +3760,7 @@ where
             WorkareaMode::Standard
         };
         if current == mode {
-            return Ok(node);
+            return Ok(ModeAdmitted::Already(node));
         }
         let subtree = self
             .journal
@@ -3695,39 +3796,10 @@ where
                 held_free = nodes;
             }
         }
-        let event = self.seal(
-            prev.as_ref(),
-            tenant_id,
-            event_types::WORKAREA_MODE_SET,
-            &key.principal,
-            Some(key.key_id),
-            json!({
-                "workarea_id": workarea_id.to_string(),
-                "mode": mode.as_str(),
-                "from": current.as_str(),
-            }),
-        )?;
-        // The commit's zero-held test runs again inside the committing
-        // transaction, so no held row created without a chain event slips
-        // past it (ADR-0030 d6).
-        self.commit(
-            event,
-            MetadataFold::WorkareaModeSet {
-                workarea_id,
-                in_progress: mode == WorkareaMode::InProgress,
-                held_free,
-            },
-            None,
-        )
-        .await
-        .map_err(|e| match e {
-            AppError::Store(StoreError::HeldRemaining) => AppError::HeldRemaining { workarea_id },
-            other => other,
-        })?;
-        self.observer.mode_set(mode.as_str());
-        Ok(WorkareaRecord {
-            in_progress: mode == WorkareaMode::InProgress,
-            ..node
+        Ok(ModeAdmitted::Change {
+            node,
+            current,
+            held_free,
         })
     }
 
@@ -3948,11 +4020,11 @@ where
     /// (roles-and-keys.md permission matrix, footnote 6; ADR-0026 d15).
     pub async fn workarea_status(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         workarea: Reference,
     ) -> Result<WorkareaStatusView, AppError> {
         const VERB: &str = "workarea_status";
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         let structure = key.role == Role::Admin;
         if !structure {
@@ -3995,45 +4067,18 @@ where
     /// (workareas.md, ratification re-checks).
     pub async fn propose_transition(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         workarea: Reference,
         to: WorkareaStatus,
     ) -> Result<TransitionRecord, AppError> {
         const VERB: &str = "propose_transition";
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         if key.role != Role::Admin {
             require_admissible(key, Role::Dreamer, VERB)?;
         }
         let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
-        if key.role != Role::Admin {
-            self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
-                .await?;
-        }
-        let node = self
-            .journal
-            .workarea(key.tenant_id, workarea_id)
-            .await?
-            .ok_or(AppError::NotFound)?;
-        self.refuse_inside(key.tenant_id, workarea_id).await?;
-        let children: Vec<WorkareaStatus> = self
-            .journal
-            .workarea_children(key.tenant_id, workarea_id)
-            .await?
-            .iter()
-            .map(|child| child.status)
-            .collect();
-        // "No simulation is fenced on the subtree" holds vacuously while
-        // simulations are unbuilt, and lands in the ladder's preconditions
-        // with them (workareas.md, readings the build takes).
-        propose_check(ladder_node(&node), node.status, to, &children).map_err(|reason| {
-            AppError::TransitionRefused {
-                workarea_id,
-                from: node.status,
-                to,
-                reason,
-            }
-        })?;
+        let node = self.propose_admitted(&caller, workarea_id, to).await?;
         let proposal = TransitionRecord {
             transition_id: self.ids.new_id(),
             tenant_id: key.tenant_id,
@@ -4069,6 +4114,50 @@ where
         Ok(proposal)
     }
 
+    /// Whether `propose_transition` admits `to` on the node for the caller
+    /// now, every check after the name resolves and before the commit, in
+    /// its order. The verb and the pages' offer call this one function
+    /// (ADR-0045 d28).
+    pub(crate) async fn propose_admitted(
+        &self,
+        caller: &Caller,
+        workarea_id: Uuid,
+        to: WorkareaStatus,
+    ) -> Result<WorkareaRecord, AppError> {
+        const VERB: &str = "propose_transition";
+        let key = &caller.key;
+        if key.role != Role::Admin {
+            require_admissible(key, Role::Dreamer, VERB)?;
+            self.require_access(caller, workarea_id, Role::Dreamer, VERB)
+                .await?;
+        }
+        let node = self
+            .journal
+            .workarea(key.tenant_id, workarea_id)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        self.refuse_inside(key.tenant_id, workarea_id).await?;
+        let children: Vec<WorkareaStatus> = self
+            .journal
+            .workarea_children(key.tenant_id, workarea_id)
+            .await?
+            .iter()
+            .map(|child| child.status)
+            .collect();
+        // "No simulation is fenced on the subtree" holds vacuously while
+        // simulations are unbuilt, and lands in the ladder's preconditions
+        // with them (workareas.md, readings the build takes).
+        propose_check(ladder_node(&node), node.status, to, &children).map_err(|reason| {
+            AppError::TransitionRefused {
+                workarea_id,
+                from: node.status,
+                to,
+                reason,
+            }
+        })?;
+        Ok(node)
+    }
+
     /// Ratifies the pending proposal `transition_id` on the node, by id or
     /// name, as a second identity: the node's status becomes the proposal's
     /// `to`, journalled as one `workarea.status_transition` signed by the
@@ -4092,23 +4181,82 @@ where
     /// (workareas.md, ratification re-checks).
     pub async fn ratify_transition(
         &self,
-        api_key: &str,
+        bearer: impl Into<Bearer<'_>>,
         workarea: Reference,
         transition_id: Uuid,
     ) -> Result<WorkareaRecord, AppError> {
         const VERB: &str = "ratify_transition";
-        let caller = self.authenticate(api_key).await?;
+        let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         if key.role != Role::Admin {
             require_admissible(key, Role::Dreamer, VERB)?;
         }
         refuse_service(key, VERB)?;
         let workarea_id = self.resolve(key, NamedKind::Workarea, &workarea).await?;
+        let prev = self.head_event(key.tenant_id).await?;
+        let (proposal, node) = self
+            .ratify_admitted(&caller, workarea_id, transition_id)
+            .await?;
+        let mut policy_snapshot = review_policy();
+        if proposal.to == WorkareaStatus::Validated {
+            // A false one was refused above and is never journalled.
+            policy_snapshot["children_all_validated"] = Value::Bool(true);
+        }
+        let event = self.seal(
+            prev.as_ref(),
+            key.tenant_id,
+            event_types::WORKAREA_STATUS_TRANSITION,
+            &key.principal,
+            Some(key.key_id),
+            json!({
+                "workarea_id": workarea_id.to_string(),
+                "from": proposal.from.as_str(),
+                "to": proposal.to.as_str(),
+                "transition_id": transition_id.to_string(),
+                "proposed_by_key_id": proposal.proposer_key_id.to_string(),
+                "ratified_by_key_id": key.key_id.to_string(),
+                "policy_snapshot": policy_snapshot,
+                "same_user": self.same_person(key.tenant_id, proposal.proposer_key_id, key).await?,
+            }),
+        )?;
+        self.commit(
+            event,
+            MetadataFold::TransitionRatified {
+                transition_id,
+                workarea_id,
+                to: proposal.to,
+                ratifier_key_id: key.key_id,
+            },
+            None,
+        )
+        .await?;
+        Ok(WorkareaRecord {
+            status: proposal.to,
+            ..node
+        })
+    }
+
+    /// Whether `ratify_transition` admits the proposal on the node for the
+    /// caller now, every check after the name resolves and before the
+    /// commit, in its order; R2 among them, so a proposing key or
+    /// principal is never admitted. The verb and the pages' offer call this
+    /// one function (ADR-0045 d28).
+    pub(crate) async fn ratify_admitted(
+        &self,
+        caller: &Caller,
+        workarea_id: Uuid,
+        transition_id: Uuid,
+    ) -> Result<(TransitionRecord, WorkareaRecord), AppError> {
+        const VERB: &str = "ratify_transition";
+        let key = &caller.key;
         if key.role != Role::Admin {
-            self.require_access(&caller, workarea_id, Role::Dreamer, VERB)
+            require_admissible(key, Role::Dreamer, VERB)?;
+        }
+        refuse_service(key, VERB)?;
+        if key.role != Role::Admin {
+            self.require_access(caller, workarea_id, Role::Dreamer, VERB)
                 .await?;
         }
-        let prev = self.head_event(key.tenant_id).await?;
         self.refuse_inside(key.tenant_id, workarea_id).await?;
         let proposal = self
             .journal
@@ -4159,43 +4307,7 @@ where
             &children,
         )
         .map_err(refused)?;
-        let mut policy_snapshot = review_policy();
-        if proposal.to == WorkareaStatus::Validated {
-            // A false one was refused above and is never journalled.
-            policy_snapshot["children_all_validated"] = Value::Bool(true);
-        }
-        let event = self.seal(
-            prev.as_ref(),
-            key.tenant_id,
-            event_types::WORKAREA_STATUS_TRANSITION,
-            &key.principal,
-            Some(key.key_id),
-            json!({
-                "workarea_id": workarea_id.to_string(),
-                "from": proposal.from.as_str(),
-                "to": proposal.to.as_str(),
-                "transition_id": transition_id.to_string(),
-                "proposed_by_key_id": proposal.proposer_key_id.to_string(),
-                "ratified_by_key_id": key.key_id.to_string(),
-                "policy_snapshot": policy_snapshot,
-                "same_user": self.same_person(key.tenant_id, proposal.proposer_key_id, key).await?,
-            }),
-        )?;
-        self.commit(
-            event,
-            MetadataFold::TransitionRatified {
-                transition_id,
-                workarea_id,
-                to: proposal.to,
-                ratifier_key_id: key.key_id,
-            },
-            None,
-        )
-        .await?;
-        Ok(WorkareaRecord {
-            status: proposal.to,
-            ..node
-        })
+        Ok((proposal, node))
     }
 
     /// The lead's start on the names schema, before it serves: each chain of
@@ -4384,6 +4496,8 @@ where
             since: req.since.clone(),
             until: req.until.clone(),
             anchor: req.anchor.clone(),
+            author: req.author,
+            tip: req.tip,
         };
         // One row past the page says whether another page exists.
         let mut rows = self
@@ -4644,7 +4758,6 @@ where
             }
             return Err(refusal);
         }
-
         // An omitted claim_key is derived from the author and the text; the
         // `auto-` prefix is the server's alone (ADR-0039 d6). The author id
         // is the key's own id while rotation is unbuilt; once it is, d6 names
@@ -4775,6 +4888,15 @@ where
         {
             return Err(AppError::ClaimKeyConflict);
         }
+
+        // A person of the sign-up tenant writes at most their memories
+        // quota; nothing is journalled past it. The check follows the
+        // idempotency replay and the live claim_key refusal, so a retry
+        // gets its stored receipt and a write under a live claim is the
+        // conflict it was; a new version goes through `supersede`, which
+        // adds no memory (ADR-0068 d5).
+        self.require_quota(key, oml_domain::signup::Quota::Memories)
+            .await?;
 
         // The similar check, after every other refusal and before the
         // commit: a refusal here journals nothing and claims no idempotency
@@ -5008,7 +5130,7 @@ where
             None => {
                 // The default rests on the claimed queue row (review_queue's
                 // held_by_key), not on a serve record: the serve binding
-                // stays FR-66 (ADR-0039 Consequences, "The serve binding is
+                // stays #130 (ADR-0039 Consequences, "The serve binding is
                 // not fixed here").
                 let claimed = self
                     .journal
@@ -5773,13 +5895,15 @@ where
         // The candidate scope is the core's, never an adapter's: the
         // readable hit nodes, the kinds, and the own held rows only when
         // asked — the own key set is the calling key alone until rotation is
-        // built (roles-and-keys.md#own), on the readable set, which already
-        // excludes the key's global denials (ADR-0025 d4; ADR-0049 d2).
+        // built (roles-and-keys.md#own), and for a session user key every key
+        // naming its user, ADR-0045 d16's reading that the user page's text
+        // search uses (d22); on the readable set, which already excludes the
+        // key's global denials (ADR-0025 d4; ADR-0049 d2).
         let candidate_scope = CandidateScope {
             promoted_nodes: hit_nodes.clone(),
             kinds: kinds.clone(),
             own_held: include_unreviewed.then(|| OwnHeldScope {
-                author_key_ids: vec![key.key_id],
+                author_key_ids: caller.own_key_ids(),
                 // Every author's held rows on the nodes inside alone; the
                 // key's own on every served node otherwise (ADR-0030 d3).
                 nodes: if any_author {
@@ -5819,12 +5943,13 @@ where
         // or any version of a retired claim is promoted history, never a
         // hit; a retirement version is never in force (ADR-0025 d4, d8).
         // The reranker is handed only rows this admits (ADR-0053 d2).
+        let own = caller.own_key_ids();
         let admits = |m: &MemoryRecord| {
             let admitted = match m.status {
                 MemoryStatus::Promoted => m.is_tip && hit_nodes.contains(&m.workarea_id),
                 MemoryStatus::Held => {
                     include_unreviewed
-                        && ((m.author_key_id == key.key_id && readable.contains(&m.workarea_id))
+                        && ((own.contains(&m.author_key_id) && readable.contains(&m.workarea_id))
                             || (any_author
                                 && served_unreviewed(m)
                                 && inside.contains(&m.workarea_id)))
@@ -7989,8 +8114,8 @@ where
         // and a page is one bounded store read whatever the tenant holds.
         // The cost left is the scope itself: every reader node of the key,
         // one subtree read per reader grant, bound into the query as an
-        // array that grows with the tenant's workareas, unmeasured (FR-7,
-        // FR-25).
+        // array that grows with the tenant's workareas, unmeasured (#99,
+        // #150).
         let readable_nodes = self.nodes_holding(&caller, Role::Reader).await?;
         // A scoped read: at `workarea`, else the key's default workarea, an
         // edge with an endpoint inside an in-progress subtree the scope is
@@ -9076,6 +9201,12 @@ where
             .into_iter()
             .find(|c| c.state == ConnectionState::Open)
             .map(|c| c.connection_id);
+        // A new connection, not a replacement, counts against the person's
+        // connections quota (ADR-0068 d5).
+        if replaces.is_none() {
+            self.require_quota(key, oml_domain::signup::Quota::Connections)
+                .await?;
+        }
         let (issued, tokens) = self.mint_token_pair(now);
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(

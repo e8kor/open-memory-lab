@@ -10,7 +10,10 @@ use oml_cli::sync::run::{Extracted, Loaded, Options, extract, load};
 fn extracted(loaded: &Loaded) -> Extracted {
     extract(loaded, Kind::default_for(&loaded.paths()))
 }
-use oml_cli::sync::source::{is_secret_shaped, repo_of_remote};
+use oml_cli::sync::source::{
+    ALLOW_PUBLIC_CONFIG, PublicServerConsent, authorize_public_server, is_secret_shaped,
+    record_public_server_consent, repo_of_remote,
+};
 
 fn scratch(test: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("oml-cli-sync-{test}-{}", std::process::id()));
@@ -103,7 +106,7 @@ fn sync_reads_the_tree_at_rev_and_never_the_working_tree() {
         },
     )
     .unwrap_err();
-    assert!(err.contains("names no commit"), "{err}");
+    assert!(err.contains("is not a commit"), "{err}");
     let outside = scratch("outside");
     assert!(
         load(&outside, &opts("."))
@@ -151,7 +154,7 @@ fn sync_derives_repo_from_the_remote_without_its_credentials() {
     let loaded = load(&dir, &opts("docs")).unwrap();
     assert_eq!(loaded.repo, "github.com/e8kor/docs");
     assert!(
-        loaded.warnings[0].contains("carries credentials"),
+        loaded.warnings[0].contains("contains credentials"),
         "{:?}",
         loaded.warnings
     );
@@ -167,7 +170,7 @@ fn sync_derives_repo_from_the_remote_without_its_credentials() {
         },
     )
     .unwrap_err();
-    assert!(named.contains("is not a repository name"), "{named}");
+    assert!(named.contains("is invalid"), "{named}");
 }
 
 #[test]
@@ -309,7 +312,8 @@ fn sync_refuses_the_public_server_without_allow_public_server() {
     );
     assert_eq!(code, 2, "{err}");
     assert!(
-        err.contains("--allow-public-server") && err.contains("never erased"),
+        err.contains("--allow-public-server")
+            && err.contains("superseding or retiring a memory does not erase"),
         "{err}"
     );
     assert!(
@@ -322,6 +326,79 @@ fn sync_refuses_the_public_server_without_allow_public_server() {
             .stdout
             .is_empty(),
         "nothing is recorded on a refusal"
+    );
+}
+
+#[test]
+fn public_server_consent_is_recorded_once_and_reused() {
+    let dir = clone_with("public-consent", "git@github.com:e8kor/docs.git");
+    let url = "https://memory.doublegate.io";
+    let err = authorize_public_server(url, &dir, false).unwrap_err();
+    assert!(err.contains("--allow-public-server"), "{err}");
+    assert!(
+        !err.contains("ADR-"),
+        "CLI errors stay self-contained: {err}"
+    );
+    assert_eq!(
+        authorize_public_server(url, &dir, true).unwrap(),
+        PublicServerConsent::FirstOptIn
+    );
+    assert!(
+        !git(&dir, &["config", "--local", "--list"]).contains(ALLOW_PUBLIC_CONFIG),
+        "authorization alone does not persist consent before the disclosure"
+    );
+    record_public_server_consent(&dir).unwrap();
+    assert_eq!(
+        git(&dir, &["config", "--local", "--get", ALLOW_PUBLIC_CONFIG]),
+        "true"
+    );
+    assert_eq!(
+        authorize_public_server(url, &dir, false).unwrap(),
+        PublicServerConsent::Recorded,
+        "recorded consent needs neither another flag nor another disclosure"
+    );
+    assert_eq!(
+        authorize_public_server("https://oml.example.com", &dir, false).unwrap(),
+        PublicServerConsent::NotRequired
+    );
+
+    let outside = scratch("public-consent-outside-a-clone");
+    assert_eq!(
+        authorize_public_server(url, &outside, true).unwrap(),
+        PublicServerConsent::OneTime,
+        "an explicit opt-in outside a clone is honestly one-time"
+    );
+    assert!(authorize_public_server(url, &outside, false).is_err());
+}
+
+#[test]
+fn public_server_consent_follows_the_source_clone_not_the_invocation_clone() {
+    let invocation = clone_with("consent-invocation", "git@github.com:e8kor/invocation.git");
+    let source = clone_with("consent-source", "git@github.com:e8kor/source.git");
+    write(&source, "docs/a.md", "# A\n\n## B\n\nC.\n");
+    git(&source, &["add", "."]);
+    git(&source, &["commit", "-q", "-m", "a"]);
+    let path = source.join("docs");
+    let loaded = load(&invocation, &opts(path.to_str().unwrap())).unwrap();
+    let root = loaded.root.as_deref().expect("the source clone's root");
+    assert_eq!(root, source.canonicalize().unwrap());
+
+    let url = "https://memory.doublegate.io";
+    assert_eq!(
+        authorize_public_server(url, root, true).unwrap(),
+        PublicServerConsent::FirstOptIn
+    );
+    record_public_server_consent(root).unwrap();
+    assert_eq!(
+        git(
+            &source,
+            &["config", "--local", "--get", ALLOW_PUBLIC_CONFIG]
+        ),
+        "true"
+    );
+    assert!(
+        !git(&invocation, &["config", "--local", "--list"]).contains(ALLOW_PUBLIC_CONFIG),
+        "the invocation clone records nothing for another clone's source"
     );
 }
 

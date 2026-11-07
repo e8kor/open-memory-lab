@@ -5,7 +5,7 @@ There are no manifests in this directory, on purpose.
 The kubernetes profile — the Helm umbrella chart with its `local` and `scaled`
 value sets — is specified in [docs/operations/deployment.md](../../docs/operations/deployment.md)
 and governed by [ADR-0016](../../docs/adr/ADR-0016-kubernetes-workloads.md).
-Per the [critical path](../../docs/product/critical-path.md), the `local` value
+Per the critical path, the `local` value
 set lands at **M3** and `scaled` at **M6**.
 
 What runs on Kubernetes today is the first revision of that chart,

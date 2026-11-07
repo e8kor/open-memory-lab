@@ -427,7 +427,7 @@ export interface paths {
         put?: never;
         /**
          * Verdict against a valid serve; the journalled verdict records the served digests.
-         * @description Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row's workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (FR-66; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item.
+         * @description Requires: dreamer(review), valid unexpired unconsumed serve bound to this key (review.serve_invalid names the failure), and dreamer effective access on the row's workarea, resolved by the refusal order of docs/architecture/roles-and-keys.md: access.grant_refused with needed_role dreamer where reader is effective there, access.not_found otherwise (ADR-0025 d1); a held_by: service key is refused with access.verb_ceiling before any lookup. An approve that would ratify a supersession whose target is no longer the tip of the successor's own workarea and claim_key is refused with 409 submission.tip_conflict (details.current_tip when readable); nothing is journalled and the serve_id is not consumed (ADR-0025 d10). Resulting state: promoted, held (more verdicts needed) or rejected. serve_id is optional: omitted, the verdict applies to the one review item this key has claimed through review next, and with none or several it is refused with request.validation, details.field /serve_id, nothing journalled; the default rests on the claimed queue row, not on a serve record (#130; ADR-0039 d10). The Idempotency-Key record, scoped to the key and a nil workarea, is looked up before the default resolves: a retry of a committed verdict replays its stored response with Idempotency-Replay: true and never applies to another item.
          */
         post: operations["postVerdict"];
         delete?: never;
@@ -798,6 +798,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/web/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The people of the tenant with their quota use and limits, and the pending deletion requests.
+         * @description Requires: admin key role (ADR-0068 d5, d6, d11). mode is signup.mode; address_limit_shared is true when no proxy is trusted, so every sign-up shares one address limit. under_quotas marks the people of the sign-up tenant. oml doctor reads it for its quota and signup lines. Journals nothing. Proposed.
+         */
+        get: operations["listWebUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/search": {
         parameters: {
             query?: never;
@@ -966,6 +986,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/web/data/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The user page's page of memories as JSON.
+         * @description The Memories view's query (state, workarea, origin, author, q, limit, cursor) and its scope, as <user>-web: the rows the list shows with the card's fields alone, and the workareas the key may read under the filter with their rows counted by state and their dropdown's acts. The session cookie alone; an Authorization header is access.verb_ceiling web_is_human_only, no session access.not_found; no-store, nosniff, no CORS (ADR-0045 d25, d30).
+         */
+        get: operations["userPageMemoriesData"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/admin/data/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The admin page's page of memories as JSON.
+         * @description As /web/data/memories, as <user>-admin through the admin read: the page is one memory.admin_read; the workareas are the tenant's tree, counted as structure (ADR-0045 d24, d25, d30).
+         */
+        get: operations["adminPageMemoriesData"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/web/admin": {
         parameters: {
             query?: never;
@@ -981,9 +1041,117 @@ export interface paths {
         put?: never;
         /**
          * One act of the admin page, named by action, run as the capacity it needs.
-         * @description Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as <user>-curate; demote, planned for v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
+         * @description Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
          */
         post: operations["adminPageAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/sign-up": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept the terms and create the account, in open sign-up.
+         * @description Only where signup.mode is open (ADR-0068 d2, d9). The same-origin check; the sealed __Host-oml_signup cookie the callback set for an unlisted, verified identity; accept_terms=yes and the current terms_version. Takes one slot of the client address's hourly limit (limit.rate past it). Creates the entry under a drawn user, journalled as web.signed_up with the terms version, issues <user>-web and <user>-review, opens a session and answers 303 /web/start. Proposed.
+         */
+        post: operations["webSignUp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The onboarding page; the sign-in page without a session.
+         * @description Three steps: choose a client (query client: claude-ai, claude-code, other), get its credential, and wait for the first connection and the first memory. The only page with a script, hashed in its CSP with connect-src self, for its copy buttons and its status poll (ADR-0068 d10). Proposed.
+         */
+        get: operations["startPage"];
+        put?: never;
+        /**
+         * One act of the onboarding page, named by action.
+         * @description Requires a session, csrf_token and the same-origin check. issue_claude_ai issues a connector key <user>-claude-ai and shows its connect code once; issue_claude_code and issue_other issue <user>-claude-code and <user>-agent and show the value once; a taken name gains -2 to -9. Past the keys quota, limit.quota. request_deletion with confirm=delete journals web.deletion_requested (ADR-0068 d6, d10). Proposed.
+         */
+        post: operations["startPageAct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/start/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether the person's agent has connected and the state of their newest memory.
+         * @description A session only; without one access.not_found (ADR-0068 d7, d10). connected is true once any of the person's agent keys authenticated since the process started or a connector key has an open connection. Proposed.
+         */
+        get: operations["startStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/start/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything the person holds, as a JSON download.
+         * @description A session only. Every memory in the person's root and below, every state, with its workarea path, claim key, version, state, text and times; the person's keys (ADR-0068 d6). Proposed.
+         */
+        get: operations["startExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/web/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The admin's users page — quota use, quotas and pending deletion requests.
+         * @description For an admin session; any other answers access.not_found (ADR-0068 d5, d6, d8). Proposed.
+         */
+        get: operations["usersPage"];
+        put?: never;
+        /**
+         * One act of the users page, named by action, run as <user>-admin.
+         * @description set_quota (user, quota, limit; empty limit returns to the default) journals web.quota_set; disable_user journals web.user_disabled and cuts off every agent key of the person; close_deletion disables the person and journals web.deletion_closed (ADR-0068 d5, d6, d8). Proposed.
+         */
+        post: operations["usersPageAct"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1162,7 +1330,7 @@ export interface components {
         SubmitAccepted: {
             artifact_id: string;
             claim_key: string;
-            /** @description The ordinal within the claim_key; for a successor, 1 + the greatest version of the claim_key in any state, so it counts versions the key may not read — a stated residual, FR-31 (docs/architecture/audit-and-lineage.md). */
+            /** @description The ordinal within the claim_key; for a successor, 1 + the greatest version of the claim_key in any state, so it counts versions the key may not read — a stated residual, #129 (docs/architecture/audit-and-lineage.md). */
             version: number;
             /** @constant */
             state: "held";
@@ -5149,6 +5317,63 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listWebUsers: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The people and the pending requests. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        mode: "allowlist" | "open";
+                        address_limit_shared: boolean;
+                        users: {
+                            user: string;
+                            signed_up: boolean;
+                            disabled: boolean;
+                            under_quotas: boolean;
+                            usage: {
+                                memories?: number;
+                                keys?: number;
+                                connections?: number;
+                            };
+                            quotas: {
+                                memories?: number;
+                                keys?: number;
+                                connections?: number;
+                                requests_per_minute?: number;
+                            };
+                        }[];
+                        deletions: {
+                            user: string;
+                            /** Format: date-time */
+                            requested_at: string;
+                        }[];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
     searchSettings: {
         parameters: {
             query?: never;
@@ -5456,7 +5681,7 @@ export interface operations {
             content: {
                 "application/x-www-form-urlencoded": {
                     /** @enum {string} */
-                    action: "issue_key" | "connect_key" | "connect_code" | "cut_off" | "create_workarea" | "review_next" | "verdict" | "sign_out";
+                    action: "issue_key" | "connect_key" | "connect_code" | "cut_off" | "create_workarea" | "workarea_mode" | "workarea_transition" | "workarea_ratify" | "review_next" | "verdict" | "sign_out";
                     csrf_token: string;
                 };
             };
@@ -5555,10 +5780,68 @@ export interface operations {
             };
         };
     };
+    userPageMemoriesData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description {items, next_cursor, workareas, base}. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description access.not_found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    adminPageMemoriesData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description {items, next_cursor, workareas, base}. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description access.not_found, for a session that is not an admin's. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     adminPage: {
         parameters: {
             query?: {
-                view?: "people" | "queue" | "review" | "curate" | "memories";
+                view?: "people" | "queue" | "review" | "held" | "curate" | "memories" | "workarea";
                 q?: string;
                 memory?: string;
             };
@@ -5599,7 +5882,7 @@ export interface operations {
             content: {
                 "application/x-www-form-urlencoded": {
                     /** @enum {string} */
-                    action: "allow_email" | "remove_email" | "set_admin" | "grant_review" | "grant_curation" | "review_next" | "verdict" | "curate" | "supersede" | "cut_off";
+                    action: "allow_email" | "remove_email" | "set_admin" | "grant_review" | "grant_curation" | "review_next" | "verdict" | "bulk_confirm" | "bulk_verdict" | "curate" | "supersede" | "cut_off" | "workarea_mode" | "workarea_transition" | "workarea_ratify";
                     csrf_token: string;
                 };
             };
@@ -5613,6 +5896,229 @@ export interface operations {
                 content: {
                     "text/html": string;
                 };
+            };
+        };
+    };
+    webSignUp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    /** @enum {string} */
+                    accept_terms: "yes";
+                    terms_version: string;
+                };
+            };
+        };
+        responses: {
+            /** @description To /web/start, setting the __Host-oml_session cookie. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description request.validation (accept_terms or terms_version), on a page. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description limit.rate, on a page. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    startPage: {
+        parameters: {
+            query?: {
+                client?: "claude-ai" | "claude-code" | "other";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    startPageAct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    /** @enum {string} */
+                    action: "issue_claude_ai" | "issue_claude_code" | "issue_other" | "request_deletion";
+                    csrf_token: string;
+                    confirm?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The page with the credential, shown once. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description After request_deletion, to /web/start. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    startStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        connected: boolean;
+                        /** @enum {string|null} */
+                        first_memory: "held" | "promoted" | null;
+                    };
+                };
+            };
+            /** @description access.not_found, on a page. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    startExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export, Content-Disposition attachment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description access.not_found, on a page. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    usersPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description access.not_found, on a page. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    usersPageAct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": {
+                    /** @enum {string} */
+                    action: "set_quota" | "disable_user" | "close_deletion";
+                    csrf_token: string;
+                    user: string;
+                    /** @enum {string} */
+                    quota?: "memories" | "keys" | "connections" | "requests_per_minute";
+                    limit?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Back to /web/admin/users. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

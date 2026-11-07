@@ -5891,10 +5891,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 34,
-        "every migration through 0034_similar_keys_search_text"
-    );
+    assert_eq!(applied, 37, "every migration through 0037_open_signup");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -6960,7 +6957,7 @@ async fn edge_estimates(
 /// tenant B's edges carry, and for one of tenant B's endpoints, as for a
 /// label and an id no tenant holds: 0018 keeps no column statistics on
 /// `claim_edges`, whose labels are tenant text, so the estimate cannot tell
-/// tenant A whether another tenant uses an edge label (FR-45; ADR-0034 d1,
+/// tenant A whether another tenant uses an edge label (#134; ADR-0034 d1,
 /// d11; spike 3's S3.4/estimate). The control restores the default target,
 /// and the same estimates then differ.
 #[tokio::test]
@@ -7339,10 +7336,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 34,
-        "every migration through 0034_similar_keys_search_text"
-    );
+    assert_eq!(applied, 37, "every migration through 0037_open_signup");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8148,7 +8142,7 @@ async fn the_bm25_postings_statement_reads_the_postings_by_their_index_under_row
     );
     // The parent keeps no statistics of its own, which an ANALYZE of it
     // would gather across every tenant; the tenant's partition keeps its own
-    // (FR-45; review F5).
+    // (#134; review F5).
     let mut owner = owner_conn(&store).await;
     let targets: Vec<(String, Option<i16>)> = sqlx::query_as(
         "SELECT c.relname::text, a.attstattarget::int2 FROM pg_attribute a \
@@ -8218,10 +8212,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 34,
-        "every migration through 0034_similar_keys_search_text"
-    );
+    assert_eq!(applied, 37, "every migration through 0037_open_signup");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;

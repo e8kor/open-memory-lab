@@ -31,7 +31,7 @@ class SubmitAccepted:
         artifact_id (str):
         claim_key (str):
         version (int): The ordinal within the claim_key; for a successor, 1 + the greatest version of the claim_key in
-            any state, so it counts versions the key may not read — a stated residual, FR-31 (docs/architecture/audit-and-
+            any state, so it counts versions the key may not read — a stated residual, #129 (docs/architecture/audit-and-
             lineage.md).
         state (Literal['held']):
         workarea_id (str): The workarea the submission was captured in — the resolved target, or a supersession target's

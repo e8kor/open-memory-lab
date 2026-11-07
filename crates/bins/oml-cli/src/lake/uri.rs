@@ -30,8 +30,8 @@ pub fn canonical(location: &str) -> Result<String, String> {
     }
     let Some((scheme, rest)) = location.split_once("://") else {
         return Err(format!(
-            "{location:?} is not a location: a local path is read with --uri-base \
-             <s3://, gs://, https:// or file:// location> (ADR-0062 d5)"
+            "invalid --uri-base {location:?}: use an s3://, gs://, https://, or file:// \
+             location; local paths are not accepted"
         ));
     };
     let scheme = scheme.to_ascii_lowercase();

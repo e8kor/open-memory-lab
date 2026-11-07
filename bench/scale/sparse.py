@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The learned sparse lane of the scale bench (ADR-0052 d16, FR-100, FR-101):
+"""The learned sparse lane of the scale bench (ADR-0052 d16, #103, #104):
 `sparse` and `bm25-sparse`'s two lists beside `bm25-postings`, at a given
 number of memories per tenant, through the adapter's own statements, as the
 serving role under row security.

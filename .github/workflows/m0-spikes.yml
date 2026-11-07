@@ -19,8 +19,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Which categories of path the pull request changed (scripts/ci_paths.py;
+  # docs/contributing/ci-and-toolchain.md, "Which jobs a change runs"). A push,
+  # a merge group, a pull request into another branch, a change to .github/,
+  # Cargo.lock, rust-toolchain.toml or scripts/, and a path in no category all
+  # turn every category on.
+  changes:
+    name: changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.paths.outputs.rust }}
+      migrations: ${{ steps.paths.outputs.migrations }}
+      api: ${{ steps.paths.outputs.api }}
+      docs: ${{ steps.paths.outputs.docs }}
+      cli_ref: ${{ steps.paths.outputs.cli_ref }}
+      plugins: ${{ steps.paths.outputs.plugins }}
+      sdk: ${{ steps.paths.outputs.sdk }}
+      eval: ${{ steps.paths.outputs.eval }}
+      release: ${{ steps.paths.outputs.release }}
+      spikes: ${{ steps.paths.outputs.spikes }}
+      ci: ${{ steps.paths.outputs.ci }}
+      cargo: ${{ steps.paths.outputs.cargo }}
+      docs_tests: ${{ steps.paths.outputs.docs_tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: paths
+        shell: bash  # -eo pipefail: a crashing classifier fails this job and so "ci ok"
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci_paths.py --event "$EVENT" --base-ref "$BASE_REF" --base "$BASE_SHA" --head "$HEAD_SHA" | tee -a "$GITHUB_OUTPUT"
+
   chain-vectors:
     name: chain-format vectors reproduce outside Rust
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +68,8 @@ jobs:
 
   rls-spike:
     name: spike 3, RLS hardening (pg17)
+    needs: changes
+    if: needs.changes.outputs.spikes == 'true' || needs.changes.outputs.migrations == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -54,3 +93,20 @@ jobs:
       - run: uv run --python 3.13 --locked --script testing/spikes/rls/spike_rls.py --require-all
         env:
           OML_SPIKE_PG_DSN: postgresql://oml:oml_dev_only@127.0.0.1:5432/oml_dev
+
+  # The one check to require: it succeeds when every job above succeeded or was
+  # skipped by the filter, and fails when one failed or was cancelled.
+  ci-ok:
+    name: ci ok (spikes)
+    if: always()
+    needs: [changes, chain-vectors, rls-spike]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in success|skipped) ;; *) echo "a job finished: $r" >&2; exit 1 ;; esac
+          done

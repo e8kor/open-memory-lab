@@ -33,13 +33,13 @@ struct SearchBody {
 
 /// The cursor: the last item's `created_at` and id, as
 /// `<rfc3339>_<uuid>`.
-fn cursor_of(next: Option<&(EventTime, Uuid)>) -> Value {
+pub(crate) fn cursor_of(next: Option<&(EventTime, Uuid)>) -> Value {
     next.map_or(Value::Null, |(at, id)| {
         json!(format!("{}_{id}", at.as_str()))
     })
 }
 
-fn parse_cursor(cursor: &str) -> Result<(EventTime, Uuid), ApiError> {
+pub(crate) fn parse_cursor(cursor: &str) -> Result<(EventTime, Uuid), ApiError> {
     let refused = || {
         ApiError::validation("cursor is not a cursor this search served")
             .with_details(json!({ "field": "/cursor" }))
