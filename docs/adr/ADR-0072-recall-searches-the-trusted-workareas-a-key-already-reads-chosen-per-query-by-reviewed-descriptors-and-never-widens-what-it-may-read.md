@@ -219,7 +219,8 @@ Decided, not built.
 - **d6 — Advertising grants nothing, and a key can never learn of a workarea it cannot read
   through recall; discovery without read is a directory workarea, not a new grant.** The
   candidate set of d4 is a subset of the nodes the key reads, so a descriptor, a statistic, a
-  name or a count of an unreadable workarea never enters a score, a list or a response. Leakage
+  name or a count of an unreadable workarea never enters a score, a list or a response, and since the statements read only the candidates'
+  rows, the work a recall does, and so its latency, depends on nothing unreadable. Leakage
   of an unreadable workarea's descriptor, by field:
 
     | Field | Leaks |
