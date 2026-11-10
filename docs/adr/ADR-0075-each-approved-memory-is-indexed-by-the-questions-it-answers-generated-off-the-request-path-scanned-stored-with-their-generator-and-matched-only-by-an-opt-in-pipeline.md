@@ -7,7 +7,7 @@ answers: what hypothetical question indexing is for and what the recall eval say
 
 # ADR-0075 — Each approved memory is indexed by the questions it answers, generated off the request path, scanned, stored with their generator, and matched only by an opt-in pipeline
 
-**Status:** proposed · 2026-11-10 · revised after review round 1 the same day (see the Review log)
+**Status:** proposed · 2026-11-10 · revised after review rounds 1 and 2 the same day (see the Review log)
 
 **In short.** When a memory version is approved, a generator writes up to five questions that the
 memory answers. The server keeps only questions grounded in the memory's own words, scans them,
@@ -15,8 +15,9 @@ stores them with the model and prompt that wrote them, and indexes them as a sec
 version. A new pipeline, `bm25-questions`, scores the memory text and its questions together by
 field-weighted BM25 (BM25F), and each hit names the question it matched. Nothing unreviewed is ever
 expanded. A question changes ranking, never visibility, is never served as memory text, and can
-only add to a row's score: a row without questions scores exactly what its own text earns. Recall
-makes no model call. Phase 0 is an offline run, on a labelled set grown large enough to see the
+only add to a row's score: a row without questions scores exactly what `bm25-postings` gives it,
+with the same words pruned, whatever other rows' questions say. A word counts once per question
+set, however many questions repeat it. Recall makes no model call. Phase 0 is an offline run, on a labelled set grown large enough to see the
 gain, that decides whether the server work is worth building.
 
 **Decisions at a glance.**
@@ -25,15 +26,15 @@ gain, that decides whether the server work is worth building.
 |---|---|---|
 | d1 | Questions are generated when a version becomes served, by a queue the lead drains outside any transaction; never for a held, unreviewed or in-progress-only version; backfill only by an admin's act | 1 |
 | d2 | One current question set per version, stored with its generator; every set written, replaced or dropped is journalled and bumps a tenant sequence; a replaced set's text stays until erase | 1 |
-| d3 | Questions are postings of kind 3 (`KIND_QUESTIONS`), one field per version, with their own counts; never ADR-0072's memory kind 3 | 1 |
-| d4 | `bm25-questions` scores text and questions as two fields of one BM25F document; opt-in; a row without questions scores its text alone; a hit names its question | 1 and 2, one release |
+| d3 | Questions are postings of kind 3 (`KIND_QUESTIONS`), one field per version, a word counted once per set, with their own counts and a count of the rows where a word is new; never ADR-0072's memory kind 3 | 1 |
+| d4 | `bm25-questions` scores text and questions as two fields of one BM25F document; the text keeps `bm25-postings`' statistics and pruning exactly; opt-in; a row without questions scores what `bm25-postings` gives it; a hit names its question | 1 and 2, one release |
 | d5 | A `QuestionGenerator` port with one adapter in phase 1, the local one unless phase 0 says otherwise; off by default; no egress | 1 |
-| d6 | A question must be grounded in its memory, specific and clean: grounding, genericity, caps and the scan; any finding drops it; a version with a hold finding gets none | 1 |
+| d6 | A question must be grounded in its memory, specific, distinct from its set and clean: grounding, genericity, near-duplicates, caps and the scan; any finding drops it; a version with a hold finding gets none | 1 |
 | d7 | ADR-0072 d10 reads per-workarea kind 3 counts, through both of its reads, and a coverage share net of expired versions, nothing else | 3 |
-| d8 | Gates sized to see the gain (power shown), non-inferiority on BEIR, neutrality at partial coverage, an adversarial suite per adapter, latency under load, size, and the bill | 0 to 2 |
+| d8 | One superiority gate with 90% power shown, non-inferiority arms sized to 99% each, a displacement bound at partial coverage, the joint power stated; an adversarial suite per adapter, recall and write latency under load, size, and the bill | 0 to 2 |
 | d9 | Dense embeddings of questions are deferred until a named trigger fires | — |
 | d10 | Phase 0 (with 0a, the grown labelled set) decides; phases 1 and 2 ship in one release; phase 3 when #207 is scheduled | 0 to 3 |
-| d11 | Operations: an outage pauses the drain and it resumes on its own; parked entries come back with backoff; a backfill is estimated, capped, stoppable and tracked; the bill is metered; doctor names each state | 1 |
+| d11 | Operations: an outage, told from a bad version by a compiled-in canary, pauses the drain and it resumes on its own; parked entries come back with backoff; a backfill is estimated, capped, stoppable and tracked; the bill is metered; doctor names each state | 1 |
 
 **Open questions: recommended answers, pending the operator.** Each is detailed at the end.
 
@@ -41,13 +42,14 @@ gain, that decides whether the server work is worth building.
 |---|---|---|
 | 1 | Which generator ships first? | `local` (an in-process T5), behind the one adapter phase 1 builds. No non-loopback endpoint on memory.doublegate.io. |
 | 2 | Exclude approved memories that carry a hold finding? | Yes, with the count visible in `status` and doctor. |
-| 3 | Run phase 0 now? | Yes, phase 0a first (grow the labelled set), then phase 0; phases 1 and 2 stay behind its verdict. |
+| 3 | Run phase 0 now? | Yes, phase 0a first (grow the labelled set to at least 550 queries), then phase 0; phases 1 and 2 stay behind its verdict. |
 | 4 | Correct #201's 0.17? | Yes: done in #201's body on 2026-11-10, with today's baseline and its source. |
 
 **Amends:** ADR-0049 (d4: the pipeline table gains `bm25-questions`; d6: `matched` gains
 `question` and `question_terms`, and `via` gains `questions`), ADR-0052 (d1 and d3: `kind` gains `3`,
-question term frequencies; d7: postings of kind 3 follow the version and leave with an erase or a
-regeneration), ADR-0005 (d4: the erasure inventory gains the question tables and kind 3 postings),
+with a weight of 1 per lexeme and a `novel` flag; d5: `search_term_rows` gains `novel_rows` for kind
+3; d7: postings of kind 3 follow the version and leave with an erase or a regeneration; d11: under
+`bm25-questions` the answer's `search` gains `pruned_questions`), ADR-0005 (d4: the erasure inventory gains the question tables and kind 3 postings),
 ADR-0065 (d13, as ADR-0074 d14 amends it: the recorded rescan walks stored questions), ADR-0054
 (d2: `recall_events` gains `questions_seq`), and ADR-0072 (phase 2's test 13 and its review log now
 read "memory-kind-3 postings", a one-line clarification made in this pull request; posting kind 3
@@ -171,7 +173,8 @@ expansion harms.
   ([ADR-0001](ADR-0001-the-constitution.md)). Questions are written by a model nobody reviews, so
   they may only rank rows a key could already read, only rows that review made served, and only
   upward: a scan finding that removes a question may take away what the question added, never
-  what the memory's own text earns (d4's laws).
+  what the memory's own text earns, and no row's questions, its own or another's, change what any
+  row's text earns (d4's laws).
 - **Repeatability** (#176). The same key, query, approved set and time give the same answer.
   Recall stays model-free, so the generator's output must be stored and named, never recomputed,
   and every change to the stored sets must be visible to replay (d2).
@@ -201,34 +204,55 @@ Decided, not built.
     version. A version that leaves served before it is drained leaves the queue in the same
     transaction.
   - **The drain** reuses the sparse queue's shape (ADR-0052 d15) with one change of order, so that
-    no lock or transaction spans a model call. One task per lead takes due entries
-    `FOR UPDATE SKIP LOCKED` under a 5-minute lease and commits. It then reads the version's search
-    text with no lock (d5's input), calls the generator outside any transaction under
-    `search.questions.timeout` (default 60 s), and filters and scans the output (d6). Only then does
-    it open the write transaction: it takes the version `FOR SHARE`, checks that the version is
-    still served and that the entry's `enqueued_at` is the one it read, and writes the set, its
-    questions, their kind 3 postings and counts, the journal event and the sequence bump (d2). If
-    either check fails, it discards the output and writes nothing. A supersession, retirement or
-    erase therefore never waits on a model.
-  - **Failures** are of two kinds (d11). A generator that cannot be reached pauses the lead's drain
-    and counts against no entry. A failure of one version (unparseable output, a timeout while other
-    calls succeed) keeps the entry, names `last_error` and retries after `2^attempts` seconds, at
-    most an hour; after 5 such failures the entry is parked, and d11 brings it back. A version not
-    yet drained has no question field; `bm25-questions` scores it by its text alone (d4).
-  - **Order and fairness.** `priority` 0 (new approvals) is drained before `priority` 1
-    (backfill), oldest first per tenant, at most 16 entries per tenant per pass as ADR-0052 d15
-    takes them, tenants in turn. So one tenant's backfill never delays another tenant's new
-    approvals.
+    no lock or transaction spans a model call. Each worker of d1's pool takes **one** due entry
+    `FOR UPDATE SKIP LOCKED`, sets `leased_by` to its lead and `leased_until` to 5 minutes ahead,
+    and commits; one entry's work is a timeout of at most 60 s and one write, so the lease cannot
+    expire under a batch. It then reads the version's search text with no lock (d5's input), calls
+    the generator outside any transaction under `search.questions.timeout` (default 60 s), and
+    filters and scans the output (d6). Only then does it open the write transaction. It first
+    deletes the queue entry `WHERE leased_by` is this lead and `enqueued_at` is the one it read, and
+    requires exactly one row deleted; it takes the version `FOR SHARE` and checks that it is still
+    served; and only then writes the set, its questions, their kind 3 postings and counts, the
+    journal event and the sequence bump (d2). If any check fails, it rolls back and discards the
+    output: an entry another lead took after the lease lapsed is written by one of them only, never
+    twice, so no set, event, `questions_seq` bump or token count is doubled. A supersession,
+    retirement or erase therefore never waits on a model.
+  - **Failures** are of two kinds (d11), and the canary tells them apart. A generator that cannot
+    be reached pauses the lead's drain and counts against no entry. When a call fails or times out,
+    the worker runs d11's compiled-in canary input before it classes the failure: if the canary
+    fails too, the generator is down; if the canary succeeds, the failure is the version's. A
+    version's failure (unparseable output, or a timeout the canary does not share) keeps the entry,
+    names `last_error` and retries after `2^attempts` seconds, at most an hour; after 5 such
+    failures the entry is parked, and d11 brings it back. So a version that always times out is
+    parked after five attempts and never stalls the drain, even with `threads` 1. A version not yet
+    drained has no question field; `bm25-questions` scores it by its text alone (d4).
+  - **Order and fairness.** `priority` 0 (new approvals) is taken before `priority` 1 (backfill),
+    oldest first per tenant, tenants in turn, at most 16 entries per tenant per pass as ADR-0052
+    d15 orders them, each still taken and leased one at a time. So one tenant's backfill never
+    delays another tenant's new approvals.
   - **Where the model runs.** The generator runs on its own bounded pool of
     `search.questions.threads` (default 1), apart from the request runtime, as the reranker's pool
     is bounded (ADR-0053). d8's latency gate is measured with the drain saturated.
+  - **The write path is shared.** A set write appends a journal event, so it takes the tenant's
+    chain head, which every commit in the tenant serialises on (ADR-0002, #100), and it updates the
+    kind 3 rows of `search_term_rows` and `search_workarea_rows`. Those rows are keyed by `kind`
+    (ADR-0052 d5), so a set write never contends with a promotion's kind 1 count rows, but a
+    backfill at 60 sets a minute adds 60 short transactions a minute to the chain head for as long
+    as it runs (about 28 hours at 100,000). The write transaction does the deletes, inserts and
+    count updates first and appends the journal event last, so it holds the chain head only for the
+    append. d8 gates promotion, supersession and erase latency with the drain saturated on the same
+    tenant; if that gate misses, phase 1 writes up to 16 sets of one tenant per transaction, each
+    with its own event and its own `questions_seq` step, so replay still sees every set change
+    apart, and the chain head is taken once per 16.
   - **Backfill** is an admin's act, never the lead's own: `oml admin questions backfill
     [--tenant t] [--stale] [--limit n] [--dry-run]`, with `--stop` and `--resume` (d11). It is
     journalled as `search.questions_backfill_started` with the generator and the estimate. It
     enqueues, at `priority` 1, the served versions with no current set (or, under `--stale`, a set
-    from another generator) in resumable steps of 1,000, as `SPARSE_BACKFILL_STEP` does, at most
-    `search.questions.rate` versions a minute per lead (default 60, chosen, not measured; phase 0
-    measures it, #236). Turning a tenant on (`oml admin questions enable`) does not backfill by
+    from another generator) in resumable steps of 1,000, as `SPARSE_BACKFILL_STEP` does.
+    `search.questions.rate` (default 60 a minute per lead, chosen, not measured; phase 0 measures
+    it, #236) throttles the **drain's** takes of `priority` 1 entries, not the enqueue, so a large
+    backfill sits in the queue and new approvals pass it; `threads` bounds the CPU the drain uses at
+    any rate. Turning a tenant on (`oml admin questions enable`) does not backfill by
     itself; its answer gives the count of served versions with no set, d11's estimate, and the
     command. A lead never regenerates on start or on a model change (d5).
   - The cost: questions arrive after the approval. Between the two a new memory is found by its
@@ -248,9 +272,9 @@ Decided, not built.
     | `search_question_generators` | one row per generator: `id`, `adapter`, `model`, `model_digest`, `weights_licence`, `data_licence` (d5's register), `prompt_version` (`oml-questions/1`), `prompt_sha256`, `max_questions`, the decoding parameters, `created_at`. No tenant data, so it is the one table here that is not partitioned. |
     | `search_question_sets` | `(tenant_id, memory_id, set_seq)` key: `workarea_id`, `generator_id`, `generated_at`, `replaced_at` (null for the current set; one current set per version by a partial unique index), `kept` (0 to 5), `dropped` (a list of `{reason, class, rule}`, never the dropped text), `outcome` (`written`, `empty`, `failed`), `tokens_in`, `tokens_out` |
     | `search_questions` | `(tenant_id, memory_id, set_seq, ordinal)` key: `text`, at most 200 characters, and `dropped_at` for a question a rescan or an admin dropped |
-    | `search_questions_queue` | as `search_sparse_queue`: `enqueued_at`, `priority` (0 new, 1 backfill), `attempts`, `next_at`, `last_error`, `parked_at`, `park_count`, `leased_until` |
-    | `search_questions_state` | per tenant: `enabled`, `current_generator_id`, `questions_seq` (a monotonic counter), `backfill_after`, `backfill_total`, `backfill_limit`, `backfill_stopped_at`, `backfilled_at` |
-    | `search_question_coverage` | `(tenant_id, workarea_id, generator_id)` key: `rows`, the served versions in the workarea whose current set came from that generator, kept by the trigger (d7) |
+    | `search_questions_queue` | as `search_sparse_queue`: `enqueued_at`, `priority` (0 new, 1 backfill), `attempts`, `next_at`, `last_error`, `parked_at`, `park_count`, `leased_by`, `leased_until`, and `tokens_in` and `tokens_out` summed over the entry's failed attempts |
+    | `search_questions_state` | per tenant: `enabled`, `current_generator_id`, `questions_seq` (a monotonic counter), `backfill_after`, `backfill_total`, `backfill_limit`, `backfill_taken`, `backfill_stopped_at`, `backfilled_at`, and `tokens_in_total` and `tokens_out_total`, every token the tenant's generation spent, kept or not (d11) |
+    | `search_question_coverage` | `(tenant_id, workarea_id, generator_id)` key: `rows`, the served versions in the workarea whose current set came from that generator, kept by the trigger (d7). It is not net of expired versions; d7.2 says how it is read |
 
   - **A set belongs to one version**, not to a claim. A supersession serves a new version, which
     gets its own set; the replaced version's kind 3 postings go to state 2 with its kind 1
@@ -288,15 +312,20 @@ Decided, not built.
   kind 1. Descriptors get no questions (they are not a hit kind).
   - **The field.** A version's kept questions are tokenised as kind 1 is (ADR-0049 d12's `simple`
     and `english` lexemes, `oml_token_id`, ADR-0052 d2) and written as one field per version: one
-    `search_postings` row per distinct lexeme across the set, `weight` the number of kept questions
-    holding it (at most 5, so one question repeating a word counts once), `doc_len` the sum of
-    weights, `memory_kind` the version's, and `state` the version's, read `FOR SHARE` in d1's write
-    transaction. Question words such as "how" and "what" are English stop words and are dropped
-    first.
+    `search_postings` row per distinct lexeme across the set, `weight` 1 however many questions hold
+    it, `doc_len` the number of distinct lexemes, `memory_kind` the version's, `state` the
+    version's, read `FOR SHARE` in d1's write transaction, and `novel`, true when no kind 1 posting
+    of the same version has that token. A word therefore counts once per set: a generator that
+    repeats a word across five questions gives it no more weight than one question does (d4's law
+    3). Question words such as "how" and "what" are English stop words and are dropped first.
   - **Counts.** The trigger keeps `search_term_rows` and `search_workarea_rows` for kind 3 as it
-    keeps them for kind 1 (ADR-0052 d5), so kind 3 has its own document frequencies and its own
-    mean field length over the rows that have a set, summed over the readable nodes at query time,
-    less expired versions as kind 1's are (d4).
+    keeps them for kind 1 (ADR-0052 d5), so kind 3 has its own document frequencies `df_3` and its
+    own mean field length, summed over the readable nodes at query time, less expired versions as
+    kind 1's are; d7 reads these. `search_term_rows` also gains `novel_rows` for kind 3: the served
+    versions whose question field holds the token and whose text does not, kept on the same state
+    flips from the postings' `novel` flag and less expired versions the same way. `df_1(t) +
+    novel_rows(t)` is then exactly the number of rows holding t in either field, with no row
+    counted twice (d4).
   - **One field per version, not one document per question.** A version with five questions would
     otherwise get five chances to match, and the set's length would not normalise.
   - **A field of its own, not docTTTTTquery's append.** Appending would change kind 1's counts and
@@ -317,46 +346,82 @@ Decided, not built.
     term frequencies rather than scores.
   - **The score.** For a query, over the readable, served, unexpired rows of the scope (ADR-0052 d5
     and `POSTINGS_EXPIRED`, as `bm25-postings` reads them), let N be the kind 1 row count, `df_1(t)`
-    and `df_3(t)` the two kinds' document frequencies of a kept query word t, `avg_1` and `avg_3`
-    the mean field lengths (`avg_3` over rows with a set). Then:
-    - n(t) = min(N, df_1(t) + df_3(t)), an upper bound on the number of rows holding t in either
-      field, so the IDF below is never larger than the true two-field IDF;
-    - idf(t) = ln(1 + (N − n(t) + 0.5) / (n(t) + 0.5)), the form `bm25` already computes in
-      `oml-pg`, the maximum over a word's forms as there;
-    - B_1(d) = 1 − b_1 + b_1 · len_1(d)/avg_1 and B_3(d) = 1 − b_3 + b_3 · len_3(d)/avg_3, each
-      field normalised by its own length;
-    - x_t(d) = tf_1(t,d)/B_1(d) + w_q · tf_3(t,d)/B_3(d), with the second term 0 for a row without
-      a current set;
-    - S(d) = Σ_t idf(t) · g(x_t(d)), with g(x) = x(k1 + 1)/(k1 + x).
+    the kind 1 document frequency of a kept query word t, `novel_rows(t)` d3's count of rows whose
+    questions hold t and whose text does not, and `avg_1` the mean text length. The text keeps
+    `bm25-postings`' statistics exactly, and the questions get a union statistic of their own:
+    - idf_1(t) = ln(1 + (N − df_1(t) + 0.5) / (df_1(t) + 0.5)), the form `bm25` already computes in
+      `oml-pg`, the maximum over a word's forms as there: `bm25-postings`' own IDF;
+    - n_U(t) = min(N, df_1(t) + novel_rows(t)), exactly the rows holding t in either field, each
+      counted once, and idf_q(t) the same form over n_U(t), so idf_q(t) ≤ idf_1(t);
+    - y_t(d) = tf_1(t,d)/B_1(d), with B_1(d) = 1 − b_1 + b_1 · len_1(d)/avg_1, the text term
+      `bm25-postings` saturates;
+    - q_t(d) = 1 if d's current set holds t and 0 otherwise (d3's binary weight), and
+      x_t(d) = y_t(d) + w_q · q_t(d);
+    - T(d) = Σ_t idf_1(t) · g(y_t(d)), the text score, and
+      S(d) = T(d) + Σ_t idf_q(t) · [g(x_t(d)) − g(y_t(d))], with g(x) = x(k1 + 1)/(k1 + x).
 
-    k1 is 1.2 and b_1 0.75, as `bm25` today. w_q and b_3 are set in phase 0 by five-fold
-    cross-validation on the grown labelled set (d8), with b_3 = 0 as the prior since the field is
-    capped. Pruning reads n(t): a word whose n(t) exceeds `FREQUENT_SHARE` of N is dropped, and the
-    budget counts both kinds' postings against `POSTING_BUDGET` (ADR-0052 d6). The candidates are
-    the rows either kind's postings hold for the kept words, rescored once.
-  - **Law 1, neutrality.** If d has no current set, an empty one, or a set holding none of the
-    kept query words, then x_t(d) = tf_1(t,d)/B_1(d) for every t and S(d) = S_text(d), the score of
-    its text alone under the same statistics. A set's length enters only B_3, which divides only
-    tf_3, so a set that misses the query cannot lower its row. This is why each field has its own
-    length normalisation: with Robertson et al.'s one weighted document length, five questions
-    would lengthen the row and lower its text's score on every query they miss.
-  - **Law 2, a question only adds.** g increases, so S(d) ≥ S_text(d) for every row. A scan finding
-    that drops a question or a set (d6) returns the row to S_text(d) at most, never below it: the
-    gate may take away what unreviewed text added and never what reviewed text earns. A drop also
-    moves n(t) by at most one per word for every row alike, as any posting change does. Rows with
-    questions can still pass a row without them on a query their questions match; that is the
-    feature, and d8 measures its cost to uncovered rows.
-  - **Law 3, the over-matching bound.** g is concave with g(0) = 0, so g(a + b) ≤ g(a) + g(b), and
-    a row's gain from its questions is
-    Δ(d) = S(d) − S_text(d) ≤ Σ_{t in both the query and the set} idf(t) · g(w_q · m_t / B_3(d)),
-    where m_t ≤ 5 is the number of questions holding t. With b_3 = 0, a word's gain is at most
-    idf(t) · g(5 · w_q), less than idf(t) · (k1 + 1): a question match on t is worth at most what
-    5 · w_q occurrences of t in the text would be worth, at t's absolute IDF. A generic word that
-    generators emit across a tenant raises df_3 and so n(t), which lowers its IDF for every row,
-    and above `FREQUENT_SHARE` of N it is pruned. For example, at w_q 0.3 and b_3 0, g(1.5) is
-    1.22; a word held by 5% of rows has idf about ln 20, 3.0, so it adds at most 3.7, below a single
-    text match on a word held by 1% of rows (idf about ln 100, 4.6, g(1) = 1). The bound is a test
+    This is BM25F as Robertson et al. combine fields, term frequencies summed before one
+    saturation, with one change: the increment the question field adds is weighted by the union
+    IDF, and the text term keeps the text's. When no question holds a word outside its own row's
+    text, n_U = df_1 and S is plain two-field BM25F. k1 is 1.2 and b_1 0.75, as `bm25` today. The
+    question field has no length normalisation: b_3 is fixed at 0, because its term frequency is
+    binary and the field is capped at five questions of at most eight content lexemes (d6), and a
+    normalisation would let a short, dense set raise its own words. Only w_q is tuned, in phase 0,
+    by five-fold cross-validation on the grown labelled set (d8), over a grid inside (0, 1).
+  - **Pruning and candidates.** The text field is pruned exactly as `bm25-postings` prunes it:
+    `df_1` against `FREQUENT_SHARE` of N, then `POSTING_BUDGET` over the kind 1 forms, and step 5
+    completes each returned row's text term (ADR-0052 d4, d6); nothing of kind 3 enters either
+    decision. The question field is pruned on its own: a word whose n_U(t) exceeds `FREQUENT_SHARE`
+    of N adds nothing through questions, and kind 3 postings are read under a `POSTING_BUDGET` of
+    their own, the kept word with the most kind 3 postings pruned first. Since n_U ≥ df_1, a word
+    pruned from the text by frequency is pruned from the questions too. A question-field prune is
+    not completed in step 5: that word's question increment is 0, which law 2 allows. The answer's
+    `search.pruned` is `bm25-postings`' list, unchanged, and `search.pruned_questions` lists the
+    words pruned from the question field alone, so an agent can see why the two pipelines disagree.
+    The candidates are the rows the kept kind 1 postings hold, which are `bm25-postings`'
+    candidates, and the rows the kept kind 3 postings hold, each scored once.
+  - **Law 1, neutrality against the default.** For every row d whose current set holds none of
+    the query words the question field kept (no set, an empty set, or a set that misses), every q_t
+    is 0, so x_t = y_t, the second sum of S is 0, and S(d) = T(d). T reads N, `df_1`, `avg_1`, k1,
+    b_1, the kept words and step 5's completion, all of them `bm25-postings`' inputs and none of
+    them touched by kind 3, so T(d) is the score `bm25-postings` gives d on the same request, and
+    d's text words are pruned as `bm25-postings` prunes them. No other row's questions enter T: a
+    backfill, a regeneration or a drop elsewhere never moves the score of a row without questions;
+    it moves only the covered rows around it. At 0% coverage kind 3 holds nothing, the candidate set
+    is `bm25-postings`', and the answer is byte-identical to `bm25-postings`' but for the pipeline
+    name. Both are phase 2 property tests (d10). Separate per-field statistics are also why a set's
+    length can never lower its row: with Robertson et al.'s one weighted document length, five
+    questions would lengthen the row and lower its text's score on every query they miss.
+  - **Law 2, a question only adds.** g increases and idf_q ≥ 0, so every increment
+    g(y + w_q · q) − g(y) is at least 0 and S(d) ≥ T(d) for every row. A scan finding that drops a
+    question or a set (d6) returns its row's increment toward 0 and never below T(d): the gate may
+    take away what unreviewed text added and never what reviewed text earns. A drop also lowers
+    `novel_rows` by at most one per word, which moves idf_q, and so the increments of other covered
+    rows, and moves no row's T. Rows with questions can still pass a row without them on a query
+    their questions match; that is the feature, and d8's displacement bound measures its cost.
+  - **Law 3, the over-matching bound.** g is concave with g(0) = 0, so g(y + w_q) − g(y) ≤ g(w_q),
+    and a row's gain from its questions is
+    Δ(d) = S(d) − T(d) ≤ Σ_{t in both the query and the set} idf_q(t) · g(w_q).
+    Since w_q < 1, g(w_q) < g(1) = 1: **a question match on t is worth less than one occurrence of
+    t in a text of average length, at an IDF no larger than the text's, however many of the set's
+    questions hold t.** A word that generators add across a tenant, where the texts lack it, raises
+    `novel_rows` and so n_U, lowering its idf_q for every row, and above `FREQUENT_SHARE` of N the
+    question field prunes it. A word copied from the text counts once in n_U, so the text's
+    salient words keep their IDF. For example, at w_q 0.3, g(0.3) is 0.44; a word held by 5% of
+    rows in either field has idf_q about ln 20, 3.0, so it adds at most 1.3, below a single text
+    match on a word held by 1% of rows (idf about ln 100, 4.6, g(1) = 1). The bound is a test
     (d10); how many ranks it allows on real sets is d8's adversarial suite.
+  - **Repetition no longer amplifies.** Round 2's counterexample: a memory approved with a
+    trailing "Related: deploy keys" line, whose five grounded, distinct questions each hold
+    "deploy" and "keys" and add "rotate", against an uncovered right memory "rotate deploy keys" of
+    the same length, on "how do I rotate deploy keys", with all three words at one IDF I. Under the
+    round 1 form (tf_3 the number of questions, 5) the bait scored 2 · g(1 + 1.5) + g(1.5) =
+    2 · 1.49 + 1.22 = 4.19 I against the right memory's 3 · g(1) = 3.0 I. Under d3's binary weight it
+    scores at most 2 · g(1.3) + g(0.3) = 2 · 1.14 + 0.44 = 2.73 I, below 3.0 I; its gain from
+    questions is at most 3 · 0.44 = 1.32 I on any three-word query, against 2.19 I before. A right
+    memory about 24% longer than the mean text (B_1 1.18) still ties the bait, as a long memory
+    already trails a short one under `bm25-postings`; d8's fourth adversarial style measures that
+    residue.
   - **The pipeline.** `bm25-questions` is one retriever, `RetrieverKind::Questions` (`questions`),
     reading kind 1 and kind 3 postings by the served index, scope and state alike, through
     ADR-0052 d4's path and d6's pruning. The own held rows contribute their text, since they have no
@@ -381,7 +446,10 @@ Decided, not built.
     has moved the replay says so and lists, from d2's journal, the set changes between the two, with
     the replaced sets' text still readable. #176's page gains three events that change an answer: a
     set written for a served version, a set regenerated by a backfill, and a question dropped by a
-    rescan or an admin. Replay across such an event is best-effort, and the page says so.
+    rescan or an admin. Replay across such an event is best-effort, and the page says so. The page
+    also says that a set written for row A can change row B's answer: B's rank against A, and, when
+    B has a set of its own, B's question increment through idf_q. It never changes B's text score
+    (law 1), and `questions_seq` records it either way.
 
 - **d5 — A `QuestionGenerator` port with one adapter in phase 1; generation is off by default, and
   the server reaches no network for it.**
@@ -437,6 +505,10 @@ Decided, not built.
     a character of the hidden-character table (ADR-0074 d5 if accepted, ADR-0065's escaping
     otherwise), or repeats another question of the set after NFC, case folding and whitespace
     folding.
+  - **Diversity.** A question whose content lexemes overlap an earlier kept question's by a Jaccard
+    index of 0.5 or more is dropped as `near_duplicate`, in the generator's order. Five rephrasings
+    of one question add nothing to ranking under d3's binary weight, and they crowd out questions
+    that would cover another intent of the memory.
   - **Genericity.** After stop words, a question with fewer than two content lexemes is dropped,
     and so is one whose content lexemes all lie in the generic lexicon compiled with the prompt
     (`oml-questions/1`: words such as "configure", "recommended", "way", "use", "work", "best"),
@@ -448,7 +520,10 @@ Decided, not built.
     a set can add new vocabulary, which is the point (docTTTTTquery's 33% new words), but a memory
     cannot make its generator emit a list of words the reviewer never saw. A trailing "Related:
     credential rotation, deploy keys" line in an approved memory is reviewed text, so its words
-    already rank the memory through kind 1; grounding stops the generator from adding more of them.
+    already rank the memory through kind 1. Grounding stops the generator from adding new words;
+    it does not stop it repeating the line's words in every question. That repetition is stopped by
+    d3's binary weight, which counts a word once per set, so the line's words gain at most g(w_q)
+    each through questions (d4's law 3 and its worked counterexample).
   - **The scan.** Each remaining question is scanned by the composed rule set (`oml-scan/1.x`
     today, `/2` under ADR-0074) as one free-text field. **Any finding drops the question**, whatever
     its verdict: refuse, hold or annotate. A memory's author may need such words, so a memory is held
@@ -480,8 +555,9 @@ Decided, not built.
     an ADR-0072 descriptor. The MCP instructions add: "A matched question was written by a model to
     index the memory. It may use words and ideas the memory does not contain; most of its content
     words come from the memory. Only the memory's text was reviewed."
-  - **Over-matching** is bounded by d4's law 3 (IDF, `w_q`, the per-question count cap and
-    pruning), by grounding and the novel-lexeme cap, and by the genericity filter. d8's
+  - **Over-matching** is bounded by d4's law 3 (the union IDF, `w_q` below 1, d3's once-per-set
+    weight and the question field's pruning), by grounding and the novel-lexeme cap, and by the
+    genericity and near-duplicate filters. d8's
     adversarial suite measures what is left, per adapter.
 
 - **d7 — ADR-0072's phase 3 reads per-workarea kind 3 counts and a coverage share net of expired
@@ -501,7 +577,10 @@ Decided, not built.
      change and from the expired subtraction, so a supersession, retirement, rejection, erase or
      rescan drop is in the next read; nothing the drain keeps enters it. The generator ids in force
      in s come from `search_question_coverage`, which the trigger keeps beside
-     `search_workarea_rows` under the same policy; that split is reported, not scored. ADR-0072
+     `search_workarea_rows` under the same policy; that split is reported, not scored. It is gross
+     of expired versions, since the table keeps no expiry, so its per-generator rows can sum to more
+     than `coverage_s`'s numerator; `status` labels the split "gross of expired versions" rather
+     than subtract per generator. ADR-0072
      needs coverage because a workarea whose backfill has not run would otherwise rank low for want
      of questions, not for want of answers. How #207 uses it (a floor, or scoring only fully covered
      candidates) is ADR-0072's to decide on its eval.
@@ -512,7 +591,9 @@ Decided, not built.
      the policy (ADR-0072 tests 14 and 15).
   4. **Repeatability.** The `questions_seq` and generator ids read are recorded in
      `recall_events` when a selection used them, beside ADR-0072 d9's fields, so ADR-0054 d11's
-     replay can say what it read.
+     replay can say what it read. `coverage_s`, the per-generator split and the generator ids are
+     recorded there only, never in a key's answer: a reader who could poll coverage around an
+     approval would learn whether that memory drew a `source_finding`.
 
 - **d8 — The gates: a gain the eval can see, no harm on BEIR, no harm to rows without questions,
   an adversarial suite per adapter, a latency budget under load, a size budget, and the bill
@@ -523,30 +604,75 @@ Decided, not built.
     of 3.3 points is detected at one-sided α 0.05 with power 0.37 at n 121 if there are no losses,
     and 0.26 if losses run at a third of the wins (wins 5.0%, losses 1.7% of queries). Half the set
     was also to be used for tuning. So the 121-query set is reported, never gated on.
-  - **Phase 0a grows the labelled set.** The sample needed for 80% power at one-sided α 0.05,
-    for a gain of δ = 3.3 points with wins p10 5.0% and losses p01 1.7%, by Connor's paired-sample
-    formula n = (z_α √(p10 + p01) + z_β √(p10 + p01 − δ²))² / δ², with z_α 1.645 and z_β 0.842, is
-    (1.645 · 0.259 + 0.842 · 0.257)² / 0.033² ≈ 378; exact enumeration of the one-sided McNemar test
-    gives 415. With no losses it is 185 by the formula and 205 exactly. Phase 0a therefore writes at
-    least 420 new question-shaped and paraphrased queries over the synthetic corpus, labelled
-    against it. They are written by a person or by a model of a different family from the one that
-    wrote the corpus, so a generator from the corpus's family cannot win by echoing its phrasing;
-    a person checks the labels of a 10% sample. Per-query results of every run are committed.
-  - **Tuning.** w_q and b_3 are chosen by five-fold cross-validation on the grown set; every figure
-    gated on is out-of-fold.
-  - **Quality, measured offline in phase 0 and served in phase 2:**
+  - **Phase 0a grows the labelled set.** The planning effect is a gain of δ = 3.3 points of
+    success@5, with wins p10 5.0% and losses p01 1.7% of queries. Connor's paired-sample formula,
+    n = (z_α √(p10 + p01) + z_β √(p10 + p01 − δ²))² / δ², with z_α 1.645 (one-sided α 0.05), gives
+    (1.645 · 0.259 + 0.842 · 0.257)² / 0.033² ≈ 378 for 80% power and
+    (1.645 · 0.259 + 1.282 · 0.257)² / 0.033² ≈ 523 for 90%. Exact enumeration of the one-sided
+    conditional McNemar test (every count of wins W and losses L, weighted by its multinomial
+    probability, passing when the binomial tail P(Bin(W + L, 0.5) ≥ W) is below 0.05) gives 415
+    for 80% and 546 for 90%; with no losses, 205 for 80%. Phase 0a therefore writes at least **550**
+    new question-shaped and paraphrased queries over the synthetic corpus, labelled against it,
+    for 90% power (0.902 at n 550 by the same enumeration). They are written by a person or by a
+    model of a family different from both the corpus's writer and phase 0's endpoint generator, so
+    neither generator can win by echoing its own family's phrasing; a person checks the labels of a
+    10% sample. Per-query results of every run are committed. 0a's rerun repeats this computation
+    with the wins and losses measured on the grown set.
+  - **Tuning.** w_q is chosen by five-fold cross-validation on the grown set, over a grid inside
+    (0, 1); every figure gated on is out-of-fold.
+  - **Why the gain is gated on the test, not on the point estimate.** Round 1's gate was "gain
+    ≥ 3.3 points and p < 0.05", with n sized for a true gain of exactly 3.3. When the true gain
+    equals the threshold, the observed gain clears it about half the time at any n: by the same
+    enumeration at n 420, P(p < 0.05) is 0.81 but P(p < 0.05 and gain ≥ 3.3) is 0.52. The gate now
+    rests on the test, with δ the effect its power targets, and keeps a floor of 1.5 points so that
+    a significant but trivial gain does not pass; at n 550 the floor changes the power by less than
+    0.001 (0.902 either way).
+  - **Quality, measured offline in phase 0 and served in phase 2.** One superiority gate, three
+    non-inferiority arms and one displacement bound:
 
-    | Set | Baseline (`bm25-postings`) | Gate for `bm25-questions` | Test |
+    | Set | Baseline (`bm25-postings`) | Gate for `bm25-questions` | Power at the planning effect |
     |---|---|---|---|
-    | grown set, ≥ 420 queries (0a) | measured in 0a | success@5 gain ≥ 3.3 points, and one-sided exact McNemar p < 0.05 on the discordant pairs | paired, per query |
-    | synthetic, 121 queries | success@5 0.934, nDCG@10 0.873 | reported, with no category falling by more than one query | descriptive |
-    | LoCoMo, 1,535 queries in 10 conversations | nDCG@10 0.503 | gain ≥ 0.010, and a one-sided paired randomisation test that flips signs per conversation (1,024 assignments), p < 0.05 | clustered by conversation |
-    | SciFact, 300 | nDCG@10 0.685 | non-inferior: lower bound of the 95% paired bootstrap interval of the difference above −0.01 | paired bootstrap, 10,000 resamples |
-    | NFCorpus, 323 | nDCG@10 0.321 | non-inferior, as SciFact | paired bootstrap |
-    | partial coverage | — | at 95% and 80% coverage, uncovered rows chosen at random and from the hold-finding class: queries whose right memory has no set are non-inferior to `bm25-postings` on them (the bootstrap bound above −0.01 nDCG@10) | paired bootstrap |
-    | adversarial, per adapter | — | ten planted memories in each of three styles, generic, bait for a named set of ten target queries, and text addressed to the generator: no planted memory enters the top 5 of more than one non-target query, and the target queries' right memories leave the top 5 in at most one of ten, on the grown set and LoCoMo | per style |
+    | grown set, ≥ 550 queries (0a) | measured in 0a | one-sided exact McNemar p < 0.05 on the discordant pairs, and a success@5 gain ≥ 1.5 points | 0.90 at δ 3.3 |
+    | synthetic, 121 queries | success@5 0.934, nDCG@10 0.873 | reported per category, never gated (0.26 to 0.37 power, above) | — |
+    | SciFact, 300 | nDCG@10 0.685 | non-inferior: lower bound of the 95% paired bootstrap interval (10,000 resamples) of the nDCG@10 difference above −m | 0.99 at a true difference of 0, by m's choice below |
+    | NFCorpus, 323 | nDCG@10 0.321 | non-inferior, as SciFact | 0.99, as SciFact |
+    | LoCoMo, 1,535 queries in 10 conversations | nDCG@10 0.503 | non-inferior, clustered: a one-sided randomisation test that flips the signs of the ten per-conversation differences plus m (1,024 assignments), p < 0.025; the gain is reported | 0.99, as SciFact, from the per-conversation SD |
+    | partial coverage, ≥ 300 queries pooled | `bm25-postings` on the same queries | displacement: at 95% coverage, the one-sided 95% Clopper–Pearson upper bound on the share of queries whose right memory has no set and leaves the top 5 is below 4%; at 300 queries, at most 6 displaced (bound 3.9%) | 0.967 at a true 1% displacement, 0.999 at 0.5% |
+    | adversarial, per adapter | — | ten planted memories in each of four styles, generic, bait for a named set of ten target queries, text addressed to the generator, and a reviewed trailing line whose words the generator repeats across every question: no planted memory enters the top 5 of more than one non-target query, and the target queries' right memories leave the top 5 in at most one of ten, on the grown set and LoCoMo | an engineering bound, not a test |
 
-    For reference: `bm25-sparse` measured 0.983 / 0.910 on the synthetic set and 0.550 on LoCoMo,
+  - **The non-inferiority margin m is sized for power, not fixed.** A fixed margin of 0.01 nDCG@10
+    has power Φ(0.01 √n / σ − 1.96) at a true difference of 0, where σ is the per-query SD of the
+    paired difference; if σ were 0.10 on SciFact's 300 queries, that would be 0.41. Phase 0a reruns
+    `bm25-postings` and `bm25-sparse` on each set with per-query output (the committed results hold
+    aggregates only), takes σ_i of their paired difference as the planning SD, since kind 2 is the
+    expansion OML has measured, and sets m_i = max(0.01, (1.960 + 2.326) · σ_i / √n_i), which gives
+    99% power at a true difference of 0; LoCoMo uses the SD of its ten per-conversation means and
+    √10. A margin is capped at 0.02; an arm whose margin hits the cap gates at 0.02, and its lower
+    power enters the joint figure below.
+  - **The displacement bound.** With law 1, a row without questions keeps its exact
+    `bm25-postings` score, so the only harm left is covered competitors passing it, and that harm
+    is one-directional. Round 1's bootstrap on about 21 such queries per set was decided by one or
+    two queries; this arm pools the grown set, LoCoMo, SciFact and NFCorpus and leaves without sets
+    the right memories of a random sample of their queries, at least 300 in all, then removes sets
+    from further random rows until coverage is 95%. Half of the uncovered right memories are
+    chosen at random and half are given a planted hold-class finding (a scan rule hit inserted into
+    the memory before generation), since none of the external sets has scan findings of its own.
+    The tolerable rate is 4%: at 95% coverage an uncovered right memory is about 5% of queries, so
+    4% of them displaced costs about 0.2 points of success@5 overall, against the 3.3 the record
+    must gain. 80% coverage is reported with the same count.
+  - **The joint power.** A go needs every gate to pass. A false go therefore needs the superiority
+    test to reject wrongly, so the go decision's false-positive rate is at most that test's α, 0.05,
+    with no correction. Its power is at least 1 minus the sum of the gates' type II errors, by the
+    union bound and without assuming independence: 1 − (0.098 + 3 · 0.01 + 0.033) ≈ **0.84**, when
+    the true effect is the planned one (a 3.3-point gain, no difference on BEIR or LoCoMo, at most
+    1% displacement). 0a's rerun restates it with the measured σ_i and any capped margin, and if it
+    falls below 0.80, 0a grows the set further before phase 0 runs.
+  - **Pre-registered arms.** The verdict names one of two arms fixed before phase 0 runs: `local`
+    and the endpoint LLM, each with five questions and every d6 filter on. The other variants,
+    five against ten questions, each filter off, and other values of the filters' constants, are
+    reported and are never chosen among on the gated sets; adopting one is a later amendment with
+    a run of its own.
+  - **Reported beside the gates.** For reference, `bm25-sparse` measured 0.983 / 0.910 on the synthetic set and 0.550 on LoCoMo,
     and BEIR's docT5query gained 0.003 to 0.010 over BM25. Phase 0 also reports, beside the gates,
     five against ten questions per version (QuOTE plateaus at 10 to 15); what each filter of d6
     dropped and the gain with each filter off; the share of generated questions that reproduce a
@@ -567,6 +693,11 @@ Decided, not built.
     database, not from a 28-hour backfill. Phase 0 runs the same read shape on those postings as a
     latency proxy, so its verdict covers latency as well as quality. At 1,000,000 it is measured with
     #103, and `bm25-postings`' own bar there is unresolved (ADR-0052 d10).
+  - **Write latency under a backfill.** d1's set writes share the tenant's chain head. With the
+    drain saturated on the same tenant at its default rate, the p95 of promotion, supersession and
+    erase is at most 20% or 2 ms above its baseline on the same run without the drain, whichever is
+    larger, measured in phase 2's bench. If it misses, phase 1 batches set writes as d1 describes
+    and the gate is rerun.
   - **Size,** budgeted and then measured in phase 1 (#236). Kind 1 measured about 36 postings per
     version, and heap, indexes and counts of about 1.1 GiB per 165,000 memories, about 6.7 GiB per
     1,000,000 by linear extrapolation (ADR-0052 d10). The budget is kind 3 at no more than kind 1 in
@@ -589,11 +720,9 @@ Decided, not built.
     | 1,000,000 (backfill) | 180 M / 660 M | 75 M / 320 M | about 11.6 days |
 
     For `local`, the cost is CPU time on d1's pool, which phase 0 measures on the 8 vCPU host by
-    running the same candle T5 phase 1 would ship, and from which it sets the default rate. For
-    scale only, at a hosted small model's list price of $0.10 per million tokens in and $0.50 out
-    (Claude Haiku 5.5, Anthropic's price list as of 2026-10-06), 1,000 approvals would cost about
-    $0.06 typical and $0.23 worst, and a 100,000-memory backfill about $5.60 and $23; no hosted
-    endpoint is built here (d5). docTTTTTquery's own figure, about 40 TPU hours for 5 queries over
+    running the same candle T5 phase 1 would ship, and from which it sets the default rate. No
+    hosted endpoint is built here (d5), so no price per token is quoted; the token columns are what
+    a later amendment that allows one would price, from a price page it cites. docTTTTTquery's own figure, about 40 TPU hours for 5 queries over
     8.8 million passages, is the external reference.
 
 - **d9 — Dense embeddings of the questions are deferred, and return only when a named trigger
@@ -613,29 +742,43 @@ Decided, not built.
 
     | Phase | Builds | Issue | Built when | Acceptance (each test red first by breaking its clause) |
     |---|---|---|---|---|
-    | 0a | the grown labelled set (≥ 420 queries, d8), its labels and a person's 10% check | #235 | now: it changes no server code | the set committed with its provenance; the power computation rerun on it |
-    | 0 | offline generation for the grown set, the synthetic set, SciFact, NFCorpus and LoCoMo with `local` and an LLM; d6's filters and scan; offline BM25F scoring with w_q and b_3 by five-fold cross-validation; the coverage arms; the adversarial suite; the capped-sparse comparison; the latency proxy; rate, tokens and kind 3 postings per memory; the checkpoint register | #235 | after 0a | d8's gates offline; every d8 report; a go or stop verdict on #201, naming the adapter; on stop, or when capped `bm25-sparse` clears the same gates inside the latency budget, this record is marked declined and #236 to #238 closed |
-    | 1 | migration `search_questions`, the trigger, the queue and drain, the port and phase 0's one adapter, d6's filters and scan, kind 3 postings and counts, the journal and `questions_seq`, `oml admin questions` (`enable`, `adopt`, `backfill` with `--dry-run`, `--limit`, `--stop`, `--resume`, `status`, `show`, `drop`, `retry-parked`), erase and rescan, d11's outage handling, doctor and metrics | #236 | after phase 0 says go; released with phase 2 | an unreviewed, held or in-progress-only version never gets a set; a version with a hold finding gets none; a question with any finding, or failing grounding, genericity or a cap, is dropped, counted and recorded without its text; the generator's input is that one version's own text; a version superseded or erased during generation gets no set; supersession, retirement and rejection flip kind 3 with kind 1; erase deletes every set, question, posting, count and coverage row in one transaction; every set change writes one journal event and bumps `questions_seq`; a lead whose generator differs from the tenant's drains nothing; a tenant with questions off enqueues nothing; an unreachable generator parks no entry and the drain resumes on its own; a parked entry returns after its backoff; a backfill stops, resumes and honours its limit; d8's size budget at 100,000 |
-    | 2 | `RetrieverKind::Questions`, `bm25-questions`, `matched.question` and `question_terms`, `questions_seq` in `recall_events`, the served eval and the benchmark pages, #176's page | #237 | with phase 1, in one release | d8's gates served; the latency budget with the drain saturated; d4's law 1 (a row with no set, an empty set or a set missing the query scores exactly its text's score) and law 2 (dropping a set never lowers a row below that score), as property tests; law 3's bound holds for every row of the eval sets; byte-identical answers across calls and two processes for fixed inputs; a replay across a set change names the change; a question of an unreadable version changes no byte, count or `did_you_mean`; no question text in `text`, the hook, an export or the lake; `did_you_mean` offers no word only questions hold |
+    | 0a | the grown labelled set (≥ 550 queries, d8), its labels and a person's 10% check; per-query reruns of `bm25-postings` and `bm25-sparse` on every set for the planning SDs | #235 | now: it changes no server code | the set committed with its provenance; the power computation, each margin m_i and the joint power rerun on it, the joint power at least 0.80 |
+    | 0 | offline generation for the grown set, the synthetic set, SciFact, NFCorpus and LoCoMo with `local` and an LLM; d6's filters and scan; offline BM25F scoring with w_q by five-fold cross-validation; the two pre-registered arms; the displacement arm; the adversarial suite; the capped-sparse comparison; the latency proxy; rate, tokens and kind 3 postings per memory; the checkpoint register | #235 | after 0a | d8's gates offline; every d8 report; a go or stop verdict on #201, naming the adapter; on stop, or when capped `bm25-sparse` clears the same gates inside the latency budget, this record is marked declined and #236 to #238 closed |
+    | 1 | migration `search_questions`, the trigger, the queue and drain, the port and phase 0's one adapter, d6's filters and scan, kind 3 postings and counts, the journal and `questions_seq`, `oml admin questions` (`enable`, `adopt`, `backfill` with `--dry-run`, `--limit`, `--stop`, `--resume`, `status`, `show`, `drop`, `retry-parked`), erase and rescan, d11's outage handling, doctor and metrics | #236 | after phase 0 says go; released with phase 2 | an unreviewed, held or in-progress-only version never gets a set; a version with a hold finding gets none; a question with any finding, or failing grounding, genericity or a cap, is dropped, counted and recorded without its text; the generator's input is that one version's own text; a version superseded or erased during generation gets no set; an entry whose lease lapsed and was taken by a second lead is written once, with one event, one `questions_seq` step and one token count; a version that always times out while the canary succeeds is parked after five attempts and the drain goes on; a canary failure counts no attempt; a word in all five questions writes one posting of weight 1; `novel_rows` counts a row only when its text lacks the token; a near-duplicate question is dropped; supersession, retirement and rejection flip kind 3 with kind 1; erase deletes every set, question, posting, count and coverage row in one transaction; every set change writes one journal event and bumps `questions_seq`; a lead whose generator differs from the tenant's drains nothing; a tenant with questions off enqueues nothing; an unreachable generator parks no entry and the drain resumes on its own; a parked entry returns after its backoff, and `retry-parked` is journalled; a backfill stops, resumes and honours its limit across the resume; a failed or discarded attempt's tokens reach the tenant's totals; d8's size budget at 100,000 |
+    | 2 | `RetrieverKind::Questions`, `bm25-questions`, `matched.question` and `question_terms`, `questions_seq` in `recall_events`, the served eval and the benchmark pages, #176's page | #237 | with phase 1, in one release | d8's gates served; the recall latency budget and the write latency gate with the drain saturated; d4's law 1 as property tests (at any coverage, every row with no set, an empty set or a set missing the query has exactly its `bm25-postings` score, and `search.pruned` equals `bm25-postings`'; at 0% coverage the answer is byte-identical to `bm25-postings`' but for the pipeline name; a set written for one row changes no other row's text score) and law 2 (dropping a set never lowers a row below that score); law 3's bound, idf_q(t) · g(w_q) per word, holds for every row of the eval sets; byte-identical answers across calls and two processes for fixed inputs; a replay across a set change names the change; a question of an unreadable version changes no byte, count or `did_you_mean`; no question text in `text`, the hook, an export or the lake; `did_you_mean` offers no word only questions hold |
     | 3 | d7's kind 3 counts, through both reads, and coverage in ADR-0072's statistics read, recorded in `recall_events` | #238 | when #207 is scheduled, not before | ADR-0072 tests 14 and 15; the counts law, with an expired version contributing nothing |
 
-- **d11 — Operations: an outage pauses the drain and it resumes on its own; parked entries come
-  back with backoff; a backfill is estimated, capped, stoppable and tracked; the bill is metered;
+- **d11 — Operations: an outage, told from a bad version by a compiled-in canary, pauses the drain
+  and it resumes on its own; parked entries come back with backoff; a backfill is estimated, capped, stoppable and tracked; the bill is metered;
   doctor names each state.**
-  - **Generator down.** A connect error, a timeout of the probe, a 5xx, a 429 or a model that fails
-    to load means the generator is unreachable. The lead then pauses its whole drain, counts no
-    attempt against any entry, and probes with one entry after 30 s, doubling to at most 15 minutes,
-    with jitter. The first success resumes the drain. Doctor's `search_questions_generator_down`
+  - **The canary.** Each adapter carries a canary input compiled in with the prompt
+    (`oml-questions/1`): a fixed memory text of about 40 tokens, no tenant's data, with a timeout
+    of a quarter of `search.questions.timeout`. It is how a failure is classed: after a failed or
+    timed-out call, the worker runs the canary; a canary that fails means the generator is down, and
+    one that succeeds means the version failed (d1). With `threads` 1 there are no other calls to
+    compare against, so the canary is the only way to tell a slow or pathological version from an
+    outage.
+  - **Generator down.** A connect error, a canary that fails or times out, a 5xx, a 429 or a model
+    that fails to load means the generator is unreachable. The lead then pauses its whole drain,
+    counts no attempt against any entry, and probes **with the canary, never a queue entry**, after
+    30 s, doubling to at most 15 minutes, with jitter. The first canary success resumes the drain.
+    A version that always times out therefore cannot hold the drain: the canary succeeds, its
+    timeouts count as its own attempts, and it is parked after five. Doctor's `search_questions_generator_down`
     names the generator and since when, and the gauge `oml_questions_generator_up` reads 0. An
     outage therefore parks nothing, and every approval made during it gets its questions afterwards.
   - **Parked entries come back.** A parked entry is retried after 1 day, then 2, then 4
     (`park_count`), and after the third return it stays parked until an admin's `oml admin
-    questions retry-parked [--tenant t]` or a new version re-enqueues it. An adopted generator change
-    also unparks every entry of the tenant, since the failure may have been the old model's.
+    questions retry-parked [--tenant t]`, journalled as `search.questions_parked_retried` with the
+    count, or until the version leaves served, which removes its entry (d1). A supersession serves
+    a new version with a new `memory_id`, which d1 enqueues on its own; the parked entry of the old
+    version leaves the queue then. An adopted generator change also unparks every entry of the
+    tenant, since the failure may have been the old model's.
   - **The estimate first.** `backfill --dry-run`, `enable` and `adopt` print the versions to
     generate, the tokens in and out by d8's arithmetic (typical and worst), and the time at the
     configured rate. `backfill` journals the estimate it started with.
-  - **Control.** `--limit n` caps a run at n versions, recorded as `backfill_limit`.
+  - **Control.** `--limit n` caps a run at n versions in total, recorded as `backfill_limit`;
+    `backfill_taken` counts what the run has enqueued, and `--resume` continues the same run, so it
+    enqueues at most `backfill_limit − backfill_taken` more. A new limit needs a new run.
     `backfill --stop` removes the run's untaken `priority` 1 entries, keeps its resume point and
     records `backfill_stopped_at`, journalled as `search.questions_backfill_stopped`; `--resume`
     continues from the resume point. `oml admin questions status [--tenant t]` gives, per tenant,
@@ -643,7 +786,11 @@ Decided, not built.
     priority, parked and failed counts, sets per generator, stale sets, and `empty` sets by reason,
     `source_finding` among them, so the versions excluded by open question 2 are counted.
   - **Metering.** `oml_questions_tokens_total{direction}` (`in`, `out`) counts tokens for either
-    adapter, and each set stores its own (d2), so a tenant's bill can be summed.
+    adapter. Each set stores its own; a failed attempt adds its tokens to its queue entry, and every
+    attempt, kept, failed, timed out or discarded by d1's checks, adds its tokens to the tenant's
+    `tokens_in_total` and `tokens_out_total` in `search_questions_state` (d2), in a short
+    transaction of its own when the write was discarded. A tenant's bill is
+    those totals, not the sum over its sets, which would leave out the attempts no set holds.
   - **Doctor lines:** `search_questions_backlog`, `search_questions_failed`,
     `search_questions_parked`, `search_questions_stale`, `search_questions_undrained` (questions on
     and no lead drains the tenant), `search_questions_generator_down`,
@@ -708,6 +855,10 @@ Decided, not built.
 | d4 | **Two lists fused by convex combination (the first draft, ADR-0052 d13)** | Per-list min-max turns a weak generic match into the list's maximum, so IDF no longer bounds over-matching, and caps a row without questions at `1 − w_q`, so a backlog or a scan finding demotes it. |
 | d4 | **Reciprocal rank fusion** | It discards how strongly a question matched and, like any two-list fusion, gives a row present in both lists a lift a row in one cannot get. |
 | d4 | **BM25F with one weighted document length (Robertson et al.'s form)** | A row's questions would lengthen it and lower its text's score on every query they miss, which breaks law 1. |
+| d4 | **One IDF from n(t) = df_1 + df_3 (round 1)** | About two thirds of a generated question's words are copied from its memory (docTTTTTquery), so a row holding t in both fields counted twice: a word in 6% of texts that generators copy into 5% of sets reached 11%, above `FREQUENT_SHARE`, and was pruned for every row, rows without questions included. The text term now keeps `df_1` and its pruning, and the question increment uses the exact union, `df_1 + novel_rows`. |
+| d4 | **One union IDF for both terms, even exact** | Every new word a generator adds anywhere would lower the text term of rows without questions, so a backfill would move their scores; law 1 would hold only against `bm25-questions`' own statistics, not against the default. |
+| d3 | **Term frequency as the number of questions holding a word (round 1)** | Five grounded questions repeating one reviewed word gave it g(1 + 5 · w_q) where one text occurrence gives g(1): 1.49 against 1.0 at w_q 0.3, so a "Related:" line could outrank the right memory (d4's worked counterexample). |
+| d4 | **Tune b_3 with w_q** | With b_3 above 0 a short, dense set gets B_3 below 1 and raises its own words (at b_3 0.75 and half the mean length, B_3 is 0.625), and law 3's bound would need min B_3 = 1 − b_3. A binary, capped field has little length to normalise. |
 | d4 | **A candidate default now** | The default stays model-free at write and at recall until ADR-0049 d9's evidence says otherwise, and this record has none yet. |
 | d4 | **Serve questions as their own hits** | A question would then be served as memory text, which d6 forbids. |
 | d5 | **HyDE: a hypothetical answer at recall** | A model call per recall, latency (QuOTE reports about 12 times the query time of plain chunks for HyDE on SQuAD) and variance, against #176. |
@@ -722,6 +873,8 @@ Decided, not built.
 | d7 | **A coverage count kept by the drain** | Supersession, retirement, erase and rescan drops change state in the trigger, not the drain, so the count would go stale and break d7's invariants. |
 | d9 | **Dense question embeddings first (QuOTE)** | A vector index under row security is unmeasured, a model would run at recall to embed the query, and ADR-0048 puts meaning last, after the lexical attempt. |
 | d11 | **Park on five failures of any kind (the sparse queue's rule)** | Five failures take about 62 s (2 + 4 + 8 + 16 + 32), so a routine endpoint restart would park every approval made during it, for good. |
+| d11 | **Probe an outage with the oldest queue entry** | The oldest entry may be the version that caused the timeout, and an outage counts no attempt, so a version that always times out would hold every tenant's drain on that lead for good. |
+| d1 | **Lease 16 entries per pass under one lease** | Sixteen 60 s timeouts outlive a 5-minute lease, a second lead takes the same entries, and both writes pass their checks: a doubled event, `questions_seq` step and token count. |
 
 ## Open questions for the operator
 
@@ -729,16 +882,16 @@ Each answer below is recommended, pending the operator.
 
 1. **Which generator ships first.** Phase 0 measures `local` and an LLM. Recommended: `local` (an
    in-process T5, no egress, no per-token cost), behind the one adapter phase 1 builds, unless the
-   LLM clears d8's gates by a further 3.3 points on the grown set or 0.01 more LoCoMo nDCG@10, and
-   then only as a loopback endpoint. No non-loopback endpoint on the public server
+   LLM arm passes d8's gates and beats the `local` arm by at least 3.3 points of success@5 on the
+   grown set, both arms pre-registered (d8), and then only as a loopback endpoint. No non-loopback endpoint on the public server
    (memory.doublegate.io).
 2. **Versions whose hold finding a person approved** get no questions (d6), so they are found by
-   their text alone, at exactly their text's score (d4's law 1). Recommended: yes, as written; they
+   their text alone, at exactly their `bm25-postings` score (d4's law 1). Recommended: yes, as written; they
    are few, the generator is the reader ADR-0074 warns about, and `status` and doctor count them
    (d11).
 3. **Run phase 0 now, ahead of #201's "When to try it"?** #201 waits for a labelled real-usage miss
    set and for workareas of hundreds to thousands of memories. Recommended: yes, phase 0a first, to
-   grow the labelled set to at least 420 queries, then phase 0, offline, changing no server code,
+   grow the labelled set to at least 550 queries, then phase 0, offline, changing no server code,
    at one generation run over about 15,000 memories (200 + 5,183 + 3,633 + 5,882) per adapter, time
    boxed by #235. Phases 1 and 2 stay behind phase 0's verdict and ship together.
 4. **Correct #201's numbers.** Recommended: yes, and done on 2026-11-10: #201's body now gives
@@ -797,3 +950,47 @@ here) and shortening the title, which is the record's handle in links already ma
   a contamination check (IR m9); five against ten questions, and the cap of five named as a size
   choice (product m6); `generator` left out of each hit (product's note on the hit); the open
   questions sit under the decision table with their recommendations (product m9).
+
+**Round 2, 2026-11-10.** One fresh review (IR method, security, operations): 0 blockers, 6 majors,
+8 minors; of round 1's 21 blockers and majors, 15 closed and 6 partly closed. Every major and minor
+is taken, and the six partly closed rows close with N1 to N6. What changed:
+
+- **Statistics (N1; round 1 IR M1, IR m8).** n(t) = df_1 + df_3 counted a word twice where a
+  question copied it from its own text, so `bm25-questions` pruned and deflated the text's salient
+  words for every row. The text term now keeps `bm25-postings`' N, `df_1`, `avg_1` and pruning
+  exactly; the question increment is weighted by idf_q over the exact union `df_1 + novel_rows`,
+  where kind 3 postings carry a `novel` flag and `search_term_rows` gains `novel_rows` (d3, d4).
+  Law 1 now reads against the default: a row without questions has exactly its `bm25-postings`
+  score at any coverage, and at 0% coverage the answer is byte-identical; both are phase 2 property
+  tests. `search.pruned` is `bm25-postings`' list and `search.pruned_questions` names the
+  question-field prunes. #176's page says a set written for one row can move another's rank, never
+  its text score.
+- **Repetition (N2; round 1 IR M2).** Kind 3 term frequency is binary, one per set; the worked
+  counterexample now scores 2.73 I against the right memory's 3.0 I (4.19 I before), and law 3
+  reads "worth less than one text occurrence, at an IDF no larger than the text's". A
+  near-duplicate filter drops a question overlapping an earlier one by Jaccard 0.5; d6's "Related:"
+  sentence is corrected; the adversarial suite gains a fourth style (d3, d4, d6, d8).
+- **Power (N3; round 1 IR M3).** The gain is gated on the one-sided exact McNemar test with a
+  1.5-point floor, not on a point estimate at δ: by exact enumeration, "gain ≥ 3.3 and p < 0.05" had
+  power 0.52 at n 420. The grown set is now at least 550 queries, 0.90 power at δ 3.3 (546 by
+  enumeration, 523 by Connor's formula). LoCoMo and BEIR are non-inferiority arms whose margins
+  phase 0a sizes to 99% power from measured per-query SDs, capped at 0.02. The joint power is at
+  least 0.84 by the union bound, and the false-go rate at most 0.05 (d8).
+- **Partial coverage (N4).** Replaced by a pooled displacement bound: at least 300 queries whose
+  right memory has no set, at 95% coverage, at most 6 of 300 displaced from the top 5 (Clopper–
+  Pearson bound 3.9% below a tolerable 4%), power 0.967 at a true 1%; the hold class is planted
+  synthetic findings (d8).
+- **The drain (N5; product M1).** A compiled-in canary classes every failure and probes every
+  outage, so a version that always times out is parked after five attempts and never stalls the
+  drain; entries are leased one at a time, and the write deletes its own leased entry and requires
+  one row, so a lapsed lease writes once (d1, d11).
+- **Write path (N6; round 1 IR M9).** Set writes take the chain head; the journal append is last,
+  and phase 2 gates promotion, supersession and erase p95 with the drain saturated, with 16 sets a
+  transaction as the fallback (d1, d8).
+- **Minors.** b_3 is fixed at 0 (m1); the per-generator coverage table is labelled gross of expired
+  versions (m2); coverage and generator ids stay in `recall_events`, never in an answer (m3); every
+  attempt's tokens reach the tenant's totals (m4); the rate throttles the drain, `--limit` is the
+  run's total across resumes, `retry-parked` is journalled, and a superseded version's parked entry
+  leaves with its served state (m5); the unverified price line is dropped (m6); two arms are
+  pre-registered, the rest reported, and the query writer's family differs from the endpoint
+  generator's (m7); `search.pruned` is answered (m8).
