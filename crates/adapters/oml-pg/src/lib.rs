@@ -723,9 +723,10 @@ pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
      LIMIT $5";
 
 /// The own held recall statement `recall_own_held` runs, binding `$1` the
-/// tenant, `$2` the author keys ([`held_authors`]), `$3` the readable nodes,
-/// `$4` the query, `$5` the kinds and `$6` `k`; pruned to the tenant's
-/// partition as [`RECALL_FTS`] is (ADR-0034 d11).
+/// tenant, `$2` the author keys (the own key set, and inside an in-progress
+/// scope the mark of the server's rule set), `$3` the readable nodes, `$4`
+/// the query, `$5` the kinds and `$6` `k`; pruned to the tenant's partition
+/// as [`RECALL_FTS`] is (ADR-0034 d11).
 pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
             ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), \
                     plainto_tsquery('simple', $4), 0) AS score \
