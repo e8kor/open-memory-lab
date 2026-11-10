@@ -94,15 +94,17 @@ def sync_detailed(
 ) -> Response[ConnectCode | ErrorEnvelope]:
     """Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
 
-     Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer
-    value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422
-    oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code
-    is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued
-    journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's
-    earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route
-    keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the
-    oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea
-    (ADR-0067 d3).
+     A person's web session key mints a code for one of their own connector keys, by name, at the default
+    lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with
+    details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). Otherwise requires: admin key role. The
+    key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor
+    expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with
+    details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here;
+    the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry,
+    never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as
+    docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency
+    record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl
+    setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -149,15 +151,17 @@ def sync(
 ) -> ConnectCode | ErrorEnvelope | None:
     """Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
 
-     Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer
-    value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422
-    oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code
-    is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued
-    journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's
-    earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route
-    keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the
-    oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea
-    (ADR-0067 d3).
+     A person's web session key mints a code for one of their own connector keys, by name, at the default
+    lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with
+    details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). Otherwise requires: admin key role. The
+    key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor
+    expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with
+    details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here;
+    the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry,
+    never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as
+    docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency
+    record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl
+    setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -199,15 +203,17 @@ async def asyncio_detailed(
 ) -> Response[ConnectCode | ErrorEnvelope]:
     """Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
 
-     Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer
-    value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422
-    oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code
-    is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued
-    journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's
-    earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route
-    keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the
-    oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea
-    (ADR-0067 d3).
+     A person's web session key mints a code for one of their own connector keys, by name, at the default
+    lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with
+    details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). Otherwise requires: admin key role. The
+    key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor
+    expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with
+    details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here;
+    the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry,
+    never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as
+    docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency
+    record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl
+    setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -252,15 +258,17 @@ async def asyncio(
 ) -> ConnectCode | ErrorEnvelope | None:
     """Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
 
-     Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer
-    value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422
-    oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code
-    is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued
-    journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's
-    earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route
-    keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the
-    oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea
-    (ADR-0067 d3).
+     A person's web session key mints a code for one of their own connector keys, by name, at the default
+    lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with
+    details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). Otherwise requires: admin key role. The
+    key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor
+    expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with
+    details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here;
+    the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry,
+    never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as
+    docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency
+    record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl
+    setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a

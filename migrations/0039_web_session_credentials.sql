@@ -12,10 +12,10 @@
 -- Numbered 0039, after the scan's rule set (0038). A new table and its
 -- policies, and on web_sessions the (tenant_id, token_hash) key the
 -- credentials' foreign key names, so that it carries tenant_id as every
--- foreign key into a tenant table does: its index is built over the live
--- sessions only, rows that expire within a session's lifetime, so the build
--- holds the lock for no longer than reading them; a lock is waited for at
--- most 5 s.
+-- foreign key into a tenant table does. Its index is built over every
+-- session row under a lock on web_sessions; the table holds only sessions
+-- not yet swept, each expiring within a session's lifetime, so the build
+-- is short, and a lock is waited for at most 5 s.
 
 SET LOCAL lock_timeout = '5s';
 

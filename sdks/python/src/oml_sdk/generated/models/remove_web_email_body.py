@@ -16,7 +16,8 @@ class RemoveWebEmailBody:
     Attributes:
         email (str):
         keep_an_admin (bool | Unset): true: removing the tenant's last admin entry is refused, request.validation with
-            details.field admin, and nothing changes (ADR-0045 d10; ADR-0070 d5). Since v0.6.4.
+            details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own
+            transaction (ADR-0045 d10; ADR-0070 d5). Since v0.6.4.
     """
 
     email: str

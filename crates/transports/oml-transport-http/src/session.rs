@@ -199,7 +199,9 @@ where
                 };
                 SESSION.scope(resolved, next.run(req)).await
             }
-            Err(e @ AppError::Store(_)) => finish(&rid, Err(map_app_error(e, ErrorContext::Write))),
+            Err(e @ (AppError::Store(_) | AppError::KeyRateLimited { .. })) => {
+                finish(&rid, Err(map_app_error(e, ErrorContext::Write)))
+            }
             Err(_) => finish(&rid, Err(ApiError::auth_invalid("unknown"))),
         }
     }

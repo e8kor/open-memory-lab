@@ -96,7 +96,10 @@ def sync_detailed(
      Requires: admin key role (ADR-0068 d5; ADR-0070 d5). Each quota sent is one web.quota_set; a member
     sent as null returns that quota to the default, and one not sent is left as it is. A limit is a
     whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers
-    access.not_found. Answers the person's row as GET /v2/web/users serves it. Since v0.6.4.
+    access.not_found. Answers the person's row as GET /v2/web/users serves it. A resubmission under the
+    same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing
+    again, the outcome recorded after the act's last commit; the same key on another request is
+    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -145,7 +148,10 @@ def sync(
      Requires: admin key role (ADR-0068 d5; ADR-0070 d5). Each quota sent is one web.quota_set; a member
     sent as null returns that quota to the default, and one not sent is left as it is. A limit is a
     whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers
-    access.not_found. Answers the person's row as GET /v2/web/users serves it. Since v0.6.4.
+    access.not_found. Answers the person's row as GET /v2/web/users serves it. A resubmission under the
+    same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing
+    again, the outcome recorded after the act's last commit; the same key on another request is
+    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -189,7 +195,10 @@ async def asyncio_detailed(
      Requires: admin key role (ADR-0068 d5; ADR-0070 d5). Each quota sent is one web.quota_set; a member
     sent as null returns that quota to the default, and one not sent is left as it is. A limit is a
     whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers
-    access.not_found. Answers the person's row as GET /v2/web/users serves it. Since v0.6.4.
+    access.not_found. Answers the person's row as GET /v2/web/users serves it. A resubmission under the
+    same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing
+    again, the outcome recorded after the act's last commit; the same key on another request is
+    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -236,7 +245,10 @@ async def asyncio(
      Requires: admin key role (ADR-0068 d5; ADR-0070 d5). Each quota sent is one web.quota_set; a member
     sent as null returns that quota to the default, and one not sent is left as it is. A limit is a
     whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers
-    access.not_found. Answers the person's row as GET /v2/web/users serves it. Since v0.6.4.
+    access.not_found. Answers the person's row as GET /v2/web/users serves it. A resubmission under the
+    same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing
+    again, the outcome recorded after the act's last commit; the same key on another request is
+    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         user (str):

@@ -1302,7 +1302,7 @@ paths:
       tags: [keys]
       operationId: issueKey
       summary: Issue a key under the issuer ceiling; the value appears exactly once, here.
-      description: 'Requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant''s first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant''s workarea_node_id, a deny entry''s subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value''s place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a retried issuance answers name.taken and its code is minted again with oml keys connect-code.'
+      description: 'A person''s web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>), role (reader or writer) and connect_code only; the key names their user and holds writer or reader on their root alone, any other field is request.validation naming it, and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant''s first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant''s workarea_node_id, a deny entry''s subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value''s place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a retried issuance answers name.taken and its code is minted again with oml keys connect-code.'
       parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1445,7 +1445,7 @@ paths:
       tags: [keys]
       operationId: addDenial
       summary: Create or extend the key's global deny object — deny-wins across all its grants.
-      description: 'Requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial''s epoch is that event''s journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).'
+      description: 'A person''s session key cuts a key off on universe alone, workarea universe, the key by name: <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). Otherwise requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial''s epoch is that event''s journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -1482,7 +1482,7 @@ paths:
       tags: [keys]
       operationId: mintConnectCode
       summary: Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
-      description: 'Requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key''s earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).'
+      description: 'A person''s web session key mints a code for one of their own connector keys, by name, at the default lifetime; another person''s key is access.not_found, and another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). Otherwise requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key''s earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -1960,7 +1960,7 @@ paths:
                 email: { type: string, maxLength: 254 }
                 user: { type: string, pattern: '^[a-z]([a-z0-9-]{0,54}[a-z0-9])?$', description: 'A name under the creation grammar, at most 56 characters.' }
                 admin: { type: boolean }
-                keep_an_admin: { type: boolean, description: "true: un-flagging the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes (ADR-0045 d10; ADR-0070 d5). Since v0.6.4." }
+                keep_an_admin: { type: boolean, description: "true: un-flagging the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10; ADR-0070 d5). Since v0.6.4." }
       responses:
         '200':
           description: The entry as stored.
@@ -1998,7 +1998,7 @@ paths:
               required: [email]
               properties:
                 email: { type: string, maxLength: 254 }
-                keep_an_admin: { type: boolean, description: "true: removing the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes (ADR-0045 d10; ADR-0070 d5). Since v0.6.4." }
+                keep_an_admin: { type: boolean, description: "true: removing the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction (ADR-0045 d10; ADR-0070 d5). Since v0.6.4." }
       responses:
         '200':
           description: Removed.
@@ -2061,7 +2061,7 @@ paths:
       tags: [web]
       operationId: grantWebCapacities
       summary: Give a person's session key a capacity on workareas, review or curation.
-      description: 'Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the universe node alone, is created at the first designation, and gains reader on each workarea. Each grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none and journal_seq is null. A user with no session key of that capacity answers access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. Since v0.6.4.'
+      description: 'Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the universe node alone, is created at the first designation, and gains reader on each workarea. Each grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none and journal_seq is null. A user with no session key of that capacity answers access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act''s last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2111,7 +2111,7 @@ paths:
       tags: [web]
       operationId: setWebUserQuota
       summary: Set a person's quotas, or return one to the default with null.
-      description: 'Requires: admin key role (ADR-0068 d5; ADR-0070 d5). Each quota sent is one web.quota_set; a member sent as null returns that quota to the default, and one not sent is left as it is. A limit is a whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers access.not_found. Answers the person''s row as GET /v2/web/users serves it. Since v0.6.4.'
+      description: 'Requires: admin key role (ADR-0068 d5; ADR-0070 d5). Each quota sent is one web.quota_set; a member sent as null returns that quota to the default, and one not sent is left as it is. A limit is a whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers access.not_found. Answers the person''s row as GET /v2/web/users serves it. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act''s last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2152,7 +2152,7 @@ paths:
       tags: [web]
       operationId: disableWebUser
       summary: Disable a person, ending their sessions and cutting off their agent keys.
-      description: 'Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin''s, answers access.not_found and journals nothing. reason is accepted and not journalled in this build. Since v0.6.4.'
+      description: 'Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin''s, answers access.not_found and journals nothing. The body is empty: no reason is journalled in this build, so a reason is refused rather than dropped. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act''s last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2166,8 +2166,7 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              properties:
-                reason: { type: string, maxLength: 512 }
+              properties: {}
       responses:
         '200':
           description: Disabled.
@@ -2191,7 +2190,7 @@ paths:
       tags: [web]
       operationId: closeWebDeletion
       summary: Close a person's pending deletion request, disabling them first.
-      description: 'Requires: admin key role (ADR-0068 d6; ADR-0070 d5). The person is disabled as POST /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending request answers access.not_found. outcome is deleted, the one close this build makes. Since v0.6.4.'
+      description: 'Requires: admin key role (ADR-0068 d6; ADR-0070 d5). The person is disabled as POST /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act''s last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2281,7 +2280,7 @@ paths:
       tags: [web]
       operationId: requestWebDeletion
       summary: The person asks for their account's deletion.
-      description: 'Requires: the person''s web session key (<user>-web, through its capacity credential); any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5). Journalled as web.deletion_requested; it ends nothing and changes no access, and an admin closes it. Since v0.6.4.'
+      description: 'Requires: the person''s web session key (<user>-web, through its capacity credential); any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5). Journalled as web.deletion_requested; it ends nothing and changes no access, and an admin closes it. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act''s last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }

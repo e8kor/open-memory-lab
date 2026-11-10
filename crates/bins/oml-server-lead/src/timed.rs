@@ -19,8 +19,8 @@ use oml_app::domain::oauth::{RefreshDecision, TokenKind};
 use oml_app::domain::web::Provider;
 use oml_app::domain::{ChainHead, EventTime, Sha256Hash, SignedEnvelope};
 use oml_app::ports::{
-    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyRecord, IdempotencyScope,
-    JournalStore, Retriever, StoreError, TailScan, WebStore,
+    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyPut, IdempotencyRecord,
+    IdempotencyScope, JournalStore, Retriever, StoreError, TailScan, WebStore,
 };
 use oml_app::search::{CandidateScope, RetrievalQuery, Retrieved, RetrieverKind};
 use oml_app::types::{
@@ -586,6 +586,13 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         scope: &IdempotencyScope,
     ) -> impl Future<Output = Result<Option<IdempotencyRecord>, StoreError>> + Send {
         timed("idempotency_get", self.inner.idempotency_get(scope))
+    }
+
+    fn idempotency_put(
+        &self,
+        put: IdempotencyPut,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send {
+        timed("idempotency_put", self.inner.idempotency_put(put))
     }
 }
 

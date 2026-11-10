@@ -79,7 +79,9 @@ def sync_detailed(
      Requires: the person's web session key (<user>-web, through its capacity credential); any other key
     answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5).
     Journalled as web.deletion_requested; it ends nothing and changes no access, and an admin closes it.
-    Since v0.6.4.
+    A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay:
+    true and acts nothing again, the outcome recorded after the act's last commit; the same key on
+    another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         x_request_id (str | Unset):
@@ -122,7 +124,9 @@ def sync(
      Requires: the person's web session key (<user>-web, through its capacity credential); any other key
     answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5).
     Journalled as web.deletion_requested; it ends nothing and changes no access, and an admin closes it.
-    Since v0.6.4.
+    A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay:
+    true and acts nothing again, the outcome recorded after the act's last commit; the same key on
+    another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         x_request_id (str | Unset):
@@ -160,7 +164,9 @@ async def asyncio_detailed(
      Requires: the person's web session key (<user>-web, through its capacity credential); any other key
     answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5).
     Journalled as web.deletion_requested; it ends nothing and changes no access, and an admin closes it.
-    Since v0.6.4.
+    A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay:
+    true and acts nothing again, the outcome recorded after the act's last commit; the same key on
+    another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         x_request_id (str | Unset):
@@ -201,7 +207,9 @@ async def asyncio(
      Requires: the person's web session key (<user>-web, through its capacity credential); any other key
     answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5).
     Journalled as web.deletion_requested; it ends nothing and changes no access, and an admin closes it.
-    Since v0.6.4.
+    A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay:
+    true and acts nothing again, the outcome recorded after the act's last commit; the same key on
+    another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         x_request_id (str | Unset):

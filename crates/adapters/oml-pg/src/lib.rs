@@ -32,9 +32,9 @@ use oml_app::domain::{
 };
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
-    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyRecord, IdempotencyScope,
-    JournalStore, MetadataFold, Retriever, StoreError, SubjectRow, TailEvent, TailScan, WebStore,
-    claim_subject,
+    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyPut, IdempotencyRecord,
+    IdempotencyScope, JournalStore, MetadataFold, Retriever, StoreError, SubjectRow, TailEvent,
+    TailScan, WebStore, claim_subject,
 };
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, MatchedToken, OwnHeldScope, PostingsHealth,
@@ -3048,8 +3048,14 @@ async fn apply_fold(
                 _ => backend(e),
             })?;
         }
-        MetadataFold::WebEmailChanged(entry) => {
+        MetadataFold::WebEmailChanged {
+            entry,
+            keep_an_admin,
+        } => {
             let hash = entry.email.digest().0.to_vec();
+            if keep_an_admin && !entry.admin && last_admin_entry(tx, tenant_id, &hash).await? {
+                return Err(StoreError::LastAdminEntry);
+            }
             end_entry_sessions(tx, tenant_id, &hash).await?;
             let changed = sqlx::query(
                 "UPDATE web_emails SET user_name = $3, admin = $4 \
@@ -3068,8 +3074,14 @@ async fn apply_fold(
                 ));
             }
         }
-        MetadataFold::WebEmailRemoved { email_hash } => {
+        MetadataFold::WebEmailRemoved {
+            email_hash,
+            keep_an_admin,
+        } => {
             let hash = email_hash.0.to_vec();
+            if keep_an_admin && last_admin_entry(tx, tenant_id, &hash).await? {
+                return Err(StoreError::LastAdminEntry);
+            }
             end_entry_sessions(tx, tenant_id, &hash).await?;
             let removed =
                 sqlx::query("DELETE FROM web_emails WHERE tenant_id = $1 AND email_hash = $2")
@@ -6712,6 +6724,26 @@ impl JournalStore for PgStore {
         }))
     }
 
+    async fn idempotency_put(&self, put: IdempotencyPut) -> Result<bool, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, put.scope.tenant_id).await?;
+        let inserted = sqlx::query(
+            "INSERT INTO idempotency (tenant_id, key, request_digest, response, \
+             committed_at) VALUES ($1, $2, $3, $4, now()) \
+             ON CONFLICT (tenant_id, key) DO NOTHING",
+        )
+        .bind(put.scope.tenant_id)
+        .bind(scope_key(&put.scope))
+        .bind(put.record.request_digest.into_bytes())
+        .bind(put.record.response)
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?
+        .rows_affected();
+        tx.commit().await.map_err(backend)?;
+        Ok(inserted == 1)
+    }
+
     async fn brief_edge(
         &self,
         tenant_id: Uuid,
@@ -7133,6 +7165,26 @@ async fn set_lookup_digest(
         .await
         .map_err(backend)?;
     Ok(())
+}
+
+/// Whether the entry `hash` names is the tenant's only admin entry, read
+/// with every admin entry locked in this transaction, so two commits that
+/// would each leave the other the last admin are serialized and the second
+/// sees the first's change (ADR-0045 d10; ADR-0070 d5).
+async fn last_admin_entry(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    hash: &[u8],
+) -> Result<bool, StoreError> {
+    let admins: Vec<Vec<u8>> = sqlx::query_scalar(
+        "SELECT email_hash FROM web_emails WHERE tenant_id = $1 AND admin \
+         ORDER BY email_hash FOR UPDATE",
+    )
+    .bind(tenant_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(admins.iter().any(|h| h == hash) && admins.iter().all(|h| h == hash))
 }
 
 /// Ends every session of one allowlist entry, in the commit that changes

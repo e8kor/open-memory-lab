@@ -22,8 +22,7 @@ use oml_app::types::{WebEmailRequest, WebEntry};
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
 use crate::{
-    Acting, ApiState, acting, finish, idempotency_key, json_response, page_params, parse_json,
-    retry_chain,
+    ApiState, acting, finish, idempotency_key, json_response, page_params, parse_json, retry_chain,
 };
 
 #[derive(Deserialize)]
@@ -214,13 +213,16 @@ where
         let admin = req.admin.ok_or_else(|| {
             ApiError::validation("admin is required").with_details(json!({ "field": "/admin" }))
         })?;
-        if req.keep_an_admin == Some(true) && !admin {
-            st.keep_an_admin(&acting, &email).await?;
-        }
         let request = WebEmailRequest { email, user, admin };
-        let (entry, _) = retry_chain(|| st.app.allow_web_email(acting.bearer(), &request))
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let (entry, _) = retry_chain(|| {
+            st.app.allow_web_email_keeping(
+                acting.bearer(),
+                &request,
+                req.keep_an_admin == Some(true),
+            )
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &entry_json(&entry)))
     }
 
@@ -248,50 +250,18 @@ where
         let _idem = idempotency_key(headers)?;
         let req: RemoveBody = parse_json(headers, body)?;
         let email = email_field(req.email.as_deref())?;
-        if req.keep_an_admin == Some(true) {
-            st.keep_an_admin(&acting, &email).await?;
-        }
-        let (_, seq, event_id) = retry_chain(|| st.app.remove_web_email(acting.bearer(), &email))
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let (_, seq, event_id) = retry_chain(|| {
+            st.app.remove_web_email_keeping(
+                acting.bearer(),
+                &email,
+                req.keep_an_admin == Some(true),
+            )
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::OK,
             &json!({ "journal_seq": seq, "event_id": event_id.to_string(), "dry_run": false }),
         ))
-    }
-
-    /// `keep_an_admin`: removing or un-flagging `email` is refused when its
-    /// entry is the tenant's last admin entry, `request.validation`
-    /// `details.field: admin` (ADR-0045 d10; ADR-0070 d5). The check reads
-    /// the entries before the act commits.
-    async fn keep_an_admin(&self, acting: &Acting<'_>, email: &Email) -> Result<(), ApiError> {
-        let admin = self
-            .app
-            .caller(acting.bearer())
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let entry_is_admin = self
-            .app
-            .web_all_entries(&admin)
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?
-            .iter()
-            .any(|e| &e.email == email && e.admin);
-        if !entry_is_admin {
-            return Ok(());
-        }
-        let other = self
-            .app
-            .web_other_admin(&admin, &email.digest())
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        if other {
-            Ok(())
-        } else {
-            Err(ApiError::validation(
-                "this is the organisation's last admin address; add another admin first",
-            )
-            .with_details(json!({ "field": "admin" })))
-        }
     }
 }

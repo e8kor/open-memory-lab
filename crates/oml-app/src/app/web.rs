@@ -76,6 +76,18 @@ where
         bearer: impl Into<Bearer<'_>>,
         req: &WebEmailRequest,
     ) -> Result<(WebEntry, WebEmailOutcome), AppError> {
+        self.allow_web_email_keeping(bearer, req, false).await
+    }
+
+    /// [`Self::allow_web_email`], refusing with `keep_an_admin` to un-flag
+    /// the tenant's last admin entry, checked in the commit's own
+    /// transaction (ADR-0045 d10; ADR-0070 d5).
+    pub async fn allow_web_email_keeping(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &WebEmailRequest,
+        keep_an_admin: bool,
+    ) -> Result<(WebEntry, WebEmailOutcome), AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "web_emails")?;
         check_user(&req.user)?;
@@ -108,7 +120,10 @@ where
         let (event_type, fold) = match outcome {
             WebEmailOutcome::Changed => (
                 event_types::WEB_EMAIL_CHANGED,
-                MetadataFold::WebEmailChanged(entry.clone()),
+                MetadataFold::WebEmailChanged {
+                    entry: entry.clone(),
+                    keep_an_admin,
+                },
             ),
             _ => (
                 event_types::WEB_EMAIL_ALLOWED,
@@ -142,6 +157,18 @@ where
         bearer: impl Into<Bearer<'_>>,
         email: &Email,
     ) -> Result<(WebEntry, u64, Uuid), AppError> {
+        self.remove_web_email_keeping(bearer, email, false).await
+    }
+
+    /// [`Self::remove_web_email`], refusing with `keep_an_admin` to remove
+    /// the tenant's last admin entry, checked in the commit's own
+    /// transaction (ADR-0045 d10; ADR-0070 d5).
+    pub async fn remove_web_email_keeping(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        email: &Email,
+        keep_an_admin: bool,
+    ) -> Result<(WebEntry, u64, Uuid), AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "web_emails")?;
         let tenant_id = admin.tenant_id;
@@ -168,7 +195,14 @@ where
         )?;
         let event_id = event.envelope.event_id;
         let receipt = self
-            .commit(event, MetadataFold::WebEmailRemoved { email_hash }, None)
+            .commit(
+                event,
+                MetadataFold::WebEmailRemoved {
+                    email_hash,
+                    keep_an_admin,
+                },
+                None,
+            )
             .await?;
         Ok((entry, receipt.seq, event_id))
     }

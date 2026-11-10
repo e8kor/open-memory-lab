@@ -659,8 +659,6 @@ Requires: a person's web session key (<user>-web, through its capacity credentia
 
 Issue a key under the issuer ceiling; the value appears exactly once, here.
 
-Requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only.
-
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
 | `Idempotency-Key` | header | string | yes | Claims an idempotency record (key_id, workarea, idem_key) before side effects. |
@@ -711,8 +709,6 @@ Requires: admin key role.
 
 Create or extend the key's global deny object — deny-wins across all its grants.
 
-Requires: admin key role.
-
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
 | `key` | path | KeyRef | yes |  |
@@ -731,8 +727,6 @@ Requires: admin key role.
 ### `POST /v2/keys/{key}/connect-codes`
 
 Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
-
-Requires: admin key role.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
@@ -938,7 +932,7 @@ Requires: admin key role.
 | `email` | string | yes |  |
 | `user` | string | yes | A name under the creation grammar, at most 56 characters. |
 | `admin` | boolean | yes |  |
-| `keep_an_admin` | boolean | no | true: un-flagging the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes. |
+| `keep_an_admin` | boolean | no | true: un-flagging the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction. |
 
 **Responses.** `200` The entry as stored.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `409` A 409-class conflict (idempotency.*, submission.tip_conflict, workarea.frozen, review.serve_invalid, …).; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
@@ -958,7 +952,7 @@ Requires: admin key role.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `email` | string | yes |  |
-| `keep_an_admin` | boolean | no | true: removing the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes. |
+| `keep_an_admin` | boolean | no | true: removing the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes; the store reads the admin entries under lock in the commit's own transaction. |
 
 **Responses.** `200` Removed.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `404` access.not_found — absent or outside read scope, indistinguishable by design.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
@@ -1027,11 +1021,7 @@ Requires: admin key role.
 | `Idempotency-Key` | header | string | yes | Claims an idempotency record (key_id, workarea, idem_key) before side effects. |
 | `user` | path | string | yes | The person's user name. |
 
-**Request body** (`application/json`)
-
-| Field | Type | Required | Meaning |
-|---|---|---|---|
-| `reason` | string | no |  |
+**Request body** (`application/json`): object
 
 **Responses.** `200` Disabled.; `403` A 403-class refusal naming its rule (access.*, review.*, simulation.audience_refused).; `404` access.not_found — absent or outside read scope, indistinguishable by design.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 

@@ -95,7 +95,10 @@ def sync_detailed(
 
      Requires: admin key role (ADR-0068 d6; ADR-0070 d5). The person is disabled as POST
     /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending
-    request answers access.not_found. outcome is deleted, the one close this build makes. Since v0.6.4.
+    request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission
+    under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts
+    nothing again, the outcome recorded after the act's last commit; the same key on another request is
+    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -143,7 +146,10 @@ def sync(
 
      Requires: admin key role (ADR-0068 d6; ADR-0070 d5). The person is disabled as POST
     /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending
-    request answers access.not_found. outcome is deleted, the one close this build makes. Since v0.6.4.
+    request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission
+    under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts
+    nothing again, the outcome recorded after the act's last commit; the same key on another request is
+    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -186,7 +192,10 @@ async def asyncio_detailed(
 
      Requires: admin key role (ADR-0068 d6; ADR-0070 d5). The person is disabled as POST
     /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending
-    request answers access.not_found. outcome is deleted, the one close this build makes. Since v0.6.4.
+    request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission
+    under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts
+    nothing again, the outcome recorded after the act's last commit; the same key on another request is
+    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -232,7 +241,10 @@ async def asyncio(
 
      Requires: admin key role (ADR-0068 d6; ADR-0070 d5). The person is disabled as POST
     /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending
-    request answers access.not_found. outcome is deleted, the one close this build makes. Since v0.6.4.
+    request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission
+    under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts
+    nothing again, the outcome recorded after the act's last commit; the same key on another request is
+    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
 
     Args:
         user (str):

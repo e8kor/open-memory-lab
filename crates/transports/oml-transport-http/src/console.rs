@@ -26,8 +26,9 @@ use oml_app::types::{AppError, Bearer, Credential, GrantRecord};
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
 use crate::{
-    ApiState, PAGE_LIMIT_DEFAULT, acting, finish, idempotency_key, json_response, page_limit,
-    parse_json, reference, retry_chain, session,
+    ApiState, KeyIssueBody, PAGE_LIMIT_DEFAULT, acting, connect_code_json, finish, idempotency_key,
+    json_response, key_issued_json, page_limit, parse_json, parse_role, reference, retry_chain,
+    session,
 };
 
 /// The most workareas one capacities request names.
@@ -48,6 +49,34 @@ fn session_key_only(caller: &Caller, verb: &'static str) -> ApiError {
         "role": caller.key().role.as_str(),
         "reason": "session_key_only",
     }))
+}
+
+/// A refusal of a key verb to a session key of another capacity than
+/// `web`: `access.verb_ceiling`, `details.reason: session_capacity`. The
+/// admin capacity issues no plain key and denies only as the pages do
+/// (ADR-0070 d2, d5).
+fn session_capacity(caller: &Caller, verb: &'static str) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "access.verb_ceiling",
+        "A session key acts only as the page act it serves (ADR-0070 d2).",
+        format!("{verb} runs as a session key only through the person's web capacity"),
+    )
+    .with_details(json!({
+        "verb": verb,
+        "role": caller.key().role.as_str(),
+        "reason": "session_capacity",
+    }))
+}
+
+/// The digest an act's `Idempotency-Key` is held to: the path's user and
+/// the body's bytes, so the same key on another request is
+/// `idempotency.digest_mismatch`.
+fn act_digest(user: &str, body: &Bytes) -> String {
+    let mut bytes = user.as_bytes().to_vec();
+    bytes.push(b'\n');
+    bytes.extend_from_slice(body);
+    oml_app::domain::Sha256Hash::digest(&bytes).to_prefixed()
 }
 
 /// Whether `caller` is a person's `<user>-web` session key.
@@ -110,14 +139,12 @@ where
     Option::<u64>::deserialize(deserializer).map(Some)
 }
 
-/// `POST /v2/web/users/{user}/disable`'s body: a reason the admin may give,
-/// which the use case does not journal in this build.
+/// `POST /v2/web/users/{user}/disable`'s body: empty, since no reason is
+/// journalled in this build and a field the server does not keep is
+/// refused, never dropped.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DisableBody {
-    #[serde(rename = "reason")]
-    _reason: Option<String>,
-}
+struct DisableBody {}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -140,6 +167,60 @@ where
             .caller(acting.bearer())
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))
+    }
+
+    /// The outcome recorded for this act under the request's
+    /// `Idempotency-Key`, answered as it was with `Idempotency-Replay:
+    /// true`, or `None` to act (http-api.md idempotency; ADR-0070 d3 layer
+    /// 4).
+    async fn replayed(
+        &self,
+        caller: &Caller,
+        act: &str,
+        idem: &str,
+        digest: &str,
+    ) -> Result<Option<Response>, ApiError> {
+        let Some(recorded) = self
+            .app
+            .recorded_act(caller, act, idem, digest)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?
+        else {
+            return Ok(None);
+        };
+        let status = recorded["status"]
+            .as_u64()
+            .and_then(|s| u16::try_from(s).ok())
+            .and_then(|s| StatusCode::from_u16(s).ok())
+            .unwrap_or(StatusCode::OK);
+        let mut response = json_response(status, &recorded["body"]);
+        response
+            .headers_mut()
+            .insert("idempotency-replay", HeaderValue::from_static("true"));
+        Ok(Some(response))
+    }
+
+    /// Records the act's answer under its `Idempotency-Key` and answers it.
+    async fn record_outcome(
+        &self,
+        caller: &Caller,
+        act: &str,
+        idem: &str,
+        digest: &str,
+        status: StatusCode,
+        body: &Value,
+    ) -> Result<Response, ApiError> {
+        self.app
+            .record_act(
+                caller,
+                act,
+                idem,
+                digest,
+                json!({ "status": status.as_u16(), "body": body }),
+            )
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(status, body))
     }
 
     // -- #1 GET /v2/keys ------------------------------------------------------
@@ -327,7 +408,14 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let caller = st.console_caller(headers).await?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
+        let digest = act_digest(user, body);
+        if let Some(replayed) = st
+            .replayed(&caller, "web.capacities", &idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
+        }
         let user = user_param(user)?;
         let req: CapacitiesBody = parse_json(headers, body)?;
         let curate = match req.capacity.as_str() {
@@ -363,14 +451,19 @@ where
             key = Some(granted.key);
         }
         let key = key.ok_or_else(ApiError::not_found)?;
-        Ok(json_response(
+        st.record_outcome(
+            &caller,
+            "web.capacities",
+            &idem,
+            &digest,
             StatusCode::OK,
             &json!({
                 "key": { "id": key.key_id, "name": key.name.as_ref().map(Name::as_str) },
                 "grants_added": added.iter().map(grant_json).collect::<Vec<_>>(),
                 "journal_seq": added.iter().map(|g| g.epoch).max(),
             }),
-        ))
+        )
+        .await
     }
 
     // -- #4 GET /v2/workareas/{workarea}/offers -------------------------------
@@ -521,7 +614,14 @@ where
     async fn request_deletion_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let caller = st.console_caller(headers).await?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
+        let digest = act_digest("", &Bytes::new());
+        if let Some(replayed) = st
+            .replayed(&caller, "web.deletion_requested", &idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
+        }
         if !is_web_session_key(&caller) {
             return Err(session_key_only(&caller, "request_deletion"));
         }
@@ -533,7 +633,11 @@ where
             .whoami_person(Bearer::Session(&caller))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
+        st.record_outcome(
+            &caller,
+            "web.deletion_requested",
+            &idem,
+            &digest,
             StatusCode::OK,
             &json!({
                 "requested_at": person
@@ -541,7 +645,8 @@ where
                     .map(|t| t.as_str().to_owned()),
                 "journal_seq": seq,
             }),
-        ))
+        )
+        .await
     }
 
     // -- #8 POST /v2/web/users/{user}/quota -------------------------------------
@@ -571,7 +676,14 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let caller = st.console_caller(headers).await?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
+        let digest = act_digest(user, body);
+        if let Some(replayed) = st
+            .replayed(&caller, "web.quota_set", &idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
+        }
         let user = user_param(user)?;
         let req: QuotaBody = parse_json(headers, body)?;
         let sent: Vec<(Quota, Option<u64>)> = [
@@ -605,10 +717,15 @@ where
             .into_iter()
             .find(|u| u.user == user)
             .ok_or_else(ApiError::not_found)?;
-        Ok(json_response(
+        st.record_outcome(
+            &caller,
+            "web.quota_set",
+            &idem,
+            &digest,
             StatusCode::OK,
             &crate::web::emails::user_row_json(&row),
-        ))
+        )
+        .await
     }
 
     // -- #9 POST /v2/web/users/{user}/disable -----------------------------------
@@ -639,7 +756,14 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let caller = st.console_caller(headers).await?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
+        let digest = act_digest(user, body);
+        if let Some(replayed) = st
+            .replayed(&caller, "web.user_disabled", &idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
+        }
         let user = user_param(user)?;
         if !body.is_empty() {
             let _: DisableBody = parse_json(headers, body)?;
@@ -647,10 +771,15 @@ where
         let done = retry_chain(|| st.app.web_disable_user(&caller, &user))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
+        st.record_outcome(
+            &caller,
+            "web.user_disabled",
+            &idem,
+            &digest,
             StatusCode::OK,
             &json!({ "keys_cut_off": done.keys_cut_off, "journal_seq": done.journal_seq }),
-        ))
+        )
+        .await
     }
 
     // -- #10 POST /v2/web/users/{user}/deletion/close ----------------------------
@@ -681,7 +810,14 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let caller = st.console_caller(headers).await?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
+        let digest = act_digest(user, body);
+        if let Some(replayed) = st
+            .replayed(&caller, "web.deletion_closed", &idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
+        }
         let user = user_param(user)?;
         let req: CloseBody = parse_json(headers, body)?;
         if req.outcome != "deleted" {
@@ -691,9 +827,152 @@ where
         let seq = retry_chain(|| st.app.web_close_deletion(&caller, &user))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
+        st.record_outcome(
+            &caller,
+            "web.deletion_closed",
+            &idem,
+            &digest,
             StatusCode::OK,
             &json!({ "journal_seq": seq }),
+        )
+        .await
+    }
+
+    // -- d5's unchanged key operations, as a session key -------------------
+
+    /// `POST /v2/keys` as `<user>-web`: the person's own issuance, a reader
+    /// or writer key named `<user>-<suffix>` on their root, its grants the
+    /// use case's, never the body's; every other field is refused naming
+    /// it. Any other session capacity is `session_capacity` (ADR-0070 d2,
+    /// d5; ADR-0045 d9, d16).
+    pub(crate) async fn issue_key_as_session(
+        st: &Self,
+        caller: &Caller,
+        req: &KeyIssueBody,
+        name: &Name,
+    ) -> Result<Response, ApiError> {
+        if !is_web_session_key(caller) {
+            return Err(session_capacity(caller, "issue_key"));
+        }
+        let set: [(&str, bool); 9] = [
+            ("/grants", !req.grants.is_empty()),
+            ("/label", req.label.is_some()),
+            ("/principal", req.principal.is_some()),
+            ("/held_by", req.held_by.is_some()),
+            ("/default_workarea", req.default_workarea.is_some()),
+            ("/crew", req.crew.is_some()),
+            ("/user", req.user.is_some()),
+            ("/guardrail_scope", req.guardrail_scope.is_some()),
+            (
+                "/profile",
+                req.profile.is_some() || req.expiry.is_some() || req.tenant.is_some(),
+            ),
+        ];
+        if let Some((field, _)) = set.iter().find(|(_, set)| *set) {
+            return Err(ApiError::validation(format!(
+                "{field} is the person's own issuance's to set: send name, role and connect_code"
+            ))
+            .with_details(json!({ "field": field })));
+        }
+        let user = caller
+            .key()
+            .session_user
+            .clone()
+            .ok_or_else(ApiError::not_found)?;
+        let suffix = name
+            .as_str()
+            .strip_prefix(&format!("{}-", user.as_str()))
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                ApiError::validation(format!("a key you issue is named {}-<name>", user.as_str()))
+                    .with_details(json!({ "field": "/name" }))
+            })?
+            .to_owned();
+        let role = parse_role(&req.role)?;
+        let issued = retry_chain(|| {
+            st.app
+                .web_issue_key(caller, &suffix, role, req.connect_code)
+        })
+        .await
+        .map_err(|e| match e {
+            AppError::WebField { field, message } => {
+                ApiError::validation(message).with_details(json!({ "field": format!("/{field}") }))
+            }
+            e => map_app_error(e, ErrorContext::Write),
+        })?;
+        Ok(json_response(
+            StatusCode::CREATED,
+            &key_issued_json(&issued, None),
+        ))
+    }
+
+    /// `POST /v2/keys/{key}/denials` as a session key: `<user>-web` cuts
+    /// off one of the person's own keys, `<user>-admin` one of the
+    /// tenant's, each only on `universe` and never a session key, as the
+    /// pages' `cut_off` does (ADR-0070 d5; ADR-0045 d9, d13).
+    pub(crate) async fn cut_off_as_session(
+        st: &Self,
+        caller: &Caller,
+        key: &Reference,
+        node: &Reference,
+    ) -> Result<oml_app::types::DenialRecord, ApiError> {
+        let capacity_web = is_web_session_key(caller);
+        if !capacity_web && caller.key().role != Role::Admin {
+            return Err(session_capacity(caller, "deny_key"));
+        }
+        if !matches!(node, Reference::Name(n) if n.as_str() == "universe") {
+            return Err(
+                ApiError::validation("a session key cuts a key off on universe only")
+                    .with_details(json!({ "field": "/workarea" })),
+            );
+        }
+        let Reference::Name(key) = key else {
+            return Err(
+                ApiError::validation("a session key names the key by its name")
+                    .with_details(json!({ "field": "key" })),
+            );
+        };
+        retry_chain(|| st.app.web_cut_off(caller, key))
+            .await
+            .map_err(|e| match e {
+                AppError::WebField { field, message } => {
+                    ApiError::validation(message).with_details(json!({ "field": field }))
+                }
+                e => map_app_error(e, ErrorContext::Write),
+            })
+    }
+
+    /// `POST /v2/keys/{key}/connect-codes` as `<user>-web`: a fresh code
+    /// for one of the person's own connector keys, at the default lifetime;
+    /// another person's key is `access.not_found` (ADR-0070 d5; ADR-0045
+    /// d9).
+    pub(crate) async fn connect_code_as_session(
+        st: &Self,
+        caller: &Caller,
+        key: &Reference,
+        ttl_seconds: Option<i64>,
+    ) -> Result<Response, ApiError> {
+        if !is_web_session_key(caller) {
+            return Err(session_capacity(caller, "mint_connect_code"));
+        }
+        if ttl_seconds.is_some() {
+            return Err(
+                ApiError::validation("a person's connect code lives the default lifetime")
+                    .with_details(json!({ "field": "/ttl_seconds" })),
+            );
+        }
+        let Reference::Name(key) = key else {
+            return Err(
+                ApiError::validation("a session key names the key by its name")
+                    .with_details(json!({ "field": "key" })),
+            );
+        };
+        let code = retry_chain(|| st.app.web_connect_code(caller, key))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::CREATED,
+            &connect_code_json(&code),
         ))
     }
 }

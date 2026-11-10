@@ -2999,6 +2999,10 @@ impl From<StoreError> for AppError {
         match error {
             StoreError::NameTaken { kind, name } => AppError::NameTaken { kind, name },
             StoreError::EmailTaken => AppError::WebEmailTaken,
+            StoreError::LastAdminEntry => AppError::WebField {
+                field: "admin",
+                message: "this is the organisation's last admin address; add another admin first",
+            },
             other => AppError::Store(other),
         }
     }

@@ -31,7 +31,7 @@ use oml_domain::{
 use crate::ports::Retriever;
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
-    DocumentFetchFailure, FetchedDocument, HandleSealer, IdGen, IdempotencyRecord,
+    DocumentFetchFailure, FetchedDocument, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord,
     IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold, OutboxRow,
     ScanOutcome, Scanner, SignInExchange, Signer, StoreError, SubjectRow, TailEvent, TailScan,
     WebStore, claim_subject,
@@ -1064,8 +1064,14 @@ fn apply_fold(
             }
             state.web_entries.insert(hash, entry);
         }
-        MetadataFold::WebEmailChanged(entry) => {
+        MetadataFold::WebEmailChanged {
+            entry,
+            keep_an_admin,
+        } => {
             let hash = entry.email.digest();
+            if keep_an_admin && !entry.admin && last_admin(&state.web_entries, &hash) {
+                return Err(StoreError::LastAdminEntry);
+            }
             let Some(held) = state.web_entries.get_mut(&hash.0) else {
                 return Err(StoreError::Backend(
                     "web.email_changed names an entry the tenant does not hold".to_owned(),
@@ -1075,7 +1081,13 @@ fn apply_fold(
             held.admin = entry.admin;
             state.web_sessions.retain(|_, s| s.email_hash != hash);
         }
-        MetadataFold::WebEmailRemoved { email_hash } => {
+        MetadataFold::WebEmailRemoved {
+            email_hash,
+            keep_an_admin,
+        } => {
+            if keep_an_admin && last_admin(&state.web_entries, &email_hash) {
+                return Err(StoreError::LastAdminEntry);
+            }
             if state.web_entries.remove(&email_hash.0).is_none() {
                 return Err(StoreError::Backend(
                     "web.email_removed names an entry the tenant does not hold".to_owned(),
@@ -3139,6 +3151,17 @@ impl JournalStore for MemStore {
             .cloned())
     }
 
+    async fn idempotency_put(&self, put: IdempotencyPut) -> Result<bool, StoreError> {
+        let state = self.tenant(put.scope.tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        let key = (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key);
+        if state.idempotency.contains_key(&key) {
+            return Ok(false);
+        }
+        state.idempotency.insert(key, put.record);
+        Ok(true)
+    }
+
     async fn brief_edge(
         &self,
         tenant_id: Uuid,
@@ -4571,4 +4594,11 @@ impl crate::ports::SparseEncoder for FakeSparseEncoder {
                 .collect())
         })
     }
+}
+
+/// Whether the entry `hash` names is an admin's and no other entry of the
+/// tenant is (ADR-0045 d10).
+fn last_admin(entries: &BTreeMap<[u8; 32], WebEntry>, hash: &Sha256Hash) -> bool {
+    entries.get(&hash.0).is_some_and(|e| e.admin)
+        && !entries.iter().any(|(h, e)| e.admin && h != &hash.0)
 }

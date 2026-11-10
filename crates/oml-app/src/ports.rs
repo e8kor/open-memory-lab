@@ -143,6 +143,12 @@ pub enum StoreError {
     /// nothing, its event included (ADR-0045 d2).
     #[error("the email is held by another tenant's allowlist")]
     EmailTaken,
+    /// A `keep_an_admin` change or removal would leave the tenant no admin
+    /// entry; the store read the admin entries under lock in the commit's
+    /// transaction, and the commit wrote nothing (ADR-0045 d10; ADR-0070
+    /// d5).
+    #[error("the entry is the tenant's last admin entry")]
+    LastAdminEntry,
     #[error("storage backend failure: {0}")]
     Backend(String),
 }
@@ -357,12 +363,20 @@ pub enum MetadataFold {
     /// `web.email_changed`: the entry's user and admin flag, its pinned
     /// subjects kept, and every session of the entry ended in the same
     /// commit (ADR-0045 d2, d5).
-    WebEmailChanged(WebEntry),
+    WebEmailChanged {
+        entry: WebEntry,
+        /// Refuse, with [`StoreError::LastAdminEntry`], un-flagging the
+        /// tenant's last admin entry (ADR-0070 d5).
+        keep_an_admin: bool,
+    },
     /// `web.email_removed`: the entry's row and every session of it, gone
     /// in the same commit; the store refuses an entry it does not hold
     /// (ADR-0045 d2, d13).
     WebEmailRemoved {
         email_hash: Sha256Hash,
+        /// Refuse, with [`StoreError::LastAdminEntry`], removing the
+        /// tenant's last admin entry (ADR-0070 d5).
+        keep_an_admin: bool,
     },
     /// `memory.admin_read`: an admin key read memories' text; nothing
     /// changes but the journal (ADR-0045 d21).
@@ -1174,6 +1188,15 @@ pub trait JournalStore: Retriever + Send + Sync {
         &self,
         scope: &IdempotencyScope,
     ) -> impl Future<Output = Result<Option<IdempotencyRecord>, StoreError>> + Send;
+
+    /// Records the outcome of an act that committed in more than one
+    /// transaction, after its last one, under `scope`: `false` when the
+    /// scope already holds a record, which is then left as it is
+    /// (ADR-0070 d5, the web console's acts).
+    fn idempotency_put(
+        &self,
+        put: IdempotencyPut,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
 
     /// One claim edge of the tenant, pending or ratified; `None` for an edge
     /// it does not hold (postgres-schema.md `claim_edges`).

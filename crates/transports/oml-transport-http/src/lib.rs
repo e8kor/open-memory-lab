@@ -1610,6 +1610,11 @@ where
         // with the rest of the body before step 0 of the issuance order
         // (roles-and-keys.md issuance order; ADR-0026 d5, d9).
         let name = required_creation_name("/name", req.name.as_deref())?;
+        // A session key issues only as the person's own issuance, bounded
+        // to their root (ADR-0070 d2, d5; ADR-0045 d9, d16).
+        if let Some(caller) = session::session_caller() {
+            return Self::issue_key_as_session(st, &caller, &req, &name).await;
+        }
         // Issued keys do not expire yet: a requested expiry is refused by
         // name, since minting the key without it would leave the key its
         // access past the issuer's date (ADR-0025 d2, d16).
@@ -1723,9 +1728,14 @@ where
             refuse_renamed(body, "", &[("workarea_node_id", "workarea")])
         })?;
         let node = reference("/workarea", &req.workarea)?;
-        let denial = retry_chain(|| st.app.deny_key(acting.bearer(), key.clone(), node.clone()))
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let denial = match session::session_caller() {
+            // A session key cuts off one key on universe, as the pages do
+            // (ADR-0070 d5; ADR-0045 d9, d13).
+            Some(caller) => Self::cut_off_as_session(st, &caller, &key, &node).await?,
+            None => retry_chain(|| st.app.deny_key(acting.bearer(), key.clone(), node.clone()))
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?,
+        };
         Ok(json_response(
             StatusCode::CREATED,
             &json!({
@@ -2476,6 +2486,11 @@ where
         } else {
             parse_json(headers, body)?
         };
+        // A person's web session key mints a code for one of their own
+        // connector keys (ADR-0070 d5; ADR-0045 d9).
+        if let Some(caller) = session::session_caller() {
+            return Self::connect_code_as_session(st, &caller, &key, req.ttl_seconds).await;
+        }
         let code = retry_chain(|| {
             st.app
                 .mint_connect_code_with_ttl(&token, key.clone(), req.ttl_seconds)

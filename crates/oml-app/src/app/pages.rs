@@ -412,10 +412,67 @@ where
         };
         let capacity = Capacity::parse(&capacity).ok_or(AppError::Unauthorized)?;
         match self.web_caller(&session, capacity).await {
-            Ok(caller) => Ok((caller, session)),
+            // A person of the sign-up tenant's request rate binds their
+            // session keys at the API as it binds their agent keys
+            // (ADR-0068 d5).
+            Ok(caller) => {
+                self.admit_request(&caller.key).await?;
+                Ok((caller, session))
+            }
             Err(AppError::Store(e)) => Err(AppError::Store(e)),
             Err(_) => Err(AppError::Unauthorized),
         }
+    }
+
+    // -- the web console's acts, replayed by their Idempotency-Key ----------
+
+    /// The scope a web console act records its outcome under: the acting
+    /// key, no workarea, and the act's name beside the client's key, so
+    /// one key's value names one act (ADR-0070 d3 layer 4, d5).
+    fn act_scope(caller: &Caller, act: &str, idem_key: &str) -> crate::ports::IdempotencyScope {
+        crate::ports::IdempotencyScope {
+            tenant_id: caller.key.tenant_id,
+            key_id: caller.key.key_id,
+            workarea_id: Uuid::nil(),
+            idem_key: format!("{act}:{idem_key}"),
+        }
+    }
+
+    /// The outcome recorded for this act under the caller's
+    /// `Idempotency-Key`, if any; a record of another request is
+    /// `idempotency.digest_mismatch` (http-api.md idempotency).
+    pub async fn recorded_act(
+        &self,
+        caller: &Caller,
+        act: &str,
+        idem_key: &str,
+        request_digest: &str,
+    ) -> Result<Option<serde_json::Value>, AppError> {
+        self.recorded(&Self::act_scope(caller, act, idem_key), request_digest)
+            .await
+    }
+
+    /// Records an act's outcome after its last commit, so a resubmission
+    /// with the same key answers it instead of acting again. A scope a
+    /// concurrent resubmission recorded first is left as it is.
+    pub async fn record_act(
+        &self,
+        caller: &Caller,
+        act: &str,
+        idem_key: &str,
+        request_digest: &str,
+        response: serde_json::Value,
+    ) -> Result<(), AppError> {
+        self.journal
+            .idempotency_put(crate::ports::IdempotencyPut {
+                scope: Self::act_scope(caller, act, idem_key),
+                record: crate::ports::IdempotencyRecord {
+                    request_digest: request_digest.to_owned(),
+                    response,
+                },
+            })
+            .await?;
+        Ok(())
     }
 
     // -- the user page's keys ---------------------------------------------
