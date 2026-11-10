@@ -70,7 +70,7 @@ against it.
 
 | Category | Paths | Jobs it turns on |
 |---|---|---|
-| `rust` | `crates/`, `Cargo.toml`, `deny.toml`, `testing/lake/`, `testing/oml-port-contracts/` | `cargo` |
+| `rust` | `crates/`, `sdks/rust/` (the workspace member `oml-sdk`), `Cargo.toml`, `deny.toml`, `testing/lake/`, `testing/oml-port-contracts/` | `cargo` |
 | `migrations` | `migrations/` | `cargo`, `spike 3, RLS hardening` |
 | `api` | `docs/api/*.yaml`, `docs/api/*.json` (the server compiles in and its tests read them) | `cargo`, `openapi.yaml validates`, `generated SDK code is current` |
 | `cargo` | `rust`, `migrations` or `api` | fmt, clippy and doc; `cargo test` with Postgres; `cargo deny`; `demo and quickstart`; `oml CLI` on three targets; the SDK jobs; the recall eval; the release image, `compose` and `chart` |
@@ -80,7 +80,7 @@ against it.
 | `eval` | `eval/`, `bench/` | the recall eval and its data check, remember eval data, benchmark pages, and `docs_tests` |
 | `plugins` | `plugins/`, `kit/`, `.claude-plugin/` | `agent plugin agrees with the server`, `contract surfaces agree` |
 | `sdk` | `sdks/` | the Python, TypeScript and generated-code SDK jobs, `contract surfaces agree` |
-| `release` | `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `deploy/`, `LICENSES/` (the image copies it) | the release image, `compose`, `chart` and `install-smoke` |
+| `release` | `RELEASE-HOLD`, `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `deploy/`, `LICENSES/` (the image copies it) | the release image, `compose`, `chart` and `install-smoke` |
 | `spikes` | `testing/spikes/` | `spike 3, RLS hardening` |
 
 The Rust tests that read files outside `crates/` are the reason `docs` and `eval` keep a slice of

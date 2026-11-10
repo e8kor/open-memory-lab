@@ -4,6 +4,9 @@ Run by .github/workflows/ci.yml (job image). Holds .github/workflows/release.yml
 to docs/engineering/ci-and-toolchain.md "Release artifacts", failing with every
 disagreement found:
 
+- the version job runs scripts/check_release_hold.py as its first step, and
+  every other job needs the version job, so RELEASE-HOLD at the root stops
+  the whole release;
 - the image is built for linux/amd64 and linux/arm64, each build pushed by
   digest rather than by tag;
 - a merge job, needing the build job, assembles the index with
@@ -197,6 +200,7 @@ def main() -> int:
         elif inspect is not None and sign < inspect:
             errors.append(f"job {name}: signs the index before asserting its platforms")
 
+    check_release_hold(errors, jobs)
     check_chart(errors, jobs)
     check_binaries(errors, jobs)
     check_agents(errors, jobs)
@@ -205,6 +209,23 @@ def main() -> int:
     check_installers(errors, jobs)
     check_installer_lines(errors)
     return report(errors)
+
+
+def check_release_hold(errors: list[str], jobs: dict) -> None:
+    """The version job runs scripts/check_release_hold.py before anything else, and every other
+    job needs it, so RELEASE-HOLD stops the whole release."""
+    version = jobs.get("version")
+    if version is None:
+        errors.append("no version job, so nothing runs scripts/check_release_hold.py first")
+        return
+    hold = step_index(version, "scripts/check_release_hold.py")
+    if hold is None:
+        errors.append("the version job does not run scripts/check_release_hold.py")
+    elif hold != next(i for i, run in enumerate(runs(version)) if run):
+        errors.append("the version job runs another step before scripts/check_release_hold.py")
+    for name in jobs:
+        if name != "version" and "version" not in ancestors(jobs, name):
+            errors.append(f"job {name}: does not need the version job, so RELEASE-HOLD would not stop it")
 
 
 def matrix_rows(job: dict) -> list[dict]:

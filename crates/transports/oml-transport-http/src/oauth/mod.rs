@@ -620,18 +620,12 @@ impl Submission {
 /// equal to the issuer's. `Origin: null`, any other value, and a header
 /// sent twice are refused.
 pub(crate) fn same_origin(headers: &HeaderMap, issuer: &Issuer) -> bool {
-    let single = |name: &str| {
-        let mut values = headers.get_all(name).iter();
-        match (values.next(), values.next()) {
-            (Some(value), None) => Some(value.as_bytes()),
-            _ => None,
-        }
-    };
-    if headers.contains_key("sec-fetch-site") {
-        single("sec-fetch-site") == Some(b"same-origin")
-    } else {
-        single(header::ORIGIN.as_str()) == Some(issuer.as_str().as_bytes())
-    }
+    // One rule, in oml-page, so oml-web admits exactly what the lead does
+    // (#230).
+    oml_page::same_origin(
+        |name| headers.get_all(name).iter().map(|v| v.as_bytes()).collect(),
+        issuer.as_str(),
+    )
 }
 
 /// An OAuth endpoint's answer, `Cache-Control: no-store` on every one, its

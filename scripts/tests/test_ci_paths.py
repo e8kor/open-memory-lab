@@ -54,6 +54,11 @@ class Selection(unittest.TestCase):
     def test_an_sdk_change_selects_the_sdk_jobs(self):
         self.assertEqual(on(["sdks/python/pyproject.toml"]), {"sdk"})
 
+    def test_a_rust_sdk_change_selects_the_cargo_build_as_well(self):
+        # sdks/rust is the workspace member oml-sdk, which oml-web links.
+        got = on(["sdks/rust/src/lib.rs"])
+        self.assertTrue({"sdk", "rust", "cargo"} <= got, got)
+
     def test_a_deploy_change_selects_the_release_jobs(self):
         self.assertEqual(on(["deploy/helm/oml/values.yaml"]), {"release"})
         self.assertEqual(on(["Dockerfile"]), {"release"})

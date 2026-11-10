@@ -2044,155 +2044,16 @@ async fn a_key_issued_on_the_user_page_takes_the_default_guardrail_scope_and_the
 }
 
 #[tokio::test]
-async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
+async fn the_lead_no_longer_serves_the_guardrails_view() {
+    // oml-web serves it (ADR-0070 d7 (b)); its assertions moved to
+    // crates/clients/oml-web/tests/web_pages.rs unchanged. The lead answers
+    // the URL as no page rather than as another view.
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let value = laptop_key(&rig, &cookie).await;
-    let id = agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
-    let (_, _, page) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
-    assert!(page.contains("Guardrails"), "{page}");
-    assert!(
-        page.contains("Rules in force at <code>universe.alice</code>"),
-        "{page}"
-    );
-    assert!(
-        page.contains("This workarea and its readable parent workareas."),
-        "{page}"
-    );
-    assert!(page.contains("<select name=\"workarea\">"), "{page}");
-    // Held, it is no rule yet: the set holds none (d3); the memories view
-    // lists the agents' held rows.
-    assert!(page.contains("No guardrail applies here."), "{page}");
-    // Approved by the person's reviewer key, it is in force.
-    act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
-    let serve_id = format!("srv_{}", id.simple());
-    let (status, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "verdict"),
-            ("serve_id", &serve_id),
-            ("verdict", "approve"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    let (_, _, page) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
-    assert!(
-        page.contains("[must] Run the tests before every commit."),
-        "{page}"
-    );
-    assert!(page.contains("universe.alice"), "{page}");
-    let (status, _, _) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[("action", "create_workarea"), ("name", "proj")],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    let (status, _, _) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "create_workarea"),
-            ("name", "docs"),
-            ("parent", "alice.proj"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    let root = key_named(&rig, "alice-web").await.user.expect("a root");
-    let proj = rig
-        .store
-        .workarea_children(rig.boot.tenant_id, root)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|w| w.name.as_str() == "proj")
-        .expect("proj")
-        .workarea_id;
-    let docs = rig
-        .store
-        .workarea_children(rig.boot.tenant_id, proj)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|w| w.name.as_str() == "docs")
-        .expect("docs")
-        .workarea_id;
-    let (status, _, nested) = send(
-        &rig.router,
-        get(
-            &format!("/web?view=guardrails&workarea={docs}"),
-            Some(&cookie),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{nested}");
-    assert!(
-        nested.contains("Rules in force at <code>universe.alice.proj.docs</code>"),
-        "{nested}"
-    );
-    assert!(
-        nested.contains(&format!("value=\"{docs}\" selected")),
-        "{nested}"
-    );
-    assert!(
-        nested.contains("[must] Run the tests before every commit."),
-        "the parent's root rule applies to the nested workarea: {nested}"
-    );
-    // No page act writes, supersedes or retires a guardrail (d17).
-    let (status, _, body) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[("action", "write_guardrail"), ("text", "Push freely.")],
-    )
-    .await;
-    assert!(status.is_client_error(), "{status}: {body}");
-}
-
-#[tokio::test]
-async fn the_guardrail_selector_includes_workareas_after_the_first_tree_page() {
-    let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    for n in 0..200 {
-        let name = format!("w{n:03}");
-        let (status, _, body) = act(
-            &rig,
-            &cookie,
-            "/web",
-            &[("action", "create_workarea"), ("name", &name)],
-        )
-        .await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{name}: {body}");
-    }
-    let root = key_named(&rig, "alice-web").await.user.expect("a root");
-    let last = rig
-        .store
-        .workarea_children(rig.boot.tenant_id, root)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|w| w.name.as_str() == "w199")
-        .expect("the child after the first 200-node page")
-        .workarea_id;
-    let (status, _, page) = send(
-        &rig.router,
-        get(
-            &format!("/web?view=guardrails&workarea={last}"),
-            Some(&cookie),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(
-        page.contains(&format!("value=\"{last}\" selected")),
-        "the selected workarea is present beyond the first page: {page}"
-    );
+    let (status, _, page) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
+    assert!(page.contains("access.not_found"), "{page}");
+    assert!(!page.contains("Rules in force at"), "{page}");
 }
 
 #[tokio::test]

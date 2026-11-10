@@ -4,6 +4,8 @@
 resolver = "2"
 members = [
     "crates/shared/oml-page",
+    "crates/shared/oml-web-credential",
+    "sdks/rust",
     "crates/clients/oml-web",
     "crates/oml-guardrail",
     "crates/oml-scan",
@@ -32,6 +34,8 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 oml-page = { path = "crates/shared/oml-page" }
+oml-web-credential = { path = "crates/shared/oml-web-credential" }
+oml-sdk = { path = "sdks/rust" }
 oml-web = { path = "crates/clients/oml-web" }
 oml-app = { path = "crates/oml-app" }
 oml-domain = { path = "crates/oml-domain" }

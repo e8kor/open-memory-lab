@@ -27,6 +27,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # check_release.py and check_contract_sync.py read YAML; their tests do too.
+      - run: pip install pyyaml
       - run: python -m unittest discover -s scripts/tests
 
   numbers:
