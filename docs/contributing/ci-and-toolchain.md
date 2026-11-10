@@ -80,7 +80,7 @@ against it.
 | `eval` | `eval/`, `bench/` | the recall eval and its data check, remember eval data, benchmark pages, and `docs_tests` |
 | `plugins` | `plugins/`, `kit/`, `.claude-plugin/` | `agent plugin agrees with the server`, `contract surfaces agree` |
 | `sdk` | `sdks/` | the Python, TypeScript and generated-code SDK jobs, `contract surfaces agree` |
-| `release` | `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `deploy/`, `LICENSES/` (the image copies it) | the release image, `compose`, `chart` and `install-smoke` |
+| `release` | `RELEASE-HOLD`, `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `deploy/`, `LICENSES/` (the image copies it) | the release image, `compose`, `chart` and `install-smoke` |
 | `spikes` | `testing/spikes/` | `spike 3, RLS hardening` |
 
 The Rust tests that read files outside `crates/` are the reason `docs` and `eval` keep a slice of

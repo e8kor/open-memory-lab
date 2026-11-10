@@ -34,7 +34,7 @@ CATEGORIES: dict[str, list[str]] = {
     "plugins": ["plugins/**", "kit/**", ".claude-plugin/**"],
     "sdk": ["sdks/**"],
     "eval": ["eval/**", "bench/**"],
-    "release": ["Dockerfile", ".dockerignore", "docker-compose.yml", "deploy/**", "LICENSES/**"],  # the image copies LICENSES/
+    "release": ["RELEASE-HOLD", "Dockerfile", ".dockerignore", "docker-compose.yml", "deploy/**", "LICENSES/**"],  # the image copies LICENSES/
     "spikes": ["testing/spikes/**"],
     # Runs everything: the workflows, the lockfile, the toolchain pin and the scripts the jobs run.
     "ci": [".github/**", "Cargo.lock", "rust-toolchain.toml", "scripts/**"],

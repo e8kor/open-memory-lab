@@ -49,6 +49,10 @@ jobs:
       version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      # RELEASE-HOLD at the root holds every release; every other job needs
+      # this one (scripts/check_release.py holds that).
+      - name: no release hold
+        run: python3 scripts/check_release_hold.py
       - id: v
         run: |
           tag="${GITHUB_REF_NAME#v}"
