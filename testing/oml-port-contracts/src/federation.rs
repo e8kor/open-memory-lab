@@ -1133,18 +1133,22 @@ pub async fn the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row<
     let key = w
         .key(Role::Reader, &["crew", "legal", "product"], &[])
         .await;
-    // k 1, so the answer is never thin: the hint is the rate test's alone.
-    assert_eq!(
-        kiwi_hint(&w, &key).await,
-        None,
-        "equal rates, and one stray row twice as rich, fired the hint"
-    );
+    // Equal rates and a stray row fire nothing, at k 1 and at k 10, where
+    // the scope's two hits leave the answer short of k: the hint reads
+    // rates alone (d8 as amended by the phase 1 eval).
+    for k in [1, 10] {
+        assert_eq!(
+            kiwi_hint(&w, &key, k).await,
+            None,
+            "equal rates, and one stray row twice as rich, fired the hint at k {k}"
+        );
+    }
     let mut w = w;
     w.create("orchard", "crew").await;
     w.promote("orchard", "kiwi grafting").await;
     w.promote("orchard", "kiwi pruning").await;
     w.commit("orchard").await;
-    let fired = kiwi_hint(&w, &key)
+    let fired = kiwi_hint(&w, &key, 1)
         .await
         .expect("a source twice as rich fires the hint");
     assert_eq!(
@@ -1171,8 +1175,9 @@ pub async fn the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row<
 async fn kiwi_hint<S: JournalStore + Clone>(
     w: &FedWorld<S>,
     key: &IssuedKey,
+    k: usize,
 ) -> Option<oml_app::federation::Widen> {
-    w.recall(key, "kiwi", "home", Some(Sources::Scope), "bm25", 1)
+    w.recall(key, "kiwi", "home", Some(Sources::Scope), "bm25", k)
         .await
         .expect("scope")
         .widen

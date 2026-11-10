@@ -6213,12 +6213,9 @@ where
             (candidates, below_floor) = apply_floor(candidates, floor);
         }
         // The widen hint, on a `scope` answer of a federated tenant: a
-        // candidate richer per readable row than the scope, or a thin
-        // answer while some candidate holds a query word (ADR-0072 d8).
-        let widen = plan
-            .hint
-            .as_ref()
-            .and_then(|hint| hint.widen(candidates.len() < req.k));
+        // candidate richer per readable row than the scope (ADR-0072 d8, as
+        // amended by the phase 1 eval).
+        let widen = plan.hint.as_ref().and_then(|hint| hint.widen());
         // Spellings only for an empty or thin result, fewer hits than
         // `DID_YOU_MEAN_BELOW` (or than `k` when it asks fewer) before the
         // budget cut, for the

@@ -9362,6 +9362,10 @@ async fn unreadable_rows_move_no_timing(copies: u32) {
     let pick = |c: &str| match c {
         "id" => "gen_random_uuid()".to_owned(),
         "claim_key" => "claim_key || '-copy-' || g".to_owned(),
+        // Each copy's own text, so no two copies are near copies of each
+        // other for the similar-key trigger, every one holding every query
+        // word.
+        "claim" => "claim || ' copy ' || g".to_owned(),
         other => other.to_owned(),
     };
     let sql = format!(

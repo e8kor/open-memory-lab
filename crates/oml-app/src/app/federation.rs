@@ -67,24 +67,24 @@ pub(super) struct HintInput {
 }
 
 impl HintInput {
-    /// `search.widen` (d8): a candidate at least twice as rich per readable
-    /// row as the scope with a kept word on two of its rows, or a thin
-    /// answer while some candidate holds a kept word.
-    pub(super) fn widen(&self, thin: bool) -> Option<Widen> {
+    /// `search.widen` (d8, as amended by the phase 1 eval): a candidate at
+    /// least twice as rich per readable row as the scope, with a kept word
+    /// on two of its rows. The thin-answer rule is dropped: on the eval's
+    /// scopes of 12 to 25 memories it fired on 84% of the queries the scope
+    /// answered, past d11's 10% (ADR-0072 Phase 1 as built).
+    pub(super) fn widen(&self) -> Option<Widen> {
         let scope_rate = rate(&self.scope, &self.reference);
-        let positive = self
-            .candidates
+        self.candidates
             .iter()
-            .filter(|c| estimate(c, &self.reference) > 0.0)
-            .count();
-        let rich = self
-            .candidates
-            .iter()
-            .any(|c| richer(c, scope_rate, &self.reference));
-        (rich || (thin && positive > 0)).then(|| Widen {
-            candidates: positive,
-            matches_at_least: matches_at_least(self.words, &self.candidates),
-        })
+            .any(|c| richer(c, scope_rate, &self.reference))
+            .then(|| Widen {
+                candidates: self
+                    .candidates
+                    .iter()
+                    .filter(|c| estimate(c, &self.reference) > 0.0)
+                    .count(),
+                matches_at_least: matches_at_least(self.words, &self.candidates),
+            })
     }
 }
 
