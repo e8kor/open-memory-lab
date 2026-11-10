@@ -17,6 +17,9 @@ pub const KEY_LISTEN: &str = "web.listen";
 /// The web client secret the API checks on every `omls_` credential
 /// (ADR-0070 d2). Read, never logged.
 pub const KEY_CLIENT_SECRET: &str = "web.client_secret";
+/// Permits a plain `http://` `web.api_url` to a host that is not loopback,
+/// for a private network (ADR-0070 d4). Off unless set to `true`.
+pub const KEY_ALLOW_PLAIN_HTTP: &str = "web.allow_plain_http_api";
 
 /// Where the pages listen when `web.listen` is unset: loopback, beside the
 /// lead's `127.0.0.1:8090`, for the reverse proxy in front of both.
@@ -73,6 +76,23 @@ pub struct Config {
     pub api_url: String,
     pub listen: SocketAddr,
     pub client_secret: ClientSecret,
+    /// `web.allow_plain_http_api`: the `http://` hop to a non-loopback host
+    /// is allowed, and the process logs a warning at every start.
+    pub allow_plain_http_api: bool,
+}
+
+/// Whether `authority` (`host[:port]`, no userinfo) names a loopback host.
+fn is_loopback_host(authority: &str) -> bool {
+    let host = if let Some(v6) = authority.strip_prefix('[') {
+        v6.split(']').next().unwrap_or("")
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// The shortest secret accepted: 32 characters, so a placeholder such as
@@ -97,6 +117,7 @@ impl Config {
         let get = |key: &'static str| lookup(&env_name(key)).filter(|v| !v.trim().is_empty());
         let api_url = get(KEY_API_URL).ok_or(ConfigError::Missing(KEY_API_URL))?;
         let api_url = api_url.trim().trim_end_matches('/').to_owned();
+        let plain = api_url.starts_with("http://");
         let rest = api_url
             .strip_prefix("https://")
             .or_else(|| api_url.strip_prefix("http://"))
@@ -108,6 +129,20 @@ impl Config {
             return Err(ConfigError::Invalid(
                 KEY_API_URL,
                 "must name a host and no path",
+            ));
+        }
+        if rest.contains(['@', '?', '#']) {
+            return Err(ConfigError::Invalid(
+                KEY_API_URL,
+                "must carry no userinfo, query or fragment",
+            ));
+        }
+        let allow_plain_http_api =
+            get(KEY_ALLOW_PLAIN_HTTP).is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
+        if plain && !is_loopback_host(rest) && !allow_plain_http_api {
+            return Err(ConfigError::Invalid(
+                KEY_API_URL,
+                "plain http to a non-loopback host sends session credentials in clear; use https://, or set web.allow_plain_http_api = true for a private network",
             ));
         }
         let listen = get(KEY_LISTEN)
@@ -122,10 +157,12 @@ impl Config {
                 "must be at least 32 characters",
             ));
         }
+        let warn_plain = plain && allow_plain_http_api && !is_loopback_host(rest);
         Ok(Self {
             api_url,
             listen,
             client_secret: ClientSecret(secret),
+            allow_plain_http_api: warn_plain,
         })
     }
 }
@@ -197,6 +234,50 @@ mod tests {
         .unwrap();
         assert_eq!(config.api_url, "https://memory.example");
         assert_eq!(config.listen, DEFAULT_LISTEN.parse().unwrap());
+    }
+
+    #[test]
+    fn a_plain_http_api_url_to_a_non_loopback_host_is_refused_unless_allowed() {
+        let base = [("OML_WEB__CLIENT_SECRET", SECRET)];
+        let with = |url: &'static str, allow: Option<&'static str>| {
+            let mut v = base.to_vec();
+            v.push(("OML_WEB__API_URL", url));
+            if let Some(a) = allow {
+                v.push(("OML_WEB__ALLOW_PLAIN_HTTP_API", a));
+            }
+            load(&v)
+        };
+        for ok in [
+            "http://127.0.0.1:8090",
+            "http://localhost:8090",
+            "http://[::1]:8090",
+            "https://oml:8090",
+        ] {
+            assert!(with(ok, None).is_ok(), "{ok}");
+        }
+        let err = with("http://oml:8090", None).unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid(KEY_API_URL, _)));
+        assert!(err.to_string().contains("allow_plain_http_api"));
+        assert!(with("http://oml:8090", Some("false")).is_err());
+        let config = with("http://oml:8090", Some("true")).unwrap();
+        assert!(config.allow_plain_http_api);
+        assert!(
+            !with("https://oml:8090", Some("true"))
+                .unwrap()
+                .allow_plain_http_api
+        );
+    }
+
+    #[test]
+    fn an_api_url_with_userinfo_query_or_fragment_is_refused() {
+        for bad in ["https://u:p@h", "http://127.0.0.1?x=1", "https://h#f"] {
+            let err = load(&[
+                ("OML_WEB__API_URL", bad),
+                ("OML_WEB__CLIENT_SECRET", SECRET),
+            ])
+            .unwrap_err();
+            assert!(matches!(err, ConfigError::Invalid(KEY_API_URL, _)), "{bad}");
+        }
     }
 
     #[test]

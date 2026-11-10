@@ -17,6 +17,12 @@ async fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if config.allow_plain_http_api {
+        eprintln!(
+            "oml-web: warning: web.api_url {} is plain http to a non-loopback host; session credentials cross it in clear (web.allow_plain_http_api is set)",
+            config.api_url
+        );
+    }
     let layers = Layers {
         public_origin: None,
         log: Arc::new(|line| println!("{line}")),
