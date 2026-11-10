@@ -1,4 +1,4 @@
-//! The deterministic content scan, rule set `oml-scan/1` (ADR-0065).
+//! The deterministic content scan, rule set `oml-scan/1.1` (ADR-0065; `/1` before the 2026-11-10 amendment).
 //!
 //! Rules, not a model: the same text gives the same findings under the same
 //! rule-set version (admission.md). A finding names its class, its rule and
@@ -25,10 +25,10 @@ use regex::Regex;
 
 pub use path::secret_path;
 pub use rules::Action;
-use rules::{Check, PLACEHOLDERS, RULES, Rule};
+use rules::{Check, LETTER_PHRASES, PLACEHOLDERS, RULES, Rule};
 
 /// The rule-set version every verdict is journalled under (ADR-0065 d1).
-pub const RULESET: &str = "oml-scan/1";
+pub const RULESET: &str = "oml-scan/1.1";
 
 /// The largest text one scan reads: 1 MiB. A longer field is vetoed as
 /// `format.scan_bound` rather than scanned in part (d9).
@@ -118,9 +118,30 @@ pub struct Options {
 static COMPILED: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     RULES
         .iter()
-        .map(|r| Regex::new(r.pattern).expect("the oml-scan/1 patterns compile"))
+        .map(|r| Regex::new(r.pattern).expect("the oml-scan/1.1 patterns compile"))
         .collect()
 });
+
+/// The letters-only view's phrase patterns, each with the rule it reports.
+static LETTERS: LazyLock<Vec<(&'static Rule, Regex)>> = LazyLock::new(|| {
+    LETTER_PHRASES
+        .iter()
+        .map(|(id, pattern)| {
+            let rule = RULES
+                .iter()
+                .find(|r| r.id == *id)
+                .expect("a letters phrase names a rule");
+            (
+                rule,
+                Regex::new(pattern).expect("the letters phrases compile"),
+            )
+        })
+        .collect()
+});
+
+/// One run of letters and digits: what the letters-only view keeps.
+static LETTER_RUN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\p{L}\p{N}]+").expect("compiles"));
 
 /// Every rule id the set can report, with its class and action: the closed
 /// label set of the findings metric (d11).
@@ -131,11 +152,12 @@ pub fn rule_ids() -> Vec<(&'static str, &'static str, Action)> {
     out.push(("encoding.base64_blob", "base64-blob", Action::Hold));
     out.push(("unicode.invisible", "invisible-format", Action::Hold));
     out.push(("unicode.invisible", "tag-characters", Action::Hold));
+    out.push(("unicode.invisible", "variation-run", Action::Hold));
     out.push(("format.scan_bound", "scan-bound", Action::Veto));
     out
 }
 
-/// The scanner: the compiled `oml-scan/1` set, the deployment's options,
+/// The scanner: the compiled `oml-scan/1.1` set, the deployment's options,
 /// and the findings counted by rule since start (d11).
 #[derive(Debug, Default)]
 pub struct RuleSet {
@@ -216,6 +238,25 @@ impl RuleSet {
                 line: 1,
             }];
         }
+        // The order is fixed (d14, amended 2026-11-10): first every pattern
+        // and run rule over the text as written; then the invisible-character
+        // rules over the text as written, since the views remove what they
+        // count; then every pattern and run rule again over each normalised
+        // view, veto and hold alike, keeping each rule no earlier pass
+        // reported. The first view deletes the removable characters, which
+        // undoes one inside a word; the second puts a space where each was,
+        // which undoes one used as the space between words. A view that
+        // normalises past the bound is vetoed as the text would be (d9).
+        let views = normalised(text);
+        if views.iter().any(|v| v.len() > MAX_SCAN_BYTES) {
+            return vec![Finding {
+                class: "format.scan_bound",
+                rule: "scan-bound",
+                action: Action::Veto,
+                field: field.to_owned(),
+                line: 1,
+            }];
+        }
         let mut out = self.matched(field, text);
         if let Some((start, rule)) = invisible(text) {
             out.push((
@@ -223,14 +264,22 @@ impl RuleSet {
                 code_finding("unicode.invisible", rule, Action::Hold, field, text, start),
             ));
         }
-        // The veto rules again over the text as copy-paste mangles it:
-        // zero-width characters and soft hyphens gone, a no-break space a
-        // space, compatibility forms folded (NFKC) (d14).
-        if let Some(view) = normalised(text) {
-            for (start, f) in self.matched(field, &view) {
-                if f.action == Action::Veto && !out.iter().any(|(_, g)| g.rule == f.rule) {
+        for view in &views {
+            for (start, f) in self.matched(field, view) {
+                if !out.iter().any(|(_, g)| g.rule == f.rule) {
                     out.push((start, f));
                 }
+            }
+        }
+        // Last, the letters-only view (ADR-0074 d6): compatibility forms
+        // decomposed, lower case, and every code point that is not a letter
+        // or a digit dropped, combining marks, spaces, punctuation and
+        // invisible characters alike. It is read by the injection phrases
+        // alone, written without separators, so no character inside or
+        // between the words hides one.
+        for (start, f) in letters_findings(field, text) {
+            if !out.iter().any(|(_, g)| g.rule == f.rule) {
+                out.push((start, f));
             }
         }
         out.sort_by_key(|(start, f)| (*start, f.rule));
@@ -392,34 +441,109 @@ fn aws_secret_near_id(text: &str) -> Option<usize> {
     None
 }
 
-/// Characters copy-paste inserts inside a token without changing how it
-/// reads: zero-width spaces and joiners, the word joiner, the byte-order
-/// mark and the soft hyphen (d14).
+/// Characters that change nothing a reader sees, so copy-paste or an
+/// evasion can put them inside a token or a phrase: Unicode's default
+/// ignorable code points — the soft hyphen, the combining grapheme joiner,
+/// the Arabic letter mark, the Hangul fillers, the Mongolian vowel
+/// separator, the zero-width spaces, joiners and directional marks, the
+/// bidirectional controls, the word joiner and the invisible operators,
+/// the variation selectors, the byte-order mark, the interlinear
+/// annotation marks and the tag characters (d14, amended 2026-11-10).
 fn removable(c: char) -> bool {
     matches!(
         c,
-        '\u{00AD}' | '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}'
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF0}'..='\u{FFFB}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E0FFF}'
     )
 }
 
-/// The text as copy-paste mangles it, undone, or `None` when it is already
-/// that text: removable characters gone, NBSP a space, NFKC (d14).
-fn normalised(text: &str) -> Option<String> {
+/// The text with what hides a token or a phrase undone, none when it is
+/// already that text: NBSP a space, NFKC, and the removable characters
+/// deleted in one view and made spaces in the other (d14). Not
+/// case-folded: the hold patterns match either case already, and folding
+/// would hide an upper-case key from the veto patterns.
+fn normalised(text: &str) -> Vec<String> {
     use unicode_normalization::UnicodeNormalization as _;
     use unicode_normalization::{IsNormalized, is_nfkc_quick};
     let plain = text.is_ascii()
         || (!text.chars().any(|c| removable(c) || c == '\u{00A0}')
             && is_nfkc_quick(text.chars()) == IsNormalized::Yes);
     if plain {
-        return None;
+        return Vec::new();
     }
-    let view: String = text
+    let view = |sep: Option<char>| -> String {
+        text.chars()
+            .filter_map(|c| {
+                if removable(c) {
+                    sep
+                } else if c == '\u{00A0}' {
+                    Some(' ')
+                } else {
+                    Some(c)
+                }
+            })
+            .nfkc()
+            .collect()
+    };
+    let mut views = vec![view(None), view(Some(' '))];
+    views.dedup();
+    views.retain(|v| v != text);
+    views
+}
+
+/// The injection phrases found in the letters-only view of `text`, each
+/// placed on the line of the text where its first letter stands.
+fn letters_findings(field: &str, text: &str) -> Vec<(usize, Finding)> {
+    use unicode_normalization::UnicodeNormalization as _;
+    // The Hangul fillers are letters that show nothing; every removable
+    // character goes before the letters are read.
+    let folded: String = text
         .chars()
-        .filter(|&c| !removable(c))
-        .map(|c| if c == '\u{00A0}' { ' ' } else { c })
-        .nfkc()
+        .map(|c| if removable(c) { ' ' } else { c })
+        .nfkd()
+        .flat_map(char::to_lowercase)
         .collect();
-    (view != text).then_some(view)
+    let mut letters = String::with_capacity(folded.len());
+    // (offset in `letters`, offset in `folded`) at the start of each run.
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for m in LETTER_RUN.find_iter(&folded) {
+        runs.push((letters.len(), m.start()));
+        letters.push_str(m.as_str());
+    }
+    let mut out = Vec::new();
+    for (rule, re) in LETTERS.iter() {
+        if let Some(m) = re.find(&letters) {
+            let i = runs.partition_point(|&(at, _)| at <= m.start()) - 1;
+            let (at, from) = runs[i];
+            let start = from + (m.start() - at);
+            out.push((
+                start,
+                Finding {
+                    class: rule.class,
+                    rule: rule.id,
+                    action: rule.action,
+                    field: field.to_owned(),
+                    line: line_of(&folded, start),
+                },
+            ));
+        }
+    }
+    out
 }
 
 fn line_of(text: &str, start: usize) -> usize {
@@ -560,23 +684,53 @@ fn invisible_format(c: char) -> bool {
     matches!(c, '\u{200B}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' | '\u{180E}' | '\u{206A}'..='\u{206F}')
 }
 
+/// The emoji tag sequences Unicode recommends for general interchange
+/// (UTS #51, `emoji-test.txt`, RGI): the subdivision flags of England,
+/// Scotland and Wales, each U+1F3F4, its id as tag letters, then the cancel
+/// tag U+E007F. No other tag sequence is RGI.
+const RGI_TAG_SEQUENCES: [&str; 3] = [
+    "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}",
+    "\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}",
+    "\u{1F3F4}\u{E0067}\u{E0062}\u{E0077}\u{E006C}\u{E0073}\u{E007F}",
+];
+
 /// The invisible-character rules (d5): more than [`INVISIBLE_LIMIT`]
 /// zero-width or invisible format characters, or any Unicode tag character
-/// outside an emoji flag sequence (which opens with U+1F3F4). Joiners
-/// (U+200C, U+200D) and the soft hyphen are left alone: scripts and emoji
-/// use them.
+/// outside an RGI emoji tag sequence, read whole (amended 2026-11-10): a
+/// flag prefix with any other tag characters after it is a hidden payload,
+/// not a flag; and two or more variation selectors in a row
+/// (`variation-run`, amended the same day). Joiners (U+200C, U+200D) and the soft hyphen are left alone:
+/// scripts and emoji use them.
 fn invisible(text: &str) -> Option<(usize, &'static str)> {
     let mut first = None;
     let mut n = 0;
-    let mut prev_flag = false;
-    for (i, c) in text.char_indices() {
-        if ('\u{E0000}'..='\u{E007F}').contains(&c) {
-            if !prev_flag {
-                return Some((i, "tag-characters"));
+    let mut selectors = 0;
+    let mut chars = text.char_indices();
+    while let Some((i, c)) = chars.next() {
+        // One variation selector picks a glyph for the character before it;
+        // two or more in a row choose nothing and can carry a byte each.
+        if matches!(c, '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}') {
+            selectors += 1;
+            if selectors > 1 {
+                return Some((i, "variation-run"));
             }
             continue;
         }
-        prev_flag = c == '\u{1F3F4}';
+        // A joiner or another removable character between selectors does
+        // not end the run: it shows nothing either.
+        if !removable(c) {
+            selectors = 0;
+        }
+        if c == '\u{1F3F4}'
+            && let Some(flag) = RGI_TAG_SEQUENCES.iter().find(|f| text[i..].starts_with(*f))
+        {
+            // Past the sequence's tag characters: each is one char.
+            chars.nth(flag.chars().count() - 2);
+            continue;
+        }
+        if ('\u{E0000}'..='\u{E007F}').contains(&c) {
+            return Some((i, "tag-characters"));
+        }
         if invisible_format(c) {
             first.get_or_insert(i);
             n += 1;

@@ -510,7 +510,10 @@ flowchart TD
           space, so a phrase joined by underscores or slashes matches;
         - **Letters only:** every character that is not a letter removed, so `i-g-n-o-r-e
           p.r.e.v.i.o.u.s` reads `ignoreprevious`;
-        - **Skeleton:** TR39's skeleton of the folded text.
+        - **Skeleton:** TR39's skeleton of the folded text. `oml-scan/1.1` ships the
+          letters-only view ahead of phase 2 (ADR-0065 d14 as amended 2026-11-10); the skeleton
+          view, which mixed-script confusables still evade without, is tracked as
+          [#225](https://github.com/e8kor/open-memory-lab/issues/225).
 
     **Which rule reads which view.** A skeleton maps letters to letters (`rn` to `m`, `1` and
     `I` to `l`) and the letters-only view drops word boundaries, so neither can be read by a

@@ -636,7 +636,14 @@ enum AdminCommand {
     },
     /// Report by rule and location which stored versions current rules would
     /// refuse or hold; never prints text or changes data.
-    Rescan,
+    Rescan {
+        /// Also record each held version's findings under current rules, so
+        /// a held version written before an upgrade is served inside an
+        /// in-progress workarea again when nothing is found; journals
+        /// scan.findings_recorded.
+        #[arg(long)]
+        record_held: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3350,19 +3357,28 @@ fn run_crews(
 /// memory by id, or every page of a search, each answer journalled by the
 /// server as `memory.admin_read`.
 /// `oml admin rescan`: every window of the journal, summed by rule, each
-/// finding listed by artifact, version, state and place (ADR-0065 d13).
-/// Exits 1 when any stored version would be refused, so a script notices.
-fn run_rescan(cli: &Cli, client: &Client) -> Result<ExitCode, CliError> {
+/// finding listed by artifact, version, state and place (ADR-0065 d13), and,
+/// with `record_held`, each window's held versions' findings recorded under
+/// the server's rule set (d15; ADR-0074 d28). Exits 1 when any stored
+/// version would be refused, so a script notices.
+fn run_rescan(cli: &Cli, client: &Client, record_held: bool) -> Result<ExitCode, CliError> {
     let mut after = 0_u64;
     let mut scanned = 0_u64;
+    let mut recorded = 0_u64;
     let mut version;
     let mut findings: Vec<Value> = Vec::new();
     let mut by_rule: std::collections::BTreeMap<(String, String, String), u64> =
         std::collections::BTreeMap::new();
     loop {
-        let (_, page) = client.get(&format!("/v2/admin/rescan?after_seq={after}"))?;
+        let path = format!("/v2/admin/rescan?after_seq={after}");
+        let (_, page) = if record_held {
+            client.post(&path, &json!({}), &write_opts())?
+        } else {
+            client.get(&path)?
+        };
         version = page["scanner_version"].clone();
         scanned += page["scanned"].as_u64().unwrap_or(0);
+        recorded += page["recorded"].as_u64().unwrap_or(0);
         findings.extend(page["findings"].as_array().cloned().unwrap_or_default());
         for r in page["by_rule"].as_array().into_iter().flatten() {
             *by_rule
@@ -3387,10 +3403,11 @@ fn run_rescan(cli: &Cli, client: &Client) -> Result<ExitCode, CliError> {
                 "class": class, "rule": rule, "action": action, "count": count,
             })).collect::<Vec<_>>(),
             "findings": findings,
+            "recorded": recorded,
         }));
     } else {
         println!(
-            "rescan      : {scanned} stored version(s) under {}, {} finding(s)",
+            "rescan      : {scanned} stored version(s) under {}, {} finding(s), {recorded} held version(s) recorded",
             version.as_str().unwrap_or("no pinned rule set"),
             findings.len()
         );
@@ -3411,7 +3428,7 @@ fn run_rescan(cli: &Cli, client: &Client) -> Result<ExitCode, CliError> {
         }
         if vetoes > 0 {
             println!(
-                "next        : {vetoes} finding(s) the scan would refuse today; nothing was changed. Read each with oml admin read <artifact_id> and retire or demote it"
+                "next        : {vetoes} finding(s) the scan would refuse today; nothing was refused or deleted. Read each with oml admin read <artifact_id> and retire or demote it"
             );
         }
     }
@@ -3429,7 +3446,7 @@ fn run_admin(
 ) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
     let (memory, query, workarea, state) = match command {
-        AdminCommand::Rescan => return run_rescan(cli, &client),
+        AdminCommand::Rescan { record_held } => return run_rescan(cli, &client, *record_held),
         AdminCommand::Read {
             memory,
             query,
@@ -4569,6 +4586,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut reads_universe: Option<bool> = None;
     let mut admin_emails: Option<(usize, Vec<String>)> = None;
     let mut signup_overview: Option<Value> = None;
+    let mut scan_backlog: Option<Value> = None;
     let mut default_node: Option<Value> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
@@ -4651,6 +4669,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             // d8).
             if is_admin {
                 search_settings = client.get("/v2/search").ok().map(|(_, v)| v);
+                // One event's window, read for the counts it carries
+                // (ADR-0074 d28).
+                scan_backlog = client.get("/v2/admin/rescan?limit=1").ok().map(|(_, v)| v);
             }
         }
     }
@@ -4674,7 +4695,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     );
     let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
     let telemetry = telemetry_doctor(scrape.as_ref());
-    let scan = scan_doctor(ready.as_ref(), scrape.as_ref());
+    let mut scan = scan_doctor(ready.as_ref(), scrape.as_ref());
+    scan.extend(scan_backlog_doctor(scan_backlog.as_ref()));
     let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     let handlers = handlers_doctor(scrape.as_ref());
@@ -5149,6 +5171,39 @@ fn telemetry_doctor(scrape: Option<&Scrape>) -> Vec<String> {
         ));
     }
     lines
+}
+
+/// The rescan backlog lines (ADR-0074 d28), from an admin key's one-event
+/// rescan window: held versions an older rule set scanned, which stay their
+/// authors' alone in in-progress workareas until `--record-held` reads
+/// them, and every stored version an older rule set scanned.
+fn scan_backlog_doctor(report: Option<&Value>) -> Vec<String> {
+    let Some(r) = report else {
+        return vec![
+            "scan_held_unrescanned, scan_rescan_due: not read; an admin key reads them".to_owned(),
+        ];
+    };
+    let version = r["scanner_version"]
+        .as_str()
+        .unwrap_or("the server's rule set");
+    let held = r["held_unrescanned"].as_u64().unwrap_or(0);
+    let due = r["rescan_due"].as_u64().unwrap_or(0);
+    vec![
+        if held > 0 {
+            format!(
+                "warn scan_held_unrescanned: {held} held version(s) were scanned under an older rule set than {version}, and stay their authors' alone in in-progress workareas; run oml admin rescan --record-held"
+            )
+        } else {
+            "scan_held_unrescanned: 0".to_owned()
+        },
+        if due > 0 {
+            format!(
+                "warn scan_rescan_due: {due} stored version(s) were scanned under an older rule set than {version}; oml admin rescan reports what it finds in them"
+            )
+        } else {
+            "scan_rescan_due: 0".to_owned()
+        },
+    ]
 }
 
 /// The scan doctor lines (ADR-0065 d11): the rule set `/readyz` names, how
@@ -5845,6 +5900,37 @@ mod tests {
         assert_eq!(lines[2], "findings since start: none");
         let old = (200, json!({"status": "ok"}));
         assert!(scan_doctor(Some(&old), None)[0].starts_with("warn scan_ruleset:"));
+    }
+
+    #[test]
+    fn the_scan_doctor_warns_of_held_versions_and_versions_an_older_rule_set_scanned() {
+        let due = json!({
+            "scanner_version": "oml-scan/1.1", "held_unrescanned": 4, "rescan_due": 9,
+        });
+        assert_eq!(
+            scan_backlog_doctor(Some(&due)),
+            vec![
+                "warn scan_held_unrescanned: 4 held version(s) were scanned under an older rule set than oml-scan/1.1, and stay their authors' alone in in-progress workareas; run oml admin rescan --record-held".to_owned(),
+                "warn scan_rescan_due: 9 stored version(s) were scanned under an older rule set than oml-scan/1.1; oml admin rescan reports what it finds in them".to_owned(),
+            ]
+        );
+        let clear = json!({
+            "scanner_version": "oml-scan/1.1", "held_unrescanned": 0, "rescan_due": 0,
+        });
+        assert_eq!(
+            scan_backlog_doctor(Some(&clear)),
+            vec![
+                "scan_held_unrescanned: 0".to_owned(),
+                "scan_rescan_due: 0".to_owned(),
+            ]
+        );
+        assert_eq!(
+            scan_backlog_doctor(None),
+            vec![
+                "scan_held_unrescanned, scan_rescan_due: not read; an admin key reads them"
+                    .to_owned()
+            ]
+        );
     }
 
     #[test]

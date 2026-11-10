@@ -12,7 +12,8 @@ Rust crate that:
 - depends on `oml-page`, `oml-sdk`, `axum`, `tower`, `http`, `serde` and
   `serde_json` only;
 - cannot reach `oml-app`, `oml-domain`, `oml-guardrail`, `oml-scan`,
-  `oml-pg`, `oml-fetch`, `oml-rerank` or the Rust server shell;
+  `oml-pg`, `oml-lake`, `oml-fetch`, `oml-rerank`, `oml-transport-http` or the
+  lead (ADR-0070 d1);
 - presents the same pages, forms and outcomes as today;
 - calls only documented operations with the `omls_` credential of the
   authenticated person’s session.
@@ -40,10 +41,9 @@ crates/
           start.rs
           users.rs        # (open sign-up only if enabled)
         templates/          # generated from oml-page
-        dependencies.rs      # cargo metadata dependency wall
       tests/
         parity.rs           # web_pages.rs moved, assertions untouched
-        dependencies.rs
+        dependencies.rs     # the cargo metadata wall (ADR-0070 d1)
   shared/
     oml-page/            # new shared presentation crate
   transports/
@@ -67,7 +67,7 @@ The dependency wall is a structural test, not a code review habit:
 ```bash
 cargo metadata --format-version 1 --locked
 # walk oml-web's resolve graph over normal/build edges and fail if it reaches
-# oml-app, oml-domain, oml-guardrail, oml-scan, oml-pg, oml-fetch,
+# oml-app, oml-domain, oml-guardrail, oml-scan, oml-pg, oml-lake, oml-fetch,
 # oml-rerank, oml-transport-http, oml-server-lead or sqlx.
 ```
 
@@ -169,7 +169,7 @@ still required for pages:
 
 1. list keys for a user,
 2. review held queue summary,
-3. issue `web`/`review`/`curate` capacity credentials,
+3. grant a person's session key review or curation capacity (the `omls_` credentials themselves are derived from the session token, not issued by an operation),
 4. workarea offers,
 5. session end under the session credential,
 6. account export,
@@ -249,7 +249,7 @@ API returns the same JSON as today, but with no page syntax
 - `generate_sdks.py --check`
 - `cargo build -p oml-server-lead` with web crate and dev parity dependency
 - `cargo test -p oml-transport-http --test web_pages`
-- #163 `open_signup_pg.rs`
+- #167 `open_signup_pg.rs`
 - Chromium frame/Atlas scripts
 - dependency wall
 - route wall
