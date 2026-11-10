@@ -55,7 +55,7 @@ upgrade consequence (d28).
 | d23 | Findings are a list per version |
 | d24 | Steering and guardrails: stricter verdicts; a steering version from any key but a person session needs a person |
 | d25 | Acts that define a person or weaken the scan need a person session, never a bearer key; a tenant's first person is confirmed by a host code |
-| d26 | Same-user approval of a hold finding counts in a single-person tenant, marked `same_user`; in a team another person is required |
+| d26 | Same-user approval of a hold finding counts in a single-person tenant and, in a team, inside the author's own private user root, marked `same_user`; elsewhere in a team another person is required |
 | d27 | Without web sign-in, a local person: a boot-file binding, a lead running under its own OS user, a rate-limited second factor enrolled by host code; with neither, `review_route: none` |
 | d28 | `oml-scan/1.1` is the fix's rule set; held versions with an older `scanned_under` stay author-only in progress until `rescan --record-held` |
 
@@ -312,7 +312,8 @@ flowchart TD
        and the ancestry, as for every verdict: the grant, not the key type, says it may judge
        this row;
     6. the key is not the author key (R2). Whether the person may be the author key's user is
-       d26: yes in a single-person tenant, marked `same_user`; no in a team.
+       d26: yes in a single-person tenant and, in a team, in the author's own private user root, marked
+       `same_user`; elsewhere in a team no.
 
   Every other key, a `held_by: human` bearer dreamer key included, may reject or refer (d19)
   and never approve; the attempt answers `review.person_required` with `details.reason` one of
@@ -922,6 +923,7 @@ flowchart TD
        `a_hold_verdict_after_the_freshness_window_is_refused_as_stale_sign_in`;
        `a_person_may_approve_a_hold_finding_their_own_agent_wrote_in_a_single_person_tenant_marked_same_user`;
        `in_a_team_a_hold_finding_needs_a_person_other_than_the_authors_user`;
+       `in_a_team_a_same_user_approval_counts_in_the_authors_private_user_root`;
        `with_no_sign_in_and_no_local_person_a_hold_finding_reports_review_route_none_and_doctor_errors`;
        `a_local_person_session_needs_the_bound_os_user_and_its_second_factor`;
        `the_local_factor_locks_the_binding_after_five_failures`;
@@ -1143,7 +1145,8 @@ flowchart TD
   every test the server can make.
 
 - **d26 — A person's verdict on a hold finding their own agent wrote counts in a single-person
-  tenant, marked `same_user`, and a team needs another person.** ADR-0044 d8 and ADR-0046 d2 let
+  tenant and, in a team, inside the author's own private user root, marked `same_user`; elsewhere a
+  team needs another person.** ADR-0044 d8 and ADR-0046 d2 let
   a person ratify or approve their own agents' work through another key, marked `same_user`, so
   that a solo user can move their own work. d2's first draft refused the author's user outright,
   which would leave every hold finding in a solo user's root unapprovable and, since dismissal
@@ -1154,12 +1157,18 @@ flowchart TD
       agent key of their own user wrote counts, and the verdict records `same_user: true` and
       `tenant_persons: 1`. The threat d2 guards against is a model talked round by the text it
       judges, not a person approving their own agent's text.
-    - **A team**, two or more confirmed users, needs a person whose user differs from the author
-      key's: a same-user approval answers `review.person_required` with
-      `details.reason: same_user_in_team`. In a team, a hold finding inside one person's user
-      root therefore needs an admin to grant another person review on that root
-      (`grant_review`), which shows that root's held rows to them; the cost is said plainly, and
-      the operator may still choose otherwise (Q4).
+    - **A team**, two or more confirmed users, needs, in a shared workarea, a person whose user
+      differs from the author key's: a same-user approval there answers `review.person_required`
+      with `details.reason: same_user_in_team`.
+    - **A team's private user root (the third case, decided by the operator, 2026-11-10).** Inside
+      the author's own user root, a same-user approval or dismissal counts, marked `same_user`,
+      while that root's readers are that user's keys alone. Once an admin grants another user
+      reader on the root, the team rule above applies there from then on; the approvals already
+      given stay, marked. A user root's readers are its own user's agents, the exposure a
+      single-person tenant already accepts, and anything curated out of it into a shared workarea
+      is a new version, scanned again, which needs another person there. The alternative, a
+      colleague granted review on a private root, would show them its held rows for no gain over
+      the person's own judgment.
     - **The author's user** is read off the author key's `user` or `session_user`. A tenant
       agent key with neither belongs to no person, so in a team the person who runs it may
       approve its findings; the verdict records `author_user: none`, and the card says the
@@ -1174,9 +1183,9 @@ flowchart TD
     - **Open sign-up** ([ADR-0068](ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md),
       proposed). A self-signed-up entry is added by the person's own provider-verified sign-in,
       with no key involved, so it is confirmed for review on its own user root, never with the
-      admin capacity. No second person may read that root (ADR-0068 d3), so d26's team rule can
-      never be met there: if ADR-0068 lands, the sign-up tenant takes Q4's recommended reading
-      for private roots, or every hold finding in it waits forever.
+      admin capacity. No second person may read that root (ADR-0068 d3), so d26's shared-workarea
+      rule can never be met there; the private-root case above is what lets a hold finding there
+      be approved.
 
   Ordinary items are unchanged: outside hold findings, ADR-0044 d8 and ADR-0046 d2 stand as
   written in a team too.
@@ -1310,8 +1319,9 @@ flowchart TD
   new colleague does it on the admin page from the second person on.
 - A person approving a hold finding signs in again when their sign-in is more than 15 minutes
   old (d2). A GitHub sign-in's freshness is the server's own clock, recorded as unattested.
-- A team tenant's hold findings in one person's user root need a second person, who is granted
-  review on that root and sees its held rows (d26).
+- A team tenant's hold findings in a shared workarea need a second person; in one person's own
+  user root that person's same-user approval counts, marked `same_user`, until an admin grants
+  another user reader on it (d26).
 - A CLI-only deployment that wants hold findings approved binds a `[[person]]` in its boot
   settings and enrols a TOTP authenticator; without one, doctor errors while any hold finding
   waits (d27).
@@ -1372,24 +1382,13 @@ a control (d22, former question 2); the dry run reads a restored copy of memory.
 store on that host, never copied off it, publishes per-class and per-origin rates as aggregates
 only, with no sample text and no claim keys, and adds a second, synthetic tenant fed by `oml sync`
 of a few public repositories and a chat-capture fixture so the rates are not one operator's
-habits (d18, former question 3). What is left is the operator's choice:
+habits (d18, former question 3). The last, Q4, is decided below:
 
-- **Q4.** In a team tenant, a hold finding in a person's own user root needs another person
-  (d26), who must then be granted review on that root and sees its held rows. Is that cost
-  accepted, or should a same-user approval also count inside the author's own user root in a
-  team, marked `same_user`, keeping d26's rule for shared workareas only?
-
-  **Recommended (Round 3):** count it inside the author's own user root, marked `same_user`,
-  while that root's readers are that user's keys alone; once an admin grants another user reader
-  on it, d26's team rule applies there. A user root's readers are its own user's agents, the
-  exposure a single-person tenant already accepts; anything curated out of it into a shared
-  workarea is a new version, scanned again, which needs another person there. The rule as
-  written instead grants a colleague review on a private root, which shows them its held rows: a
-  privacy cost with no gain over the person's own judgment. memory.doublegate.io keeps a root
-  per person (ADR-0044), so the rule as written would put every person's flagged notes in front
-  of a colleague. Under ADR-0068's open sign-up no colleague may read the root at all, so the
-  rule as written would leave every hold finding there unapprovable (d26). If the operator agrees, d26 gains this as a third case and the test
-  `in_a_team_a_same_user_approval_counts_in_the_authors_private_user_root`.
+- **Q4.** Decided by the operator, 2026-11-10: in a team, a same-user approval counts inside the
+  author's own user root, marked `same_user`, while that root's readers are that user's keys
+  alone. d26 carries it as its third case, and the test
+  `in_a_team_a_same_user_approval_counts_in_the_authors_private_user_root` is listed in #214's
+  tests (phase 2).
 
 ## Review log
 
