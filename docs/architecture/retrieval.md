@@ -132,7 +132,7 @@ The benchmarks run every pipeline through the same served path as an agent. The 
 
 ## Searching beyond the scope
 
-`sources` says where a recall searches ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). It is off until a tenant admin enables federation (`oml search federation --enabled on`); until then `wide` and a list are refused, never answered as `scope`.
+`sources` says where a recall searches ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). It is off until a tenant admin enables federation with `oml search federation --enabled on`. Until then `wide` and a list are refused, never answered as `scope`.
 
 | `sources` | Searches | Scores with the statistics of |
 |---|---|---|
@@ -140,13 +140,13 @@ The benchmarks run every pipeline through the same served path as an agent. The 
 | `wide` | the subtree, plus the `committed` and `validated` workareas the key reads elsewhere that accept federated reads | the subtree and every such workarea, searched or not |
 | a list of names | exactly the listed workareas, answered whole or refused | the listed workareas |
 
-Below the tenant's `max_sources` (8 by default), `wide` searches every such workarea. Above it, it searches those holding the largest share of the query's matching rows, each word weighted by its rarity, ties broken by name; `search.sources.cut` counts the rest. A large workarea ranks high only by holding most of the matches, so `universe` beside a crew of a few hundred memories is chosen on its share, not its size.
+Below the tenant's `max_sources` (8 by default), `wide` searches every such workarea. Above it, `wide` searches the workareas holding the largest share of the query's matching rows. Each word is weighted by its rarity, and ties break by name. `search.sources.cut` counts the rest. A large workarea ranks high only by holding most of the matches. So `universe` is chosen beside a small crew on its share, not its size.
 
-The statistics are fixed before any workarea is chosen, so no hit's score depends on which workareas were searched: with `bm25`, the answer for any searched set is the full search's answer restricted to that set. The same query, key, memories and settings give the same answer; selection reads no clock, no randomness and no model.
+The statistics are fixed before any workarea is chosen, so no hit's score depends on which workareas were searched. With `bm25`, the answer for any searched set is the full search's answer restricted to that set. The same query, key, memories and settings give the same answer. Selection reads no clock, no randomness and no model.
 
-The answer says what it searched. Under `wide` or a list, `search.sources` lists each workarea searched with `via` (`scope` or `federated`), its estimate and the query words its rows hold, and each hit carries `via` beside its `workarea_path`. A `scope` answer on a federated tenant carries `search.widen` when a workarea the key reads elsewhere holds the query's words at least twice as often per memory as the scope, on at least two of its memories. It names no workarea; a retry with `sources: "wide"` searches them. Every name and number in an answer is of a workarea the key reads.
+The answer says what it searched. Under `wide` or a list, `search.sources` lists each workarea searched with `via`, `scope` or `federated`. It adds the workarea's estimate and the query words its rows hold. Each hit carries `via` beside its `workarea_path`. On a federated tenant, a `scope` answer carries `search.widen` when another workarea the key reads is richer in the query's words. It must hold them at least twice as often per memory as the scope, on at least two memories. The hint names no workarea; a retry with `sources: "wide"` searches them. Every name and number in an answer is of a workarea the key reads.
 
-Each `scope` and `wide` recall of a federated tenant reads the per-workarea word counts of every such workarea, exact and never sampled; a list reads the listed ones. A tenant with federation off reads nothing more. [Workareas](workareas.md#federated-recall) covers the settings and how to make a workarea findable without granting it.
+On a federated tenant, each `scope` and `wide` recall reads the word counts of every such workarea, exact and never sampled. A list reads the listed ones. A tenant with federation off reads nothing more. [Workareas](workareas.md#federated-recall) covers the settings and how to make a workarea findable without granting it.
 
 ## What search does not do
 

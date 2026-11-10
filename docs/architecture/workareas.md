@@ -158,7 +158,7 @@ A person can put a development workarea in progress with `oml workareas mode <wo
 
 ## Federated recall
 
-A recall searches its workarea's subtree. On a tenant whose admin turned federation on, a recall that asks for `sources: "wide"` also searches the `committed` and `validated` workareas the key already reads elsewhere, and a list such as `["acme.legal", "acme.product"]` searches exactly those ([retrieval](retrieval.md#searching-beyond-the-scope); [ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). Nothing becomes readable that was not: a source is a workarea the key reads, and a key never learns of one it cannot read.
+A recall searches its workarea's subtree. An admin can turn federation on for the tenant. Then a recall with `sources: "wide"` also searches the `committed` and `validated` workareas the key reads elsewhere. A list such as `["acme.legal", "acme.product"]` searches exactly those ([retrieval](retrieval.md#searching-beyond-the-scope); [ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). Nothing becomes readable that was not: a source is a workarea the key reads, and a key never learns of one it cannot read.
 
 | Setting | Who sets it | Default | Command |
 |---|---|---|---|
@@ -169,12 +169,12 @@ A recall searches its workarea's subtree. On a tenant whose admin turned federat
 
 ### A directory workarea
 
-Federated recall searches only what a key reads, so it never tells a crew that a workarea it cannot read exists. A team that wants others to find its work publishes a description as an ordinary claim in a workarea its audience reads, such as a node `directory` under `universe`:
+Federated recall searches only what a key reads, so it never tells a crew that a workarea it cannot read exists. A team that wants others to find its work writes a description as an ordinary claim. It goes in a workarea the audience reads, such as a node `directory` under `universe`:
 
 ```sh
 oml workareas create universe directory
 oml write --workarea directory --claim-key legal-crew "acme.legal holds the contract templates and the review checklist; ask the legal crew's admin for reader."
 ```
 
-The claim is reviewed like any other. Reader on `directory` is the discover grant: reading an entry grants nothing on the workarea it describes, and access is still a grant an admin issues. An entry is a copy that can go stale, and federated recall never routes to the workarea it names.
+The claim is reviewed like any other. Reader on `directory` is the discover grant. Reading an entry grants nothing on the workarea it describes; access is still a grant an admin issues. An entry is a copy that can go stale, and federated recall never routes to the workarea it names.
 
