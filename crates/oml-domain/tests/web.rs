@@ -4,8 +4,8 @@
 use oml_domain::name::Name;
 use oml_domain::web::{
     Email, GitHubEmail, Provider, SIGN_IN_TTL_SECS, SignInRefusal, SignInState, admit_github,
-    admit_google_id_token, base64url_decode, check_user, csrf_matches, csrf_token,
-    session_key_names,
+    admit_google_id_token, base62, base64url_decode, capacity_credential, check_user, csrf_matches,
+    csrf_token, hmac_sha256, session_key_names,
 };
 use serde_json::{Value, json};
 
@@ -209,4 +209,40 @@ fn the_csrf_token_is_the_sessions_and_worthless_without_it() {
     assert!(!csrf_matches("session-b", &token));
     assert!(!csrf_matches("session-a", ""));
     assert_ne!(token, csrf_token("session-b"));
+}
+
+/// HMAC-SHA256 is RFC 4231's: its test case 2, and a key longer than the
+/// block, hashed first.
+#[test]
+fn hmac_sha256_answers_the_rfc_4231_vectors() {
+    assert_eq!(
+        hex::encode(hmac_sha256(b"Jefe", b"what do ya want for nothing?")),
+        "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+    );
+    assert_eq!(
+        hex::encode(hmac_sha256(&[b'k'; 100], b"m")),
+        "0482265a92ce176b0374f2192380b21e2d40126432c52f865cc0957053ae7a14"
+    );
+}
+
+/// A capacity credential is `omls_` and the base62 of HMAC-SHA256 keyed by
+/// the session token over the capacity's purpose, one per capacity, the
+/// value computed here independently by Python's hmac (ADR-0070 d2).
+#[test]
+fn a_capacity_credential_is_the_base62_hmac_of_the_session_token_over_its_capacity() {
+    assert_eq!(
+        capacity_credential("tok", "web"),
+        "omls_NWs52SyPhq5hZwG2dqOo1Q4llEtq86F47PMEKifoKpM"
+    );
+    assert_ne!(
+        capacity_credential("tok", "web"),
+        capacity_credential("tok", "admin")
+    );
+    assert_ne!(
+        capacity_credential("tok", "web"),
+        capacity_credential("tok2", "web")
+    );
+    assert_eq!(base62(&[0, 0]), "0");
+    assert_eq!(base62(&[0, 61]), "z");
+    assert_eq!(base62(&[0, 62]), "10");
 }

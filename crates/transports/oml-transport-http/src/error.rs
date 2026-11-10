@@ -868,6 +868,11 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         AppError::WebField { field, message } => {
             ApiError::validation(message).with_details(json!({ "field": field }))
         }
+        // Converted to `WebField` by `From<StoreError>`; never built raw.
+        AppError::Store(StoreError::LastAdminEntry) => ApiError::validation(
+            "this is the organisation's last admin address; add another admin first",
+        )
+        .with_details(json!({ "field": "admin" })),
         // A read's feedback member is refused by the field it names, and
         // the read is not run (ADR-0054 d6).
         AppError::Feedback { field, message } => {

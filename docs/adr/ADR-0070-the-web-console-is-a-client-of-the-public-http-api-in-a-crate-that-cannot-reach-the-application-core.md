@@ -18,6 +18,8 @@ lines share a correlation id; d16: the new and changed operations below), ADR-00
 **Amended in place:** 2026-11-10, by the operator's decision that `oml-web` runs only as its own
 process (d1, d2, d3, d4, d7, d8, d9 and d10 revised; d11 and d12 new). What changed and why is in
 [The amendment of 2026-11-10](#the-amendment-of-2026-11-10); the decisions below read as amended.
+Amended again on 2026-11-10 by phase (a) as built (d2, d3, d5 and d7 revised): see
+[Phase (a) as built](#phase-a-as-built-2026-11-10).
 
 ## Context
 
@@ -132,6 +134,18 @@ Decided, not built. The build follows #163, #166 and #167.
   can make an act run as another of the same person's capacities, never as anyone else, and
   the API's verb rules still bind it; and whoever holds both the cookie and `oml-web`'s client
   identity acts as the person, which is the operator's process boundary.
+  As built in phase (a): the identity is the secret alone. Mutual TLS needs the lead to
+  terminate TLS on the listener `oml-web` reaches, which it does not, so `web.client_ca` or
+  `web.client_subject` stops the lead at start, naming the setting; the gate accepts a client
+  certificate only as a request extension such a listener would set, never as a header. The
+  capacities are those the entry reaches when the session opens: a curate designation or an
+  admin flag gained later takes effect at the next sign-in, and an entry change ends the
+  session. Each resolved request passes the person's request rate (ADR-0068 d5), as their agent
+  keys do. A session key acts only as the page act its capacity serves where a key operation
+  would reach further: `POST /v2/keys` issues as `<user>-web` only, the person's own issuance,
+  and refuses every other capacity (`access.verb_ceiling`, `details.reason:
+  session_capacity`), so the admin capacity mints no plain key. The admin capacity keeps the
+  admin key role's other verbs, under the API's rules, as any admin key does.
 
 - **d3 — Seven layers wrap every page request, outermost first, each concern has one owner,
   and the stack lives in `oml-web`; an external gateway in front is optional.** The layers are
@@ -158,7 +172,9 @@ Decided, not built. The build follows #163, #166 and #167.
     calls it made. The record of what happened is the API's journal: every act and every admin
     read is journalled by the use case behind its operation, under the session key, as today.
     `oml-web` writes no journal event and keeps no store, so a page cannot record anything the
-    API would not.
+    API would not. An admin read means a read of memory content: the admin's listing of a
+    person's keys (`GET /v2/keys?user=`) reads no claim and journals nothing, as `whoami`
+    does not.
 
 - **d4 — `oml-web` runs only as its own process and reaches the API over HTTP at `web.api_url`,
   which is required; the lead serves no page, and the deployment routes by path.** The SDK
@@ -252,7 +268,7 @@ Decided, not built. The build follows #163, #166 and #167.
     | Operation | Change | Serves (source) | Traces to | Admin |
     |---|---|---|---|---|
     | `GET /v1/memories` | `with_own=true`: the scoped listing and the caller's own rows merged newest first, a row in both once, one cursor; `author`: one key naming the caller's user, by name or id, which drops the scoped part | `web_memories` (#163) | ADR-0045 d22, d23 | no |
-    | `GET /v2/workareas/{workarea}/tree` | `counts=true`: each node carries `{held, promoted, rejected}` as the caller's listing would show them, and `truncated` past `REGION_COUNT_MAX`; for the admin role every row counted as structure, no content | `web_regions`, `admin_regions` (#163) | ADR-0045 d30 | for the admin reading |
+    | `GET /v2/workareas/{workarea}/tree` | `counts=true`: the whole subtree in one answer, each node carrying `{promoted, held, in_progress, other}` as the caller's `with_own` listing would show them, the counts the Atlas draws, and `truncated` past `REGION_COUNT_MAX`; for the admin role every row counted as structure, no content | `web_regions`, `admin_regions` (#163) | ADR-0045 d30 | for the admin reading |
     | `POST /v2/admin/memories/search` | `origin_kind` and `author` filters | `admin_search_filtered` (#163) | ADR-0045 d22, d24 | yes |
     | `GET /v2/review/held` | `ids`: the named held rows only, each with its row or `null` when no longer held or no longer the caller's to judge | `review_named`, the bulk confirmation (main) | ADR-0055 d10 | no |
     | `POST /v2/web/emails`, `POST /v2/web/emails/remove` | `keep_an_admin: true` refuses removing or un-flagging the tenant's last admin entry, `request.validation` `details.field: admin`, in the same transaction | `web_other_admin` (main) | ADR-0045 d10 | yes |
@@ -262,19 +278,26 @@ Decided, not built. The build follows #163, #166 and #167.
 
     | # | Method and path | Request | Response | Serves (source) | Traces to | Who |
     |---|---|---|---|---|---|---|
-    | 1 | `GET /v2/keys` | query `user?`, `limit?`, `cursor?` | `{items: [{id, name, role, held_by, credential, user, created_at, grants: [{role, workarea: {id, name}, path}], cut_off, connections: [{id, client_name, opened_at}]}], next_cursor}` | `web_own_keys`, `web_keys_of_user` (main), `web_has_agent_key` (#167) | ADR-0045 d9, d13; the designed `listKeys` | a session user key, its own user's keys only; the admin role, the tenant's, `user` narrowing |
+    | 1 | `GET /v2/keys` | query `user?`, `limit?`, `cursor?` | `{items: [{id, name, role, held_by, credential, user_root_id, revoked, cut_off, grants: [{role, workarea_id, path}]}], next_cursor}` | `web_own_keys`, `web_keys_of_user` (main), `web_has_agent_key` (#167) | ADR-0045 d9, d13; the designed `listKeys` | a session user key, its own user's keys only; the admin role, one `user`'s keys, `user` required |
     | 2 | `GET /v2/review/queue` | none | `{items: [{workarea: {id, name}, path, held, oldest_at}]}`, no content | `web_queue` (main) | ADR-0045 d10, the designed `reviewQueue` | admin |
     | 3 | `POST /v2/web/users/{user}/capacities` | `{capacity: review \| curate, workareas: [NameRef]}` | `{key: {id, name}, grants_added: [...], journal_seq}` | `web_grant_review`, `web_grant_curation` (main) | ADR-0045 d10, ADR-0044 d7 | admin |
-    | 4 | `GET /v2/workareas/{workarea}/offers` | none | `{transitions: [{to}], mode: {to} \| null, commit: {offered, held}}`, each offered only where the verb's own check admits the caller now | `workarea_offers`, `workarea_offer_check` (#163) | ADR-0045 d28 | no |
+    | 4 | `GET /v2/workareas/{workarea}/offers` | none | `{workarea_id, status, mode, transitions: [{op, to, transition_id?, from?}], mode_change: {to} \| null, commit: {offered, held}}`, each offered only where the verb's own check admits the caller now; an unreadable workarea `access.not_found` | `workarea_offers`, `workarea_offer_check` (#163) | ADR-0045 d28 | no |
     | 5 | `POST /v2/web/session/end` | none | `204` | `web_sign_out` (main), the `sign_out` action | ADR-0045 d5 | an `omls_` credential only; it ends the session it derives from |
     | 6 | `GET /v2/web/export` | none | `application/json` attachment of everything the person holds | `web_export` (#167) | ADR-0068 d6 | session user key only |
     | 7 | `POST /v2/web/deletion-requests` | none | `{requested_at, journal_seq}` | `web_request_deletion` (#167) | ADR-0068 d6 | session user key only |
     | 8 | `POST /v2/web/users/{user}/quota` | `{memories?, keys?, connections?}` | the user's row as `GET /v2/web/users` serves it | `web_set_quota` (#167) | ADR-0068 d5 | admin |
-    | 9 | `POST /v2/web/users/{user}/disable` | `{reason?}` | `{sessions_ended, journal_seq}` | `web_disable_user` (#167) | ADR-0068 d8 | admin |
+    | 9 | `POST /v2/web/users/{user}/disable` | none | `{keys_cut_off, journal_seq}` | `web_disable_user` (#167) | ADR-0068 d8 | admin |
     | 10 | `POST /v2/web/users/{user}/deletion/close` | `{outcome}` | `{journal_seq}` | `web_close_deletion` (#167) | ADR-0068 d6 | admin |
 
     Every state-creating `POST` takes `Idempotency-Key`, and every refusal is the envelope of
-    [errors](../api/errors.md). Six of the ten need the admin key role; #1 needs it for any
+    [errors](../api/errors.md). #3, #7, #8, #9 and #10 replay: a resubmission under the same
+    key answers the recorded response with `Idempotency-Replay: true` and acts nothing again,
+    the outcome recorded after the act's last commit, so a process that dies between them
+    leaves an act a resubmission repeats. The three key operations of the table above serve a
+    session key through the page's own use case: `POST /v2/keys` as `<user>-web` is
+    `web_issue_key` (name, role and `connect_code` only), `POST /v2/keys/{key}/connect-codes`
+    as `<user>-web` is `web_connect_code`, and `POST /v2/keys/{key}/denials` as `<user>-web`
+    or `<user>-admin` is `web_cut_off`, on `universe` alone. Six of the ten need the admin key role; #1 needs it for any
     user but the caller's own. #3 is one operation for two acts because both are one job: an
     admin gives a person's session key grants, creating `<user>-curate` at the first
     designation; it creates a session key only by this path, so `POST /v2/keys` never mints
@@ -339,8 +362,8 @@ Decided, not built. The build follows #163, #166 and #167.
 
     | Phase | Builds | Check that closes it |
     |---|---|---|
-    | (a) | `omls_` credentials and `oml-web`'s client identity, the secret or mTLS (d2); the ten new operations and six changes (d5), each with its use case, its contract entries and its tests; `oml-sdk` (d9) | `check_contract_sync.py`, `generate_sdks.py --check`, and per operation a test named after its sentence, among them `an_omls_credential_without_the_web_client_is_auth_invalid`, `an_omls_credential_on_mcp_is_refused`, `a_capacity_credential_ends_with_its_session`, `the_admin_capacity_ends_when_the_entry_loses_admin`, `a_bearer_user_key_cannot_export_or_request_deletion` |
-    | (b) | `oml-page`, the `oml-web` binary with the layers of d3; the proxy routes of d4 send each moved page's URL to it; pages move one at a time behind the same URLs, the old handler deleted in the commit that moves its page | the page suites, unchanged (below), green after each page moves; `oml_web_reaches_no_application_crate` |
+    | (a) | `omls_` credentials and `oml-web`'s client identity, the secret (d2; mutual TLS is not built and stops the start); the ten new operations and six changes (d5), each with its use case, its contract entries and its tests | `check_contract_sync.py`, `generate_sdks.py --check`, and per operation a test named after its sentence, among them `an_omls_credential_without_the_web_client_is_auth_invalid`, `an_omls_credential_on_mcp_is_refused`, `a_capacity_credential_ends_with_its_session`, `the_admin_capacity_ends_when_the_entry_loses_admin`, `a_bearer_user_key_cannot_export_or_request_deletion` |
+    | (b) | `oml-sdk` (d9), whose one consumer is `oml-web`; `oml-page`, the `oml-web` binary with the layers of d3; the proxy routes of d4 send each moved page's URL to it; pages move one at a time behind the same URLs, the old handler deleted in the commit that moves its page | the page suites, unchanged (below), green after each page moves; `oml_web_reaches_no_application_crate` |
     | (c) | the `web_*` use cases deleted: the logic behind a new operation is renamed to that operation's use case, the sign-in ones move to `oml-app`'s auth module, the rest go | `grep -rn 'pub async fn web_' crates/oml-app --include='*.rs' | grep -v 'crates/oml-app/src/app/auth.rs'` is empty; the workspace builds and every suite passes |
     | (d) | the walls: the dependency test is a required CI check, and `the_lead_serves_no_page_route_outside_oml_web_and_auth` asserts the route table | both tests required on `main` |
 
@@ -456,6 +479,23 @@ web console can be deployed, scaled and restarted without the server. What moved
 | d9 | two `Transport` implementations | one |
 | d10 (b), (e) | in-process; sign-in passes through | reversed; a `303` to the lead's sign-in |
 | d12 | (none) | the landing as its own deployable |
+
+## Phase (a) as built (2026-11-10)
+
+Phase (a) (#188, #232) built the wire; where a decision named a shape the use case does not
+hold, or a promise the build cannot keep yet, the record now says what was built, and why:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d2 | the secret or mutual TLS | the secret; `web.client_ca` stops the start | the lead terminates no TLS, so an mTLS identity could never be proven; refusing at start fails closed |
+| d2 | (silent) | capacities fixed at session open; the person's request rate applies; the admin capacity mints no plain key | the credential's digests are written in the opening commit; ADR-0068 d5 binds every key of a person; the admin page never minted keys, and a session key acts as its page act |
+| d3 | every admin read journalled | every admin read of memory content | listing keys reads no claim |
+| d5 #1 | `created_at`, `connections`, the tenant's keys for the admin role | `user_root_id`, `revoked`; the admin role names `user` | the key row holds no creation time, no page shows connections, and no use case reads every key of a tenant |
+| d5 #4 | `{transitions: [{to}], mode, commit}` | adds `op`, `transition_id`, `from`, the node's status and mode | the dropdown ratifies a named proposal, so it needs its id |
+| d5 #9 | `{reason?}` → `{sessions_ended, …}` | no body → `{keys_cut_off, …}` | the reason is not journalled, so it is refused rather than dropped; the sessions end in the fold and are not counted, while the keys cut off are |
+| d5 tree | `{held, promoted, rejected}` | `{promoted, held, in_progress, other}` | the Atlas draws held rows inside an in-progress scope apart, and the use case counts so |
+| d5 | `Idempotency-Key` taken | replayed by the console's acts; the key operations serve a session key | ADR-0070 d3 layer 4 depends on replay; d5's table maps the page's key acts to them |
+| d7 | `oml-sdk` in (a) | `oml-sdk` in (b) | its one consumer is `oml-web` |
 
 ## Consequences
 

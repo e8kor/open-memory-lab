@@ -11,8 +11,10 @@ from .admin_read_memory_response_200_verdicts_item import (
     AdminReadMemoryResponse200VerdictsItem,
 )
 from .admin_search_memories_body import AdminSearchMemoriesBody
+from .admin_search_memories_body_origin_kind import AdminSearchMemoriesBodyOriginKind
 from .admin_search_memories_body_state import AdminSearchMemoriesBodyState
 from .admin_search_memories_response_200 import AdminSearchMemoriesResponse200
+from .allow_web_email_body import AllowWebEmailBody
 from .anchor import Anchor
 from .anchor_hasher import AnchorHasher
 from .attachment_descriptor import AttachmentDescriptor
@@ -69,6 +71,9 @@ from .client_registration_request_response_types_item import (
 from .client_registration_request_token_endpoint_auth_method import (
     ClientRegistrationRequestTokenEndpointAuthMethod,
 )
+from .close_web_deletion_body import CloseWebDeletionBody
+from .close_web_deletion_body_outcome import CloseWebDeletionBodyOutcome
+from .close_web_deletion_response_200 import CloseWebDeletionResponse200
 from .connect_code import ConnectCode
 from .connection import Connection
 from .connection_client_kind import ConnectionClientKind
@@ -82,12 +87,19 @@ from .crew_page import CrewPage
 from .crew_update import CrewUpdate
 from .denial import Denial
 from .denial_request import DenialRequest
+from .disable_web_user_body import DisableWebUserBody
+from .disable_web_user_response_200 import DisableWebUserResponse200
 from .edge_page import EdgePage
 from .error_code import ErrorCode
 from .error_envelope import ErrorEnvelope
 from .error_envelope_error import ErrorEnvelopeError
 from .error_envelope_error_details import ErrorEnvelopeErrorDetails
 from .events_page import EventsPage
+from .export_web_person_response_200 import ExportWebPersonResponse200
+from .export_web_person_response_200_keys_item import ExportWebPersonResponse200KeysItem
+from .export_web_person_response_200_memories_item import (
+    ExportWebPersonResponse200MemoriesItem,
+)
 from .feedback import Feedback
 from .grant import Grant
 from .grant_covers import GrantCovers
@@ -97,6 +109,10 @@ from .grant_request_covers import GrantRequestCovers
 from .grant_request_deny_item import GrantRequestDenyItem
 from .grant_request_role import GrantRequestRole
 from .grant_role import GrantRole
+from .grant_web_capacities_body import GrantWebCapacitiesBody
+from .grant_web_capacities_body_capacity import GrantWebCapacitiesBodyCapacity
+from .grant_web_capacities_response_200 import GrantWebCapacitiesResponse200
+from .grant_web_capacities_response_200_key import GrantWebCapacitiesResponse200Key
 from .guardrail_rule import GuardrailRule
 from .guardrail_rule_effect import GuardrailRuleEffect
 from .guardrail_rule_rule import GuardrailRuleRule
@@ -105,6 +121,8 @@ from .guardrail_scope import GuardrailScope
 from .guardrail_set import GuardrailSet
 from .guardrail_set_own_held_item import GuardrailSetOwnHeldItem
 from .health import Health
+from .held_named import HeldNamed
+from .held_named_items_item import HeldNamedItemsItem
 from .held_page import HeldPage
 from .held_page_items_item import HeldPageItemsItem
 from .journal_event import JournalEvent
@@ -123,6 +141,7 @@ from .key_profile_type_1 import KeyProfileType1
 from .key_profile_type_2_type_1 import KeyProfileType2Type1
 from .key_profile_type_3_type_1 import KeyProfileType3Type1
 from .list_edges_kind import ListEdgesKind
+from .list_keys_response_200 import ListKeysResponse200
 from .list_memories_kind import ListMemoriesKind
 from .list_memories_state import ListMemoriesState
 from .list_web_emails_response_200 import ListWebEmailsResponse200
@@ -131,13 +150,10 @@ from .list_web_users_response_200_deletions_item import (
     ListWebUsersResponse200DeletionsItem,
 )
 from .list_web_users_response_200_mode import ListWebUsersResponse200Mode
-from .list_web_users_response_200_users_item import ListWebUsersResponse200UsersItem
-from .list_web_users_response_200_users_item_quotas import (
-    ListWebUsersResponse200UsersItemQuotas,
-)
-from .list_web_users_response_200_users_item_usage import (
-    ListWebUsersResponse200UsersItemUsage,
-)
+from .listed_key import ListedKey
+from .listed_key_credential import ListedKeyCredential
+from .listed_key_grants_item import ListedKeyGrantsItem
+from .listed_key_held_by import ListedKeyHeldBy
 from .memory import Memory
 from .memory_page import MemoryPage
 from .memory_summary import MemorySummary
@@ -163,6 +179,7 @@ from .ready import Ready
 from .ready_checks import ReadyChecks
 from .ready_scan_type_0 import ReadyScanType0
 from .ready_status import ReadyStatus
+from .ready_web_client import ReadyWebClient
 from .recall_budget import RecallBudget
 from .recall_budget_counter import RecallBudgetCounter
 from .recall_event import RecallEvent
@@ -191,6 +208,7 @@ from .remove_web_email_body import RemoveWebEmailBody
 from .remove_web_email_response_200 import RemoveWebEmailResponse200
 from .replay_report import ReplayReport
 from .replay_report_pipelines_item import ReplayReportPipelinesItem
+from .request_web_deletion_response_200 import RequestWebDeletionResponse200
 from .rerank_outcome import RerankOutcome
 from .rerank_reason import RerankReason
 from .rescan_report import RescanReport
@@ -200,6 +218,8 @@ from .rescan_report_findings_item import RescanReportFindingsItem
 from .rescan_report_findings_item_action import RescanReportFindingsItemAction
 from .review_next_body import ReviewNextBody
 from .review_policy import ReviewPolicy
+from .review_queue_response_200 import ReviewQueueResponse200
+from .review_queue_response_200_items_item import ReviewQueueResponse200ItemsItem
 from .revoke_connection_body import RevokeConnectionBody
 from .role import Role
 from .search_settings import SearchSettings
@@ -211,6 +231,7 @@ from .served_guardrail_verdicts_item import ServedGuardrailVerdictsItem
 from .served_guardrail_verdicts_item_held_by import ServedGuardrailVerdictsItemHeldBy
 from .set_search_default_body import SetSearchDefaultBody
 from .set_usage_settings_body import SetUsageSettingsBody
+from .set_web_user_quota_body import SetWebUserQuotaBody
 from .severity import Severity
 from .similar_item import SimilarItem
 from .similar_item_kind import SimilarItemKind
@@ -280,22 +301,39 @@ from .web_sign_in_body import WebSignInBody
 from .web_sign_in_body_provider import WebSignInBodyProvider
 from .web_sign_up_body import WebSignUpBody
 from .web_sign_up_body_accept_terms import WebSignUpBodyAcceptTerms
+from .web_user import WebUser
+from .web_user_quotas import WebUserQuotas
+from .web_user_usage import WebUserUsage
 from .whoami import Whoami
 from .whoami_grant import WhoamiGrant
 from .whoami_grant_covers import WhoamiGrantCovers
 from .whoami_grant_role import WhoamiGrantRole
 from .whoami_held_by import WhoamiHeldBy
+from .whoami_person import WhoamiPerson
+from .whoami_person_quotas_type_0 import WhoamiPersonQuotasType0
+from .whoami_person_usage_type_0 import WhoamiPersonUsageType0
 from .whoami_profile_type_1 import WhoamiProfileType1
 from .whoami_profile_type_2_type_1 import WhoamiProfileType2Type1
 from .whoami_profile_type_3_type_1 import WhoamiProfileType3Type1
 from .whoami_ref import WhoamiRef
 from .whoami_workarea import WhoamiWorkarea
 from .workarea import Workarea
+from .workarea_counts import WorkareaCounts
+from .workarea_counts_items_item import WorkareaCountsItemsItem
+from .workarea_counts_items_item_counts import WorkareaCountsItemsItemCounts
+from .workarea_counts_items_item_mode import WorkareaCountsItemsItemMode
 from .workarea_create import WorkareaCreate
 from .workarea_crew_update import WorkareaCrewUpdate
 from .workarea_mode import WorkareaMode
 from .workarea_mode_set import WorkareaModeSet
 from .workarea_mode_set_mode import WorkareaModeSetMode
+from .workarea_offers import WorkareaOffers
+from .workarea_offers_commit import WorkareaOffersCommit
+from .workarea_offers_mode import WorkareaOffersMode
+from .workarea_offers_mode_change_type_0 import WorkareaOffersModeChangeType0
+from .workarea_offers_mode_change_type_0_to import WorkareaOffersModeChangeType0To
+from .workarea_offers_transitions_item import WorkareaOffersTransitionsItem
+from .workarea_offers_transitions_item_op import WorkareaOffersTransitionsItemOp
 from .workarea_page import WorkareaPage
 from .workarea_status import WorkareaStatus
 from .workarea_view import WorkareaView
@@ -316,8 +354,10 @@ __all__ = (
     "AdminReadMemoryResponse200",
     "AdminReadMemoryResponse200VerdictsItem",
     "AdminSearchMemoriesBody",
+    "AdminSearchMemoriesBodyOriginKind",
     "AdminSearchMemoriesBodyState",
     "AdminSearchMemoriesResponse200",
+    "AllowWebEmailBody",
     "Anchor",
     "AnchorHasher",
     "AttachmentDescriptor",
@@ -356,6 +396,9 @@ __all__ = (
     "ClientRegistrationRequestGrantTypesItem",
     "ClientRegistrationRequestResponseTypesItem",
     "ClientRegistrationRequestTokenEndpointAuthMethod",
+    "CloseWebDeletionBody",
+    "CloseWebDeletionBodyOutcome",
+    "CloseWebDeletionResponse200",
     "ConnectCode",
     "Connection",
     "ConnectionClientKind",
@@ -369,12 +412,17 @@ __all__ = (
     "CrewUpdate",
     "Denial",
     "DenialRequest",
+    "DisableWebUserBody",
+    "DisableWebUserResponse200",
     "EdgePage",
     "ErrorCode",
     "ErrorEnvelope",
     "ErrorEnvelopeError",
     "ErrorEnvelopeErrorDetails",
     "EventsPage",
+    "ExportWebPersonResponse200",
+    "ExportWebPersonResponse200KeysItem",
+    "ExportWebPersonResponse200MemoriesItem",
     "Feedback",
     "Grant",
     "GrantCovers",
@@ -384,6 +432,10 @@ __all__ = (
     "GrantRequestDenyItem",
     "GrantRequestRole",
     "GrantRole",
+    "GrantWebCapacitiesBody",
+    "GrantWebCapacitiesBodyCapacity",
+    "GrantWebCapacitiesResponse200",
+    "GrantWebCapacitiesResponse200Key",
     "GuardrailRule",
     "GuardrailRuleEffect",
     "GuardrailRuleRule",
@@ -392,6 +444,8 @@ __all__ = (
     "GuardrailSet",
     "GuardrailSetOwnHeldItem",
     "Health",
+    "HeldNamed",
+    "HeldNamedItemsItem",
     "HeldPage",
     "HeldPageItemsItem",
     "JournalEvent",
@@ -410,15 +464,17 @@ __all__ = (
     "KeyProfileType2Type1",
     "KeyProfileType3Type1",
     "ListEdgesKind",
+    "ListKeysResponse200",
     "ListMemoriesKind",
     "ListMemoriesState",
     "ListWebEmailsResponse200",
     "ListWebUsersResponse200",
     "ListWebUsersResponse200DeletionsItem",
     "ListWebUsersResponse200Mode",
-    "ListWebUsersResponse200UsersItem",
-    "ListWebUsersResponse200UsersItemQuotas",
-    "ListWebUsersResponse200UsersItemUsage",
+    "ListedKey",
+    "ListedKeyCredential",
+    "ListedKeyGrantsItem",
+    "ListedKeyHeldBy",
     "Memory",
     "MemoryPage",
     "MemorySummary",
@@ -440,6 +496,7 @@ __all__ = (
     "ReadyChecks",
     "ReadyScanType0",
     "ReadyStatus",
+    "ReadyWebClient",
     "RecallBudget",
     "RecallBudgetCounter",
     "RecallEvent",
@@ -468,6 +525,7 @@ __all__ = (
     "RemoveWebEmailResponse200",
     "ReplayReport",
     "ReplayReportPipelinesItem",
+    "RequestWebDeletionResponse200",
     "RerankOutcome",
     "RerankReason",
     "RescanReport",
@@ -477,6 +535,8 @@ __all__ = (
     "RescanReportFindingsItemAction",
     "ReviewNextBody",
     "ReviewPolicy",
+    "ReviewQueueResponse200",
+    "ReviewQueueResponse200ItemsItem",
     "RevokeConnectionBody",
     "Role",
     "SearchSettings",
@@ -488,6 +548,7 @@ __all__ = (
     "ServedGuardrailVerdictsItemHeldBy",
     "SetSearchDefaultBody",
     "SetUsageSettingsBody",
+    "SetWebUserQuotaBody",
     "Severity",
     "SimilarItem",
     "SimilarItemKind",
@@ -551,22 +612,39 @@ __all__ = (
     "WebSignInBodyProvider",
     "WebSignUpBody",
     "WebSignUpBodyAcceptTerms",
+    "WebUser",
+    "WebUserQuotas",
+    "WebUserUsage",
     "Whoami",
     "WhoamiGrant",
     "WhoamiGrantCovers",
     "WhoamiGrantRole",
     "WhoamiHeldBy",
+    "WhoamiPerson",
+    "WhoamiPersonQuotasType0",
+    "WhoamiPersonUsageType0",
     "WhoamiProfileType1",
     "WhoamiProfileType2Type1",
     "WhoamiProfileType3Type1",
     "WhoamiRef",
     "WhoamiWorkarea",
     "Workarea",
+    "WorkareaCounts",
+    "WorkareaCountsItemsItem",
+    "WorkareaCountsItemsItemCounts",
+    "WorkareaCountsItemsItemMode",
     "WorkareaCreate",
     "WorkareaCrewUpdate",
     "WorkareaMode",
     "WorkareaModeSet",
     "WorkareaModeSetMode",
+    "WorkareaOffers",
+    "WorkareaOffersCommit",
+    "WorkareaOffersMode",
+    "WorkareaOffersModeChangeType0",
+    "WorkareaOffersModeChangeType0To",
+    "WorkareaOffersTransitionsItem",
+    "WorkareaOffersTransitionsItemOp",
     "WorkareaPage",
     "WorkareaStatus",
     "WorkareaView",

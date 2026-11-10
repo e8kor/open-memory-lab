@@ -5529,6 +5529,14 @@ fn web_doctor(
     };
     let providers: Vec<&str> = providers.iter().filter_map(Value::as_str).collect();
     let mut lines = vec![format!("on ({})", providers.join(", "))];
+    // A lead before ADR-0070 names no client identity; one that names
+    // `none` refuses every capacity credential oml-web presents (d2).
+    if body["web_client"] == "none" {
+        lines.push(
+            "warn web: no web client identity set; oml-web cannot reach the API (set web.client_secret on the lead and on oml-web)"
+                .to_owned(),
+        );
+    }
     // The failed exchanges are the metrics listener's (ADR-0054 d1).
     for provider in &providers {
         let Some(scrape) = scrape else { break };
@@ -5948,6 +5956,29 @@ mod tests {
             "warn web_provider_google: 2 failed exchanges since start (1 busy, 1 error_answer)"
         );
         assert_eq!(lines.len(), 2, "{lines:?}");
+    }
+
+    #[test]
+    fn the_web_doctor_warns_when_the_lead_has_no_web_client_identity() {
+        let bare = (
+            200,
+            json!({"web": {"providers": ["google"]}, "web_client": "none"}),
+        );
+        assert_eq!(
+            web_doctor(Some(&bare), None, None),
+            vec![
+                "on (google)".to_owned(),
+                "warn web: no web client identity set; oml-web cannot reach the API (set web.client_secret on the lead and on oml-web)".to_owned(),
+            ]
+        );
+        let set = (
+            200,
+            json!({"web": {"providers": ["google"]}, "web_client": "secret"}),
+        );
+        assert_eq!(
+            web_doctor(Some(&set), None, None),
+            vec!["on (google)".to_owned()]
+        );
     }
 
     #[test]

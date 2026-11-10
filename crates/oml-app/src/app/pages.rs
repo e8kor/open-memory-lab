@@ -28,8 +28,8 @@ use oml_domain::{MemoryStatus, WorkareaStatus};
 use crate::cursor::ListingCursor;
 use crate::types::{
     AdminSearch, AdminState, AppError, Bearer, ConnectCodeIssued, Credential, DenialRecord,
-    GrantRequest, IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, MemoryRecord, QueueDepth,
-    WebEntry, WebSessionRecord, WorkareaRecord,
+    GrantRecord, GrantRequest, IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, MemoryRecord,
+    QueueDepth, WebEntry, WebSessionRecord, WorkareaRecord,
 };
 use crate::types::{AnchorFilter, ListRequest, ListingPosition, MemoryPage, ServedMemory};
 
@@ -48,6 +48,19 @@ pub enum Capacity {
 }
 
 impl Capacity {
+    /// The capacity a suffix names; `None` for any other word.
+    #[must_use]
+    pub fn parse(suffix: &str) -> Option<Self> {
+        [
+            Capacity::Web,
+            Capacity::Review,
+            Capacity::Curate,
+            Capacity::Admin,
+        ]
+        .into_iter()
+        .find(|c| c.suffix() == suffix)
+    }
+
     /// The suffix of the key's name, `<user>-<suffix>`.
     #[must_use]
     pub fn suffix(self) -> &'static str {
@@ -58,6 +71,16 @@ impl Capacity {
             Capacity::Admin => "admin",
         }
     }
+}
+
+/// What a capacity designation did (ADR-0045 d10; ADR-0070 d5 #3): the
+/// session key that holds the capacity and the grants it gained, each
+/// with its epoch, the seq of its `grant.issued`; none when it held them
+/// all already.
+#[derive(Debug, Clone)]
+pub struct CapacityGranted {
+    pub key: KeyRecord,
+    pub grants_added: Vec<GrantRecord>,
 }
 
 /// One of the person's keys as the user page lists it (ADR-0045 d9).
@@ -373,6 +396,85 @@ where
         Ok(caller)
     }
 
+    /// The caller a capacity credential acts as (ADR-0070 d2): the live
+    /// session it derives from, re-checked as [`Self::web_caller`] checks a
+    /// session on every request, under the capacity it names. A credential
+    /// no live session holds, or whose capacity the session no longer
+    /// reaches, is [`AppError::Unauthorized`]; the API answers it
+    /// `auth.invalid`, as it answers an unknown key.
+    pub async fn web_credential_caller(
+        &self,
+        credential: &str,
+    ) -> Result<(Caller, WebSessionRecord), AppError> {
+        let Some((session, capacity)) = self.web_session_of_credential(credential).await? else {
+            self.observer.credential(None, None);
+            return Err(AppError::Unauthorized);
+        };
+        let capacity = Capacity::parse(&capacity).ok_or(AppError::Unauthorized)?;
+        match self.web_caller(&session, capacity).await {
+            // A person of the sign-up tenant's request rate binds their
+            // session keys at the API as it binds their agent keys
+            // (ADR-0068 d5).
+            Ok(caller) => {
+                self.admit_request(&caller.key).await?;
+                Ok((caller, session))
+            }
+            Err(AppError::Store(e)) => Err(AppError::Store(e)),
+            Err(_) => Err(AppError::Unauthorized),
+        }
+    }
+
+    // -- the web console's acts, replayed by their Idempotency-Key ----------
+
+    /// The scope a web console act records its outcome under: the acting
+    /// key, no workarea, and the act's name beside the client's key, so
+    /// one key's value names one act (ADR-0070 d3 layer 4, d5).
+    fn act_scope(caller: &Caller, act: &str, idem_key: &str) -> crate::ports::IdempotencyScope {
+        crate::ports::IdempotencyScope {
+            tenant_id: caller.key.tenant_id,
+            key_id: caller.key.key_id,
+            workarea_id: Uuid::nil(),
+            idem_key: format!("{act}:{idem_key}"),
+        }
+    }
+
+    /// The outcome recorded for this act under the caller's
+    /// `Idempotency-Key`, if any; a record of another request is
+    /// `idempotency.digest_mismatch` (http-api.md idempotency).
+    pub async fn recorded_act(
+        &self,
+        caller: &Caller,
+        act: &str,
+        idem_key: &str,
+        request_digest: &str,
+    ) -> Result<Option<serde_json::Value>, AppError> {
+        self.recorded(&Self::act_scope(caller, act, idem_key), request_digest)
+            .await
+    }
+
+    /// Records an act's outcome after its last commit, so a resubmission
+    /// with the same key answers it instead of acting again. A scope a
+    /// concurrent resubmission recorded first is left as it is.
+    pub async fn record_act(
+        &self,
+        caller: &Caller,
+        act: &str,
+        idem_key: &str,
+        request_digest: &str,
+        response: serde_json::Value,
+    ) -> Result<(), AppError> {
+        self.journal
+            .idempotency_put(crate::ports::IdempotencyPut {
+                scope: Self::act_scope(caller, act, idem_key),
+                record: crate::ports::IdempotencyRecord {
+                    request_digest: request_digest.to_owned(),
+                    response,
+                },
+            })
+            .await?;
+        Ok(())
+    }
+
     // -- the user page's keys ---------------------------------------------
 
     /// The person's keys (ADR-0045 d9): every key naming their user, with
@@ -598,7 +700,7 @@ where
         admin: &Caller,
         user: &Name,
         workarea: Reference,
-    ) -> Result<(), AppError> {
+    ) -> Result<CapacityGranted, AppError> {
         require_role(&admin.key, Role::Admin, "grant_review")?;
         let review = self
             .session_key_of(admin.key.tenant_id, user, Capacity::Review)
@@ -610,7 +712,11 @@ where
             deny: Vec::new(),
             covers: Covers::Subtree,
         });
-        self.add_grants(&admin.key, &review, &grants).await
+        let added = self.add_grants(&admin.key, &review, &grants).await?;
+        Ok(CapacityGranted {
+            key: review,
+            grants_added: added,
+        })
     }
 
     /// `grant_curation` (ADR-0045 d10, ADR-0044 d7): the user's
@@ -622,7 +728,7 @@ where
         admin: &Caller,
         user: &Name,
         workarea: Reference,
-    ) -> Result<(), AppError> {
+    ) -> Result<CapacityGranted, AppError> {
         require_role(&admin.key, Role::Admin, "grant_curation")?;
         let tenant_id = admin.key.tenant_id;
         let reader = GrantRequest {
@@ -635,7 +741,11 @@ where
             .session_key_of(tenant_id, user, Capacity::Curate)
             .await?
         {
-            return self.add_grants(&admin.key, &curate, &[reader]).await;
+            let added = self.add_grants(&admin.key, &curate, &[reader]).await?;
+            return Ok(CapacityGranted {
+                key: curate,
+                grants_added: added,
+            });
         }
         let name = key_name(user, Capacity::Curate.suffix())?;
         let req = IssueKeyRequest {
@@ -661,9 +771,17 @@ where
             connect_code: false,
             user: None,
         };
-        self.issue_key_by(&admin.key, &req, Issuance::Session(user))
-            .await
-            .map(|_| ())
+        let issued = self
+            .issue_key_by(&admin.key, &req, Issuance::Session(user))
+            .await?;
+        let key = self
+            .session_key_of(tenant_id, user, Capacity::Curate)
+            .await?
+            .ok_or(AppError::WebKeyMissing { capacity: "curate" })?;
+        Ok(CapacityGranted {
+            key,
+            grants_added: issued.access.grants,
+        })
     }
 
     /// The live session key of `capacity` serving `user`.
@@ -691,7 +809,7 @@ where
         admin: &KeyRecord,
         key: &KeyRecord,
         grants: &[GrantRequest],
-    ) -> Result<(), AppError> {
+    ) -> Result<Vec<GrantRecord>, AppError> {
         let tenant_id = admin.tenant_id;
         let held = self
             .journal
@@ -719,14 +837,15 @@ where
             });
         }
         check_issuance(Role::Admin, key.role, &resolved).map_err(issuance_refusal)?;
+        let mut added = Vec::with_capacity(resolved.len());
         for grant in resolved {
             let prev = self
                 .head_event(tenant_id)
                 .await?
                 .ok_or(AppError::NotFound)?;
-            self.commit_grant(&prev, admin, key.key_id, grant).await?;
+            added.push(self.commit_grant(&prev, admin, key.key_id, grant).await?.1);
         }
-        Ok(())
+        Ok(added)
     }
 
     /// The review queue's depth and age per workarea, tenant-wide, no

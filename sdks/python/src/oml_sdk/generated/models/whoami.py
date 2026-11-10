@@ -15,6 +15,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.whoami_grant import WhoamiGrant
+    from ..models.whoami_person import WhoamiPerson
     from ..models.whoami_ref import WhoamiRef
     from ..models.whoami_workarea import WhoamiWorkarea
 
@@ -46,6 +47,7 @@ class Whoami:
                 /guardrail_scope (ADR-0037 d4; since v0.5.1).
             profile (None | Unset | WhoamiProfileType1 | WhoamiProfileType2Type1 | WhoamiProfileType3Type1): The key's
                 profile; null for none (ADR-0030 d8).
+            person (None | Unset | WhoamiPerson): The person the key's user root names; null for a tenant key (ADR-0070 d5).
     """
 
     key_id: str
@@ -66,8 +68,10 @@ class Whoami:
         | WhoamiProfileType2Type1
         | WhoamiProfileType3Type1
     ) = UNSET
+    person: None | Unset | WhoamiPerson = UNSET
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.whoami_person import WhoamiPerson
         from ..models.whoami_ref import WhoamiRef
         from ..models.whoami_workarea import WhoamiWorkarea
 
@@ -127,6 +131,14 @@ class Whoami:
         else:
             profile = self.profile
 
+        person: dict[str, Any] | None | Unset
+        if isinstance(self.person, Unset):
+            person = UNSET
+        elif isinstance(self.person, WhoamiPerson):
+            person = self.person.to_dict()
+        else:
+            person = self.person
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -147,12 +159,15 @@ class Whoami:
             field_dict["guardrail_scope"] = guardrail_scope
         if profile is not UNSET:
             field_dict["profile"] = profile
+        if person is not UNSET:
+            field_dict["person"] = person
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.whoami_grant import WhoamiGrant
+        from ..models.whoami_person import WhoamiPerson
         from ..models.whoami_ref import WhoamiRef
         from ..models.whoami_workarea import WhoamiWorkarea
 
@@ -294,6 +309,23 @@ class Whoami:
 
         profile = _parse_profile(d.pop("profile", UNSET))
 
+        def _parse_person(data: object) -> None | Unset | WhoamiPerson:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                person_type_0 = WhoamiPerson.from_dict(data)
+
+                return person_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | WhoamiPerson, data)
+
+        person = _parse_person(d.pop("person", UNSET))
+
         whoami = cls(
             key_id=key_id,
             name=name,
@@ -307,6 +339,7 @@ class Whoami:
             grants=grants,
             guardrail_scope=guardrail_scope,
             profile=profile,
+            person=person,
         )
 
         return whoami

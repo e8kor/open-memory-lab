@@ -42,6 +42,15 @@ server:
   web.github.client_secret:
     default: unset
     note: The matching secret. Set both or neither. The web pages need `oauth.issuer` and at least one provider.
+  web.client_secret:
+    default: unset (no capacity credential accepted)
+    note: "The secret `oml-web` sends as `OML-Web-Client` to present a person's capacity credential (`omls_`), at least 32 characters, set to the same value on the server and on `oml-web` (ADR-0070 d2). Unset, every capacity credential is refused as `auth.invalid` `session_outside_web` and `oml doctor` warns. The server never logs it."
+  web.client_ca:
+    default: unset
+    note: "Mutual TLS for `oml-web` (ADR-0070 d2) needs the server to terminate TLS on the listener `oml-web` reaches, which this build does not: setting it stops the server at start, naming the setting. Use `web.client_secret`."
+  web.client_subject:
+    default: unset
+    note: The certificate subject `oml-web` presents under `web.client_ca`. Setting it stops the server at start in this build, as `web.client_ca` does.
   signup.mode:
     default: "`allowlist`: the sign-in allowlist, unchanged"
     note: "`open` lets a person whose provider-verified email no entry holds create an account after accepting the terms: a drawn user, a private root, `<user>-web` and `<user>-review` (ADR-0068 d1). `open` requires `oauth.issuer`, a sign-in provider (`web.google.*` or `web.github.*`) and every `signup.*` setting except `per_ip_per_hour`. A missing one, a tenant id that does not parse, or an issuer that is not a live admin key of that tenant stops the process at start, naming the setting."

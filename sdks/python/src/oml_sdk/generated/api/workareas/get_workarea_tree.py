@@ -6,6 +6,7 @@ import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
+from ...models.workarea_counts import WorkareaCounts
 from ...models.workarea_page import WorkareaPage
 from ...types import UNSET, Response, Unset
 
@@ -15,6 +16,7 @@ def _get_kwargs(
     *,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    counts: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -35,6 +37,8 @@ def _get_kwargs(
 
     params["cursor"] = cursor
 
+    params["counts"] = counts
+
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
@@ -51,9 +55,25 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | WorkareaPage:
+) -> ErrorEnvelope | WorkareaCounts | WorkareaPage:
     if response.status_code == 200:
-        response_200 = WorkareaPage.from_dict(response.json())
+
+        def _parse_response_200(data: object) -> WorkareaCounts | WorkareaPage:
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                response_200_type_0 = WorkareaPage.from_dict(data)
+
+                return response_200_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            if not isinstance(data, dict):
+                raise TypeError()
+            response_200_type_1 = WorkareaCounts.from_dict(data)
+
+            return response_200_type_1
+
+        response_200 = _parse_response_200(response.json())
 
         return response_200
 
@@ -64,7 +84,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | WorkareaPage]:
+) -> Response[ErrorEnvelope | WorkareaCounts | WorkareaPage]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,10 +99,11 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    counts: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | WorkareaPage]:
+) -> Response[ErrorEnvelope | WorkareaCounts | WorkareaPage]:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
@@ -98,6 +119,7 @@ def sync_detailed(
             neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        counts (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -107,13 +129,14 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | WorkareaPage]
+        Response[ErrorEnvelope | WorkareaCounts | WorkareaPage]
     """
 
     kwargs = _get_kwargs(
         workarea=workarea,
         limit=limit,
         cursor=cursor,
+        counts=counts,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -132,10 +155,11 @@ def sync(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    counts: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | WorkareaPage | None:
+) -> ErrorEnvelope | WorkareaCounts | WorkareaPage | None:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
@@ -151,6 +175,7 @@ def sync(
             neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        counts (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -160,7 +185,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | WorkareaPage
+        ErrorEnvelope | WorkareaCounts | WorkareaPage
     """
 
     return sync_detailed(
@@ -168,6 +193,7 @@ def sync(
         client=client,
         limit=limit,
         cursor=cursor,
+        counts=counts,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -180,10 +206,11 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    counts: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | WorkareaPage]:
+) -> Response[ErrorEnvelope | WorkareaCounts | WorkareaPage]:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
@@ -199,6 +226,7 @@ async def asyncio_detailed(
             neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        counts (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -208,13 +236,14 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | WorkareaPage]
+        Response[ErrorEnvelope | WorkareaCounts | WorkareaPage]
     """
 
     kwargs = _get_kwargs(
         workarea=workarea,
         limit=limit,
         cursor=cursor,
+        counts=counts,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -231,10 +260,11 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    counts: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | WorkareaPage | None:
+) -> ErrorEnvelope | WorkareaCounts | WorkareaPage | None:
     """The subtree, paginated; nodes outside read scope are omitted.
 
      Requires: reader effective access, or the admin key role, which reads the structure of every
@@ -250,6 +280,7 @@ async def asyncio(
             neither, and is refused (request.validation).
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        counts (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -259,7 +290,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | WorkareaPage
+        ErrorEnvelope | WorkareaCounts | WorkareaPage
     """
 
     return (
@@ -268,6 +299,7 @@ async def asyncio(
             client=client,
             limit=limit,
             cursor=cursor,
+            counts=counts,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,
             traceparent=traceparent,

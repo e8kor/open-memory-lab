@@ -20,6 +20,8 @@ def _get_kwargs(
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
     own: bool | Unset = False,
+    with_own: bool | Unset = UNSET,
+    author: str | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
@@ -65,6 +67,10 @@ def _get_kwargs(
     params["kind"] = json_kind
 
     params["own"] = own
+
+    params["with_own"] = with_own
+
+    params["author"] = author
 
     params["anchor_repo"] = anchor_repo
 
@@ -144,6 +150,8 @@ def sync_detailed(
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
     own: bool | Unset = False,
+    with_own: bool | Unset = UNSET,
+    author: str | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
@@ -180,6 +188,8 @@ def sync_detailed(
         state (ListMemoriesState | Unset):
         kind (ListMemoriesKind | Unset):
         own (bool | Unset):  Default: False.
+        with_own (bool | Unset):
+        author (str | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
             (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
             whose anchor names it; unanchored rows are left out (d4).
@@ -209,6 +219,8 @@ def sync_detailed(
         state=state,
         kind=kind,
         own=own,
+        with_own=with_own,
+        author=author,
         anchor_repo=anchor_repo,
         anchor_path_prefix=anchor_path_prefix,
         origin_kinds=origin_kinds,
@@ -236,6 +248,8 @@ def sync(
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
     own: bool | Unset = False,
+    with_own: bool | Unset = UNSET,
+    author: str | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
@@ -272,6 +286,8 @@ def sync(
         state (ListMemoriesState | Unset):
         kind (ListMemoriesKind | Unset):
         own (bool | Unset):  Default: False.
+        with_own (bool | Unset):
+        author (str | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
             (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
             whose anchor names it; unanchored rows are left out (d4).
@@ -302,6 +318,8 @@ def sync(
         state=state,
         kind=kind,
         own=own,
+        with_own=with_own,
+        author=author,
         anchor_repo=anchor_repo,
         anchor_path_prefix=anchor_path_prefix,
         origin_kinds=origin_kinds,
@@ -323,6 +341,8 @@ async def asyncio_detailed(
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
     own: bool | Unset = False,
+    with_own: bool | Unset = UNSET,
+    author: str | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
@@ -359,6 +379,8 @@ async def asyncio_detailed(
         state (ListMemoriesState | Unset):
         kind (ListMemoriesKind | Unset):
         own (bool | Unset):  Default: False.
+        with_own (bool | Unset):
+        author (str | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
             (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
             whose anchor names it; unanchored rows are left out (d4).
@@ -388,6 +410,8 @@ async def asyncio_detailed(
         state=state,
         kind=kind,
         own=own,
+        with_own=with_own,
+        author=author,
         anchor_repo=anchor_repo,
         anchor_path_prefix=anchor_path_prefix,
         origin_kinds=origin_kinds,
@@ -413,6 +437,8 @@ async def asyncio(
     state: ListMemoriesState | Unset = UNSET,
     kind: ListMemoriesKind | Unset = UNSET,
     own: bool | Unset = False,
+    with_own: bool | Unset = UNSET,
+    author: str | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
@@ -449,6 +475,8 @@ async def asyncio(
         state (ListMemoriesState | Unset):
         kind (ListMemoriesKind | Unset):
         own (bool | Unset):  Default: False.
+        with_own (bool | Unset):
+        author (str | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
             (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
             whose anchor names it; unanchored rows are left out (d4).
@@ -480,6 +508,8 @@ async def asyncio(
             state=state,
             kind=kind,
             own=own,
+            with_own=with_own,
+            author=author,
             anchor_repo=anchor_repo,
             anchor_path_prefix=anchor_path_prefix,
             origin_kinds=origin_kinds,

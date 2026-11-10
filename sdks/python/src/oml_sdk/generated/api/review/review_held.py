@@ -1,10 +1,12 @@
 from http import HTTPStatus
 from typing import Any
+from uuid import UUID
 
 import httpx
 
 from ...client import AuthenticatedClient, Client
 from ...models.error_envelope import ErrorEnvelope
+from ...models.held_named import HeldNamed
 from ...models.held_page import HeldPage
 from ...types import UNSET, Response, Unset
 
@@ -16,6 +18,7 @@ def _get_kwargs(
     claim_key_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    ids: list[UUID] | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -47,6 +50,15 @@ def _get_kwargs(
 
     params["cursor"] = cursor
 
+    json_ids: list[str] | Unset = UNSET
+    if not isinstance(ids, Unset):
+        json_ids = []
+        for ids_item_data in ids:
+            ids_item = str(ids_item_data)
+            json_ids.append(ids_item)
+
+    params["ids"] = json_ids
+
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
@@ -61,9 +73,25 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> ErrorEnvelope | HeldPage:
+) -> ErrorEnvelope | HeldNamed | HeldPage:
     if response.status_code == 200:
-        response_200 = HeldPage.from_dict(response.json())
+
+        def _parse_response_200(data: object) -> HeldNamed | HeldPage:
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                response_200_type_0 = HeldPage.from_dict(data)
+
+                return response_200_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            if not isinstance(data, dict):
+                raise TypeError()
+            response_200_type_1 = HeldNamed.from_dict(data)
+
+            return response_200_type_1
+
+        response_200 = _parse_response_200(response.json())
 
         return response_200
 
@@ -84,7 +112,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[ErrorEnvelope | HeldPage]:
+) -> Response[ErrorEnvelope | HeldNamed | HeldPage]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -101,10 +129,11 @@ def sync_detailed(
     claim_key_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    ids: list[UUID] | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | HeldPage]:
+) -> Response[ErrorEnvelope | HeldNamed | HeldPage]:
     """The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
      Requires: a dreamer key held_by human; any other key, a dreamer key held by an agent or a service
@@ -127,6 +156,7 @@ def sync_detailed(
         claim_key_prefix (str | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        ids (list[UUID] | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -136,7 +166,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | HeldPage]
+        Response[ErrorEnvelope | HeldNamed | HeldPage]
     """
 
     kwargs = _get_kwargs(
@@ -145,6 +175,7 @@ def sync_detailed(
         claim_key_prefix=claim_key_prefix,
         limit=limit,
         cursor=cursor,
+        ids=ids,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -165,10 +196,11 @@ def sync(
     claim_key_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    ids: list[UUID] | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | HeldPage | None:
+) -> ErrorEnvelope | HeldNamed | HeldPage | None:
     """The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
      Requires: a dreamer key held_by human; any other key, a dreamer key held by an agent or a service
@@ -191,6 +223,7 @@ def sync(
         claim_key_prefix (str | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        ids (list[UUID] | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -200,7 +233,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | HeldPage
+        ErrorEnvelope | HeldNamed | HeldPage
     """
 
     return sync_detailed(
@@ -210,6 +243,7 @@ def sync(
         claim_key_prefix=claim_key_prefix,
         limit=limit,
         cursor=cursor,
+        ids=ids,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -224,10 +258,11 @@ async def asyncio_detailed(
     claim_key_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    ids: list[UUID] | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> Response[ErrorEnvelope | HeldPage]:
+) -> Response[ErrorEnvelope | HeldNamed | HeldPage]:
     """The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
      Requires: a dreamer key held_by human; any other key, a dreamer key held by an agent or a service
@@ -250,6 +285,7 @@ async def asyncio_detailed(
         claim_key_prefix (str | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        ids (list[UUID] | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -259,7 +295,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[ErrorEnvelope | HeldPage]
+        Response[ErrorEnvelope | HeldNamed | HeldPage]
     """
 
     kwargs = _get_kwargs(
@@ -268,6 +304,7 @@ async def asyncio_detailed(
         claim_key_prefix=claim_key_prefix,
         limit=limit,
         cursor=cursor,
+        ids=ids,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -286,10 +323,11 @@ async def asyncio(
     claim_key_prefix: str | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
+    ids: list[UUID] | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-) -> ErrorEnvelope | HeldPage | None:
+) -> ErrorEnvelope | HeldNamed | HeldPage | None:
     """The held items this person's reviewer key may judge, with their text, oldest first; claims nothing.
 
      Requires: a dreamer key held_by human; any other key, a dreamer key held by an agent or a service
@@ -312,6 +350,7 @@ async def asyncio(
         claim_key_prefix (str | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
+        ids (list[UUID] | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -321,7 +360,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        ErrorEnvelope | HeldPage
+        ErrorEnvelope | HeldNamed | HeldPage
     """
 
     return (
@@ -332,6 +371,7 @@ async def asyncio(
             claim_key_prefix=claim_key_prefix,
             limit=limit,
             cursor=cursor,
+            ids=ids,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,
             traceparent=traceparent,

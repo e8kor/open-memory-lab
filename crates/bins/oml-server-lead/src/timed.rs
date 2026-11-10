@@ -19,8 +19,8 @@ use oml_app::domain::oauth::{RefreshDecision, TokenKind};
 use oml_app::domain::web::Provider;
 use oml_app::domain::{ChainHead, EventTime, Sha256Hash, SignedEnvelope};
 use oml_app::ports::{
-    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyRecord, IdempotencyScope,
-    JournalStore, Retriever, StoreError, TailScan, WebStore,
+    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyPut, IdempotencyRecord,
+    IdempotencyScope, JournalStore, Retriever, StoreError, TailScan, WebStore,
 };
 use oml_app::search::{CandidateScope, RetrievalQuery, Retrieved, RetrieverKind};
 use oml_app::types::{
@@ -587,6 +587,13 @@ impl<J: JournalStore> JournalStore for Timed<J> {
     ) -> impl Future<Output = Result<Option<IdempotencyRecord>, StoreError>> + Send {
         timed("idempotency_get", self.inner.idempotency_get(scope))
     }
+
+    fn idempotency_put(
+        &self,
+        put: IdempotencyPut,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send {
+        timed("idempotency_put", self.inner.idempotency_put(put))
+    }
 }
 
 impl<J: ConnectionStore> ConnectionStore for Timed<J> {
@@ -832,10 +839,21 @@ impl<J: WebStore> WebStore for Timed<J> {
         &self,
         session: WebSessionRecord,
         replaces: Option<Sha256Hash>,
+        credentials: Vec<(&'static str, Sha256Hash)>,
     ) -> impl Future<Output = Result<(), StoreError>> + Send {
         timed(
             "web_session_open",
-            self.inner.web_session_open(session, replaces),
+            self.inner.web_session_open(session, replaces, credentials),
+        )
+    }
+
+    fn web_session_credential(
+        &self,
+        credential_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<(WebSessionRecord, String)>, StoreError>> + Send {
+        timed(
+            "web_session_credential",
+            self.inner.web_session_credential(credential_hash),
         )
     }
 

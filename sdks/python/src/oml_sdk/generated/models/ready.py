@@ -7,6 +7,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.ready_status import ReadyStatus
+from ..models.ready_web_client import ReadyWebClient
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -28,6 +29,8 @@ class Ready:
             connections are on here, not from the discovery paths it checks (ADR-0031 d14).
         build (Build): The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field
             nothing could supply is the string unknown.
+        web_client (ReadyWebClient | Unset): The client identity oml-web proves when it presents a capacity credential
+            (web.client_secret), or none; with none every capacity credential is refused and doctor warns (ADR-0070 d2).
         scan (None | ReadyScanType0 | Unset): The scanner's rule set, how many rules it loaded and whether the personal-
             data rules are on, or null for a server that pins none; doctor's scan line reads it (ADR-0065 d11). Its findings
             are counted on the metrics listener, never here.
@@ -37,6 +40,7 @@ class Ready:
     checks: ReadyChecks
     oauth_issuer: None | str
     build: Build
+    web_client: ReadyWebClient | Unset = UNSET
     scan: None | ReadyScanType0 | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -51,6 +55,10 @@ class Ready:
         oauth_issuer = self.oauth_issuer
 
         build = self.build.to_dict()
+
+        web_client: str | Unset = UNSET
+        if not isinstance(self.web_client, Unset):
+            web_client = self.web_client.value
 
         scan: dict[str, Any] | None | Unset
         if isinstance(self.scan, Unset):
@@ -70,6 +78,8 @@ class Ready:
                 "build": build,
             }
         )
+        if web_client is not UNSET:
+            field_dict["web_client"] = web_client
         if scan is not UNSET:
             field_dict["scan"] = scan
 
@@ -95,6 +105,13 @@ class Ready:
 
         build = Build.from_dict(d.pop("build"))
 
+        _web_client = d.pop("web_client", UNSET)
+        web_client: ReadyWebClient | Unset
+        if isinstance(_web_client, Unset):
+            web_client = UNSET
+        else:
+            web_client = ReadyWebClient(_web_client)
+
         def _parse_scan(data: object) -> None | ReadyScanType0 | Unset:
             if data is None:
                 return data
@@ -117,6 +134,7 @@ class Ready:
             checks=checks,
             oauth_issuer=oauth_issuer,
             build=build,
+            web_client=web_client,
             scan=scan,
         )
 

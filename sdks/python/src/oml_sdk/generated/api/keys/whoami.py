@@ -74,10 +74,11 @@ def sync_detailed(
     denials or deny masks.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
-    workarea carries its derived path. The key's denials and its grants' per-grant deny masks, which
-    name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A
-    revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
-    ADR-0039 d15).
+    workarea carries its derived path. person names the user a key names, with its sign-up usage and
+    limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
+    d10). The key's denials and its grants' per-grant deny masks, which name subtrees it may not read,
+    are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers
+    auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
 
     Args:
         x_request_id (str | Unset):
@@ -116,10 +117,11 @@ def sync(
     denials or deny masks.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
-    workarea carries its derived path. The key's denials and its grants' per-grant deny masks, which
-    name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A
-    revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
-    ADR-0039 d15).
+    workarea carries its derived path. person names the user a key names, with its sign-up usage and
+    limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
+    d10). The key's denials and its grants' per-grant deny masks, which name subtrees it may not read,
+    are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers
+    auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
 
     Args:
         x_request_id (str | Unset):
@@ -153,10 +155,11 @@ async def asyncio_detailed(
     denials or deny masks.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
-    workarea carries its derived path. The key's denials and its grants' per-grant deny masks, which
-    name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A
-    revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
-    ADR-0039 d15).
+    workarea carries its derived path. person names the user a key names, with its sign-up usage and
+    limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
+    d10). The key's denials and its grants' per-grant deny masks, which name subtrees it may not read,
+    are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers
+    auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
 
     Args:
         x_request_id (str | Unset):
@@ -193,10 +196,11 @@ async def asyncio(
     denials or deny masks.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
-    workarea carries its derived path. The key's denials and its grants' per-grant deny masks, which
-    name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A
-    revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
-    ADR-0039 d15).
+    workarea carries its derived path. person names the user a key names, with its sign-up usage and
+    limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
+    d10). The key's denials and its grants' per-grant deny masks, which name subtrees it may not read,
+    are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers
+    auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
 
     Args:
         x_request_id (str | Unset):

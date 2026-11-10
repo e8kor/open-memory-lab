@@ -12,7 +12,7 @@ use uuid::Uuid;
 use oml_domain::name::{Name, NamedKind};
 use oml_domain::web::{
     Email, Provider, ProviderIdentity, SESSION_TTL_DEFAULT_SECS, SignInRefusal, SignInState,
-    admit_github, admit_google_id_token, check_user, session_key_names,
+    admit_github, admit_google_id_token, capacity_credential, check_user, session_key_names,
 };
 use oml_domain::{EventTime, Role, Sha256Hash, event_types};
 
@@ -76,6 +76,18 @@ where
         bearer: impl Into<Bearer<'_>>,
         req: &WebEmailRequest,
     ) -> Result<(WebEntry, WebEmailOutcome), AppError> {
+        self.allow_web_email_keeping(bearer, req, false).await
+    }
+
+    /// [`Self::allow_web_email`], refusing with `keep_an_admin` to un-flag
+    /// the tenant's last admin entry, checked in the commit's own
+    /// transaction (ADR-0045 d10; ADR-0070 d5).
+    pub async fn allow_web_email_keeping(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        req: &WebEmailRequest,
+        keep_an_admin: bool,
+    ) -> Result<(WebEntry, WebEmailOutcome), AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "web_emails")?;
         check_user(&req.user)?;
@@ -108,7 +120,10 @@ where
         let (event_type, fold) = match outcome {
             WebEmailOutcome::Changed => (
                 event_types::WEB_EMAIL_CHANGED,
-                MetadataFold::WebEmailChanged(entry.clone()),
+                MetadataFold::WebEmailChanged {
+                    entry: entry.clone(),
+                    keep_an_admin,
+                },
             ),
             _ => (
                 event_types::WEB_EMAIL_ALLOWED,
@@ -142,6 +157,18 @@ where
         bearer: impl Into<Bearer<'_>>,
         email: &Email,
     ) -> Result<(WebEntry, u64, Uuid), AppError> {
+        self.remove_web_email_keeping(bearer, email, false).await
+    }
+
+    /// [`Self::remove_web_email`], refusing with `keep_an_admin` to remove
+    /// the tenant's last admin entry, checked in the commit's own
+    /// transaction (ADR-0045 d10; ADR-0070 d5).
+    pub async fn remove_web_email_keeping(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        email: &Email,
+        keep_an_admin: bool,
+    ) -> Result<(WebEntry, u64, Uuid), AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "web_emails")?;
         let tenant_id = admin.tenant_id;
@@ -168,7 +195,14 @@ where
         )?;
         let event_id = event.envelope.event_id;
         let receipt = self
-            .commit(event, MetadataFold::WebEmailRemoved { email_hash }, None)
+            .commit(
+                event,
+                MetadataFold::WebEmailRemoved {
+                    email_hash,
+                    keep_an_admin,
+                },
+                None,
+            )
             .await?;
         Ok((entry, receipt.seq, event_id))
     }
@@ -319,13 +353,69 @@ where
             created_at,
             expires_at,
         };
+        let credentials = self
+            .web_session_capacities(entry)
+            .await?
+            .into_iter()
+            .map(|capacity| {
+                let credential = capacity_credential(&token, capacity);
+                (capacity, Sha256Hash::digest(credential.as_bytes()))
+            })
+            .collect();
         self.journal
             .web_session_open(
                 record.clone(),
                 replaces.map(|old| Sha256Hash::digest(old.as_bytes())),
+                credentials,
             )
             .await?;
         Ok(OpenedSession { token, record })
+    }
+
+    /// The capacities a session's entry reaches when it opens (ADR-0070
+    /// d2): `web` and `review`, `curate` where `<user>-curate` exists, and
+    /// `admin` for an admin's entry. Each gets a capacity credential whose
+    /// digest is stored beside the session row.
+    async fn web_session_capacities(
+        &self,
+        entry: &WebEntry,
+    ) -> Result<Vec<&'static str>, AppError> {
+        let curate = format!("{}-curate", entry.user.as_str());
+        let has_curate = self
+            .journal
+            .web_session_keys(entry.tenant_id, &entry.user)
+            .await?
+            .iter()
+            .any(|k| k.revoked_at.is_none() && k.name.as_ref().map(Name::as_str) == Some(&curate));
+        Ok(["web", "review", "curate", "admin"]
+            .into_iter()
+            .filter(|c| match *c {
+                "curate" => has_curate,
+                "admin" => entry.admin,
+                _ => true,
+            })
+            .collect())
+    }
+
+    /// The live session and the capacity a capacity credential names
+    /// (ADR-0070 d2): `None` for a credential no live session holds, and
+    /// for one whose session is past its expiry, which is ended here, as
+    /// [`Self::web_session`] ends it.
+    pub async fn web_session_of_credential(
+        &self,
+        credential: &str,
+    ) -> Result<Option<(WebSessionRecord, String)>, AppError> {
+        let digest = Sha256Hash::digest(credential.as_bytes());
+        let Some((session, capacity)) = self.journal.web_session_credential(&digest).await? else {
+            return Ok(None);
+        };
+        if session.expires_at.unix_micros() <= self.clock.now().unix_micros() {
+            self.journal
+                .web_session_end(session.tenant_id, &session.token_hash)
+                .await?;
+            return Ok(None);
+        }
+        Ok(Some((session, capacity)))
     }
 
     /// The live session a cookie's token names: `None` for no row, and for

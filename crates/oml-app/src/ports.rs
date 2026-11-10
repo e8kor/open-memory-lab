@@ -143,6 +143,12 @@ pub enum StoreError {
     /// nothing, its event included (ADR-0045 d2).
     #[error("the email is held by another tenant's allowlist")]
     EmailTaken,
+    /// A `keep_an_admin` change or removal would leave the tenant no admin
+    /// entry; the store read the admin entries under lock in the commit's
+    /// transaction, and the commit wrote nothing (ADR-0045 d10; ADR-0070
+    /// d5).
+    #[error("the entry is the tenant's last admin entry")]
+    LastAdminEntry,
     #[error("storage backend failure: {0}")]
     Backend(String),
 }
@@ -357,12 +363,20 @@ pub enum MetadataFold {
     /// `web.email_changed`: the entry's user and admin flag, its pinned
     /// subjects kept, and every session of the entry ended in the same
     /// commit (ADR-0045 d2, d5).
-    WebEmailChanged(WebEntry),
+    WebEmailChanged {
+        entry: WebEntry,
+        /// Refuse, with [`StoreError::LastAdminEntry`], un-flagging the
+        /// tenant's last admin entry (ADR-0070 d5).
+        keep_an_admin: bool,
+    },
     /// `web.email_removed`: the entry's row and every session of it, gone
     /// in the same commit; the store refuses an entry it does not hold
     /// (ADR-0045 d2, d13).
     WebEmailRemoved {
         email_hash: Sha256Hash,
+        /// Refuse, with [`StoreError::LastAdminEntry`], removing the
+        /// tenant's last admin entry (ADR-0070 d5).
+        keep_an_admin: bool,
     },
     /// `memory.admin_read`: an admin key read memories' text; nothing
     /// changes but the journal (ADR-0045 d21).
@@ -1175,6 +1189,15 @@ pub trait JournalStore: Retriever + Send + Sync {
         scope: &IdempotencyScope,
     ) -> impl Future<Output = Result<Option<IdempotencyRecord>, StoreError>> + Send;
 
+    /// Records the outcome of an act that committed in more than one
+    /// transaction, after its last one, under `scope`: `false` when the
+    /// scope already holds a record, which is then left as it is
+    /// (ADR-0070 d5, the web console's acts).
+    fn idempotency_put(
+        &self,
+        put: IdempotencyPut,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
     /// One claim edge of the tenant, pending or ratified; `None` for an edge
     /// it does not hold (postgres-schema.md `claim_edges`).
     fn claim_edge(
@@ -1272,14 +1295,26 @@ pub trait WebStore: JournalStore {
         subject: &str,
     ) -> impl Future<Output = Result<PinOutcome, StoreError>> + Send;
 
-    /// Writes a session row, and ends the row `replaces` names in the same
-    /// transaction, so a browser that arrives with an old session leaves
-    /// with only the new one (ADR-0045 d5).
+    /// Writes a session row with the digests of its capacity credentials,
+    /// each `(capacity, SHA-256 of the credential)` (ADR-0070 d2), and ends
+    /// the row `replaces` names in the same transaction, so a browser that
+    /// arrives with an old session leaves with only the new one
+    /// (ADR-0045 d5). The credentials end with the session.
     fn web_session_open(
         &self,
         session: WebSessionRecord,
         replaces: Option<Sha256Hash>,
+        credentials: Vec<(&'static str, Sha256Hash)>,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// The live session row a capacity credential's digest names, and the
+    /// capacity, before any tenant is known; `None` for a digest no row
+    /// holds, which includes every credential of an ended session
+    /// (ADR-0070 d2).
+    fn web_session_credential(
+        &self,
+        credential_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<(WebSessionRecord, String)>, StoreError>> + Send;
 
     /// The session a token's digest names, before any tenant is known;
     /// `None` for a digest no row holds.
