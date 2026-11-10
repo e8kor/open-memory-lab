@@ -1,5 +1,5 @@
 //! Guardrails in the domain: admission and its caps, the set's order,
-//! conflicts and digest, and the key's scope (proposed ADR-0037 d2, d4, d5,
+//! conflicts and digest, and the key's scope (ADR-0037 d2, d4, d5,
 //! d7, d10). The rule grammar, the check and the cache are tested in
 //! `oml-guardrail`, re-exported here (d18 Q10).
 
@@ -141,8 +141,8 @@ fn the_set_orders_by_severity_then_depth_then_promoted_at_then_artifact_id() {
         (Severity::Must, 2, early.clone(), Uuid::from_u128(2)),
         (Severity::Must, 1, late.clone(), Uuid::from_u128(3)),
         (Severity::Must, 1, early.clone(), Uuid::from_u128(5)),
-        (Severity::Must, 1, early.clone(), Uuid::from_u128(4)),
-        (Severity::Never, 3, late.clone(), Uuid::from_u128(6)),
+        (Severity::Must, 1, early, Uuid::from_u128(4)),
+        (Severity::Never, 3, late, Uuid::from_u128(6)),
     ];
     guardrail_order(&mut rows, |r| (r.0, r.1, &r.2, r.3));
     let ids: Vec<u128> = rows.iter().map(|r| r.3.as_u128()).collect();

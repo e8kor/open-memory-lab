@@ -654,7 +654,7 @@ where
                 "path": r.path,
                 "status": w.status.as_str(),
                 "in_progress": w.in_progress,
-                // Ontology crews are designed (ADR-0027) and not stored
+                // Ontology crews are designed (ADR-0027 [proposed in #10, unmerged]) and not stored
                 // yet; the badge shows when a workarea can say so.
                 "ontology": false,
                 "counts": {

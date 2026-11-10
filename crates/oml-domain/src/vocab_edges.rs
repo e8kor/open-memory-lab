@@ -3,7 +3,7 @@
 //! refusal over `is_a` and `replaced_by`, the lineage closure without
 //! `oml:about`, computed retirement, and recall's terms match — pure
 //! functions over edges, versions and term tips the caller has already read
-//! (ADR-0021 d3, d5, d9; ADR-0027 d6–d11).
+//! (ADR-0021 d3, d5, d9; ADR-0027 [proposed in #10, unmerged] d6–d11).
 //!
 //! The rules are declared on `docs/architecture/ontologies.md`
 //! ("Hierarchy and mappings"; "Classification: ontology crews attach terms

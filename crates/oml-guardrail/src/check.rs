@@ -1,7 +1,7 @@
 //! The check before a tool call: the cached rules against one call, with
 //! no request, answering deny, ask or nothing, never allow; and the cache's
 //! state deciding first, so a cache that cannot be checked denies and no
-//! cache at all warns (proposed ADR-0037 d8, d9).
+//! cache at all warns (ADR-0037 d8, d9).
 
 use serde_json::Value;
 use uuid::Uuid;
@@ -22,7 +22,7 @@ pub const NO_CACHE_WARNING: &str = "OML guardrails are not loaded for this sessi
 /// directory, for the built-in rule (ADR-0037 d9).
 const CACHE_WORD: &str = "oml/guardrails";
 
-/// One tool call as the PreToolUse hook input carries it: `tool_name`,
+/// One tool call as the `PreToolUse` hook input carries it: `tool_name`,
 /// `tool_input` and the input's `cwd`.
 #[derive(Debug, Clone, Copy)]
 pub struct ToolCall<'a> {
@@ -99,7 +99,7 @@ impl Decision {
     }
 }
 
-/// What the PreToolUse hook does with one call.
+/// What the `PreToolUse` hook does with one call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     /// Prints nothing: no rule matched, or the tool is matched by none.

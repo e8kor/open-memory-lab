@@ -26,7 +26,7 @@ pub struct SearchSettings {
     /// deployment serves `bm25-postings` and the store keeps postings, for
     /// doctor (ADR-0052 d12); `None` otherwise.
     pub postings: Option<PostingsHealth>,
-    /// The tenant's valid time, for doctor (proposed ADR-0059 d12); `None`
+    /// The tenant's valid time, for doctor (ADR-0059 d12); `None`
     /// from a store that keeps none.
     pub valid_time: Option<crate::search::ValidTimeCounts>,
 }
@@ -51,7 +51,7 @@ where
             settings.postings = self.journal.postings_health(admin.tenant_id).await?;
         }
         // Every pipeline hides ended versions, so the counts are read
-        // whatever the deployment serves (proposed ADR-0059 d12).
+        // whatever the deployment serves (ADR-0059 d12).
         let now = self.clock.now().unix_micros();
         settings.valid_time = self.journal.valid_time_counts(admin.tenant_id, now).await?;
         Ok(settings)

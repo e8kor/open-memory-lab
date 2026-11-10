@@ -292,7 +292,7 @@ def check_rust_copies(root: Path, signed: dict[str, tuple[int, bytes]], known_he
         files += 1
         shown = path.relative_to(root)
 
-        def line(at: int) -> int:
+        def line(at: int, text: str = text) -> int:
             return text.count("\n", 0, at) + 1
 
         for m in RAW_STRING.finditer(text):

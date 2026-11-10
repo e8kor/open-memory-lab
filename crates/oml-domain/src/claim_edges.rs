@@ -62,7 +62,7 @@ pub enum LabelRefusal {
     #[error("a claim-edge label is in NFC (request.validation)")]
     NotNfc,
     /// `oml:about` is the classification relation, and classification
-    /// (ADR-0027) is not built: refused until its term-tip and duplicate
+    /// (ADR-0027 [proposed in #10, unmerged]) is not built: refused until its term-tip and duplicate
     /// reads are.
     // reading: ADR-0027 is not accepted on this branch, and
     // `vocab_edges::check_classification` needs reads no caller makes yet;
