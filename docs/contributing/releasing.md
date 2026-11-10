@@ -27,6 +27,9 @@ The release pull request then edits the section's lead paragraph by hand (the AD
 and bumps the version files. Because no change edited `docs/changelog.md`, the release pull
 request does not conflict on it.
 
+The landing footer and install command name the workspace version, so the same pull request runs
+`python site/build.py` after the bump; CI's `site/build.py --check` fails it otherwise.
+
 ## Merge queue
 
 **Status: not enabled.** `main` has no ruleset and no branch protection. GitHub merge queues

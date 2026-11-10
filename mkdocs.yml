@@ -1,6 +1,7 @@
 site_name: Open Memory Lab
 site_description: An external memory provider for AI agents. Every write is held until a different identity reviews it.
 site_url: https://e8kor.github.io/open-memory-lab/
+site_dir: _site
 repo_url: https://github.com/e8kor/open-memory-lab
 edit_uri: edit/main/docs/
 docs_dir: docs
