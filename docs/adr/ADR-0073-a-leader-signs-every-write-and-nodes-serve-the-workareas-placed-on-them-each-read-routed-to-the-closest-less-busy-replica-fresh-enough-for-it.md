@@ -210,7 +210,8 @@ flowchart LR
           primary alone, the commit index freezes (no `sync` row), nodes fall behind and lose their
           leases at the next narrowing floor, and doctor fires `cluster.authority_unsynced`. A
           narrowing act is accepted and answered through its barrier (d8), which waits out the
-          nodes' leases. The standby is marked `stale` (`cluster.standby_stale`), and the promotion
+          nodes' leases; the operator decided this on 2026-11-10, so an emergency denial is never
+          refused `503 cluster.authority_unsynced`, and the safety is the promotion check below. The standby is marked `stale` (`cluster.standby_stale`), and the promotion
           runbook and Patroni recipe refuse to promote it until it has caught up, so no act an admin
           was told took effect is lost by a promotion. 2 PostgreSQL instances. A lead renewal is
           a commit too and waits like any write; d8 item 3 bounds that wait below the lead lease.
@@ -714,7 +715,7 @@ sequenceDiagram
     | one tenant larger than a node (3) | placement roots | as measured | as measured |
 
   Per node the operator enrols it, renews its certificate, encrypts its volume, runs its
-  PostgreSQL, and drains it on upgrade. The public server's next step is 1a.
+  PostgreSQL, and drains it on upgrade. The public server's next step is 1a, which the operator took there on 2026-11-10 (#221); 1b stays until ADR-0058's condition is met.
 - **Operational costs.** Per node: a PostgreSQL, a certificate, an encrypted volume, CPU to apply
   every event of its tenants (#209). Per cluster from 1b: the synchronous standby's round trip on
   every commit, one renewal per node every L/3, a checkpoint hash every `cluster.checkpoint_every`
@@ -760,12 +761,14 @@ sequenceDiagram
 
 ## Open questions for the operator
 
-1. **The public server.** Recommended: take phase 1a there now (one database, no backup question);
-   keep 1b self-hosted until ADR-0058's "a second person stores data" condition is met. Confirm.
-2. **Narrowing acts while the standby is out of the set.** Recommended, and written into d5 (b):
-   accept them, answer through the barrier, and fail closed at promotion by refusing a stale
-   standby, so an emergency denial is never refused. The alternative refuses them
-   `503 cluster.authority_unsynced` naming the recovery step. Confirm.
+1. **The public server.** Decided by the operator, 2026-11-10: phase 1a goes to the public server
+   now (one database, no backup question, tracked in #221); 1b stays self-hosted until
+   [ADR-0058](ADR-0058-the-public-server-runs-to-stated-slos-with-an-error-budget-and-without-backups-until-a-second-person-stores-data.md)'s
+   condition, a second person storing data, is met.
+2. **Narrowing acts while the standby is out of the set.** Decided by the operator, 2026-11-10:
+   they are accepted and answered through the barrier, and the system fails closed at promotion
+   by refusing a stale standby (d5 b), so an emergency denial is never refused. The alternative,
+   refusing them `503 cluster.authority_unsynced` naming the recovery step, is declined.
 
 ## Review log
 
