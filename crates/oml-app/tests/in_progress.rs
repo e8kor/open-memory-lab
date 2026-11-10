@@ -1507,3 +1507,46 @@ async fn each_r2_clause_alone_keeps_a_curator_off_a_row() {
         assert!(matches!(err, AppError::AuthorInLineage), "{case}: {err:?}");
     }
 }
+
+/// An edge with an endpoint the scan held is not served to a sibling inside
+/// an in-progress scope, while that endpoint's author still reads it
+/// (ADR-0030 d3; ADR-0065 d15). The edge is made between clean rows; a
+/// recording rescan then finds a hold on one of them.
+#[tokio::test]
+async fn an_edge_to_a_flagged_held_row_is_not_listed_to_a_sibling_in_progress() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let a = w
+        .write(&w.ann, "e1", "the canary drains first", w.proj)
+        .await;
+    let b = w
+        .write(&w.bob, "e2", "the canary never drains", w.proj)
+        .await;
+    w.flag(&w.curator, a, b).await.expect("curator flags");
+    assert_eq!(w.edges(&w.bob, Some(w.proj), Some(b)).await, 1, "before");
+    seal_onto(
+        &w,
+        event_types::SCAN_FINDINGS_RECORDED,
+        json!({ "scanned_under": null, "versions": [
+            { "artifact_id": a.to_string(), "findings": [] },
+        ] }),
+        MetadataFold::FindingsRecorded {
+            scanned_under: None,
+            versions: vec![(
+                a,
+                Some("test.marker: marker-hold at /body line 1".to_owned()),
+            )],
+        },
+    )
+    .await;
+    assert_eq!(
+        w.edges(&w.bob, Some(w.proj), Some(b)).await,
+        0,
+        "a sibling no longer reads the edge"
+    );
+    assert_eq!(
+        w.edges(&w.ann, Some(w.proj), Some(b)).await,
+        1,
+        "the flagged endpoint's author still does"
+    );
+}

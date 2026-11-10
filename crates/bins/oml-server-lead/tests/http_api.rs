@@ -4838,6 +4838,97 @@ async fn a_held_row_scanned_under_an_older_rule_set_stays_its_authors_until_the_
     drop_db(&rig.db_name).await;
 }
 
+/// On PostgreSQL, an edge with an endpoint the scan held is not served to a
+/// sibling inside an in-progress workarea, while that endpoint's author still
+/// reads it (ADR-0030 d3; ADR-0065 d15). The edge is made between clean
+/// rows; the finding is then set on one, as a recording rescan sets it.
+#[tokio::test]
+async fn an_edge_to_a_flagged_held_row_is_not_listed_to_a_sibling_in_progress() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, tenant, crew) = crew_tenant(router).await;
+    let proj = create_workarea(router, &admin, crew, "proj").await;
+    let ann = agent_on(router, &admin, "crew/ann", crew).await;
+    let bob = agent_on(router, &admin, "crew/bob", crew).await;
+    let (status, _, person) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("issue-pat").body(json!({
+            "role": "dreamer",
+            "name": "pat",
+            "principal": "crew/pat",
+            "held_by": "human",
+            "grants": [
+                { "workarea": crew, "role": "dreamer" },
+                { "workarea": crew, "role": "reader" },
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{person}");
+    let person = person["value"].as_str().expect("value").to_owned();
+    let (status, _, marked) = send(
+        router,
+        "POST",
+        &format!("/v2/workareas/{proj}/mode"),
+        Call::auth(&person)
+            .idem("mark-proj")
+            .body(json!({ "mode": "in_progress" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{marked}");
+    let a = remember(router, &ann, "a", "The canary drains first.", Some(proj)).await;
+    let b = remember(router, &bob, "b", "The canary never drains.", Some(proj)).await;
+    let (status, _, edge) = send(
+        router,
+        "POST",
+        "/v2/edges",
+        Call::auth(&person).idem("e-1").body(json!({
+            "kind": "claim", "from_artifact_id": a, "to_artifact_id": b, "label": "contradicts",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{edge}");
+    let read = |token: String| {
+        let path = format!("/v2/edges?kind=claim&workarea_id={proj}&artifact_id={b}");
+        async move {
+            let (status, _, page) = send(router, "GET", &path, Call::auth(&token)).await;
+            assert_eq!(status, StatusCode::OK, "{page}");
+            page["items"].as_array().expect("items").len()
+        }
+    };
+    assert_eq!(read(bob.clone()).await, 1, "before the finding");
+
+    let mut owner = PgConnection::connect(&owner_url(&rig.db_name))
+        .await
+        .expect("owner connection");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, false)")
+        .bind(tenant.to_string())
+        .execute(&mut owner)
+        .await
+        .expect("set tenant");
+    sqlx::query(
+        "UPDATE memories SET scan_finding = 'test.marker: marker-hold at /body line 1' \
+         WHERE id = $1",
+    )
+    .bind(Uuid::parse_str(&a).expect("uuid"))
+    .execute(&mut owner)
+    .await
+    .expect("the finding");
+    drop(owner);
+    assert_eq!(read(bob).await, 0, "a sibling no longer reads the edge");
+    assert_eq!(
+        read(ann).await,
+        1,
+        "the flagged endpoint's author still does"
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
 #[tokio::test]
 async fn own_held_rows_are_ranked_among_promoted_hits_with_state_held() {
     let Some((rig, _admin, _crew, agent, dreamer, _reader)) = own_held_rig().await else {
