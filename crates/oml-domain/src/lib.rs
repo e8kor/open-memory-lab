@@ -8,7 +8,7 @@
 //! (ADR-0001 d2). `access` holds grant admissibility, effective access, the
 //! refusal order, effective verbs and content-tail visibility (ADR-0025 d1,
 //! d2, d14, d15), with dreamer grants narrowed by `edge_labels` and the
-//! member-profile check (ADR-0027 d3, d4, d5); `budget` holds the budget token, the budget cut and the
+//! member-profile check (ADR-0027 [proposed in #10, unmerged] d3, d4, d5); `budget` holds the budget token, the budget cut and the
 //! recall order (ADR-0025 d6, d7, d8); `name` holds the name grammar, the
 //! classification of a reference as an id or a name, and the naming of rows
 //! that predate names (ADR-0026 d2, d3, d11); `ladder` holds the workarea
@@ -22,7 +22,7 @@
 //! answers the server admits and the CSRF token (ADR-0045, proposed); `guardrail`
 //! holds the guardrail kind's fields and caps, the `oml-gr/1` rule grammar,
 //! its tool classes, glob and check, the set's order and conflicts, and the
-//! rule cache's codec (proposed ADR-0037 d2, d4, d7, d8, d9, d10).
+//! rule cache's codec (ADR-0037 d2, d4, d7, d8, d9, d10).
 //! `vocab` holds the CURIE grammar, the prefix registry, `term_status` and
 //! the `oml:` register (ADR-0021 d1, d2; ADR-0027 d7); `vocab_edges` holds
 //! claim-edge states, classification validation, cycle refusal, the lineage
@@ -32,7 +32,7 @@
 //! d5; ADR-0021 d5; ADR-0012). `similar` holds the near-copy check's words,
 //! keys, guard and exact relation (ADR-0050 d1, d17); `valid_time` holds a
 //! version's declared valid time, expiry and the query's date window under
-//! rule `oml-when/1` (proposed ADR-0059).
+//! rule `oml-when/1` (ADR-0059).
 
 #![forbid(unsafe_code)]
 

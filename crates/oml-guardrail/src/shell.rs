@@ -1,6 +1,6 @@
 //! The `shell` class's argument: a `command` tokenised by POSIX quoting
 //! without expansion, then split into segments at unquoted `;`, `&`, `&&`,
-//! `||`, `|` and newlines (proposed ADR-0037 d8).
+//! `||`, `|` and newlines (ADR-0037 d8).
 //!
 //! What the record makes the check ask on, rather than tokenise, is a
 //! [`ShellRefusal`]: a quote or escape left open, command or process
@@ -16,7 +16,7 @@
 //! does.
 
 /// Why a command was not tokenised. Whenever a `shell` rule is cached the
-/// check asks on it (proposed ADR-0037 d8).
+/// check asks on it (ADR-0037 d8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 pub enum ShellRefusal {
     #[error("a quote is not closed")]
@@ -58,7 +58,7 @@ const RESERVED: [&str; 16] = [
 
 /// One segment of a `shell` command: its words, which rules match, and the
 /// target words of its redirections, which only the built-in cache rule
-/// reads (proposed ADR-0037 d8, d9).
+/// reads (ADR-0037 d8, d9).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ShellSegment {
     pub words: Vec<String>,

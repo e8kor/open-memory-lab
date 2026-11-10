@@ -1,6 +1,6 @@
 //! Guardrail rules: severity, the `oml-gr/1` rule grammar, the tool classes
 //! and their argument normalisation, the linear-time glob, the check before
-//! a tool call and the rule cache's codec (proposed ADR-0037 d2, d7, d8,
+//! a tool call and the rule cache's codec (ADR-0037 d2, d7, d8,
 //! d9; the leaf crate of d18 Q10).
 
 use oml_guardrail::{

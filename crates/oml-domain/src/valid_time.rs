@@ -1,6 +1,6 @@
 //! Valid time, the query's date window and expiry — pure
-//! functions over values the app has already read (proposed ADR-0059; it
-//! narrows proposed ADR-0036 d2).
+//! functions over values the app has already read (ADR-0059; it narrows
+//! ADR-0036 d2, proposed in #19 and unmerged).
 //!
 //! - **Valid time** (ADR-0059 d2): a version's optional ends `valid_from`
 //!   and `valid_until`, each a period (`YYYY`, `YYYY-MM`, `YYYY-MM-DD`) or an
