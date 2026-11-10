@@ -7,7 +7,7 @@ answers: what hypothetical question indexing is for and what the recall eval say
 
 # ADR-0075 — Each approved memory is indexed by the questions it answers, generated off the request path, scanned, stored with their generator, and matched only by an opt-in pipeline
 
-**Status:** proposed · 2026-11-10 · revised after review rounds 1 and 2 the same day (see the Review log)
+**Status:** proposed · 2026-11-10 · revised after review rounds 1, 2 and 3 the same day (see the Review log)
 
 **In short.** When a memory version is approved, a generator writes up to five questions that the
 memory answers. The server keeps only questions grounded in the memory's own words, scans them,
@@ -29,9 +29,9 @@ gain, that decides whether the server work is worth building.
 | d3 | Questions are postings of kind 3 (`KIND_QUESTIONS`), one field per version, a word counted once per set, with their own counts and a count of the rows where a word is new; never ADR-0072's memory kind 3 | 1 |
 | d4 | `bm25-questions` scores text and questions as two fields of one BM25F document; the text keeps `bm25-postings`' statistics and pruning exactly; opt-in; a row without questions scores what `bm25-postings` gives it; a hit names its question | 1 and 2, one release |
 | d5 | A `QuestionGenerator` port with one adapter in phase 1, the local one unless phase 0 says otherwise; off by default; no egress | 1 |
-| d6 | A question must be grounded in its memory, specific, distinct from its set and clean: grounding, genericity, near-duplicates, caps and the scan; any finding drops it; a version with a hold finding gets none | 1 |
+| d6 | A question must be grounded in its memory, specific, distinct from its set and clean: grounding, genericity, near-duplicates, caps and the scan; any finding drops it; a version with a finding whose class holds by default gets none, whatever a tenant ceiling says | 1 |
 | d7 | ADR-0072 d10 reads per-workarea kind 3 counts, through both of its reads, and a coverage share net of expired versions, nothing else | 3 |
-| d8 | One superiority gate with 90% power shown, non-inferiority arms sized to 99% each, a displacement bound at partial coverage, the joint power stated; an adversarial suite per adapter, recall and write latency under load, size, and the bill | 0 to 2 |
+| d8 | One superiority gate with 90% power shown, two arms in a fixed sequence, non-inferiority arms sized to 99% each, a displacement bound at partial coverage, the joint power stated; an adversarial suite per adapter, recall and write latency under load, size, and the bill | 0 to 2 |
 | d9 | Dense embeddings of questions are deferred until a named trigger fires | — |
 | d10 | Phase 0 (with 0a, the grown labelled set) decides; phases 1 and 2 ship in one release; phase 3 when #207 is scheduled | 0 to 3 |
 | d11 | Operations: an outage, told from a bad version by a compiled-in canary, pauses the drain and it resumes on its own; parked entries come back with backoff; a backfill is estimated, capped, stoppable and tracked; the bill is metered; doctor names each state | 1 |
@@ -40,7 +40,7 @@ gain, that decides whether the server work is worth building.
 
 | | Question | Recommended, pending operator |
 |---|---|---|
-| 1 | Which generator ships first? | `local` (an in-process T5), behind the one adapter phase 1 builds. No non-loopback endpoint on memory.doublegate.io. |
+| 1 | Which generator ships first? | `local` (an in-process T5), behind the one adapter phase 1 builds; the endpoint only if it then beats `local` by the same paired test. No non-loopback endpoint on memory.doublegate.io. |
 | 2 | Exclude approved memories that carry a hold finding? | Yes, with the count visible in `status` and doctor. |
 | 3 | Run phase 0 now? | Yes, phase 0a first (grow the labelled set to at least 550 queries), then phase 0; phases 1 and 2 stay behind its verdict. |
 | 4 | Correct #201's 0.17? | Yes: done in #201's body on 2026-11-10, with today's baseline and its source. |
@@ -53,7 +53,8 @@ with a weight of 1 per lexeme and a `novel` flag; d5: `search_term_rows` gains `
 ADR-0065 (d13, as ADR-0074 d14 amends it: the recorded rescan walks stored questions), ADR-0054
 (d2: `recall_events` gains `questions_seq`), and ADR-0072 (phase 2's test 13 and its review log now
 read "memory-kind-3 postings", a one-line clarification made in this pull request; posting kind 3
-is this record's question field)
+is this record's question field; and d9's list of what changes an answer in phase 3 now names a
+question set written, regenerated or dropped, as d4 here does)
 
 **Supplies:** ADR-0072 d10 (the generated-questions selection list of its phase 3, #207)
 
@@ -368,16 +369,35 @@ Decided, not built.
     binary and the field is capped at five questions of at most eight content lexemes (d6), and a
     normalisation would let a short, dense set raise its own words. Only w_q is tuned, in phase 0,
     by five-fold cross-validation on the grown labelled set (d8), over a grid inside (0, 1).
+    Here t ranges over the kept query words, as in `bm25-postings`: y_t takes the word's text form
+    as `bm25-postings` scores it, q_t is 1 when the set holds either form of the word, and
+    `novel_rows`, n_U and idf_q are computed per form, idf_q being the maximum over forms as idf_1
+    is. So idf_q ≤ idf_1 holds form by form, and a word counts once per set, not once per form.
+    Under federation the scope's rows are ADR-0072's R, and `novel_rows` and the kind 3 counts are
+    summed over R as kind 1's are, so no hit's score depends on which sources were selected
+    (ADR-0072 d4, its test 6).
   - **Pruning and candidates.** The text field is pruned exactly as `bm25-postings` prunes it:
-    `df_1` against `FREQUENT_SHARE` of N, then `POSTING_BUDGET` over the kind 1 forms, and step 5
-    completes each returned row's text term (ADR-0052 d4, d6); nothing of kind 3 enters either
-    decision. The question field is pruned on its own: a word whose n_U(t) exceeds `FREQUENT_SHARE`
+    `df_1` against `FREQUENT_SHARE` of N, then `POSTING_BUDGET` over the kind 1 forms (ADR-0052
+    d6); nothing of kind 3 enters either decision. The question field is pruned on its own: a word whose n_U(t) exceeds `FREQUENT_SHARE`
     of N adds nothing through questions, and kind 3 postings are read under a `POSTING_BUDGET` of
     their own, the kept word with the most kind 3 postings pruned first. Since n_U ≥ df_1, a word
     pruned from the text by frequency is pruned from the questions too. A question-field prune is
     not completed in step 5: that word's question increment is 0, which law 2 allows. The answer's
     `search.pruned` is `bm25-postings`' list, unchanged, and `search.pruned_questions` lists the
     words pruned from the question field alone, so an agent can see why the two pipelines disagree.
+  - **Completion, the scan path and `match: "all"`.** ADR-0052 d4's step 5 adds the pruned forms'
+    contributions for the best 4k candidates by partial score. Here it completes the union of two
+    windows: `bm25-postings`' own, the best 4k kind 1 candidates by partial T, and the best 4k by
+    partial S. A window chosen by S alone would let covered rows crowd an uncovered row out: with k
+    1, four covered rows matching on their questions fill the window, and an uncovered row whose
+    pruned words would have ranked it first under `bm25-postings` is neither completed nor returned
+    (round 3). With the union, every row `bm25-postings` completes is completed here with its full
+    T, for at most 4k more `(memory_id)` reads. When every kind 1 form is pruned, `bm25-postings`
+    answers by `scan` (ADR-0052 d6); `bm25-questions` then takes T from the same scan, adds the
+    question increments of the scan's candidates from their kind 3 rows by `(memory_id)`, and says
+    `search.access` `scan`. Under `match: "all"` a row must hold every query word in its text,
+    decided as `bm25-postings` decides it, so "every answer holds every word" stays a statement
+    about reviewed text; questions only reorder those rows.
     The candidates are the rows the kept kind 1 postings hold, which are `bm25-postings`'
     candidates, and the rows the kept kind 3 postings hold, each scored once.
   - **Law 1, neutrality against the default.** For every row d whose current set holds none of
@@ -389,7 +409,9 @@ Decided, not built.
     backfill, a regeneration or a drop elsewhere never moves the score of a row without questions;
     it moves only the covered rows around it. At 0% coverage kind 3 holds nothing, the candidate set
     is `bm25-postings`', and the answer is byte-identical to `bm25-postings`' but for the pipeline
-    name. Both are phase 2 property tests (d10). Separate per-field statistics are also why a set's
+    name. Under pruning, every row of `bm25-postings`' completion window is completed here with
+    the same T, by the union of windows above, and the `scan` path and `match: "all"` keep T the
+    same way. These are phase 2 property tests (d10). Separate per-field statistics are also why a set's
     length can never lower its row: with Robertson et al.'s one weighted document length, five
     questions would lengthen the row and lower its text's score on every query they miss.
   - **Law 2, a question only adds.** g increases and idf_q ≥ 0, so every increment
@@ -496,10 +518,14 @@ Decided, not built.
   drops it; a version with a hold finding gets no questions; a question changes ranking, never
   visibility, and is never served as memory text.**
   - **The input side.** A generator reading an injection can be steered by it. A version with any
-    hold-class finding, approved or dismissed by a person, gets no questions, and its queue entry
-    ends `outcome: empty` with the reason `source_finding`. Under `oml-scan/1.x`, the hold class is
-    ADR-0065's; under ADR-0074, if accepted, it is d1's. A rescan that adds such a finding after the
-    set was written drops the set (below).
+    finding whose class holds by default, approved or dismissed by a person, gets no questions, and
+    its queue entry ends `outcome: empty` with the reason `source_finding`. The default is the
+    class's verdict before any tenant policy: ADR-0065's under `oml-scan/1.x`, and ADR-0074 d1's if
+    that record is accepted. A tenant ceiling that lowers a class to `annotate`, or an allowlist
+    entry (ADR-0074 d22), spares the tenant's readers a held queue; it does not open the version
+    to the generator, which is the reader ADR-0074 d2 says can be talked round and whose output
+    ranks in every reader's recall. A rescan that adds such a finding after the set was written
+    drops the set (below).
   - **Shape** filters run first, in the generator's order, and drop a question that is longer than
     200 characters, spans more than one line, does not end in `?`, holds `://`, a backtick fence or
     a character of the hidden-character table (ADR-0074 d5 if accepted, ADR-0065's escaping
@@ -526,7 +552,8 @@ Decided, not built.
     each through questions (d4's law 3 and its worked counterexample).
   - **The scan.** Each remaining question is scanned by the composed rule set (`oml-scan/1.x`
     today, `/2` under ADR-0074) as one free-text field. **Any finding drops the question**, whatever
-    its verdict: refuse, hold or annotate. A memory's author may need such words, so a memory is held
+    its verdict: refuse, hold or annotate, and whatever a tenant ceiling or allowlist says
+    (ADR-0074 d22). A memory's author may need such words, so a memory is held
     for a person; a generated question has no author who needs it and no reviewer who will read it,
     and a drop costs one question of five. At most `max_questions` (5) survive, in the generator's
     order.
@@ -610,10 +637,11 @@ Decided, not built.
     (1.645 · 0.259 + 0.842 · 0.257)² / 0.033² ≈ 378 for 80% power and
     (1.645 · 0.259 + 1.282 · 0.257)² / 0.033² ≈ 523 for 90%. Exact enumeration of the one-sided
     conditional McNemar test (every count of wins W and losses L, weighted by its multinomial
-    probability, passing when the binomial tail P(Bin(W + L, 0.5) ≥ W) is below 0.05) gives 415
-    for 80% and 546 for 90%; with no losses, 205 for 80%. Phase 0a therefore writes at least **550**
+    probability, passing when the binomial tail P(Bin(W + L, 0.5) ≥ W) is below 0.05) gives 412
+    for 80% and 546 for 90%; with no losses, 203 for 80%. Phase 0a therefore writes at least **550**
     new question-shaped and paraphrased queries over the synthetic corpus, labelled against it,
-    for 90% power (0.902 at n 550 by the same enumeration). They are written by a person or by a
+    for 90% power (0.902 at n 550 by the same enumeration, and at least 0.90 at every n from 547 to 719, so the
+    set may overshoot 550 without losing power). They are written by a person or by a
     model of a family different from both the corpus's writer and phase 0's endpoint generator, so
     neither generator can win by echoing its own family's phrasing; a person checks the labels of a
     10% sample. Per-query results of every run are committed. 0a's rerun repeats this computation
@@ -646,8 +674,10 @@ Decided, not built.
     `bm25-postings` and `bm25-sparse` on each set with per-query output (the committed results hold
     aggregates only), takes σ_i of their paired difference as the planning SD, since kind 2 is the
     expansion OML has measured, and sets m_i = max(0.01, (1.960 + 2.326) · σ_i / √n_i), which gives
-    99% power at a true difference of 0; LoCoMo uses the SD of its ten per-conversation means and
-    √10. A margin is capped at 0.02; an arm whose margin hits the cap gates at 0.02, and its lower
+    99% power at a true difference of 0. LoCoMo uses the SD σ of its ten per-conversation means,
+    √10 and Student's t with 9 degrees of freedom, m = (2.262 + 2.821) · σ / √10: with normal
+    quantiles the ten-conversation sign-flip test reaches about 0.965, not 0.99, and with t
+    quantiles 0.991 (round 3, 4,000 simulated runs of the exact 1,024-assignment test). A margin is capped at 0.02; an arm whose margin hits the cap gates at 0.02, and its lower
     power enters the joint figure below.
   - **The displacement bound.** With law 1, a row without questions keeps its exact
     `bm25-postings` score, so the only harm left is covered competitors passing it, and that harm
@@ -660,15 +690,26 @@ Decided, not built.
     The tolerable rate is 4%: at 95% coverage an uncovered right memory is about 5% of queries, so
     4% of them displaced costs about 0.2 points of success@5 overall, against the 3.3 the record
     must gain. 80% coverage is reported with the same count.
-  - **The joint power.** A go needs every gate to pass. A false go therefore needs the superiority
-    test to reject wrongly, so the go decision's false-positive rate is at most that test's α, 0.05,
-    with no correction. Its power is at least 1 minus the sum of the gates' type II errors, by the
+  - **The joint power.** A go needs every gate to pass. A false go, a go when the chosen arm gains
+    nothing, needs a superiority test to reject wrongly; with the arms tested in the fixed sequence
+    below, the go decision's false-positive rate is at most 0.05, and each non-inferiority null is
+    held at 0.025. Its power is at least 1 minus the sum of the gates' type II errors, by the
     union bound and without assuming independence: 1 − (0.098 + 3 · 0.01 + 0.033) ≈ **0.84**, when
     the true effect is the planned one (a 3.3-point gain, no difference on BEIR or LoCoMo, at most
     1% displacement). 0a's rerun restates it with the measured σ_i and any capped margin, and if it
-    falls below 0.80, 0a grows the set further before phase 0 runs.
-  - **Pre-registered arms.** The verdict names one of two arms fixed before phase 0 runs: `local`
-    and the endpoint LLM, each with five questions and every d6 filter on. The other variants,
+    falls below 0.80, 0a grows the set further before phase 0 runs. The figure covers the
+    statistical gates; the adversarial suite and the latency, write-latency and size gates are
+    pass/fail engineering bounds outside it.
+  - **Pre-registered arms, tested in a fixed sequence.** The verdict names one of two arms fixed
+    before phase 0 runs: `local` and the endpoint LLM, each with five questions and every d6 filter
+    on. Gating both against `bm25-postings` on one set and taking the better would let either test's
+    error through, a false-go rate up to 0.10. So: (1) the first arm, `local`, or the endpoint when
+    d5's register stops `local`, faces every gate above; (2) only if it passes, the endpoint faces
+    the first arm by the same one-sided exact McNemar test and 1.5-point floor on the grown set, and
+    is chosen only if that passes and it clears every other gate too. A fixed sequence keeps the
+    family-wise error at 0.05 and n at 550 (splitting α at 0.025 an arm would need 663 for 90%, by
+    the same enumeration). If step 1 fails the record stops, and the endpoint's figures are
+    reported for a later amendment with a run of its own. The other variants,
     five against ten questions, each filter off, and other values of the filters' constants, are
     reported and are never chosen among on the gated sets; adopting one is a later amendment with
     a run of its own.
@@ -743,9 +784,9 @@ Decided, not built.
     | Phase | Builds | Issue | Built when | Acceptance (each test red first by breaking its clause) |
     |---|---|---|---|---|
     | 0a | the grown labelled set (≥ 550 queries, d8), its labels and a person's 10% check; per-query reruns of `bm25-postings` and `bm25-sparse` on every set for the planning SDs | #235 | now: it changes no server code | the set committed with its provenance; the power computation, each margin m_i and the joint power rerun on it, the joint power at least 0.80 |
-    | 0 | offline generation for the grown set, the synthetic set, SciFact, NFCorpus and LoCoMo with `local` and an LLM; d6's filters and scan; offline BM25F scoring with w_q by five-fold cross-validation; the two pre-registered arms; the displacement arm; the adversarial suite; the capped-sparse comparison; the latency proxy; rate, tokens and kind 3 postings per memory; the checkpoint register | #235 | after 0a | d8's gates offline; every d8 report; a go or stop verdict on #201, naming the adapter; on stop, or when capped `bm25-sparse` clears the same gates inside the latency budget, this record is marked declined and #236 to #238 closed |
-    | 1 | migration `search_questions`, the trigger, the queue and drain, the port and phase 0's one adapter, d6's filters and scan, kind 3 postings and counts, the journal and `questions_seq`, `oml admin questions` (`enable`, `adopt`, `backfill` with `--dry-run`, `--limit`, `--stop`, `--resume`, `status`, `show`, `drop`, `retry-parked`), erase and rescan, d11's outage handling, doctor and metrics | #236 | after phase 0 says go; released with phase 2 | an unreviewed, held or in-progress-only version never gets a set; a version with a hold finding gets none; a question with any finding, or failing grounding, genericity or a cap, is dropped, counted and recorded without its text; the generator's input is that one version's own text; a version superseded or erased during generation gets no set; an entry whose lease lapsed and was taken by a second lead is written once, with one event, one `questions_seq` step and one token count; a version that always times out while the canary succeeds is parked after five attempts and the drain goes on; a canary failure counts no attempt; a word in all five questions writes one posting of weight 1; `novel_rows` counts a row only when its text lacks the token; a near-duplicate question is dropped; supersession, retirement and rejection flip kind 3 with kind 1; erase deletes every set, question, posting, count and coverage row in one transaction; every set change writes one journal event and bumps `questions_seq`; a lead whose generator differs from the tenant's drains nothing; a tenant with questions off enqueues nothing; an unreachable generator parks no entry and the drain resumes on its own; a parked entry returns after its backoff, and `retry-parked` is journalled; a backfill stops, resumes and honours its limit across the resume; a failed or discarded attempt's tokens reach the tenant's totals; d8's size budget at 100,000 |
-    | 2 | `RetrieverKind::Questions`, `bm25-questions`, `matched.question` and `question_terms`, `questions_seq` in `recall_events`, the served eval and the benchmark pages, #176's page | #237 | with phase 1, in one release | d8's gates served; the recall latency budget and the write latency gate with the drain saturated; d4's law 1 as property tests (at any coverage, every row with no set, an empty set or a set missing the query has exactly its `bm25-postings` score, and `search.pruned` equals `bm25-postings`'; at 0% coverage the answer is byte-identical to `bm25-postings`' but for the pipeline name; a set written for one row changes no other row's text score) and law 2 (dropping a set never lowers a row below that score); law 3's bound, idf_q(t) · g(w_q) per word, holds for every row of the eval sets; byte-identical answers across calls and two processes for fixed inputs; a replay across a set change names the change; a question of an unreadable version changes no byte, count or `did_you_mean`; no question text in `text`, the hook, an export or the lake; `did_you_mean` offers no word only questions hold |
+    | 0 | offline generation for the grown set, the synthetic set, SciFact, NFCorpus and LoCoMo with `local` and an LLM; d6's filters and scan; offline BM25F scoring with w_q by five-fold cross-validation; the two pre-registered arms in d8's fixed sequence; the displacement arm; the adversarial suite; the capped-sparse comparison; the latency proxy; rate, tokens and kind 3 postings per memory; the checkpoint register | #235 | after 0a | d8's gates offline; every d8 report; a go or stop verdict on #201, naming the adapter; on stop, or when capped `bm25-sparse` clears the same gates inside the latency budget, this record is marked declined and #236 to #238 closed |
+    | 1 | migration `search_questions`, the trigger, the queue and drain, the port and phase 0's one adapter, d6's filters and scan, kind 3 postings and counts, the journal and `questions_seq`, `oml admin questions` (`enable`, `adopt`, `backfill` with `--dry-run`, `--limit`, `--stop`, `--resume`, `status`, `show`, `drop`, `retry-parked`), erase and rescan, d11's outage handling, doctor and metrics | #236 | after phase 0 says go; released with phase 2 | an unreviewed, held or in-progress-only version never gets a set; a version with a finding whose class holds by default gets none, under a tenant ceiling or an allowlist too; a question with any finding, or failing grounding, genericity or a cap, is dropped, counted and recorded without its text; the generator's input is that one version's own text; a version superseded or erased during generation gets no set; an entry whose lease lapsed and was taken by a second lead is written once, with one event, one `questions_seq` step and one token count; a version that always times out while the canary succeeds is parked after five attempts and the drain goes on; a canary failure counts no attempt; a word in all five questions writes one posting of weight 1; `novel_rows` counts a row only when its text lacks the token; a near-duplicate question is dropped; supersession, retirement and rejection flip kind 3 with kind 1; erase deletes every set, question, posting, count and coverage row in one transaction; every set change writes one journal event and bumps `questions_seq`; a lead whose generator differs from the tenant's drains nothing; a tenant with questions off enqueues nothing; an unreachable generator parks no entry and the drain resumes on its own; a parked entry returns after its backoff, and `retry-parked` is journalled; a backfill stops, resumes and honours its limit across the resume; a failed or discarded attempt's tokens reach the tenant's totals; d8's size budget at 100,000 |
+    | 2 | `RetrieverKind::Questions`, `bm25-questions`, `matched.question` and `question_terms`, `questions_seq` in `recall_events`, the served eval and the benchmark pages, #176's page | #237 | with phase 1, in one release | d8's gates served; the recall latency budget and the write latency gate with the drain saturated; d4's law 1 as property tests (at any coverage, every row with no set, an empty set or a set missing the query has exactly its `bm25-postings` score, and `search.pruned` equals `bm25-postings`'; at 0% coverage the answer is byte-identical to `bm25-postings`' but for the pipeline name; a set written for one row changes no other row's text score; with a budget-pruned word, every row of `bm25-postings`' completion window keeps its full score, on the `scan` path and under `match: "all"` too; with federation on, a hit's score is the same whether a source is selected or not, ADR-0072's test 6) and law 2 (dropping a set never lowers a row below that score); law 3's bound, idf_q(t) · g(w_q) per word, holds for every row of the eval sets; byte-identical answers across calls and two processes for fixed inputs; a replay across a set change names the change; a question of an unreadable version changes no byte, count or `did_you_mean`; no question text in `text`, the hook, an export or the lake; `did_you_mean` offers no word only questions hold |
     | 3 | d7's kind 3 counts, through both reads, and coverage in ADR-0072's statistics read, recorded in `recall_events` | #238 | when #207 is scheduled, not before | ADR-0072 tests 14 and 15; the counts law, with an expired version contributing nothing |
 
 - **d11 — Operations: an outage, told from a bad version by a compiled-in canary, pauses the drain
@@ -832,7 +873,7 @@ Decided, not built.
 
     | | R1 | R2 | R3 | R4 |
     |---|---|---|---|---|
-    | generation | no agent act; a lead's task after a version becomes served | only served versions, which review made served; none with a hold finding; one version's own text in, nothing else | — | reads a version, writes no memory |
+    | generation | no agent act; a lead's task after a version becomes served | only served versions, which review made served; none with a finding whose class holds by default; one version's own text in, nothing else | — | reads a version, writes no memory |
     | questions | index data, never a claim | never reviewed, so grounded, filtered and scanned, never served as text and never visible on their own | change a served row's rank, never who reads it; only add to a row's score, so a finding never lowers a row below its own text's score (d4) | follow their version; postings leave with an erase or a regeneration, text with an erase, neither touching a memory's bytes |
     | settings | an admin's act | — | — | journalled, every set change too |
 
@@ -868,6 +909,9 @@ Decided, not built.
 | d5 | **Beam search for repeatability** | docTTTTTquery measured top-k sampling more effective; stored questions already give repeatability, so the seed is a convenience. |
 | d6 | **Hold a question with a finding for a person** | A person would review machine text no reader needs; dropping one question of five costs less than a review. |
 | d6 | **Filter by a relevance model (Doc2Query--)** | A second model at write; DeeperImpact found such filtering unhelpful with learned weights. d6's grounding filter keeps Doc2Query--'s motive with a lexical rule and no model, and phase 0 reports what it costs. |
+| d6 | **Follow the tenant's effective verdict (ADR-0074 d22) when excluding versions** | A ceiling spares a tenant's readers a held queue; it says nothing about feeding the text to a model that can be talked round, whose questions rank in every reader's recall. |
+| d8 | **Gate both arms against the baseline and take the better** | Either test's error passes, so the false-go rate doubles to 0.10; a fixed sequence keeps 0.05 at the same n. |
+| d4 | **Complete the best 4k by the combined score only** | Covered rows can crowd an uncovered row out of completion, so a row `bm25-postings` returns first is not returned, against law 1. |
 | d6 | **Generate for versions whose hold finding a person approved** | The approval judges the memory for its readers, not as a model's input; a generator is the reader ADR-0074 d2 says can be talked round. |
 | d7 | **Hand ADR-0072 the question text** | A selection needs counts, not text; text across workareas would be a second channel for d6's "never served as memory text". |
 | d7 | **A coverage count kept by the drain** | Supersession, retirement, erase and rescan drops change state in the trigger, not the drain, so the count would go stale and break d7's invariants. |
@@ -881,11 +925,13 @@ Decided, not built.
 Each answer below is recommended, pending the operator.
 
 1. **Which generator ships first.** Phase 0 measures `local` and an LLM. Recommended: `local` (an
-   in-process T5, no egress, no per-token cost), behind the one adapter phase 1 builds, unless the
-   LLM arm passes d8's gates and beats the `local` arm by at least 3.3 points of success@5 on the
-   grown set, both arms pre-registered (d8), and then only as a loopback endpoint. No non-loopback endpoint on the public server
+   in-process T5, no egress, no per-token cost), behind the one adapter phase 1 builds. The LLM
+   arm replaces it only by d8's fixed sequence: `local` passes every gate, and the LLM then beats
+   `local` by the same one-sided exact McNemar test with the 1.5-point floor on the grown set and
+   passes every other gate, and then only as a loopback endpoint. No non-loopback endpoint on the public server
    (memory.doublegate.io).
-2. **Versions whose hold finding a person approved** get no questions (d6), so they are found by
+2. **Versions whose hold finding a person approved**, or whose class a tenant ceiling lowered,
+   get no questions (d6), so they are found by
    their text alone, at exactly their `bm25-postings` score (d4's law 1). Recommended: yes, as written; they
    are few, the generator is the reader ADR-0074 warns about, and `status` and doctor count them
    (d11).
@@ -994,3 +1040,26 @@ is taken, and the six partly closed rows close with N1 to N6. What changed:
   leaves with its served state (m5); the unverified price line is dropped (m6); two arms are
   pre-registered, the rest reported, and the query writer's family differs from the endpoint
   generator's (m7); `search.pruned` is answered (m8).
+
+**Round 3, 2026-11-10, the final round.** One fresh review (IR method, security, operations,
+readability): 0 blockers, 4 majors, 7 minors; of round 2's 6 majors, 5 closed and 1 partly closed,
+and all 8 minors closed. The neutrality algebra (N1), the once-per-set count (N2) and 550 queries
+at 0.902 power by exact enumeration (N3) were rechecked and hold. Every major and minor is taken.
+What changed:
+
+- **Completion (R3-M1; round 2 N1).** Step 5 completes only the best 4k candidates by partial
+  score, so covered rows could crowd an uncovered row out of completion under pruning, and a row
+  `bm25-postings` returns first would not be returned. Step 5 now completes the union of
+  `bm25-postings`' window and the combined score's; law 1 and its phase 2 test cover pruning (d4).
+- **LoCoMo's margin (R3-M2).** Ten clusters need Student's t: m = 5.083 · σ / √10 gives 0.991
+  power where the normal quantiles gave about 0.965 (d8).
+- **Two arms (R3-M3).** Gating both arms against the baseline let a false go through at up to
+  0.10. The arms are now tested in a fixed sequence, `local` first, the endpoint only against
+  `local` by the same paired test; open question 1 no longer rests on a 3.3-point point estimate
+  (d8, open question 1).
+- **The hold class (R3-M4).** A version is excluded by its class's default verdict, before any
+  tenant ceiling or allowlist of ADR-0074 d22, and the question scan ignores both (d6).
+- **Minors.** 80% power is reached at 412 queries and, with no losses, at 203 (m1); the `scan`
+  path (m2), `match: "all"` (m3) and word forms (m4) are stated; under federation the counts are
+  R's, and ADR-0072 d9 names the set-level events (m5); the joint power says what it covers (m6);
+  the status line (m7).

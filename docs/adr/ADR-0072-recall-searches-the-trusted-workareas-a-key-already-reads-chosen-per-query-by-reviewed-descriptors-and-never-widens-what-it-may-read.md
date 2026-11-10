@@ -550,7 +550,7 @@ sequenceDiagram
   searched sources, their order and the hits are byte-identical across calls and processes,
   `recall_id` aside (#176). What changes the answer is listed on #176's page: a promotion,
   demotion, supersession or retirement in any node of R; a policy or setting change; a grant
-  change; and, in phase 3, a question backfill under a new model or prompt version.
+  change; and, in phase 3, a question set written, regenerated or dropped (ADR-0075 d4).
   `recall_events` gains `sources` (the mode, or the list as workarea ids), `federated_workarea_ids`
   and `reference_workarea_ids` (R's nodes after any round-1 miss, d4.2), and in phase 2 `selector`, so ADR-0054 d11's replay reproduces a
   federated recall; all fall under recall telemetry's erasure row (ADR-0054 d4). `now` is one
