@@ -5865,6 +5865,37 @@ mod tests {
     }
 
     #[test]
+    fn the_scan_doctor_warns_of_held_versions_and_versions_an_older_rule_set_scanned() {
+        let due = json!({
+            "scanner_version": "oml-scan/1.1", "held_unrescanned": 4, "rescan_due": 9,
+        });
+        assert_eq!(
+            scan_backlog_doctor(Some(&due)),
+            vec![
+                "warn scan_held_unrescanned: 4 held version(s) were scanned under an older rule set than oml-scan/1.1, and stay their authors' alone in in-progress workareas; run oml admin rescan --record-held".to_owned(),
+                "warn scan_rescan_due: 9 stored version(s) were scanned under an older rule set than oml-scan/1.1; oml admin rescan reports what it finds in them".to_owned(),
+            ]
+        );
+        let clear = json!({
+            "scanner_version": "oml-scan/1.1", "held_unrescanned": 0, "rescan_due": 0,
+        });
+        assert_eq!(
+            scan_backlog_doctor(Some(&clear)),
+            vec![
+                "scan_held_unrescanned: 0".to_owned(),
+                "scan_rescan_due: 0".to_owned(),
+            ]
+        );
+        assert_eq!(
+            scan_backlog_doctor(None),
+            vec![
+                "scan_held_unrescanned, scan_rescan_due: not read; an admin key reads them"
+                    .to_owned()
+            ]
+        );
+    }
+
+    #[test]
     fn the_web_doctor_reads_failed_exchanges_from_the_metrics_listener() {
         let ready = (200, json!({"web": {"providers": ["google", "github"]}}));
         let scrape = Scrape(

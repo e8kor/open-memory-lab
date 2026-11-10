@@ -4732,6 +4732,9 @@ async fn a_held_row_scanned_under_an_older_rule_set_stays_its_authors_until_the_
     let (status, _, read) = send(router, "GET", "/v2/admin/rescan", Call::auth(&admin)).await;
     assert_eq!(status, StatusCode::OK, "{read}");
     assert_eq!(read["recorded"], 0, "{read}");
+    // Doctor's two counts: the four held versions, and the promoted one too.
+    assert_eq!(read["held_unrescanned"], 4, "{read}");
+    assert_eq!(read["rescan_due"], 5, "{read}");
     assert_eq!(bobs(query.clone()).await.0, Vec::<Value>::new());
 
     let (status, _, recorded) = send(
@@ -4744,6 +4747,19 @@ async fn a_held_row_scanned_under_an_older_rule_set_stays_its_authors_until_the_
     assert_eq!(status, StatusCode::OK, "{recorded}");
     assert_eq!(recorded["scanner_version"], "oml-scan/1.1", "{recorded}");
     assert_eq!(recorded["recorded"], 4, "held versions alone: {recorded}");
+    let (status, _, after) = send(
+        router,
+        "GET",
+        "/v2/admin/rescan?limit=1",
+        Call::auth(&admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert_eq!(after["held_unrescanned"], 0, "{after}");
+    assert_eq!(
+        after["rescan_due"], 1,
+        "the promoted version alone: {after}"
+    );
     let (hits, page) = bobs(query).await;
     assert_eq!(hits, vec![json!(clean)], "the clean row returns");
     assert_eq!(page, vec![clean.clone()]);
