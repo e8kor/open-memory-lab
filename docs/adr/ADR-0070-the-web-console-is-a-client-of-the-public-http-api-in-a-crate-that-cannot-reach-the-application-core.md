@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core
 tier: engineering
-status: proposed
-answers: why the web pages stop calling oml-app's use cases and call the public HTTP API instead; which crate serves the pages and what it may depend on; how a signed-in person's session becomes an API credential without a key value at rest or in the browser; which middleware layer owns the request id, the session, CSRF, CSP, rate limits, audit and error mapping; how oml-web reaches the API in the lead and when it runs on its own; which existing operation serves each web call and which operations are new; what stays in the auth context; the bounded contexts; the migration phases and the test that proves parity; the overhead budget; what it amends in ADR-0042 and ADR-0045
+status: accepted design · 2026-11-07, amended 2026-11-10
+answers: why the web pages stop calling oml-app's use cases and call the public HTTP API instead; which crate serves the pages and what it may depend on; how a signed-in person's session becomes an API credential without a key value at rest or in the browser; which middleware layer owns the request id, the session, CSRF, CSP, rate limits, audit and error mapping; how oml-web, always its own process, reaches the API; which existing operation serves each web call and which operations are new; what stays in the auth context; the bounded contexts; the migration phases and the test that proves parity; the overhead budget; what it amends in ADR-0042 and ADR-0045
 -->
 
 # ADR-0070 — The web console is a client of the public HTTP API, in a crate that cannot reach the application core
 
-**Status:** proposed · 2026-11-06
+**Status:** accepted design · 2026-11-07, amended 2026-11-10
 
 **Amends:** ADR-0045 (d1: the page routes move to `oml-web` and the sign-in routes to the auth
 context; d6: a session key gains a per-session credential; d7: that credential, never the
@@ -169,19 +169,34 @@ Decided, not built. The build follows #163, #166 and #167.
   router. `oml-web`'s settings are `web.api_url`, `web.listen`, its client identity (d2), and
   `web.public_url`, the origin its same-origin check compares a `POST`'s `Origin` against, which
   defaults to the API's `/.well-known/oauth-authorization-server` `issuer`, read at start. The
-  `omls_` credential and the client secret cross the hop, so an `http://` `web.api_url` to a
-  host other than loopback makes `oml-web` log a warning at start and `oml doctor` warn while
-  it is set; across a LAN the hop is `https://` or mutual TLS (d2).
+  `omls_` credential and the client secret cross the hop, so a plain `http://`
+  `web.api_url` is accepted only for a loopback host (`127.0.0.0/8`, `::1`, `localhost`). For any
+  other host `oml-web` refuses to start with `web.api_url: plain http to a non-loopback host sends
+  session credentials in clear; use https://, or set web.allow_plain_http_api = true for a private
+  network`; with `web.allow_plain_http_api = true` it starts and logs one warning naming the host
+  at every start. `web.api_url` carries no userinfo, query or fragment. Across a LAN the hop is
+  `https://` or mutual TLS (d2); `oml quickstart`'s compose network reaches the lead at a service
+  name, so it sets the opt-in explicitly. The doctor line lives in `oml-web`, whose settings the
+  lead's `oml doctor` cannot read: `oml-web --doctor` prints `web.api_url` as `ok`, `warn` (plain
+  http allowed by the opt-in) or `fail` (plain http refused), and `oml doctor` run with `oml-web`'s
+  environment gives the same line. Test:
+  `a_plain_http_api_url_to_a_non_loopback_host_is_refused_unless_allowed`.
 
     | Shape | Browser reaches | `oml-web` reaches the API at |
     |---|---|---|
     | Production | Caddy (or another proxy) on the public origin: `/web` and `/web/*` to `oml-web`, except the auth routes of d6 (`/web/sign-in`, `/web/callback/*`, `/web/sign-up` and the sign-up terms page); those, `/v1/*`, `/v2/*`, `/mcp`, `/oauth/*` and `/.well-known/*` to the lead; the landing paths to static files (d12) | the lead's listener on loopback or the LAN, not back through the public proxy |
-    | Local development | two processes, both started by `oml quickstart` (its compose file gains an `oml-web` service): the lead on its port and `oml-web` on the next; the cookie is host-only, so the two ports share it, and `oml quickstart` sets the lead's new `web.page_url` to `oml-web`'s address, so sign-in returns there | the lead's address on the host or on the compose network |
+    | Local development | three services started by `oml quickstart` (its compose file gains `oml-web` and the router): the lead, `oml-web`, and a path router (Caddy, as a third compose service) in front of both, routing exactly as production does, so the browser sees one origin, `web.public_url` keeps its default and there is no `web.page_url` setting | the lead's address on the host or on the compose network |
     | Kubernetes | the chart's Ingress routes as production does, to two Deployments | the lead's Service |
 
     `__Host-` cookies bind one host, so production puts both behind the same public origin.
     A person with no live session who opens a page is sent with a `303` to the lead's
-    `/web/sign-in`, carrying the page as `next`; this replaces d10 (e)'s pass-through, which
+    `/web/sign-in`, carrying the page as `next`; the redirect is relative, which works because
+    every shape has one public origin. `GET /web/sign-in` is a new route: sign-in rendered at
+    `GET /web` until now, and the lead's route table moves with it (phase d). The lead accepts
+    `next` only as a same-origin relative path: it starts with `/web`, holds no `//`, no `\`, no
+    `@` and no scheme, is percent-decoded once and checked again, and anything else is dropped to
+    `/web`. The redirect target is built from the lead's configured public origin, never from a
+    request header. Test: `a_next_outside_web_or_naming_another_origin_returns_to_web`. This replaces d10 (e)'s pass-through, which
     needed the sign-in renderer in the same process. The boundary is the `Transport` trait and
     the serialized request, as before, and now also a socket, a second accept path and a peer
     address on every API line. The cost: two processes to deploy, start, upgrade and monitor
@@ -424,7 +439,7 @@ Decided, not built. The build follows #163, #166 and #167.
 
 ## The amendment of 2026-11-10
 
-The record as accepted on 2026-11-07 mounted `oml-web` in the lead by default, calling the API
+The record as first accepted on 2026-11-07 mounted `oml-web` in the lead by default, calling the API
 through a `oneshot` on the same `Router`, with a standalone mode as the second option. The
 operator reversed that on 2026-11-10 (d11): one process shape is simpler to reason about and to
 secure than two, the boundary becomes a socket nobody can bypass with a function call, and the
