@@ -86,7 +86,7 @@ Read on `main` at `71e4fc4c`, 2026-11-08.
   ([admission](../architecture/admission.md) lines 48–55; `crates/oml-scan/src/rules.rs:94-242`;
   `crates/oml-scan/src/lib.rs:35`). The landing says the same: "refuses private keys, known
   providers' API tokens and passwords set in config (`DB_PASSWORD=…`) … Prompt-injection text
-  and hidden Unicode are held for a reviewer to judge" (`deploy/landing/teams.src.html:59`).
+  and hidden Unicode are held for a reviewer to judge" (`site/src/teams.src.html:59`).
 - **What it holds.** `injection.*`, `unicode.*` and `encoding.base64_blob` record a finding on a
   held version (`rules.rs:246-291`; `lib.rs:130-133`, `:342`, `:568-585`). Every write is held
   until another identity reviews it anyway, so a hold finding is a recorded reason, not a

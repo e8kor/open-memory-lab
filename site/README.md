@@ -44,8 +44,9 @@ directory.
 Caddy serves the five pages for `/`, `/teams`, `/personal`, `/privacy` and `/terms`, and routes
 the rest by path. Once the web console runs as its own process, `oml-web`
 ([ADR-0070](../docs/adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md)
-phase b), `/web` and `/web/*` go to it, on port 8091 here; until then the lead serves them and
-that `handle` is left out. The API, MCP, OAuth and discovery paths go to the lead, here on port
+phase b), the page routes under `/web/*` go to it, on port 8091 here, but the auth routes
+(`/web/sign-in`, `/web/callback/*` and `/web/sign-up`) stay with the lead, as ADR-0070 d4 routes
+them; until then the lead serves every `/web` path and the `@web` handle is left out. The API, MCP, OAuth and discovery paths go to the lead, here on port
 8090. Every other path also goes to the lead, so a path this example does not name keeps working.
 
 ```caddyfile
@@ -57,6 +58,11 @@ memory.doublegate.io {
 		file_server
 	}
 	# With oml-web as its own process (ADR-0070 phase b); until then, leave this handle out.
+	# The auth routes stay with the lead (ADR-0070 d4); this handle comes before @web.
+	@auth path /web/sign-in /web/sign-in/* /web/callback/* /web/sign-up /web/sign-up/*
+	handle @auth {
+		reverse_proxy 127.0.0.1:8090
+	}
 	@web path /web /web/*
 	handle @web {
 		reverse_proxy 127.0.0.1:8091
