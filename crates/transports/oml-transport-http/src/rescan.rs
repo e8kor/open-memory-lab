@@ -15,7 +15,7 @@ use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signe
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
-use crate::{ApiState, bearer, finish, json_response};
+use crate::{ApiState, bearer, finish, idempotency_key, json_response, retry_chain};
 
 /// openapi.yaml `RescanReport`.
 fn report_json(r: &RescanReport) -> Value {
@@ -37,6 +37,7 @@ fn report_json(r: &RescanReport) -> Value {
             "class": class, "rule": rule, "action": action(*veto), "count": count,
         })).collect::<Vec<_>>(),
         "next_after_seq": r.next_after_seq,
+        "recorded": r.recorded,
     })
 }
 
@@ -55,8 +56,37 @@ where
         Query(params): Query<HashMap<String, String>>,
         headers: HeaderMap,
     ) -> Response {
+        Self::rescan_call(&st, &rid, &params, &headers, false).await
+    }
+
+    /// `POST /v2/admin/rescan?after_seq=&limit=`, admin by key role: the
+    /// read, and the window's held versions' findings recorded under the
+    /// server's rule set (ADR-0065 d15; ADR-0074 d28). Idempotency-Key
+    /// required.
+    pub(crate) async fn rescan_record_route(
+        State(st): State<Self>,
+        rid: Rid,
+        Query(params): Query<HashMap<String, String>>,
+        headers: HeaderMap,
+    ) -> Response {
+        Self::rescan_call(&st, &rid, &params, &headers, true).await
+    }
+
+    async fn rescan_call(
+        st: &Self,
+        rid: &Rid,
+        params: &HashMap<String, String>,
+        headers: &HeaderMap,
+        record_held: bool,
+    ) -> Response {
         let result = async {
-            let token = bearer(&headers)?;
+            if record_held {
+                st.require_writes_open()?;
+            }
+            let token = bearer(headers)?;
+            if record_held {
+                idempotency_key(headers)?;
+            }
             let after_seq: u64 = match params.get("after_seq") {
                 None => 0,
                 Some(s) => s.parse().map_err(|_| {
@@ -75,14 +105,15 @@ where
                         ))
                     })?,
             };
-            let report = st
-                .app
-                .rescan(&token, after_seq, limit)
-                .await
-                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            let report = if record_held {
+                retry_chain(|| st.app.rescan_record_held(&token, after_seq, limit)).await
+            } else {
+                st.app.rescan(&token, after_seq, limit).await
+            }
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
             Ok(json_response(StatusCode::OK, &report_json(&report)))
         }
         .await;
-        finish(&rid, result)
+        finish(rid, result)
     }
 }

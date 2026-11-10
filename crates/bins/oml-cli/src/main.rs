@@ -636,7 +636,14 @@ enum AdminCommand {
     },
     /// Report by rule and location which stored versions current rules would
     /// refuse or hold; never prints text or changes data.
-    Rescan,
+    Rescan {
+        /// Also record each held version's findings under current rules, so
+        /// a held version written before an upgrade is served inside an
+        /// in-progress workarea again when nothing is found; journals
+        /// scan.findings_recorded.
+        #[arg(long)]
+        record_held: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3350,19 +3357,28 @@ fn run_crews(
 /// memory by id, or every page of a search, each answer journalled by the
 /// server as `memory.admin_read`.
 /// `oml admin rescan`: every window of the journal, summed by rule, each
-/// finding listed by artifact, version, state and place (ADR-0065 d13).
-/// Exits 1 when any stored version would be refused, so a script notices.
-fn run_rescan(cli: &Cli, client: &Client) -> Result<ExitCode, CliError> {
+/// finding listed by artifact, version, state and place (ADR-0065 d13), and,
+/// with `record_held`, each window's held versions' findings recorded under
+/// the server's rule set (d15; ADR-0074 d28). Exits 1 when any stored
+/// version would be refused, so a script notices.
+fn run_rescan(cli: &Cli, client: &Client, record_held: bool) -> Result<ExitCode, CliError> {
     let mut after = 0_u64;
     let mut scanned = 0_u64;
+    let mut recorded = 0_u64;
     let mut version;
     let mut findings: Vec<Value> = Vec::new();
     let mut by_rule: std::collections::BTreeMap<(String, String, String), u64> =
         std::collections::BTreeMap::new();
     loop {
-        let (_, page) = client.get(&format!("/v2/admin/rescan?after_seq={after}"))?;
+        let path = format!("/v2/admin/rescan?after_seq={after}");
+        let (_, page) = if record_held {
+            client.post(&path, &json!({}), &write_opts())?
+        } else {
+            client.get(&path)?
+        };
         version = page["scanner_version"].clone();
         scanned += page["scanned"].as_u64().unwrap_or(0);
+        recorded += page["recorded"].as_u64().unwrap_or(0);
         findings.extend(page["findings"].as_array().cloned().unwrap_or_default());
         for r in page["by_rule"].as_array().into_iter().flatten() {
             *by_rule
@@ -3387,10 +3403,11 @@ fn run_rescan(cli: &Cli, client: &Client) -> Result<ExitCode, CliError> {
                 "class": class, "rule": rule, "action": action, "count": count,
             })).collect::<Vec<_>>(),
             "findings": findings,
+            "recorded": recorded,
         }));
     } else {
         println!(
-            "rescan      : {scanned} stored version(s) under {}, {} finding(s)",
+            "rescan      : {scanned} stored version(s) under {}, {} finding(s), {recorded} held version(s) recorded",
             version.as_str().unwrap_or("no pinned rule set"),
             findings.len()
         );
@@ -3411,7 +3428,7 @@ fn run_rescan(cli: &Cli, client: &Client) -> Result<ExitCode, CliError> {
         }
         if vetoes > 0 {
             println!(
-                "next        : {vetoes} finding(s) the scan would refuse today; nothing was changed. Read each with oml admin read <artifact_id> and retire or demote it"
+                "next        : {vetoes} finding(s) the scan would refuse today; nothing was refused or deleted. Read each with oml admin read <artifact_id> and retire or demote it"
             );
         }
     }
@@ -3429,7 +3446,7 @@ fn run_admin(
 ) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
     let (memory, query, workarea, state) = match command {
-        AdminCommand::Rescan => return run_rescan(cli, &client),
+        AdminCommand::Rescan { record_held } => return run_rescan(cli, &client, *record_held),
         AdminCommand::Read {
             memory,
             query,

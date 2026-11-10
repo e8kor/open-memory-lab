@@ -1,4 +1,4 @@
-//! The `oml-scan/1` rule set (ADR-0065): a true positive per rule, built at
+//! The `oml-scan/1.1` rule set (ADR-0065): a true positive per rule, built at
 //! run time from obviously fake material so no key-shaped literal sits in
 //! the repository; the false-positive corpus; findings that never carry
 //! what they matched; and the time budget.
@@ -373,7 +373,7 @@ fn a_field_over_the_bound_is_vetoed_not_scanned_in_part() {
 fn the_scan_is_deterministic_and_versioned() {
     let scanner = RuleSet::new(Options::default());
     assert_eq!(scanner.version(), RULESET);
-    assert_eq!(RULESET, "oml-scan/1");
+    assert_eq!(RULESET, "oml-scan/1.1");
     for (_, text, _) in positives() {
         assert_eq!(
             scanner.scan(&[("/body", &text)]),

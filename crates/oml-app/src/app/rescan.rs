@@ -1,17 +1,25 @@
 //! The rescan (ADR-0065 d13): an admin key runs the server's scanner over
 //! the versions a tenant already stores, a window of the journal at a time,
 //! and is told which versions it would refuse or hold, by rule and place,
-//! never by value. It changes nothing and journals nothing: a version it
-//! would veto stays where it is, for a person to retire (ADR-0001 R4).
+//! never by value. The read changes nothing and journals nothing: a version
+//! it would veto stays where it is, for a person to retire (ADR-0001 R4).
+//! The recording rescan (`--record-held`) reads the window's held versions
+//! alone: each takes the server's rule set as its `scanned_under`, and any
+//! finding it made becomes its own, journalled once per window as
+//! `scan.findings_recorded` (ADR-0065 d15; ADR-0074 d28). It moves nothing
+//! through review.
 
 use std::collections::BTreeMap;
 
 use oml_domain::anchor as anchor_grammar;
 use oml_domain::{MemoryStatus, Role, event_types};
+use serde_json::json;
 use uuid::Uuid;
 
 use super::{App, require_role};
-use crate::ports::{AdmissionEnvelope, Clock, IdGen, JournalStore, ScanFinding, Scanner, Signer};
+use crate::ports::{
+    AdmissionEnvelope, Clock, IdGen, JournalStore, MetadataFold, ScanFinding, Scanner, Signer,
+};
 use crate::types::{AppError, Bearer};
 
 /// The most journal events one rescan call reads.
@@ -41,6 +49,21 @@ pub struct RescanReport {
     pub by_rule: Vec<(String, String, bool, u64)>,
     /// The `after_seq` of the next window, or `None` at the chain's head.
     pub next_after_seq: Option<u64>,
+    /// Held versions whose findings this call recorded under the server's
+    /// rule set; zero for the read, which changes nothing (d15).
+    pub recorded: u64,
+}
+
+/// A finding as a version's `scan_finding` carries it, as admission's
+/// reason names one: `class: rule at place` (d8).
+fn finding_reason(found: &[ScanFinding]) -> Option<String> {
+    (!found.is_empty()).then(|| {
+        found
+            .iter()
+            .map(|f| format!("{}: {} at {}", f.class, f.rule, f.at))
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
 }
 
 impl<J, S, C, I, Sc> App<J, S, C, I, Sc>
@@ -60,6 +83,32 @@ where
         bearer: impl Into<Bearer<'_>>,
         after_seq: u64,
         limit: usize,
+    ) -> Result<RescanReport, AppError> {
+        self.rescan_window(bearer, after_seq, limit, false).await
+    }
+
+    /// `POST /v2/admin/rescan`, admin by key role: the read of
+    /// [`App::rescan`], and every held version of the window recorded under
+    /// the server's rule set: its `scanned_under` set, any finding the rescan
+    /// made kept on it, a finding already on the row kept; journalled once
+    /// per window as `scan.findings_recorded` when the window holds any
+    /// held version (ADR-0065 d15; ADR-0074 d28). It promotes, rejects and
+    /// deletes nothing.
+    pub async fn rescan_record_held(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        after_seq: u64,
+        limit: usize,
+    ) -> Result<RescanReport, AppError> {
+        self.rescan_window(bearer, after_seq, limit, true).await
+    }
+
+    async fn rescan_window(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        after_seq: u64,
+        limit: usize,
+        record_held: bool,
     ) -> Result<RescanReport, AppError> {
         let admin = self.authenticate_bearer(bearer.into()).await?.key;
         require_role(&admin, Role::Admin, "rescan")?;
@@ -87,6 +136,8 @@ where
         };
         let mut scanned = 0;
         let mut hits = Vec::new();
+        let current = self.scanner.version();
+        let mut recorded: Vec<(Uuid, Vec<ScanFinding>)> = Vec::new();
         for row in rows.iter().filter(|r| r.status != MemoryStatus::Erased) {
             scanned += 1;
             let mut found = self.scanner.findings(&AdmissionEnvelope {
@@ -116,6 +167,9 @@ where
                     }
                 }
             }
+            if record_held && row.status == MemoryStatus::Held {
+                recorded.push((row.memory_id, found.clone()));
+            }
             hits.extend(found.into_iter().map(|finding| RescanHit {
                 artifact_id: row.memory_id,
                 workarea_id: row.workarea_id,
@@ -137,6 +191,41 @@ where
         let next_after_seq = (events.len() == limit)
             .then(|| events.last().map(|e| e.envelope.seq))
             .flatten();
+        let recorded_n = recorded.len() as u64;
+        if !recorded.is_empty() {
+            let prev = self.head_event(tenant_id).await?;
+            let event = self.seal(
+                prev.as_ref(),
+                tenant_id,
+                event_types::SCAN_FINDINGS_RECORDED,
+                &admin.principal,
+                Some(admin.key_id),
+                json!({
+                    "scanned_under": current,
+                    "versions": recorded.iter().map(|(id, found)| json!({
+                        "artifact_id": id.to_string(),
+                        "findings": found.iter().map(|f| json!({
+                            "class": f.class,
+                            "rule": f.rule,
+                            "action": if f.veto { "veto" } else { "hold" },
+                            "at": f.at,
+                        })).collect::<Vec<_>>(),
+                    })).collect::<Vec<_>>(),
+                }),
+            )?;
+            self.commit(
+                event,
+                MetadataFold::FindingsRecorded {
+                    scanned_under: current.map(str::to_owned),
+                    versions: recorded
+                        .iter()
+                        .map(|(id, found)| (*id, finding_reason(found)))
+                        .collect(),
+                },
+                None,
+            )
+            .await?;
+        }
         Ok(RescanReport {
             scanner_version: self.scanner.version(),
             scanned,
@@ -146,6 +235,7 @@ where
                 .map(|((c, r, v), n)| (c, r, v, n))
                 .collect(),
             next_after_seq,
+            recorded: recorded_n,
         })
     }
 }

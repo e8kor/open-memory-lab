@@ -68,6 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 any_author: false,
                 author_key_ids: own_keys,
                 nodes: uuids(&item["own_nodes"]),
+                current_scanner: None,
             }),
             expired_at: None,
         };

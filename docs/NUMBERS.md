@@ -266,4 +266,4 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0034 | `main` |  | similar keys search text | used |
 | migration | 0036 | `feat/implicit-capture` |  | code parent | reserved |
 | migration | 0037 | `feat/open-signup` |  | open signup | reserved |
-| migration | 0038 | `fix/scan-bypasses` |  | scanner version stamp | reserved |
+| migration | 0038 | `fix/scan-bypasses` |  | scanned under | reserved |

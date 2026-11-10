@@ -3083,7 +3083,7 @@ async fn the_hook_output_never_contains_the_key_value() {
     // (ADR-0065 d13; ADR-0001 R4).
     let (code, rescan, log) = crew.lab.json(None, &["admin", "rescan"]);
     assert_eq!(code, 1, "a veto on a stored row exits 1: {log}");
-    assert_eq!(rescan["scanner_version"], "oml-scan/1", "{log}");
+    assert_eq!(rescan["scanner_version"], "oml-scan/1.1", "{log}");
     let hit = rescan["findings"]
         .as_array()
         .expect("findings")

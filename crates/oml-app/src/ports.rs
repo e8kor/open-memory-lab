@@ -327,6 +327,14 @@ pub enum MetadataFold {
         memory_id: Uuid,
         check: SourceCheck,
     },
+    /// `scan.findings_recorded`: each held version named takes
+    /// `scanned_under` as the rule set it was last scanned under, and keeps
+    /// any finding it had, else takes the one the rescan found; a version no
+    /// longer held is left as it is (ADR-0065 d13, d15; ADR-0074 d28).
+    FindingsRecorded {
+        scanned_under: Option<String>,
+        versions: Vec<(Uuid, Option<String>)>,
+    },
     /// `lifecycle.supersede`: the ratified successor takes the tip from the
     /// version it replaces, which stays promoted. The store compare-and-sets
     /// that `replaced` is still the promoted tip under the successor's own

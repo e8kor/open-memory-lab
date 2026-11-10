@@ -312,13 +312,16 @@ struct ServedNodes {
 }
 
 /// Whether a held version may be served unreviewed inside an in-progress
-/// subtree: a memory or derived fact, never a retirement version, and never
-/// one the scan held, which stays its author's until a reviewer reads it
-/// (ADR-0030 d3; ADR-0065 d5, amended 2026-11-10).
-fn served_unreviewed(m: &MemoryRecord) -> bool {
+/// subtree: a memory or derived fact, never a retirement version, never one
+/// the scan held, which stays its author's until a reviewer reads it, and
+/// only one last scanned under `current`, the server's rule set: a version
+/// an older rule set passed stays its author's until a rescan re-evaluates
+/// it (ADR-0030 d3; ADR-0065 d15).
+fn served_unreviewed(m: &MemoryRecord, current: Option<&str>) -> bool {
     m.status == MemoryStatus::Held
         && !m.retirement
         && m.scan_finding.is_none()
+        && m.scanned_under.as_deref() == current
         && matches!(m.kind, MemoryKind::Memory | MemoryKind::DerivedFact)
 }
 
@@ -1727,7 +1730,7 @@ where
             // Inside an in-progress subtree a reader reads another author's
             // held memory, never a steering, guardrail or retirement version
             // (ADR-0030 d3).
-            return Ok(served_unreviewed(memory)
+            return Ok(served_unreviewed(memory, self.scanner.version())
                 && self
                     .in_progress_root(caller.key.tenant_id, memory.workarea_id)
                     .await?
@@ -4479,6 +4482,7 @@ where
                 ListingScope::Tips {
                     nodes: served.nodes,
                     held: served.inside,
+                    current_scanner: self.scanner.version().map(str::to_owned),
                 },
                 None,
             )
@@ -4532,10 +4536,11 @@ where
                 ListingScope::Own { key_ids, masked } => {
                     key_ids.contains(&m.author_key_id) && !masked.contains(&m.workarea_id)
                 }
-                ListingScope::Tips { nodes, held } => {
+                ListingScope::Tips { nodes, held, .. } => {
                     nodes.contains(&m.workarea_id)
                         && ((m.status == MemoryStatus::Promoted && m.is_tip)
-                            || (held.contains(&m.workarea_id) && served_unreviewed(&m)))
+                            || (held.contains(&m.workarea_id)
+                                && served_unreviewed(&m, self.scanner.version())))
                 }
             };
             if admitted {
@@ -4619,6 +4624,7 @@ where
                 author_key_ids: vec![key.key_id],
                 nodes: readable.clone(),
                 any_author: false,
+                current_scanner: self.scanner.version().map(str::to_owned),
             }),
             // A copy is a copy even once its valid time has ended
             // (ADR-0050 d1; proposed ADR-0059 d3).
@@ -4938,6 +4944,7 @@ where
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),
             scan_finding: scan_finding.clone(),
+            scanned_under: self.scanner.version().map(str::to_owned),
             created_at: self.clock.now(),
             guardrail,
             valid: Box::new(valid),
@@ -5914,6 +5921,7 @@ where
                     readable.clone()
                 },
                 any_author,
+                current_scanner: self.scanner.version().map(str::to_owned),
             }),
             // An ended version is outside the scope unless asked for: a
             // visibility rule, never a weight (proposed ADR-0059 d3).
@@ -5953,7 +5961,7 @@ where
                     include_unreviewed
                         && ((own.contains(&m.author_key_id) && readable.contains(&m.workarea_id))
                             || (any_author
-                                && served_unreviewed(m)
+                                && served_unreviewed(m, self.scanner.version())
                                 && inside.contains(&m.workarea_id)))
                 }
                 _ => false,
@@ -7202,6 +7210,7 @@ where
             lineage_principals: principals.into_iter().collect(),
             lineage_key_ids: key_ids.into_iter().collect(),
             scan_finding: scan_finding.clone(),
+            scanned_under: self.scanner.version().map(str::to_owned),
             created_at: self.clock.now(),
             guardrail,
             valid: Box::new(valid),
@@ -8167,6 +8176,7 @@ where
             held_nodes,
             readable_nodes,
             reader_key_id: key.key_id,
+            current_scanner: self.scanner.version().map(str::to_owned),
         };
         // One edge past the page says whether another page exists.
         let mut served = self

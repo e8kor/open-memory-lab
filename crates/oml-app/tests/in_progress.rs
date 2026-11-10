@@ -390,7 +390,12 @@ async fn a_held_row_the_scan_flagged_stays_its_authors_inside_an_in_progress_sco
     let w = world().await;
     w.mark(w.proj).await;
     let flagged = w
-        .write(&w.ann, "f1", "the canary drains first [needs-human]", w.proj)
+        .write(
+            &w.ann,
+            "f1",
+            "the canary drains first [needs-human]",
+            w.proj,
+        )
         .await;
     let clean = w
         .write(&w.ann, "f2", "the canary rolls back on error", w.proj)

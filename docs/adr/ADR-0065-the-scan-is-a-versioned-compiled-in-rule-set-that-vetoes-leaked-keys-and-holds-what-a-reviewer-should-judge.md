@@ -7,7 +7,7 @@ answers: what replaces the marker scanner; how the rule set is named, versioned 
 
 # ADR-0065 — The scan is a versioned, compiled-in rule set that vetoes leaked keys and holds what a reviewer should judge
 
-**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05 · amended 2026-11-10 (d5, d14, d15: every rule reads the normalised view, a tag sequence passes only whole and RGI, a scan-held version stays author-only in an in-progress scope)
+**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05 · amended 2026-11-10 (d1, d5, d13, d14, d15, as ADR-0074 d28 shapes them: the rule set becomes `oml-scan/1.1`; every rule reads the normalised view; a tag sequence passes only whole and RGI; a version records the rule set it was scanned under, and inside an in-progress scope another author's held version is served only when the server's rule set scanned it and found nothing; `oml admin rescan --record-held` records held versions)
 
 **Amends:** ADR-0019 (d4: the scanner port gains `version()`, the plugin's identity on the events
 it informs, as d4 already asks); ADR-0057 (d2, d6, d18: the secret-shaped path list becomes one
@@ -45,6 +45,12 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   is a new version (`oml-scan/2`). A verdict taken under `/1` stays valid against `/1`, and
   nothing is re-scanned retroactively ([admission](../architecture/admission.md), the rule-set
   registry). Same text, same findings: the set holds no state but its counters (d11).
+  Amended 2026-11-10: the changes to d5 and d14 below are `oml-scan/1.1`, a fix's minor
+  (ADR-0074 (proposed, `design/scan-expansion`)
+  d21, d28), which `version()`, `/readyz` and every submission event from then on report. Each
+  stored version records the rule set it was scanned under, `memories.scanned_under` (migration
+  0038): admission's, or the recording rescan's (d13). The migration reads every row stored
+  before it as `oml-scan/1`.
 
 - **d2 — Each rule names a finding class, a rule id and one action.** Classes keep admission's
   `family.condition` vocabulary, so a review policy's `human_required_classes` can name them. The
@@ -275,7 +281,14 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   each finding, and exits 1 when any finding vetoes, so a script can gate on it. The scanner
   port gains `findings()`, which reports without counting, so a rescan does not inflate the
   admission metric, and `info()`, which `/readyz` reads. One call per window is a scaling limit,
-  tracked as #140.
+  tracked as #140. Amended 2026-11-10 (ADR-0074 d28): `POST /v2/admin/rescan`, the same window
+  and answer, also records what it read of the window's held versions, and
+  `oml admin rescan --record-held` calls it; the plain verb keeps the read. Each held version
+  takes the server's rule set as its `scanned_under`, and a finding the rescan made becomes its
+  `scan_finding` unless it has one, journalled once per window as `scan.findings_recorded` with
+  each version's id and findings, an empty list when there are none, never its text; the
+  answer counts them as `recorded`. Nothing is promoted, rejected, demoted or deleted, and a
+  promoted version is not recorded: review already read it.
 
 - **d14 — Every rule also reads the text as copy-paste mangles it** (amended 2026-11-10; the first
   build ran the veto rules alone over the view). A token copied from a web
@@ -294,13 +307,20 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   builds no view. Homoglyphs, percent or HTML encoding, a token split across lines and base64
   are still not undone.
 
-- **d15 — A version the scan held stays its author's inside an in-progress scope** (added
-  2026-11-10, amending [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d3). ADR-0030 serves every
-  author's held memory to readers inside an in-progress root. A held version whose
-  `scan_finding` is set is not among them: its author reads it, and a reviewer, as R3 has it,
-  and no other key does, by id, listing, recall under any pipeline, or claim edge, in either
-  store. The first build served it, so a hold finding reached other agents' context unreviewed,
-  which is what the hold exists to prevent.
+- **d15 — Inside an in-progress scope, another author's held version is served only when the
+  server's rule set scanned it and found nothing** (added 2026-11-10, amending
+  [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
+  d3). ADR-0030 serves every author's held memory to readers inside an in-progress root. A held
+  version is among them only when its `scan_finding` is empty and its `scanned_under` is the
+  server's own (`None` matching `None` for a scanner that pins no version). Any other held version
+  stays its author's and its reviewer's, as R3 has it, by id, listing, recall under every
+  pipeline and claim edge, in both stores. The first build served a version the scan held, so a
+  hold finding reached other agents' context unreviewed. The stamp covers what the finding
+  cannot: a version an older rule set passed carries no finding, though the current rules may
+  hold it, so it waits for `oml admin rescan --record-held` to read it (d13). Rejected: rescanning each such
+  version on every read, which puts the scan in the read path and still records nothing a
+  reviewer can see; and serving unstamped versions until the operator runs the rescan, which
+  is the leak this decision closes.
 
 ## Consequences
 
@@ -316,11 +336,11 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   now refused where it used to pass (d4).
 - Rows written before this change are not re-scanned at admission (d1). `oml admin rescan`
   finds them (d13), and a person retires them. Nothing retires them on its own.
-- After an upgrade to the 2026-11-10 amendment, run `oml admin rescan`: it reports, by rule, the
-  stored versions that d5's and d14's amended rules now hold. It changes nothing, so a reported
-  version keeps the state it has and, being scanned clean at admission, carries no
-  `scan_finding`; d15 does not cover it. A person reads each with `oml admin read` and demotes
-  or retires it. A version the scan held at admission is covered by d15 at once.
+- After an upgrade to `oml-scan/1.1`, run `oml admin rescan --record-held`. Until it runs,
+  sibling agents in an in-progress workarea do not see held versions written before the
+  upgrade (d15): it records each held version under `/1.1`, keeps the ones the amended rules
+  flag their author's, and serves the rest inside again. A promoted version it reports keeps its state; a person reads
+  each with `oml admin read` and demotes or retires it.
 - A rule that needs changing waits for `oml-scan/2`. That is slower than a toggle, and it is what
   keeps a journalled verdict reproducible.
 

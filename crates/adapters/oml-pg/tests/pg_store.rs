@@ -379,6 +379,7 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                             any_author: false,
                             author_key_ids: vec![own],
                             nodes: vec![wa],
+                            current_scanner: None,
                         }),
                         expired_at: None,
                     },
@@ -2597,7 +2598,7 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'source_check_result' - 'source_check_hash' - 'source_check_path' \
                  - 'source_check_fragment' - 'source_check_at' \
                  - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us' \
-                 - 'origin_kind' - 'format' - 'title' - 'search_text' - 'search_text_by'"
+                 - 'origin_kind' - 'scanned_under' - 'format' - 'title' - 'search_text' - 'search_text_by'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -5891,7 +5892,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 37, "every migration through 0037_open_signup");
+    assert_eq!(applied, 38, "every migration through 0038_scanned_under");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7336,7 +7337,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 37, "every migration through 0037_open_signup");
+    assert_eq!(applied, 38, "every migration through 0038_scanned_under");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8212,7 +8213,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 37, "every migration through 0037_open_signup");
+    assert_eq!(applied, 38, "every migration through 0038_scanned_under");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8245,6 +8246,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                             any_author: false,
                             author_key_ids: vec![Uuid::from_u128(0xE5)],
                             nodes: vec![wa],
+                            current_scanner: None,
                         }),
                         expired_at: None,
                     },

@@ -1,4 +1,4 @@
-//! The `oml-scan/1` rule table (ADR-0065 d2–d5). Each rule names its
+//! The `oml-scan/1.1` rule table (ADR-0065 d2–d5). Each rule names its
 //! finding class, its action and one pattern; a rule whose match needs a
 //! second look (an entropy floor, a placeholder password) names that check.
 //!
@@ -88,8 +88,8 @@ const fn pii(rule: Rule) -> Rule {
     Rule { pii: true, ..rule }
 }
 
-/// The rules, in reporting order. Ids are stable within `oml-scan/1`; a
-/// changed pattern or a new rule is `oml-scan/2` (ADR-0065 d1).
+/// The rules, in reporting order. Ids are stable within `oml-scan/1.1`; a
+/// changed pattern or a new rule is a new name, `oml-scan/1.2` for a fix (ADR-0065 d1; ADR-0074 d21).
 pub(crate) const RULES: &[Rule] = &[
     // ---- d3: secrets, veto -------------------------------------------------
     veto(
