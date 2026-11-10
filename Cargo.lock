@@ -3950,7 +3950,7 @@ dependencies = [
 
 [[package]]
 name = "oml-page"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "proptest",
  "serde",
@@ -4075,7 +4075,7 @@ dependencies = [
 
 [[package]]
 name = "oml-web"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
