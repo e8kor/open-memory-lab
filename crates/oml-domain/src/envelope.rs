@@ -71,6 +71,11 @@ pub mod event_types {
     /// with its source at a commit; it changes no text and no anchor and
     /// moves nothing through review (ADR-0057 d5, d18).
     pub const SOURCE_CHECKED: &str = "source.checked";
+    /// An admin's `rescan --record-held` read held versions under the
+    /// server's rule set: the rule set and each version's findings, an empty
+    /// list when there are none, never the text (ADR-0065 d13, d15;
+    /// ADR-0074 d28).
+    pub const SCAN_FINDINGS_RECORDED: &str = "scan.findings_recorded";
     /// Crypto-shredding erasure (vector 3 of chain-format.md).
     pub const LIFECYCLE_ERASE: &str = "lifecycle.erase";
     /// Deployment signing-key rotation, first event the new key signs.

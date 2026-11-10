@@ -381,6 +381,84 @@ async fn unreviewed_rows_are_served_inside_an_in_progress_scope_and_invisible_fr
     );
 }
 
+/// A held row the scan held stays its author's inside an in-progress scope:
+/// another reader there neither recalls, lists nor reads it, while the
+/// author still does, and a held row the scan passed is served as before
+/// (ADR-0030 d3; ADR-0065 d5, amended 2026-11-10).
+#[tokio::test]
+async fn a_held_row_the_scan_flagged_stays_its_authors_inside_an_in_progress_scope() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let flagged = w
+        .write(
+            &w.ann,
+            "f1",
+            "the canary drains first [needs-human]",
+            w.proj,
+        )
+        .await;
+    let clean = w
+        .write(&w.ann, "f2", "the canary rolls back on error", w.proj)
+        .await;
+    let sorted = |mut ids: Vec<Uuid>| {
+        ids.sort();
+        ids
+    };
+
+    // Another reader inside: the clean row alone, by recall, listing and id.
+    assert_eq!(
+        World::ids(&w.recall_with(&w.bob, "canary", w.proj, Some(true)).await),
+        vec![clean]
+    );
+    assert_eq!(w.listed(&w.bob, w.proj).await, vec![clean]);
+    assert!(matches!(
+        w.app.get_memory(w.bob.value.as_str(), flagged).await,
+        Err(AppError::NotFound)
+    ));
+    w.app
+        .get_memory(w.bob.value.as_str(), clean)
+        .await
+        .expect("the clean row inside");
+
+    // The author: both rows, by recall, by its own listing and by id.
+    assert_eq!(
+        sorted(World::ids(&w.recall(&w.ann, "canary", w.proj).await)),
+        sorted(vec![flagged, clean])
+    );
+    let own: Vec<Uuid> = w
+        .app
+        .list_memories(
+            w.ann.value.as_str(),
+            &ListRequest {
+                own: true,
+                workarea: Some(w.proj.into()),
+                claim_key: None,
+                state: None,
+                kind: None,
+                since: None,
+                until: None,
+                limit: 50,
+                cursor: None,
+                anchor: oml_app::types::AnchorFilter::default(),
+                author: None,
+                tip: None,
+            },
+        )
+        .await
+        .expect("own list")
+        .items
+        .iter()
+        .map(|m| m.memory.memory_id)
+        .collect();
+    assert_eq!(sorted(own), sorted(vec![flagged, clean]));
+    let got = w
+        .app
+        .get_memory(w.ann.value.as_str(), flagged)
+        .await
+        .expect("the author reads its flagged row");
+    assert_eq!(got.memory.status, MemoryStatus::Held);
+}
+
 /// Law 2: only a dreamer key a person holds sets the mode.
 #[tokio::test]
 async fn only_a_persons_key_sets_the_mode() {
@@ -1428,4 +1506,47 @@ async fn each_r2_clause_alone_keeps_a_curator_off_a_row() {
         let err = w.flag(&w.curator, memory_id, other).await.unwrap_err();
         assert!(matches!(err, AppError::AuthorInLineage), "{case}: {err:?}");
     }
+}
+
+/// An edge with an endpoint the scan held is not served to a sibling inside
+/// an in-progress scope, while that endpoint's author still reads it
+/// (ADR-0030 d3; ADR-0065 d15). The edge is made between clean rows; a
+/// recording rescan then finds a hold on one of them.
+#[tokio::test]
+async fn an_edge_to_a_flagged_held_row_is_not_listed_to_a_sibling_in_progress() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let a = w
+        .write(&w.ann, "e1", "the canary drains first", w.proj)
+        .await;
+    let b = w
+        .write(&w.bob, "e2", "the canary never drains", w.proj)
+        .await;
+    w.flag(&w.curator, a, b).await.expect("curator flags");
+    assert_eq!(w.edges(&w.bob, Some(w.proj), Some(b)).await, 1, "before");
+    seal_onto(
+        &w,
+        event_types::SCAN_FINDINGS_RECORDED,
+        json!({ "scanned_under": null, "versions": [
+            { "artifact_id": a.to_string(), "findings": [] },
+        ] }),
+        MetadataFold::FindingsRecorded {
+            scanned_under: None,
+            versions: vec![(
+                a,
+                Some("test.marker: marker-hold at /body line 1".to_owned()),
+            )],
+        },
+    )
+    .await;
+    assert_eq!(
+        w.edges(&w.bob, Some(w.proj), Some(b)).await,
+        0,
+        "a sibling no longer reads the edge"
+    );
+    assert_eq!(
+        w.edges(&w.ann, Some(w.proj), Some(b)).await,
+        1,
+        "the flagged endpoint's author still does"
+    );
 }

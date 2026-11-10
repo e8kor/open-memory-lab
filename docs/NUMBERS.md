@@ -90,6 +90,9 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0068 | `feat/open-signup` |  | anyone signs in and gets a private root under quotas when the operator opens sign-up | reserved |
 | adr | 0069 | `feat/design-system` |  | OML's design system is the source of truth for every surface | reserved |
 | adr | 0070 | `design/web-api-client` |  | the web console is a client of the public HTTP API in a crate that cannot reach the application core | reserved |
+| adr | 0072 | `design/federated-recall` |  | recall searches trusted and advertised workareas the key can already read, chosen per query by their reviewed descriptors | reserved |
+| adr | 0073 | `design/distributed-nodes` |  | a leader signs every write and nodes serve the workareas placed on them, each read routed to the closest less busy replica fresh enough for it | reserved |
+| adr | 0074 | `design/scan-expansion` |  | the scan names a threat class for every finding, refuses only what can never be safe, holds or annotates the rest, and recall serves every hit as data with its findings | reserved |
 | fr | 1 | `main` |  | Erasure destroys body and attachment bytes by destroying their keys; a | used |
 | fr | 2 | `main` |  | Review throughput is unmeasured. The design's gate is only as useful a | used |
 | fr | 3 | `main` |  | The lake mirror claims exactly-once application of every event across  | used |
@@ -266,3 +269,4 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0034 | `main` |  | similar keys search text | used |
 | migration | 0036 | `feat/implicit-capture` |  | code parent | reserved |
 | migration | 0037 | `feat/open-signup` |  | open signup | reserved |
+| migration | 0038 | `fix/scan-bypasses` |  | scanned under | reserved |
