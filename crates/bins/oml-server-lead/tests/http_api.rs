@@ -9609,8 +9609,17 @@ async fn a_bearer_user_key_cannot_export_or_request_deletion() {
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
+    let alices = rig.held(&agent, "alice", "alices-note").await;
+    let _bob = rig.signed_in("bob@example.com", "bob", false).await;
+    let bobs_key = rig.agent_key("bob", "bob-laptop").await;
+    let _bobs = rig.held(&bobs_key, "bob", "bobs-note").await;
     let (status, headers, export) =
         send(&rig.router, "GET", "/v2/web/export", web_call(&web)).await;
+    assert!(export.to_string().contains(&alices), "{export}");
+    assert!(
+        !export.to_string().contains("bobs-note"),
+        "another person's rows stay out: {export}"
+    );
     assert_eq!(status, StatusCode::OK, "{export}");
     assert_eq!(export["format"], "oml-export/personal-1");
     assert_eq!(export["user"], "alice");
@@ -9872,6 +9881,28 @@ async fn the_admin_operations_answer_the_admin_role_alone() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
+    // The curate capacity, reached from a session opened after its
+    // designation, is no web key: it exports nothing.
+    let again = rig.signed_in("alice@example.com", "alice", false).await;
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v2/web/export",
+        web_call(&credential(&again, "curate")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    // A reason is not journalled, so it is refused, never dropped.
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/alice/disable",
+        Call::auth(&rig.admin)
+            .idem("disable-reason")
+            .body(json!({ "reason": "spam" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let (status, _, body) = send(
         &rig.router,
         "POST",
@@ -10118,5 +10149,273 @@ async fn keep_an_admin_refuses_removing_the_last_admin_entry() {
     }
     let (_, _, list) = send(&rig.router, "GET", "/v2/web/emails", Call::auth(&rig.admin)).await;
     assert_eq!(list["items"][0]["admin"], true, "unchanged: {list}");
+    drop_db(&rig.db_name).await;
+}
+
+/// The key operations d5 maps the user page's key acts to accept the
+/// person's web session key, bounded as the page's acts are: `POST
+/// /v2/keys` issues `<user>-<name>` on their root and refuses every field
+/// the person does not choose, connect codes and cut-offs reach only their
+/// own keys, and a cut-off lands on universe alone (ADR-0070 d5; ADR-0045
+/// d9, d13, d16).
+#[tokio::test]
+async fn a_web_session_key_issues_connects_and_cuts_off_its_own_keys() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let _bob = rig.signed_in("bob@example.com", "bob", false).await;
+    let _bobs = rig.agent_key("bob", "bob-laptop").await;
+
+    let (status, _, issued) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys",
+        web_call(&web)
+            .idem("issue-phone")
+            .body(json!({ "name": "alice-phone", "role": "writer" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{issued}");
+    assert_eq!(issued["name"], "alice-phone");
+    assert!(issued["value"].is_string(), "{issued}");
+    for (body, field) in [
+        (json!({ "name": "phone", "role": "writer" }), "/name"),
+        (
+            json!({ "name": "alice-x", "role": "writer", "grants": [{ "workarea": "universe", "role": "writer" }] }),
+            "/grants",
+        ),
+        (
+            json!({ "name": "alice-y", "role": "writer", "user": "bob" }),
+            "/user",
+        ),
+    ] {
+        let (status, _, refused) = send(
+            &rig.router,
+            "POST",
+            "/v2/keys",
+            web_call(&web).idem(field).body(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+        assert_eq!(refused["error"]["details"]["field"], field, "{refused}");
+    }
+
+    // The person's own key reaches the mint, which refuses a bearer key a
+    // code as it refuses an admin's request for one (ADR-0031 d7).
+    let (status, _, code) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-phone/connect-codes",
+        web_call(&web).idem("code-phone"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{code}");
+    assert_envelope(&code, "oauth.connect_refused");
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/bob-laptop/connect-codes",
+        web_call(&web).idem("code-bob"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    let deny = |key: &str, workarea: &str, idem: &str| {
+        (
+            format!("/v2/keys/{key}/denials"),
+            web_call(&web)
+                .idem(idem)
+                .body(json!({ "workarea": workarea })),
+        )
+    };
+    let (path, call) = deny("alice-phone", "alice", "deny-1");
+    let (status, _, body) = send(&rig.router, "POST", &path, call).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "universe only: {body}");
+    let (path, call) = deny("bob-laptop", "universe", "deny-2");
+    let (status, _, body) = send(&rig.router, "POST", &path, call).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (path, call) = deny("alice-phone", "universe", "deny-3");
+    let (status, _, denial) = send(&rig.router, "POST", &path, call).await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+    let (_, _, keys) = send(&rig.router, "GET", "/v2/keys", web_call(&web)).await;
+    let phone = keys["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|k| k["name"] == "alice-phone")
+        .expect("alice-phone listed")
+        .clone();
+    assert_eq!(phone["cut_off"], true, "{keys}");
+
+    // A raw-bearer verb never reads a capacity credential.
+    let (status, _, body) = send(&rig.router, "GET", "/v2/crews", web_call(&web)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    drop_db(&rig.db_name).await;
+}
+
+/// The admin capacity issues no plain key through `POST /v2/keys`
+/// (`access.verb_ceiling`, `session_capacity`), and cuts a person's key off
+/// on universe as the admin page does (ADR-0070 d2, d5).
+#[tokio::test]
+async fn the_admin_capacity_issues_no_plain_key() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("ada@example.com", "ada", true).await;
+    let admin = credential(&token, "admin");
+    let _alice = rig.signed_in("alice@example.com", "alice", false).await;
+    let _laptop = rig.agent_key("alice", "alice-laptop").await;
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys",
+        web_call(&admin)
+            .idem("plain")
+            .body(json!({ "name": "minted", "role": "admin", "principal": "minted" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_envelope(&body, "access.verb_ceiling");
+    assert_eq!(body["error"]["details"]["reason"], "session_capacity");
+    let (status, _, denial) = send(
+        &rig.router,
+        "POST",
+        "/v2/keys/alice-laptop/denials",
+        web_call(&admin)
+            .idem("cut")
+            .body(json!({ "workarea": "universe" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+    drop_db(&rig.db_name).await;
+}
+
+/// A console act resubmitted under the same `Idempotency-Key` answers what
+/// it answered, `Idempotency-Replay: true`, and journals nothing again; the
+/// same key on another request is `idempotency.digest_mismatch`
+/// (ADR-0070 d3 layer 4, d5; http-api.md idempotency).
+#[tokio::test]
+async fn a_resubmitted_console_act_replays_its_answer() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let (status, first_headers, first) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/deletion-requests",
+        web_call(&web).idem("delete-once"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert!(first_headers.get("idempotency-replay").is_none());
+    let (status, headers, again) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/deletion-requests",
+        web_call(&web).idem("delete-once"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again, first, "the same answer");
+    assert_eq!(headers["idempotency-replay"], "true");
+    let (_, _, next) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/deletion-requests",
+        web_call(&web).idem("delete-twice"),
+    )
+    .await;
+    assert_eq!(
+        next["journal_seq"].as_u64(),
+        first["journal_seq"].as_u64().map(|s| s + 1),
+        "the replay journalled nothing: {next}"
+    );
+
+    let quota = |body: Value| Call::auth(&rig.admin).idem("quota-once").body(body);
+    let (status, _, set) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/alice/quota",
+        quota(json!({ "memories": 10 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{set}");
+    let (status, headers, replayed) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/alice/quota",
+        quota(json!({ "memories": 10 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replayed, set);
+    assert_eq!(headers["idempotency-replay"], "true");
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/alice/quota",
+        quota(json!({ "memories": 20 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_envelope(&body, "idempotency.digest_mismatch");
+    drop_db(&rig.db_name).await;
+}
+
+/// Two concurrent `keep_an_admin` un-flags of the tenant's last two admin
+/// entries cannot both pass: the store reads the admin entries under lock
+/// in each commit, so one lands and the other is `request.validation`
+/// naming `admin`, and an admin entry remains (ADR-0070 d5; ADR-0045 d10).
+#[tokio::test]
+async fn keep_an_admin_holds_under_two_concurrent_unflags() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let _ada = rig.signed_in("ada@example.com", "ada", true).await;
+    let _ops = rig.signed_in("ops@example.com", "ops", true).await;
+    let unflag = |email: &str, user: &str| {
+        Call::auth(&rig.admin)
+            .idem(&format!("unflag-{user}"))
+            .body(json!({ "email": email, "user": user, "admin": false, "keep_an_admin": true }))
+    };
+    let (a, b) = tokio::join!(
+        send(
+            &rig.router,
+            "POST",
+            "/v2/web/emails",
+            unflag("ada@example.com", "ada")
+        ),
+        send(
+            &rig.router,
+            "POST",
+            "/v2/web/emails",
+            unflag("ops@example.com", "ops")
+        ),
+    );
+    let statuses = [a.0, b.0];
+    assert!(
+        statuses.contains(&StatusCode::OK) && statuses.contains(&StatusCode::BAD_REQUEST),
+        "one lands and one is refused: {} {}",
+        a.2,
+        b.2
+    );
+    let refused = if a.0 == StatusCode::BAD_REQUEST {
+        &a.2
+    } else {
+        &b.2
+    };
+    assert_eq!(refused["error"]["details"]["field"], "admin", "{refused}");
+    let (_, _, list) = send(&rig.router, "GET", "/v2/web/emails", Call::auth(&rig.admin)).await;
+    let admins = list["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter(|e| e["admin"] == true)
+        .count();
+    assert_eq!(admins, 1, "{list}");
     drop_db(&rig.db_name).await;
 }
