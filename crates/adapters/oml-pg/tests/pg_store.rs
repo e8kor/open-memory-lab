@@ -2548,10 +2548,12 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
         let row = match (renamed, table) {
             // 0020 adds search_default and 0023 telemetry_query_text_since,
             // null for every tenant they find
-            // (ADR-0049 d4).
+            // (ADR-0049 d4); 0040 the federation policy, off with its
+            // defaults (ADR-0072 d5).
             (true, "tenants") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'search_default' \
-                  - 'telemetry_query_text_since') \
+                  - 'telemetry_query_text_since' - 'federation_enabled' \
+                  - 'federation_default_sources' - 'federation_max_sources') \
                  || jsonb_build_object('name', t.prior_name)"
             }
             // Before 0017 a workarea's status is the one every build served,
@@ -2564,10 +2566,13 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             }
             // 0014 adds user_root and namespace_root_id, folded as false and
             // null for every workarea it finds (ADR-0044 d12); 0028 adds
-            // mode, standard for every workarea it finds (ADR-0030 d14).
+            // mode, standard for every workarea it finds (ADR-0030 d14);
+            // 0040 accept_federated, true for every workarea it finds
+            // (ADR-0072 d5).
             (true, "workareas") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'user_root' \
-                 - 'namespace_root_id' - 'mode') || jsonb_build_object('name', t.prior_name)"
+                 - 'namespace_root_id' - 'mode' - 'accept_federated') \
+                 || jsonb_build_object('name', t.prior_name)"
             }
             // 0012 adds credential, folded as bearer for every key it finds
             // (ADR-0031 d7); 0014 adds user_root_id, null for every key it

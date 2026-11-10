@@ -995,9 +995,9 @@ const REFERENCE_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
        AND m.kind = ANY($3::text[]) AND m.status = 'promoted' AND m.is_tip \
        AND m.workarea_id = ANY($10::uuid[])";
 
-/// [`bm25_sql_within`] under a reference set (ADR-0072 d7): the row count,
+/// `bm25_sql_within` under a reference set (ADR-0072 d7): the row count,
 /// the mean length and each form's document frequency are taken over
-/// [`REFERENCE_SCOPE`], `$10` the reference nodes, and the anchor's binds
+/// `REFERENCE_SCOPE`, `$10` the reference nodes, and the anchor's binds
 /// start at `$11`; the scored rows are the candidate scope's, so a row's
 /// score is a function of the row, the query and the reference set alone.
 /// A scored row holding a form no reference row holds scores it with a

@@ -2813,6 +2813,7 @@ async fn an_admin_keys_workarea_read_lists_every_child_with_my_effective_verbs_e
                 "stale_versions": 0,
                 "in_progress_root": null,
                 "policy": { "k": 1, "required_roles": ["dreamer"] },
+                "federation": { "accept_federated": true },
                 "pending_transitions": [],
                 "brief": empty_brief(),
             })
@@ -5849,6 +5850,7 @@ async fn crew_given_at_create_is_persisted_and_returned() {
             "stale_versions": 0,
             "in_progress_root": null,
             "policy": { "k": 1, "required_roles": ["dreamer"] },
+            "federation": { "accept_federated": true },
             "pending_transitions": [],
             "brief": empty_brief(),
         })
@@ -7808,8 +7810,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        80,
-        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the eight web routes (ADR-0045 d25), open sign-up's seven (ADR-0068 d10) and the web console's ten (ADR-0070 d5)"
+        83,
+        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the eight web routes (ADR-0045 d25), open sign-up's seven (ADR-0068 d10), the web console's ten (ADR-0070 d5) and federation's three (ADR-0072 d5)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 

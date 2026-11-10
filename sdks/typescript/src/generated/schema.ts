@@ -1870,7 +1870,7 @@ export interface components {
             /** @description How many of the first k candidates the floor withheld; hits empty with below_floor above 0 means nothing scored above the floor (ADR-0053 d6). */
             below_floor: number;
             sources?: components["schemas"]["RecallSources"];
-            /** @description On a sources scope answer of a tenant with federation on, when a workarea the key reads outside the scope holds the query's words at least twice as often per row as the scope, on at least two of its rows, or when the answer has fewer than k hits and such a workarea holds any of them: a retry with sources wide would search it. It names no workarea (ADR-0072 d8). */
+            /** @description On a sources scope answer of a tenant with federation on, when a workarea the key reads outside the scope holds the query's words at least twice as often per row as the scope, on at least two of its rows: a retry with sources wide would search it. It names no workarea (ADR-0072 d8). */
             widen?: {
                 /** @enum {string} */
                 sources: "wide";
