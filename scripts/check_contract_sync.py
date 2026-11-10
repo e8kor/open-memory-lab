@@ -56,12 +56,13 @@ This script extracts each surface and fails with a diff on any disagreement:
     teaches the new one (ADR-0039 d13, d14 step 5)
 
   * an entry of the hand-written Rust SDK's operation table (OPERATIONS in
-    sdks/rust/src/lib.rs, "<operationId> <METHOD> <path>" then query:, body:
-    and resp: field lists) whose operationId openapi.yaml does not serve,
-    whose method or path differs from the operation's, which sends a query
-    parameter or a body field the operation does not declare, or which reads
-    a response field the operation's 2xx schema does not declare, where that
-    schema declares any (ADR-0070 d9)
+    sdks/rust/src/lib.rs, "<operationId> <METHOD> <path>" then query: and
+    body: field lists and resp:<the struct the answer decodes into>) whose
+    operationId openapi.yaml does not serve, whose method or path differs
+    from the operation's, which sends a query parameter or a body field the
+    operation does not declare, or whose response struct, or any struct it
+    holds at any depth, reads a field the 2xx schema does not declare there,
+    or meets a schema that declares no fields (ADR-0070 d9)
 
 It checks AGREEMENT only — no count or code name is hard-coded, so the closed
 taxonomy may grow without touching this script.
@@ -543,14 +544,80 @@ def mcp_catalog_problems() -> list[str]:
     return problems
 
 
-def rust_sdk_problems(spec: dict) -> list[str]:
+RUST_STRUCT = re.compile(r"pub struct (\w+) \{\n(.*?)\n\}", re.S)
+RUST_FIELD = re.compile(r"^\s*pub (\w+): (.+),$", re.M)
+RUST_WRAPPERS = re.compile(r"^(?:Option|Vec|Box)<(.*)>$")
+
+
+def rust_structs(source: str) -> dict[str, list[tuple[str, str, bool]]]:
+    """Each `pub struct` in `source`: its `pub` fields as (name, inner type, through a Vec)."""
+    structs = {}
+    for name, body in RUST_STRUCT.findall(source):
+        fields = []
+        for field, ty in RUST_FIELD.findall(body):
+            ty, listed = ty.strip(), False
+            while (wrapped := RUST_WRAPPERS.match(ty)):
+                listed |= ty.startswith("Vec<")
+                ty = wrapped.group(1).strip()
+            fields.append((field, ty, listed))
+        structs[name] = fields
+    return structs
+
+
+def schema_candidates(schema, docs: dict[str, dict], doc: str) -> list[tuple[dict, str]]:
+    """The object schemas `schema` may be, through $ref, allOf, oneOf and anyOf."""
+    schema, doc = resolve(schema, docs, doc)
+    if not isinstance(schema, dict):
+        return []
+    found = [(schema, doc)]
+    for combinator in ("allOf", "oneOf", "anyOf"):
+        for member in schema.get(combinator, []):
+            found += schema_candidates(member, docs, doc)
+    return found
+
+
+def shape_problems(
+    where: str, struct: str, candidates: list[tuple[dict, str]],
+    structs: dict[str, list[tuple[str, str, bool]]], docs: dict[str, dict],
+) -> list[str]:
+    """Every field `struct` reads is a property its schema declares, at every depth."""
+    properties: dict[str, list[tuple[dict, str]]] = {}
+    for schema, doc in candidates:
+        for name, prop in schema.get("properties", {}).items():
+            properties.setdefault(name, []).append((prop, doc))
+    if not properties:
+        return [f"{where}: the schema {struct} reads declares no fields, so its shape cannot be checked"]
+    problems = []
+    for field, ty, listed in structs[struct]:
+        if field not in properties:
+            problems.append(f"{where}: the SDK's {struct}.{field} is a field openapi.yaml does not declare")
+            continue
+        if ty not in structs:
+            continue
+        nested: list[tuple[dict, str]] = []
+        for prop, doc in properties[field]:
+            for candidate, cdoc in schema_candidates(prop, docs, doc):
+                if listed and "items" in candidate:
+                    nested += schema_candidates(candidate["items"], docs, cdoc)
+                elif not listed:
+                    nested.append((candidate, cdoc))
+        problems += shape_problems(f"{where}.{field}", ty, nested, structs, docs)
+    return problems
+
+
+def rust_sdk_problems(spec: dict, source: str | None = None) -> list[str]:
     """Each operation the Rust SDK calls is served by openapi.yaml under the
-    same method and path, and sends and reads only fields it declares
-    (ADR-0070 d9). The SDK is hand-written, so this is what keeps it on the
-    contract the generated layers follow by construction."""
-    entries = rust_str_array(RUST_SDK_RS.read_text(encoding="utf-8"), "OPERATIONS")
+    same method and path, sends only query parameters and body fields it
+    declares, and reads a response type whose every field, at every depth,
+    the 2xx schema declares (ADR-0070 d9). The SDK is hand-written, so this
+    is what keeps it on the contract the generated layers follow by
+    construction."""
+    if source is None:
+        source = RUST_SDK_RS.read_text(encoding="utf-8")
+    entries = rust_str_array(source, "OPERATIONS")
     if not entries:
         return ["OPERATIONS not found, or empty, in sdks/rust/src/lib.rs"]
+    structs = rust_structs(source)
     served: dict[str, tuple[str, str, dict]] = {}
     for path, item in spec["paths"].items():
         if not isinstance(item, dict):
@@ -577,23 +644,38 @@ def rust_sdk_problems(spec: dict) -> list[str]:
             parameter, _ = resolve(parameter, docs, "openapi.yaml")
             if parameter.get("in") == "query":
                 query.add(parameter["name"])
-        fields = served_fields(op, docs)
         body: set[str] = set()
         request_body, _ = resolve(op.get("requestBody", {}), docs, "openapi.yaml")
         for media in request_body.get("content", {}).values():
             body |= schema_fields(media.get("schema", {}), docs, "openapi.yaml")
+        response = None
         for word in words[3:]:
             kind, _, names = word.partition(":")
-            declared = {"query": query, "body": body, "resp": fields["response"]}.get(kind)
+            if kind == "resp":
+                response = names
+                continue
+            declared = {"query": query, "body": body}.get(kind)
             if declared is None:
                 problems.append(f"{op_id}: {word!r} is not query:, body: or resp:")
                 continue
-            if kind == "resp" and not declared:
-                continue
             for name in names.split(","):
                 if name not in declared:
-                    side = {"query": "query parameter", "body": "request field", "resp": "2xx response field"}[kind]
-                    problems.append(f"{op_id}: the SDK names the {side} {name!r}, which openapi.yaml does not declare")
+                    side = {"query": "query parameter", "body": "request field"}[kind]
+                    problems.append(f"{op_id}: the SDK sends the {side} {name!r}, which openapi.yaml does not declare")
+        if response is None:
+            problems.append(f"{op_id}: names no resp: type")
+            continue
+        if response not in structs:
+            problems.append(f"{op_id}: resp:{response} is no pub struct in sdks/rust/src/lib.rs")
+            continue
+        candidates: list[tuple[dict, str]] = []
+        for status, answer in op.get("responses", {}).items():
+            if not str(status).startswith("2"):
+                continue
+            answer, adoc = resolve(answer, docs, "openapi.yaml")
+            for media in answer.get("content", {}).values():
+                candidates += schema_candidates(media.get("schema", {}), docs, adoc)
+        problems += shape_problems(op_id, response, candidates, structs, docs)
     return problems
 
 
@@ -716,7 +798,7 @@ def main() -> int:
     print(f"  path+method operations agreeing: {len(spec_ops)} "
           f"({len(served_ops)} served, {len(designed_ops)} designed)")
     print("  MCP tools: mcp-tools.json is the served tools/list, mcp-tools.designed.json disjoint from it")
-    print("  the Rust SDK's operations agree with openapi.yaml in method, path and fields")
+    print("  the Rust SDK's operations agree with openapi.yaml in method, path, fields and response shape")
     return 0
 
 

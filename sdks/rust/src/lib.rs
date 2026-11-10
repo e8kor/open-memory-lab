@@ -26,15 +26,17 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 
 /// The operations this client calls, one entry each:
 /// `<operationId> <METHOD> <path>`, then `query:` the query parameters it
-/// may send, `body:` the request fields it may send and `resp:` the
-/// response fields it reads, each comma-separated. The contract check reads
-/// this table; `every_method_sends_the_method_and_path_its_table_entry_names`
+/// may send and `body:` the request fields it may send, each
+/// comma-separated, and `resp:` the struct its answer decodes into. The
+/// contract check reads this table and holds every field of that struct,
+/// and of each struct it holds, to the operation's 2xx schema;
+/// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
 pub const OPERATIONS: [&str; 4] = [
-    "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:issuer",
-    "whoami GET /v2/whoami resp:key_id,name,role,tenant,user",
-    "getGuardrails GET /v1/guardrails query:workarea resp:scope_node,scope_path,guardrail_scope,over_cap,guardrails,own_held",
-    "getWorkareaTree GET /v2/workareas/{workarea}/tree query:limit,cursor resp:items,next_cursor",
+    "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
+    "whoami GET /v2/whoami resp:Whoami",
+    "getGuardrails GET /v1/guardrails query:workarea resp:GuardrailSet",
+    "getWorkareaTree GET /v2/workareas/{workarea}/tree query:limit,cursor resp:WorkareaPage",
 ];
 
 /// The request id header (ADR-0042 d4).
@@ -44,11 +46,22 @@ pub const CORRELATION_ID: &str = "x-correlation-id";
 
 /// One call's credential and ids: the bearer value it presents, and the
 /// request and correlation ids the API's line will carry.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Call<'a> {
     pub bearer: &'a str,
     pub request_id: Option<&'a str>,
     pub correlation_id: Option<&'a str>,
+}
+
+/// No debug output prints the bearer value.
+impl std::fmt::Debug for Call<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Call")
+            .field("bearer", &"<redacted>")
+            .field("request_id", &self.request_id)
+            .field("correlation_id", &self.correlation_id)
+            .finish()
+    }
 }
 
 /// The API's refusal envelope (docs/api/errors.md), with the status and the
@@ -91,6 +104,12 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+/// `GET /.well-known/oauth-authorization-server`, the field read here.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AuthorizationServerMetadata {
+    pub issuer: String,
+}
 
 /// A named reference, `{id, name}`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -289,21 +308,24 @@ impl<T: Transport> Client<T> {
         })
     }
 
-    /// `GET /.well-known/oauth-authorization-server`'s `issuer`: the
-    /// server's public origin, which a client takes as its own default
-    /// (ADR-0070 d4). No credential.
+    /// `GET /.well-known/oauth-authorization-server`. No credential.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn authorization_server_metadata(
+        &self,
+    ) -> Result<AuthorizationServerMetadata, Error> {
+        self.get(None, "/.well-known/oauth-authorization-server".to_owned())
+            .await
+    }
+
+    /// The server's public origin, the metadata's `issuer`, which a client
+    /// takes as its own default (ADR-0070 d4).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
     pub async fn issuer(&self) -> Result<String, Error> {
-        #[derive(Deserialize)]
-        struct Metadata {
-            issuer: String,
-        }
-        let metadata: Metadata = self
-            .get(None, "/.well-known/oauth-authorization-server".to_owned())
-            .await?;
-        Ok(metadata.issuer)
+        Ok(self.authorization_server_metadata().await?.issuer)
     }
 
     /// `GET /v2/whoami`.
@@ -399,18 +421,28 @@ mod tests {
     };
 
     /// The method and path template of each table entry, by operation id.
-    fn table() -> Vec<(&'static str, &'static str, &'static str)> {
+    /// Each entry's operation id, method, path template and `resp:` type.
+    fn table() -> Vec<[&'static str; 4]> {
         OPERATIONS
             .iter()
             .map(|entry| {
                 let mut words = entry.split(' ');
-                (
+                let (id, method, path) = (
                     words.next().unwrap(),
                     words.next().unwrap(),
                     words.next().unwrap(),
-                )
+                );
+                let resp = words
+                    .find_map(|w| w.strip_prefix("resp:"))
+                    .expect("every entry names its resp: type");
+                [id, method, path, resp]
             })
             .collect()
+    }
+
+    /// The name of the type an answer decodes into.
+    fn decodes<T>(_: &Result<T, Error>) -> &'static str {
+        std::any::type_name::<T>().rsplit("::").next().unwrap()
     }
 
     fn matches_template(path: &str, template: &str) -> bool {
@@ -424,16 +456,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn every_method_sends_the_method_and_path_its_table_entry_names() {
+    async fn every_method_sends_the_method_path_and_type_its_table_entry_names() {
         let (client, seen) = recording(500, "{}");
-        let _ = client.issuer().await;
-        let _ = client.whoami(&CALL).await;
-        let _ = client.guardrails(&CALL, Some("alice.proj")).await;
-        let _ = client.workarea_tree(&CALL, "w/1", 200, Some("c 1")).await;
+        let types = [
+            decodes(&client.authorization_server_metadata().await),
+            decodes(&client.whoami(&CALL).await),
+            decodes(&client.guardrails(&CALL, Some("alice.proj")).await),
+            decodes(&client.workarea_tree(&CALL, "w/1", 200, Some("c 1")).await),
+        ];
         let seen = seen.lock().unwrap();
         let table = table();
         assert_eq!(seen.len(), table.len(), "one call per table entry");
-        for (request, (id, method, template)) in seen.iter().zip(&table) {
+        for ((request, [id, method, template, resp]), ty) in seen.iter().zip(&table).zip(types) {
+            assert_eq!(
+                ty, *resp,
+                "{id}: the method decodes into the type its entry names"
+            );
             assert_eq!(request.method().as_str(), *method, "{id}");
             let path = request.uri().to_string();
             assert!(
@@ -469,6 +507,13 @@ mod tests {
         assert_eq!(h[CORRELATION_ID], "page-1");
         assert_eq!(h["oml-web-client"], "s3cret");
         assert!(h["oml-web-client"].is_sensitive());
+    }
+
+    #[test]
+    fn a_calls_debug_output_never_prints_its_bearer() {
+        let shown = format!("{CALL:?}");
+        assert!(!shown.contains("omls_x"), "{shown}");
+        assert!(shown.contains("page-1.1"), "{shown}");
     }
 
     #[tokio::test]
