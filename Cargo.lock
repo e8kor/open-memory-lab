@@ -3832,6 +3832,7 @@ dependencies = [
  "oml-pg",
  "oml-scan",
  "oml-server-lead",
+ "oml-test-pg",
  "oml-transport-http",
  "rpassword",
  "serde",
@@ -4013,6 +4014,7 @@ dependencies = [
  "oml-pg",
  "oml-rerank",
  "oml-scan",
+ "oml-test-pg",
  "oml-transport-http",
  "opentelemetry",
  "opentelemetry-proto",
@@ -4031,6 +4033,13 @@ dependencies = [
  "tracing-subscriber",
  "ureq",
  "uuid",
+]
+
+[[package]]
+name = "oml-test-pg"
+version = "0.6.2"
+dependencies = [
+ "sqlx",
 ]
 
 [[package]]

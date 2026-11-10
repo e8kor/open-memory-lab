@@ -1,0 +1,14 @@
+[package]
+name = "oml-test-pg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Throwaway PostgreSQL databases for the integration suites: one owner/serving role pair and one database per test (ADR-0034 d8). A dev-dependency only."
+publish = false
+
+[dependencies]
+sqlx.workspace = true
+
+[lints]
+workspace = true
