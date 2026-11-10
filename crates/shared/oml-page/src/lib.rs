@@ -21,6 +21,19 @@ pub fn escape(value: &str) -> String {
     out
 }
 
+/// A request or correlation id the rule admits: one to 128 characters from
+/// `A`–`Z`, `a`–`z`, `0`–`9`, `-`, `_`, `.` and `:`, so an honoured id can
+/// neither break a JSON line nor forge a second one (ADR-0042 d4). The same
+/// rule the API's traffic layer applies, so a page id the web client
+/// forwards is one the API honours.
+#[must_use]
+pub fn request_id_admitted(value: &[u8]) -> bool {
+    (1..=128).contains(&value.len())
+        && value
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
+}
+
 /// Current compile-time digests are created from a byte string. The web
 /// stylesheet's digest moves here after it is exacted (ADR-0069).
 pub fn sha256_hex(input: &str) -> String {
@@ -36,6 +49,16 @@ mod tests {
     #[test]
     fn escape_preserves_clean_text() {
         assert_eq!(escape("ok"), "ok");
+    }
+
+    #[test]
+    fn the_request_id_rule_admits_req_ids_and_refuses_spaces_quotes_and_long_values() {
+        assert!(request_id_admitted(b"req_0123456789abcdef"));
+        assert!(request_id_admitted(b"page-1.2:3"));
+        assert!(!request_id_admitted(b""));
+        assert!(!request_id_admitted(b"a b"));
+        assert!(!request_id_admitted(b"a\"b"));
+        assert!(!request_id_admitted(&[b'a'; 129]));
     }
 
     #[test]

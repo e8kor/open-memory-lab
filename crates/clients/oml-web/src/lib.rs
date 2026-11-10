@@ -1,22 +1,31 @@
-//! The web console as a client: presentation and translation of the public
-//! HTTP API's responses. It does not reach the application core; the
-//! dependency test in `tests/dependencies.rs` enforces the wall.
+//! The web console as its own process: pages over the public HTTP API, and
+//! nothing of the application core (ADR-0070 d1; d4 as amended on
+//! 2026-11-10, `oml-web` runs only as its own process, with `web.api_url`
+//! required). `tests/dependencies.rs` holds the wall.
 //!
-//! Phase (b) of ADR-0070 d7: this crate exists before any page moves, so
-//! the wall can be built and the SDK/portfolio code can be added incrementally.
-//! Rendering code is added page by page in later commits.
+//! This is the scaffold of phase (b): the configuration, the health probe and
+//! the middleware stack. No page has moved yet; every page route still lives
+//! in the lead until it moves here behind its parity test.
 
-/// A page that can render an outcome, in the end: `Authorization` is checked
-/// at the first point a session is loaded (d3 layer 2).
-pub const WEB_ROUTES: &[(&str, &str)] = &[
-    ("GET", "/web"),
-    ("POST", "/web"),
-    ("GET", "/web/admin"),
-    ("POST", "web/admin"),
-];
+pub mod config;
+pub mod middleware;
+pub mod outcome;
 
-/// Capacities that the browser proves through the credential derived from
-/// the session token (ADR-0070 d2).
+use axum::Router;
+use axum::routing::get;
+use http::StatusCode;
+use serde_json::json;
+use tower::ServiceBuilder;
+
+pub use config::Config;
+pub use middleware::Layers;
+
+/// The health probe: answers without calling the API, so it says the process
+/// is up, not that the API is.
+pub const HEALTH_PATH: &str = "/web/healthz";
+
+/// The capacities a session's credential is derived for (ADR-0070 d2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Capacity {
     Web,
     Review,
@@ -24,16 +33,36 @@ pub enum Capacity {
     Admin,
 }
 
-/// The rendering modes required of the lead's container.
-pub enum WebApiClientMode {
-    /// A clone of the same router the lead serves.
-    InProcessLoopback,
-    /// The public HTTP API at `web.api_url`.
-    StandaloneHttp,
+async fn health() -> axum::Json<serde_json::Value> {
+    axum::Json(json!({
+        "status": "ok",
+        "service": "oml-web",
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
 }
 
-/// Split into two separate real types (local/in_process vs HTTP) once the
-/// build reaches phase (a). This placeholder keeps the boot shape explicit.
-pub struct WebBootstrap {
-    pub mode: WebApiClientMode,
+/// Every path no page serves yet; it passes the same layers as a page.
+async fn not_found() -> StatusCode {
+    StatusCode::NOT_FOUND
+}
+
+/// The router with every layer of the scaffold, outermost first: ids and
+/// the line, the human-only gate, the same-origin check, the headers.
+pub fn router(layers: Layers) -> Router {
+    Router::new()
+        .route(HEALTH_PATH, get(health))
+        .fallback(not_found)
+        .layer(
+            ServiceBuilder::new()
+                .layer(axum::middleware::from_fn_with_state(
+                    layers.clone(),
+                    middleware::ids_and_log,
+                ))
+                .layer(axum::middleware::from_fn(middleware::human_only))
+                .layer(axum::middleware::from_fn_with_state(
+                    layers,
+                    middleware::same_origin,
+                ))
+                .layer(axum::middleware::from_fn(middleware::headers)),
+        )
 }
