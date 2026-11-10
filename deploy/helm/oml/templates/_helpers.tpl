@@ -30,6 +30,27 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: server
 {{- end -}}
 
+{{/* oml-web's pods (ADR-0070 d4): their own component, outside the server selector. */}}
+{{- define "oml.webSelectorLabels" -}}
+app.kubernetes.io/name: {{ .Chart.Name }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: web
+{{- end -}}
+
+{{/* The Secret holding web.client_secret for the lead and oml-web (ADR-0070 d2). */}}
+{{- define "oml.webClientSecret" -}}
+{{- .Values.web.clientSecret.existingSecret | default (printf "%s-web-client" (include "oml.fullname" .)) -}}
+{{- end -}}
+
+{{/* oml-web's public origin: web.publicUrl, else https:// and the first Ingress host. */}}
+{{- define "oml.webPublicUrl" -}}
+{{- if .Values.web.publicUrl -}}
+{{- .Values.web.publicUrl -}}
+{{- else -}}
+{{- printf "https://%s" (index .Values.ingress.hosts 0).host -}}
+{{- end -}}
+{{- end -}}
+
 {{/* The lead's pods: the Deployment's immutable selector. */}}
 {{- define "oml.leadSelectorLabels" -}}
 {{ include "oml.serverSelectorLabels" . }}

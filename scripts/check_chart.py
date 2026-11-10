@@ -1,4 +1,4 @@
-"""The Helm chart renders the one lead ADR-0033 decides, at the workspace version.
+"""The Helm chart renders the one lead ADR-0033 decides and oml-web beside it, at the workspace version.
 
 Run by .github/workflows/ci.yml (job chart). Renders deploy/helm/oml with
 `helm template` and checks, failing with every disagreement found:
@@ -9,7 +9,16 @@ Run by .github/workflows/ci.yml (job chart). Renders deploy/helm/oml with
   ci/*-values.yaml file;
 - the default image is ghcr.io/e8kor/open-memory-lab:<appVersion>, and
   image.digest pins it as <repository>:<tag>@<digest> (d9);
-- exactly one Deployment, at one replica, with the Recreate strategy (d2);
+- exactly one lead Deployment, at one replica, with the Recreate strategy (d2);
+- exactly one oml-web Deployment (ADR-0070 d4), at one replica, from the same
+  image under the command /usr/local/bin/oml-web, its pods outside the
+  server selector, hardened as the lead's, reaching the lead's Service
+  through OML_WEB__API_URL, with startup and liveness on GET /web/healthz
+  and readiness on GET /readyz on its http port, a ClusterIP Service of its
+  own, and OML_WEB__CLIENT_SECRET from the same Secret and key as the lead's
+  (ADR-0070 d2); with the NetworkPolicy on, oml-web's pods admit their http
+  port alone and reach DNS and the lead's pods alone, and the lead admits
+  them;
 - the pod sets runAsNonRoot, a numeric non-root runAsUser and runAsGroup,
   fsGroup with fsGroupChangePolicy OnRootMismatch (under Always the kubelet
   ORs 0660 into the 0600 keyring and the lead refuses it) and seccomp
@@ -74,6 +83,8 @@ INGRESS_HOST_FLAGS = (
 SERVER_COMPONENT = ("app.kubernetes.io/component", "server")
 LEAD_ROLE = ("oml.e8kor.github.io/role", "lead")
 PROBES = {"startupProbe": "/healthz", "livenessProbe": "/healthz", "readinessProbe": "/readyz"}
+WEB_COMPONENT = ("app.kubernetes.io/component", "web")
+WEB_PROBES = {"startupProbe": "/web/healthz", "livenessProbe": "/web/healthz", "readinessProbe": "/readyz"}
 
 
 def main() -> int:
@@ -117,7 +128,8 @@ def main() -> int:
         if docs is None:
             continue
         check_lead(errors, label, docs, listen_port, keyring_dir, args.image_user)
-        image = only(errors, label, docs, "Deployment")
+        check_web(errors, label, docs, args.image_user)
+        image = lead_deployment(errors, label, docs)
         if image is not None and label == "default values":
             want = f"{IMAGE_REPOSITORY}:{app_version}"
             got = containers(image)[0].get("image")
@@ -129,9 +141,8 @@ def main() -> int:
         for kind in ("Ingress", "NetworkPolicy"):
             if of_kind(defaults, kind):
                 errors.append(f"default values: render a {kind}; it is off until asked for (ADR-0033 d5, d8)")
-        lead = only(errors, "default values", defaults, "Deployment")
-        if lead is not None:
-            for c in containers(lead):
+        for deployment in of_kind(defaults, "Deployment"):
+            for c in containers(deployment):
                 if c.get("resources"):
                     errors.append(f"default values: container {c.get('name')} requests or limits resources")
 
@@ -185,7 +196,7 @@ def check_lead(
     keyring_dir: str | None,
     image_user: str | None,
 ) -> None:
-    deployment = only(errors, label, docs, "Deployment")
+    deployment = lead_deployment(errors, label, docs)
     if deployment is None:
         return
     spec = deployment.get("spec", {})
@@ -299,7 +310,7 @@ def check_lead(
         if claim.get("metadata", {}).get("annotations", {}).get("helm.sh/resource-policy") != "keep":
             errors.append(f"{label}: helm uninstall would delete the keyring claim and the signing key with it (ADR-0033 d3)")
 
-    service = only(errors, label, docs, "Service")
+    service = lead_service(errors, label, docs)
     if service is not None:
         sspec = service.get("spec", {})
         if sspec.get("type", "ClusterIP") != "ClusterIP":
@@ -315,8 +326,8 @@ def check_lead(
 
 def check_options(errors: list[str], docs: list[dict], app_version: str) -> None:
     label = "ingress, NetworkPolicy, digest and existing claim enabled"
-    deployment = only(errors, label, docs, "Deployment")
-    service = only(errors, label, docs, "Service")
+    deployment = lead_deployment(errors, label, docs)
+    service = lead_service(errors, label, docs)
     if deployment is None or service is None:
         return
     want = f"{IMAGE_REPOSITORY}:{app_version}@{DIGEST}"
@@ -345,16 +356,27 @@ def check_options(errors: list[str], docs: list[dict], app_version: str) -> None
         if not backends or any(b.get("name") != service_name or b.get("port") != {"name": "http"} for b in backends):
             errors.append(f"{label}: the Ingress does not route every path to {service_name}'s http port: {backends!r}")
 
-    policy = only(errors, label, docs, "NetworkPolicy")
-    if policy is None:
+    policies = [
+        p for p in of_kind(docs, "NetworkPolicy")
+        if p.get("spec", {}).get("podSelector", {}).get("matchLabels", {}).get(SERVER_COMPONENT[0]) == SERVER_COMPONENT[1]
+    ]
+    if len(policies) != 1:
+        errors.append(f"{label}: renders {len(policies)} NetworkPolicy objects for the server pods, not one")
         return
-    pspec = policy.get("spec", {})
+    check_web_policy(errors, label, docs)
+    pspec = policies[0].get("spec", {})
     selected = pspec.get("podSelector", {}).get("matchLabels", {})
     if dict([SERVER_COMPONENT]).items() - selected.items():
         errors.append(f"{label}: the NetworkPolicy does not select the server pods: {selected!r}")
     if sorted(pspec.get("policyTypes", [])) != ["Egress", "Ingress"]:
         errors.append(f"{label}: the NetworkPolicy does not govern both Ingress and Egress")
     in_ports = [p for rule in pspec.get("ingress", []) for p in rule.get("ports", [])]
+    if not any(
+        (peer.get("podSelector") or {}).get("matchLabels", {}).get(SERVER_COMPONENT[0]) == WEB_COMPONENT[1]
+        for rule in pspec.get("ingress", [])
+        for peer in rule.get("from", [])
+    ):
+        errors.append(f"{label}: the lead's NetworkPolicy does not admit oml-web's pods, which reach it at its Service")
     if not pspec.get("ingress") or any(not r.get("ports") for r in pspec["ingress"]) or any(
         p.get("port") != "http" for p in in_ports
     ):
@@ -362,6 +384,150 @@ def check_options(errors: list[str], docs: list[dict], app_version: str) -> None
     out_ports = sorted({p.get("port") for rule in pspec.get("egress", []) for p in rule.get("ports", [])}, key=str)
     if not pspec.get("egress") or any(not r.get("ports") for r in pspec["egress"]) or out_ports != sorted({53, 5432}, key=str):
         errors.append(f"{label}: the NetworkPolicy's egress is {pspec.get('egress')!r}, not DNS and the Postgres port alone")
+
+
+def lead_deployment(errors: list[str], label: str, docs: list[dict]) -> dict | None:
+    """The one Deployment whose pods carry the lead role."""
+    found = [d for d in of_kind(docs, "Deployment") if pod_labels(d).get(LEAD_ROLE[0]) == LEAD_ROLE[1]]
+    if len(found) != 1:
+        errors.append(f"{label}: renders {len(found)} lead Deployments, not one")
+        return None
+    return found[0]
+
+
+def web_deployment(errors: list[str], label: str, docs: list[dict]) -> dict | None:
+    """The one Deployment whose pods are oml-web's (ADR-0070 d4)."""
+    found = [d for d in of_kind(docs, "Deployment") if pod_labels(d).get(WEB_COMPONENT[0]) == WEB_COMPONENT[1]]
+    if len(found) != 1:
+        errors.append(f"{label}: renders {len(found)} oml-web Deployments, not one (ADR-0070 d4)")
+        return None
+    return found[0]
+
+
+def lead_service(errors: list[str], label: str, docs: list[dict]) -> dict | None:
+    found = [s for s in of_kind(docs, "Service") if s.get("spec", {}).get("selector", {}).get(SERVER_COMPONENT[0]) == SERVER_COMPONENT[1]]
+    if len(found) != 1:
+        errors.append(f"{label}: renders {len(found)} Services for the server pods, not one")
+        return None
+    return found[0]
+
+
+def pod_labels(deployment: dict) -> dict:
+    return deployment.get("spec", {}).get("template", {}).get("metadata", {}).get("labels", {})
+
+
+def env_of(container: dict, name: str) -> dict | None:
+    return next((e for e in container.get("env", []) if e.get("name") == name), None)
+
+
+def check_web(errors: list[str], label: str, docs: list[dict], image_user: str | None) -> None:
+    """oml-web beside the lead (ADR-0070 d2, d4)."""
+    web = web_deployment(errors, label, docs)
+    lead = lead_deployment([], label, docs)
+    service = lead_service([], label, docs)
+    if web is None or lead is None:
+        return
+    spec = web.get("spec", {})
+    if spec.get("replicas") != 1:
+        errors.append(f"{label}: oml-web runs {spec.get('replicas')!r} replicas; the frame route needs one (ADR-0070 d4)")
+    labels = pod_labels(web)
+    selector = spec.get("selector", {}).get("matchLabels", {})
+    if not selector or selector.items() - labels.items():
+        errors.append(f"{label}: oml-web's selector {selector!r} does not match its pod template's labels")
+    pod = spec.get("template", {}).get("spec", {})
+    psc = pod.get("securityContext", {})
+    if psc.get("runAsNonRoot") is not True or psc.get("seccompProfile", {}).get("type") != "RuntimeDefault":
+        errors.append(f"{label}: oml-web's pod is not non-root under RuntimeDefault seccomp")
+    lead_psc = lead.get("spec", {}).get("template", {}).get("spec", {}).get("securityContext", {})
+    for field in ("runAsUser", "runAsGroup"):
+        if psc.get(field) != lead_psc.get(field):
+            errors.append(f"{label}: oml-web's {field} is {psc.get(field)!r}, the lead's {lead_psc.get(field)!r}")
+    if pod.get("automountServiceAccountToken") is not False:
+        errors.append(f"{label}: oml-web's pod mounts a service account token")
+    cs = containers(web)
+    if len(cs) != 1:
+        errors.append(f"{label}: oml-web's pod runs {len(cs)} containers, not one")
+        return
+    c = cs[0]
+    sc = c.get("securityContext", {})
+    if (
+        sc.get("readOnlyRootFilesystem") is not True
+        or sc.get("allowPrivilegeEscalation") is not False
+        or sc.get("capabilities", {}).get("drop") != ["ALL"]
+        or sc.get("capabilities", {}).get("add")
+    ):
+        errors.append(f"{label}: oml-web's container is not read-only, unescalated and without capabilities")
+    if c.get("image") != containers(lead)[0].get("image"):
+        errors.append(f"{label}: oml-web runs {c.get('image')!r}, not the lead's image {containers(lead)[0].get('image')!r}")
+    if c.get("command") != ["/usr/local/bin/oml-web"]:
+        errors.append(f"{label}: oml-web's command is {c.get('command')!r}, not the image's /usr/local/bin/oml-web")
+    port = {p.get("name"): p.get("containerPort") for p in c.get("ports", [])}.get("http")
+    listen = (env_of(c, "OML_WEB__LISTEN") or {}).get("value", "")
+    if port is None or not listen.endswith(f":{port}"):
+        errors.append(f"{label}: oml-web listens on {listen!r}, its http port is {port!r}")
+    for probe, path in WEB_PROBES.items():
+        get = c.get(probe, {}).get("httpGet", {})
+        if get.get("path") != path or get.get("port") not in ("http", port):
+            errors.append(f"{label}: oml-web's {probe} is {c.get(probe)!r}, not GET {path} on the http port")
+    api_url = (env_of(c, "OML_WEB__API_URL") or {}).get("value", "")
+    if service is not None:
+        want = f"http://{service['metadata']['name']}:8080"
+        if api_url != want:
+            errors.append(f"{label}: oml-web's OML_WEB__API_URL is {api_url!r}, not the lead's Service {want!r}")
+    if api_url.startswith("http://") and (env_of(c, "OML_WEB__ALLOW_PLAIN_HTTP_API") or {}).get("value") != "true":
+        errors.append(f"{label}: oml-web reaches the lead over plain http without OML_WEB__ALLOW_PLAIN_HTTP_API; it refuses to start")
+    if not (env_of(c, "OML_WEB__PUBLIC_URL") or {}).get("value"):
+        errors.append(f"{label}: oml-web has no OML_WEB__PUBLIC_URL, and the lead names no issuer it could read")
+    refs = []
+    for container, who in ((c, "oml-web"), (containers(lead)[0], "the lead")):
+        ref = ((env_of(container, "OML_WEB__CLIENT_SECRET") or {}).get("valueFrom") or {}).get("secretKeyRef")
+        if ref is None:
+            errors.append(f"{label}: {who}'s OML_WEB__CLIENT_SECRET does not come from a secretKeyRef (ADR-0070 d2)")
+        refs.append(ref)
+    if None not in refs and refs[0] != refs[1]:
+        errors.append(f"{label}: the lead and oml-web read OML_WEB__CLIENT_SECRET from {refs[1]!r} and {refs[0]!r}")
+    if None not in refs:
+        secrets = {d["metadata"]["name"]: d for d in of_kind(docs, "Secret")}
+        rendered = secrets.get(refs[0].get("name"))
+        if rendered is not None and refs[0].get("key") not in (rendered.get("data") or {}):
+            errors.append(f"{label}: Secret {refs[0].get('name')!r} has no key {refs[0].get('key')!r}")
+    services = [
+        s for s in of_kind(docs, "Service")
+        if s.get("spec", {}).get("selector", {}).get(WEB_COMPONENT[0]) == WEB_COMPONENT[1]
+    ]
+    if len(services) != 1:
+        errors.append(f"{label}: renders {len(services)} Services for oml-web, not one")
+    else:
+        sspec = services[0].get("spec", {})
+        if sspec.get("type", "ClusterIP") != "ClusterIP":
+            errors.append(f"{label}: oml-web's Service is a {sspec.get('type')}, not cluster-internal")
+        if not any(p.get("name") == "http" and p.get("targetPort") in ("http", port) for p in sspec.get("ports", [])):
+            errors.append(f"{label}: oml-web's Service has no http port targeting its pods' http port")
+
+
+def check_web_policy(errors: list[str], label: str, docs: list[dict]) -> None:
+    policies = [
+        p for p in of_kind(docs, "NetworkPolicy")
+        if p.get("spec", {}).get("podSelector", {}).get("matchLabels", {}).get(WEB_COMPONENT[0]) == WEB_COMPONENT[1]
+    ]
+    if len(policies) != 1:
+        errors.append(f"{label}: renders {len(policies)} NetworkPolicy objects for oml-web, not one")
+        return
+    pspec = policies[0].get("spec", {})
+    if sorted(pspec.get("policyTypes", [])) != ["Egress", "Ingress"]:
+        errors.append(f"{label}: oml-web's NetworkPolicy does not govern both Ingress and Egress")
+    in_ports = [p for rule in pspec.get("ingress", []) for p in rule.get("ports", [])]
+    if not in_ports or any(p.get("port") != "http" for p in in_ports):
+        errors.append(f"{label}: oml-web's NetworkPolicy admits more than its http port")
+    egress = pspec.get("egress", [])
+    dns = all(p.get("port") == 53 for p in egress[0].get("ports", [])) if egress else False
+    lead = egress[1:] and all(
+        (peer.get("podSelector") or {}).get("matchLabels", {}).get(SERVER_COMPONENT[0]) == SERVER_COMPONENT[1]
+        for rule in egress[1:]
+        for peer in rule.get("to", [{}])
+    )
+    if len(egress) != 2 or not dns or not lead:
+        errors.append(f"{label}: oml-web's NetworkPolicy egress is {egress!r}, not DNS and the lead's pods alone")
 
 
 def check_notes(errors: list[str]) -> None:
@@ -460,7 +626,7 @@ def report(errors: list[str]) -> int:
     for e in errors:
         print(f"chart check: {e}", file=sys.stderr)
     if not errors:
-        print("chart check: deploy/helm/oml renders one hardened lead at the workspace version (ADR-0033)")
+        print("chart check: deploy/helm/oml renders one hardened lead and oml-web beside it at the workspace version (ADR-0033, ADR-0070)")
     return 1 if errors else 0
 
 

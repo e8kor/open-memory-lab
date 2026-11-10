@@ -226,6 +226,11 @@ jobs:
         run: docker compose up -d --build
       - name: Quickstart inside the container
         run: bash scripts/quickstart.sh
+      # ADR-0070 d4: the router sends the moved page to oml-web, which sends
+      # a signed-out browser to the lead's sign-in carrying the page, and
+      # every other path to the lead; oml-web's doctor reaches the lead.
+      - name: oml-web behind the router, and its doctor
+        run: bash scripts/check_web_hop.sh http://127.0.0.1:8080 docker compose exec -T oml-web /usr/local/bin/oml-web --doctor
       - name: Logs on failure
         if: failure()
         run: docker compose logs
@@ -251,6 +256,8 @@ jobs:
             echo "a second quickstart was not refused" >&2; exit 1
           fi
           grep -q quickstart.exists "$RUNNER_TEMP/again"
+          bash scripts/check_web_hop.sh http://127.0.0.1:8080 \
+            docker compose --project-directory "$RUNNER_TEMP/oml" exec -T oml-web /usr/local/bin/oml-web --doctor
       - name: Docker quickstart timing, first held write and first recall
         run: |
           export OML_URL=http://127.0.0.1:8080
@@ -663,6 +670,26 @@ jobs:
           helm install oml deploy/helm/oml --namespace oml \
             --values deploy/helm/oml/ci/kind-values.yaml --wait --timeout 5m
           kubectl --namespace oml rollout status deployment/oml-server-lead --timeout=300s
+          kubectl --namespace oml rollout status deployment/oml-web --timeout=300s
+      # oml-web beside the lead (ADR-0070 d4): ready only once the lead
+      # answers ready and accepts its identity; its doctor agrees; a moved
+      # page without a session goes to the lead's sign-in carrying the page.
+      - name: oml-web is ready over the hop and sends a signed-out page to sign in
+        run: |
+          kubectl --namespace oml exec deployment/oml-web -- /usr/local/bin/oml-web --doctor
+          kubectl --namespace oml port-forward service/oml-web 8091:8091 >"$RUNNER_TEMP/port-forward-web.log" 2>&1 &
+          forward=$!
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8091/readyz >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8091/readyz | tee "$RUNNER_TEMP/web-ready.json"
+          jq -e '.checks.api == "ok" and .checks.web_client == "secret"' "$RUNNER_TEMP/web-ready.json"
+          location="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' 'http://127.0.0.1:8091/web?view=guardrails')"
+          kill "$forward"
+          echo "$location"
+          [ "$location" = "303 http://127.0.0.1:8091/web/sign-in?next=%2Fweb%3Fview%3Dguardrails" ] \
+            || { echo "expected a 303 to /web/sign-in carrying next" >&2; exit 1; }
       - name: Claim the enrollment token through port-forward, then the quickstart
         run: |
           docker create --name oml-cli "$IMAGE:$VERSION" >/dev/null
@@ -739,6 +766,7 @@ jobs:
           kubectl --namespace oml describe pods || true
           kubectl --namespace oml logs deployment/oml-server-lead --previous || true
           kubectl --namespace oml logs deployment/oml-server-lead || true
+          kubectl --namespace oml logs deployment/oml-web || true
           cat "$RUNNER_TEMP"/port-forward*.log || true
 
   # The client SDKs of docs/engineering/sdks.md: each suite runs against the

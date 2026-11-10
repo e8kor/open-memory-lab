@@ -9,6 +9,9 @@ name: Release
 #     (macOS paused: docs/engineering/ci-and-toolchain.md "Paused targets");
 #   - oml-server-lead-X.Y.Z-<target>.tar.gz for x86_64-unknown-linux-gnu and
 #     aarch64-unknown-linux-gnu;
+#   - oml-web-X.Y.Z-<target>.tar.gz, the web console, its own process over the
+#     lead's HTTP API (ADR-0070 d4), for x86_64-unknown-linux-gnu and
+#     aarch64-unknown-linux-gnu;
 #   - oml-lakewriter-X.Y.Z-<target>.tar.gz, the Delta lake writer, a separate
 #     service (ADR-0060), for x86_64-unknown-linux-gnu and
 #     aarch64-unknown-linux-gnu;
@@ -174,6 +177,45 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The web console (ADR-0070 d4): its own binary, built and packaged like
+  # the server, on the same glibc.
+  web:
+    name: oml-web, ${{ matrix.target }}
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+      - run: cargo build --release --locked --bin oml-web --target "$TARGET"
+      - name: Package, after the binary prints the tag's version
+        run: |
+          got="$("target/$TARGET/release/oml-web" --version)"
+          [ "$got" = "oml-web $VERSION" ] || { echo "$TARGET: '$got', expected 'oml-web $VERSION'" >&2; exit 1; }
+          name="oml-web-${VERSION}-${TARGET}"
+          mkdir -p "dist/$name"
+          cp "target/$TARGET/release/oml-web" README.md LICENSE "dist/$name/"
+          cp -r LICENSES "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -rf "dist/$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
   lakewriter:
     name: oml-lakewriter, ${{ matrix.target }}
     needs: version
@@ -270,7 +312,7 @@ jobs:
   # from one runner, and SHA256SUMS is written once the set is complete.
   binaries:
     name: SBOMs, SHA256SUMS, signatures
-    needs: [version, cli, server, lakewriter, agents, site]
+    needs: [version, cli, server, web, lakewriter, agents, site]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -280,6 +322,7 @@ jobs:
       CLI_TARGETS: >-
         x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-pc-windows-msvc
       SERVER_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+      WEB_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
       LAKEWRITER_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
@@ -291,7 +334,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: "{cli,server,lakewriter,agents,site}-*"
+          pattern: "{cli,server,web,lakewriter,agents,site}-*"
           merge-multiple: true
       - name: Every archive is here, and nothing else
         run: |
@@ -303,6 +346,7 @@ jobs:
             esac
           done
           for t in $SERVER_TARGETS; do want="$want oml-server-lead-${VERSION}-$t.tar.gz"; done
+          for t in $WEB_TARGETS; do want="$want oml-web-${VERSION}-$t.tar.gz"; done
           for t in $LAKEWRITER_TARGETS; do want="$want oml-lakewriter-${VERSION}-$t.tar.gz"; done
           want="$want oml-claude-plugins-${VERSION}.tar.gz oml-claude-plugins-${VERSION}.zip"
           want="$want oml-agent-kit-${VERSION}.tar.gz oml-agent-kit-${VERSION}.zip"
@@ -320,6 +364,10 @@ jobs:
           for t in $SERVER_TARGETS; do
             cargo cyclonedx --format json --override-filename sbom --target "$t"
             cp crates/bins/oml-server-lead/sbom.json "dist/oml-server-lead-${VERSION}-$t.cdx.json"
+          done
+          for t in $WEB_TARGETS; do
+            cargo cyclonedx --format json --override-filename sbom --target "$t"
+            cp crates/clients/oml-web/sbom.json "dist/oml-web-${VERSION}-$t.cdx.json"
           done
           for t in $LAKEWRITER_TARGETS; do
             cargo cyclonedx --format json --override-filename sbom --target "$t"
@@ -478,7 +526,7 @@ jobs:
           cat > notes.md <<EOF
           ## Install
 
-          Docker (Postgres + oml-server):
+          Docker (Postgres, oml-server, oml-web and a Caddy router on 127.0.0.1:8080):
 
               curl -fsSLO https://raw.githubusercontent.com/${{ github.repository }}/v${VERSION}/docker-compose.yml
               OML_VERSION=${VERSION} docker compose up -d
@@ -524,6 +572,10 @@ jobs:
           targets are paused; on a Mac, build the CLI from source with \`cargo install\`.
           The server: \`oml-server-lead-${VERSION}-<target>.tar.gz\` for x86_64-unknown-linux-gnu
           and aarch64-unknown-linux-gnu.
+          The web console, its own process beside the server behind one proxy origin
+          (docs/operations/web-console.md): \`oml-web-${VERSION}-<target>.tar.gz\` for
+          x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu. The image carries it too, as
+          \`/usr/local/bin/oml-web\`.
           The lake writer, a separate service run on its own (docs/operations/lake.md):
           \`oml-lakewriter-${VERSION}-<target>.tar.gz\` for x86_64-unknown-linux-gnu and
           aarch64-unknown-linux-gnu.

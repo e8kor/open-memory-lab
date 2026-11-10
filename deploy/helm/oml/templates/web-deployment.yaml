@@ -1,0 +1,91 @@
+{{- $fullname := include "oml.fullname" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-web
+  labels:
+    {{- include "oml.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  # One replica, not a value: the Mermaid frame route holds its sources in
+  # memory, so a second replica needs session affinity (ADR-0070 d4).
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "oml.webSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "oml.labels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+    spec:
+      serviceAccountName: {{ $fullname }}-web
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        # The image's oml user and group, as numbers (ADR-0033 d4).
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: oml-web
+          image: {{ include "oml.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # The same image as the lead, under oml-web's entrypoint.
+          command: ["/usr/local/bin/oml-web"]
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            # oml-web holds no store and writes no file (ADR-0070 d3).
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            # The lead's Service, never the Ingress (ADR-0070 d4).
+            - name: OML_WEB__API_URL
+              value: {{ printf "http://%s-server:8080" $fullname | quote }}
+            {{- if .Values.web.allowPlainHttpApi }}
+            - name: OML_WEB__ALLOW_PLAIN_HTTP_API
+              value: "true"
+            {{- end }}
+            - name: OML_WEB__LISTEN
+              value: "0.0.0.0:8091"
+            - name: OML_WEB__PUBLIC_URL
+              value: {{ include "oml.webPublicUrl" . | quote }}
+            - name: OML_WEB__CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "oml.webClientSecret" . | quote }}
+                  key: {{ .Values.web.clientSecret.key | quote }}
+          ports:
+            - name: http
+              containerPort: 8091
+              protocol: TCP
+          # Probe timings are chosen, not measured. /web/healthz says the
+          # process is up; /readyz that the lead answers ready and accepts
+          # oml-web's identity.
+          startupProbe:
+            httpGet:
+              path: /web/healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /web/healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          {{- with .Values.web.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

@@ -41,6 +41,35 @@ keyring:
   # Empty: the cluster's default StorageClass.
   storageClassName: ""
 
+# The web console, oml-web: its own process over the lead's HTTP API, a
+# second Deployment from the same image under the entrypoint
+# /usr/local/bin/oml-web (ADR-0070 d4). It reaches the lead at the lead's
+# Service, never through the Ingress.
+web:
+  # The browser's origin, which a form's Origin must equal (web.public_url).
+  # Empty: https:// and the first Ingress host below.
+  publicUrl: ""
+  # oml-web's identity to the lead, web.client_secret, at least 32
+  # characters, set on both Deployments from this Secret's key (ADR-0070 d2).
+  # Empty existingSecret: the chart creates <release>-web-client with a random
+  # value, read back on every upgrade so it does not change.
+  clientSecret:
+    existingSecret: ""
+    key: OML_WEB__CLIENT_SECRET
+  # The hop to the lead's Service carries session credentials in plain http
+  # inside the cluster network; oml-web refuses plain http to a non-loopback
+  # host unless this allows it (web.allow_plain_http_api). Set false only
+  # with a TLS hop in front of the lead.
+  allowPlainHttpApi: true
+  # Ingress paths routed to oml-web, ahead of the lead's, per host. An Ingress
+  # routes by path alone, and the pages oml-web serves today are a query of
+  # /web (GET /web?view=guardrails, oml_web::PAGES), so the default is none:
+  # route those with a controller that matches on the query, or a proxy in
+  # front (deploy/caddy/Caddyfile). Each entry: {path, pathType}.
+  ingressPaths: []
+  # Hints, never claims (docs/operations/capacity.md).
+  resources: {}
+
 # Off until the first admin key is claimed through kubectl port-forward: until
 # then, whoever presents the enrollment token from the pod log first receives
 # that key (ADR-0033 d8; NOTES.txt prints the ceremony).

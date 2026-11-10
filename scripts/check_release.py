@@ -1,4 +1,4 @@
-"""The release workflow ships one signed image index, the signed chart, signed CLI and server archives, and the signed agent artifacts.
+"""The release workflow ships one signed image index, the signed chart, signed CLI, server and oml-web archives, and the signed agent artifacts.
 
 Run by .github/workflows/ci.yml (job image). Holds .github/workflows/release.yml
 to docs/engineering/ci-and-toolchain.md "Release artifacts", failing with every
@@ -26,7 +26,10 @@ disagreement found:
   native runner named there, packages it as oml-cli-${VERSION}-${TARGET}
   (.zip on Windows, .tar.gz elsewhere) after the binary prints the tag's
   version, and a matrix job builds oml-server-lead for every target in
-  SERVER_TARGETS as oml-server-lead-${VERSION}-${TARGET}.tar.gz;
+  SERVER_TARGETS as oml-server-lead-${VERSION}-${TARGET}.tar.gz, and one
+  builds oml-web, the web console's own process (ADR-0070 d4), for the
+  same targets as oml-web-${VERSION}-${TARGET}.tar.gz after the binary
+  prints the tag's version;
 - one job, needing both and holding `id-token: write`, writes one CycloneDX
   SBOM per archive with `cargo cyclonedx --target`, one SHA256SUMS over every
   archive and SBOM, and only then signs every archive, every SBOM and
@@ -98,6 +101,7 @@ MUSL_CC = {
 }
 CLI_ARCHIVE = "oml-cli-${VERSION}-${TARGET}"
 SERVER_ARCHIVE = "oml-server-lead-${VERSION}-${TARGET}"
+WEB_ARCHIVE = "oml-web-${VERSION}-${TARGET}"
 CARGO_BUILD = re.compile(r"\bcargo\s+build\b[^\n]*--bin\s+(\S+)")
 CYCLONEDX = re.compile(r"\bcargo\s+cyclonedx\b[^\n]*--target\b")
 SHA256SUMS = re.compile(
@@ -245,7 +249,8 @@ def check_binaries(errors: list[str], jobs: dict) -> None:
     """Every CLI and server target is built natively, packaged, given an SBOM, summed and signed."""
     cli = builders(jobs, "oml")
     server = builders(jobs, "oml-server-lead")
-    for binary, found in (("oml", cli), ("oml-server-lead", server)):
+    web = builders(jobs, "oml-web")
+    for binary, found in (("oml", cli), ("oml-server-lead", server), ("oml-web", web)):
         if len(found) != 1:
             errors.append(f"{len(found)} jobs build --bin {binary}, not exactly one")
     for name, job in cli.items():
@@ -271,6 +276,15 @@ def check_binaries(errors: list[str], jobs: dict) -> None:
         script = "\n".join(runs(job))
         if SERVER_ARCHIVE not in script or '.tar.gz"' not in script:
             errors.append(f"job {name}: does not package {SERVER_ARCHIVE}.tar.gz")
+    for name, job in web.items():
+        targets = {str(r.get("target")) for r in matrix_rows(job)}
+        if targets != SERVER_TARGETS:
+            errors.append(f"job {name}: builds oml-web for {sorted(targets)}, not {sorted(SERVER_TARGETS)}")
+        script = "\n".join(runs(job))
+        if WEB_ARCHIVE not in script or '.tar.gz"' not in script:
+            errors.append(f"job {name}: does not package {WEB_ARCHIVE}.tar.gz")
+        if "--version" not in script:
+            errors.append(f"job {name}: does not run the built oml-web --version before packaging it")
 
     signers = {
         name: job
@@ -283,7 +297,7 @@ def check_binaries(errors: list[str], jobs: dict) -> None:
         )
     for name, job in signers.items():
         upstream = ancestors(jobs, name)
-        if not set(cli) <= upstream or not set(server) <= upstream:
+        if not set(cli) <= upstream or not set(server) <= upstream or not set(web) <= upstream:
             errors.append(f"job {name}: signs without needing every job that builds an archive")
         if job.get("permissions", {}).get("id-token") != "write":
             errors.append(f"job {name}: has no id-token: write, so keyless signing has no identity")
@@ -292,6 +306,8 @@ def check_binaries(errors: list[str], jobs: dict) -> None:
             errors.append(f"job {name}: CLI_TARGETS is not {sorted(CLI_TARGETS)}")
         if set(str(env.get("SERVER_TARGETS", "")).split()) != SERVER_TARGETS:
             errors.append(f"job {name}: SERVER_TARGETS is not {sorted(SERVER_TARGETS)}")
+        if set(str(env.get("WEB_TARGETS", "")).split()) != SERVER_TARGETS:
+            errors.append(f"job {name}: WEB_TARGETS is not {sorted(SERVER_TARGETS)}")
         sbom = step_matching(job, CYCLONEDX)
         sums = step_matching(job, SHA256SUMS)
         sign = step_matching(job, SIGN_EVERY_BLOB)
@@ -304,7 +320,11 @@ def check_binaries(errors: list[str], jobs: dict) -> None:
         if sign is not None and sums is not None and sign < sums:
             errors.append(f"job {name}: signs before SHA256SUMS is written")
         script = "\n".join(runs(job))
-        for stem in ("oml-cli-${VERSION}-$t.cdx.json", "oml-server-lead-${VERSION}-$t.cdx.json"):
+        for stem in (
+            "oml-cli-${VERSION}-$t.cdx.json",
+            "oml-server-lead-${VERSION}-$t.cdx.json",
+            "oml-web-${VERSION}-$t.cdx.json",
+        ):
             if stem not in script:
                 errors.append(f"job {name}: writes no SBOM named {stem}")
         creators = [n for n, j in jobs.items() if step_matching(j, RELEASE_CREATE) is not None]
