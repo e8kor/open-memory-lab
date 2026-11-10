@@ -660,7 +660,7 @@ sequenceDiagram
   `selection_yield` is below the floor; a key with more than 1,000 candidate sources (tenant
   admin only).
 - For ADR-0073, which runs this selection across nodes: its first round needs R's **exact**
-  counts without contacting every candidate (d12), with what they disclose to a node that does
+  counts, in one statistics round per unit holding R (d12), with what they disclose to a node that does
   not hold the unit stated there; the request's single `now` as a point (d9); each source's
   answering position logged (d9); each node returning every retriever's list to the depth the
   pipeline uses for it (ADR-0049), so a fused or reranked answer equals one node's; a list
