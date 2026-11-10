@@ -20,7 +20,8 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::Response;
 use serde_json::{Value, json};
 
-use crate::oauth::page::{base64_32, escape, sha256};
+use oml_page::digest::{base64_32, sha256};
+use oml_page::escape;
 
 /// The pinned Mermaid release (MIT, `assets/mermaid.LICENSE`), vendored and
 /// compiled in; nothing is fetched from a CDN.

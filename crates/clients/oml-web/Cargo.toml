@@ -6,18 +6,30 @@ rust-version.workspace = true
 license.workspace = true
 description = "The web console, its own process and a client of the public HTTP API (ADR-0070 d1, d4)."
 
-# The wall (ADR-0070 d1): normal dependencies are oml-page and the HTTP
-# stack only. tests/dependencies.rs fails when the graph reaches a
-# workspace crate other than oml-page.
+# The wall (ADR-0070 d1): of the workspace's crates, normal dependencies
+# are oml-page, oml-sdk and oml-web-credential only, beside the HTTP stack.
+# tests/dependencies.rs fails when the graph reaches any other.
 [dependencies]
 oml-page = { workspace = true }
+oml-sdk = { workspace = true }
+oml-web-credential = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 http = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["net", "signal"] }
+tokio = { workspace = true, features = ["net", "signal", "time"] }
 getrandom = { workspace = true }
+
+# The parity suite composes the lead in-test over the doubles and talks to
+# it over loopback; dev-dependencies are outside the wall's walk.
+[dev-dependencies]
+oml-app = { workspace = true }
+oml-format = { workspace = true }
+oml-guardrail = { workspace = true }
+oml-transport-http = { workspace = true }
+reqwest = { workspace = true }
+uuid = { workspace = true }
 
 [lib]
 name = "oml_web"

@@ -24,7 +24,7 @@ import sys
 # Category -> path globs. `**` crosses `/`, `*` does not. A path may be in several categories.
 CATEGORIES: dict[str, list[str]] = {
     # Compiled into or read by the workspace's own tests.
-    "rust": ["crates/**", "Cargo.toml", "deny.toml", "testing/lake/**", "testing/oml-port-contracts/**", "testing/oml-test-pg/**"],
+    "rust": ["crates/**", "sdks/rust/**", "Cargo.toml", "deny.toml", "testing/lake/**", "testing/oml-port-contracts/**", "testing/oml-test-pg/**"],  # sdks/rust is the workspace member oml-sdk
     "migrations": ["migrations/**"],  # sqlx::migrate! embeds them; the Postgres suites apply them
     # The machine-readable contracts the server include_str!s and its tests read.
     "api": ["docs/api/*.yaml", "docs/api/*.json"],

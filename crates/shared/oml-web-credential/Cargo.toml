@@ -1,0 +1,17 @@
+[package]
+name = "oml-web-credential"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "What a web session's token derives, on both sides of the hop: the capacity credential and the CSRF token (ADR-0070 d2, d3)."
+
+# A leaf: the auth context (oml-domain) and the web client (oml-web) both
+# link it, so the two derivations cannot disagree, and oml-web reaches no
+# application crate to compute them (ADR-0070 d1).
+[dependencies]
+hex = { workspace = true }
+sha2 = { workspace = true }
+
+[lints]
+workspace = true

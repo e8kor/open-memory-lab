@@ -8,6 +8,7 @@ description = "The two-ring HTTP transport (/v1 provider, /v2 lab) as an axum ad
 
 [dependencies]
 oml-app.workspace = true
+oml-page.workspace = true
 axum.workspace = true
 getrandom.workspace = true
 hex.workspace = true

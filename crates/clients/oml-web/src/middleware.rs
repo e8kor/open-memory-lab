@@ -1,6 +1,9 @@
-//! The layers of ADR-0070 d3 that this scaffold builds, outermost first.
-//! Layer 3 (session load) and layer 6 (the fan-out cap) need API calls and
-//! land in phase (b) with the first page; layer 7 is [`crate::outcome`].
+//! The layers of ADR-0070 d3, outermost first: 1 the ids and the line, 2
+//! the human-only gate, 4 the same-origin and CSRF check, 5 the headers.
+//! Layer 3, the session load, is [`crate::session::load`] on the page
+//! routes, inside these, so a form is refused before any API call; layer 7
+//! is [`crate::outcome`]. Layer 6, the per-session cap on calls in flight,
+//! is not built yet (#170).
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -12,7 +15,8 @@ use axum::response::{IntoResponse, Response};
 use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use serde_json::json;
 
-use crate::HEALTH_PATH;
+use crate::session::{PageCalls, cookie};
+use crate::{HEALTH_PATH, SESSION_COOKIE, outcome};
 
 /// The request id header, honoured or minted, and returned.
 pub const REQUEST_ID: &str = "x-request-id";
@@ -22,12 +26,17 @@ pub const CORRELATION_ID: &str = "x-correlation-id";
 /// the lead's own reason for the same refusal (ADR-0045 d7).
 pub const HUMAN_ONLY: &str = "web_is_human_only";
 
-/// The pages' policy: nothing loads, forms post only to the page's origin,
-/// no frame holds a page (ADR-0070 d3 layer 5). The stylesheet's digest
-/// joins `style-src` when the stylesheet moves to `oml-page` with the first
-/// page.
-pub const CONTENT_SECURITY_POLICY: &str =
-    "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+/// The pages' policy (ADR-0070 d3 layer 5): nothing loads but the one
+/// stylesheet, named by its compile-time digest, forms post only to the
+/// page's origin, and no frame holds a page. No page here runs a script or
+/// frames one, so the policy names neither.
+#[must_use]
+pub fn content_security_policy() -> String {
+    oml_page::web::content_security_policy(&[], None)
+}
+
+/// The most a form's body may be; past it the post is refused unread.
+pub const FORM_MAX_BYTES: usize = 64 * 1024;
 
 /// Where the one line per request goes: standard output in the binary, a
 /// buffer in the tests.
@@ -93,7 +102,7 @@ fn refusal(
     code: &str,
     rule: &str,
     message: &str,
-    reason: Option<&str>,
+    details: Option<serde_json::Value>,
 ) -> Response {
     let mut error = json!({
         "code": code,
@@ -101,8 +110,8 @@ fn refusal(
         "rule": rule,
         "retryable": false,
     });
-    if let Some(reason) = reason {
-        error["details"] = json!({ "reason": reason });
+    if let Some(details) = details {
+        error["details"] = details;
     }
     let body = json!({ "error": error, "request_id": ids.request_id });
     let mut response = (status, axum::Json(body)).into_response();
@@ -123,6 +132,8 @@ pub async fn ids_and_log(State(layers): State<Layers>, mut req: Request, next: N
         .map_or("unmatched", MatchedPath::as_str)
         .to_owned();
     req.extensions_mut().insert(ids.clone());
+    let calls = Arc::new(PageCalls::new(&ids.request_id));
+    req.extensions_mut().insert(calls.clone());
     let mut response = next.run(req).await;
     for (name, value) in [
         (REQUEST_ID, &ids.request_id),
@@ -132,7 +143,7 @@ pub async fn ids_and_log(State(layers): State<Layers>, mut req: Request, next: N
             response.headers_mut().insert(name, value);
         }
     }
-    let line = json!({
+    let mut line = json!({
         "msg": "http_request",
         "service": "oml-web",
         "request_id": ids.request_id,
@@ -142,6 +153,16 @@ pub async fn ids_and_log(State(layers): State<Layers>, mut req: Request, next: N
         "status": response.status().as_u16(),
         "duration_ms": started.elapsed().as_millis(),
     });
+    // The page-level audit (d3): who acted, as which key, and the ids of
+    // the API calls the page made, each the API's own line's id.
+    if let Some(key) = calls.acting() {
+        line["credential"] = json!("session");
+        line["key"] = json!(key);
+    }
+    let made = calls.made();
+    if !made.is_empty() {
+        line["api_request_ids"] = json!(made);
+    }
     (layers.log)(line.to_string());
     response
 }
@@ -164,45 +185,98 @@ pub async fn human_only(req: Request, next: Next) -> Response {
             "access.verb_ceiling",
             "R1: the pages are a person's, reached by a signed-in browser and by nothing an agent holds (ADR-0045 d7).",
             "the web pages take no Authorization header",
-            Some(HUMAN_ONLY),
+            Some(json!({ "reason": HUMAN_ONLY })),
         );
     }
     next.run(req).await
 }
 
-/// Layer 4: every request that can change state comes from the page's own
-/// origin (ADR-0045 d8). The `csrf_token` comparison against the session
-/// token joins this layer in phase (b), with the session load it needs.
-pub async fn same_origin(State(layers): State<Layers>, req: Request, next: Next) -> Response {
-    let safe = matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
-    if !safe {
-        let origin = req
-            .headers()
-            .get(header::ORIGIN)
-            .and_then(|v| v.to_str().ok());
-        let admitted = matches!(
-            (origin, layers.public_origin.as_deref()),
-            (Some(sent), Some(ours)) if sent == ours
-        );
-        if !admitted {
-            return refusal(
-                &ids_of(&req),
-                StatusCode::FORBIDDEN,
-                "oauth.origin_refused",
-                "A page's form is accepted only from the page's own origin (ADR-0045 d8; ADR-0031 d9).",
-                "this form was not sent from this server's own page",
-                None,
-            );
-        }
+fn csrf_refused(ids: &RequestIds) -> Response {
+    refusal(
+        ids,
+        StatusCode::BAD_REQUEST,
+        "request.validation",
+        "A page's form carries the session's CSRF token (ADR-0045 d8).",
+        "the form's csrf_token is absent or not this session's",
+        Some(json!({"field": "csrf_token"})),
+    )
+}
+
+/// The `csrf_token` field of a form body, unescaped, if it is sent once.
+fn csrf_field(body: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(body).ok()?;
+    let mut sent = text
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .filter(|(name, _)| *name == "csrf_token")
+        .map(|(_, value)| value.to_owned());
+    match (sent.next(), sent.next()) {
+        (Some(value), None) => Some(value),
+        _ => None,
     }
-    next.run(req).await
+}
+
+/// Layer 4: every request that can change state comes from the page's own
+/// origin, by the lead's own rule ([`oml_page::same_origin`], #230), and
+/// carries the session's CSRF token, compared in constant time (ADR-0045
+/// d8). A post without a session cookie goes to sign in.
+pub async fn same_origin(State(layers): State<Layers>, req: Request, next: Next) -> Response {
+    if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+        return next.run(req).await;
+    }
+    let admitted = layers.public_origin.as_deref().is_some_and(|ours| {
+        oml_page::same_origin(
+            |name| {
+                req.headers()
+                    .get_all(name)
+                    .iter()
+                    .map(HeaderValue::as_bytes)
+                    .collect()
+            },
+            ours,
+        )
+    });
+    if !admitted {
+        return refusal(
+            &ids_of(&req),
+            StatusCode::FORBIDDEN,
+            "oauth.origin_refused",
+            "A page's form is accepted only from the page's own origin (ADR-0045 d8; ADR-0031 d9).",
+            "this form was not sent from this server's own page",
+            None,
+        );
+    }
+    let ids = ids_of(&req);
+    let Some(token) = cookie(req.headers(), SESSION_COOKIE) else {
+        return outcome::sign_in();
+    };
+    let (parts, body) = req.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, FORM_MAX_BYTES).await else {
+        return refusal(
+            &ids,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "request.payload_too_large",
+            "A page's form is at most 64 KiB.",
+            "this form is larger than a page sends",
+            None,
+        );
+    };
+    let matches =
+        csrf_field(&bytes).is_some_and(|sent| oml_web_credential::csrf_matches(&token, &sent));
+    if !matches {
+        return csrf_refused(&ids);
+    }
+    next.run(Request::from_parts(parts, Body::from(bytes)))
+        .await
 }
 
 /// The headers every answer carries. A refusal by an outer layer sets them
 /// itself, since it never reaches layer 5.
 fn security_headers(h: &mut HeaderMap) {
+    if let Ok(csp) = HeaderValue::from_str(&content_security_policy()) {
+        h.insert(header::CONTENT_SECURITY_POLICY, csp);
+    }
     for (name, value) in [
-        (header::CONTENT_SECURITY_POLICY, CONTENT_SECURITY_POLICY),
         (header::CACHE_CONTROL, "no-store"),
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::REFERRER_POLICY, "same-origin"),

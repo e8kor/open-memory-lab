@@ -55,6 +55,14 @@ This script extracts each surface and fails with a diff on any disagreement:
     "Upgrading from …": the migration names the old spelling, a start page
     teaches the new one (ADR-0039 d13, d14 step 5)
 
+  * an entry of the hand-written Rust SDK's operation table (OPERATIONS in
+    sdks/rust/src/lib.rs, "<operationId> <METHOD> <path>" then query:, body:
+    and resp: field lists) whose operationId openapi.yaml does not serve,
+    whose method or path differs from the operation's, which sends a query
+    parameter or a body field the operation does not declare, or which reads
+    a response field the operation's 2xx schema does not declare, where that
+    schema declares any (ADR-0070 d9)
+
 It checks AGREEMENT only — no count or code name is hard-coded, so the closed
 taxonomy may grow without touching this script.
 
@@ -105,6 +113,7 @@ DESIGNED_FIELDS = "x-oml-designed-fields"
 MCP_TOOLS_JSON = ROOT / "docs" / "api" / "mcp-tools.json"
 MCP_DESIGNED_JSON = ROOT / "docs" / "api" / "mcp-tools.designed.json"
 MCP_RS = ROOT / "crates" / "transports" / "oml-transport-http" / "src" / "mcp.rs"
+RUST_SDK_RS = ROOT / "sdks" / "rust" / "src" / "lib.rs"
 MEMORY_READERS = [ROOT / "README.md", *sorted((ROOT / "sdks").glob("*/README.md")),
                   *sorted((ROOT / "scripts").glob("*.sh"))]
 # A host such as https://memory.doublegate.io, the default server (ADR-0043
@@ -534,6 +543,60 @@ def mcp_catalog_problems() -> list[str]:
     return problems
 
 
+def rust_sdk_problems(spec: dict) -> list[str]:
+    """Each operation the Rust SDK calls is served by openapi.yaml under the
+    same method and path, and sends and reads only fields it declares
+    (ADR-0070 d9). The SDK is hand-written, so this is what keeps it on the
+    contract the generated layers follow by construction."""
+    entries = rust_str_array(RUST_SDK_RS.read_text(encoding="utf-8"), "OPERATIONS")
+    if not entries:
+        return ["OPERATIONS not found, or empty, in sdks/rust/src/lib.rs"]
+    served: dict[str, tuple[str, str, dict]] = {}
+    for path, item in spec["paths"].items():
+        if not isinstance(item, dict):
+            continue
+        for method, op in item.items():
+            if method.lower() in OPENAPI_METHODS and isinstance(op, dict) and "operationId" in op:
+                served[op["operationId"]] = (method.upper(), path, op)
+    docs = {"openapi.yaml": spec}
+    problems = []
+    for entry in entries:
+        words = entry.split()
+        if len(words) < 3:
+            problems.append(f"{entry!r}: not '<operationId> <METHOD> <path> ...'")
+            continue
+        op_id, method, path = words[:3]
+        if op_id not in served:
+            problems.append(f"{op_id}: openapi.yaml serves no operation with this id")
+            continue
+        want_method, want_path, op = served[op_id]
+        if (method, path) != (want_method, want_path):
+            problems.append(f"{op_id}: the SDK sends {method} {path}, openapi.yaml declares {want_method} {want_path}")
+        query: set[str] = set()
+        for parameter in op.get("parameters", []):
+            parameter, _ = resolve(parameter, docs, "openapi.yaml")
+            if parameter.get("in") == "query":
+                query.add(parameter["name"])
+        fields = served_fields(op, docs)
+        body: set[str] = set()
+        request_body, _ = resolve(op.get("requestBody", {}), docs, "openapi.yaml")
+        for media in request_body.get("content", {}).values():
+            body |= schema_fields(media.get("schema", {}), docs, "openapi.yaml")
+        for word in words[3:]:
+            kind, _, names = word.partition(":")
+            declared = {"query": query, "body": body, "resp": fields["response"]}.get(kind)
+            if declared is None:
+                problems.append(f"{op_id}: {word!r} is not query:, body: or resp:")
+                continue
+            if kind == "resp" and not declared:
+                continue
+            for name in names.split(","):
+                if name not in declared:
+                    side = {"query": "query parameter", "body": "request field", "resp": "2xx response field"}[kind]
+                    problems.append(f"{op_id}: the SDK names the {side} {name!r}, which openapi.yaml does not declare")
+    return problems
+
+
 def format_ops(ops: set[tuple[str, str]]) -> list[str]:
     return [f"{method} {path}" for method, path in sorted(ops, key=lambda t: (t[1], t[0]))]
 
@@ -635,6 +698,10 @@ def main() -> int:
     if catalog_problems:
         failures.append(("the MCP catalog disagrees with the served tools/list", catalog_problems))
 
+    sdk_problems = rust_sdk_problems(spec)
+    if sdk_problems:
+        failures.append(("the Rust SDK's operation table disagrees with openapi.yaml", sdk_problems))
+
     if failures:
         print("contract-sync check FAILED\n")
         for title, lines in failures:
@@ -649,6 +716,7 @@ def main() -> int:
     print(f"  path+method operations agreeing: {len(spec_ops)} "
           f"({len(served_ops)} served, {len(designed_ops)} designed)")
     print("  MCP tools: mcp-tools.json is the served tools/list, mcp-tools.designed.json disjoint from it")
+    print("  the Rust SDK's operations agree with openapi.yaml in method, path and fields")
     return 0
 
 

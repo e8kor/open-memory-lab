@@ -70,7 +70,7 @@ against it.
 
 | Category | Paths | Jobs it turns on |
 |---|---|---|
-| `rust` | `crates/`, `Cargo.toml`, `deny.toml`, `testing/lake/`, `testing/oml-port-contracts/` | `cargo` |
+| `rust` | `crates/`, `sdks/rust/` (the workspace member `oml-sdk`), `Cargo.toml`, `deny.toml`, `testing/lake/`, `testing/oml-port-contracts/` | `cargo` |
 | `migrations` | `migrations/` | `cargo`, `spike 3, RLS hardening` |
 | `api` | `docs/api/*.yaml`, `docs/api/*.json` (the server compiles in and its tests read them) | `cargo`, `openapi.yaml validates`, `generated SDK code is current` |
 | `cargo` | `rust`, `migrations` or `api` | fmt, clippy and doc; `cargo test` with Postgres; `cargo deny`; `demo and quickstart`; `oml CLI` on three targets; the SDK jobs; the recall eval; the release image, `compose` and `chart` |
