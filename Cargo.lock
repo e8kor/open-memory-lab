@@ -3949,6 +3949,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oml-page"
+version = "0.6.2"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "oml-pg"
 version = "0.6.3"
 dependencies = [
@@ -4061,6 +4071,20 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "oml-web"
+version = "0.6.2"
+dependencies = [
+ "axum",
+ "getrandom 0.2.17",
+ "http",
+ "oml-page",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
 ]
 
 [[package]]

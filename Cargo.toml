@@ -3,6 +3,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/shared/oml-page",
+    "crates/clients/oml-web",
     "crates/oml-guardrail",
     "crates/oml-scan",
     "crates/oml-domain",
@@ -29,6 +31,8 @@ rust-version = "1.97"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+oml-page = { path = "crates/shared/oml-page" }
+oml-web = { path = "crates/clients/oml-web" }
 oml-app = { path = "crates/oml-app" }
 oml-domain = { path = "crates/oml-domain" }
 oml-guardrail = { path = "crates/oml-guardrail" }
