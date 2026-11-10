@@ -23,6 +23,8 @@ class RescanReport:
         findings (list[RescanReportFindingsItem]):
         by_rule (list[RescanReportByRuleItem]):
         next_after_seq (int | None): The after_seq of the next window, or null at the chain head.
+        recorded (int): Held versions whose findings this call recorded under the server's rule set (ADR-0065 d15;
+            ADR-0074 d28); 0 for the read.
     """
 
     scanner_version: None | str
@@ -30,6 +32,7 @@ class RescanReport:
     findings: list[RescanReportFindingsItem]
     by_rule: list[RescanReportByRuleItem]
     next_after_seq: int | None
+    recorded: int
 
     def to_dict(self) -> dict[str, Any]:
         scanner_version: None | str
@@ -50,6 +53,8 @@ class RescanReport:
         next_after_seq: int | None
         next_after_seq = self.next_after_seq
 
+        recorded = self.recorded
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -59,6 +64,7 @@ class RescanReport:
                 "findings": findings,
                 "by_rule": by_rule,
                 "next_after_seq": next_after_seq,
+                "recorded": recorded,
             }
         )
 
@@ -101,12 +107,15 @@ class RescanReport:
 
         next_after_seq = _parse_next_after_seq(d.pop("next_after_seq"))
 
+        recorded = d.pop("recorded")
+
         rescan_report = cls(
             scanner_version=scanner_version,
             scanned=scanned,
             findings=findings,
             by_rule=by_rule,
             next_after_seq=next_after_seq,
+            recorded=recorded,
         )
 
         return rescan_report
