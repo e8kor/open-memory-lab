@@ -16,7 +16,6 @@ def _get_kwargs(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-    idempotency_key: str,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(x_request_id, Unset):
@@ -27,8 +26,6 @@ def _get_kwargs(
 
     if not isinstance(traceparent, Unset):
         headers["traceparent"] = traceparent
-
-    headers["Idempotency-Key"] = idempotency_key
 
     params: dict[str, Any] = {}
 
@@ -85,7 +82,6 @@ def sync_detailed(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-    idempotency_key: str,
 ) -> Response[ErrorEnvelope | RescanReport]:
     """Rescan one window as the read does, and record each held version's findings under the server's rule
     set.
@@ -97,7 +93,8 @@ def sync_detailed(
     [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none,
     when the window holds any held version, else nothing. Inside an in-progress workarea another
     author's held version is served only when scanned under the server's rule set and without a finding.
-    Promotes, rejects and deletes nothing. Idempotency-Key required. Since v0.6.3.
+    Promotes, rejects and deletes nothing. Takes no Idempotency-Key: a repeat reads the window again and
+    journals what it read again, and the stored state it leaves is the same. Since v0.6.3.
 
     Args:
         after_seq (int | Unset):  Default: 0.
@@ -105,7 +102,6 @@ def sync_detailed(
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
-        idempotency_key (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -121,7 +117,6 @@ def sync_detailed(
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
-        idempotency_key=idempotency_key,
     )
 
     response = client.get_httpx_client().request(
@@ -139,7 +134,6 @@ def sync(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-    idempotency_key: str,
 ) -> ErrorEnvelope | RescanReport | None:
     """Rescan one window as the read does, and record each held version's findings under the server's rule
     set.
@@ -151,7 +145,8 @@ def sync(
     [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none,
     when the window holds any held version, else nothing. Inside an in-progress workarea another
     author's held version is served only when scanned under the server's rule set and without a finding.
-    Promotes, rejects and deletes nothing. Idempotency-Key required. Since v0.6.3.
+    Promotes, rejects and deletes nothing. Takes no Idempotency-Key: a repeat reads the window again and
+    journals what it read again, and the stored state it leaves is the same. Since v0.6.3.
 
     Args:
         after_seq (int | Unset):  Default: 0.
@@ -159,7 +154,6 @@ def sync(
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
-        idempotency_key (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,7 +170,6 @@ def sync(
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
-        idempotency_key=idempotency_key,
     ).parsed
 
 
@@ -188,7 +181,6 @@ async def asyncio_detailed(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-    idempotency_key: str,
 ) -> Response[ErrorEnvelope | RescanReport]:
     """Rescan one window as the read does, and record each held version's findings under the server's rule
     set.
@@ -200,7 +192,8 @@ async def asyncio_detailed(
     [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none,
     when the window holds any held version, else nothing. Inside an in-progress workarea another
     author's held version is served only when scanned under the server's rule set and without a finding.
-    Promotes, rejects and deletes nothing. Idempotency-Key required. Since v0.6.3.
+    Promotes, rejects and deletes nothing. Takes no Idempotency-Key: a repeat reads the window again and
+    journals what it read again, and the stored state it leaves is the same. Since v0.6.3.
 
     Args:
         after_seq (int | Unset):  Default: 0.
@@ -208,7 +201,6 @@ async def asyncio_detailed(
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
-        idempotency_key (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -224,7 +216,6 @@ async def asyncio_detailed(
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
-        idempotency_key=idempotency_key,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -240,7 +231,6 @@ async def asyncio(
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
-    idempotency_key: str,
 ) -> ErrorEnvelope | RescanReport | None:
     """Rescan one window as the read does, and record each held version's findings under the server's rule
     set.
@@ -252,7 +242,8 @@ async def asyncio(
     [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none,
     when the window holds any held version, else nothing. Inside an in-progress workarea another
     author's held version is served only when scanned under the server's rule set and without a finding.
-    Promotes, rejects and deletes nothing. Idempotency-Key required. Since v0.6.3.
+    Promotes, rejects and deletes nothing. Takes no Idempotency-Key: a repeat reads the window again and
+    journals what it read again, and the stored state it leaves is the same. Since v0.6.3.
 
     Args:
         after_seq (int | Unset):  Default: 0.
@@ -260,7 +251,6 @@ async def asyncio(
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
-        idempotency_key (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -278,6 +268,5 @@ async def asyncio(
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,
             traceparent=traceparent,
-            idempotency_key=idempotency_key,
         )
     ).parsed

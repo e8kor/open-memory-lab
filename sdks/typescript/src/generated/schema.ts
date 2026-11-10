@@ -1213,7 +1213,7 @@ export interface paths {
         put?: never;
         /**
          * Rescan one window as the read does, and record each held version's findings under the server's rule set.
-         * @description Requires: admin key role (ADR-0065 d13, d15; ADR-0074 d28); every other role answers access.verb_ceiling. Answers what the read answers. Each held version of the window takes the server's rule set as its scanned_under, and a finding the rescan made becomes its scan finding unless it has one; journalled once per window as scan.findings_recorded {scanned_under, versions: [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none, when the window holds any held version, else nothing. Inside an in-progress workarea another author's held version is served only when scanned under the server's rule set and without a finding. Promotes, rejects and deletes nothing. Idempotency-Key required. Since v0.6.3.
+         * @description Requires: admin key role (ADR-0065 d13, d15; ADR-0074 d28); every other role answers access.verb_ceiling. Answers what the read answers. Each held version of the window takes the server's rule set as its scanned_under, and a finding the rescan made becomes its scan finding unless it has one; journalled once per window as scan.findings_recorded {scanned_under, versions: [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none, when the window holds any held version, else nothing. Inside an in-progress workarea another author's held version is served only when scanned under the server's rule set and without a finding. Promotes, rejects and deletes nothing. Takes no Idempotency-Key: a repeat reads the window again and journals what it read again, and the stored state it leaves is the same. Since v0.6.3.
          */
         post: operations["adminRescanRecordHeld"];
         delete?: never;
@@ -2566,6 +2566,10 @@ export interface components {
             next_after_seq: number | null;
             /** @description Held versions whose findings this call recorded under the server's rule set (ADR-0065 d15; ADR-0074 d28); 0 for the read. */
             recorded: number;
+            /** @description After this call, the tenant's held versions last scanned under another rule set than the server's, which stay their authors' alone in in-progress workareas: doctor's scan_held_unrescanned (ADR-0074 d28). */
+            held_unrescanned: number;
+            /** @description After this call, every stored version, erased ones aside, last scanned under another rule set: doctor's scan_rescan_due (ADR-0074 d28). */
+            rescan_due: number;
         };
         /** @description The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field nothing could supply is the string unknown. */
         Build: {
@@ -6280,7 +6284,9 @@ export interface operations {
                      *         }
                      *       ],
                      *       "next_after_seq": null,
-                     *       "recorded": 0
+                     *       "recorded": 0,
+                     *       "held_unrescanned": 0,
+                     *       "rescan_due": 0
                      *     }
                      */
                     "application/json": components["schemas"]["RescanReport"];
@@ -6298,15 +6304,13 @@ export interface operations {
                 /** @description The most journal events this window reads. */
                 limit?: number;
             };
-            header: {
+            header?: {
                 /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
                 "X-Request-Id"?: components["parameters"]["XRequestId"];
                 /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
                 "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
                 /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
                 traceparent?: components["parameters"]["Traceparent"];
-                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
             path?: never;
             cookie?: never;

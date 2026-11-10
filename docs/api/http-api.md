@@ -1156,7 +1156,6 @@ Requires: admin key role; every other role answers access.verb_ceiling.
 
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
-| `Idempotency-Key` | header | string | yes | Claims an idempotency record (key_id, workarea, idem_key) before side effects. |
 | `after_seq` | query | integer | no | Rescan the submissions journalled after this sequence number. |
 | `limit` | query | integer | no | The most journal events this window reads. |
 

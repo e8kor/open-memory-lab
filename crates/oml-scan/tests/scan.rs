@@ -921,8 +921,8 @@ fn a_run_of_variation_selectors_is_held_and_one_after_a_character_is_not() {
         "{:?}",
         rules_of(&smuggled)
     );
-    let low = format!("look \u{1F600}\u{FE00}\u{FE01} here");
-    assert!(rules_of(&low).contains(&"variation-run"));
+    let low = "look \u{1F600}\u{FE00}\u{FE01} here";
+    assert!(rules_of(low).contains(&"variation-run"));
     for clean in [
         "a heart \u{2764}\u{FE0F} and \u{263A}\u{FE0E}",
         "\u{8FBB}\u{E0100} is a variant",

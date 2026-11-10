@@ -46,7 +46,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   nothing is re-scanned retroactively ([admission](../architecture/admission.md), the rule-set
   registry). Same text, same findings: the set holds no state but its counters (d11).
   Amended 2026-11-10: the changes to d5 and d14 below are `oml-scan/1.1`, a fix's minor
-  (ADR-0074 (proposed, `design/scan-expansion`)
+  ([ADR-0074](ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md)
   d21, d28), which `version()`, `/readyz` and every submission event from then on report. Each
   stored version records the rule set it was scanned under, `memories.scanned_under` (migration
   0038): admission's, or the recording rescan's (d13). The migration reads every row stored
