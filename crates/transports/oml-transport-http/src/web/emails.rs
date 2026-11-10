@@ -12,6 +12,7 @@ use axum::response::Response;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use oml_app::app::UserRow;
 use oml_app::domain::Sha256Hash;
 use oml_app::domain::name::Name;
 use oml_app::domain::web::Email;
@@ -21,7 +22,8 @@ use oml_app::types::{WebEmailRequest, WebEntry};
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
 use crate::{
-    ApiState, bearer, finish, idempotency_key, json_response, page_params, parse_json, retry_chain,
+    Acting, ApiState, acting, finish, idempotency_key, json_response, page_params, parse_json,
+    retry_chain,
 };
 
 #[derive(Deserialize)]
@@ -30,12 +32,16 @@ struct AllowBody {
     email: Option<String>,
     user: Option<String>,
     admin: Option<bool>,
+    /// Refuse un-flagging the tenant's last admin entry (ADR-0045 d10).
+    keep_an_admin: Option<bool>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RemoveBody {
     email: Option<String>,
+    /// Refuse removing the tenant's last admin entry (ADR-0045 d10).
+    keep_an_admin: Option<bool>,
 }
 
 fn entry_json(entry: &WebEntry) -> Value {
@@ -43,6 +49,28 @@ fn entry_json(entry: &WebEntry) -> Value {
         "email": entry.email.as_str(),
         "user": entry.user.as_str(),
         "admin": entry.admin,
+    })
+}
+
+/// One person as `GET /v2/web/users` serves them, and as the quota
+/// update answers (ADR-0068 d5; ADR-0070 d5 #8).
+pub(crate) fn user_row_json(u: &UserRow) -> Value {
+    json!({
+        "user": u.user.as_str(),
+        "signed_up": u.signed_up,
+        "disabled": u.disabled,
+        "under_quotas": u.under_quotas,
+        "usage": {
+            "memories": u.usage.memories,
+            "keys": u.usage.keys,
+            "connections": u.usage.connections,
+        },
+        "quotas": {
+            "memories": u.quotas.memories,
+            "keys": u.quotas.keys,
+            "connections": u.quotas.connections,
+            "requests_per_minute": u.quotas.requests_per_minute,
+        },
     })
 }
 
@@ -89,10 +117,10 @@ where
     /// sign-up mode, whether sign-ups share one address bucket, each
     /// person's usage and limits, and the pending deletion requests.
     async fn list_web_users_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let (users, deletions) = st
             .app
-            .signup_overview(&token)
+            .signup_overview(acting.bearer())
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let policy = st.app.signup_policy();
@@ -101,23 +129,7 @@ where
             &json!({
                 "mode": policy.map_or("allowlist", |p| p.mode.as_str()),
                 "address_limit_shared": !st.traffic.proxies_trusted(),
-                "users": users.iter().map(|u| json!({
-                    "user": u.user.as_str(),
-                    "signed_up": u.signed_up,
-                    "disabled": u.disabled,
-                    "under_quotas": u.under_quotas,
-                    "usage": {
-                        "memories": u.usage.memories,
-                        "keys": u.usage.keys,
-                        "connections": u.usage.connections,
-                    },
-                    "quotas": {
-                        "memories": u.quotas.memories,
-                        "keys": u.quotas.keys,
-                        "connections": u.quotas.connections,
-                        "requests_per_minute": u.quotas.requests_per_minute,
-                    },
-                })).collect::<Vec<_>>(),
+                "users": users.iter().map(user_row_json).collect::<Vec<_>>(),
                 "deletions": deletions.iter().map(|d| json!({
                     "user": d.user.as_str(),
                     "requested_at": d.requested_at.as_str(),
@@ -133,7 +145,7 @@ where
         params: &[(String, String)],
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let (limit, cursor) = page_params(params)?;
         let after = cursor
             .map(|c| {
@@ -149,7 +161,7 @@ where
             .transpose()?;
         let entries = st
             .app
-            .web_emails(&token, after.as_ref(), limit)
+            .web_emails(acting.bearer(), after.as_ref(), limit)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let next_cursor = (entries.len() == limit)
@@ -184,7 +196,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let _idem = idempotency_key(headers)?;
         let req: AllowBody = parse_json(headers, body)?;
         let email = email_field(req.email.as_deref())?;
@@ -202,8 +214,11 @@ where
         let admin = req.admin.ok_or_else(|| {
             ApiError::validation("admin is required").with_details(json!({ "field": "/admin" }))
         })?;
+        if req.keep_an_admin == Some(true) && !admin {
+            st.keep_an_admin(&acting, &email).await?;
+        }
         let request = WebEmailRequest { email, user, admin };
-        let (entry, _) = retry_chain(|| st.app.allow_web_email(&token, &request))
+        let (entry, _) = retry_chain(|| st.app.allow_web_email(acting.bearer(), &request))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &entry_json(&entry)))
@@ -229,16 +244,54 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let _idem = idempotency_key(headers)?;
         let req: RemoveBody = parse_json(headers, body)?;
         let email = email_field(req.email.as_deref())?;
-        let (_, seq, event_id) = retry_chain(|| st.app.remove_web_email(&token, &email))
+        if req.keep_an_admin == Some(true) {
+            st.keep_an_admin(&acting, &email).await?;
+        }
+        let (_, seq, event_id) = retry_chain(|| st.app.remove_web_email(acting.bearer(), &email))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
             StatusCode::OK,
             &json!({ "journal_seq": seq, "event_id": event_id.to_string(), "dry_run": false }),
         ))
+    }
+
+    /// `keep_an_admin`: removing or un-flagging `email` is refused when its
+    /// entry is the tenant's last admin entry, `request.validation`
+    /// `details.field: admin` (ADR-0045 d10; ADR-0070 d5). The check reads
+    /// the entries before the act commits.
+    async fn keep_an_admin(&self, acting: &Acting<'_>, email: &Email) -> Result<(), ApiError> {
+        let admin = self
+            .app
+            .caller(acting.bearer())
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let entry_is_admin = self
+            .app
+            .web_all_entries(&admin)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?
+            .iter()
+            .any(|e| &e.email == email && e.admin);
+        if !entry_is_admin {
+            return Ok(());
+        }
+        let other = self
+            .app
+            .web_other_admin(&admin, &email.digest())
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        if other {
+            Ok(())
+        } else {
+            Err(ApiError::validation(
+                "this is the organisation's last admin address; add another admin first",
+            )
+            .with_details(json!({ "field": "admin" })))
+        }
     }
 }

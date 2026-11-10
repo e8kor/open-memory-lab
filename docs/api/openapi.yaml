@@ -144,6 +144,8 @@ paths:
         - { name: state, in: query, schema: { type: string, enum: [held, promoted, demoted, rejected, erased] } }
         - { name: kind, in: query, schema: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release] } }
         - { name: own, in: query, schema: { type: boolean, default: false } }
+        - { name: with_own, in: query, schema: { type: boolean }, description: "true: the scoped listing (at workarea, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, workarea, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4." }
+        - { name: author, in: query, schema: { type: string }, description: "One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. Implies the with_own listing (ADR-0045 d23; ADR-0070 d5). Since v0.6.4." }
         - { name: anchor_repo, in: query, schema: { $ref: '#/components/schemas/AnchorRepo' }, description: "Rows whose anchor names this repository, with own or without it; unanchored rows are left out (ADR-0057 d4). Malformed is request.validation naming anchor_repo." }
         - { name: anchor_path_prefix, in: query, schema: { $ref: '#/components/schemas/AnchorPathPrefix' }, description: "Rows whose anchor path starts with these bytes; unanchored rows are left out (ADR-0057 d4)." }
         - { name: origin_kinds, in: query, style: form, explode: false, schema: { $ref: '#/components/schemas/OriginKinds' }, description: "Comma-separated: rows whose origin kind is one of these; rows without a kind are left out (ADR-0063 d3). Malformed is request.validation naming origin_kinds." }
@@ -549,9 +551,10 @@ paths:
         - { $ref: '#/components/parameters/WorkareaId' }
         - { $ref: '#/components/parameters/Limit' }
         - { $ref: '#/components/parameters/Cursor' }
+        - { name: counts, in: query, schema: { type: boolean }, description: "true: the whole subtree in one answer, up to 2000 nodes, each with counts of its rows by state as the caller's with_own listing shows them, counted up to 2000 rows, and truncated when either stopped there; for the admin key role every row is counted as structure. No crew, no content, and no limit or cursor beside it (ADR-0045 d30; ADR-0070 d5). Since v0.6.4." }
       responses:
         '200':
-          description: One page of nodes.
+          description: One page of nodes, or with counts=true the subtree with its counts.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
             X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
@@ -582,7 +585,41 @@ paths:
                     external_manager: crewd.example.com
                   created_at: '2026-10-29T15:40:12Z'
                 next_cursor: null
-              schema: { $ref: '#/components/schemas/WorkareaPage' }
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/WorkareaPage' }
+                  - { $ref: '#/components/schemas/WorkareaCounts' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/workareas/{workarea}/offers:
+    get:
+      tags: [workareas]
+      operationId: getWorkareaOffers
+      summary: The transitions, the mode change and the commit the caller's verbs admit on a workarea now.
+      description: 'Requires: reader effective access on the workarea, or the admin key role; one the caller cannot read is access.not_found (R3). Each act is offered only where the verb''s own check admits the caller now: propose the next rung, ratify a live proposal another key made, put the workarea in progress, or commit an in-progress root; a commit the held rows refuse is not offered and names their count. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/WorkareaId' }
+      responses:
+        '200':
+          description: The acts offered now.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                workarea_id: fbbb41c5-9630-4274-ae53-166f562f5286
+                status: development
+                mode: standard
+                transitions:
+                - { op: propose, to: committed }
+                mode_change: { to: in_progress }
+                commit: { offered: false, held: null }
+              schema: { $ref: '#/components/schemas/WorkareaOffers' }
+        '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/workareas/{workarea}/crew:
@@ -1117,17 +1154,62 @@ paths:
         - { name: claim_key_prefix, in: query, schema: { type: string }, description: A literal prefix of the claim key. }
         - { $ref: '#/components/parameters/Limit' }
         - { $ref: '#/components/parameters/Cursor' }
+        - { name: ids, in: query, style: form, explode: false, schema: { type: array, minItems: 1, maxItems: 200, items: { type: string, format: uuid } }, description: "Comma-separated memory ids: each named row as this listing serves it while it is still held and still the key's to judge, else null, in the order named; the bulk confirmation reads it (ADR-0055 d10; ADR-0070 d5). Takes no other parameter. Since v0.6.4." }
       responses:
         '200':
-          description: One page of held items.
+          description: One page of held items, or with ids each named row or null.
           headers:
             X-Request-Id: { $ref: '#/components/headers/XRequestId' }
             X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/HeldPage' }
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/HeldPage' }
+                  - { $ref: '#/components/schemas/HeldNamed' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/RateLimited' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/review/queue:
+    get:
+      tags: [review]
+      operationId: reviewQueue
+      summary: The review queue's depth and oldest held row per workarea, tenant-wide; no content.
+      description: 'Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workarea holding a held row: its id, path, held count and the oldest held row''s time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      responses:
+        '200':
+          description: The queue by workarea.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                items:
+                - workarea_id: fbbb41c5-9630-4274-ae53-166f562f5286
+                  path: universe.alice
+                  held: 3
+                  oldest_at: '2026-11-09T08:12:44.000000Z'
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [workarea_id, path, held, oldest_at]
+                      properties:
+                        workarea_id: { type: string, format: uuid }
+                        path: { type: string }
+                        held: { type: integer, minimum: 1 }
+                        oldest_at: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
   /v2/review/verdicts/bulk:
@@ -1174,6 +1256,48 @@ paths:
         default: { $ref: '#/components/responses/Error' }
 
   /v2/keys:
+    get:
+      tags: [keys]
+      operationId: listKeys
+      summary: A person's own keys to their web session key; the keys naming a user to the admin key role.
+      description: 'Requires: a person''s web session key (<user>-web, through its capacity credential), which lists every key naming its user, session keys among them; or the admin key role with user, which lists the keys naming that user, session keys aside (ADR-0045 d9, d13; ADR-0070 d5). Any other key answers access.verb_ceiling with details.reason session_key_only, so an agent''s key never lists its person''s keys; the admin key role without user answers request.validation naming user; a person''s key naming another user answers access.not_found. In name order; next_cursor is opaque. Each key''s grants carry the workarea''s path; cut_off is a denial on universe. Journals nothing. Since v0.6.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: user, in: query, schema: { type: string }, description: "The user whose keys an admin lists." }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: One page of keys.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                items:
+                - id: d405428e-4c99-426d-8826-76d28436e423
+                  name: alice-laptop
+                  role: writer
+                  held_by: agent
+                  credential: bearer
+                  user_root_id: fbbb41c5-9630-4274-ae53-166f562f5286
+                  revoked: false
+                  cut_off: false
+                  grants:
+                  - { role: writer, workarea_id: fbbb41c5-9630-4274-ae53-166f562f5286, path: universe.alice }
+                next_cursor: null
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/ListedKey' } }
+                  next_cursor: { type: [string, 'null'] }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
     post:
       tags: [keys]
       operationId: issueKey
@@ -1243,7 +1367,9 @@ paths:
       summary: The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its denials or deny masks.
       description: >-
         Requires: any live key; it reads only its own record. Each reference is {id, name} and the
-        default workarea carries its derived path. The key's denials and its grants' per-grant deny
+        default workarea carries its derived path. person names the user a key names, with its
+        sign-up usage and limits and its pending deletion request, and is null for a tenant key
+        (ADR-0070 d5; ADR-0068 d5, d6, d10). The key's denials and its grants' per-grant deny
         masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A revoked or
         unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
         ADR-0039 d15).
@@ -1826,7 +1952,15 @@ paths:
               email: alice@example.com
               user: alice
               admin: true
-            schema: { $ref: '#/components/schemas/WebEmail' }
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, user, admin]
+              properties:
+                email: { type: string, maxLength: 254 }
+                user: { type: string, pattern: '^[a-z]([a-z0-9-]{0,54}[a-z0-9])?$', description: 'A name under the creation grammar, at most 56 characters.' }
+                admin: { type: boolean }
+                keep_an_admin: { type: boolean, description: "true: un-flagging the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes (ADR-0045 d10; ADR-0070 d5). Since v0.6.4." }
       responses:
         '200':
           description: The entry as stored.
@@ -1864,6 +1998,7 @@ paths:
               required: [email]
               properties:
                 email: { type: string, maxLength: 254 }
+                keep_an_admin: { type: boolean, description: "true: removing the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes (ADR-0045 d10; ADR-0070 d5). Since v0.6.4." }
       responses:
         '200':
           description: Removed.
@@ -1909,27 +2044,7 @@ paths:
                   address_limit_shared: { type: boolean }
                   users:
                     type: array
-                    items:
-                      type: object
-                      required: [user, signed_up, disabled, under_quotas, usage, quotas]
-                      properties:
-                        user: { type: string }
-                        signed_up: { type: boolean }
-                        disabled: { type: boolean }
-                        under_quotas: { type: boolean }
-                        usage:
-                          type: object
-                          properties:
-                            memories: { type: integer }
-                            keys: { type: integer }
-                            connections: { type: integer }
-                        quotas:
-                          type: object
-                          properties:
-                            memories: { type: integer }
-                            keys: { type: integer }
-                            connections: { type: integer }
-                            requests_per_minute: { type: integer }
+                    items: { $ref: '#/components/schemas/WebUser' }
                   deletions:
                     type: array
                     items:
@@ -1938,6 +2053,254 @@ paths:
                       properties:
                         user: { type: string }
                         requested_at: { type: string, format: date-time }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/users/{user}/capacities:
+    post:
+      tags: [web]
+      operationId: grantWebCapacities
+      summary: Give a person's session key a capacity on workareas, review or curation.
+      description: 'Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the universe node alone, is created at the first designation, and gains reader on each workarea. Each grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none and journal_seq is null. A user with no session key of that capacity answers access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. Since v0.6.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: user, in: path, required: true, schema: { type: string, pattern: '^[a-z]([a-z0-9-]{0,54}[a-z0-9])?$' }, description: The person's user name. }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              capacity: review
+              workareas: [metals-crew]
+            schema:
+              type: object
+              additionalProperties: false
+              required: [capacity, workareas]
+              properties:
+                capacity: { type: string, enum: [review, curate] }
+                workareas: { type: array, minItems: 1, maxItems: 50, items: { type: string }, description: Each by id or name. }
+      responses:
+        '200':
+          description: The key that holds the capacity and the grants it gained.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, grants_added, journal_seq]
+                properties:
+                  key:
+                    type: object
+                    required: [id, name]
+                    properties:
+                      id: { type: string, format: uuid }
+                      name: { type: [string, 'null'] }
+                  grants_added: { type: array, items: { $ref: '#/components/schemas/WhoamiGrant' } }
+                  journal_seq: { type: [integer, 'null'], description: 'The seq of the last grant.issued, or null when none was added.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/users/{user}/quota:
+    post:
+      tags: [web]
+      operationId: setWebUserQuota
+      summary: Set a person's quotas, or return one to the default with null.
+      description: 'Requires: admin key role (ADR-0068 d5; ADR-0070 d5). Each quota sent is one web.quota_set; a member sent as null returns that quota to the default, and one not sent is left as it is. A limit is a whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers access.not_found. Answers the person''s row as GET /v2/web/users serves it. Since v0.6.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: user, in: path, required: true, schema: { type: string, pattern: '^[a-z]([a-z0-9-]{0,54}[a-z0-9])?$' }, description: The person's user name. }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              memories: 2000
+              keys: null
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                memories: { type: [integer, 'null'], minimum: 0, maximum: 1000000 }
+                keys: { type: [integer, 'null'], minimum: 0, maximum: 1000000 }
+                connections: { type: [integer, 'null'], minimum: 0, maximum: 1000000 }
+                requests_per_minute: { type: [integer, 'null'], minimum: 0, maximum: 1000000 }
+      responses:
+        '200':
+          description: The person's row.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebUser' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/users/{user}/disable:
+    post:
+      tags: [web]
+      operationId: disableWebUser
+      summary: Disable a person, ending their sessions and cutting off their agent keys.
+      description: 'Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin''s, answers access.not_found and journals nothing. reason is accepted and not journalled in this build. Since v0.6.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: user, in: path, required: true, schema: { type: string, pattern: '^[a-z]([a-z0-9-]{0,54}[a-z0-9])?$' }, description: The person's user name. }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: string, maxLength: 512 }
+      responses:
+        '200':
+          description: Disabled.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys_cut_off, journal_seq]
+                properties:
+                  keys_cut_off: { type: integer, description: The agent keys denied on universe. }
+                  journal_seq: { type: integer, description: The seq of web.user_disabled. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/users/{user}/deletion/close:
+    post:
+      tags: [web]
+      operationId: closeWebDeletion
+      summary: Close a person's pending deletion request, disabling them first.
+      description: 'Requires: admin key role (ADR-0068 d6; ADR-0070 d5). The person is disabled as POST /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending request answers access.not_found. outcome is deleted, the one close this build makes. Since v0.6.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: user, in: path, required: true, schema: { type: string, pattern: '^[a-z]([a-z0-9-]{0,54}[a-z0-9])?$' }, description: The person's user name. }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { outcome: deleted }
+            schema:
+              type: object
+              additionalProperties: false
+              required: [outcome]
+              properties:
+                outcome: { type: string, enum: [deleted] }
+      responses:
+        '200':
+          description: Closed.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [journal_seq]
+                properties:
+                  journal_seq: { type: integer, description: The seq of web.deletion_closed. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/session/end:
+    post:
+      tags: [web]
+      operationId: endWebSession
+      summary: End the web session a capacity credential derives from.
+      description: 'Requires: a capacity credential (omls_), which oml-web presents with its client identity; any other credential answers access.verb_ceiling with details.reason session_key_only. The session row ends, and every capacity credential derived from it with it (ADR-0045 d5; ADR-0070 d2, d5). Journals nothing: a session is operational state. Since v0.6.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      responses:
+        '204':
+          description: The session ended.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/export:
+    get:
+      tags: [web]
+      operationId: exportWebPerson
+      summary: Everything the person holds, as a JSON attachment.
+      description: 'Requires: the person''s web session key (<user>-web, through its capacity credential); any other key, the person''s agent keys included, answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5). The memories of their root and below, every state, with text, and their keys, at most 10000 memories. Since v0.6.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      responses:
+        '200':
+          description: The export, with Content-Disposition attachment.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+            Content-Disposition: { schema: { type: string }, description: 'attachment; filename="oml-export.json"' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [format, user, exported_at, memories, keys]
+                properties:
+                  format: { type: string, const: oml-export/personal-1 }
+                  user: { type: [string, 'null'] }
+                  exported_at: { type: string, format: date-time }
+                  memories: { type: array, items: { type: object } }
+                  keys: { type: array, items: { type: object } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /v2/web/deletion-requests:
+    post:
+      tags: [web]
+      operationId: requestWebDeletion
+      summary: The person asks for their account's deletion.
+      description: 'Requires: the person''s web session key (<user>-web, through its capacity credential); any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5). Journalled as web.deletion_requested; it ends nothing and changes no access, and an admin closes it. Since v0.6.4.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: The pending request.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requested_at, journal_seq]
+                properties:
+                  requested_at: { type: [string, 'null'], format: date-time }
+                  journal_seq: { type: integer, description: The seq of web.deletion_requested. }
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
@@ -2490,6 +2853,8 @@ paths:
                 query: { type: string, maxLength: 512 }
                 workarea: { type: string }
                 state: { type: string, enum: [held, promoted, rejected, superseded, demoted] }
+                origin_kind: { type: string, enum: [repo, doc, code, lake, chat, web, manual], description: "One origin.kind (ADR-0045 d22, d24; ADR-0070 d5). Since v0.6.4." }
+                author: { type: string, description: "The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4." }
                 limit: { type: integer, minimum: 1, maximum: 100 }
                 cursor: { type: string }
       responses:
@@ -2834,6 +3199,29 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/Anchor' }
             - { type: 'null' }
+
+    WebUser:
+      type: object
+      description: 'One person of the tenant as GET /v2/web/users lists them and the quota update answers (ADR-0068 d5).'
+      required: [user, signed_up, disabled, under_quotas, usage, quotas]
+      properties:
+        user: { type: string }
+        signed_up: { type: boolean }
+        disabled: { type: boolean }
+        under_quotas: { type: boolean }
+        usage:
+          type: object
+          properties:
+            memories: { type: integer }
+            keys: { type: integer }
+            connections: { type: integer }
+        quotas:
+          type: object
+          properties:
+            memories: { type: integer }
+            keys: { type: integer }
+            connections: { type: integer }
+            requests_per_minute: { type: integer }
 
     WebEmail:
       type: object
@@ -4232,6 +4620,132 @@ components:
         grants: { type: array, items: { $ref: '#/components/schemas/WhoamiGrant' }, description: "The key's stored grants, each with its epoch and without its deny masks." }
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
         profile: { type: [string, 'null'], enum: [curator, null], description: "The key's profile; null for none (ADR-0030 d8)." }
+        person:
+          description: The person the key's user root names; null for a tenant key (ADR-0070 d5).
+          oneOf:
+            - { $ref: '#/components/schemas/WhoamiPerson' }
+            - { type: 'null' }
+
+    WhoamiPerson:
+      type: object
+      additionalProperties: false
+      required: [user, under_quotas, usage, quotas, deletion_requested_at]
+      properties:
+        user: { type: string }
+        under_quotas: { type: boolean, description: "Whether the person is under the sign-up tenant's quotas; usage and quotas are null when not (ADR-0068 d5)." }
+        usage:
+          type: [object, 'null']
+          properties:
+            memories: { type: integer }
+            keys: { type: integer }
+            connections: { type: integer }
+        quotas:
+          type: [object, 'null']
+          properties:
+            memories: { type: integer }
+            keys: { type: integer }
+            connections: { type: integer }
+            requests_per_minute: { type: integer }
+        deletion_requested_at: { type: [string, 'null'], format: date-time, description: "When the person asked for deletion, while the request is pending (ADR-0068 d6)." }
+
+    ListedKey:
+      type: object
+      additionalProperties: false
+      required: [id, name, role, held_by, credential, user_root_id, revoked, cut_off, grants]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: [string, 'null'] }
+        role: { $ref: '#/components/schemas/Role' }
+        held_by: { type: string, enum: [agent, human, service] }
+        credential: { type: string, enum: [bearer, connection, session] }
+        user_root_id: { type: [string, 'null'], format: uuid }
+        revoked: { type: boolean }
+        cut_off: { type: boolean, description: A denial on universe cuts the key off (ADR-0045 d9). }
+        grants:
+          type: array
+          items:
+            type: object
+            required: [role, workarea_id, path]
+            properties:
+              role: { $ref: '#/components/schemas/Role' }
+              workarea_id: { type: string, format: uuid }
+              path: { type: string }
+
+    HeldNamed:
+      type: object
+      required: [items]
+      description: GET /v2/review/held with ids (ADR-0055 d10; ADR-0070 d5).
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, item]
+            properties:
+              id: { type: string, format: uuid }
+              item:
+                description: The row as the held listing serves its text, or null when it is no longer held or no longer the key's to judge.
+                oneOf:
+                  - { $ref: '#/components/schemas/Memory' }
+                  - { type: 'null' }
+
+    WorkareaCounts:
+      type: object
+      required: [items, next_cursor, truncated]
+      description: GET /v2/workareas/{workarea}/tree with counts=true (ADR-0045 d30; ADR-0070 d5).
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, name, parent_id, path, status, user_root, mode, counts]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              parent_id: { type: [string, 'null'], format: uuid }
+              path: { type: string }
+              status: { type: string }
+              user_root: { type: boolean }
+              mode: { type: string, enum: [standard, in_progress] }
+              counts:
+                type: object
+                required: [promoted, held, in_progress, other]
+                properties:
+                  promoted: { type: integer, description: Promoted tips. }
+                  held: { type: integer, description: Held rows outside an in-progress scope. }
+                  in_progress: { type: integer, description: Held rows inside an in-progress scope. }
+                  other: { type: integer, description: Every other state. }
+        next_cursor: { type: 'null' }
+        truncated: { type: boolean, description: The node or the row count stopped at 2000. }
+
+    WorkareaOffers:
+      type: object
+      required: [workarea_id, status, mode, transitions, mode_change, commit]
+      properties:
+        workarea_id: { type: string, format: uuid }
+        status: { type: string }
+        mode: { type: string, enum: [standard, in_progress] }
+        transitions:
+          type: array
+          items:
+            type: object
+            required: [op, to]
+            properties:
+              op: { type: string, enum: [propose, ratify] }
+              transition_id: { type: string, format: uuid, description: The live proposal a ratify names. }
+              from: { type: string }
+              to: { type: string }
+        mode_change:
+          description: Putting the workarea in progress, where offered; null otherwise.
+          type: [object, 'null']
+          properties:
+            to: { type: string, enum: [in_progress] }
+        commit:
+          type: object
+          required: [offered, held]
+          properties:
+            offered: { type: boolean, description: Committing the in-progress root is offered now. }
+            held: { type: [integer, 'null'], description: 'The held rows that withhold the commit, or null.' }
 
     KeyIssued:
       allOf:
@@ -4361,6 +4875,13 @@ components:
             The lead's oauth.issuer, or null where connections are off; doctor reads whether
             connections are on here, not from the discovery paths it checks (ADR-0031 d14).
         build: { $ref: '#/components/schemas/Build' }
+        web_client:
+          type: string
+          enum: [none, secret, mtls, secret+mtls]
+          description: >-
+            The client identity oml-web proves when it presents a capacity credential
+            (web.client_secret), or none; with none every capacity credential is refused and
+            doctor warns (ADR-0070 d2).
         scan:
           type: [object, 'null']
           description: >-

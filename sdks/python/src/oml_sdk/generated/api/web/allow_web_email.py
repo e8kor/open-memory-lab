@@ -4,6 +4,7 @@ from typing import Any
 import httpx
 
 from ...client import AuthenticatedClient, Client
+from ...models.allow_web_email_body import AllowWebEmailBody
 from ...models.error_envelope import ErrorEnvelope
 from ...models.web_email import WebEmail
 from ...types import UNSET, Response, Unset
@@ -11,7 +12,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
-    body: WebEmail,
+    body: AllowWebEmailBody,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -84,7 +85,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: WebEmail,
+    body: AllowWebEmailBody,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -104,8 +105,7 @@ def sync_detailed(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WebEmail): An allowlist entry (ADR-0045 d2): an email a person may sign in with, the
-            ADR-0044 user it signs in as, and whether it opens the admin page.
+        body (AllowWebEmailBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -133,7 +133,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    body: WebEmail,
+    body: AllowWebEmailBody,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -153,8 +153,7 @@ def sync(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WebEmail): An allowlist entry (ADR-0045 d2): an email a person may sign in with, the
-            ADR-0044 user it signs in as, and whether it opens the admin page.
+        body (AllowWebEmailBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -177,7 +176,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: WebEmail,
+    body: AllowWebEmailBody,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -197,8 +196,7 @@ async def asyncio_detailed(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WebEmail): An allowlist entry (ADR-0045 d2): an email a person may sign in with, the
-            ADR-0044 user it signs in as, and whether it opens the admin page.
+        body (AllowWebEmailBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -224,7 +222,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    body: WebEmail,
+    body: AllowWebEmailBody,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -244,8 +242,7 @@ async def asyncio(
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
         idempotency_key (str):
-        body (WebEmail): An allowlist entry (ADR-0045 d2): an email a person may sign in with, the
-            ADR-0044 user it signs in as, and whether it opens the admin page.
+        body (AllowWebEmailBody):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

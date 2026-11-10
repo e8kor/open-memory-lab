@@ -832,10 +832,21 @@ impl<J: WebStore> WebStore for Timed<J> {
         &self,
         session: WebSessionRecord,
         replaces: Option<Sha256Hash>,
+        credentials: Vec<(&'static str, Sha256Hash)>,
     ) -> impl Future<Output = Result<(), StoreError>> + Send {
         timed(
             "web_session_open",
-            self.inner.web_session_open(session, replaces),
+            self.inner.web_session_open(session, replaces, credentials),
+        )
+    }
+
+    fn web_session_credential(
+        &self,
+        credential_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<(WebSessionRecord, String)>, StoreError>> + Send {
+        timed(
+            "web_session_credential",
+            self.inner.web_session_credential(credential_hash),
         )
     }
 

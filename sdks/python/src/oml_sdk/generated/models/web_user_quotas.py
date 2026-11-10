@@ -8,11 +8,11 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="ListWebUsersResponse200UsersItemQuotas")
+T = TypeVar("T", bound="WebUserQuotas")
 
 
 @_attrs_define
-class ListWebUsersResponse200UsersItemQuotas:
+class WebUserQuotas:
     """
     Attributes:
         memories (int | Unset):
@@ -61,15 +61,15 @@ class ListWebUsersResponse200UsersItemQuotas:
 
         requests_per_minute = d.pop("requests_per_minute", UNSET)
 
-        list_web_users_response_200_users_item_quotas = cls(
+        web_user_quotas = cls(
             memories=memories,
             keys=keys,
             connections=connections,
             requests_per_minute=requests_per_minute,
         )
 
-        list_web_users_response_200_users_item_quotas.additional_properties = d
-        return list_web_users_response_200_users_item_quotas
+        web_user_quotas.additional_properties = d
+        return web_user_quotas
 
     @property
     def additional_keys(self) -> list[str]:

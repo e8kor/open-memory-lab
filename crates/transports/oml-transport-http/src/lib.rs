@@ -18,11 +18,13 @@
 
 #![forbid(unsafe_code)]
 
+mod console;
 pub mod error;
 pub mod mcp;
 pub mod oauth;
 mod rescan;
 mod search;
+pub mod session;
 pub mod time;
 pub mod traffic;
 mod usage;
@@ -103,6 +105,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/review/verdicts"),
     ("GET", "/v2/review/held"),
     ("POST", "/v2/review/verdicts/bulk"),
+    ("GET", "/v2/review/queue"),
+    ("GET", "/v2/keys"),
     ("POST", "/v2/keys"),
     ("GET", "/v2/keys/{key}"),
     ("POST", "/v2/keys/{key}/denials"),
@@ -116,6 +120,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/workareas"),
     ("GET", "/v2/workareas/{workarea}"),
     ("GET", "/v2/workareas/{workarea}/tree"),
+    ("GET", "/v2/workareas/{workarea}/offers"),
     ("POST", "/v2/workareas/{workarea}/crew"),
     ("POST", "/v2/workareas/{workarea}/mode"),
     ("POST", "/v2/workareas/{workarea}/transitions"),
@@ -132,6 +137,13 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/web/users"),
     ("POST", "/v2/web/emails"),
     ("POST", "/v2/web/emails/remove"),
+    ("POST", "/v2/web/users/{user}/capacities"),
+    ("POST", "/v2/web/users/{user}/quota"),
+    ("POST", "/v2/web/users/{user}/disable"),
+    ("POST", "/v2/web/users/{user}/deletion/close"),
+    ("POST", "/v2/web/session/end"),
+    ("GET", "/v2/web/export"),
+    ("POST", "/v2/web/deletion-requests"),
     ("POST", "/v2/admin/memories/search"),
     ("GET", "/v2/admin/memories/{artifact_id}"),
     ("GET", "/v2/admin/rescan"),
@@ -235,6 +247,9 @@ pub struct ApiState<J, S, C, I, Sc> {
     traffic: traffic::Traffic,
     /// The web pages, where the composition set providers (ADR-0045 d17).
     web: Option<Arc<web::WebPages>>,
+    /// The identity `oml-web` proves to present a capacity credential
+    /// (ADR-0070 d2).
+    web_client: session::WebClient,
 }
 
 impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
@@ -251,6 +266,7 @@ impl<J: Clone, S, C, I, Sc> Clone for ApiState<J, S, C, I, Sc> {
             documents: self.documents.clone(),
             traffic: self.traffic.clone(),
             web: self.web.clone(),
+            web_client: self.web_client.clone(),
         }
     }
 }
@@ -287,7 +303,14 @@ where
                 .merge(rings)
                 .route("/mcp", post(Self::mcp).get(mcp::mcp_get));
             let router = self.with_oauth_routes(router);
-            self.with_web_routes(router).with_state(self)
+            // A capacity credential is resolved, or refused, before any
+            // handler reads `Authorization` (ADR-0070 d2).
+            self.with_web_routes(router)
+                .layer(axum::middleware::from_fn_with_state(
+                    self.clone(),
+                    Self::session_gate,
+                ))
+                .with_state(self)
         } else {
             probes.fallback(names_unassigned).with_state(self)
         };
@@ -314,6 +337,8 @@ where
             ("POST", "/v2/review/verdicts") => post(Self::review_verdicts),
             ("GET", "/v2/review/held") => get(Self::review_held),
             ("POST", "/v2/review/verdicts/bulk") => post(Self::review_bulk),
+            ("GET", "/v2/review/queue") => get(Self::review_queue),
+            ("GET", "/v2/keys") => get(Self::list_keys),
             ("POST", "/v2/keys") => post(Self::issue_key),
             ("GET", "/v2/keys/{key}") => get(Self::get_key),
             ("POST", "/v2/keys/{key}/denials") => post(Self::deny_key),
@@ -329,6 +354,7 @@ where
             ("POST", "/v2/workareas") => post(Self::create_workarea),
             ("GET", "/v2/workareas/{workarea}") => get(Self::get_workarea),
             ("GET", "/v2/workareas/{workarea}/tree") => get(Self::workarea_tree),
+            ("GET", "/v2/workareas/{workarea}/offers") => get(Self::workarea_offers),
             ("POST", "/v2/workareas/{workarea}/crew") => post(Self::set_workarea_crew),
             ("POST", "/v2/workareas/{workarea}/mode") => post(Self::set_workarea_mode),
             ("POST", "/v2/workareas/{workarea}/transitions") => post(Self::propose_transition),
@@ -344,6 +370,13 @@ where
             ("GET", "/v2/web/users") => get(Self::list_web_users),
             ("POST", "/v2/web/emails") => post(Self::allow_web_email),
             ("POST", "/v2/web/emails/remove") => post(Self::remove_web_email),
+            ("POST", "/v2/web/users/{user}/capacities") => post(Self::grant_capacities),
+            ("POST", "/v2/web/users/{user}/quota") => post(Self::set_quota),
+            ("POST", "/v2/web/users/{user}/disable") => post(Self::disable_user),
+            ("POST", "/v2/web/users/{user}/deletion/close") => post(Self::close_deletion),
+            ("POST", "/v2/web/session/end") => post(Self::end_session),
+            ("GET", "/v2/web/export") => get(Self::web_export),
+            ("POST", "/v2/web/deletion-requests") => post(Self::request_deletion),
             ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
             ("GET", "/v2/admin/rescan") => get(Self::rescan_route),
@@ -389,6 +422,7 @@ where
             documents: oauth::Documents::default(),
             traffic: traffic::Traffic::default(),
             web: None,
+            web_client: session::WebClient::default(),
         }
     }
 
@@ -416,6 +450,15 @@ where
     #[must_use]
     pub fn with_web(mut self, pages: web::WebPages) -> Self {
         self.web = Some(Arc::new(pages));
+        self
+    }
+
+    /// The identity `oml-web` proves when it presents a capacity
+    /// credential: `web.client_secret`, `web.client_subject`, or both
+    /// (ADR-0070 d2). Without it every capacity credential is refused.
+    #[must_use]
+    pub fn with_web_client(mut self, web_client: session::WebClient) -> Self {
+        self.web_client = web_client;
         self
     }
 
@@ -471,6 +514,10 @@ where
             // doctor's web line reads it (ADR-0045 d18); their failed
             // exchanges are the metrics listener's (ADR-0054 d1).
             "web": st.web.as_ref().filter(|_| st.app.oauth_issuer().is_some()).map(|w| w.readyz()),
+            // Which client identity oml-web proves to present a capacity
+            // credential, `none` where neither is set: doctor warns then,
+            // and every capacity credential is refused (ADR-0070 d2).
+            "web_client": st.web_client.identity(),
             // The claim formats this build serves and the adapters that
             // derive their search text: doctor's formats line reads them
             // (ADR-0056 d14).
@@ -653,10 +700,99 @@ where
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, connection)?;
         refuse_workarea_header(headers, "workarea")?;
+        if params
+            .iter()
+            .any(|(n, v)| (n == "with_own" && v == "true") || n == "author")
+        {
+            return Self::list_with_own_inner(st, params, &acting, include_text).await;
+        }
         let req = list_request(params)?;
         let page = st
             .app
             .list_memories(acting.bearer(), &req)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({
+                "items": page.items.iter().map(|m| memory_json(m, include_text)).collect::<Vec<_>>(),
+                "next_cursor": page.next_cursor,
+            }),
+        ))
+    }
+
+    /// `GET /v1/memories` with `with_own=true` or `author`: the scoped
+    /// listing at `universe` (or at `workarea`) and the caller's own rows,
+    /// every key naming its user's for a person's web session key, merged
+    /// newest first under one cursor, a row in both once; `author`, one of
+    /// those keys by name, drops the scoped part, and a key that is not the
+    /// caller's is `access.not_found` (ADR-0045 d22, d23; ADR-0070 d5).
+    async fn list_with_own_inner(
+        st: &Self,
+        params: &[(String, String)],
+        acting: &Acting<'_>,
+        include_text: bool,
+    ) -> Result<Response, ApiError> {
+        let mut req = oml_app::app::WebListRequest {
+            limit: PAGE_LIMIT_DEFAULT,
+            ..oml_app::app::WebListRequest::default()
+        };
+        let mut seen = HashSet::new();
+        for (name, value) in params {
+            if !seen.insert(name.as_str()) {
+                return Err(ApiError::validation(format!(
+                    "the query parameter {name} is given more than once"
+                )));
+            }
+            match name.as_str() {
+                "with_own" if value == "true" || value == "false" => {}
+                "with_own" => return Err(ApiError::validation("with_own must be true or false")),
+                "author" => {
+                    req.author = Some(Name::parse(value).map_err(|e| {
+                        ApiError::validation(format!("author {value:?} is not a key's name: {e}"))
+                            .with_details(json!({ "field": "author" }))
+                    })?);
+                }
+                "workarea" => req.workarea = Some(reference("workarea", value)?),
+                "state" => {
+                    req.state =
+                        Some(oml_app::types::AdminState::parse(value).ok_or_else(|| {
+                            ApiError::validation(
+                                "state is held, promoted, rejected, superseded or demoted",
+                            )
+                            .with_details(json!({ "field": "state" }))
+                        })?);
+                }
+                "origin_kinds" => {
+                    let kinds = origin_grammar::parse_kinds(value.split(',')).map_err(|why| {
+                        ApiError::validation(format!("origin_kinds: {why}"))
+                            .with_details(json!({ "field": "origin_kinds" }))
+                    })?;
+                    if kinds.len() != 1 {
+                        return Err(ApiError::validation(
+                            "origin_kinds names one kind with with_own or author",
+                        )
+                        .with_details(json!({ "field": "origin_kinds" })));
+                    }
+                    req.origin = kinds.first().copied();
+                }
+                "limit" => req.limit = page_limit(value)?,
+                "cursor" => req.cursor = Some(value.clone()),
+                other => {
+                    return Err(ApiError::validation(format!(
+                        "the query parameter {other:?} does not combine with with_own or author"
+                    )));
+                }
+            }
+        }
+        let caller = st
+            .app
+            .caller(acting.bearer())
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let page = st
+            .app
+            .web_memories(&caller, &req)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
@@ -1151,7 +1287,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?; // claiming a serve is a side effect
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let _idem = idempotency_key(headers)?;
         if !body.is_empty() {
             // The subtree filter is not built: the PoC serves the whole
@@ -1169,7 +1305,7 @@ where
         }
         let served = st
             .app
-            .review_next(&token)
+            .review_next(acting.bearer())
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Review))?;
         match served {
@@ -1187,7 +1323,7 @@ where
                 // ADR-0025 d3, d10).
                 let replaced = match memory.replaces {
                     None => None,
-                    Some(r) => match st.app.get_memory(&token, r.artifact_id).await {
+                    Some(r) => match st.app.get_memory(acting.bearer(), r.artifact_id).await {
                         Ok(replaced) => Some(replaced),
                         // Unreadable since the item was served: shown as
                         // the item's own read would show it, not at all.
@@ -1234,7 +1370,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let idem_key = idempotency_key(headers)?;
         let req: VerdictBody = parse_json(headers, body)?;
         let verdict = match req.verdict.as_str() {
@@ -1267,7 +1403,7 @@ where
             reason: req.reason.clone(),
             idempotency_key: idem_key,
         };
-        let outcome = retry_chain(|| st.app.review_verdict(&token, &request))
+        let outcome = retry_chain(|| st.app.review_verdict(acting.bearer(), &request))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Review))?;
         let mut response = json_response(
@@ -1311,7 +1447,15 @@ where
         params: &[(String, String)],
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        if let Some((_, ids)) = params.iter().find(|(n, _)| n == "ids") {
+            if params.len() > 1 {
+                return Err(ApiError::validation(
+                    "ids names its rows, so it takes no other query parameter",
+                ));
+            }
+            return Self::review_named_inner(st, ids, headers).await;
+        }
+        let acting = acting(headers, None)?;
         let mut seen = HashSet::new();
         let mut req = HeldListingRequest {
             limit: HELD_PAGE_DEFAULT,
@@ -1338,10 +1482,52 @@ where
         }
         let page = st
             .app
-            .review_held(&token, &req)
+            .review_held(acting.bearer(), &req)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Review))?;
         Ok(json_response(StatusCode::OK, &held_page_json(&page)))
+    }
+
+    /// `GET /v2/review/held?ids=`: each named row as the held listing
+    /// serves it while it is still held and still the caller's to judge,
+    /// else `null`, in the order named; the bulk confirmation reads it
+    /// (ADR-0055 d10; ADR-0070 d5). A row the caller cannot judge is
+    /// `null`, never named otherwise.
+    async fn review_named_inner(
+        st: &Self,
+        ids: &str,
+        headers: &HeaderMap,
+    ) -> Result<Response, ApiError> {
+        let acting = acting(headers, None)?;
+        let ids: Vec<Uuid> = ids
+            .split(',')
+            .map(|id| Uuid::parse_str(id.trim()))
+            .collect::<Result<_, _>>()
+            .map_err(|_| {
+                ApiError::validation("ids is a comma-separated list of memory ids")
+                    .with_details(json!({ "field": "ids" }))
+            })?;
+        if ids.is_empty() || ids.len() > oml_app::types::BULK_VERDICT_MAX {
+            return Err(ApiError::validation(format!(
+                "ids names 1 to {} rows, as one bulk verdict judges",
+                oml_app::types::BULK_VERDICT_MAX
+            ))
+            .with_details(json!({ "field": "ids" })));
+        }
+        let named = st
+            .app
+            .review_named(acting.bearer(), &ids)
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Review))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({
+                "items": named.iter().map(|(id, served)| json!({
+                    "id": id,
+                    "item": served.as_ref().map(|m| memory_json(m, true)),
+                })).collect::<Vec<_>>(),
+            }),
+        ))
     }
 
     /// `POST /v2/review/verdicts/bulk`: one verdict per named id, each
@@ -1362,7 +1548,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let idem_key = idempotency_key(headers)?;
         let req: BulkBody = parse_json(headers, body)?;
         let verdict = match req.verdict.as_str() {
@@ -1393,7 +1579,7 @@ where
         };
         let items = st
             .app
-            .review_bulk(&token, &request)
+            .review_bulk(acting.bearer(), &request)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Review))?;
         count_bulk(st.traffic.metrics(), &items);
@@ -1415,7 +1601,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let _idem = idempotency_key(headers)?;
         // The body is closed, nested objects included: a field the server
         // does not serve is refused, never dropped (ADR-0025 d16).
@@ -1498,7 +1684,7 @@ where
             guardrail_scope: parse_guardrail_scope(req.guardrail_scope.as_deref())?,
             profile: parse_profile(req.profile.as_deref())?,
         };
-        let issued = retry_chain(|| st.app.issue_key(&token, &issue))
+        let issued = retry_chain(|| st.app.issue_key(acting.bearer(), &issue))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
@@ -1530,14 +1716,14 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let _idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
         let req: DenialBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("workarea_node_id", "workarea")])
         })?;
         let node = reference("/workarea", &req.workarea)?;
-        let denial = retry_chain(|| st.app.deny_key(&token, key.clone(), node.clone()))
+        let denial = retry_chain(|| st.app.deny_key(acting.bearer(), key.clone(), node.clone()))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
@@ -1570,7 +1756,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let _idem = idempotency_key(headers)?;
         let req: WorkareaCreateBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("parent_id", "parent")])
@@ -1586,7 +1772,7 @@ where
         let crew = optional_reference("/crew", req.crew.as_deref())?;
         let created = retry_chain(|| {
             st.app
-                .create_workarea(&token, &name, parent.clone(), crew.clone())
+                .create_workarea(acting.bearer(), &name, parent.clone(), crew.clone())
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
@@ -1659,7 +1845,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let _idem = idempotency_key(headers)?;
         let node = reference("workarea", workarea)?;
         let req: TransitionBody = parse_json(headers, body)?;
@@ -1673,7 +1859,7 @@ where
                 .with_details(json!({ "field": "/to" })));
             }
         };
-        let proposal = retry_chain(|| st.app.propose_transition(&token, node.clone(), to))
+        let proposal = retry_chain(|| st.app.propose_transition(acting.bearer(), node.clone(), to))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
@@ -1712,7 +1898,7 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let _idem = idempotency_key(headers)?;
         let node = reference("workarea", workarea)?;
         let transition_id = Uuid::parse_str(transition_id).map_err(|_| {
@@ -1721,7 +1907,7 @@ where
         })?;
         let ratified = retry_chain(|| {
             st.app
-                .ratify_transition(&token, node.clone(), transition_id)
+                .ratify_transition(acting.bearer(), node.clone(), transition_id)
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Review))?;
@@ -1992,12 +2178,30 @@ where
         params: &[(String, String)],
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let node = reference("workarea", workarea_id)?;
-        let (limit, cursor) = page_params(params)?;
+        match params.iter().find(|(n, _)| n == "counts") {
+            Some((_, v)) if v == "true" => {
+                if params.len() > 1 {
+                    return Err(ApiError::validation(
+                        "counts=true serves the whole subtree, so it takes no limit or cursor",
+                    ));
+                }
+                return Self::tree_counts(st, node, &acting).await;
+            }
+            Some((_, v)) if v == "false" => {}
+            Some(_) => return Err(ApiError::validation("counts must be true or false")),
+            None => {}
+        }
+        let params: Vec<(String, String)> = params
+            .iter()
+            .filter(|(n, _)| n != "counts")
+            .cloned()
+            .collect();
+        let (limit, cursor) = page_params(&params)?;
         let page = st
             .app
-            .workarea_tree(&token, node, cursor, limit)
+            .workarea_tree(acting.bearer(), node, cursor, limit)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let items: Vec<Value> = page
@@ -2008,6 +2212,56 @@ where
         Ok(json_response(
             StatusCode::OK,
             &json!({ "items": items, "next_cursor": page.next_cursor }),
+        ))
+    }
+
+    /// `GET /v2/workareas/{workarea}/tree?counts=true`: the subtree, up to
+    /// `REGION_COUNT_MAX` nodes, each with its rows by state as the
+    /// caller's merged listing would show them (`with_own`), counted up to
+    /// `REGION_COUNT_MAX` rows, and `truncated` when either stopped there;
+    /// for the admin key role every row is counted as structure, and no
+    /// content is served (ADR-0045 d30; ADR-0070 d5).
+    async fn tree_counts(
+        st: &Self,
+        node: Reference,
+        acting: &Acting<'_>,
+    ) -> Result<Response, ApiError> {
+        let caller = st
+            .app
+            .caller(acting.bearer())
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let regions = if caller.key().role == Role::Admin {
+            st.app.admin_regions(&caller, Some(node)).await
+        } else {
+            st.app.web_regions(&caller, Some(node)).await
+        }
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let items: Vec<Value> = regions
+            .regions
+            .iter()
+            .map(|r| {
+                let w = &r.workarea;
+                json!({
+                    "id": w.workarea_id,
+                    "name": w.name.as_str(),
+                    "parent_id": w.parent_id,
+                    "path": r.path,
+                    "status": w.status.as_str(),
+                    "user_root": w.user_root,
+                    "mode": if w.in_progress { "in_progress" } else { "standard" },
+                    "counts": {
+                        "promoted": r.approved,
+                        "held": r.held,
+                        "in_progress": r.in_progress,
+                        "other": r.other,
+                    },
+                })
+            })
+            .collect();
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({ "items": items, "next_cursor": null, "truncated": regions.partial }),
         ))
     }
 
@@ -2287,13 +2541,25 @@ where
     /// never its denials, and no read is journalled (http-api.md whoami;
     /// ADR-0039 d15).
     async fn whoami_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let whoami = st
             .app
-            .whoami(&token)
+            .whoami_of(acting.bearer())
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(StatusCode::OK, &whoami_json(&whoami)))
+        let person = st
+            .app
+            .whoami_person(acting.bearer())
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let mut body = whoami_json(&whoami);
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert(
+                "person".to_owned(),
+                person.as_ref().map_or(Value::Null, person_json),
+            );
+        }
+        Ok(json_response(StatusCode::OK, &body))
     }
 
     async fn create_crew(
@@ -2459,7 +2725,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let _idem = idempotency_key(headers)?;
         let workarea = reference("workarea", workarea_id)?;
         let req: WorkareaModeBody = parse_json(headers, body)?;
@@ -2472,13 +2738,13 @@ where
         })?;
         let updated = retry_chain(|| {
             st.app
-                .set_workarea_mode(token.as_str(), workarea.clone(), mode)
+                .set_workarea_mode(acting.bearer(), workarea.clone(), mode)
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let info = st
             .app
-            .workarea_info(token.as_str(), Some(Reference::Id(updated.workarea_id)))
+            .workarea_info(acting.bearer(), Some(Reference::Id(updated.workarea_id)))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &workarea_view_json(&info)))
@@ -3207,6 +3473,9 @@ fn bearer_value(headers: &HeaderMap) -> Result<String, ApiError> {
 enum Acting<'a> {
     Value(String),
     Connection(&'a Caller),
+    /// A session key's caller, resolved from a capacity credential by the
+    /// session gate (ADR-0070 d2).
+    Session(Arc<Caller>),
 }
 
 impl Acting<'_> {
@@ -3214,6 +3483,7 @@ impl Acting<'_> {
         match self {
             Acting::Value(value) => Bearer::Key(value),
             Acting::Connection(caller) => Bearer::Connection(caller),
+            Acting::Session(caller) => Bearer::Session(caller),
         }
     }
 }
@@ -3221,7 +3491,10 @@ impl Acting<'_> {
 fn acting<'a>(headers: &HeaderMap, connection: Option<&'a Caller>) -> Result<Acting<'a>, ApiError> {
     match connection {
         Some(caller) => Ok(Acting::Connection(caller)),
-        None => bearer(headers).map(Acting::Value),
+        None => match session::session_caller() {
+            Some(caller) => Ok(Acting::Session(caller)),
+            None => bearer(headers).map(Acting::Value),
+        },
     }
 }
 
@@ -3549,6 +3822,35 @@ fn whoami_json(whoami: &Whoami) -> Value {
     })
 }
 
+/// `whoami`'s `person`: the user a key names, whether it is under the
+/// sign-up quotas, its usage and limits there, and its pending deletion
+/// request (ADR-0070 d5; ADR-0068 d5, d6, d10).
+fn person_json(person: &oml_app::app::Person) -> Value {
+    let (usage, quotas) = match &person.limits {
+        Some((usage, quotas)) => (
+            json!({
+                "memories": usage.memories,
+                "keys": usage.keys,
+                "connections": usage.connections,
+            }),
+            json!({
+                "memories": quotas.memories,
+                "keys": quotas.keys,
+                "connections": quotas.connections,
+                "requests_per_minute": quotas.requests_per_minute,
+            }),
+        ),
+        None => (Value::Null, Value::Null),
+    };
+    json!({
+        "user": person.user.as_str(),
+        "under_quotas": person.limits.is_some(),
+        "usage": usage,
+        "quotas": quotas,
+        "deletion_requested_at": person.deletion_requested_at.as_ref().map(|t| t.as_str()),
+    })
+}
+
 /// openapi.yaml `WhoamiGrant`: a stored grant as `whoami` serves it, its
 /// id, node, role and epoch and never its per-grant deny masks, which name
 /// subtrees the key may not read through it, the reason `whoami` omits the
@@ -3641,6 +3943,9 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
             "cursor" => req.cursor = Some(value.clone()),
             "anchor_repo" => anchor_repo = Some(value.as_str()),
             "anchor_path_prefix" => anchor_path_prefix = Some(value.as_str()),
+            // `with_own=true` is the merged listing's; false is this one.
+            "with_own" if value == "false" => {}
+            "with_own" => return Err(ApiError::validation("with_own must be true or false")),
             other => {
                 return Err(ApiError::validation(format!(
                     "unknown query parameter {other:?}"

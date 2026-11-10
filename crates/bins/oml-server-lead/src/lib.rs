@@ -37,6 +37,7 @@ use oml_pg::{
     ForkCheckError, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
 };
+use oml_transport_http::session::WebClient;
 use oml_transport_http::traffic::{ScopeObserver, Traffic, TrustedProxies};
 use oml_transport_http::web::WebPages;
 use oml_transport_http::{ApiState, BuildInfo, DbPing, time::system_event_time};
@@ -80,6 +81,10 @@ pub struct Config {
     /// `web.github.client_id` and `web.github.client_secret`: GitHub
     /// sign-in, on when both are set (ADR-0045 d17).
     pub web_github: Option<ClientCredentials>,
+    /// `web.client_secret`: the identity `oml-web` proves to present a
+    /// capacity credential; unset, every capacity credential is refused
+    /// and the doctor warns (ADR-0070 d2). Never logged.
+    pub web_client: WebClient,
     /// `brief.max_tokens`: the budget a workarea's brief is cut to, in
     /// budget tokens; 400 when unset, unmeasured (ADR-0046 d8; #145).
     pub brief_max_tokens: u64,
@@ -438,6 +443,13 @@ const KEY_WEB_GOOGLE_CLIENT_ID: &str = "web.google.client_id";
 const KEY_WEB_GOOGLE_CLIENT_SECRET: &str = "web.google.client_secret";
 const KEY_WEB_GITHUB_CLIENT_ID: &str = "web.github.client_id";
 const KEY_WEB_GITHUB_CLIENT_SECRET: &str = "web.github.client_secret";
+const KEY_WEB_CLIENT_SECRET: &str = "web.client_secret";
+const KEY_WEB_CLIENT_CA: &str = "web.client_ca";
+const KEY_WEB_CLIENT_SUBJECT: &str = "web.client_subject";
+
+/// The shortest `web.client_secret` the lead accepts: 32 characters, the
+/// length of a 192-bit secret in base64, chosen, not measured.
+pub const WEB_CLIENT_SECRET_MIN: usize = 32;
 const KEY_BRIEF_MAX_TOKENS: &str = "brief.max_tokens";
 const KEY_SIGNUP_MODE: &str = "signup.mode";
 const KEY_SIGNUP_TENANT: &str = "signup.tenant";
@@ -466,6 +478,32 @@ const KEY_RERANK_MAX_TOKENS: &str = "search.rerank.max_tokens";
 const KEY_SPARSE_MODEL_DIR: &str = "search.sparse.model_dir";
 const KEY_SPARSE_FETCH: &str = "search.sparse.fetch";
 const KEY_SPARSE_THREADS: &str = "search.sparse.threads";
+
+/// `oml-web`'s client identity (ADR-0070 d2): `web.client_secret`, at least
+/// [`WEB_CLIENT_SECRET_MIN`] characters. Mutual TLS (`web.client_ca` with
+/// `web.client_subject`) needs the lead to terminate TLS on the listener
+/// `oml-web` reaches, which this build does not, so either stops the start
+/// naming the setting rather than accepting an identity no request can
+/// prove.
+fn web_client(lookup: &impl Fn(&str) -> Option<String>) -> Result<WebClient, ConfigError> {
+    if let Some(key) = [KEY_WEB_CLIENT_CA, KEY_WEB_CLIENT_SUBJECT]
+        .into_iter()
+        .find(|k| lookup(k).is_some_and(|v| !v.is_empty()))
+    {
+        return Err(ConfigError::Invalid(format!(
+            "{key} is set: mutual TLS needs the lead to terminate TLS on the listener oml-web reaches, which this build does not; set {KEY_WEB_CLIENT_SECRET} instead (ADR-0070 d2)"
+        )));
+    }
+    match lookup(KEY_WEB_CLIENT_SECRET) {
+        None => Ok(WebClient::default()),
+        Some(secret) if secret.chars().count() >= WEB_CLIENT_SECRET_MIN => {
+            Ok(WebClient::new(Some(secret), None))
+        }
+        Some(_) => Err(ConfigError::Invalid(format!(
+            "{KEY_WEB_CLIENT_SECRET} is shorter than {WEB_CLIENT_SECRET_MIN} characters; oml quickstart writes one, or use `openssl rand -base64 32` (ADR-0070 d2)"
+        ))),
+    }
+}
 
 /// `OML_` + dotted path in SCREAMING_SNAKE with `__` as the nesting
 /// separator — mechanical in both directions (configuration.md).
@@ -703,6 +741,7 @@ impl Config {
         };
         let web_google = provider(KEY_WEB_GOOGLE_CLIENT_ID, KEY_WEB_GOOGLE_CLIENT_SECRET)?;
         let web_github = provider(KEY_WEB_GITHUB_CLIENT_ID, KEY_WEB_GITHUB_CLIENT_SECRET)?;
+        let web_client = web_client(&lookup)?;
         // A brief that serves nothing is no brief: zero and anything but a
         // positive whole number stop the start (ADR-0046 d8).
         let brief_max_tokens = match lookup(KEY_BRIEF_MAX_TOKENS) {
@@ -904,6 +943,7 @@ impl Config {
             otlp_endpoint,
             web_google,
             web_github,
+            web_client,
             brief_max_tokens,
             signup,
             search,
@@ -1651,6 +1691,7 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
         search,
         reranker,
         None,
+        WebClient::default(),
     )
     .await
 }
@@ -1677,6 +1718,7 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     search: Option<SearchConfig>,
     reranker: Option<Arc<dyn oml_app::ports::Reranker>>,
     sparse: Option<Arc<dyn oml_app::ports::SparseEncoder>>,
+    web_client: WebClient,
 ) -> Result<LeadStart, String> {
     // The retrievers the database can run decide which pipelines may be
     // served: a configuration naming one it cannot run stops the start,
@@ -1775,7 +1817,10 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
         Some(pages) => state.with_web(pages),
         None => state,
     };
-    let router = state.with_names_assigned(names.is_ok()).into_router();
+    let router = state
+        .with_web_client(web_client)
+        .with_names_assigned(names.is_ok())
+        .into_router();
     Ok(LeadStart {
         tenants,
         fork_check,
@@ -2255,6 +2300,44 @@ mod tests {
                 .expect_err("not a public origin");
             assert!(matches!(err, ConfigError::Invalid(_)), "{bad}: {err:?}");
             assert!(err.to_string().contains("oauth.issuer"), "{err}");
+        }
+    }
+
+    /// `web.client_secret` is oml-web's identity, at least 32 characters
+    /// and never in the configuration's debug form; mutual TLS stops the
+    /// start, naming the setting, since no listener here verifies a client
+    /// certificate (ADR-0070 d2).
+    #[test]
+    fn the_web_client_identity_is_a_long_secret_and_mutual_tls_stops_the_start() {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let cfg = Config::from_sources(None, &|k| env_of(&base).get(k).cloned())
+            .expect("no identity loads");
+        assert_eq!(cfg.web_client.identity(), "none");
+        let secret = "s3cret-s3cret-s3cret-s3cret-s3cret-0";
+        let mut env = env_of(&base);
+        env.insert("OML_WEB__CLIENT_SECRET".to_owned(), secret.to_owned());
+        let cfg = Config::from_sources(None, &|k| env.get(k).cloned()).expect("a secret loads");
+        assert_eq!(cfg.web_client.identity(), "secret");
+        assert!(
+            !format!("{cfg:?}").contains(secret),
+            "never in the debug form"
+        );
+        env.insert("OML_WEB__CLIENT_SECRET".to_owned(), "short".to_owned());
+        let err = Config::from_sources(None, &|k| env.get(k).cloned())
+            .expect_err("a short secret stops the start");
+        assert!(err.to_string().contains("web.client_secret"), "{err}");
+        for (set, named) in [
+            ("OML_WEB__CLIENT_CA", "web.client_ca"),
+            ("OML_WEB__CLIENT_SUBJECT", "web.client_subject"),
+        ] {
+            let mut env = env_of(&base);
+            env.insert(set.to_owned(), "value".to_owned());
+            let err = Config::from_sources(None, &|k| env.get(k).cloned())
+                .expect_err("mutual TLS stops the start");
+            assert!(err.to_string().contains(named), "{err}");
         }
     }
 

@@ -1272,14 +1272,26 @@ pub trait WebStore: JournalStore {
         subject: &str,
     ) -> impl Future<Output = Result<PinOutcome, StoreError>> + Send;
 
-    /// Writes a session row, and ends the row `replaces` names in the same
-    /// transaction, so a browser that arrives with an old session leaves
-    /// with only the new one (ADR-0045 d5).
+    /// Writes a session row with the digests of its capacity credentials,
+    /// each `(capacity, SHA-256 of the credential)` (ADR-0070 d2), and ends
+    /// the row `replaces` names in the same transaction, so a browser that
+    /// arrives with an old session leaves with only the new one
+    /// (ADR-0045 d5). The credentials end with the session.
     fn web_session_open(
         &self,
         session: WebSessionRecord,
         replaces: Option<Sha256Hash>,
+        credentials: Vec<(&'static str, Sha256Hash)>,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    /// The live session row a capacity credential's digest names, and the
+    /// capacity, before any tenant is known; `None` for a digest no row
+    /// holds, which includes every credential of an ended session
+    /// (ADR-0070 d2).
+    fn web_session_credential(
+        &self,
+        credential_hash: &Sha256Hash,
+    ) -> impl Future<Output = Result<Option<(WebSessionRecord, String)>, StoreError>> + Send;
 
     /// The session a token's digest names, before any tenant is known;
     /// `None` for a digest no row holds.

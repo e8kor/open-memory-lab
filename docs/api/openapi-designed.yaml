@@ -508,34 +508,6 @@ paths:
               schema: { $ref: '#/components/schemas/TermMappingPage' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
-  /v2/review/queue:
-    get:
-      tags: [review]
-      operationId: reviewQueue
-      summary: Held-item counts and oldest ages per workarea in the reviewer's scope.
-      description: 'Requires: dreamer(review) effective access. A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).'
-      parameters:
-        - { name: workarea, in: query, schema: { $ref: 'openapi.yaml#/components/schemas/WorkareaRef' }, description: Subtree filter. }
-        - { $ref: 'openapi.yaml#/components/parameters/Limit' }
-        - { $ref: 'openapi.yaml#/components/parameters/Cursor' }
-      responses:
-        '200':
-          description: Queue depths.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              example:
-                items:
-                - workarea_id: fbbb41c5-9630-4274-ae53-166f562f5286
-                  workarea_path: universe.procurement.metals-crew
-                  held: 3
-                  oldest_age_seconds: 5411
-                next_cursor: null
-              schema: { $ref: '#/components/schemas/ReviewQueuePage' }
-        '403': { $ref: 'openapi.yaml#/components/responses/Forbidden' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
   /v2/review/reopen:
     post:
       tags: [review]
@@ -567,47 +539,6 @@ paths:
         '403': { $ref: 'openapi.yaml#/components/responses/Forbidden' }
         '409': { $ref: 'openapi.yaml#/components/responses/Conflict' }
         '415': { $ref: 'openapi.yaml#/components/responses/UnsupportedMedia' }
-        default: { $ref: 'openapi.yaml#/components/responses/Error' }
-
-  /v2/keys:
-    get:
-      tags: [keys]
-      operationId: listKeys
-      summary: Key ids, roles, principals, labels, expiries — never values.
-      description: 'Requires: admin key role.'
-      parameters:
-        - { name: role, in: query, schema: { $ref: 'openapi.yaml#/components/schemas/Role' } }
-        - { $ref: 'openapi.yaml#/components/parameters/Limit' }
-        - { $ref: 'openapi.yaml#/components/parameters/Cursor' }
-      responses:
-        '200':
-          description: One page of keys.
-          headers:
-            X-Request-Id: { $ref: 'openapi.yaml#/components/headers/XRequestId' }
-          content:
-            application/json:
-              example:
-                items:
-                - key_id: d405428e-4c99-426d-8826-76d28436e423
-                  name: metals-reviewer-3
-                  role: dreamer
-                  principal: crew-review/agent-3
-                  crew_id: null
-                  default_workarea_id: fbbb41c5-9630-4274-ae53-166f562f5286
-                  held_by: agent
-                  label: metals review agent
-                  expiry: null
-                  revoked_at: null
-                  rotated_from: null
-                  grants:
-                  - workarea_node_id: fbbb41c5-9630-4274-ae53-166f562f5286
-                    role: dreamer
-                    grant_id: gr_01JB2YG8J1L3N5Q7S9UA2CW4FZ
-                    epoch: 41
-                  denials: []
-                  epoch: 41
-                next_cursor: null
-              schema: { $ref: '#/components/schemas/KeyPage' }
         default: { $ref: 'openapi.yaml#/components/responses/Error' }
 
   /v2/keys/{key}/revoke:
@@ -1549,21 +1480,6 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/TermMapping' } }
         next_cursor: { type: [string, 'null'] }
 
-    ReviewQueuePage:
-      type: object
-      required: [items, next_cursor]
-      properties:
-        items:
-          type: array
-          items:
-            type: object
-            properties:
-              workarea_id: { type: string }
-              workarea_path: { type: string }
-              held: { type: integer }
-              oldest_age_seconds: { type: integer }
-        next_cursor: { type: [string, 'null'] }
-
     ReopenRequest:
       type: object
       required: [artifact_id, version, reason]
@@ -1579,13 +1495,6 @@ components:
       properties:
         name: { $ref: 'openapi.yaml#/components/schemas/Name', description: "The successor's own name; both keys are live through the grace window, so it cannot be the old key's (ADR-0026 d9)." }
         grace: { type: string, description: 'Bounded grace window before the old key is revoked, e.g. "72h".' }
-
-    KeyPage:
-      type: object
-      required: [items, next_cursor]
-      properties:
-        items: { type: array, items: { $ref: 'openapi.yaml#/components/schemas/Key' } }
-        next_cursor: { type: [string, 'null'] }
 
     EffectiveAccess:
       type: object

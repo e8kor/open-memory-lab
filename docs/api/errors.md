@@ -45,7 +45,7 @@ Every request except `/healthz`, `/readyz`, the discovery documents and the OAut
 | Code | HTTP | Fires when |
 |---|---|---|
 | `auth.missing` | 401 | No `Authorization: Bearer` header. |
-| `auth.invalid` | 401 | The key or token is unknown, malformed, expired or denied. `details.reason` is `unknown` for keys. On web pages it also carries `not_allowed`, `email_unverified`, `state_mismatch`, `identity_changed`, `provider_refused` and `session_expired`. |
+| `auth.invalid` | 401 | The key or token is unknown, malformed, expired or denied. `details.reason` is `unknown` for keys, and for a capacity credential (`omls_`) whose web session has ended. It is `session_outside_web` for a capacity credential on `/mcp`, or on `/v1` and `/v2` without `oml-web`'s client identity, or beside a client certificate a gateway forwarded. On web pages it also carries `not_allowed`, `email_unverified`, `state_mismatch`, `identity_changed`, `provider_refused` and `session_expired`. |
 
 ## `oauth` — connections
 
@@ -71,7 +71,7 @@ A key's role, grants and denials decide these. Reads fail closed as absence.
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `access.verb_ceiling` | 403 | The key's role never calls this verb, whatever its grants. Examples: an agent key calling an admin verb, an admin key posting a verdict or reading memory text, a `held_by: service` key reviewing, any web-page request carrying an `Authorization` header. |
+| `access.verb_ceiling` | 403 | The key's role never calls this verb, whatever its grants. Examples: an agent key calling an admin verb, an admin key posting a verdict or reading memory text, a `held_by: service` key reviewing, any web-page request carrying an `Authorization` header. `details.reason` `session_key_only`: a person's own act (listing their keys, ending their session, the export, the deletion request) sent by any key but their web session key, an agent's key naming them included. |
 | `access.grant_refused` | 403 | The key can read the workarea, but its effective access does not confer the verb's role there. `details`: `workarea_id`, `needed_role`. |
 | `access.not_found` | 404 | The thing does not exist, or is outside the key's read scope. The two cases look the same. Also answers a name that resolves to nothing the key may see. |
 | `access.author_only` | 403 | A writer key tried to supersede a version it did not author. |

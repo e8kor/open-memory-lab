@@ -7318,6 +7318,7 @@ impl WebStore for PgStore {
         &self,
         session: WebSessionRecord,
         replaces: Option<Sha256Hash>,
+        credentials: Vec<(&'static str, Sha256Hash)>,
     ) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, session.tenant_id).await?;
@@ -7347,8 +7348,61 @@ impl WebStore for PgStore {
         .execute(&mut *tx)
         .await
         .map_err(backend)?;
+        // The capacity credentials' digests, in the commit that opens the
+        // session; the foreign key ends them with it (ADR-0070 d2).
+        for (capacity, digest) in credentials {
+            sqlx::query(
+                "INSERT INTO web_session_credentials (credential_hash, tenant_id, token_hash, \
+                 capacity) VALUES ($1, $2, $3, $4)",
+            )
+            .bind(digest.0.to_vec())
+            .bind(session.tenant_id)
+            .bind(session.token_hash.0.to_vec())
+            .bind(capacity)
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        }
         tx.commit().await.map_err(backend)?;
         Ok(())
+    }
+
+    async fn web_session_credential(
+        &self,
+        credential_hash: &Sha256Hash,
+    ) -> Result<Option<(WebSessionRecord, String)>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_lookup_digest(&mut tx, credential_hash).await?;
+        let found = sqlx::query(
+            "SELECT tenant_id, token_hash, capacity FROM web_session_credentials \
+             WHERE credential_hash = $1",
+        )
+        .bind(credential_hash.0.to_vec())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let Some(found) = found else {
+            tx.commit().await.map_err(backend)?;
+            return Ok(None);
+        };
+        let tenant_id: Uuid = found.try_get("tenant_id").map_err(backend)?;
+        let token_hash: Vec<u8> = found.try_get("token_hash").map_err(backend)?;
+        let capacity: String = found.try_get("capacity").map_err(backend)?;
+        // The matched row's tenant fences the session's read.
+        set_tenant(&mut tx, tenant_id).await?;
+        let row = sqlx::query(&format!(
+            "SELECT {WEB_SESSION_COLUMNS} FROM web_sessions WHERE tenant_id = $1 AND token_hash = $2"
+        ))
+        .bind(tenant_id)
+        .bind(token_hash)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        row.as_ref()
+            .map(web_session_from_row)
+            .transpose()
+            .map(|s| s.map(|s| (s, capacity)))
     }
 
     async fn web_session(

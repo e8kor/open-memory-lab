@@ -210,6 +210,7 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
         Some(config.search.clone()),
         reranker,
         sparse.clone(),
+        config.web_client.clone(),
     )
     .await?;
     // The encoder drains the queue every write fills, off the commit path

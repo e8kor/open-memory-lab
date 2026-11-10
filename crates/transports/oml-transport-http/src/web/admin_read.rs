@@ -11,15 +11,16 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use oml_app::app::{AdminMemory, AdminPage};
+use oml_app::app::{AdminMemory, AdminPage, AdminSearchRequest};
 use oml_app::domain::EventTime;
 use oml_app::domain::name::Reference;
+use oml_app::domain::origin::OriginKind;
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::AdminState;
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
-use crate::{ApiState, bearer, finish, json_response, parse_json, retry_chain};
+use crate::{ApiState, acting, finish, json_response, parse_json, retry_chain};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +28,10 @@ struct SearchBody {
     query: Option<String>,
     workarea: Option<String>,
     state: Option<String>,
+    /// One `origin.kind` (ADR-0045 d22, d24; ADR-0070 d5).
+    origin_kind: Option<String>,
+    /// The authoring key, by name or id, of the tenant.
+    author: Option<String>,
     limit: Option<usize>,
     cursor: Option<String>,
 }
@@ -138,7 +143,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let req: SearchBody = parse_json(headers, body)?;
         let workarea = req
             .workarea
@@ -166,18 +171,39 @@ where
                 .with_details(json!({ "field": "/limit" })));
         }
         let after = req.cursor.as_deref().map(parse_cursor).transpose()?;
-        let page = retry_chain(|| {
-            st.app.admin_search(
-                &token,
-                req.query.as_deref(),
-                workarea.clone(),
-                state,
-                after.clone(),
-                limit,
-            )
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let origin = req
+            .origin_kind
+            .as_deref()
+            .map(|k| {
+                OriginKind::parse(k).ok_or_else(|| {
+                    ApiError::validation(
+                        "origin_kind is one of repo, doc, code, lake, chat, web, manual",
+                    )
+                    .with_details(json!({ "field": "/origin_kind" }))
+                })
+            })
+            .transpose()?;
+        let author = req
+            .author
+            .as_deref()
+            .map(|a| {
+                Reference::parse(a).map_err(|e| {
+                    ApiError::validation(e.to_string()).with_details(json!({ "field": "/author" }))
+                })
+            })
+            .transpose()?;
+        let search = AdminSearchRequest {
+            query: req.query.as_deref(),
+            workarea,
+            state,
+            origin,
+            author,
+            after,
+            limit,
+        };
+        let page = retry_chain(|| st.app.admin_search_filtered(acting.bearer(), &search))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &page_json(&page)))
     }
 
@@ -199,9 +225,9 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        let acting = acting(headers, None)?;
         let id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
-        let read = retry_chain(|| st.app.admin_read(&token, id))
+        let read = retry_chain(|| st.app.admin_read(acting.bearer(), id))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(

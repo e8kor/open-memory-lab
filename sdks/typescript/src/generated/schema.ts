@@ -188,6 +188,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/workareas/{workarea}/offers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The transitions, the mode change and the commit the caller's verbs admit on a workarea now.
+         * @description Requires: reader effective access on the workarea, or the admin key role; one the caller cannot read is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now: propose the next rung, ratify a live proposal another key made, put the workarea in progress, or commit an in-progress root; a commit the held rows refuse is not offered and names their count. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
+         */
+        get: operations["getWorkareaOffers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/workareas/{workarea}/crew": {
         parameters: {
             query?: never;
@@ -456,6 +476,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/review/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The review queue's depth and oldest held row per workarea, tenant-wide; no content.
+         * @description Requires: admin key role; every other key answers access.verb_ceiling (ADR-0045 d10, amending ADR-0026 d15). One item per workarea holding a held row: its id, path, held count and the oldest held row's time, by path. No memory id, text or author. Journals nothing. Since v0.6.4.
+         */
+        get: operations["reviewQueue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/review/verdicts/bulk": {
         parameters: {
             query?: never;
@@ -483,7 +523,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * A person's own keys to their web session key; the keys naming a user to the admin key role.
+         * @description Requires: a person's web session key (<user>-web, through its capacity credential), which lists every key naming its user, session keys among them; or the admin key role with user, which lists the keys naming that user, session keys aside (ADR-0045 d9, d13; ADR-0070 d5). Any other key answers access.verb_ceiling with details.reason session_key_only, so an agent's key never lists its person's keys; the admin key role without user answers request.validation naming user; a person's key naming another user answers access.not_found. In name order; next_cursor is opaque. Each key's grants carry the workarea's path; cut_off is a denial on universe. Journals nothing. Since v0.6.4.
+         */
+        get: operations["listKeys"];
         put?: never;
         /**
          * Issue a key under the issuer ceiling; the value appears exactly once, here.
@@ -505,7 +549,7 @@ export interface paths {
         };
         /**
          * The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its denials or deny masks.
-         * @description Requires: any live key; it reads only its own record. Each reference is {id, name} and the default workarea carries its derived path. The key's denials and its grants' per-grant deny masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+         * @description Requires: any live key; it reads only its own record. Each reference is {id, name} and the default workarea carries its derived path. person names the user a key names, with its sign-up usage and limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6, d10). The key's denials and its grants' per-grant deny masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
          */
         get: operations["whoami"];
         put?: never;
@@ -812,6 +856,146 @@ export interface paths {
         get: operations["listWebUsers"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/users/{user}/capacities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give a person's session key a capacity on workareas, review or curation.
+         * @description Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the universe node alone, is created at the first designation, and gains reader on each workarea. Each grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none and journal_seq is null. A user with no session key of that capacity answers access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. Since v0.6.4.
+         */
+        post: operations["grantWebCapacities"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/users/{user}/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set a person's quotas, or return one to the default with null.
+         * @description Requires: admin key role (ADR-0068 d5; ADR-0070 d5). Each quota sent is one web.quota_set; a member sent as null returns that quota to the default, and one not sent is left as it is. A limit is a whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers access.not_found. Answers the person's row as GET /v2/web/users serves it. Since v0.6.4.
+         */
+        post: operations["setWebUserQuota"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/users/{user}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disable a person, ending their sessions and cutting off their agent keys.
+         * @description Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin's, answers access.not_found and journals nothing. reason is accepted and not journalled in this build. Since v0.6.4.
+         */
+        post: operations["disableWebUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/users/{user}/deletion/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Close a person's pending deletion request, disabling them first.
+         * @description Requires: admin key role (ADR-0068 d6; ADR-0070 d5). The person is disabled as POST /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending request answers access.not_found. outcome is deleted, the one close this build makes. Since v0.6.4.
+         */
+        post: operations["closeWebDeletion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/session/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End the web session a capacity credential derives from.
+         * @description Requires: a capacity credential (omls_), which oml-web presents with its client identity; any other credential answers access.verb_ceiling with details.reason session_key_only. The session row ends, and every capacity credential derived from it with it (ADR-0045 d5; ADR-0070 d2, d5). Journals nothing: a session is operational state. Since v0.6.4.
+         */
+        post: operations["endWebSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything the person holds, as a JSON attachment.
+         * @description Requires: the person's web session key (<user>-web, through its capacity credential); any other key, the person's agent keys included, answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5). The memories of their root and below, every state, with text, and their keys, at most 10000 memories. Since v0.6.4.
+         */
+        get: operations["exportWebPerson"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/web/deletion-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The person asks for their account's deletion.
+         * @description Requires: the person's web session key (<user>-web, through its capacity credential); any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5). Journalled as web.deletion_requested; it ends nothing and changes no access, and an admin closes it. Since v0.6.4.
+         */
+        post: operations["requestWebDeletion"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1243,6 +1427,24 @@ export interface components {
             created_at: string;
             /** @description The version's anchor, which the reviewer judges beside the text, or null (ADR-0057 d2). */
             anchor?: components["schemas"]["Anchor"] | null;
+        };
+        /** @description One person of the tenant as GET /v2/web/users lists them and the quota update answers (ADR-0068 d5). */
+        WebUser: {
+            user: string;
+            signed_up: boolean;
+            disabled: boolean;
+            under_quotas: boolean;
+            usage: {
+                memories?: number;
+                keys?: number;
+                connections?: number;
+            };
+            quotas: {
+                memories?: number;
+                keys?: number;
+                connections?: number;
+                requests_per_minute?: number;
+            };
         };
         /** @description An allowlist entry (ADR-0045 d2): an email a person may sign in with, the ADR-0044 user it signs in as, and whether it opens the admin page. */
         WebEmail: {
@@ -2409,6 +2611,116 @@ export interface components {
              * @enum {string|null}
              */
             profile?: "curator" | null;
+            /** @description The person the key's user root names; null for a tenant key (ADR-0070 d5). */
+            person?: components["schemas"]["WhoamiPerson"] | null;
+        };
+        WhoamiPerson: {
+            user: string;
+            /** @description Whether the person is under the sign-up tenant's quotas; usage and quotas are null when not (ADR-0068 d5). */
+            under_quotas: boolean;
+            usage: {
+                memories?: number;
+                keys?: number;
+                connections?: number;
+            } | null;
+            quotas: {
+                memories?: number;
+                keys?: number;
+                connections?: number;
+                requests_per_minute?: number;
+            } | null;
+            /**
+             * Format: date-time
+             * @description When the person asked for deletion, while the request is pending (ADR-0068 d6).
+             */
+            deletion_requested_at: string | null;
+        };
+        ListedKey: {
+            /** Format: uuid */
+            id: string;
+            name: string | null;
+            role: components["schemas"]["Role"];
+            /** @enum {string} */
+            held_by: "agent" | "human" | "service";
+            /** @enum {string} */
+            credential: "bearer" | "connection" | "session";
+            /** Format: uuid */
+            user_root_id: string | null;
+            revoked: boolean;
+            /** @description A denial on universe cuts the key off (ADR-0045 d9). */
+            cut_off: boolean;
+            grants: {
+                role: components["schemas"]["Role"];
+                /** Format: uuid */
+                workarea_id: string;
+                path: string;
+            }[];
+        };
+        /** @description GET /v2/review/held with ids (ADR-0055 d10; ADR-0070 d5). */
+        HeldNamed: {
+            items: {
+                /** Format: uuid */
+                id: string;
+                /** @description The row as the held listing serves its text, or null when it is no longer held or no longer the key's to judge. */
+                item: components["schemas"]["Memory"] | null;
+            }[];
+        };
+        /** @description GET /v2/workareas/{workarea}/tree with counts=true (ADR-0045 d30; ADR-0070 d5). */
+        WorkareaCounts: {
+            items: {
+                /** Format: uuid */
+                id: string;
+                name: string;
+                /** Format: uuid */
+                parent_id: string | null;
+                path: string;
+                status: string;
+                user_root: boolean;
+                /** @enum {string} */
+                mode: "standard" | "in_progress";
+                counts: {
+                    /** @description Promoted tips. */
+                    promoted: number;
+                    /** @description Held rows outside an in-progress scope. */
+                    held: number;
+                    /** @description Held rows inside an in-progress scope. */
+                    in_progress: number;
+                    /** @description Every other state. */
+                    other: number;
+                };
+            }[];
+            next_cursor: null;
+            /** @description The node or the row count stopped at 2000. */
+            truncated: boolean;
+        };
+        WorkareaOffers: {
+            /** Format: uuid */
+            workarea_id: string;
+            status: string;
+            /** @enum {string} */
+            mode: "standard" | "in_progress";
+            transitions: {
+                /** @enum {string} */
+                op: "propose" | "ratify";
+                /**
+                 * Format: uuid
+                 * @description The live proposal a ratify names.
+                 */
+                transition_id?: string;
+                from?: string;
+                to: string;
+            }[];
+            /** @description Putting the workarea in progress, where offered; null otherwise. */
+            mode_change: {
+                /** @enum {string} */
+                to?: "in_progress";
+            } | null;
+            commit: {
+                /** @description Committing the in-progress root is offered now. */
+                offered: boolean;
+                /** @description The held rows that withhold the commit, or null. */
+                held: number | null;
+            };
         };
         KeyIssued: components["schemas"]["Key"] & {
             /** @description The secret — returned exactly once, journalled as issued-without-value. */
@@ -2531,6 +2843,11 @@ export interface components {
             /** @description The lead's oauth.issuer, or null where connections are off; doctor reads whether connections are on here, not from the discovery paths it checks (ADR-0031 d14). */
             oauth_issuer: string | null;
             build: components["schemas"]["Build"];
+            /**
+             * @description The client identity oml-web proves when it presents a capacity credential (web.client_secret), or none; with none every capacity credential is refused and doctor warns (ADR-0070 d2).
+             * @enum {string}
+             */
+            web_client?: "none" | "secret" | "mtls" | "secret+mtls";
             /** @description The scanner's rule set, how many rules it loaded and whether the personal-data rules are on, or null for a server that pins none; doctor's scan line reads it (ADR-0065 d11). Its findings are counted on the metrics listener, never here. */
             scan?: {
                 version?: string;
@@ -2732,6 +3049,10 @@ export interface operations {
                 state?: "held" | "promoted" | "demoted" | "rejected" | "erased";
                 kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
                 own?: boolean;
+                /** @description true: the scoped listing (at workarea, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, workarea, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
+                with_own?: boolean;
+                /** @description One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. Implies the with_own listing (ADR-0045 d23; ADR-0070 d5). Since v0.6.4. */
+                author?: string;
                 /** @description Rows whose anchor names this repository, with own or without it; unanchored rows are left out (ADR-0057 d4). Malformed is request.validation naming anchor_repo. */
                 anchor_repo?: components["schemas"]["AnchorRepo"];
                 /** @description Rows whose anchor path starts with these bytes; unanchored rows are left out (ADR-0057 d4). */
@@ -3339,6 +3660,8 @@ export interface operations {
                 limit?: components["parameters"]["Limit"];
                 /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
                 cursor?: components["parameters"]["Cursor"];
+                /** @description true: the whole subtree in one answer, up to 2000 nodes, each with counts of its rows by state as the caller's with_own listing shows them, counted up to 2000 rows, and truncated when either stopped there; for the admin key role every row is counted as structure. No crew, no content, and no limit or cursor beside it (ADR-0045 d30; ADR-0070 d5). Since v0.6.4. */
+                counts?: boolean;
             };
             header?: {
                 /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
@@ -3355,7 +3678,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description One page of nodes. */
+            /** @description One page of nodes, or with counts=true the subtree with its counts. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
@@ -3398,9 +3721,62 @@ export interface operations {
                      *       "next_cursor": null
                      *     }
                      */
-                    "application/json": components["schemas"]["WorkareaPage"];
+                    "application/json": components["schemas"]["WorkareaPage"] | components["schemas"]["WorkareaCounts"];
                 };
             };
+            default: components["responses"]["Error"];
+        };
+    };
+    getWorkareaOffers: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                workarea: components["parameters"]["WorkareaId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The acts offered now. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *       "status": "development",
+                     *       "mode": "standard",
+                     *       "transitions": [
+                     *         {
+                     *           "op": "propose",
+                     *           "to": "committed"
+                     *         }
+                     *       ],
+                     *       "mode_change": {
+                     *         "to": "in_progress"
+                     *       },
+                     *       "commit": {
+                     *         "offered": false,
+                     *         "held": null
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["WorkareaOffers"];
+                };
+            };
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };
@@ -4146,6 +4522,8 @@ export interface operations {
                 limit?: components["parameters"]["Limit"];
                 /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
                 cursor?: components["parameters"]["Cursor"];
+                /** @description Comma-separated memory ids: each named row as this listing serves it while it is still held and still the key's to judge, else null, in the order named; the bulk confirmation reads it (ADR-0055 d10; ADR-0070 d5). Takes no other parameter. Since v0.6.4. */
+                ids?: string[];
             };
             header?: {
                 /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
@@ -4160,7 +4538,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description One page of held items. */
+            /** @description One page of held items, or with ids each named row or null. */
             200: {
                 headers: {
                     "X-Request-Id": components["headers"]["XRequestId"];
@@ -4168,11 +4546,63 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HeldPage"];
+                    "application/json": components["schemas"]["HeldPage"] | components["schemas"]["HeldNamed"];
                 };
             };
             403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
+            default: components["responses"]["Error"];
+        };
+    };
+    reviewQueue: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The queue by workarea. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *           "path": "universe.alice",
+                     *           "held": 3,
+                     *           "oldest_at": "2026-11-09T08:12:44.000000Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": {
+                        items: {
+                            /** Format: uuid */
+                            workarea_id: string;
+                            path: string;
+                            held: number;
+                            /** Format: date-time */
+                            oldest_at: string;
+                        }[];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
             default: components["responses"]["Error"];
         };
     };
@@ -4247,6 +4677,72 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             415: components["responses"]["UnsupportedMedia"];
             429: components["responses"]["RateLimited"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listKeys: {
+        parameters: {
+            query?: {
+                /** @description The user whose keys an admin lists. */
+                user?: string;
+                /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
+                limit?: components["parameters"]["Limit"];
+                /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
+                cursor?: components["parameters"]["Cursor"];
+            };
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of keys. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *           "name": "alice-laptop",
+                     *           "role": "writer",
+                     *           "held_by": "agent",
+                     *           "credential": "bearer",
+                     *           "user_root_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *           "revoked": false,
+                     *           "cut_off": false,
+                     *           "grants": [
+                     *             {
+                     *               "role": "writer",
+                     *               "workarea_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
+                     *               "path": "universe.alice"
+                     *             }
+                     *           ]
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
+                    "application/json": {
+                        items: components["schemas"]["ListedKey"][];
+                        next_cursor: string | null;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };
@@ -5254,7 +5750,14 @@ export interface operations {
                  *       "admin": true
                  *     }
                  */
-                "application/json": components["schemas"]["WebEmail"];
+                "application/json": {
+                    email: string;
+                    /** @description A name under the creation grammar, at most 56 characters. */
+                    user: string;
+                    admin: boolean;
+                    /** @description true: un-flagging the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes (ADR-0045 d10; ADR-0070 d5). Since v0.6.4. */
+                    keep_an_admin?: boolean;
+                };
             };
         };
         responses: {
@@ -5300,6 +5803,8 @@ export interface operations {
                  */
                 "application/json": {
                     email: string;
+                    /** @description true: removing the tenant's last admin entry is refused, request.validation with details.field admin, and nothing changes (ADR-0045 d10; ADR-0070 d5). Since v0.6.4. */
+                    keep_an_admin?: boolean;
                 };
             };
         };
@@ -5355,28 +5860,335 @@ export interface operations {
                         /** @enum {string} */
                         mode: "allowlist" | "open";
                         address_limit_shared: boolean;
-                        users: {
-                            user: string;
-                            signed_up: boolean;
-                            disabled: boolean;
-                            under_quotas: boolean;
-                            usage: {
-                                memories?: number;
-                                keys?: number;
-                                connections?: number;
-                            };
-                            quotas: {
-                                memories?: number;
-                                keys?: number;
-                                connections?: number;
-                                requests_per_minute?: number;
-                            };
-                        }[];
+                        users: components["schemas"]["WebUser"][];
                         deletions: {
                             user: string;
                             /** Format: date-time */
                             requested_at: string;
                         }[];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    grantWebCapacities: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description The person's user name. */
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "capacity": "review",
+                 *       "workareas": [
+                 *         "metals-crew"
+                 *       ]
+                 *     }
+                 */
+                "application/json": {
+                    /** @enum {string} */
+                    capacity: "review" | "curate";
+                    /** @description Each by id or name. */
+                    workareas: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description The key that holds the capacity and the grants it gained. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        key: {
+                            /** Format: uuid */
+                            id: string;
+                            name: string | null;
+                        };
+                        grants_added: components["schemas"]["WhoamiGrant"][];
+                        /** @description The seq of the last grant.issued, or null when none was added. */
+                        journal_seq: number | null;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    setWebUserQuota: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description The person's user name. */
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "memories": 2000,
+                 *       "keys": null
+                 *     }
+                 */
+                "application/json": {
+                    memories?: number | null;
+                    keys?: number | null;
+                    connections?: number | null;
+                    requests_per_minute?: number | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The person's row. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebUser"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    disableWebUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description The person's user name. */
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Disabled. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description The agent keys denied on universe. */
+                        keys_cut_off: number;
+                        /** @description The seq of web.user_disabled. */
+                        journal_seq: number;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    closeWebDeletion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                /** @description The person's user name. */
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "outcome": "deleted"
+                 *     }
+                 */
+                "application/json": {
+                    /** @enum {string} */
+                    outcome: "deleted";
+                };
+            };
+        };
+        responses: {
+            /** @description Closed. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description The seq of web.deletion_closed. */
+                        journal_seq: number;
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    endWebSession: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session ended. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    exportWebPerson: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export, with Content-Disposition attachment. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    /** @description attachment; filename="oml-export.json" */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @constant */
+                        format: "oml-export/personal-1";
+                        user: string | null;
+                        /** Format: date-time */
+                        exported_at: string;
+                        memories: Record<string, never>[];
+                        keys: Record<string, never>[];
+                    };
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    requestWebDeletion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The pending request. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        requested_at: string | null;
+                        /** @description The seq of web.deletion_requested. */
+                        journal_seq: number;
                     };
                 };
             };
@@ -6159,6 +6971,13 @@ export interface operations {
                     workarea?: string;
                     /** @enum {string} */
                     state?: "held" | "promoted" | "rejected" | "superseded" | "demoted";
+                    /**
+                     * @description One origin.kind (ADR-0045 d22, d24; ADR-0070 d5). Since v0.6.4.
+                     * @enum {string}
+                     */
+                    origin_kind?: "repo" | "doc" | "code" | "lake" | "chat" | "web" | "manual";
+                    /** @description The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4. */
+                    author?: string;
                     limit?: number;
                     cursor?: string;
                 };

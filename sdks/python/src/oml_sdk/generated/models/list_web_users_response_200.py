@@ -12,9 +12,7 @@ if TYPE_CHECKING:
     from ..models.list_web_users_response_200_deletions_item import (
         ListWebUsersResponse200DeletionsItem,
     )
-    from ..models.list_web_users_response_200_users_item import (
-        ListWebUsersResponse200UsersItem,
-    )
+    from ..models.web_user import WebUser
 
 
 T = TypeVar("T", bound="ListWebUsersResponse200")
@@ -26,13 +24,13 @@ class ListWebUsersResponse200:
     Attributes:
         mode (ListWebUsersResponse200Mode):
         address_limit_shared (bool):
-        users (list[ListWebUsersResponse200UsersItem]):
+        users (list[WebUser]):
         deletions (list[ListWebUsersResponse200DeletionsItem]):
     """
 
     mode: ListWebUsersResponse200Mode
     address_limit_shared: bool
-    users: list[ListWebUsersResponse200UsersItem]
+    users: list[WebUser]
     deletions: list[ListWebUsersResponse200DeletionsItem]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -69,9 +67,7 @@ class ListWebUsersResponse200:
         from ..models.list_web_users_response_200_deletions_item import (
             ListWebUsersResponse200DeletionsItem,
         )
-        from ..models.list_web_users_response_200_users_item import (
-            ListWebUsersResponse200UsersItem,
-        )
+        from ..models.web_user import WebUser
 
         d = dict(src_dict)
         mode = ListWebUsersResponse200Mode(d.pop("mode"))
@@ -81,7 +77,7 @@ class ListWebUsersResponse200:
         users = []
         _users = d.pop("users")
         for users_item_data in _users:
-            users_item = ListWebUsersResponse200UsersItem.from_dict(users_item_data)
+            users_item = WebUser.from_dict(users_item_data)
 
             users.append(users_item)
 

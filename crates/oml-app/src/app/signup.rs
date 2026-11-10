@@ -18,7 +18,7 @@ use oml_domain::{Role, event_types};
 use super::{App, Caller, require_role};
 use crate::ports::{Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, WebStore};
 use crate::types::{
-    AdminSearch, AppError, Credential, DeletionRequest, KeyRecord, SignupPolicy, UserUsage,
+    AdminSearch, AppError, Bearer, Credential, DeletionRequest, KeyRecord, SignupPolicy, UserUsage,
     WebEntry,
 };
 use oml_domain::MemoryStatus;
@@ -50,6 +50,24 @@ impl SignupState {
             windows: Mutex::new(BTreeMap::new()),
         }
     }
+}
+
+/// What disabling a person did (ADR-0068 d8): the bearer and connector
+/// keys cut off on `universe`, and the seq of `web.user_disabled`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserDisabled {
+    pub keys_cut_off: usize,
+    pub journal_seq: u64,
+}
+
+/// The person a key names, as `GET /v2/whoami` serves it (ADR-0070 d5):
+/// `limits` is their usage and quotas where they are under the sign-up
+/// quotas.
+#[derive(Debug, Clone)]
+pub struct Person {
+    pub user: Name,
+    pub limits: Option<(UserUsage, Quotas)>,
+    pub deletion_requested_at: Option<oml_domain::EventTime>,
 }
 
 /// One person of the sign-up tenant as the admin's users page lists them
@@ -333,7 +351,11 @@ where
     /// every entry of the user and ends their sessions, then one
     /// `key.denied` on `universe` for each live bearer and connector key of
     /// the root. Session keys are reached only from sessions, which ended.
-    pub async fn web_disable_user(&self, admin: &Caller, user: &Name) -> Result<usize, AppError> {
+    pub async fn web_disable_user(
+        &self,
+        admin: &Caller,
+        user: &Name,
+    ) -> Result<UserDisabled, AppError> {
         require_role(&admin.key, Role::Admin, "web_users")?;
         let tenant_id = admin.key.tenant_id;
         // Only a person the tenant holds, and never an admin: a name no
@@ -369,12 +391,13 @@ where
             Some(admin.key.key_id),
             json!({ "user": user.as_str(), "by_key_id": admin.key.key_id.to_string() }),
         )?;
-        self.commit(
-            event,
-            MetadataFold::UserDisabled { user: user.clone() },
-            None,
-        )
-        .await?;
+        let receipt = self
+            .commit(
+                event,
+                MetadataFold::UserDisabled { user: user.clone() },
+                None,
+            )
+            .await?;
         let mut cut = 0;
         if let Some(root) = self.signup_root(tenant_id, user).await? {
             let universe_id = self.universe(tenant_id).await?;
@@ -396,13 +419,16 @@ where
                 cut += 1;
             }
         }
-        Ok(cut)
+        Ok(UserDisabled {
+            keys_cut_off: cut,
+            journal_seq: receipt.seq,
+        })
     }
 
     /// `request_deletion` (ADR-0068 d6), as `<user>-web`: the pending
     /// request, journalled as `web.deletion_requested`. It ends nothing and
     /// changes no access.
-    pub async fn web_request_deletion(&self, web: &Caller) -> Result<(), AppError> {
+    pub async fn web_request_deletion(&self, web: &Caller) -> Result<u64, AppError> {
         let user = web
             .key
             .session_user
@@ -418,9 +444,10 @@ where
             Some(web.key.key_id),
             json!({ "user": user.as_str() }),
         )?;
-        self.commit(event, MetadataFold::DeletionRequested { user }, None)
-            .await?;
-        Ok(())
+        Ok(self
+            .commit(event, MetadataFold::DeletionRequested { user }, None)
+            .await?
+            .seq)
     }
 
     /// Whether the session's user has a deletion request pending.
@@ -448,7 +475,7 @@ where
     /// `close_deletion` (ADR-0068 d6): the person disabled (d8), then the
     /// request closed, journalled as `web.deletion_closed`. The bytes wait
     /// for erasure.
-    pub async fn web_close_deletion(&self, admin: &Caller, user: &Name) -> Result<(), AppError> {
+    pub async fn web_close_deletion(&self, admin: &Caller, user: &Name) -> Result<u64, AppError> {
         require_role(&admin.key, Role::Admin, "web_users")?;
         let tenant_id = admin.key.tenant_id;
         if !self
@@ -470,13 +497,14 @@ where
             Some(admin.key.key_id),
             json!({ "user": user.as_str(), "by_key_id": admin.key.key_id.to_string() }),
         )?;
-        self.commit(
-            event,
-            MetadataFold::DeletionClosed { user: user.clone() },
-            None,
-        )
-        .await?;
-        Ok(())
+        Ok(self
+            .commit(
+                event,
+                MetadataFold::DeletionClosed { user: user.clone() },
+                None,
+            )
+            .await?
+            .seq)
     }
 
     /// `GET /v2/web/users`, admin by key role (ADR-0068 d5, d6, d11): the
@@ -538,6 +566,39 @@ where
             self.journal.user_usage(tenant_id, root).await?,
             self.quotas_of(tenant_id, root).await?,
         )))
+    }
+
+    /// The person a key names, for `GET /v2/whoami`'s `person` (ADR-0070
+    /// d5; ADR-0068 d5, d6, d10): the user of its root, whether it is
+    /// under the sign-up quotas, its usage and limits there, and when the
+    /// person asked for deletion. `None` for a key that names no user.
+    pub async fn whoami_person(&self, bearer: Bearer<'_>) -> Result<Option<Person>, AppError> {
+        let caller = self.authenticate_bearer(bearer).await?;
+        let tenant_id = caller.key.tenant_id;
+        let Some(root) = caller.key.user else {
+            return Ok(None);
+        };
+        let Some(user) = self
+            .journal
+            .workarea(tenant_id, root)
+            .await?
+            .map(|w| w.name)
+        else {
+            return Ok(None);
+        };
+        let limits = self.web_own_limits(&caller).await?;
+        let deletion_requested_at = self
+            .journal
+            .web_deletion_requests(tenant_id)
+            .await?
+            .into_iter()
+            .find(|r| r.user == user)
+            .map(|r| r.requested_at);
+        Ok(Some(Person {
+            user,
+            limits,
+            deletion_requested_at,
+        }))
     }
 
     /// Whether the person holds any bearer or connector key: a sign-in

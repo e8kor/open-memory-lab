@@ -184,6 +184,9 @@ struct TenantState {
     /// Web sessions by their token's digest (postgres-schema.md
     /// `web_sessions`; ADR-0045 d5).
     web_sessions: BTreeMap<[u8; 32], WebSessionRecord>,
+    /// Capacity credentials by their digest: the session's token digest
+    /// and the capacity (ADR-0070 d2).
+    web_session_credentials: BTreeMap<[u8; 32], ([u8; 32], String)>,
     /// Claim edges by id.
     claim_edges: BTreeMap<Uuid, ClaimEdgeRecord>,
     /// Brief edges by id (ADR-0046 d7).
@@ -3330,6 +3333,7 @@ impl WebStore for MemStore {
         &self,
         session: WebSessionRecord,
         replaces: Option<Sha256Hash>,
+        credentials: Vec<(&'static str, Sha256Hash)>,
     ) -> Result<(), StoreError> {
         if let Some(old) = replaces
             && let Some(found) =
@@ -3349,8 +3353,30 @@ impl WebStore for MemStore {
                 "a session names an entry the tenant does not hold".to_owned(),
             ));
         }
+        for (capacity, digest) in credentials {
+            state
+                .web_session_credentials
+                .insert(digest.0, (session.token_hash.0, capacity.to_owned()));
+        }
         state.web_sessions.insert(session.token_hash.0, session);
         Ok(())
+    }
+
+    async fn web_session_credential(
+        &self,
+        credential_hash: &Sha256Hash,
+    ) -> Result<Option<(WebSessionRecord, String)>, StoreError> {
+        // A credential ends with its session: one whose session row is
+        // gone, however it ended, names nothing (ADR-0070 d2).
+        Ok(self
+            .find_in_tenants(|state| {
+                let (token, capacity) = state.web_session_credentials.get(&credential_hash.0)?;
+                state
+                    .web_sessions
+                    .get(token)
+                    .map(|s| (s.clone(), capacity.clone()))
+            })
+            .map(|found| found.row))
     }
 
     async fn web_session(
