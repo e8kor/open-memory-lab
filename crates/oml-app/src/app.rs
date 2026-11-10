@@ -1068,7 +1068,7 @@ fn recall_query_digest(
         // the list's workarea ids, so a `scope` recall digests as it did
         // before (ADR-0072 d9).
         if let Some(record) = federation
-            && record.sources != Value::from("scope")
+            && record.sources != "scope"
         {
             members.insert("sources".to_owned(), record.sources.clone());
         }
