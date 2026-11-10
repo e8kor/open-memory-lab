@@ -683,8 +683,12 @@ pub struct OwnHeldScope {
     pub nodes: Vec<Uuid>,
     /// Inside an in-progress scope, the held rows of every author on
     /// `nodes`, not the listed keys' alone (ADR-0030 d3). The core sets it
-    /// only when every node of `nodes` lies inside the scope's root.
+    /// only when every node of `nodes` lies inside the scope's root. Another
+    /// author's row is read only when the scan neither held it nor last
+    /// read it under another rule set than `current_scanner`, the server's
+    /// own (ADR-0065 d15).
     pub any_author: bool,
+    pub current_scanner: Option<String>,
 }
 
 /// The health of a tenant's integer postings, for doctor (ADR-0052 d12):

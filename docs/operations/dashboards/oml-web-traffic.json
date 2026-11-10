@@ -231,6 +231,46 @@
           "showLegend": true
         }
       }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Sign-in provider failures",
+      "description": "Sign-in exchanges that failed, by provider and reason.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "refId": "A",
+          "expr": "sum by (provider, reason) (increase(oml_web_exchanges_failed_total[$__rate_interval]))",
+          "legendFormat": "{{provider}} {{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      }
     }
   ]
 }

@@ -454,6 +454,7 @@ pub fn held_memory(
         lineage_principals: vec![author_principal.to_owned()],
         lineage_key_ids: vec![author_key_id],
         scan_finding: None,
+        scanned_under: None,
         created_at: EventTime::parse("2026-10-29T13:00:00.000000Z").expect("fixture time"),
         guardrail: None,
         valid: Default::default(),
@@ -981,6 +982,7 @@ pub trait KeywordAllReads: Retriever {
                 any_author: false,
                 author_key_ids: author_key_ids.to_vec(),
                 nodes: readable.to_vec(),
+                current_scanner: None,
             }),
             expired_at: None,
         };
@@ -1589,6 +1591,7 @@ pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: Jour
             author_key_ids: Vec::new(),
             nodes,
             any_author: true,
+            current_scanner: None,
         }),
     };
     for kind in store.retrievers() {
@@ -4552,6 +4555,7 @@ pub async fn a_tips_listing_holds_only_the_promoted_tips_on_its_nodes<S: Journal
         listing(ListingScope::Tips {
             nodes,
             held: Vec::new(),
+            current_scanner: None,
         })
     };
 
@@ -6242,6 +6246,7 @@ pub async fn a_claim_edges_page_is_newest_first_resumes_after_its_cursor_and_fil
         held_nodes: Vec::new(),
         readable_nodes: vec![root, side],
         reader_key_id: world.proposer.key_id,
+        current_scanner: None,
     };
     let all = select(None, None);
     let at = |e: &ClaimEdgeRecord| ClaimEdgePosition {
@@ -6376,6 +6381,7 @@ pub async fn a_claim_edges_page_holds_only_edges_whose_endpoints_are_promoted_or
         held_nodes: Vec::new(),
         readable_nodes: nodes,
         reader_key_id: reader,
+        current_scanner: None,
     };
     let page = |selection: ClaimEdgeSelection, limit: usize| async move {
         store
@@ -9869,6 +9875,7 @@ fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
             any_author: false,
             author_key_ids: vec![key],
             nodes: vec![wa],
+            current_scanner: None,
         }),
         expired_at: None,
     }
@@ -11714,6 +11721,7 @@ pub async fn similar_candidates_are_the_scopes_served_tips_and_own_held_rows_hol
             any_author: false,
             author_key_ids: keys_,
             nodes,
+            current_scanner: None,
         }),
         expired_at: None,
         anchor: Default::default(),

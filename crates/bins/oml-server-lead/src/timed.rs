@@ -343,6 +343,14 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn scan_backlog(
+        &self,
+        tenant_id: Uuid,
+        current: Option<&str>,
+    ) -> impl Future<Output = Result<(u64, u64), StoreError>> + Send {
+        timed("scan_backlog", self.inner.scan_backlog(tenant_id, current))
+    }
+
     fn held_count(
         &self,
         tenant_id: Uuid,

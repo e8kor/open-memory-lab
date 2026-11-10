@@ -327,6 +327,14 @@ pub enum MetadataFold {
         memory_id: Uuid,
         check: SourceCheck,
     },
+    /// `scan.findings_recorded`: each held version named takes
+    /// `scanned_under` as the rule set it was last scanned under, and keeps
+    /// any finding it had, else takes the one the rescan found; a version no
+    /// longer held is left as it is (ADR-0065 d13, d15; ADR-0074 d28).
+    FindingsRecorded {
+        scanned_under: Option<String>,
+        versions: Vec<(Uuid, Option<String>)>,
+    },
     /// `lifecycle.supersede`: the ratified successor takes the tip from the
     /// version it replaces, which stays promoted. The store compare-and-sets
     /// that `replaced` is still the promoted tip under the successor's own
@@ -912,6 +920,16 @@ pub trait JournalStore: Retriever + Send + Sync {
         workarea_id: Uuid,
         claim_key: &str,
     ) -> impl Future<Output = Result<ClaimKeyState, StoreError>> + Send;
+
+    /// How many of the tenant's versions, erased ones aside, were last
+    /// scanned under a rule set other than `current`: the held ones, then
+    /// every one. Doctor's `scan_held_unrescanned` and `scan_rescan_due`
+    /// (ADR-0074 d28).
+    fn scan_backlog(
+        &self,
+        tenant_id: Uuid,
+        current: Option<&str>,
+    ) -> impl Future<Output = Result<(u64, u64), StoreError>> + Send;
 
     /// How many versions on `nodes` are in state `held`, dead-lettered ones
     /// included: the commit's precondition and doctor's count (ADR-0030 d6,

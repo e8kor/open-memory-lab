@@ -1057,6 +1057,11 @@ pub struct MemoryRecord {
     pub lineage_principals: Vec<String>,
     pub lineage_key_ids: Vec<Uuid>,
     pub scan_finding: Option<String>,
+    /// The rule-set version that last scanned this version: the scanner's
+    /// at admission, a rescan's once it re-evaluates a held version; `None`
+    /// for a row stored before the stamp or by a scanner that pins none
+    /// (ADR-0065 d1, d15).
+    pub scanned_under: Option<String>,
     pub created_at: EventTime,
     /// A guardrail version's own fields; `None` for every other kind and for
     /// a guardrail's retirement version, which carries neither (proposed
@@ -1911,8 +1916,14 @@ pub enum ListingScope {
     /// Inside an in-progress scope, the held versions of every author on
     /// the `held` nodes too, never a retirement version, of kind `memory` or
     /// `derived_fact`: the served nodes inside the scope's root (ADR-0030
-    /// d3); empty elsewhere.
-    Tips { nodes: Vec<Uuid>, held: Vec<Uuid> },
+    /// d3); empty elsewhere. Of those, only a version the scan neither held
+    /// nor last read under another rule set than `current_scanner`, the
+    /// server's own (ADR-0065 d15).
+    Tips {
+        nodes: Vec<Uuid>,
+        held: Vec<Uuid>,
+        current_scanner: Option<String>,
+    },
 }
 
 /// A listing's predicates, re-applied on every page: a cursor carries a
@@ -2011,8 +2022,11 @@ pub struct ClaimEdgeSelection {
     pub reader_key_id: Uuid,
     /// ...or held, a memory or derived fact and never a retirement version,
     /// on one of these nodes: the served nodes inside the read's
-    /// in-progress root (ADR-0030 d3); empty outside one.
+    /// in-progress root (ADR-0030 d3); empty outside one. Of those, only a
+    /// version with no scan finding last scanned under `current_scanner`,
+    /// the server's rule set (ADR-0065 d15).
     pub held_nodes: Vec<Uuid>,
+    pub current_scanner: Option<String>,
 }
 
 /// Where a claim-edge page resumes: the `created_at` and id of the last

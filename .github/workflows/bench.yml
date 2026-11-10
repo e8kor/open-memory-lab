@@ -55,6 +55,9 @@ jobs:
           PGPASSWORD: oml_dev_only
           BENCH_CACHE: ${{ runner.temp }}/bench-data
           BENCH_PYTHON: python
+          # The five pipelines the booted lead serves without a model (eval/bench/boot.sh); bm25-rerank
+          # and the sparse ones need model files this job does not fetch (eval/bench/README.md).
+          BENCH_PIPELINES: keyword-all keyword-any bm25 bm25-trigram bm25-postings
           DATASETS: ${{ inputs.datasets || 'synthetic scifact' }}
         # shellcheck disable=SC2086 # one dataset per word
         run: bash eval/bench/run.sh "$RUNNER_TEMP/bench" $DATASETS
