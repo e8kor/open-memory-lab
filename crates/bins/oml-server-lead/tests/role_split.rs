@@ -7,10 +7,13 @@
 
 use std::io::Read as _;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use oml_test_pg::{
+    DB_N, DatabaseOwner, base_url, drop_db, mint_database_owned_by, owner_url, run_tag, serving_url,
+};
 use sqlx::postgres::PgConnection;
 use sqlx::{Connection, Executor};
 
@@ -21,28 +24,6 @@ const BOOT_DEADLINE: Duration = Duration::from_secs(90);
 // Throwaway databases and role pairs (the http_api.rs pattern)
 // ---------------------------------------------------------------------------
 
-fn base_url() -> String {
-    std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL names a throwaway PostgreSQL cluster; no suite defaults to one, so none reaches a live server")
-}
-
-/// The password of every minted test role; the roles live only as long as
-/// their throwaway database.
-const PAIR_PASSWORD: &str = "oml_test_pair";
-
-/// `db` at `DATABASE_URL`'s host, logged in as `role` with `password`.
-fn login_url(db: &str, role: &str, password: &str) -> String {
-    let base = base_url();
-    let (scheme, rest) = base
-        .split_once("://")
-        .expect("DATABASE_URL is a postgres:// URL");
-    let (_, host_path) = rest.rsplit_once('@').expect("DATABASE_URL names its user");
-    let (host, _) = host_path
-        .split_once('/')
-        .expect("DATABASE_URL names a database path");
-    format!("{scheme}://{role}:{password}@{host}/{db}")
-}
-
 /// `db` through `DATABASE_URL`'s own login.
 fn admin_url(db: &str) -> String {
     let base = base_url();
@@ -52,28 +33,6 @@ fn admin_url(db: &str) -> String {
     format!("{prefix}/{db}")
 }
 
-/// `db` through the owner login of its role pair (ADR-0034 d2, d8).
-fn owner_url(db: &str) -> String {
-    login_url(db, &format!("{db}_owner"), PAIR_PASSWORD)
-}
-
-/// `db` through the serving login of its role pair (ADR-0034 d2, d8).
-fn serving_url(db: &str) -> String {
-    login_url(db, &format!("{db}_serving"), PAIR_PASSWORD)
-}
-
-/// Eight hex digits of the clock, so a name a crashed earlier run left
-/// behind on the cluster under the same pid and counter is not reused.
-fn run_tag() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock after the epoch")
-        .subsec_nanos();
-    format!("{nanos:08x}")
-}
-
-static DB_N: AtomicU64 = AtomicU64::new(0);
-
 fn fresh_name() -> String {
     format!(
         "oml_test_split_{}_{}_{}",
@@ -81,55 +40,6 @@ fn fresh_name() -> String {
         DB_N.fetch_add(1, Ordering::SeqCst),
         run_tag()
     )
-}
-
-/// Who owns a minted database: the owner of its pair, as the split has it,
-/// or the serving login, as every unsplit install has it (ADR-0034 d5).
-#[derive(Clone, Copy)]
-enum DatabaseOwner {
-    Owner,
-    Serving,
-}
-
-/// Mints `db`'s owner/serving role pair, `LOGIN` and no other attribute,
-/// and creates `db` owned by `owner` (ADR-0034 d2, d8); `false`, with
-/// `did not run: <role> cannot create roles` printed, when `DATABASE_URL`'s
-/// role is not the superuser minting takes, as the maintainer's local `oml`
-/// (CREATEDB alone) is not. Under `OML_TEST_REQUIRE_SPLIT=1`, which CI sets,
-/// the same condition fails the test, so no run passes vacuously.
-async fn mint_database(db: &str, owner: DatabaseOwner) -> bool {
-    let mut admin = PgConnection::connect(&base_url())
-        .await
-        .expect("admin connect");
-    let (role, mints): (String, bool) = sqlx::query_as(
-        "SELECT current_user::text, rolsuper FROM pg_roles WHERE rolname = current_user",
-    )
-    .fetch_one(&mut admin)
-    .await
-    .expect("role attributes");
-    if !mints {
-        assert!(
-            std::env::var("OML_TEST_REQUIRE_SPLIT").as_deref() != Ok("1"),
-            "{role} cannot create roles, and OML_TEST_REQUIRE_SPLIT=1 requires the role pair (ADR-0034 d8)"
-        );
-        println!("did not run: {role} cannot create roles");
-        return false;
-    }
-    for role in ["owner", "serving"] {
-        admin
-            .execute(format!("CREATE ROLE {db}_{role} LOGIN PASSWORD '{PAIR_PASSWORD}'").as_str())
-            .await
-            .expect("mint the role pair");
-    }
-    let owner = match owner {
-        DatabaseOwner::Owner => "owner",
-        DatabaseOwner::Serving => "serving",
-    };
-    admin
-        .execute(format!("CREATE DATABASE {db} OWNER {db}_{owner}").as_str())
-        .await
-        .expect("create throwaway database");
-    true
 }
 
 /// A throwaway database `DATABASE_URL`'s own role creates and owns, which
@@ -142,19 +52,6 @@ async fn plain_database(db: &str) {
         .execute(format!("CREATE DATABASE {db}").as_str())
         .await
         .expect("create throwaway database");
-}
-
-async fn drop_db(name: &str) {
-    if let Ok(mut admin) = PgConnection::connect(&base_url()).await {
-        let _ = admin
-            .execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
-            .await;
-        for role in ["serving", "owner"] {
-            let _ = admin
-                .execute(format!("DROP ROLE IF EXISTS {name}_{role}").as_str())
-                .await;
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -371,7 +268,7 @@ async fn a_boot_over_one_url_exits_with_postgres_role_split_same_role_and_binds_
 #[tokio::test]
 async fn a_boot_over_an_unsplit_database_exits_with_serving_role_owns() {
     let db = fresh_name();
-    if !mint_database(&db, DatabaseOwner::Serving).await {
+    if !mint_database_owned_by(&db, DatabaseOwner::Serving).await {
         return;
     }
     let mut lead = Lead::spawn(&serving_url(&db), Some(&owner_url(&db)));
@@ -383,7 +280,7 @@ async fn a_boot_over_an_unsplit_database_exits_with_serving_role_owns() {
 #[tokio::test]
 async fn a_boot_after_a_migration_grants_truncate_exits_with_serving_role_privileged() {
     let db = fresh_name();
-    if !mint_database(&db, DatabaseOwner::Owner).await {
+    if !mint_database_owned_by(&db, DatabaseOwner::Owner).await {
         return;
     }
     // A first boot migrates and serves; the grant then stands in for a
@@ -414,7 +311,7 @@ async fn a_boot_after_a_migration_grants_truncate_exits_with_serving_role_privil
 #[tokio::test]
 async fn once_the_listener_binds_pg_stat_activity_shows_no_owner_connection() {
     let db = fresh_name();
-    if !mint_database(&db, DatabaseOwner::Owner).await {
+    if !mint_database_owned_by(&db, DatabaseOwner::Owner).await {
         return;
     }
     let mut lead = Lead::spawn(&serving_url(&db), Some(&owner_url(&db)));
