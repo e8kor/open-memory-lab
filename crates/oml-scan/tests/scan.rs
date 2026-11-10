@@ -916,11 +916,22 @@ fn a_run_of_variation_selectors_is_held_and_one_after_a_character_is_not() {
         .map(|b| char::from_u32(0xE0100 + u32::from(b)).expect("a selector"))
         .collect();
     let smuggled = format!("look \u{1F600}{payload} here");
-    assert!(rules_of(&smuggled).contains(&"variation-run"), "{:?}", rules_of(&smuggled));
+    assert!(
+        rules_of(&smuggled).contains(&"variation-run"),
+        "{:?}",
+        rules_of(&smuggled)
+    );
     let low = format!("look \u{1F600}\u{FE00}\u{FE01} here");
     assert!(rules_of(&low).contains(&"variation-run"));
-    for clean in ["a heart \u{2764}\u{FE0F} and \u{263A}\u{FE0E}", "\u{8FBB}\u{E0100} is a variant"] {
-        assert_eq!(scanner.scan(&[("/body", clean)]), Verdict::Pass, "{clean:?}");
+    for clean in [
+        "a heart \u{2764}\u{FE0F} and \u{263A}\u{FE0E}",
+        "\u{8FBB}\u{E0100} is a variant",
+    ] {
+        assert_eq!(
+            scanner.scan(&[("/body", clean)]),
+            Verdict::Pass,
+            "{clean:?}"
+        );
     }
 }
 
