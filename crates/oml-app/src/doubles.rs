@@ -1465,6 +1465,21 @@ fn apply_fold(
                 memory.source_check = Some(Box::new(check));
             }
         }
+        MetadataFold::FindingsRecorded {
+            scanned_under,
+            versions,
+        } => {
+            for (memory_id, finding) in versions {
+                if let Some(memory) = state.memories.get_mut(&memory_id)
+                    && memory.status == MemoryStatus::Held
+                {
+                    memory.scanned_under.clone_from(&scanned_under);
+                    if memory.scan_finding.is_none() {
+                        memory.scan_finding = finding;
+                    }
+                }
+            }
+        }
         MetadataFold::TipSuperseded {
             successor,
             replaced,
@@ -1941,7 +1956,10 @@ impl Retriever for MemStore {
             }
             scope.own_held.as_ref().is_some_and(|own| {
                 m.status == MemoryStatus::Held
-                    && (own.any_author || own.author_key_ids.contains(&m.author_key_id))
+                    && (own.author_key_ids.contains(&m.author_key_id)
+                        || (own.any_author
+                            && m.scan_finding.is_none()
+                            && m.scanned_under == own.current_scanner))
                     && own.nodes.contains(&m.workarea_id)
             })
         };
@@ -2418,12 +2436,18 @@ impl JournalStore for MemStore {
             ListingScope::Own { key_ids, masked } => {
                 key_ids.contains(&m.author_key_id) && !masked.contains(&m.workarea_id)
             }
-            ListingScope::Tips { nodes, held } => {
+            ListingScope::Tips {
+                nodes,
+                held,
+                current_scanner,
+            } => {
                 nodes.contains(&m.workarea_id)
                     && ((m.status == MemoryStatus::Promoted && m.is_tip)
                         || (held.contains(&m.workarea_id)
                             && m.status == MemoryStatus::Held
                             && !m.retirement
+                            && m.scan_finding.is_none()
+                            && &m.scanned_under == current_scanner
                             && HIT_KINDS.contains(&m.kind)))
             }
         };
@@ -2486,6 +2510,27 @@ impl JournalStore for MemStore {
                 greatest_version: acc.greatest_version.max(Some(m.version)),
                 live: acc.live || LIVE.contains(&m.status),
             }))
+    }
+
+    async fn scan_backlog(
+        &self,
+        tenant_id: Uuid,
+        current: Option<&str>,
+    ) -> Result<(u64, u64), StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok((0, 0));
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let older: Vec<&MemoryRecord> = state
+            .memories
+            .values()
+            .filter(|m| m.status != MemoryStatus::Erased && m.scanned_under.as_deref() != current)
+            .collect();
+        let held = older
+            .iter()
+            .filter(|m| m.status == MemoryStatus::Held)
+            .count();
+        Ok((held as u64, older.len() as u64))
     }
 
     async fn held_count(&self, tenant_id: Uuid, nodes: &[Uuid]) -> Result<u64, StoreError> {
@@ -3153,6 +3198,8 @@ impl JournalStore for MemStore {
                         || m.author_key_id == selection.reader_key_id
                         || (m.status == MemoryStatus::Held
                             && !m.retirement
+                            && m.scan_finding.is_none()
+                            && m.scanned_under == selection.current_scanner
                             && HIT_KINDS.contains(&m.kind)
                             && selection.held_nodes.contains(&m.workarea_id)))
             })

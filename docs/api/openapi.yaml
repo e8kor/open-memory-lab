@@ -2573,7 +2573,7 @@ paths:
           content:
             application/json:
               example:
-                scanner_version: oml-scan/1
+                scanner_version: oml-scan/1.1
                 scanned: 2
                 findings:
                 - artifact_id: 00000000-0000-4000-8000-0000000000a1
@@ -2587,6 +2587,31 @@ paths:
                 by_rule:
                 - { class: secret.api_token, rule: github-token, action: veto, count: 1 }
                 next_after_seq: null
+                recorded: 0
+                held_unrescanned: 0
+                rescan_due: 0
+              schema: { $ref: '#/components/schemas/RescanReport' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [admin]
+      operationId: adminRescanRecordHeld
+      summary: Rescan one window as the read does, and record each held version's findings under the server's rule set.
+      description: 'Requires: admin key role (ADR-0065 d13, d15; ADR-0074 d28); every other role answers access.verb_ceiling. Answers what the read answers. Each held version of the window takes the server''s rule set as its scanned_under, and a finding the rescan made becomes its scan finding unless it has one; journalled once per window as scan.findings_recorded {scanned_under, versions: [{artifact_id, findings: [{class, rule, action, at}]}]}, an empty findings list when there are none, when the window holds any held version, else nothing. Inside an in-progress workarea another author''s held version is served only when scanned under the server''s rule set and without a finding. Promotes, rejects and deletes nothing. Takes no Idempotency-Key: a repeat reads the window again and journals what it read again, and the stored state it leaves is the same. Since v0.6.3.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: after_seq, in: query, required: false, schema: { type: integer, minimum: 0, default: 0 }, description: 'Rescan the submissions journalled after this sequence number.' }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 1000, default: 1000 }, description: 'The most journal events this window reads.' }
+      responses:
+        '200':
+          description: What this window found, and how many held versions it recorded.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
               schema: { $ref: '#/components/schemas/RescanReport' }
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
@@ -4350,7 +4375,7 @@ components:
     RescanReport:
       type: object
       description: One rescan window (ADR-0065 d13). No field carries a version's text, claim key or anchor value.
-      required: [scanner_version, scanned, findings, by_rule, next_after_seq]
+      required: [scanner_version, scanned, findings, by_rule, next_after_seq, recorded, held_unrescanned, rescan_due]
       additionalProperties: false
       properties:
         scanner_version: { type: [string, 'null'] }
@@ -4382,6 +4407,9 @@ components:
               action: { type: string, enum: [veto, hold] }
               count: { type: integer, minimum: 1 }
         next_after_seq: { type: [integer, 'null'], description: 'The after_seq of the next window, or null at the chain head.' }
+        recorded: { type: integer, minimum: 0, description: 'Held versions whose findings this call recorded under the server''s rule set (ADR-0065 d15; ADR-0074 d28); 0 for the read.' }
+        held_unrescanned: { type: integer, minimum: 0, description: 'After this call, the tenant''s held versions last scanned under another rule set than the server''s, which stay their authors'' alone in in-progress workareas: doctor''s scan_held_unrescanned (ADR-0074 d28).' }
+        rescan_due: { type: integer, minimum: 0, description: 'After this call, every stored version, erased ones aside, last scanned under another rule set: doctor''s scan_rescan_due (ADR-0074 d28).' }
 
     Build:
       type: object
