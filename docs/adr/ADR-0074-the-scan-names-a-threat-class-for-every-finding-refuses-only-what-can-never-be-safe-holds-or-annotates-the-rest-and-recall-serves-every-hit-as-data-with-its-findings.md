@@ -18,10 +18,13 @@ a hold finding stays author-only inside an in-progress subtree, d20; a held vers
 an older rule set stays author-only until rescanned, d28), ADR-0045 (d2: adding an allowlist
 entry or changing its user or admin flag needs a person session, d25), ADR-0046 (d2, as ADR-0055
 d2 amended it, and ADR-0044 d8: a person approving a hold finding their own agent wrote counts
-only in a single-person tenant, d26)
+only in a single-person tenant, d26), and ADR-0065's amendment of 2026-11-10 (its upgrade
+consequence: a held version scanned under `/1` stays author-only in progress until a recorded
+rescan reads it, d28)
 
 **Builds on:** ADR-0065's amendment of 2026-11-10 (d5, d14, d15, and ADR-0030 d3), the decision
-behind `oml-scan/1.1`; this record cites it and does not re-decide it (d28).
+behind `oml-scan/1.1`; this record takes its rules and its serving as decided and amends only its
+upgrade consequence (d28).
 
 ### Decisions at a glance
 
@@ -51,10 +54,10 @@ behind `oml-scan/1.1`; this record cites it and does not re-decide it (d28).
 | d22 | A tenant scan policy: ceilings and allowlists within fixed floors, `secret.*` fixed at refuse, every change journalled |
 | d23 | Findings are a list per version |
 | d24 | Steering and guardrails: stricter verdicts; a steering version from any key but a person session needs a person |
-| d25 | Acts that define a person or weaken the scan need a person session, never a bearer key, and are journalled |
+| d25 | Acts that define a person or weaken the scan need a person session, never a bearer key; a tenant's first person is confirmed by a host code |
 | d26 | Same-user approval of a hold finding counts in a single-person tenant, marked `same_user`; in a team another person is required |
-| d27 | Without web sign-in, a local person session bound to an OS user and a second factor; with neither, `review_route: none` and a doctor error |
-| d28 | `oml-scan/1.1` is the fix's rule set; held versions scanned under `/1` stay author-only in progress until `rescan --record-held` |
+| d27 | Without web sign-in, a local person: a boot-file binding, a lead running under its own OS user, a rate-limited second factor enrolled by host code; with neither, `review_route: none` |
+| d28 | `oml-scan/1.1` is the fix's rule set; held versions with an older `scanned_under` stay author-only in progress until `rescan --record-held` |
 
 ## Context
 
@@ -292,9 +295,10 @@ flowchart TD
   gives it satisfies all of:
     1. `credential = session` and `session_user` is set, opened by a web sign-in (ADR-0045) or a
        local person session (d27): the identity kind is a person;
-    2. the person is **confirmed**: the allowlist entry or local binding behind the session was
-       added by the tenant's bootstrap or by another person session, never by a bearer key alone
-       (d25);
+    2. the person is **confirmed**: the allowlist entry behind a web session was confirmed by
+       the host code (the tenant's first person) or added by a confirmed admin person session,
+       never by a bearer key alone (d25); a local session's binding is in the boot settings and
+       was enrolled under the host code (d27);
     3. the sign-in is **fresh**: the session was opened, or re-proved, within the last 15
        minutes (chosen, not measured). A web sign-in for a hold verdict is a new authorization
        request with `prompt=login` and, for Google, `max_age=900`, whose ID token's `auth_time`
@@ -315,8 +319,10 @@ flowchart TD
   `hold_finding`, `unconfirmed_person`, `stale_sign_in` or `same_user_in_team`, and journals
   nothing. The bulk verdict (ADR-0055) skips a hold-finding row for any key that fails this
   predicate and names it in the result as `person_required`; it never approves it. The verdict
-  event records `credential: session`, the sign-in method (Google, GitHub, email link or
-  `local`), `auth_time` and `same_user`.
+  event records `credential: session`, the sign-in method (Google, GitHub or `local`),
+  `auth_time`, `same_user` and `author_user` (d26). A sign-in method whose proof travels through
+  a channel agents commonly hold, such as an emailed link an agent with a mailbox connector can
+  open, never counts for this predicate.
 
   **Two definitions of a person, and why they differ.** ADR-0055 d1's bulk review and ADR-0030
   d1's mode setting keep `held_by: human` (Context, "Who `main` treats as a person"): they guard
@@ -864,8 +870,11 @@ flowchart TD
   user in a team (d26); `scan_person_queue_top_author` with the author key holding the most
   unresolved hold findings and its count (d19); `scan_person_minted_by_bearer: n` for persons
   not yet confirmed (d25); `scan_person_refusals` counting bearer attempts at a person-session
-  act since start (d25); `scan_held_unrescanned: n` for held versions scanned under an older
-  set (d28); `scan_withheld: n` (d14);
+  act since start (d25); `scan_person_binding` for a `[[person]]` binding the lead refused, with
+  the reason, and each binding's enrolment time (d27); `scan_person_factor_failures` with the
+  local factor's failures since start, warning at the first lockout (d27); a warning when
+  `kernel.yama.ptrace_scope` is 0 and a binding exists (d27); `scan_held_unrescanned: n` for
+  held versions scanned under an older set (d28); `scan_withheld: n` (d14);
   `scan_policy` with the tenant's effective policy (d22); and, when on, `scan_classifier` with the
   model's id and digest and whether it loaded.
 
@@ -893,7 +902,8 @@ flowchart TD
        `a_held_version_with_a_hold_finding_is_never_served_unreviewed_in_progress`,
        `the_rule_set_after_the_fix_is_oml_scan_1_1`,
        `a_held_version_scanned_under_an_older_rule_set_is_author_only_in_progress_until_rescanned`,
-       `rescan_record_held_records_findings_on_held_versions_and_touches_no_promoted_one`.
+       `rescan_record_held_records_findings_on_held_versions_and_touches_no_promoted_one`,
+       `the_migration_marks_every_existing_version_scanned_under_oml_scan_1`.
     2. **`oml-scan/2` rules, the person lane and the tenant policy (#214).** d2–d10, d19, d22,
        d24, gated on phase 1's dry run: a class whose measured hold rate on the live copy exceeds
        1 % of versions ships at `annotate` in `2.0` and moves to `hold` only in a later minor once
@@ -914,6 +924,14 @@ flowchart TD
        `in_a_team_a_hold_finding_needs_a_person_other_than_the_authors_user`;
        `with_no_sign_in_and_no_local_person_a_hold_finding_reports_review_route_none_and_doctor_errors`;
        `a_local_person_session_needs_the_bound_os_user_and_its_second_factor`;
+       `the_local_factor_locks_the_binding_after_five_failures`;
+       `a_local_factor_code_is_accepted_once`;
+       `a_person_binding_is_refused_when_the_lead_runs_as_its_os_user`;
+       `a_first_enrolment_without_the_host_code_is_refused`;
+       `a_tenants_first_person_is_confirmed_only_by_the_host_code`;
+       `the_bootstrap_admin_key_cannot_confirm_a_person`;
+       `a_removal_that_leaves_one_confirmed_user_needs_a_person_session`;
+       `a_reviewer_person_may_dismiss_a_finding_without_the_admin_capacity`;
        `a_bulk_verdict_never_approves_a_hold_finding_with_a_bearer_key`;
        `an_injection_finding_cannot_be_dismissed_as_a_group`;
        `a_key_over_its_person_queue_cap_is_refused_by_name`;
@@ -1085,32 +1103,44 @@ flowchart TD
   key with `admin.person_required` naming the act, and each journalled with the actor key, its
   credential, the sign-in method, `auth_time` and a reason when it succeeds:
     - **Defining a person.** Adding an allowlist entry, or changing an entry's user or admin
-      flag (`web.email_allowed`, `web.email_changed`; amends ADR-0045 d2), binding a local person
-      (d27), and adding a grant to a session key (ADR-0045 d10's `grant_review` and
-      `grant_curation`, already page acts). Removing an entry stays open to any admin key, since
-      it only narrows (ADR-0045 d13).
+      flag (`web.email_allowed`, `web.email_changed`; amends ADR-0045 d2), re-enrolling another
+      person's local factor (d27), and adding a grant to a session key (ADR-0045 d10's
+      `grant_review` and `grant_curation`, already page acts). Removing an entry stays open to
+      any admin key, since it narrows (ADR-0045 d13), except a removal that would leave the
+      tenant one confirmed user: that turns a team into a single-person tenant, where same-user
+      approvals of hold findings count (d26), so it is a widening and a person-session act.
     - **Weakening the scan.** Lowering a ceiling, adding or extending an allowlist entry, turning
-      `scan.person_for_external` off (d22), `oml admin scan clear` (d14) and dismissing a finding
-      (d19). Raising a ceiling, removing or shortening an allowlist entry and recording a rescan
-      stay open to any admin key.
+      `scan.person_for_external` off (d22) and `oml admin scan clear` (d14). Raising a ceiling,
+      removing or shortening an allowlist entry and recording a rescan stay open to any admin
+      key.
 
   The person session must meet d2's conditions 1 to 3 (a confirmed person, freshly signed in)
   and hold the admin capacity, the `<user>-admin` session key of ADR-0045 d6, or a local person
-  session bound as an admin (d27). The CLI keeps these verbs: it prints a one-time link to the
+  session bound as an admin (d27). Dismissing a finding (d19) also weakens the scan, but it is a
+  reviewer's act: it needs d2's whole predicate on the version's workarea, not the admin
+  capacity. The CLI keeps these verbs: it prints a one-time link to the
   admin page's form for the act, which a person completes signed in; it never performs them with
   the stored key.
 
-  **The root of trust.** A tenant's first allowlist entry, or first local person binding, is
-  added by its bootstrap admin key as ADR-0045 d2 has it, journalled with `bootstrap: true`; a
-  tenant with any confirmed person admits no further bootstrap entry. An entry that exists
-  before this is built, added by any bearer key, is **unconfirmed**: its session may review
-  ordinary items and may never approve or dismiss a hold finding or perform an act above, until
-  a confirmed admin person re-confirms it on the admin page (`web.email_confirmed`). Doctor's
-  `scan_person_minted_by_bearer: n` counts them, and `scan_person_refusals` counts bearer
-  attempts at these acts since start, a signal that an agent is trying. The residual is the
-  bootstrap itself: an agent holding the bootstrap admin key of a tenant with no person yet can
-  name the first one, and doctor's line shows that entry with `bootstrap: true` for the operator
-  to recognise.
+  **The root of trust is the lead's host, not a key.** The bootstrap admin key is the pair
+  `oml bootstrap claim` saves on the operator's machine, the one the `oml-admin:issue-agent-key`
+  skill runs `oml` under, so it cannot be what makes the first person. At the upgrade every
+  existing tenant has no confirmed person, so a key-made root would be open on every tenant at
+  once. A tenant's first allowlist entry is still added by its bootstrap admin key as ADR-0045 d2
+  has it, and is unconfirmed. It is confirmed when that person, signed in to the admin page,
+  enters the **host code**: a one-time code the lead writes at boot, and again after each use,
+  into its state directory, readable by the lead's OS user alone, never served on any route and,
+  unlike the enrollment token, never written to the log, which agents and log shippers read.
+  The operator reads it with that account and hands it to the person; a hosted deployment's
+  operator relays it to each tenant's first admin. The confirmation journals `web.email_confirmed`
+  with `bootstrap: true`, and a tenant with a confirmed admin person accepts no further host code for a web entry. After
+  that, a confirmed admin person confirms others on the admin page. An entry added by any bearer
+  key, before or after this is built, is **unconfirmed**: its session may review ordinary items
+  and may never approve or dismiss a hold finding or perform an act above until it is confirmed.
+  Doctor's `scan_person_minted_by_bearer: n` counts them, and `scan_person_refusals` counts bearer
+  attempts at these acts since start, a signal that an agent is trying. The residual is the host:
+  an agent that runs as the lead's OS user, or as root, reads the code, and is the operator by
+  every test the server can make.
 
 - **d26 — A person's verdict on a hold finding their own agent wrote counts in a single-person
   tenant, marked `same_user`, and a team needs another person.** ADR-0044 d8 and ADR-0046 d2 let
@@ -1130,12 +1160,23 @@ flowchart TD
       root therefore needs an admin to grant another person review on that root
       (`grant_review`), which shows that root's held rows to them; the cost is said plainly, and
       the operator may still choose otherwise (Q4).
+    - **The author's user** is read off the author key's `user` or `session_user`. A tenant
+      agent key with neither belongs to no person, so in a team the person who runs it may
+      approve its findings; the verdict records `author_user: none`, and the card says the
+      author key names no person.
     - **A change in headcount** changes no recorded verdict. A tenant that gains a second person
       starts refusing same-user approvals of hold findings from then on; the approvals already
-      given stay, marked.
+      given stay, marked. A removal that would make a team single-person is a person-session
+      act (d25).
     - Doctor's `scan_person_reviewer` also fires, as an error, where a workarea holds an
       unresolved hold finding and every person who may review it there is the author's user in
       a team.
+    - **Open sign-up** ([ADR-0068](ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md),
+      proposed). A self-signed-up entry is added by the person's own provider-verified sign-in,
+      with no key involved, so it is confirmed for review on its own user root, never with the
+      admin capacity. No second person may read that root (ADR-0068 d3), so d26's team rule can
+      never be met there: if ADR-0068 lands, the sign-up tenant takes Q4's recommended reading
+      for private roots, or every hold finding in it waits forever.
 
   Ordinary items are unchanged: outside hold findings, ADR-0044 d8 and ADR-0046 d2 stand as
   written in a team too.
@@ -1145,28 +1186,48 @@ flowchart TD
   exist only where ADR-0045's providers are configured (`Provider::ALL` is Google and GitHub,
   `crates/oml-domain/src/web.rs:55`), so a self-hosted, CLI-only deployment has no person, and
   every hold finding would be a refusal in effect with the body kept.
-    - **The local person session.** A boot setting `[[person]]` binds an OS user on the lead's
-      host to an ADR-0044 user (`os_user = "eugene"`, `user = "eugene"`, `admin = true|false`).
-      Boot settings are the operator's file, which no key reaches. `oml person enrol`, run once by
-      that OS user over the lead's local socket, enrols a TOTP second factor (RFC 6238): the lead
-      generates the seed, prints it once as a QR code and text to that terminal and keeps it in
-      its store; re-enrolment needs the current factor or a confirmed admin person (d25).
-      The first enrolment of a tenant is its bootstrap (d25), journalled with `bootstrap: true`.
-      `oml person sign-in` opens a session: the lead reads the peer's uid off the Unix socket
-      (`SO_PEERCRED`), never off the request, requires it to be the bound OS user, and requires a
-      current TOTP code. The session is a session key like ADR-0045 d6's, `credential = session`,
-      `session_user` set, sign-in method `local`, with no value: acts go over that socket
-      connection and end with it, and it lasts 15 minutes, which is d2's freshness window. It is
-      refused on `/v1`, `/v2` and `/mcp` as every session key is.
-    - **What it proves.** The peer uid proves the OS user; the second factor proves a person
-      holding the authenticator, which lives on another device. An agent running as the same OS
-      user reaches the socket and cannot produce the code. The residual: an agent that can read
-      the authenticator (a TOTP app on the same desktop, or the person typing the code into the
-      agent's terminal) is the person by every test the server can make. A WebAuthn security key
+    - **The binding.** A boot setting `[[person]]` binds an OS user on the lead's host to an
+      ADR-0044 user of one tenant (`tenant = "lab"`, `os_user = "eugene"`, `user = "eugene"`,
+      `admin = true|false`). The lead refuses every binding at boot, with doctor's
+      `scan_person_binding` error naming the reason, when it runs as a bound `os_user`, the boot
+      file is writable by one, or its state directory is readable by one: an agent running as the
+      bound user would otherwise read the factor's seed or write itself a binding, and "the
+      operator's file, which no key reaches" is true of keys, not of a shell.
+    - **Enrolment.** `oml person enrol`, run by the bound OS user over the lead's local socket,
+      needs a host code (d25) for each binding's first enrolment, since the binding is the
+      operator's act and the code shows the operator, not an agent, let this person in. The lead then generates a TOTP seed (RFC 6238),
+      prints it once as a QR code and text to that terminal, and keeps it in its state
+      directory, not in the tenant store, so a store backup does not carry it. Without the host
+      code, an agent running as the same OS user could enrol first and hold the factor.
+      Re-enrolment needs the current factor or a confirmed admin person (d25). Enrolment issues
+      the person's `<user>-review` session key, and `<user>-admin` when bound `admin = true`, as
+      ADR-0045 d6 issues them at a first sign-in, and journals `person.enrolled`, with
+      `bootstrap: true` for a tenant's first person; doctor prints each binding's enrolment time
+      for the operator to recognise.
+    - **The session.** `oml person sign-in` starts an interactive process. The lead reads the
+      peer's uid off the Unix socket (`SO_PEERCRED`), never off the request, requires it to be
+      the bound OS user, and requires a current TOTP code. A code is accepted once (RFC 6238
+      section 5.2); five failures lock the binding for 15 minutes, doubling with each further
+      lockout, chosen, not measured; each failure journals `person.factor_failed`, and doctor's
+      `scan_person_factor_failures` warns at the first lockout. Without the limit an agent at the
+      socket tries the million codes in minutes. The session is that process's one connection:
+      it reads each act from its controlling terminal, leaves no socket or token for another
+      process, and ends at 15 minutes, d2's freshness window. Its keys are session keys like
+      ADR-0045 d6's, `credential = session`, `session_user` set, sign-in method `local`, with no
+      value, and are refused on `/v1`, `/v2` and `/mcp` as every session key is. Doctor warns
+      when `kernel.yama.ptrace_scope` is 0, since a same-user process may then attach to it.
+    - **What it proves.** The peer uid proves the OS user; the factor proves a person holding
+      the authenticator, which lives on another device; the host code proves the operator let
+      that person in. An agent running as the same OS user reaches the socket, cannot read the
+      seed or the host code, and cannot produce a code. The residual: an agent that can read
+      the authenticator (a TOTP app on the same desktop), one the person runs `oml person` inside
+      (a terminal the agent drives, a harness's shell escape), or one running as the lead's OS
+      user or root, is the person by every test the server can make. A WebAuthn security key
       may replace TOTP in a later record.
-    - **With neither.** Where no provider is configured and no `[[person]]` is bound, a write
-      with a hold finding answers `review_route: none`, and doctor's `scan_person_reviewer` is
-      an **error** naming both routes. Nothing is approved by an admin's CLI verdict marked as
+    - **With neither.** Where no provider is configured and no `[[person]]` is bound, or every
+      binding is refused because the lead shares its OS user with the agents, a write with a
+      hold finding answers `review_route: none`, and doctor's `scan_person_reviewer` is an
+      **error** naming both routes and, for the second, running the lead under its own OS user. Nothing is approved by an admin's CLI verdict marked as
       unverified: that is a bearer act, and it reopens what d25 closes.
 
 - **d28 — `oml-scan/1.1` is the fix's rule set, and a held version scanned under `/1` stays
@@ -1174,28 +1235,38 @@ flowchart TD
   2026-11-10 on `fix/scan-bypasses` decides the three shipped defects: every rule reads the
   normalised view (its d14), a tag sequence passes only whole and RGI (its d5), and a version
   the scan held stays its author's inside an in-progress scope (its d15, amending ADR-0030 d3).
-  This record takes that as decided. Three points make the two records one:
+  This record takes those as decided. It amends one consequence of that amendment, the upgrade:
+  the branch as read (`cc1454ed` and its staged work) says a version admitted before the
+  upgrade "carries no `scan_finding`; d15 does not cover it", and asks a person to demote or
+  retire what the plain rescan reports. That leaves every held version written before the
+  upgrade served to sibling agents in progress, unread under the fixed rules. Three points make
+  the two records one:
     - **The name moves.** The fix changes what rules match, so it ships as `oml-scan/1.1`
-      (d21; ADR-0065 d1: same text, same findings, per name). The branch as read keeps
-      `RULESET = "oml-scan/1"` (`crates/oml-scan/src/lib.rs:31` on `fix/scan-bypasses` at
-      `cc1454ed`); it must change to `oml-scan/1.1` before it merges, with `scan_rescan_due`
-      warning from then on.
-    - **The upgrade window is closed.** A held version admitted before the upgrade was scanned
-      under `/1`, so it carries no `scan_finding` for a phrase `/1.1` now catches, and ADR-0065
-      d15 does not cover it. Inside an in-progress scope, a held version whose admission event's
-      `scanner_version` is older than the composed rule set is served as a hold-finding version
-      is (d20): to its author and its reviewers only, until a recorded rescan has read it under
-      the current set. If the rescan finds a hold finding, d20 applies; if it finds nothing, the
-      version returns to ADR-0030 d3's served set. Outside in-progress scopes nothing changes,
-      since R3 already keeps a held row its author's and its reviewers'.
+      (d21; ADR-0065 d1: same text, same findings, per name). The branch keeps
+      `RULESET = "oml-scan/1"` (`crates/oml-scan/src/lib.rs:31`); it changes to `oml-scan/1.1`
+      before it merges, with `scan_rescan_due` warning from then on.
+    - **The upgrade window is closed, on a column the store can read.** The rule set a version
+      was scanned under is today only in its admission event's payload (`scan.scanner_version`,
+      `crates/oml-app/src/app.rs:4974`), which the served-set queries do not read. Phase 1 adds
+      `memories.scanned_under`: set at admission, backfilled `oml-scan/1` for every existing
+      row by the migration, and updated by `--record-held`. Inside an in-progress scope, a held
+      version is served to another reader only when `scan_finding IS NULL AND scanned_under =`
+      the composed rule set; otherwise it is served as a hold-finding version is (d20), to its
+      author and its reviewers only. If the rescan finds a hold finding, d20 applies; if it
+      finds nothing, the version returns to ADR-0030 d3's served set. Outside in-progress scopes
+      nothing changes, since R3 already keeps a held row its author's and its reviewers'. Before
+      the fix merges, the branch adds the column and that predicate to both stores (`oml-pg`'s
+      `SEARCH_SCOPE`, `RECALL_OWN_HELD`, `POSTINGS_OWN_HELD` and the listing, and the in-memory
+      store), and its changes note and ADR-0065's consequence say what the next point says.
     - **`oml admin rescan --record-held` ships with `/1.1`, in phase 1.** It walks held versions
       only, in the same windows as `oml admin rescan`, and journals `scan.findings_recorded` for
       every held version it reads, naming the rule set and the findings, an empty list when there
-      are none, so the version's current rule set is on record. Recording a
+      are none, and sets the version's `scanned_under`, so its current rule set is on record. Recording a
       finding on a held version only narrows who sees it, so it is safe before phase 4's
       `--record`, which extends the same verb to every version. Doctor's
       `scan_held_unrescanned: n` counts held versions scanned under an older set. The upgrade
-      notes and ADR-0065's consequence for the amendment say: after upgrading to `/1.1`, run
+      notes and ADR-0065's consequence for the amendment, as amended here, say: after upgrading
+      to `/1.1`, run
       `oml admin rescan --record-held`; until it runs, sibling agents in an in-progress scope do
       not see held versions written before the upgrade. Promoted versions are as ADR-0065's
       consequence has them: the plain `oml admin rescan` reports them, and a person demotes or
@@ -1245,7 +1316,15 @@ flowchart TD
   settings and enrols a TOTP authenticator; without one, doctor errors while any hold finding
   waits (d27).
 - After the upgrade to `oml-scan/1.1`, sibling agents in an in-progress scope do not see held
-  versions written before it until `oml admin rescan --record-held` has run (d28).
+  versions written before it until `oml admin rescan --record-held` has run (d28). The fix
+  branch gains the `scanned_under` column, its predicate on both stores and the new rule-set
+  name before it merges.
+- After the upgrade to phase 2, no tenant has a confirmed person until its operator reads the
+  host code on the lead's host and its first admin enters it on the admin page; until then no
+  hold finding is approved, and doctor says so (d25). A hosted deployment's operator relays one
+  code per tenant.
+- A CLI-only deployment that wants a local person runs the lead under its own OS user, apart
+  from the person's and the agents', as a packaged service does (d27).
 
 ## Rejected alternatives
 
@@ -1257,6 +1336,9 @@ flowchart TD
 | **A CLI approval on a TTY counts as a person** | An agent runs commands in a pseudo-terminal as easily as a person does, so a TTY proves nothing the server can check. |
 | **A bearer admin key may lower a ceiling, extend an allowlist, clear a withheld body or add a web person** | Each makes d2's person unnecessary or makes one, and the stored admin key is in agents' hands through the CLI. A person session for widenings and person-defining acts, with any admin key free to narrow, keeps the lever and closes the route (d25). |
 | **An admin's CLI verdict on a hold finding, marked `person_unverified`, where there is no sign-in** | It is a bearer act, so it reopens what d25 closes; the mark tells an auditor after the fact and stops nothing. A local session bound to an OS user and a second factor proves a person (d27). |
+| **The bootstrap admin key confirms a tenant's first person** | It is the key the CLI stores and agents run `oml` under, and at the upgrade every tenant has no confirmed person, so the root of trust would be open on every tenant at once. A host code, readable only by the lead's OS user, ties the first person to the operator's host (d25). |
+| **Enrol the local factor by peer uid alone** | An agent running as the bound OS user reaches the same socket and could enrol first, holding the factor from then on. The host code gates the first enrolment (d27). |
+| **Say nothing on the upgrade and let a person demote what the plain rescan reports** | A held version written before the upgrade carries no finding, so it would stay served to sibling agents in progress, unread under the fixed rules, until someone acted on a report (d28). |
 | **Refuse a person's approval of their own agent's hold finding everywhere** | A solo user's hold findings could then never be approved or dismissed, and nothing expires, so they would wait forever (d26). |
 | **Allow it in teams too** | In a team another person exists, and a person reviewing their own agent's flagged text is the weakest review the tenant can give it; d26 asks for the stronger one where it is available. |
 | **A hard 70 % held-out recall gate for hold classes** | Deterministic rules over diverse published paraphrase sets are unlikely to reach it, and chasing it widens the rules until the 1 % benign gate fails. Transform invariance and non-regression are what a deterministic scan can promise; held-out recall is reported (d15). |
@@ -1296,6 +1378,18 @@ habits (d18, former question 3). What is left is the operator's choice:
   (d26), who must then be granted review on that root and sees its held rows. Is that cost
   accepted, or should a same-user approval also count inside the author's own user root in a
   team, marked `same_user`, keeping d26's rule for shared workareas only?
+
+  **Recommended (Round 3):** count it inside the author's own user root, marked `same_user`,
+  while that root's readers are that user's keys alone; once an admin grants another user reader
+  on it, d26's team rule applies there. A user root's readers are its own user's agents, the
+  exposure a single-person tenant already accepts; anything curated out of it into a shared
+  workarea is a new version, scanned again, which needs another person there. The rule as
+  written instead grants a colleague review on a private root, which shows them its held rows: a
+  privacy cost with no gain over the person's own judgment. memory.doublegate.io keeps a root
+  per person (ADR-0044), so the rule as written would put every person's flagged notes in front
+  of a colleague. Under ADR-0068's open sign-up no colleague may read the root at all, so the
+  rule as written would leave every hold finding there unapprovable (d26). If the operator agrees, d26 gains this as a third case and the test
+  `in_a_team_a_same_user_approval_counts_in_the_authors_private_user_root`.
 
 ## Review log
 
@@ -1396,3 +1490,37 @@ artifact. What changed:
   d12).
 - **Open questions.** The three are answered at the reviewer's recommendations (d18, d22,
   d24); one operator choice remains, Q4.
+
+**Round 3 (final), 2026-11-10.** One holistic review (security, detection, reviewer and operator
+experience) of `f4431a33`, read against `fix/scan-bypasses` at `cc1454ed` and its staged work:
+4 blockers, 6 majors, 5 minors. Every blocker and major is taken, and four minors; the fifth,
+GitHub's lack of `prompt=login`, was already a named residual recorded `unattested`. What changed:
+
+- **The local factor could be guessed (B1).** A code is accepted once; five failures lock the
+  binding, doubling per lockout; failures are journalled and on doctor (d27).
+- **Whoever enrolled first held the factor (B2, M1, M2).** A binding is refused when the lead runs
+  as a bound OS user or its boot file or state directory is open to one; the first enrolment
+  needs the host code; the seed lives in the lead's state directory, not the store; the session
+  is one interactive process's connection; doctor warns on `ptrace_scope` 0; d25 and d27 now
+  agree that the boot file binds and the host code confirms (d2, d25, d27).
+- **The first person on every tenant was open to the stored admin key at the upgrade (B3).** A
+  tenant's first person is confirmed by a host code the lead writes where only its OS user reads
+  it, never to the log; the bootstrap admin key adds the entry and cannot confirm it (d25).
+- **d28 contradicted the fix it cited (B4).** d28 now amends the upgrade consequence of ADR-0065's
+  2026-11-10 amendment, says so in Amends, adds `memories.scanned_under` so the served set can
+  read the rule set, and lists what the fix branch changes before it merges (d28, d18).
+- **Removal could widen (M3).** A removal that leaves a tenant one confirmed user is a
+  person-session act (d25, d26).
+- **Dismissal (M4).** A reviewer person's act, without the admin capacity (d25).
+- **Open sign-up (M6).** ADR-0068's sign-up tenant has many persons and private roots no second
+  person may read, so d26's team rule could never be met there. A self-signed-up entry is
+  confirmed for its own root, and if ADR-0068 lands the sign-up tenant takes Q4's recommended
+  reading (d26).
+- **Email link (M5).** Dropped from the sign-in methods; a proof that travels through email never
+  counts (d2).
+- **Minors.** `[[person]]` names its tenant; the session keys a local person reaches are named;
+  an author key with no user records `author_user: none` (d26, d27).
+- **Open question.** Q4 carries a recommendation: same-user approval counts inside a private user
+  root in a team.
+
+Ready for operator review; the status stays proposed.
