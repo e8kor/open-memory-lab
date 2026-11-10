@@ -16,6 +16,7 @@ Pages for the person who runs an OML server. First time: deploy, then administer
 | Move to a new release | [Upgrade](upgrades.md) |
 | Protect the data | [Back up and restore](restore.md) |
 | Respond to a page | [Operational alerts](runbooks.md), [Failure modes](failure-modes.md) |
+| Run the web console as its own process | [Run the web console](web-console.md) |
 | Run the lake | [Run the lake writer](lake.md) |
 | Plan capacity: how many memories and clients one server serves | [Capacity and SLOs](operating.md) |
 

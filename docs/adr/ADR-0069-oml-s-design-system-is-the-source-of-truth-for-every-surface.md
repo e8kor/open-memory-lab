@@ -39,7 +39,7 @@ page is not deployed by it.
 
 - **d2 — `scripts/gen_design_tokens.py` writes every derived file, and `--check` fails CI when one
   differs.** It writes the web pages' custom properties and inline glyphs
-  (`crates/transports/oml-transport-http/src/web/tokens.css`, `brand.rs`), the docs site's
+  (`crates/shared/oml-page/src/web/tokens.css`, `brand.rs`, moved from the transport by ADR-0070 phase (b)), the docs site's
   `docs/stylesheets/oml.css` with Material's palette mapped onto the tokens, the docs' copy of the
   marks, and the review-gate diagram as two theme-resolved SVGs for the README. Generated files
   carry a header naming the generator and are never edited by hand. The Practices workflow runs

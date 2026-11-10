@@ -120,6 +120,7 @@ nav:
       - Back up and restore: operations/restore.md
       - Operational alerts: operations/runbooks.md
       - Failure modes: operations/failure-modes.md
+      - Run the web console: operations/web-console.md
       - Run the lake writer: operations/lake.md
       - Capacity and SLOs: operations/operating.md
   - Reference:
