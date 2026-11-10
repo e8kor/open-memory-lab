@@ -25,7 +25,7 @@ use regex::Regex;
 
 pub use path::secret_path;
 pub use rules::Action;
-use rules::{Check, PLACEHOLDERS, RULES, Rule};
+use rules::{Check, LETTER_PHRASES, PLACEHOLDERS, RULES, Rule};
 
 /// The rule-set version every verdict is journalled under (ADR-0065 d1).
 pub const RULESET: &str = "oml-scan/1.1";
@@ -121,6 +121,27 @@ static COMPILED: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         .map(|r| Regex::new(r.pattern).expect("the oml-scan/1.1 patterns compile"))
         .collect()
 });
+
+/// The letters-only view's phrase patterns, each with the rule it reports.
+static LETTERS: LazyLock<Vec<(&'static Rule, Regex)>> = LazyLock::new(|| {
+    LETTER_PHRASES
+        .iter()
+        .map(|(id, pattern)| {
+            let rule = RULES
+                .iter()
+                .find(|r| r.id == *id)
+                .expect("a letters phrase names a rule");
+            (
+                rule,
+                Regex::new(pattern).expect("the letters phrases compile"),
+            )
+        })
+        .collect()
+});
+
+/// One run of letters and digits: what the letters-only view keeps.
+static LETTER_RUN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\p{L}\p{N}]+").expect("compiles"));
 
 /// Every rule id the set can report, with its class and action: the closed
 /// label set of the findings metric (d11).
@@ -248,6 +269,17 @@ impl RuleSet {
                 if !out.iter().any(|(_, g)| g.rule == f.rule) {
                     out.push((start, f));
                 }
+            }
+        }
+        // Last, the letters-only view (ADR-0074 d6): compatibility forms
+        // decomposed, lower case, and every code point that is not a letter
+        // or a digit dropped, combining marks, spaces, punctuation and
+        // invisible characters alike. It is read by the injection phrases
+        // alone, written without separators, so no character inside or
+        // between the words hides one.
+        for (start, f) in letters_findings(field, text) {
+            if !out.iter().any(|(_, g)| g.rule == f.rule) {
+                out.push((start, f));
             }
         }
         out.sort_by_key(|(start, f)| (*start, f.rule));
@@ -474,6 +506,46 @@ fn normalised(text: &str) -> Vec<String> {
     views
 }
 
+/// The injection phrases found in the letters-only view of `text`, each
+/// placed on the line of the text where its first letter stands.
+fn letters_findings(field: &str, text: &str) -> Vec<(usize, Finding)> {
+    use unicode_normalization::UnicodeNormalization as _;
+    // The Hangul fillers are letters that show nothing; every removable
+    // character goes before the letters are read.
+    let folded: String = text
+        .chars()
+        .map(|c| if removable(c) { ' ' } else { c })
+        .nfkd()
+        .flat_map(char::to_lowercase)
+        .collect();
+    let mut letters = String::with_capacity(folded.len());
+    // (offset in `letters`, offset in `folded`) at the start of each run.
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for m in LETTER_RUN.find_iter(&folded) {
+        runs.push((letters.len(), m.start()));
+        letters.push_str(m.as_str());
+    }
+    let mut out = Vec::new();
+    for (rule, re) in LETTERS.iter() {
+        if let Some(m) = re.find(&letters) {
+            let i = runs.partition_point(|&(at, _)| at <= m.start()) - 1;
+            let (at, from) = runs[i];
+            let start = from + (m.start() - at);
+            out.push((
+                start,
+                Finding {
+                    class: rule.class,
+                    rule: rule.id,
+                    action: rule.action,
+                    field: field.to_owned(),
+                    line: line_of(&folded, start),
+                },
+            ));
+        }
+    }
+    out
+}
+
 fn line_of(text: &str, start: usize) -> usize {
     text.as_bytes()[..start]
         .iter()
@@ -644,7 +716,11 @@ fn invisible(text: &str) -> Option<(usize, &'static str)> {
             }
             continue;
         }
-        selectors = 0;
+        // A joiner or another removable character between selectors does
+        // not end the run: it shows nothing either.
+        if !removable(c) {
+            selectors = 0;
+        }
         if c == '\u{1F3F4}'
             && let Some(flag) = RGI_TAG_SEQUENCES.iter().find(|f| text[i..].starts_with(*f))
         {

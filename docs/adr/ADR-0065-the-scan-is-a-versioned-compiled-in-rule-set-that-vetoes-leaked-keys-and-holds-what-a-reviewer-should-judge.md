@@ -159,7 +159,8 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   hidden payload and holds, where the first build skipped every tag character after the prefix.
   Two or more variation selectors in a row (U+FE00–U+FE0F, U+E0100–U+E01EF) hold as
   `variation-run`: one picks a glyph for the character before it, and a run picks nothing and
-  can carry a byte each. Joiners and the soft hyphen are left
+  can carry a byte each. A joiner or another removable character between two selectors does
+  not end the run. Joiners and the soft hyphen are left
   alone, because scripts and emoji use them. Encoding: a run of 400 or more base64 characters
   that mixes cases and digits at 4.5 bits per character or more holds, as a payload no reviewer
   can read. A hold costs a reviewer's look and refuses nothing. A veto on a heuristic would
@@ -314,12 +315,18 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   key from the veto patterns. The order is fixed: every pattern and run rule over the text as
   written; the invisible-character rules over the text as written, since the view removes what
   they count; then every pattern and run rule, veto and hold alike, over each view, keeping each
-  rule no earlier pass reported. An injection phrase split or spaced by a zero-width or format
-  character, or written in fullwidth forms, is held, which the first build let through. A pure
-  ASCII field builds no view. Still not undone, and known: homoglyphs and mixed-script
-  confusables (a Cyrillic о, small capitals, a dotted capital I), a word with a combining mark
-  NFKC composes into another letter, percent or HTML encoding, a token split across lines, and
-  base64. A view under the UTS #39 skeleton is ADR-0074's, not this amendment's.
+  rule no earlier pass reported. A pure ASCII field builds neither. Last comes ADR-0074 d6's
+  letters-only view, built for every field: NFKD, lower case, the removable characters gone, and
+  every code point that is not a letter or a digit (Unicode L* and N*) dropped, so spaces,
+  punctuation, combining marks, the braille blank U+2800 and any invisible character go alike.
+  Only the injection phrases of three words or more read it, each written without separators
+  (`ignoreallpreviousinstructions`), since the view has no word boundaries; markup rules, which
+  name symbols, do not. An injection phrase hidden by any mix of characters inside and between
+  its words, or by combining marks or fullwidth forms, is held, which the first build let
+  through, and OML's own documentation still scans clean. Still not undone, and known:
+  mixed-script confusables (a Cyrillic о, small capitals), tracked as
+  [#225](https://github.com/e8kor/open-memory-lab/issues/225) for ADR-0074's skeleton view;
+  percent or HTML encoding, a token split across lines, and base64.
 
 - **d15 — Inside an in-progress scope, another author's held version is served only when the
   server's rule set scanned it and found nothing** (added 2026-11-10, amending

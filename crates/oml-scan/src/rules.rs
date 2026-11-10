@@ -321,3 +321,31 @@ pub(crate) const PLACEHOLDERS: &[&str] = &[
     "dummy",
     "sample",
 ];
+
+/// The injection phrases the letters-only view reads (ADR-0074 d6; ADR-0065
+/// d14 as amended 2026-11-10): each rule's phrase with every separator
+/// removed, matched against the field's letters and digits alone, lower
+/// case. Only phrases of three words or more, so ordinary words that run
+/// together once spaces and punctuation go do not match; markup rules are
+/// not here, since the view drops the symbols they name. Each pattern is
+/// a set of literals written as alternations, with no word boundary: the
+/// view has none.
+pub(crate) const LETTER_PHRASES: &[(&str, &str)] = &[
+    (
+        "ignore-instructions",
+        "(?:ignore|disregard|forget|override)(?:all|any|the|of)*(?:previous|prior|above|earlier|preceding|your|system|original)(?:instructions?|prompts?|rules|directions|guidelines|directives)",
+    ),
+    ("new-instructions", "(?:new|updated|real)systeminstructions"),
+    (
+        "persona-switch",
+        "youarenow(?:a|an|in)(?:unrestricted|jailbroken|uncensored|new|different|developer|dan)|yournew(?:role|persona|instructions)(?:is|are)|developermode(?:enabled|on)",
+    ),
+    (
+        "reader-trigger",
+        "(?:when|if|after|once)(?:an?(?:ai|agent|assistant|model|llm)|you)(?:reads?|recalls?|retrieves?|loads?|process(?:es)?)this",
+    ),
+    (
+        "covert-action",
+        "without(?:telling|informing|asking|notifying)theuser|donot(?:tell|inform|mention(?:this)?to)theuser",
+    ),
+];
