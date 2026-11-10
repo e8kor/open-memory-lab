@@ -1,6 +1,7 @@
 # oml — the Helm chart
 
-The current build on Kubernetes: one `oml-server-lead` under the `Recreate` strategy, its
+The current build on Kubernetes: the web console, `oml-web`, as a Deployment of its own beside
+one `oml-server-lead` under the `Recreate` strategy, its
 keyring on a ReadWriteOnce claim that `helm uninstall` keeps, Postgres external through an
 existing Secret, and the first admin key claimed through `kubectl port-forward` before any
 Ingress exists. The Secret holds two URLs: `OML_POSTGRES__OWNER_URL`, for the role that owns the

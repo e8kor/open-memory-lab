@@ -70,7 +70,7 @@ You get a server, a workarea `crew`, an agent key, a second agent key called `co
 
 === "Docker"
 
-    You need Docker with compose v2. One command starts the database and server, claims the server and issues the agent and reviewer keys.
+    You need Docker with compose v2. One command starts the database, the server and the web console, claims the server and issues the agent and reviewer keys.
 
     ```sh
     oml quickstart

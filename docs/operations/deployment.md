@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-10
 answers: "how to deploy an OML server: the three ways to run it, what runs, how to claim the first admin key, how to put it behind a reverse proxy, and what to back up"
 ---
 
@@ -12,11 +12,12 @@ boundary you must operate.
 | Path | For | Needs | Start with |
 |---|---|---|---|
 | Docker on one machine | A trial, one person's memory | Docker with compose v2, the `oml` CLI | `oml quickstart` |
-| One host behind TLS | A team | PostgreSQL, the `oml-server-lead` binary, a reverse proxy | [One host](#run-on-one-host-behind-tls) |
+| One host behind TLS | A team | PostgreSQL, the `oml-server-lead` and `oml-web` binaries, a reverse proxy | [One host](#run-on-one-host-behind-tls) |
 | Kubernetes | A team on a cluster | A cluster, Helm 3, an external PostgreSQL | [Install OML on Kubernetes](../guides/kubernetes.md) |
 
-Every path runs the same server binary, `oml-server-lead`. The lead is the one process that holds
-the signing key, writes the journal and serves the API. [Run your own server](../start/run-your-own.md)
+Every path runs the same server binary, `oml-server-lead`, and the web console beside it,
+`oml-web`. The lead is the one process that holds the signing key, writes the journal and serves
+the API. [Run your own server](../start/run-your-own.md)
 walks the first two paths in order.
 
 ## What runs
@@ -24,6 +25,7 @@ walks the first two paths in order.
 | Part | What it is | State |
 |---|---|---|
 | `oml-server-lead` | The server. Exactly one runs per deployment. | None in the process. Everything durable is in PostgreSQL and the keyring. |
+| `oml-web` | The web console: the pages people sign in to, a client of the server's HTTP API like the CLI. It reaches the server directly, never through the public proxy. | None. See [Run the web console](web-console.md). |
 | PostgreSQL | The system of record: journal, memories, keys, grants. | All of it. |
 | The keyring | A file, `kms.keyring_path`, that holds the signing key and the key that wraps each memory's encryption key. | The deployment's identity. |
 | `oml-lakewriter` | An optional second process that copies the journal into Delta tables for analysis. | None. See [Run the lake writer](lake.md). |
@@ -33,8 +35,11 @@ migrations at start. The serving role owns nothing and serves requests. The serv
 with `postgres.role_split`, when both URLs log in as one role. Each role has `LOGIN` and no other
 attribute.
 
-There is no web console to deploy. Administration is the [`oml` CLI](../cli/reference.md). People
-use the server's own web pages once you turn on sign-in ([configuration](configuration.md)).
+Administration is the [`oml` CLI](../cli/reference.md). People use the web pages once you turn
+on sign-in ([configuration](configuration.md)). The pages are moving from the server into
+`oml-web` one at a time, so both processes serve pages behind one proxy origin while that
+lasts. The session cookie is a `__Host-` cookie the browser sends to one host only, so the
+server, `oml-web` and the sign-in routes must share that origin.
 
 ## Start on one machine with Docker
 
@@ -44,8 +49,10 @@ You need Docker with compose v2 and the `oml` CLI ([install](../start/install.md
 oml quickstart
 ```
 
-The verb writes a compose file with the server and `pgvector/pgvector:pg17`, pinned to the CLI's
-version. It writes an owner-only `.env` of generated passwords and brings the stack up on `127.0.0.1`.
+The verb writes a compose file with the server, `oml-web`, a Caddy router and
+`pgvector/pgvector:pg17`, the server and `oml-web` pinned to the CLI's version. It writes an
+owner-only `.env` of generated passwords and the secret the server and `oml-web` share, and brings
+the stack up on `127.0.0.1`, where the router is the one published port.
 Then it claims the server, issues an agent key and a reviewer key into owner-only files, and checks one
 write end to end. The flags are in the [CLI reference](../cli/reference.md).
 
@@ -73,7 +80,10 @@ certificate, and the `oml` CLI on your own machine.
 4. Start the server as its own operating-system user. Keep its environment file readable by that user
    alone, and the keyring file at mode `0600`.
 5. [Claim the first admin key](#claim-the-first-admin-key) before the proxy exposes the server.
-6. Put the reverse proxy in front and run `oml doctor`.
+6. Start `oml-web` on `127.0.0.1:8091` with the server's `web.client_secret`
+   ([run the web console](web-console.md)). It ships as its own archive,
+   `oml-web-X.Y.Z-<target>.tar.gz`, verified as the server's is below.
+7. Put the reverse proxy in front of both and run `oml doctor` and `oml-web --doctor`.
 
 Every setting is on [configuration](configuration.md).
 
@@ -95,7 +105,8 @@ cosign verify-blob \
 ```
 
 An archive that does not verify is not installed. The `oml` CLI is a separate archive
-([install](../start/install.md)).
+([install](../start/install.md)). The web console's archive, `oml-web-X.Y.Z-<target>.tar.gz`,
+has the same targets and is verified the same way, with `oml-web` in place of `oml-server-lead`.
 
 ## Claim the first admin key
 
@@ -119,9 +130,14 @@ prints the key once and stores it in `~/.config/oml/credentials`. The rest of th
 Only the proxy listens publicly. The server, its metrics listener and PostgreSQL stay on loopback or a
 private network.
 
-- Terminate TLS at the proxy and forward the whole origin to the server, unchanged. Do not rewrite paths
-  or cache responses.
-- Keep the server's own security headers. The proxy adds none.
+- Terminate TLS at the proxy. Send each page `oml-web` serves to `oml-web`, and every other path to
+  the server, unchanged: the API, `/mcp`, `/oauth/*`, `/.well-known/*`, `/readyz` and sign-in
+  (`/web/sign-in`, `/web/callback/*`, `/web/sign-up`). Do not rewrite paths or cache responses.
+  The pages `oml-web` serves are `PAGES` in `crates/clients/oml-web/src/lib.rs`, today
+  `GET /web?view=guardrails`, which a proxy matches by method, path and query.
+  `deploy/caddy/Caddyfile` is a Caddy configuration that routes them; a page that moves in a
+  later release adds a route there.
+- Keep the server's and `oml-web`'s own security headers. The proxy adds none.
 - Keep the `Location` header of `POST /oauth/authorize` out of the proxy's access log. Keep the bodies of
   `POST /oauth/authorize` and `POST /oauth/token` out too. They carry codes and tokens.
 - Set `server.trusted_proxies` to the proxy's address, such as `127.0.0.1/32`. Unset, every request
@@ -161,6 +177,13 @@ stays down until you resolve it. There is no override that accepts and forks the
 
 `oml doctor` prints each signal with a verdict and exits 1 on any failure
 ([observability](observability.md)).
+
+`oml-web` answers `/web/healthz` while its process is up, and `/readyz` on its own listener, with
+200 only while the server answers ready and accepts `oml-web`'s secret. The public `/readyz`
+stays the server's. `oml-web --doctor`, run with `oml-web`'s environment, prints `web.api_url`
+as `ok`, `warn` (plain http to a host other than loopback, allowed by
+`web.allow_plain_http_api`) or `fail`, then whether the server is ready, and exits 1 on any
+`fail`.
 
 ## Back up the database and the keyring together
 

@@ -75,18 +75,24 @@ production
                ├─ /web /web/* ──> oml-web :8091 ──HTTP keep-alive──> lead :8090
                └─ /v1/* /v2/* /mcp /oauth/* /.well-known/* ──> lead :8090
 
-local development (oml quickstart starts both)
-  browser ──> oml-web :8091 ──HTTP──> lead :8090
-  browser ──> lead :8090 (sign-in, /v1, /v2, /mcp, /oauth)
+local development (oml quickstart starts all three)
+  browser ── Caddy router, 127.0.0.1:8080, the one published port
+               ├─ the pages oml-web serves ──> oml-web :8091 ──HTTP──> lead :8080
+               └─ everything else (sign-in, /v1, /v2, /mcp, /oauth, /readyz) ──> lead :8080
 ```
 
 - Production routes by path behind one public origin, since `__Host-` cookies
   bind one host. `oml-web` reaches the lead directly on loopback or the LAN,
   never back through the public proxy.
-- Local development runs two processes; `oml quickstart` starts both. The
-  cookie is host-only, so the two ports share it; the lead's `web.page_url`
-  names `oml-web`'s address so sign-in returns there.
-- Kubernetes: two Deployments, the Ingress routes as production does.
+- Local development runs the lead, `oml-web` and a Caddy router as compose
+  services; `oml quickstart` and `docker-compose.yml` start all three, and the
+  router routes exactly as production does, so the browser sees one origin and
+  there is no `web.page_url` setting (ADR-0070 d4).
+- Kubernetes: two Deployments. An Ingress routes by path alone, so the chart
+  routes `web.ingressPaths` to `oml-web`, none by default while the moved pages
+  are queries of `/web` (ADR-0070, phase (b) as built).
+- `deploy/caddy/Caddyfile` is the production route table; a test in `oml-web`
+  holds it and both compose files to `oml_web::PAGES`.
 - The landing is static files from the `oml-site-<version>.tar.gz` release
   archive, built from `site/`; neither the lead nor `oml-web` serves it.
 

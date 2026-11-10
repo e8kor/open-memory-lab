@@ -2538,6 +2538,22 @@ paths:
           description: After sign_out, to /web.
 
   /web/sign-in:
+    get:
+      tags: [web]
+      operationId: webSignInPage
+      summary: The sign-in page, where oml-web sends a person with no session, carrying the page as next.
+      description: 'next is kept only as a same-origin relative path under /web with no //, no \, no @ and no scheme, checked again after one more percent-decoding; anything else is /web. Each provider form carries it. A browser already signed in is sent to next on the configured public origin, never on a request header (ADR-0070 d4, d6). Since v0.6.4.'
+      security: []
+      parameters:
+        - { name: next, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: The sign-in page.
+          content:
+            text/html:
+              schema: { type: string }
+        '303':
+          description: Signed in already, to next.
     post:
       tags: [web]
       operationId: webSignIn
@@ -2554,6 +2570,7 @@ paths:
               required: [provider]
               properties:
                 provider: { type: string, enum: [google, github] }
+                next: { type: string, description: 'The page to return to after the callback, admitted as GET /web/sign-in admits it and sealed with the sign-in state (ADR-0070 d4).' }
       responses:
         '303':
           description: To the provider's authorization endpoint.
@@ -2576,7 +2593,7 @@ paths:
         - { name: state, in: query, required: false, schema: { type: string } }
       responses:
         '303':
-          description: To /web, setting the __Host-oml_session cookie.
+          description: To /web, or to the sign-in's next on the public origin, setting the __Host-oml_session cookie.
         '401':
           description: A sign-in refusal page.
           content:

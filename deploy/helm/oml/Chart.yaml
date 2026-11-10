@@ -4,7 +4,8 @@ apiVersion: v2
 name: oml
 description: >-
   Open Memory Lab on Kubernetes: the current build's one lead (oml-server-lead),
-  its keyring on a kept volume claim, Postgres external.
+  its keyring on a kept volume claim, Postgres external, and the web console
+  (oml-web) beside it.
 type: application
 # version = appVersion = the workspace version in Cargo.toml (ADR-0033 d9);
 # scripts/check_chart.py fails a pull request on a mismatch.

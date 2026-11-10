@@ -1137,7 +1137,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * The sign-in page, where oml-web sends a person with no session, carrying the page as next.
+         * @description next is kept only as a same-origin relative path under /web with no //, no \, no @ and no scheme, checked again after one more percent-decoding; anything else is /web. Each provider form carries it. A browser already signed in is sent to next on the configured public origin, never on a request header (ADR-0070 d4, d6). Since v0.6.4.
+         */
+        get: operations["webSignInPage"];
         put?: never;
         /**
          * Start a provider's sign-in — the code flow with S256 PKCE, state and, for Google, a nonce.
@@ -6525,6 +6529,35 @@ export interface operations {
             };
         };
     };
+    webSignInPage: {
+        parameters: {
+            query?: {
+                next?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The sign-in page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Signed in already, to next. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     webSignIn: {
         parameters: {
             query?: never;
@@ -6537,6 +6570,8 @@ export interface operations {
                 "application/x-www-form-urlencoded": {
                     /** @enum {string} */
                     provider: "google" | "github";
+                    /** @description The page to return to after the callback, admitted as GET /web/sign-in admits it and sealed with the sign-in state (ADR-0070 d4). */
+                    next?: string;
                 };
             };
         };
@@ -6573,7 +6608,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description To /web, setting the __Host-oml_session cookie. */
+            /** @description To /web, or to the sign-in's next on the public origin, setting the __Host-oml_session cookie. */
             303: {
                 headers: {
                     [name: string]: unknown;
