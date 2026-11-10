@@ -9948,7 +9948,7 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{by_author}");
-    assert_eq!(ids(&by_author), [first.clone()]);
+    assert_eq!(ids(&by_author), std::slice::from_ref(&first));
     let (status, _, body) = send(
         &rig.router,
         "GET",
@@ -10064,7 +10064,7 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{found}");
-    assert_eq!(ids(&found), [second.clone()], "{found}");
+    assert_eq!(ids(&found), std::slice::from_ref(&second), "{found}");
     let (status, _, none) = send(
         &rig.router,
         "POST",

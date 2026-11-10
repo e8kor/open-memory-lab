@@ -12,7 +12,7 @@
 //! request, re-checked as a page's session is today (the session is live,
 //! its entry names the user, the admin capacity only for an admin's
 //! entry), and the handlers act through it as through any key
-//! ([`crate::Acting::Session`]). Neither the credential nor the secret is
+//! (`Acting::Session`). Neither the credential nor the secret is
 //! logged.
 
 use std::sync::Arc;
