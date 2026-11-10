@@ -7488,6 +7488,8 @@ async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_worka
             // Sent none, the issuance default (proposed ADR-0037 d4, d5).
             "guardrail_scope": "ancestors",
             "profile": null,
+            // A tenant key names no person (ADR-0070 d5).
+            "person": null,
         })
     );
 
@@ -7806,8 +7808,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        70,
-        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the eight web routes (ADR-0045 d25) and open sign-up's seven (ADR-0068 d10)"
+        80,
+        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the eight web routes (ADR-0045 d25), open sign-up's seven (ADR-0068 d10) and the web console's ten (ADR-0070 d5)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -9307,5 +9309,814 @@ async fn readyz_names_no_recall_counts() {
         }),
         "{ready}"
     );
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// The web console's operations and the capacity credential (ADR-0070 d2, d5)
+// ---------------------------------------------------------------------------
+
+/// The web-client secret both the lead and oml-web hold in these tests.
+const WEB_SECRET: &str = "oml-web-client-secret-for-the-tests-0001";
+
+/// A lead that accepts capacity credentials from oml-web's secret, its
+/// bootstrap admin key, the root, and an app over the same store, which
+/// opens sessions as the auth context does at sign-in.
+struct WebRig {
+    router: Router,
+    app: oml_server_lead::LeadApp,
+    admin: String,
+    root: Uuid,
+    db_name: String,
+}
+
+async fn web_rig() -> Option<WebRig> {
+    let db_name = fresh_database().await?;
+    let store = serving_store(&db_name).await;
+    let signing = SigningKey::from_bytes(&OsIds.new_secret());
+    let router = lead_state(
+        &store,
+        signing.clone(),
+        pg_ping(store.pool().clone()),
+        true,
+        Some(ENROLLMENT.to_owned()),
+    )
+    .with_web_client(oml_transport_http::session::WebClient::new(
+        Some(WEB_SECRET.to_owned()),
+        None,
+    ))
+    .into_router();
+    let (admin, _, root) = bootstrap(&router).await;
+    let app = oml_server_lead::lead_app(&store, signing);
+    Some(WebRig {
+        router,
+        app,
+        admin,
+        root,
+        db_name,
+    })
+}
+
+impl WebRig {
+    /// Adds `email` for `user` under the admin key and opens a session for
+    /// it, its session keys issued first, as a sign-in does; the token the
+    /// cookie would carry.
+    async fn signed_in(&self, email: &str, user: &str, admin: bool) -> String {
+        let (entry, _) = self
+            .app
+            .allow_web_email(
+                self.admin.as_str(),
+                &oml_app::types::WebEmailRequest {
+                    email: oml_app::domain::web::Email::parse(email).expect("an email"),
+                    user: Name::parse(user).expect("a user"),
+                    admin,
+                },
+            )
+            .await
+            .expect("the entry is added");
+        self.app
+            .web_ensure_keys(&entry)
+            .await
+            .expect("the session keys");
+        self.app
+            .web_session_open(&entry, 3600, None)
+            .await
+            .expect("the session opens")
+            .token
+    }
+
+    /// A user key naming `user`, writer and reader on their root, as an
+    /// agent of theirs holds; its value.
+    async fn agent_key(&self, user: &str, name: &str) -> String {
+        let (status, _, body) = send(
+            &self.router,
+            "POST",
+            "/v2/keys",
+            Call::auth(&self.admin)
+                .idem(&format!("agent-{name}"))
+                .body(json!({
+                    "role": "writer",
+                    "name": name,
+                    "principal": name,
+                    "user": user,
+                    "grants": [
+                        { "workarea": user, "role": "writer" },
+                        { "workarea": user, "role": "reader" },
+                    ],
+                })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        body["value"].as_str().expect("value").to_owned()
+    }
+
+    /// A held memory written by `key` in `workarea`; its id.
+    async fn held(&self, key: &str, workarea: &str, claim_key: &str) -> String {
+        let (status, _, body) = send(
+            &self.router,
+            "POST",
+            "/v1/memories",
+            Call::auth(key)
+                .idem(&format!("w-{claim_key}"))
+                .workarea(workarea)
+                .body(json!({
+                    "verb": "remember",
+                    "claim_key": claim_key,
+                    "kind": "memory",
+                    "body": format!("The note {claim_key} is kept for later."),
+                })),
+        )
+        .await;
+        assert!(status.is_success(), "{body}");
+        body["artifact_id"]
+            .as_str()
+            .expect("artifact id")
+            .to_owned()
+    }
+}
+
+/// The capacity credential of `capacity` for a session token.
+fn credential(token: &str, capacity: &str) -> String {
+    oml_app::domain::web::capacity_credential(token, capacity)
+}
+
+/// A call as oml-web makes it: the capacity credential and the client
+/// secret.
+fn web_call(credential: &str) -> Call {
+    Call::auth(credential).header("oml-web-client", WEB_SECRET)
+}
+
+/// A capacity credential reaches the API only with oml-web's client
+/// identity: without the secret, with a wrong one, or beside a client
+/// certificate a gateway forwarded, it is `auth.invalid`
+/// `session_outside_web`; with it, the caller is the person's session key,
+/// and the request line says so (ADR-0070 d2).
+#[tokio::test]
+async fn an_omls_credential_without_the_web_client_is_auth_invalid() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    assert!(web.starts_with("omls_"), "{web}");
+    for call in [
+        Call::auth(&web),
+        Call::auth(&web).header("oml-web-client", "not-the-secret"),
+        web_call(&web).header("x-forwarded-client-cert", "Subject=\"CN=oml-web\""),
+        web_call(&web).header("ssl-client-cert", "-----BEGIN CERTIFICATE-----"),
+    ] {
+        let (status, _, body) = send(&rig.router, "GET", "/v2/whoami", call).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert_envelope(&body, "auth.invalid");
+        assert_eq!(body["error"]["details"]["reason"], "session_outside_web");
+    }
+    let (status, _, me) = send(&rig.router, "GET", "/v2/whoami", web_call(&web)).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(me["name"], "alice-web");
+    assert_eq!(me["person"]["user"], "alice", "{me}");
+    assert_eq!(me["person"]["under_quotas"], false);
+    assert_eq!(me["person"]["deletion_requested_at"], Value::Null);
+    let (status, _, me) = send(
+        &rig.router,
+        "GET",
+        "/v2/whoami",
+        web_call(&credential(&token, "review")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(me["name"], "alice-review");
+    // A capacity the entry does not reach has no credential: alice is no
+    // admin, and no curate key exists.
+    for capacity in ["admin", "curate"] {
+        let (status, _, body) = send(
+            &rig.router,
+            "GET",
+            "/v2/whoami",
+            web_call(&credential(&token, capacity)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{capacity}: {body}");
+        assert_eq!(body["error"]["details"]["reason"], "unknown");
+    }
+    drop_db(&rig.db_name).await;
+}
+
+/// A capacity credential lives exactly as long as its session: after
+/// `POST /v2/web/session/end` every credential of that session is
+/// `auth.invalid`, and a bearer key cannot end anyone's session
+/// (ADR-0070 d2, d5 #5).
+#[tokio::test]
+async fn a_capacity_credential_ends_with_its_session() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let (web, review) = (credential(&token, "web"), credential(&token, "review"));
+    let agent = rig.agent_key("alice", "alice-laptop").await;
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/session/end",
+        Call::auth(&agent),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_envelope(&body, "access.verb_ceiling");
+    assert_eq!(body["error"]["details"]["reason"], "session_key_only");
+    let (status, _, _) = send(&rig.router, "GET", "/v2/whoami", web_call(&review)).await;
+    assert_eq!(status, StatusCode::OK, "the session is live");
+
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/session/end",
+        web_call(&review),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    for cred in [&web, &review] {
+        let (status, _, body) = send(&rig.router, "GET", "/v2/whoami", web_call(cred)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert_envelope(&body, "auth.invalid");
+    }
+    drop_db(&rig.db_name).await;
+}
+
+/// The admin capacity reads the queue while the entry is an admin's; when
+/// its entry loses the flag its sessions end, and the admin credential is
+/// `auth.invalid` (ADR-0070 d2; ADR-0045 d5).
+#[tokio::test]
+async fn the_admin_capacity_ends_when_the_entry_loses_admin() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let _other = rig.signed_in("ops@example.com", "ops", true).await;
+    let token = rig.signed_in("ada@example.com", "ada", true).await;
+    let admin = credential(&token, "admin");
+    let (status, _, queue) = send(&rig.router, "GET", "/v2/review/queue", web_call(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{queue}");
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/emails",
+        Call::auth(&rig.admin)
+            .idem("unflag-ada")
+            .body(json!({ "email": "ada@example.com", "user": "ada", "admin": false, "keep_an_admin": true })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "another admin entry is left: {body}"
+    );
+    let (status, _, body) = send(&rig.router, "GET", "/v2/review/queue", web_call(&admin)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_envelope(&body, "auth.invalid");
+    drop_db(&rig.db_name).await;
+}
+
+/// The person's own export and deletion request run only as their web
+/// session key: their agent's bearer key is `access.verb_ceiling`
+/// `session_key_only`, and nothing is journalled for it (ADR-0070 d5 #6,
+/// #7; ADR-0045 d16).
+#[tokio::test]
+async fn a_bearer_user_key_cannot_export_or_request_deletion() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let agent = rig.agent_key("alice", "alice-laptop").await;
+    let (status, _, body) = send(&rig.router, "GET", "/v2/web/export", Call::auth(&agent)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"]["details"]["reason"], "session_key_only");
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/deletion-requests",
+        Call::auth(&agent).idem("del-agent"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"]["details"]["reason"], "session_key_only");
+    // The review capacity is no web key either.
+    let (status, _, _) = send(
+        &rig.router,
+        "GET",
+        "/v2/web/export",
+        web_call(&credential(&token, "review")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, headers, export) =
+        send(&rig.router, "GET", "/v2/web/export", web_call(&web)).await;
+    assert_eq!(status, StatusCode::OK, "{export}");
+    assert_eq!(export["format"], "oml-export/personal-1");
+    assert_eq!(export["user"], "alice");
+    assert!(
+        headers["content-disposition"]
+            .to_str()
+            .expect("ascii")
+            .starts_with("attachment"),
+        "{headers:?}"
+    );
+    let (status, _, requested) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/deletion-requests",
+        web_call(&web).idem("del-web"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{requested}");
+    assert!(requested["journal_seq"].as_u64().is_some(), "{requested}");
+    let at = requested["requested_at"].as_str().expect("requested_at");
+    let (_, _, me) = send(&rig.router, "GET", "/v2/whoami", web_call(&web)).await;
+    assert_eq!(me["person"]["deletion_requested_at"], at, "{me}");
+    // The admin closes it: the person is disabled, which ends the session.
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/bob/deletion/close",
+        Call::auth(&rig.admin)
+            .idem("close-bob")
+            .body(json!({ "outcome": "deleted" })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "no request is pending: {body}"
+    );
+    let (status, _, closed) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/alice/deletion/close",
+        Call::auth(&rig.admin)
+            .idem("close-alice")
+            .body(json!({ "outcome": "deleted" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{closed}");
+    assert!(closed["journal_seq"].as_u64() > requested["journal_seq"].as_u64());
+    let (status, _, _) = send(&rig.router, "GET", "/v2/whoami", web_call(&web)).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "disabling ends the session"
+    );
+    drop_db(&rig.db_name).await;
+}
+
+/// `GET /v2/keys` lists a person's own keys, session keys among them, to
+/// their web session key, a page at a time; the keys naming a user, session
+/// keys aside, to the admin key role with `user`; and refuses an agent's
+/// bearer key (ADR-0070 d5 #1; ADR-0045 d9, d13).
+#[tokio::test]
+async fn the_keys_listing_serves_a_person_their_keys_and_an_admin_a_users_keys() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let agent = rig.agent_key("alice", "alice-laptop").await;
+
+    let (status, _, page) = send(&rig.router, "GET", "/v2/keys", web_call(&web)).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let names: Vec<&str> = page["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|k| k["name"].as_str().expect("name"))
+        .collect();
+    assert_eq!(
+        names,
+        ["alice-laptop", "alice-review", "alice-web"],
+        "{page}"
+    );
+    let laptop = &page["items"][0];
+    assert_eq!(laptop["credential"], "bearer");
+    assert_eq!(laptop["cut_off"], false);
+    assert_eq!(laptop["grants"][0]["path"], "universe.alice", "{laptop}");
+
+    let (_, _, first) = send(&rig.router, "GET", "/v2/keys?limit=2", web_call(&web)).await;
+    assert_eq!(first["items"].as_array().expect("items").len(), 2);
+    let cursor = first["next_cursor"].as_str().expect("a next page");
+    let (_, _, second) = send(
+        &rig.router,
+        "GET",
+        &format!("/v2/keys?limit=2&cursor={cursor}"),
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(second["items"][0]["name"], "alice-web", "{second}");
+    assert_eq!(second["next_cursor"], Value::Null);
+
+    let (status, _, body) = send(&rig.router, "GET", "/v2/keys?user=bob", web_call(&web)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, _, body) = send(&rig.router, "GET", "/v2/keys", Call::auth(&agent)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"]["details"]["reason"], "session_key_only");
+
+    let (status, _, body) = send(&rig.router, "GET", "/v2/keys", Call::auth(&rig.admin)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["details"]["field"], "user");
+    let (status, _, page) = send(
+        &rig.router,
+        "GET",
+        "/v2/keys?user=alice",
+        Call::auth(&rig.admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["items"].as_array().expect("items").len(), 1, "{page}");
+    assert_eq!(page["items"][0]["name"], "alice-laptop");
+    drop_db(&rig.db_name).await;
+}
+
+/// The admin operations answer the admin key role and refuse every other
+/// key: the review queue's depth per workarea with no content, a person's
+/// capacities granted once each, their quota set, and a disable that cuts
+/// off their agent keys (ADR-0070 d5 #2, #3, #8, #9).
+#[tokio::test]
+async fn the_admin_operations_answer_the_admin_role_alone() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let web = credential(&token, "web");
+    let agent = rig.agent_key("alice", "alice-laptop").await;
+    let held = rig.held(&agent, "alice", "the-first-note").await;
+    let crew = create_workarea(&rig.router, &rig.admin, rig.root, "crew").await;
+
+    for (method, path, body) in [
+        ("GET", "/v2/review/queue", None),
+        (
+            "POST",
+            "/v2/web/users/alice/capacities",
+            Some(json!({ "capacity": "review", "workareas": ["crew"] })),
+        ),
+        (
+            "POST",
+            "/v2/web/users/alice/quota",
+            Some(json!({ "memories": 10 })),
+        ),
+        ("POST", "/v2/web/users/alice/disable", None),
+        (
+            "POST",
+            "/v2/web/users/alice/deletion/close",
+            Some(json!({ "outcome": "deleted" })),
+        ),
+    ] {
+        for call in [Call::auth(&agent), web_call(&web)] {
+            let call = match &body {
+                Some(b) => call.body(b.clone()),
+                None => call,
+            };
+            let (status, _, refused) = send(&rig.router, method, path, call.idem("refused")).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {refused}");
+            assert_envelope(&refused, "access.verb_ceiling");
+        }
+    }
+
+    let (status, _, queue) = send(
+        &rig.router,
+        "GET",
+        "/v2/review/queue",
+        Call::auth(&rig.admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{queue}");
+    assert_eq!(
+        queue["items"],
+        json!([{
+            "workarea_id": queue["items"][0]["workarea_id"],
+            "path": "universe.alice",
+            "held": 1,
+            "oldest_at": queue["items"][0]["oldest_at"],
+        }]),
+        "depth and age, no content: {queue}"
+    );
+    assert!(!queue.to_string().contains(&held), "no memory id: {queue}");
+
+    let grant = |idem: &str, capacity: &str| {
+        Call::auth(&rig.admin)
+            .idem(idem)
+            .body(json!({ "capacity": capacity, "workareas": [crew.to_string()] }))
+    };
+    let (status, _, granted) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/alice/capacities",
+        grant("cap-1", "review"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{granted}");
+    assert_eq!(granted["key"]["name"], "alice-review");
+    let roles: Vec<&str> = granted["grants_added"]
+        .as_array()
+        .expect("grants")
+        .iter()
+        .map(|g| g["role"].as_str().expect("role"))
+        .collect();
+    assert_eq!(roles, ["dreamer", "reader"], "{granted}");
+    assert!(granted["journal_seq"].as_u64().is_some());
+    let (_, _, again) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/alice/capacities",
+        grant("cap-2", "review"),
+    )
+    .await;
+    assert_eq!(again["grants_added"], json!([]), "held once: {again}");
+    assert_eq!(again["journal_seq"], Value::Null);
+    let (status, _, curate) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/alice/capacities",
+        grant("cap-3", "curate"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{curate}");
+    assert_eq!(
+        curate["key"]["name"], "alice-curate",
+        "created at the first designation"
+    );
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/nobody/capacities",
+        grant("cap-4", "review"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    let (status, _, row) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/alice/quota",
+        Call::auth(&rig.admin)
+            .idem("quota-1")
+            .body(json!({ "memories": 10, "keys": null })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{row}");
+    assert_eq!(row["user"], "alice");
+    assert_eq!(row["quotas"]["memories"], 10, "{row}");
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/alice/quota",
+        Call::auth(&rig.admin).idem("quota-2").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/root-admin/disable",
+        Call::auth(&rig.admin).idem("disable-0"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "no entry holds it: {body}");
+    let (status, _, disabled) = send(
+        &rig.router,
+        "POST",
+        "/v2/web/users/alice/disable",
+        Call::auth(&rig.admin).idem("disable-1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{disabled}");
+    assert_eq!(disabled["keys_cut_off"], 1, "{disabled}");
+    let (status, _, _) = send(&rig.router, "GET", "/v2/whoami", web_call(&web)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "the session ended");
+    drop_db(&rig.db_name).await;
+}
+
+/// The changed operations serve the web console's reads: the merged
+/// listing with `with_own` and `author`, the tree with `counts`, the
+/// workarea's offers, the named held rows, and the admin search narrowed by
+/// origin and author; an unreadable workarea and another person's key are
+/// `access.not_found` (ADR-0070 d5).
+#[tokio::test]
+async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named_rows() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let token = rig.signed_in("alice@example.com", "alice", false).await;
+    let (web, review) = (credential(&token, "web"), credential(&token, "review"));
+    let laptop = rig.agent_key("alice", "alice-laptop").await;
+    let phone = rig.agent_key("alice", "alice-phone").await;
+    let first = rig.held(&laptop, "alice", "laptop-note").await;
+    let second = rig.held(&phone, "alice", "phone-note").await;
+    let _bob = rig.signed_in("bob@example.com", "bob", false).await;
+    let bobs = rig.agent_key("bob", "bob-laptop").await;
+    let theirs = rig.held(&bobs, "bob", "bob-note").await;
+
+    let ids = |page: &Value| -> Vec<String> {
+        page["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|m| m["artifact_id"].as_str().expect("id").to_owned())
+            .collect()
+    };
+    let (status, _, merged) = send(
+        &rig.router,
+        "GET",
+        "/v1/memories?with_own=true",
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{merged}");
+    assert_eq!(
+        ids(&merged),
+        [second.clone(), first.clone()],
+        "newest first: {merged}"
+    );
+    let (_, _, plain) = send(&rig.router, "GET", "/v1/memories", web_call(&web)).await;
+    assert!(
+        ids(&plain).is_empty(),
+        "the scoped listing holds no held row: {plain}"
+    );
+    let (status, _, by_author) = send(
+        &rig.router,
+        "GET",
+        "/v1/memories?author=alice-laptop",
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{by_author}");
+    assert_eq!(ids(&by_author), [first.clone()]);
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v1/memories?author=bob-laptop",
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "another person's key: {body}"
+    );
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v1/memories?with_own=true&kind=memory",
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    let (status, _, tree) = send(
+        &rig.router,
+        "GET",
+        "/v2/workareas/alice/tree?counts=true",
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tree}");
+    assert_eq!(tree["truncated"], false);
+    assert_eq!(tree["items"][0]["path"], "universe.alice");
+    assert_eq!(
+        tree["items"][0]["counts"],
+        json!({ "promoted": 0, "held": 2, "in_progress": 0, "other": 0 }),
+        "{tree}"
+    );
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v2/workareas/alice/tree?counts=true&limit=5",
+        web_call(&web),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, _, admin_tree) = send(
+        &rig.router,
+        "GET",
+        "/v2/workareas/universe/tree?counts=true",
+        Call::auth(&rig.admin),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{admin_tree}");
+    let total: u64 = admin_tree["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|n| n["counts"]["held"].as_u64().expect("held"))
+        .sum();
+    assert_eq!(total, 3, "every row counted as structure: {admin_tree}");
+    assert!(!admin_tree.to_string().contains("The note"), "no content");
+
+    let (status, _, offers) = send(
+        &rig.router,
+        "GET",
+        "/v2/workareas/alice/offers",
+        web_call(&review),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{offers}");
+    assert_eq!(offers["mode"], "standard");
+    assert!(offers["transitions"].is_array(), "{offers}");
+    assert!(offers["commit"]["offered"].is_boolean(), "{offers}");
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        "/v2/workareas/bob/offers",
+        web_call(&review),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    let unknown = "00000000-0000-4000-8000-000000000001".to_owned();
+    let (status, _, named) = send(
+        &rig.router,
+        "GET",
+        &format!("/v2/review/held?ids={first},{unknown},{theirs}"),
+        web_call(&review),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{named}");
+    assert_eq!(named["items"][0]["id"], first.as_str());
+    assert_eq!(named["items"][0]["item"]["artifact_id"], first.as_str());
+    assert_eq!(named["items"][1]["item"], Value::Null, "{named}");
+    assert_eq!(
+        named["items"][2]["item"],
+        Value::Null,
+        "not alice's to judge"
+    );
+    let (status, _, body) = send(
+        &rig.router,
+        "GET",
+        &format!("/v2/review/held?ids={first}&limit=5"),
+        web_call(&review),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    let (status, _, found) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/memories/search",
+        Call::auth(&rig.admin).body(json!({ "author": "alice-phone" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    assert_eq!(ids(&found), [second.clone()], "{found}");
+    let (status, _, none) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/memories/search",
+        Call::auth(&rig.admin).body(json!({ "author": "alice-phone", "origin_kind": "lake" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{none}");
+    assert!(ids(&none).is_empty(), "no lake row: {none}");
+    let (status, _, body) = send(
+        &rig.router,
+        "POST",
+        "/v2/admin/memories/search",
+        Call::auth(&rig.admin).body(json!({ "origin_kind": "carrier-pigeon" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["details"]["field"], "/origin_kind");
+    drop_db(&rig.db_name).await;
+}
+
+/// `keep_an_admin` refuses removing or un-flagging the tenant's last admin
+/// entry, `request.validation` naming `admin`, and changes nothing
+/// (ADR-0070 d5; ADR-0045 d10).
+#[tokio::test]
+async fn keep_an_admin_refuses_removing_the_last_admin_entry() {
+    let Some(rig) = web_rig().await else {
+        return;
+    };
+    let _token = rig.signed_in("ada@example.com", "ada", true).await;
+    for (path, body) in [
+        (
+            "/v2/web/emails",
+            json!({ "email": "ada@example.com", "user": "ada", "admin": false, "keep_an_admin": true }),
+        ),
+        (
+            "/v2/web/emails/remove",
+            json!({ "email": "ada@example.com", "keep_an_admin": true }),
+        ),
+    ] {
+        let (status, _, refused) = send(
+            &rig.router,
+            "POST",
+            path,
+            Call::auth(&rig.admin).idem(path).body(body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {refused}");
+        assert_envelope(&refused, "request.validation");
+        assert_eq!(refused["error"]["details"]["field"], "admin");
+    }
+    let (_, _, list) = send(&rig.router, "GET", "/v2/web/emails", Call::auth(&rig.admin)).await;
+    assert_eq!(list["items"][0]["admin"], true, "unchanged: {list}");
     drop_db(&rig.db_name).await;
 }

@@ -3632,3 +3632,100 @@ async fn oml_workarea_serves_the_policy_the_live_proposals_and_the_brief_as_clai
     assert_eq!(node["brief"]["budget"]["max_tokens"], 400);
     drop_db(&db).await;
 }
+
+/// A capacity credential never reaches `/mcp`: even with oml-web's client
+/// secret it is `auth.invalid` `session_outside_web`, while the same
+/// credential reads `/v2/whoami`, so the refusal is the facade's, not a
+/// dead session's (ADR-0070 d2; ADR-0045 d7).
+#[tokio::test]
+async fn an_omls_credential_on_mcp_is_refused() {
+    const SECRET: &str = "oml-web-client-secret-for-the-tests-0001";
+    let db_name = format!(
+        "oml_test_mcp_{}_{}_{}",
+        std::process::id(),
+        DB_N.fetch_add(1, Ordering::SeqCst),
+        run_tag()
+    );
+    if !mint_database(&db_name).await {
+        return;
+    }
+    let store = serving_store(&db_name).await;
+    let signing = SigningKey::from_bytes(&OsIds.new_secret());
+    let router = lead_state(
+        &store,
+        signing.clone(),
+        pg_ping(store.pool().clone()),
+        true,
+        Some(ENROLLMENT.to_owned()),
+    )
+    .with_web_client(oml_transport_http::session::WebClient::new(
+        Some(SECRET.to_owned()),
+        None,
+    ))
+    .into_router();
+    let (status, boot) = send(
+        &router,
+        "POST",
+        "/v2/bootstrap/claim",
+        None,
+        None,
+        Some(&json!({"enrollment_token": ENROLLMENT, "name": "root-admin", "tenant_name": "mcp-tenant"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{boot}");
+    let admin = boot["value"].as_str().expect("admin key").to_owned();
+    let app = oml_server_lead::lead_app(&store, signing);
+    let (entry, _) = app
+        .allow_web_email(
+            admin.as_str(),
+            &oml_app::types::WebEmailRequest {
+                email: oml_app::domain::web::Email::parse("alice@example.com").expect("email"),
+                user: oml_app::domain::name::Name::parse("alice").expect("user"),
+                admin: false,
+            },
+        )
+        .await
+        .expect("the entry");
+    app.web_ensure_keys(&entry).await.expect("the session keys");
+    let token = app
+        .web_session_open(&entry, 3600, None)
+        .await
+        .expect("a session")
+        .token;
+    let web = oml_app::domain::web::capacity_credential(&token, "web");
+    let call = |path: &str, body: Option<Value>| {
+        let mut builder = Request::builder()
+            .method(if body.is_some() { "POST" } else { "GET" })
+            .uri(path)
+            .header("authorization", format!("Bearer {web}"))
+            .header("oml-web-client", SECRET);
+        let body = match body {
+            Some(v) => {
+                builder = builder.header("content-type", "application/json");
+                Body::from(v.to_string())
+            }
+            None => Body::empty(),
+        };
+        builder.body(body).expect("request builds")
+    };
+    let list = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
+    let response = router
+        .clone()
+        .oneshot(call("/mcp", Some(list)))
+        .await
+        .expect("infallible");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.expect("body"))
+            .expect("json");
+    assert_eq!(body["error"]["code"], "auth.invalid", "{body}");
+    assert_eq!(body["error"]["details"]["reason"], "session_outside_web");
+
+    let response = router
+        .clone()
+        .oneshot(call("/v2/whoami", None))
+        .await
+        .expect("infallible");
+    assert_eq!(response.status(), StatusCode::OK, "the credential is live");
+    drop_db(&db_name).await;
+}
