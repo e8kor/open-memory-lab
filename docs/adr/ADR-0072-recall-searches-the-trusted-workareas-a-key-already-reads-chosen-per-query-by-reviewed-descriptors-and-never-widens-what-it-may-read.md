@@ -236,7 +236,9 @@ sequenceDiagram
   working in a workarea know best what it answers. A write naming `oml:descriptor` on any other
   workarea is refused `request.validation`, and a second live descriptor is a supersession, never
   a sibling (ADR-0050 d2). It is held, scanned (d3) and reviewed by a non-author dreamer on the
-  same workarea, R2 against the lineage closure, like every claim; a validated workarea refuses a
+  same workarea, R2 against the lineage closure, like every claim, with one difference decided by
+  the operator on 2026-11-10: the reviewer must be a person, a reviewer with `held_by: human`, so
+  an agent's key never promotes a descriptor; a validated workarea refuses a
   new descriptor as it refuses every write (ADR-0009 d1), so its last promoted descriptor stands.
   The descriptor is not a hit kind: it is never a recall candidate, never in `HIT_KINDS`, and it
   is served by the workarea read (`oml_workarea`) beside `brief` (ADR-0046 d9), a held one to its
@@ -271,8 +273,11 @@ sequenceDiagram
      in a recall answer: `matched` (d8) names words, a descriptor version and question indices,
      never text, so instruction-shaped text has no path into another agent's context through
      recall.
-  2. **Review.** The reviewer reads the workarea the descriptor describes (dreamer on it) and
-     accepts or rejects the descriptor whole.
+  2. **Review, by a person.** The reviewer is a non-author dreamer on the workarea who is a person,
+     `held_by: human` (decided by the operator, 2026-11-10); a verdict from a reviewer of any other
+     `held_by` does not promote a descriptor. The reviewer reads the workarea the descriptor
+     describes and accepts or rejects the descriptor whole. A descriptor steers other crews'
+     selection and changes rarely, so the cost is a few reviews per tenant.
   3. **The answer check.** At hold time, in the scanner's queue and off the write path, the
      server runs each `questions` entry as a recall over the described **node alone**, not its
      subtree, under the author's effective access and the tenant's default pipeline, and attaches
@@ -632,7 +637,7 @@ sequenceDiagram
     | Phase | Builds | Issue | Built when | Leakage and invariance tests (each red first by breaking its clause) |
     |---|---|---|---|---|
     | 1 | `sources` (`"scope"`, `"wide"`, a list), d1's trust set, R with its expired subtraction and pruned words, d4's estimate and cap, d5's policies (`enabled`, `default_sources`, `max_sources`, `accept_federated`), d7, d8 with the widen hint, d9, the eval's cross and skew splits, the directory recipe | #205 | after the candidate-count distribution is reported | (1) an unreadable W (a per-grant deny on a child of a readable parent) whose rows match every query changes no byte of `sources`, `considered`, `cut`, `widen`, hits, scores, `did_you_mean`, `explain` counts or `recall_events`, against W absent; (2) the same for W readable but `development`, in progress or `accept_federated: false`; (3) a reader of the scope without reader on W reads the scope workarea: W's id and name are absent from the whole body; (4) an unreadable W named in a `sources` list gives `access.not_found` byte-identical to a nonexistent name, and a list with one unusable name is refused whole, never answered from the rest, with the latency of an unreadable name compared to an absent one over many runs, and each list-shape refusal (empty, duplicate, over `max_sources`, `Cc`) in the order of d5; (5) reader on S revoked, then a recall at once: S absent, no candidate cache; (6) a scope hit's score is identical whether source X is selected or not, and the `bm25` answer for any searched set equals the union's restricted to it, on `bm25` and on `bm25-postings` with a selection whose postings would cross `POSTING_BUDGET`; (7) timing over many runs, W with 0 against 100,000 matching rows: p50 and p95 within noise; (8) with federation off `scope` reproduces today byte for byte and `wide` and a list are refused; (9a) a list's scores and answer are byte-identical whatever the unlisted workareas hold, and whether any of them is unreachable; an unreachable listed unit refuses `503 cluster.source_unavailable` and an unreachable candidate under `wide` is in `missing` and absent from `reference_workarea_ids`; (9b) the widen hint stays silent on a scope whose rate equals the candidates', fires on one 2 times richer, and ignores a candidate's single stray row |
-    | 2 | kind `descriptor`, d3's hold rule, check and yield, memory-kind-3 postings, the `selector` setting and the `described` selector with `descriptor_slots` | #206 | only if, after phase 1, content selection's recall on the skew split is below 0.90 or more than two queries below the exact ReDDE analogue (d11), **and** a tenant's measured candidate count exceeds `max_sources`; its admission gate is d11's numeric floor, and open question 1 is answered first | (9) held, rejected and superseded descriptors select exactly what no descriptor selects, and a held descriptor is not served to a non-author; (10) a descriptor on an unreadable W changes no byte; (11) an adversarial descriptor matching every query lowers selection recall by at most one query and displaces at most `descriptor_slots` sources; (12) a descriptor version with a hold finding, at write or added by a rescan after promotion, selects exactly what no descriptor selects, whether a person approved it or dismissed the finding, and no descriptor text appears in any recall answer; (13) kind-3 postings are never hits and do not change R's statistics |
+    | 2 | kind `descriptor`, d3's hold rule, check and yield, memory-kind-3 postings, the `selector` setting and the `described` selector with `descriptor_slots` | #206 | only if, after phase 1, content selection's recall on the skew split is below 0.90 or more than two queries below the exact ReDDE analogue (d11), **and** a tenant's measured candidate count exceeds `max_sources`; its admission gate is d11's numeric floor, and open question 1 is decided (2026-11-10: a person promotes a descriptor) | (9) held, rejected and superseded descriptors select exactly what no descriptor selects, and a held descriptor is not served to a non-author; (10) a descriptor on an unreadable W changes no byte; (11) an adversarial descriptor matching every query lowers selection recall by at most one query and displaces at most `descriptor_slots` sources; (12) a descriptor version with a hold finding, at write or added by a rescan after promotion, selects exactly what no descriptor selects, whether a person approved it or dismissed the finding, and no descriptor text appears in any recall answer; (13) kind-3 postings are never hits and do not change R's statistics |
     | 3 | d10's ontology and question lists, fused by RRF into the descriptor score | #207 | after ADR-0051 and #201 land, and phase 2 is built | (14) a term or question held only by unreadable rows selects nothing and changes no count; (15) a question of a held, demoted or erased memory never scores a source, and erasure removes its postings |
 
 ## Consequences
@@ -673,7 +678,7 @@ sequenceDiagram
     | | R1 | R2 | R3 | R4 |
     |---|---|---|---|---|
     | `sources` | a read | — | searches readable rows only; no verdict and no selection enters a score | — |
-    | descriptor | a held write; the agent promotes nothing | a non-author dreamer on the workarea; a person for a hold finding (ADR-0074 d2), which still never advertises | invisible until promoted; once promoted and free of hold findings it can move at most `descriptor_slots` sources into the search and never a hit's score | superseded, never deleted |
+    | descriptor | a held write; the agent promotes nothing | a non-author dreamer on the workarea who is a person (`held_by: human`, d2); a person for a hold finding (ADR-0074 d2), which still never advertises | invisible until promoted; once promoted and free of hold findings it can move at most `descriptor_slots` sources into the search and never a hit's score | superseded, never deleted |
     | policies | a person's or an admin's act, never an agent's | — | they change what is searched, never who reads | journalled |
 
 - Issues: #205 (phase 1), #206 (phase 2, conditional), #207 (phase 3, after ADR-0051 and #201),
@@ -731,20 +736,14 @@ sequenceDiagram
 
 ## Open questions for the operator
 
-1. **Who reviews a descriptor.** This record decides that any non-author dreamer may promote it,
-   an agent's key included, with the hold rule of d3.1, no descriptor text in any answer and the
-   `descriptor_slots` bound; ADR-0074 d2 already puts a person in front of any descriptor with a
-   hold finding. The Round 1 security review and the Round 2 product review recommend a reviewer
-   `held_by: human` for every descriptor, as the policies require: a descriptor steers other
-   crews' selection, there is one per workarea, and it changes rarely, so the cost is a few
-   reviews per tenant. **This record recommends the person.** If the operator does not answer,
-   the decision above stands, which costs nothing until phase 2, itself conditional (d13); the
-   answer is needed before #206 starts, and `selection_yield` can show later whether agents'
-   descriptors are reliable. Should promoting a descriptor need a person?
-2. **Cross-tenant federation.** A confirmation, not a choice. It stays out: every source is in the
-   key's tenant ([workareas](../architecture/workareas.md#the-tree)), the tenant is the isolation
-   unit (ADR-0007), and `universe` already carries curated shared knowledge. **Recommend: out.**
-   Confirm.
+1. **Who reviews a descriptor.** Decided by the operator, 2026-11-10: promoting a descriptor needs
+   a person, a reviewer with `held_by: human`. An agent's key may write a descriptor (d2) and may
+   never promote one; d2 and d3.2 say so. The reasons were the Round 1 security and Round 2
+   product reviews': a descriptor steers other crews' selection, there is one per workarea, and
+   it changes rarely, so the cost is a few reviews per tenant.
+2. **Cross-tenant federation.** Decided by the operator, 2026-11-10: it stays out. Every source is
+   in the key's tenant ([workareas](../architecture/workareas.md#the-tree)), the tenant is the
+   isolation unit (ADR-0007), and `universe` already carries curated shared knowledge.
 
 Answered in this revision, on the product review's recommendations: no reserved floor for scope
 hits (d7); `accept_federated` on by default (d5); the directory workarea is the discovery path and
