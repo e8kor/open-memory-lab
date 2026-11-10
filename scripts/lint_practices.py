@@ -61,7 +61,7 @@ def lint_migrations(root: Path, use_allow: bool = True) -> list[str]:
             continue
         raw, sql = texts[f.name], bare[f.name]
 
-        def esc(rule: str) -> bool:
+        def esc(rule: str, raw: str = raw) -> bool:
             return re.search(rf"--\s*lint:allow\s+{rule}\b\s+\S", raw) is not None
 
         if (re.search(r"VALIDATE\s+CONSTRAINT", sql, re.I) and not esc("validate")

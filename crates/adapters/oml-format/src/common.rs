@@ -3,11 +3,11 @@
 use oml_app::ports::FormatRefusal;
 
 /// The source cap of every non-prose format, chosen, not measured (#159).
-pub const MAX_SOURCE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_SOURCE_BYTES: usize = 64 * 1024;
 /// A JSON or YAML document nests at most this deep (ADR-0056 d6).
-pub const MAX_DEPTH: usize = 32;
+pub(crate) const MAX_DEPTH: usize = 32;
 /// A JSON or YAML document holds at most this many scalars (ADR-0056 d6).
-pub const MAX_SCALARS: usize = 2_000;
+pub(crate) const MAX_SCALARS: usize = 2_000;
 
 /// The bidirectional controls, U+202A to U+202E and U+2066 to U+2069: the
 /// Trojan Source class, refused anywhere in a non-prose source.
@@ -17,7 +17,7 @@ fn is_bidi(c: char) -> bool {
 
 /// The size cap and the bidirectional controls, the checks that precede any
 /// parse. Line and column are 1-based, counted in characters.
-pub fn check_source(source: &str) -> Result<(), FormatRefusal> {
+pub(crate) fn check_source(source: &str) -> Result<(), FormatRefusal> {
     if source.len() > MAX_SOURCE_BYTES {
         return Err(FormatRefusal::new(
             "format.too_large",
@@ -41,7 +41,7 @@ pub fn check_source(source: &str) -> Result<(), FormatRefusal> {
 }
 
 /// The 1-based line and column of the first character `pred` accepts.
-pub fn find(source: &str, pred: impl Fn(char) -> bool) -> Option<(u32, u32)> {
+pub(crate) fn find(source: &str, pred: impl Fn(char) -> bool) -> Option<(u32, u32)> {
     let (mut line, mut column) = (1_u32, 1_u32);
     for c in source.chars() {
         if pred(c) {

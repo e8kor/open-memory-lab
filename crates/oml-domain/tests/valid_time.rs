@@ -1,4 +1,4 @@
-//! Valid time and the date window (proposed ADR-0059 d2, d3, d6, d7).
+//! Valid time and the date window (ADR-0059 d2, d3, d6, d7).
 
 use oml_domain::model::MemoryKind;
 use oml_domain::valid_time::{

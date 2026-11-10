@@ -11,7 +11,7 @@ use oml_app::ports::{
 
 use crate::common::check_source;
 
-pub struct Mermaid;
+pub(crate) struct Mermaid;
 
 const MAX_NODES: usize = 200;
 const MAX_RELATIONS: usize = 400;

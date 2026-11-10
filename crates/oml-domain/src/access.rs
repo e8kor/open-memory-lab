@@ -3,7 +3,7 @@
 //! and denial records, computed on every request with no cache
 //! (ADR-0025 d1, d2, d14, d15; ADR-0019 d1) — and the dreamer grant narrowed
 //! by `edge_labels`, with the member profile an ontology crew's keys carry
-//! (ADR-0027 d3, d4, d5).
+//! (ADR-0027 [proposed in #10, unmerged] d3, d4, d5).
 //!
 //! The tables are declared on `docs/architecture/roles-and-keys.md`
 //! (grant admissibility and refusal order, effective verbs, narrowed

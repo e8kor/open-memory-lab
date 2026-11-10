@@ -1,7 +1,7 @@
 //! Narrowed dreamer grants and member profiles: the `edge_labels` grant
 //! attribute, narrowed effective access, the refusal-order steps that name
 //! `edge_labels`, `my_edge_labels`, and the member-profile check of the
-//! issuance order (ADR-0027 d3, d4, d5; roles-and-keys.md "Narrowed dreamer
+//! issuance order (ADR-0027 [proposed in #10, unmerged] d3, d4, d5; roles-and-keys.md "Narrowed dreamer
 //! grants: `edge_labels`", "Member profiles", "Grant admissibility and
 //! refusal order"; workareas.md, effective access).
 

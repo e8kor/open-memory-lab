@@ -437,7 +437,7 @@ def hero(mode):
     sysg, an = system(th, cx, cy, s, "h" + mode)
     g.append(atlas_marks(th, 690, 24, 1280, 360, "PLATE I · THE SYSTEM", 13, cap_top=True))
     g.append(sysg)
-    ST, LAB, FG, MU = th["star"], th["lab"], th["fg"], th["muted"]
+    ST, LAB, MU = th["star"], th["lab"], th["muted"]
     lab = 19
     X, Y, rs = an["star"]
     # foundation: directly below the star, short vertical leader, below the outer orbit

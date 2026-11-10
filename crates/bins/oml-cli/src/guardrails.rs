@@ -1,4 +1,4 @@
-//! The agent plugin's guardrail hooks (proposed ADR-0037 d6, d7, d9): `oml
+//! The agent plugin's guardrail hooks (ADR-0037 d6, d7, d9): `oml
 //! hook guardrails`, which loads the set at SessionStart, after a compaction
 //! and at SubagentStart, prints it in its own frame and, at SessionStart
 //! alone, writes the session's rule cache; and `oml hook pre-tool-use`,

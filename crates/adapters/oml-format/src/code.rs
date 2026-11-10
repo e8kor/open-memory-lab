@@ -7,7 +7,7 @@ use oml_app::ports::{
 
 use crate::common::check_source;
 
-pub struct Code;
+pub(crate) struct Code;
 
 /// The closed list of languages (ADR-0056 d7).
 pub const LANGUAGES: [&str; 20] = [

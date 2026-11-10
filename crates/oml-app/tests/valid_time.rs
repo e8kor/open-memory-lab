@@ -1,4 +1,4 @@
-//! Valid time through the core (proposed ADR-0059): declared and signed
+//! Valid time through the core (ADR-0059): declared and signed
 //! ends, expired memories hidden from recall unless asked, and the `time`
 //! leg. The text list here is the in-memory
 //! store's any-word list answering the `bm25_postings` kind, so these tests
@@ -32,7 +32,7 @@ const PIPELINES: [Pipeline; 3] = [
 
 /// Every pipeline the expiry rule binds, `keyword-all` among them: its
 /// v0.5.0 statement keeps no expiry cut, so the core's re-check is its one
-/// fence (proposed ADR-0059 d3).
+/// fence (ADR-0059 d3).
 const EVERY_PIPELINE: [Pipeline; 4] = [
     Pipeline::KeywordAll,
     Pipeline::KeywordAny,
@@ -378,7 +378,7 @@ async fn the_time_leg_lifts_the_memory_whose_valid_time_overlaps_the_querys_wind
     let hit = &r.hits[0];
     assert!(hit.via.contains(&RetrieverKind::Time));
     // The hit carries the dates it was found by, so a "when" question can
-    // be answered from them (proposed ADR-0059 d9).
+    // be answered from them (ADR-0059 d9).
     assert_eq!(
         hit.memory.valid.from.as_ref().map(|f| f.as_str()),
         Some("2015-03")
