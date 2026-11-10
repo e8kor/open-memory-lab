@@ -5,99 +5,19 @@
 
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
-use sqlx::postgres::PgConnection;
-use sqlx::{Connection, Executor};
 
 use oml_pg::PgStore;
 use oml_server_lead::start_lead;
+use oml_test_pg::{DB_N, drop_db, mint_database, role_url, run_tag};
 
 // ---------------------------------------------------------------------------
 // Throwaway databases and role pairs (the cli_e2e.rs pattern)
 // ---------------------------------------------------------------------------
-
-fn base_url() -> String {
-    std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL names a throwaway PostgreSQL cluster; no suite defaults to one, so none reaches a live server")
-}
-
-/// The password of every minted test role; the roles live only as long as
-/// their throwaway database.
-const PAIR_PASSWORD: &str = "oml_test_pair";
-
-fn role_url(db: &str, role: &str) -> String {
-    let base = base_url();
-    let (scheme, rest) = base
-        .split_once("://")
-        .expect("DATABASE_URL is a postgres:// URL");
-    let (_, host_path) = rest.rsplit_once('@').expect("DATABASE_URL names its user");
-    let (host, _) = host_path
-        .split_once('/')
-        .expect("DATABASE_URL names a database path");
-    format!("{scheme}://{role}:{PAIR_PASSWORD}@{host}/{db}")
-}
-
-fn run_tag() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock after the epoch")
-        .subsec_nanos();
-    format!("{nanos:08x}")
-}
-
-static DB_N: AtomicU64 = AtomicU64::new(0);
-
-/// Mints `db`'s owner/serving role pair and creates `db` owned by the owner
-/// (ADR-0034 d2, d8); `false`, with `did not run: <role> cannot create
-/// roles` printed, when `DATABASE_URL`'s role is not a superuser. Under
-/// `OML_TEST_REQUIRE_SPLIT=1`, which CI sets, the same condition fails.
-async fn mint_database(db: &str) -> bool {
-    let mut admin = PgConnection::connect(&base_url())
-        .await
-        .expect("admin connect");
-    let (role, mints): (String, bool) = sqlx::query_as(
-        "SELECT current_user::text, rolsuper FROM pg_roles WHERE rolname = current_user",
-    )
-    .fetch_one(&mut admin)
-    .await
-    .expect("role attributes");
-    if !mints {
-        assert!(
-            std::env::var("OML_TEST_REQUIRE_SPLIT").as_deref() != Ok("1"),
-            "{role} cannot create roles, and OML_TEST_REQUIRE_SPLIT=1 requires the role pair (ADR-0034 d8)"
-        );
-        println!("did not run: {role} cannot create roles");
-        return false;
-    }
-    for role in ["owner", "serving"] {
-        admin
-            .execute(format!("CREATE ROLE {db}_{role} LOGIN PASSWORD '{PAIR_PASSWORD}'").as_str())
-            .await
-            .expect("mint the role pair");
-    }
-    admin
-        .execute(format!("CREATE DATABASE {db} OWNER {db}_owner").as_str())
-        .await
-        .expect("create throwaway database");
-    true
-}
-
-async fn drop_db(name: &str) {
-    if let Ok(mut admin) = PgConnection::connect(&base_url()).await {
-        let _ = admin
-            .execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
-            .await;
-        for role in ["serving", "owner"] {
-            let _ = admin
-                .execute(format!("DROP ROLE IF EXISTS {name}_{role}").as_str())
-                .await;
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // The lead over TCP, and the oml binary against it

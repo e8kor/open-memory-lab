@@ -57,7 +57,7 @@ impl HeldBy {
 /// A claim's kind, as a submission declares it and `memories.kind` stores it
 /// (http-api.md submit; postgres-schema.md `memories`; ADR-0025 d8). A
 /// successor's kind changes only within its class (audit-and-lineage.md).
-/// `Guardrail` is proposed ADR-0037 d1's kind: a promoted rule with a
+/// `Guardrail` is ADR-0037 d1's kind: a promoted rule with a
 /// severity, served by its own read and never in recall.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MemoryKind {

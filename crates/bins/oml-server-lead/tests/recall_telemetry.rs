@@ -7,7 +7,7 @@
 //! sentence it proves.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -28,36 +28,8 @@ use oml_app::types::{
 use oml_fetch::PinnedFetcher;
 use oml_pg::PgStore;
 use oml_server_lead::{LeadApp, lead_app, start_lead_with};
+use oml_test_pg::{DB_N, drop_db, mint_database, owner_url, serving_url};
 use oml_transport_http::traffic::{Traffic, TrustedProxies, metrics};
-
-fn base_url() -> String {
-    std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL names a throwaway PostgreSQL cluster; no suite defaults to one, so none reaches a live server")
-}
-
-const PAIR_PASSWORD: &str = "oml_test_pair";
-
-fn role_url(db: &str, role: &str) -> String {
-    let base = base_url();
-    let (scheme, rest) = base
-        .split_once("://")
-        .expect("DATABASE_URL is a postgres:// URL");
-    let (_, host_path) = rest.rsplit_once('@').expect("DATABASE_URL names its user");
-    let (host, _) = host_path
-        .split_once('/')
-        .expect("DATABASE_URL names a database path");
-    format!("{scheme}://{role}:{PAIR_PASSWORD}@{host}/{db}")
-}
-
-fn owner_url(db: &str) -> String {
-    role_url(db, &format!("{db}_owner"))
-}
-
-fn serving_url(db: &str) -> String {
-    role_url(db, &format!("{db}_serving"))
-}
-
-static DB_N: AtomicU64 = AtomicU64::new(0);
 
 /// A fresh id from the lead's own generator (the workspace's uuid has no
 /// v4 feature).
@@ -76,53 +48,6 @@ fn fresh_name() -> String {
         std::process::id(),
         DB_N.fetch_add(1, Ordering::SeqCst),
     )
-}
-
-/// Mints `db`'s role pair and the database, as every split suite does
-/// (ADR-0034 d8); `false` where the login cannot create roles, which
-/// `OML_TEST_REQUIRE_SPLIT=1` turns into a failure.
-async fn mint_database(db: &str) -> bool {
-    let mut admin = PgConnection::connect(&base_url())
-        .await
-        .expect("admin connect");
-    let (role, mints): (String, bool) = sqlx::query_as(
-        "SELECT current_user::text, rolsuper FROM pg_roles WHERE rolname = current_user",
-    )
-    .fetch_one(&mut admin)
-    .await
-    .expect("role attributes");
-    if !mints {
-        assert!(
-            std::env::var("OML_TEST_REQUIRE_SPLIT").as_deref() != Ok("1"),
-            "{role} cannot create roles, and OML_TEST_REQUIRE_SPLIT=1 requires the role pair (ADR-0034 d8)"
-        );
-        println!("did not run: {role} cannot create roles");
-        return false;
-    }
-    for role in ["owner", "serving"] {
-        admin
-            .execute(format!("CREATE ROLE {db}_{role} LOGIN PASSWORD '{PAIR_PASSWORD}'").as_str())
-            .await
-            .expect("mint the role pair");
-    }
-    admin
-        .execute(format!("CREATE DATABASE {db} OWNER {db}_owner").as_str())
-        .await
-        .expect("create throwaway database");
-    true
-}
-
-async fn drop_db(name: &str) {
-    if let Ok(mut admin) = PgConnection::connect(&base_url()).await {
-        let _ = admin
-            .execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
-            .await;
-        for role in ["serving", "owner"] {
-            let _ = admin
-                .execute(format!("DROP ROLE IF EXISTS {name}_{role}").as_str())
-                .await;
-        }
-    }
 }
 
 async fn call(router: &Router, request: Request<Body>) -> (StatusCode, Value) {

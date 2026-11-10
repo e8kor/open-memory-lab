@@ -105,12 +105,11 @@ def render(nodes: list[dict]) -> str:
     top = [n for n in nodes if len(n["path"]) == 1]
     root = nodes[0]
     out = [docgen.front_matter("every oml command, subcommand, argument and option, as the build prints them"), "# CLI reference\n"]
-    out.append(f"`oml` is the command-line client for administrators, reviewers and scripts. It calls the same HTTP API as agents and holds no authority of its own.\n")
+    out.append("`oml` is the command-line client for administrators, reviewers and scripts. It calls the same HTTP API as agents and holds no authority of its own.\n")
     out.append(f"*{docgen.BANNER.format(script='scripts/gen_cli_reference.py')} It lists {len(leaves)} commands.*\n")
     out.append("## Options every command takes\n")
     out.append("| Option | Meaning |\n|---|---|")
     for n, d in root["opts"]:
-        key = n.split()[0].lstrip("-,") if n.startswith("-h") else n
         out.append(f"| `{n}` | {md_cell(d)} |")
     out.append("\nPer-command sections below omit these options.\n")
     out.append("## All commands\n")

@@ -1963,7 +1963,7 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
 }
 
 // ---------------------------------------------------------------------------
-// Guardrails on the pages (proposed ADR-0037 d17, d18 Q5; build step S6)
+// Guardrails on the pages (ADR-0037 d17, d18 Q5; build step S6)
 // ---------------------------------------------------------------------------
 
 async fn agent_guardrail(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
@@ -2254,7 +2254,7 @@ async fn the_admin_page_supersedes_and_retires_no_guardrail() {
 
 /// A reviewer sees what a verdict makes true: the held version's own valid
 /// time and, on a supersession, the end approving it gives the version it
-/// replaces, on the review card and in the bulk table (proposed ADR-0059
+/// replaces, on the review card and in the bulk table (ADR-0059
 /// d2, d4).
 #[tokio::test]
 async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_card_and_the_bulk_table()

@@ -2,7 +2,7 @@
 //! validation and its duplicate rule, cycle refusal over `is_a` and
 //! `replaced_by`, the lineage closure without `oml:about`, computed
 //! retirement, and recall's terms match (ADR-0021 d3, d5, d9;
-//! ADR-0027 d6–d11; ontologies.md, retrieval.md, audit-and-lineage.md).
+//! ADR-0027 [proposed in #10, unmerged] d6–d11; ontologies.md, retrieval.md, audit-and-lineage.md).
 
 use std::collections::{BTreeMap, BTreeSet};
 

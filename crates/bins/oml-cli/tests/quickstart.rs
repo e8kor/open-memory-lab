@@ -8,93 +8,16 @@
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 
 use ed25519_dalek::SigningKey;
-use sqlx::postgres::PgConnection;
-use sqlx::{Connection, Executor};
 
 use oml_pg::PgStore;
 use oml_server_lead::{lead_state, pg_ping};
+use oml_test_pg::{DB_N, drop_db, mint_database, owner_url, run_tag, serving_url};
 
 /// The enrollment token the fake's `compose logs` prints and the lead takes.
 const TOKEN: &str = "enr_0123456789abcdef0123456789abcdef0123456789abcdef";
-
-fn base_url() -> String {
-    std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL names a throwaway PostgreSQL cluster; no suite defaults to one, so none reaches a live server")
-}
-
-const PAIR_PASSWORD: &str = "oml_test_pair";
-
-fn role_url(db: &str, role: &str) -> String {
-    let base = base_url();
-    let (scheme, rest) = base
-        .split_once("://")
-        .expect("DATABASE_URL is a postgres:// URL");
-    let (_, host_path) = rest.rsplit_once('@').expect("DATABASE_URL names its user");
-    let (host, _) = host_path
-        .split_once('/')
-        .expect("DATABASE_URL names a database path");
-    format!("{scheme}://{role}_{db}:{PAIR_PASSWORD}@{host}/{db}")
-}
-
-fn run_tag() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock after the epoch")
-        .subsec_nanos();
-    format!("{nanos:08x}")
-}
-
-/// Mints `db`'s role pair and `db` (ADR-0034 d8), or `false` with `did not
-/// run` printed where the role cannot, failing under
-/// `OML_TEST_REQUIRE_SPLIT=1` as CI sets it.
-async fn mint_database(db: &str) -> bool {
-    let mut admin = PgConnection::connect(&base_url())
-        .await
-        .expect("admin connect");
-    let (role, mints): (String, bool) = sqlx::query_as(
-        "SELECT current_user::text, rolsuper FROM pg_roles WHERE rolname = current_user",
-    )
-    .fetch_one(&mut admin)
-    .await
-    .expect("role attributes");
-    if !mints {
-        assert!(
-            std::env::var("OML_TEST_REQUIRE_SPLIT").as_deref() != Ok("1"),
-            "{role} cannot create roles, and OML_TEST_REQUIRE_SPLIT=1 requires the role pair (ADR-0034 d8)"
-        );
-        println!("did not run: {role} cannot create roles");
-        return false;
-    }
-    for role in ["owner", "serving"] {
-        admin
-            .execute(format!("CREATE ROLE {role}_{db} LOGIN PASSWORD '{PAIR_PASSWORD}'").as_str())
-            .await
-            .expect("mint the role pair");
-    }
-    admin
-        .execute(format!("CREATE DATABASE {db} OWNER owner_{db}").as_str())
-        .await
-        .expect("create throwaway database");
-    true
-}
-
-async fn drop_db(name: &str) {
-    if let Ok(mut admin) = PgConnection::connect(&base_url()).await {
-        let _ = admin
-            .execute(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)").as_str())
-            .await;
-        for role in ["serving", "owner"] {
-            let _ = admin
-                .execute(format!("DROP ROLE IF EXISTS {role}_{name}").as_str())
-                .await;
-        }
-    }
-}
-
-static DB_N: AtomicU64 = AtomicU64::new(0);
 
 /// An empty directory of this test's own, under the OS temp directory.
 fn scratch(test: &str) -> PathBuf {
@@ -175,12 +98,12 @@ async fn quickstart_brings_up_the_compose_profile_claims_the_lead_and_prints_the
     if !mint_database(&db).await {
         return;
     }
-    let store = PgStore::connect(&role_url(&db, "serving"))
+    let store = PgStore::connect(&serving_url(&db))
         .await
         .expect("connect")
-        .with_owner_url(&role_url(&db, "owner"));
+        .with_owner_url(&owner_url(&db));
     store
-        .migrate(&role_url(&db, "owner"))
+        .migrate(&owner_url(&db))
         .await
         .expect("embedded migrations apply");
     let mut seed = [0_u8; 32];

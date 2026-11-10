@@ -1,4 +1,4 @@
-//! Guardrails on the wire (proposed ADR-0037 d4, d5, d10, d14; build steps
+//! Guardrails on the wire (ADR-0037 d4, d5, d10, d14; build steps
 //! S1 and S2): kind `guardrail` with its `severity` and `rule` on
 //! `POST /v1/memories` and its supersede, refused on MCP's `oml_write`; the
 //! key's `guardrail_scope` on `POST /v2/keys`, `GET /v2/keys/{key}` and

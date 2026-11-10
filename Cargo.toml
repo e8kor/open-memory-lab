@@ -20,6 +20,7 @@ members = [
     "crates/bins/oml-cli",
     "crates/bins/oml-lakewriter",
     "testing/oml-port-contracts",
+    "testing/oml-test-pg",
 ]
 
 [workspace.package]
@@ -37,6 +38,8 @@ oml-domain = { path = "crates/oml-domain" }
 oml-guardrail = { path = "crates/oml-guardrail" }
 oml-scan = { path = "crates/oml-scan" }
 oml-port-contracts = { path = "testing/oml-port-contracts" }
+# Throwaway databases for the Postgres suites; a dev-dependency only.
+oml-test-pg = { path = "testing/oml-test-pg" }
 # Dev-dependency surface only: the oml-cli end-to-end test composes the real
 # lead in-process; the CLI binary itself depends on no server crate.
 oml-server-lead = { path = "crates/bins/oml-server-lead", default-features = false }

@@ -105,7 +105,7 @@ const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 
-/// The one prompt `prompts/list` names (proposed ADR-0037 d11): prompts are
+/// The one prompt `prompts/list` names (ADR-0037 d11): prompts are
 /// user-controlled, so it reaches a session only when a person runs it.
 fn guardrails_prompt_listing() -> Value {
     json!({
@@ -163,7 +163,7 @@ struct WriteArgs {
     reason: Option<String>,
     /// `hold` or `refuse` (ADR-0050 d1).
     on_similar: Option<String>,
-    /// When the memory holds (proposed ADR-0059 d2, d9).
+    /// When the memory holds (ADR-0059 d2, d9).
     valid_from: Option<String>,
     valid_until: Option<String>,
     /// The origin the author declares (ADR-0057 d1).
@@ -207,7 +207,7 @@ struct ReadArgs {
     match_mode: Option<String>,
     /// Feedback on the key's last recall, in any mode (ADR-0054 d6).
     feedback: Option<Value>,
-    /// Recall's expired opt-in and its now (proposed ADR-0059 d3, d5).
+    /// Recall's expired opt-in and its now (ADR-0059 d3, d5).
     include_expired: Option<bool>,
     now: Option<String>,
     /// The origin filters, in recall and listing modes (ADR-0057 d4).
@@ -1124,7 +1124,7 @@ fn field_refusal(field: &str, message: &str) -> Value {
 
 /// A plugin write of kind `guardrail`, refused naming `kind`: a guardrail is
 /// written and superseded on the HTTP API only, so no tool carries its
-/// `severity` or `rule` (proposed ADR-0037 d10, amending ADR-0039 d3).
+/// `severity` or `rule` (ADR-0037 d10, amending ADR-0039 d3).
 fn refuse_guardrail_kind(kind: Option<&str>) -> Result<(), Value> {
     if kind == Some("guardrail") {
         return Err(field_refusal(

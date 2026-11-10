@@ -1,5 +1,5 @@
 //! `oml guardrails show` and `oml guardrails export` through the real
-//! binary (proposed ADR-0037 d7, d11; build step S5), against a fixture
+//! binary (ADR-0037 d7, d11; build step S5), against a fixture
 //! that answers `GET /v1/guardrails` with a canned set it can change. The
 //! fixture is a test double, not a served route.
 

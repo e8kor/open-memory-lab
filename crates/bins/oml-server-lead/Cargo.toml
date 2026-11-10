@@ -44,6 +44,7 @@ rerank = ["oml-rerank/model"]
 [dev-dependencies]
 hex.workspace = true
 oml-guardrail.workspace = true
+oml-test-pg.workspace = true
 tower.workspace = true
 
 [lints]

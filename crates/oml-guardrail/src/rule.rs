@@ -1,6 +1,6 @@
 //! The rule grammar `oml-gr/1`: one JSON object per guardrail,
 //! `{"rule": "oml-gr/1", "tool": <class>, <match>, "effect": "deny" | "ask"}`,
-//! whose `<match>` member the class names (proposed ADR-0037 d8).
+//! whose `<match>` member the class names (ADR-0037 d8).
 
 use serde_json::{Map, Value, json};
 
@@ -263,7 +263,7 @@ impl Rule {
 
 /// A host pattern as written: an exact host, or `*.` and a domain, each
 /// already in the form the matched host is serialised in, so that no
-/// admitted rule binds nothing (proposed ADR-0037 d8). A domain is
+/// admitted rule binds nothing (ADR-0037 d8). A domain is
 /// lower-case ASCII letters, digits, `-` and `_` in non-empty dot-separated
 /// labels with no trailing dot; one that ends in a number is an IPv4
 /// address and is taken only as four canonical decimals, exact. An IPv6
