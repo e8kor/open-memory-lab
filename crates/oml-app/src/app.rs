@@ -311,6 +311,45 @@ struct ServedNodes {
     scope_root: Option<Uuid>,
 }
 
+/// One text a version's scan reads: the envelope kind it is scanned as, the
+/// text, and where a finding on it is placed (`None` for the body).
+pub(crate) struct ScanTarget<'a> {
+    pub(crate) kind: &'static str,
+    pub(crate) text: &'a str,
+    pub(crate) at: Option<&'a str>,
+}
+
+/// Every text beside the anchor that a version's scan reads, in order: the
+/// body, the title, then each view its format decoded (ADR-0056 d6). The
+/// admission scan and the recording rescan both read this one list, so a
+/// version stamped `scanned_under` was read whole under that rule set
+/// (ADR-0065 d15; ADR-0074 d28).
+pub(crate) fn scan_targets<'a>(
+    kind: MemoryKind,
+    body: &'a str,
+    fields: &'a FormatFields,
+    parsed: &'a Parsed,
+) -> Vec<ScanTarget<'a>> {
+    let mut out = vec![ScanTarget {
+        kind: kind.as_str(),
+        text: body,
+        at: None,
+    }];
+    if let Some(title) = &fields.title {
+        out.push(ScanTarget {
+            kind: "title",
+            text: title,
+            at: Some("title"),
+        });
+    }
+    out.extend(parsed.views.iter().map(|view| ScanTarget {
+        kind: kind.as_str(),
+        text: &view.text,
+        at: Some(&view.path),
+    }));
+    out
+}
+
 /// Whether a held version may be served unreviewed inside an in-progress
 /// subtree: a memory or derived fact, never a retirement version, never one
 /// the scan held, which stays its author's until a reviewer reads it, and
@@ -6677,27 +6716,18 @@ where
                 ScanOutcome::Veto(reason) => Err(AppError::ScanVeto(format!("{reason} at {at}"))),
             }
         };
-        if let Some(title) = &fields.title {
-            note(
-                self.scanner.scan(&AdmissionEnvelope {
-                    tenant_id,
-                    kind: "title",
-                    body: title,
-                }),
-                "title",
-            )?;
-        }
         if let Some(finding) = &parsed.veto {
             return Err(AppError::ScanVeto(finding.clone()));
         }
-        for view in &parsed.views {
+        // The body is scanned by the caller; the rest of the one list.
+        for target in scan_targets(kind, "", fields, parsed).into_iter().skip(1) {
             note(
                 self.scanner.scan(&AdmissionEnvelope {
                     tenant_id,
-                    kind: kind.as_str(),
-                    body: &view.text,
+                    kind: target.kind,
+                    body: target.text,
                 }),
-                &view.path,
+                target.at.unwrap_or("/body"),
             )?;
         }
         Ok(())

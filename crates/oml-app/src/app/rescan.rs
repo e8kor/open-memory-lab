@@ -16,10 +16,12 @@ use oml_domain::{MemoryStatus, Role, event_types};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{App, require_role};
+use super::{App, require_role, scan_targets};
 use crate::ports::{
-    AdmissionEnvelope, Clock, IdGen, JournalStore, MetadataFold, ScanFinding, Scanner, Signer,
+    AdmissionEnvelope, Clock, IdGen, JournalStore, MetadataFold, Parsed, ScanFinding, Scanner,
+    Signer,
 };
+use crate::types::MemoryRecord;
 use crate::types::{AppError, Bearer};
 
 /// The most journal events one rescan call reads.
@@ -103,6 +105,63 @@ where
         self.rescan_window(bearer, after_seq, limit, true).await
     }
 
+    /// The findings the server's rule set makes on what a stored version
+    /// serves beside its anchor: the body, the title and each decoded view,
+    /// the list admission reads ([`super::scan_targets`]). A source its
+    /// format no longer accepts is a hold, so the version stays its
+    /// author's (ADR-0065 d15).
+    fn stored_findings(&self, tenant_id: Uuid, row: &MemoryRecord) -> Vec<ScanFinding> {
+        let parsed = self
+            .formats
+            .resolve(&row.format.media_type)
+            .map_err(|_| "format.unknown".to_owned())
+            .and_then(|resolved| {
+                resolved
+                    .adapter
+                    .validate(&row.body)
+                    .map_err(|refusal| refusal.reason.to_owned())
+            });
+        let mut found = Vec::new();
+        let parsed = match parsed {
+            Ok(parsed) => parsed,
+            Err(reason) => {
+                found.push(ScanFinding {
+                    class: "format.invalid".to_owned(),
+                    rule: reason,
+                    veto: false,
+                    at: "/body".to_owned(),
+                });
+                Parsed::default()
+            }
+        };
+        // The format's own rule, `secret.keyed_value at <key path>`
+        // (ADR-0056 d6): a veto, placed at its key path.
+        if let Some(veto) = &parsed.veto {
+            found.push(ScanFinding {
+                class: "secret.keyed_value".to_owned(),
+                rule: "keyed-value".to_owned(),
+                veto: true,
+                at: veto
+                    .strip_prefix("secret.keyed_value at ")
+                    .unwrap_or(veto)
+                    .to_owned(),
+            });
+        }
+        for target in scan_targets(row.kind, &row.body, &row.format, &parsed) {
+            for mut f in self.scanner.findings(&AdmissionEnvelope {
+                tenant_id,
+                kind: target.kind,
+                body: target.text,
+            }) {
+                if let Some(at) = target.at {
+                    f.at = format!("{} at {at}", f.at);
+                }
+                found.push(f);
+            }
+        }
+        found
+    }
+
     async fn rescan_window(
         &self,
         bearer: impl Into<Bearer<'_>>,
@@ -140,11 +199,7 @@ where
         let mut recorded: Vec<(Uuid, Vec<ScanFinding>)> = Vec::new();
         for row in rows.iter().filter(|r| r.status != MemoryStatus::Erased) {
             scanned += 1;
-            let mut found = self.scanner.findings(&AdmissionEnvelope {
-                tenant_id,
-                kind: row.kind.as_str(),
-                body: &row.body,
-            });
+            let mut found = self.stored_findings(tenant_id, row);
             if let Some(anchor) = row.anchor.as_deref() {
                 for (field, value) in anchor.scanned() {
                     if field == "/anchor/path" && anchor_grammar::secret_shaped(value) {
