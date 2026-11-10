@@ -1,0 +1,34 @@
+# Open Memory Lab — the path router in front of the lead and oml-web
+# (ADR-0070 d4, d12). One public origin, because the session cookie is a
+# __Host- cookie the browser sends to one host only.
+#
+#   - each page oml-web serves (oml_web::PAGES in
+#     crates/clients/oml-web/src/lib.rs) goes to oml-web, 127.0.0.1:8091;
+#   - every other path goes to the lead, 127.0.0.1:8090: the API (/v1, /v2),
+#     /mcp, /oauth, /.well-known, /readyz, sign-in (/web/sign-in,
+#     /web/callback/*, /web/sign-up) and the pages that have not moved yet;
+#   - the landing pages are static files from oml-site-<version>.tar.gz.
+#
+# oml-web reaches the lead at its own address (web.api_url), never back
+# through this proxy. docker-compose.yml and `oml quickstart` route the same
+# set with the service names in place of the addresses; the routes grow as
+# pages move, and crates/clients/oml-web/tests/routes.rs holds every copy to
+# PAGES.
+
+memory.example.com {
+	@landing path / /teams /personal /privacy /terms
+	handle @landing {
+		root * /srv/oml-site
+		try_files {path}.html /index.html
+		file_server
+	}
+
+	@oml_web {
+		method GET
+		path /web
+		query view=guardrails
+	}
+	reverse_proxy @oml_web 127.0.0.1:8091
+
+	reverse_proxy 127.0.0.1:8090
+}

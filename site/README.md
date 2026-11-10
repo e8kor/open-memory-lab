@@ -42,12 +42,13 @@ Deploying it is an operator step: verify it, extract it, and point the web serve
 directory.
 
 Caddy serves the five pages for `/`, `/teams`, `/personal`, `/privacy` and `/terms`, and routes
-the rest by path. Once the web console runs as its own process, `oml-web`
-([ADR-0070](../docs/adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md)
-phase b), the page routes under `/web/*` go to it, on port 8091 here, but the auth routes
-(`/web/sign-in`, `/web/callback/*` and `/web/sign-up`) stay with the lead, as ADR-0070 d4 routes
-them; until then the lead serves every `/web` path and the `@web` handle is left out. The API, MCP, OAuth and discovery paths go to the lead, here on port
-8090. Every other path also goes to the lead, so a path this example does not name keeps working.
+the rest by path. The web console runs as its own process, `oml-web`
+([ADR-0070](../docs/adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md)),
+on port 8091 here. Its pages move from the lead one at a time, so the proxy sends `oml-web` only
+the pages it serves, matched by method, path and query, and every other path to the lead, here on
+port 8090: the API, MCP, OAuth, discovery, sign-in (`/web/sign-in`, `/web/callback/*`,
+`/web/sign-up`) and the pages that have not moved. `deploy/caddy/Caddyfile` is the reference, and
+it grows as pages move.
 
 ```caddyfile
 memory.doublegate.io {
@@ -57,23 +58,14 @@ memory.doublegate.io {
 		try_files {path}.html /index.html
 		file_server
 	}
-	# With oml-web as its own process (ADR-0070 phase b); until then, leave this handle out.
-	# The auth routes stay with the lead (ADR-0070 d4); this handle comes before @web.
-	@auth path /web/sign-in /web/sign-in/* /web/callback/* /web/sign-up /web/sign-up/*
-	handle @auth {
-		reverse_proxy 127.0.0.1:8090
+	# The pages oml-web serves (oml_web::PAGES); the list grows as pages move.
+	@oml_web {
+		method GET
+		path /web
+		query view=guardrails
 	}
-	@web path /web /web/*
-	handle @web {
-		reverse_proxy 127.0.0.1:8091
-	}
-	@api path /v1/* /v2/* /mcp /mcp/* /oauth/* /.well-known/*
-	handle @api {
-		reverse_proxy 127.0.0.1:8090
-	}
-	handle {
-		reverse_proxy 127.0.0.1:8090
-	}
+	reverse_proxy @oml_web 127.0.0.1:8091
+	reverse_proxy 127.0.0.1:8090
 }
 ```
 

@@ -14,13 +14,15 @@ const COMPOSE: &str = include_str!("quickstart-compose.yaml");
 /// The image's repository; the tag is the CLI's own version.
 pub const IMAGE: &str = "ghcr.io/e8kor/open-memory-lab";
 
-/// The `.env` variables, one generated password each: the cluster's
-/// superuser, the owner role the lead migrates as, and the serving role it
-/// serves as (ADR-0034 d2).
-pub const PASSWORDS: [&str; 3] = [
+/// The `.env` variables, one generated secret each: the cluster's
+/// superuser, the owner role the lead migrates as, the serving role it
+/// serves as (ADR-0034 d2), and the web client secret the lead and
+/// `oml-web` share (ADR-0070 d2).
+pub const PASSWORDS: [&str; 4] = [
     "OML_POSTGRES_PASSWORD",
     "OML_OWNER_PASSWORD",
     "OML_SERVER_PASSWORD",
+    "OML_WEB_CLIENT_SECRET",
 ];
 
 /// What a directory holds once a quickstart wrote into it; any one present
@@ -39,8 +41,8 @@ pub fn project_name(dir: &Path) -> String {
     format!("oml-{}", &hex::encode(digest)[..12])
 }
 
-/// The compose file of project `project` for `version`, its lead published
-/// on `127.0.0.1:port`.
+/// The compose file of project `project` for `version`, its router, in
+/// front of the lead and `oml-web`, published on `127.0.0.1:port`.
 #[must_use]
 pub fn compose(project: &str, version: &str, port: u16) -> String {
     // A Windows checkout may hold the template with CRLF endings; the file
@@ -135,18 +137,34 @@ mod tests {
         for service in ["\n  oml-server:\n", "\n  oml-web:\n", "\n  router:\n"] {
             assert!(text.contains(service), "{service}: {text}");
         }
-        assert!(text.contains("entrypoint: [\"/usr/local/bin/oml-web\"]"), "{text}");
-        assert!(text.contains("OML_WEB__API_URL: http://oml-server:8080"), "{text}");
-        assert!(text.contains("OML_WEB__ALLOW_PLAIN_HTTP_API: \"true\""), "{text}");
-        assert!(text.contains("OML_WEB__PUBLIC_URL: http://127.0.0.1:18080"), "{text}");
+        assert!(
+            text.contains("entrypoint: [\"/usr/local/bin/oml-web\"]"),
+            "{text}"
+        );
+        assert!(
+            text.contains("OML_WEB__API_URL: http://oml-server:8080"),
+            "{text}"
+        );
+        assert!(
+            text.contains("OML_WEB__ALLOW_PLAIN_HTTP_API: \"true\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("OML_WEB__PUBLIC_URL: http://127.0.0.1:18080"),
+            "{text}"
+        );
         assert_eq!(
-            text.matches("OML_WEB__CLIENT_SECRET: ${OML_WEB_CLIENT_SECRET:?").count(),
+            text.matches("OML_WEB__CLIENT_SECRET: ${OML_WEB_CLIENT_SECRET:?")
+                .count(),
             2,
             "the lead and oml-web read the one secret: {text}"
         );
         assert!(text.contains("image: caddy:"), "{text}");
         assert!(text.contains("query view=guardrails"), "{text}");
-        assert!(text.contains("reverse_proxy @oml_web oml-web:8091"), "{text}");
+        assert!(
+            text.contains("reverse_proxy @oml_web oml-web:8091"),
+            "{text}"
+        );
         assert!(text.contains("reverse_proxy oml-server:8080"), "{text}");
     }
 

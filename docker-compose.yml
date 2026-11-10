@@ -1,7 +1,8 @@
 # Open Memory Lab — docker profile, PoC (M1) slice.
 #
 # Shape per docs/operations/deployment.md ("The docker profile", ADR-0023 d7),
-# reduced to the M1 slice: postgres + oml-server only.
+# reduced to the M1 slice: postgres, oml-server, and the web console as its
+# own process, oml-web, behind a path router on one origin (ADR-0070 d4).
 #
 # Deliberately absent from the PoC, all specified in docs/operations/deployment.md:
 #   - minio            — the PoC has no attachments, so no object store yet; when it
@@ -64,10 +65,46 @@ services:
       OML_POSTGRES__OWNER_URL: postgres://oml_owner:oml_dev_only@postgres:5432/oml
       OML_SERVER__LISTEN: 0.0.0.0:8080
       OML_KMS__KEYRING_PATH: /var/lib/oml/keyring/signing.key
+      # oml-web's client identity (ADR-0070 d2): the same value on both.
+      OML_WEB__CLIENT_SECRET: oml_dev_only_web_client_secret_0000
     volumes:
       # kms-file software keyring: oml-server is the only service that mounts it
       # (deployment.md — custody separation between containers).
       - oml-keyring:/var/lib/oml/keyring
+
+  # The web console, its own process over the lead's HTTP API (ADR-0070 d4),
+  # from the same image under its own entrypoint.
+  oml-web:
+    image: ghcr.io/e8kor/open-memory-lab:${OML_VERSION:-latest}
+    # The same build as oml-server's, so `up --build` never pulls a released
+    # image for this service in place of the checkout's.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/usr/local/bin/oml-web"]
+    depends_on:
+      - oml-server
+    environment:
+      # The lead on the compose network, never back through the router. The
+      # network is this stack's own, so plain http to a service name is
+      # allowed explicitly (ADR-0070 d4).
+      OML_WEB__API_URL: http://oml-server:8080
+      OML_WEB__ALLOW_PLAIN_HTTP_API: "true"
+      OML_WEB__LISTEN: 0.0.0.0:8091
+      OML_WEB__CLIENT_SECRET: oml_dev_only_web_client_secret_0000
+      # The browser's one origin, the router's published address.
+      OML_WEB__PUBLIC_URL: http://127.0.0.1:8080
+
+  # The path router: one origin for the browser, each page oml-web serves to
+  # it and every other path to the lead (deploy/caddy/Caddyfile).
+  router:
+    image: caddy:2.11.9
+    depends_on:
+      - oml-server
+      - oml-web
+    configs:
+      - source: oml-router
+        target: /etc/caddy/Caddyfile
     ports:
       - "127.0.0.1:8080:8080"
 
@@ -75,6 +112,21 @@ services:
 # and everything the migrations create, and oml_server owns nothing and takes
 # its privileges from the migrations' grants.
 configs:
+  oml-router:
+    content: |
+      {
+      	admin off
+      	auto_https off
+      }
+      :8080 {
+      	@oml_web {
+      		method GET
+      		path /web
+      		query view=guardrails
+      	}
+      	reverse_proxy @oml_web oml-web:8091
+      	reverse_proxy oml-server:8080
+      }
   oml-role-pair:
     content: |
       CREATE ROLE oml_owner LOGIN PASSWORD 'oml_dev_only';
