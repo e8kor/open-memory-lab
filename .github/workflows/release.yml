@@ -24,7 +24,9 @@ name: Release
 #   - oml-agent-kit-X.Y.Z.tar.gz and .zip, MCP configurations for other agent
 #     tools, an AGENTS.md block and a Gemini CLI session-start hook;
 #     these five, written by scripts/package_agent_artifacts.py, are summed and
-#     signed with the archives above.
+#     signed with the archives above;
+#   - oml-site-X.Y.Z.tar.gz, the landing site as static files (site/README.md),
+#     built by site/build.py and summed and signed with the archives above.
 # The verification command the release notes carry is the one that page
 # states; this file's path is the identity it pins.
 
@@ -229,11 +231,42 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The landing site: static files Caddy serves, built from site/src/ and the
+  # design system's outputs (site/README.md). The check proves the committed
+  # site/dist/ is what the sources build, so the archive is the tag's sources.
+  site:
+    name: landing site archive
+    needs: version
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Package, after site/dist is shown to match its sources
+        run: |
+          python scripts/gen_design_tokens.py --check
+          python site/build.py --check
+          name="oml-site-${VERSION}"
+          mkdir -p "dist/$name"
+          cp site/dist/* "dist/$name/"
+          cp LICENSE LICENSE-docs "dist/$name/"
+          tar -C dist --sort=name --owner=0 --group=0 --numeric-owner -czf "dist/$name.tar.gz" "$name"
+          rm -rf "dist/$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site-all
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
   # One job signs everything, so every bundle carries this workflow's identity
   # from one runner, and SHA256SUMS is written once the set is complete.
   binaries:
     name: SBOMs, SHA256SUMS, signatures
-    needs: [version, cli, server, lakewriter, agents]
+    needs: [version, cli, server, lakewriter, agents, site]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -254,7 +287,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: "{cli,server,lakewriter,agents}-*"
+          pattern: "{cli,server,lakewriter,agents,site}-*"
           merge-multiple: true
       - name: Every archive is here, and nothing else
         run: |
@@ -270,6 +303,7 @@ jobs:
           want="$want oml-claude-plugins-${VERSION}.tar.gz oml-claude-plugins-${VERSION}.zip"
           want="$want oml-agent-kit-${VERSION}.tar.gz oml-agent-kit-${VERSION}.zip"
           want="$want oml-marketplace-${VERSION}.json"
+          want="$want oml-site-${VERSION}.tar.gz"
           diff <(printf '%s\n' $want | sort) <(ls dist | sort)
       - name: One SBOM per archive, for its own target's dependency graph
         run: |
@@ -489,6 +523,8 @@ jobs:
           The lake writer, a separate service run on its own (docs/operations/lake.md):
           \`oml-lakewriter-${VERSION}-<target>.tar.gz\` for x86_64-unknown-linux-gnu and
           aarch64-unknown-linux-gnu.
+          The landing site, static files for a web server (site/README.md):
+          \`oml-site-${VERSION}.tar.gz\`.
 
           ## Verify
 

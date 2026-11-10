@@ -36,6 +36,9 @@ disagreement found:
   .zip, and oml-marketplace-${VERSION}.json, among the files it downloads,
   sums the pinned marketplace in SHA256SUMS beside the archives and signs it
   (docs/engineering/ci-and-toolchain.md "Release artifacts");
+- a job needing the version job runs `python site/build.py --check` and packs
+  site/dist as oml-site-${VERSION}.tar.gz, and the signing job needs it and
+  requires that archive among the files it sums and signs (site/README.md);
 - ci.yml job cli-matrix runs on the same target and runner pairs and, on each,
   runs `oml --version` and the CLI's unit tests, so a broken platform fails a
   pull request before a tag (docs/engineering/ci-and-toolchain.md "Release
@@ -111,6 +114,10 @@ AGENT_FILES = (
     "oml-agent-kit-${VERSION}.zip",
     "oml-marketplace-${VERSION}.json",
 )
+# The landing site (site/README.md): one job builds it after proving site/dist/ matches its sources.
+SITE_BUILD_CHECK = re.compile(r"\bpython3?\s+site/build\.py\s+--check\b")
+SITE_ARCHIVE = "oml-site-${VERSION}.tar.gz"
+SITE_TAR = re.compile(r"\btar\b[^\n]*-czf\s+\"dist/\$name\.tar\.gz\"")
 PLATFORMS = {"linux/amd64", "linux/arm64"}
 BUILD_ACTION = "docker/build-push-action@"
 MATRIX_REF = re.compile(r"^\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}$")
@@ -193,6 +200,7 @@ def main() -> int:
     check_chart(errors, jobs)
     check_binaries(errors, jobs)
     check_agents(errors, jobs)
+    check_site(errors, jobs)
     check_cli_matrix(errors, jobs)
     check_installers(errors, jobs)
     check_installer_lines(errors)
@@ -308,6 +316,28 @@ def check_agents(errors: list[str], jobs: dict) -> None:
         for want in AGENT_FILES:
             if want not in script:
                 errors.append(f"job {name}: does not require {want} among the files it signs")
+
+
+def check_site(errors: list[str], jobs: dict) -> None:
+    """One job packages the landing site after its --check, and the signing job requires, sums and signs it."""
+    versions = {name for name, job in jobs.items() if "version" in job.get("outputs", {})}
+    packagers = {
+        name: job for name, job in jobs.items()
+        if any(SITE_TAR.search(r) and 'name="oml-site-${VERSION}"' in r for r in runs(job))
+    }
+    if len(packagers) != 1:
+        errors.append(f"{len(packagers)} jobs package oml-site-${{VERSION}}.tar.gz, not exactly one")
+    for name, job in packagers.items():
+        if not set(needs(job)) & versions:
+            errors.append(f"job {name}: packages the site without needing the job that reads the tag's version")
+        if step_matching(job, SITE_BUILD_CHECK) is None:
+            errors.append(f"job {name}: does not run python site/build.py --check before packaging the site")
+    signers = {name: job for name, job in jobs.items() if any(SIGN_EVERY_BLOB.search(r) for r in runs(job))}
+    for name, job in signers.items():
+        if not set(packagers) <= ancestors(jobs, name):
+            errors.append(f"job {name}: signs without needing the job that packages the site")
+        if SITE_ARCHIVE not in "\n".join(runs(job)):
+            errors.append(f"job {name}: does not require {SITE_ARCHIVE} among the files it signs")
 
 
 def check_cli_matrix(errors: list[str], jobs: dict) -> None:
@@ -536,7 +566,7 @@ def report(errors: list[str]) -> int:
             "release check: release.yml builds, merges and signs one index for linux/amd64 and linux/arm64,"
             " attaches the signed chart, builds, sums and signs the CLI and server archives of every"
             " target, which ci.yml's cli-matrix builds and tests first, and sums and signs the Claude Code"
-            " plugin archive, the pinned marketplace and the agent kit; the installers fetch only the"
+            " plugin archive, the pinned marketplace, the agent kit and the landing site; the installers fetch only the"
             " signed CLI archive, SHA256SUMS and its bundle, and ci.yml's install-smoke runs them"
         )
     return 1 if errors else 0

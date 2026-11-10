@@ -29,7 +29,7 @@ CATEGORIES: dict[str, list[str]] = {
     # The machine-readable contracts the server include_str!s and its tests read.
     "api": ["docs/api/*.yaml", "docs/api/*.json"],
     # Pages and what the site build reads. Rust tests read some pages (see DOCS_READ_BY_RUST).
-    "docs": ["docs/**", "design/**", "mkdocs.yml", "requirements.txt", "changes/**", "*.md", "LICENSE", "LICENSE-docs", "LICENSES/**", "hooks/**"],  # hooks/ holds the mkdocs build hook
+    "docs": ["docs/**", "design/**", "mkdocs.yml", "requirements.txt", "changes/**", "*.md", "LICENSE", "LICENSE-docs", "LICENSES/**", "hooks/**", "site/**"],  # hooks/ holds the mkdocs build hook; site/ the landing
     "cli_ref": ["docs/cli/**"],  # compared with the built oml binary's help
     "plugins": ["plugins/**", "kit/**", ".claude-plugin/**"],
     "sdk": ["sdks/**"],

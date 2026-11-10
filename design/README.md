@@ -23,9 +23,11 @@ short form.
 
 After a copy, run `python scripts/gen_design_tokens.py`. It writes the web pages'
 `tokens.css` and `brand.rs`, the docs site's `docs/stylesheets/oml.css` and its copies of the
-marks and fonts, and `assets/review-gate-{dark,light}.svg`. CI runs it with `--check` and runs
-`python scripts/check_contrast.py`; either fails the pull request when an output is stale or a
-pair drops below its floor. The landing page takes `python scripts/gen_design_tokens.py --css`.
+marks and fonts, `assets/review-gate-{dark,light}.svg`, and the landing site's inputs in
+`site/design/`; then run `python site/build.py`, which rebuilds the landing pages in `site/dist/`
+from them ([site/README.md](../site/README.md)). CI runs both with `--check` and runs
+`python scripts/check_contrast.py`; any of them fails the pull request when an output is stale or a
+pair drops below its floor.
 
 ## Voice
 
