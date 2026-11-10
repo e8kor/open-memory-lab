@@ -921,6 +921,16 @@ pub trait JournalStore: Retriever + Send + Sync {
         claim_key: &str,
     ) -> impl Future<Output = Result<ClaimKeyState, StoreError>> + Send;
 
+    /// How many of the tenant's versions, erased ones aside, were last
+    /// scanned under a rule set other than `current`: the held ones, then
+    /// every one. Doctor's `scan_held_unrescanned` and `scan_rescan_due`
+    /// (ADR-0074 d28).
+    fn scan_backlog(
+        &self,
+        tenant_id: Uuid,
+        current: Option<&str>,
+    ) -> impl Future<Output = Result<(u64, u64), StoreError>> + Send;
+
     /// How many versions on `nodes` are in state `held`, dead-lettered ones
     /// included: the commit's precondition and doctor's count (ADR-0030 d6,
     /// d14).

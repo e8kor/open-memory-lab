@@ -156,7 +156,10 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   (U+E0000–U+E007F) outside an RGI emoji tag sequence holds. Amended 2026-11-10: the three RGI
   tag sequences, the subdivision flags of England, Scotland and Wales (U+1F3F4, the id as tag
   letters, U+E007F), are matched whole; a U+1F3F4 followed by any other tag characters is a
-  hidden payload and holds, where the first build skipped every tag character after the prefix. Joiners and the soft hyphen are left
+  hidden payload and holds, where the first build skipped every tag character after the prefix.
+  Two or more variation selectors in a row (U+FE00–U+FE0F, U+E0100–U+E01EF) hold as
+  `variation-run`: one picks a glyph for the character before it, and a run picks nothing and
+  can carry a byte each. Joiners and the soft hyphen are left
   alone, because scripts and emoji use them. Encoding: a run of 400 or more base64 characters
   that mixes cases and digits at 4.5 bits per character or more holds, as a payload no reviewer
   can read. A hold costs a reviewer's look and refuses nothing. A veto on a heuristic would
@@ -288,24 +291,35 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   `scan_finding` unless it has one, journalled once per window as `scan.findings_recorded` with
   each version's id and findings, an empty list when there are none, never its text; the
   answer counts them as `recorded`. Nothing is promoted, rejected, demoted or deleted, and a
-  promoted version is not recorded: review already read it.
+  promoted version is not recorded: review already read it. It reads exactly what admission
+  reads: the body, the title and every view the version's format decodes, beside the anchor. It
+  takes no Idempotency-Key: a repeat reads the window again and journals again, and leaves the
+  same state. Every answer, read or recording, counts the tenant's versions scanned under
+  another rule set, `held_unrescanned` and `rescan_due`, which doctor reads with an admin key
+  as `scan_held_unrescanned` and `scan_rescan_due` (ADR-0074 d28), each a warning while above
+  zero.
 
 - **d14 — Every rule also reads the text as copy-paste mangles it** (amended 2026-11-10; the first
   build ran the veto rules alone over the view). A token copied from a web
   page, a chat or an editor arrives with a zero-width space, a joiner or a soft hyphen inside
   it, a no-break space in a PEM header, or a fullwidth letter from an input method. Where a
-  field holds any of these, the scan builds a second view: Unicode's default-ignorable code points
-  removed (U+00AD, U+034F, U+061C, U+115F–U+1160, U+17B4–U+17B5, U+180B–U+180F, U+200B–U+200F,
-  U+202A–U+202E, U+2060–U+206F, U+3164, U+FE00–U+FE0F, U+FEFF, U+FFA0, U+FFF0–U+FFFB,
-  U+1BCA0–U+1BCA3, U+1D173–U+1D17A, U+E0000–U+E0FFF), U+00A0 made a space, then NFKC. No case
+  field holds any of these, the scan builds two more views, each with U+00A0 made a space and
+  then NFKC: in the first, Unicode's default-ignorable code points are removed (U+00AD, U+034F,
+  U+061C, U+115F–U+1160, U+17B4–U+17B5, U+180B–U+180F, U+200B–U+200F, U+202A–U+202E,
+  U+2060–U+206F, U+3164, U+FE00–U+FE0F, U+FEFF, U+FFA0, U+FFF0–U+FFFB, U+1BCA0–U+1BCA3,
+  U+1D173–U+1D17A, U+E0000–U+E0FFF), which undoes one inside a word; in the second each becomes a
+  space, which undoes one used as the space between words. A view longer than d9's bound is
+  vetoed as `format.scan_bound`, as the text would be. No case
   fold: the injection patterns match either case already, and folding would hide an upper-case
   key from the veto patterns. The order is fixed: every pattern and run rule over the text as
   written; the invisible-character rules over the text as written, since the view removes what
-  they count; then every pattern and run rule, veto and hold alike, over the view, keeping each
-  rule the text did not already report. An injection phrase split by a zero-width character or
-  written in fullwidth forms is held, which the first build let through. A pure ASCII field
-  builds no view. Homoglyphs, percent or HTML encoding, a token split across lines and base64
-  are still not undone.
+  they count; then every pattern and run rule, veto and hold alike, over each view, keeping each
+  rule no earlier pass reported. An injection phrase split or spaced by a zero-width or format
+  character, or written in fullwidth forms, is held, which the first build let through. A pure
+  ASCII field builds no view. Still not undone, and known: homoglyphs and mixed-script
+  confusables (a Cyrillic о, small capitals, a dotted capital I), a word with a combining mark
+  NFKC composes into another letter, percent or HTML encoding, a token split across lines, and
+  base64. A view under the UTS #39 skeleton is ADR-0074's, not this amendment's.
 
 - **d15 — Inside an in-progress scope, another author's held version is served only when the
   server's rule set scanned it and found nothing** (added 2026-11-10, amending
@@ -339,8 +353,12 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
 - After an upgrade to `oml-scan/1.1`, run `oml admin rescan --record-held`. Until it runs,
   sibling agents in an in-progress workarea do not see held versions written before the
   upgrade (d15): it records each held version under `/1.1`, keeps the ones the amended rules
-  flag their author's, and serves the rest inside again. A promoted version it reports keeps its state; a person reads
-  each with `oml admin read` and demotes or retires it.
+  flag their author's, and serves the rest inside again. A promoted version it reports keeps its
+  state; a person reads each with `oml admin read` and demotes or retires it. Doctor warns with
+  `scan_held_unrescanned` until the rescan has run. Migration 0038 has no down step: a server
+  rolled back to a build before `/1.1` ignores `scanned_under` and serves as the three defects
+  did, and a version an older build writes during a rolling deploy carries no `scanned_under`, so
+  it stays its author's until the rescan reads it.
 - A rule that needs changing waits for `oml-scan/2`. That is slower than a toggle, and it is what
   keeps a journalled verdict reproducible.
 

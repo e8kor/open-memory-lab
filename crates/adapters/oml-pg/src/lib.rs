@@ -4279,8 +4279,9 @@ struct ScopeBinds<'a> {
     nodes: &'a [Uuid],
     kinds: &'a [&'static str],
     /// The held rows' author keys ([`held_authors`]): inside an in-progress
-    /// scope it names the nil id too, every author's unflagged held rows on
-    /// `held_nodes` (ADR-0030 d3); empty, no held row.
+    /// scope it names the server's rule-set mark too, every author's
+    /// unflagged held rows scanned under it on `held_nodes` (ADR-0030 d3;
+    /// ADR-0065 d15); empty, no held row.
     authors: Option<&'a [Uuid]>,
     held_nodes: &'a [Uuid],
     /// How the origin filters narrow the candidates (ADR-0057 d4).
@@ -5881,6 +5882,32 @@ impl JournalStore for PgStore {
             greatest_version: greatest.map(version).transpose()?,
             live: row.try_get("live").map_err(backend)?,
         })
+    }
+
+    async fn scan_backlog(
+        &self,
+        tenant_id: Uuid,
+        current: Option<&str>,
+    ) -> Result<(u64, u64), StoreError> {
+        // One pass over the tenant's partition; doctor reads it once per
+        // run (ADR-0074 d28).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let (held, all): (i64, i64) = sqlx::query_as(
+            "SELECT count(*) FILTER (WHERE status = 'held'), count(*) FROM memories \
+             WHERE tenant_id = $1 AND status <> 'erased' \
+               AND scanned_under IS DISTINCT FROM $2::text",
+        )
+        .bind(tenant_id)
+        .bind(current)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok((
+            u64::try_from(held).map_err(backend)?,
+            u64::try_from(all).map_err(backend)?,
+        ))
     }
 
     async fn held_count(&self, tenant_id: Uuid, nodes: &[Uuid]) -> Result<u64, StoreError> {

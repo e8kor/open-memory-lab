@@ -4586,6 +4586,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut reads_universe: Option<bool> = None;
     let mut admin_emails: Option<(usize, Vec<String>)> = None;
     let mut signup_overview: Option<Value> = None;
+    let mut scan_backlog: Option<Value> = None;
     let mut default_node: Option<Value> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
@@ -4668,6 +4669,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             // d8).
             if is_admin {
                 search_settings = client.get("/v2/search").ok().map(|(_, v)| v);
+                // One event's window, read for the counts it carries
+                // (ADR-0074 d28).
+                scan_backlog = client.get("/v2/admin/rescan?limit=1").ok().map(|(_, v)| v);
             }
         }
     }
@@ -4691,7 +4695,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     );
     let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
     let telemetry = telemetry_doctor(scrape.as_ref());
-    let scan = scan_doctor(ready.as_ref(), scrape.as_ref());
+    let mut scan = scan_doctor(ready.as_ref(), scrape.as_ref());
+    scan.extend(scan_backlog_doctor(scan_backlog.as_ref()));
     let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     let handlers = handlers_doctor(scrape.as_ref());
@@ -5166,6 +5171,39 @@ fn telemetry_doctor(scrape: Option<&Scrape>) -> Vec<String> {
         ));
     }
     lines
+}
+
+/// The rescan backlog lines (ADR-0074 d28), from an admin key's one-event
+/// rescan window: held versions an older rule set scanned, which stay their
+/// authors' alone in in-progress workareas until `--record-held` reads
+/// them, and every stored version an older rule set scanned.
+fn scan_backlog_doctor(report: Option<&Value>) -> Vec<String> {
+    let Some(r) = report else {
+        return vec![
+            "scan_held_unrescanned, scan_rescan_due: not read; an admin key reads them".to_owned(),
+        ];
+    };
+    let version = r["scanner_version"]
+        .as_str()
+        .unwrap_or("the server's rule set");
+    let held = r["held_unrescanned"].as_u64().unwrap_or(0);
+    let due = r["rescan_due"].as_u64().unwrap_or(0);
+    vec![
+        if held > 0 {
+            format!(
+                "warn scan_held_unrescanned: {held} held version(s) were scanned under an older rule set than {version}, and stay their authors' alone in in-progress workareas; run oml admin rescan --record-held"
+            )
+        } else {
+            "scan_held_unrescanned: 0".to_owned()
+        },
+        if due > 0 {
+            format!(
+                "warn scan_rescan_due: {due} stored version(s) were scanned under an older rule set than {version}; oml admin rescan reports what it finds in them"
+            )
+        } else {
+            "scan_rescan_due: 0".to_owned()
+        },
+    ]
 }
 
 /// The scan doctor lines (ADR-0065 d11): the rule set `/readyz` names, how

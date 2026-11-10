@@ -54,6 +54,12 @@ pub struct RescanReport {
     /// Held versions whose findings this call recorded under the server's
     /// rule set; zero for the read, which changes nothing (d15).
     pub recorded: u64,
+    /// After this call, the tenant's held versions last scanned under
+    /// another rule set: doctor's `scan_held_unrescanned` (ADR-0074 d28).
+    pub held_unrescanned: u64,
+    /// After this call, every stored version so scanned, erased ones aside:
+    /// doctor's `scan_rescan_due`.
+    pub rescan_due: u64,
 }
 
 /// A finding as a version's `scan_finding` carries it, as admission's
@@ -281,6 +287,7 @@ where
             )
             .await?;
         }
+        let (held_unrescanned, rescan_due) = self.journal.scan_backlog(tenant_id, current).await?;
         Ok(RescanReport {
             scanner_version: self.scanner.version(),
             scanned,
@@ -291,6 +298,8 @@ where
                 .collect(),
             next_after_seq,
             recorded: recorded_n,
+            held_unrescanned,
+            rescan_due,
         })
     }
 }

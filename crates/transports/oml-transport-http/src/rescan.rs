@@ -15,7 +15,7 @@ use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signe
 
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
-use crate::{ApiState, bearer, finish, idempotency_key, json_response, retry_chain};
+use crate::{ApiState, bearer, finish, json_response, retry_chain};
 
 /// openapi.yaml `RescanReport`.
 fn report_json(r: &RescanReport) -> Value {
@@ -38,6 +38,8 @@ fn report_json(r: &RescanReport) -> Value {
         })).collect::<Vec<_>>(),
         "next_after_seq": r.next_after_seq,
         "recorded": r.recorded,
+        "held_unrescanned": r.held_unrescanned,
+        "rescan_due": r.rescan_due,
     })
 }
 
@@ -61,8 +63,8 @@ where
 
     /// `POST /v2/admin/rescan?after_seq=&limit=`, admin by key role: the
     /// read, and the window's held versions' findings recorded under the
-    /// server's rule set (ADR-0065 d15; ADR-0074 d28). Idempotency-Key
-    /// required.
+    /// server's rule set (ADR-0065 d15; ADR-0074 d28). No Idempotency-Key:
+    /// a repeat re-reads and re-journals, and leaves the same state.
     pub(crate) async fn rescan_record_route(
         State(st): State<Self>,
         rid: Rid,
@@ -84,9 +86,6 @@ where
                 st.require_writes_open()?;
             }
             let token = bearer(headers)?;
-            if record_held {
-                idempotency_key(headers)?;
-            }
             let after_seq: u64 = match params.get("after_seq") {
                 None => 0,
                 Some(s) => s.parse().map_err(|_| {

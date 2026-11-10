@@ -2512,6 +2512,27 @@ impl JournalStore for MemStore {
             }))
     }
 
+    async fn scan_backlog(
+        &self,
+        tenant_id: Uuid,
+        current: Option<&str>,
+    ) -> Result<(u64, u64), StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok((0, 0));
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let older: Vec<&MemoryRecord> = state
+            .memories
+            .values()
+            .filter(|m| m.status != MemoryStatus::Erased && m.scanned_under.as_deref() != current)
+            .collect();
+        let held = older
+            .iter()
+            .filter(|m| m.status == MemoryStatus::Held)
+            .count();
+        Ok((held as u64, older.len() as u64))
+    }
+
     async fn held_count(&self, tenant_id: Uuid, nodes: &[Uuid]) -> Result<u64, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(0);
