@@ -463,6 +463,7 @@ mod tests {
             decodes(&client.whoami(&CALL).await),
             decodes(&client.guardrails(&CALL, Some("alice.proj")).await),
             decodes(&client.workarea_tree(&CALL, "w/1", 200, Some("c 1")).await),
+            decodes(&client.readyz().await),
         ];
         let seen = seen.lock().unwrap();
         let table = table();
@@ -480,6 +481,7 @@ mod tests {
             );
         }
         assert!(!seen[0].headers().contains_key(AUTHORIZATION));
+        assert!(!seen[4].headers().contains_key(AUTHORIZATION));
         assert_eq!(seen[2].uri(), "/v1/guardrails?workarea=alice.proj");
         assert_eq!(
             seen[3].uri(),

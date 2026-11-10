@@ -111,6 +111,11 @@ mod tests {
         assert!(text.contains("\nname: oml-0123456789ab\n"), "{text}");
         assert!(text.contains(&format!("image: {IMAGE}:0.4.0\n")), "{text}");
         assert!(text.contains("\"127.0.0.1:18080:8080\""), "{text}");
+        assert_eq!(
+            text.matches("127.0.0.1:").count(),
+            2,
+            "one published port, the router's, and oml-web's public origin: {text}"
+        );
         assert!(!text.contains("@@"), "every placeholder is filled");
         assert!(!text.contains("latest") && !text.contains("oml_dev_only"));
         for name in PASSWORDS {
@@ -119,6 +124,30 @@ mod tests {
                 "{name} is read from .env"
             );
         }
+    }
+
+    #[test]
+    fn the_compose_file_starts_the_lead_oml_web_and_a_router_on_one_origin() {
+        // ADR-0070 d4: three services, the browser on one origin, the
+        // router sending each page oml-web serves to it and the rest to the
+        // lead; both processes hold one secret from .env.
+        let text = compose("oml-0123456789ab", "0.4.0", 18080);
+        for service in ["\n  oml-server:\n", "\n  oml-web:\n", "\n  router:\n"] {
+            assert!(text.contains(service), "{service}: {text}");
+        }
+        assert!(text.contains("entrypoint: [\"/usr/local/bin/oml-web\"]"), "{text}");
+        assert!(text.contains("OML_WEB__API_URL: http://oml-server:8080"), "{text}");
+        assert!(text.contains("OML_WEB__ALLOW_PLAIN_HTTP_API: \"true\""), "{text}");
+        assert!(text.contains("OML_WEB__PUBLIC_URL: http://127.0.0.1:18080"), "{text}");
+        assert_eq!(
+            text.matches("OML_WEB__CLIENT_SECRET: ${OML_WEB_CLIENT_SECRET:?").count(),
+            2,
+            "the lead and oml-web read the one secret: {text}"
+        );
+        assert!(text.contains("image: caddy:"), "{text}");
+        assert!(text.contains("query view=guardrails"), "{text}");
+        assert!(text.contains("reverse_proxy @oml_web oml-web:8091"), "{text}");
+        assert!(text.contains("reverse_proxy oml-server:8080"), "{text}");
     }
 
     #[test]
@@ -144,9 +173,11 @@ mod tests {
             .lines()
             .map(|l| l.split_once('=').expect("k=v").1)
             .collect();
-        assert_eq!(values.len(), 3);
+        assert_eq!(values.len(), 4);
         assert!(values.iter().all(|v| v.len() == 32));
-        assert!(values[0] != values[1] && values[1] != values[2] && values[0] != values[2]);
+        let distinct: std::collections::HashSet<&&str> = values.iter().collect();
+        assert_eq!(distinct.len(), 4);
+        assert!(text.contains("OML_WEB_CLIENT_SECRET="), "{text}");
     }
 
     #[test]

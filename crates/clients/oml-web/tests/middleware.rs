@@ -211,7 +211,11 @@ async fn a_post_without_a_session_goes_to_sign_in() {
     let (app, _) = rig();
     let response = app.oneshot(form_post(ORIGIN, None, "")).await.unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(response.headers()[header::LOCATION], oml_web::SIGN_IN_PATH);
+    // A form's page is its path: the query a GET carried is not resent.
+    assert_eq!(
+        response.headers()[header::LOCATION],
+        "/web/sign-in?next=%2Fweb%2Fnothing"
+    );
 }
 
 #[tokio::test]
@@ -243,7 +247,7 @@ async fn a_page_route_without_a_session_cookie_goes_to_sign_in_without_calling_t
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(response.headers()[header::LOCATION], oml_web::SIGN_IN_PATH);
+    assert_eq!(response.headers()[header::LOCATION], "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails");
     let line: serde_json::Value = serde_json::from_str(&lines.lock().unwrap()[0]).unwrap();
     assert!(line.get("api_request_ids").is_none(), "{line}");
 }

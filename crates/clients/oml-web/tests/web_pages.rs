@@ -667,9 +667,15 @@ async fn a_moved_page_without_a_session_goes_to_the_leads_sign_in() {
     let (status, headers, _) = send(&rig.router, get("/web?view=guardrails", None)).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let location = headers[header::LOCATION].to_str().unwrap().to_owned();
+    assert_eq!(location, "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails");
     let (status, _, page) = send(&rig.router, get(&location, None)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains("Sign in with Google"), "{page}");
+    // The lead's sign-in carries the page on, to come back to it.
+    assert!(
+        page.contains(r#"name="next" value="/web?view=guardrails""#),
+        "{page}"
+    );
 }
 
 #[tokio::test]
@@ -680,5 +686,5 @@ async fn a_signed_out_session_cookie_goes_to_sign_in_from_a_moved_page() {
     assert_eq!(status, StatusCode::SEE_OTHER);
     let (status, headers, _) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], oml_web::SIGN_IN_PATH);
+    assert_eq!(headers[header::LOCATION], "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails");
 }
