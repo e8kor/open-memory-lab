@@ -1941,7 +1941,8 @@ impl Retriever for MemStore {
             }
             scope.own_held.as_ref().is_some_and(|own| {
                 m.status == MemoryStatus::Held
-                    && (own.any_author || own.author_key_ids.contains(&m.author_key_id))
+                    && (own.author_key_ids.contains(&m.author_key_id)
+                        || (own.any_author && m.scan_finding.is_none()))
                     && own.nodes.contains(&m.workarea_id)
             })
         };
@@ -2424,6 +2425,7 @@ impl JournalStore for MemStore {
                         || (held.contains(&m.workarea_id)
                             && m.status == MemoryStatus::Held
                             && !m.retirement
+                            && m.scan_finding.is_none()
                             && HIT_KINDS.contains(&m.kind)))
             }
         };
@@ -3153,6 +3155,7 @@ impl JournalStore for MemStore {
                         || m.author_key_id == selection.reader_key_id
                         || (m.status == MemoryStatus::Held
                             && !m.retirement
+                            && m.scan_finding.is_none()
                             && HIT_KINDS.contains(&m.kind)
                             && selection.held_nodes.contains(&m.workarea_id)))
             })

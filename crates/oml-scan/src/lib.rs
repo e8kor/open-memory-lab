@@ -216,6 +216,14 @@ impl RuleSet {
                 line: 1,
             }];
         }
+        // The order is fixed (d14, amended 2026-11-10): first every pattern
+        // and run rule over the text as written; then the invisible-character
+        // rules over the text as written, since the view removes what they
+        // count; then every pattern and run rule again over the normalised
+        // view, veto and hold alike, keeping each rule the text itself did
+        // not already report. A zero-width character or a fullwidth form
+        // inside an injection phrase hides it from the first pass, never
+        // from the third.
         let mut out = self.matched(field, text);
         if let Some((start, rule)) = invisible(text) {
             out.push((
@@ -223,12 +231,9 @@ impl RuleSet {
                 code_finding("unicode.invisible", rule, Action::Hold, field, text, start),
             ));
         }
-        // The veto rules again over the text as copy-paste mangles it:
-        // zero-width characters and soft hyphens gone, a no-break space a
-        // space, compatibility forms folded (NFKC) (d14).
         if let Some(view) = normalised(text) {
             for (start, f) in self.matched(field, &view) {
-                if f.action == Action::Veto && !out.iter().any(|(_, g)| g.rule == f.rule) {
+                if !out.iter().any(|(_, g)| g.rule == f.rule) {
                     out.push((start, f));
                 }
             }
@@ -392,18 +397,41 @@ fn aws_secret_near_id(text: &str) -> Option<usize> {
     None
 }
 
-/// Characters copy-paste inserts inside a token without changing how it
-/// reads: zero-width spaces and joiners, the word joiner, the byte-order
-/// mark and the soft hyphen (d14).
+/// Characters that change nothing a reader sees, so copy-paste or an
+/// evasion can put them inside a token or a phrase: Unicode's default
+/// ignorable code points — the soft hyphen, the combining grapheme joiner,
+/// the Arabic letter mark, the Hangul fillers, the Mongolian vowel
+/// separator, the zero-width spaces, joiners and directional marks, the
+/// bidirectional controls, the word joiner and the invisible operators,
+/// the variation selectors, the byte-order mark, the interlinear
+/// annotation marks and the tag characters (d14, amended 2026-11-10).
 fn removable(c: char) -> bool {
     matches!(
         c,
-        '\u{00AD}' | '\u{200B}'..='\u{200D}' | '\u{2060}' | '\u{FEFF}'
+        '\u{00AD}'
+            | '\u{034F}'
+            | '\u{061C}'
+            | '\u{115F}'..='\u{1160}'
+            | '\u{17B4}'..='\u{17B5}'
+            | '\u{180B}'..='\u{180F}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFA0}'
+            | '\u{FFF0}'..='\u{FFFB}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0000}'..='\u{E0FFF}'
     )
 }
 
-/// The text as copy-paste mangles it, undone, or `None` when it is already
-/// that text: removable characters gone, NBSP a space, NFKC (d14).
+/// The text with what hides a token or a phrase undone, or `None` when it
+/// is already that text: removable characters gone, NBSP a space, NFKC
+/// (d14). Not case-folded: the hold patterns match either case already,
+/// and folding would hide an upper-case key from the veto patterns.
 fn normalised(text: &str) -> Option<String> {
     use unicode_normalization::UnicodeNormalization as _;
     use unicode_normalization::{IsNormalized, is_nfkc_quick};
@@ -560,23 +588,37 @@ fn invisible_format(c: char) -> bool {
     matches!(c, '\u{200B}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' | '\u{180E}' | '\u{206A}'..='\u{206F}')
 }
 
+/// The emoji tag sequences Unicode recommends for general interchange
+/// (UTS #51, `emoji-test.txt`, RGI): the subdivision flags of England,
+/// Scotland and Wales, each U+1F3F4, its id as tag letters, then the cancel
+/// tag U+E007F. No other tag sequence is RGI.
+const RGI_TAG_SEQUENCES: [&str; 3] = [
+    "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}",
+    "\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}",
+    "\u{1F3F4}\u{E0067}\u{E0062}\u{E0077}\u{E006C}\u{E0073}\u{E007F}",
+];
+
 /// The invisible-character rules (d5): more than [`INVISIBLE_LIMIT`]
 /// zero-width or invisible format characters, or any Unicode tag character
-/// outside an emoji flag sequence (which opens with U+1F3F4). Joiners
-/// (U+200C, U+200D) and the soft hyphen are left alone: scripts and emoji
-/// use them.
+/// outside an RGI emoji tag sequence, read whole (amended 2026-11-10): a
+/// flag prefix with any other tag characters after it is a hidden payload,
+/// not a flag. Joiners (U+200C, U+200D) and the soft hyphen are left alone:
+/// scripts and emoji use them.
 fn invisible(text: &str) -> Option<(usize, &'static str)> {
     let mut first = None;
     let mut n = 0;
-    let mut prev_flag = false;
-    for (i, c) in text.char_indices() {
-        if ('\u{E0000}'..='\u{E007F}').contains(&c) {
-            if !prev_flag {
-                return Some((i, "tag-characters"));
-            }
+    let mut chars = text.char_indices();
+    while let Some((i, c)) = chars.next() {
+        if c == '\u{1F3F4}'
+            && let Some(flag) = RGI_TAG_SEQUENCES.iter().find(|f| text[i..].starts_with(*f))
+        {
+            // Past the sequence's tag characters: each is one char.
+            chars.nth(flag.chars().count() - 2);
             continue;
         }
-        prev_flag = c == '\u{1F3F4}';
+        if ('\u{E0000}'..='\u{E007F}').contains(&c) {
+            return Some((i, "tag-characters"));
+        }
         if invisible_format(c) {
             first.get_or_insert(i);
             n += 1;

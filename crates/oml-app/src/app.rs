@@ -312,11 +312,13 @@ struct ServedNodes {
 }
 
 /// Whether a held version may be served unreviewed inside an in-progress
-/// subtree: a memory or derived fact, never a retirement version (ADR-0030
-/// d3).
+/// subtree: a memory or derived fact, never a retirement version, and never
+/// one the scan held, which stays its author's until a reviewer reads it
+/// (ADR-0030 d3; ADR-0065 d5, amended 2026-11-10).
 fn served_unreviewed(m: &MemoryRecord) -> bool {
     m.status == MemoryStatus::Held
         && !m.retirement
+        && m.scan_finding.is_none()
         && matches!(m.kind, MemoryKind::Memory | MemoryKind::DerivedFact)
 }
 

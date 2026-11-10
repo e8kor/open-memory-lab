@@ -37,7 +37,8 @@ use oml_app::ports::{
     claim_subject,
 };
 use oml_app::search::{
-    Access, Candidate, CandidateScope, MatchMode, MatchedToken, PostingsHealth, RetrievalQuery,
+    Access, Candidate, CandidateScope, MatchMode, MatchedToken, OwnHeldScope, PostingsHealth,
+    RetrievalQuery,
     Retrieved, RetrieverKind, SparsePending, SparsePosting, SparseTenant,
 };
 use oml_app::types::{
@@ -723,15 +724,16 @@ pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
      LIMIT $5";
 
 /// The own held recall statement `recall_own_held` runs, binding `$1` the
-/// tenant, `$2` the author keys, `$3` the readable nodes, `$4` the query,
-/// `$5` the kinds and `$6` `k`; pruned to the tenant's partition as
-/// [`RECALL_FTS`] is (ADR-0034 d11).
+/// tenant, `$2` the author keys ([`held_authors`]), `$3` the readable nodes,
+/// `$4` the query, `$5` the kinds and `$6` `k`; pruned to the tenant's
+/// partition as [`RECALL_FTS`] is (ADR-0034 d11).
 pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
             ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), \
                     plainto_tsquery('simple', $4), 0) AS score \
      FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
-       AND ($2::uuid[] IS NULL OR m.author_key_id = ANY($2::uuid[])) \
+       AND (m.author_key_id = ANY($2::uuid[]) \
+         OR (m.scan_finding IS NULL AND '00000000-0000-0000-0000-000000000000'::uuid = ANY($2::uuid[]))) \
        AND NOT m.retirement AND m.kind = ANY($5::text[]) \
        AND m.workarea_id = ANY($3::uuid[]) /*anchor*/ \
        AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $4) \
@@ -792,7 +794,8 @@ pub const WIDEN_LINEAGE: &str = "WITH RECURSIVE \
 
 /// The candidate scope every search statement but `keyword-all`'s reads,
 /// binding `$1` the tenant, `$2` the promoted nodes, `$3` the kinds, `$4`
-/// the own held author keys and `$5` their nodes: promoted served tips on
+/// the own held author keys ([`held_authors`]) and `$5` their nodes:
+/// promoted served tips on
 /// the readable nodes, and the own held rows of the keys on theirs, never a
 /// retirement version (ADR-0025 d4, d8; ADR-0049 d2). Row security stays the
 /// fence beneath it (ADR-0034 d11). A version whose valid time ended at or
@@ -804,8 +807,24 @@ const SEARCH_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
        AND (m.valid_until_us IS NULL OR m.valid_until_us > $NOW::int8) \
        AND m.kind = ANY($3::text[]) \
        AND ((m.status = 'promoted' AND m.is_tip AND m.workarea_id = ANY($2::uuid[])) \
-         OR (m.status = 'held' AND ($4::uuid[] IS NULL OR m.author_key_id = ANY($4::uuid[])) \
-             AND m.workarea_id = ANY($5::uuid[])))";
+         OR (m.status = 'held' AND m.workarea_id = ANY($5::uuid[]) \
+             AND (m.author_key_id = ANY($4::uuid[]) \
+               OR (m.scan_finding IS NULL \
+                   AND '00000000-0000-0000-0000-000000000000'::uuid = ANY($4::uuid[])))))";
+
+/// The author keys a held search statement binds: the own key set, and,
+/// inside an in-progress scope, the nil id too, which admits every
+/// author's held row the scan did not hold (ADR-0030 d3; ADR-0065 d5,
+/// amended 2026-11-10). A row the scan held stays its author's: the
+/// statements read the nil id only beside `m.scan_finding IS NULL`. No key
+/// id is nil (ids are minted v4 or v7).
+fn held_authors(own: &OwnHeldScope) -> Vec<Uuid> {
+    let mut keys = own.author_key_ids.clone();
+    if own.any_author {
+        keys.push(Uuid::nil());
+    }
+    keys
+}
 
 /// `sql` with its `$NOW` placeholder numbered `$n`: the request's now as
 /// a bound `int8`, so the expiry cut compares a column with a parameter,
@@ -986,12 +1005,13 @@ const POSTINGS_COUNTS: &str = "SELECT NULL::int8 AS token_id, COALESCE(sum(c.row
      GROUP BY c.token_id";
 
 /// The own held rows a recall may rank: the held versions of the keys `$2`
-/// on their nodes `$3` of the kinds `$4`, never a retirement version
-/// (ADR-0025 d4, d5), with their lengths; read by the `memories_author`
-/// index (ADR-0052 d5, open question 7).
+/// ([`held_authors`]) on their nodes `$3` of the kinds `$4`, never a
+/// retirement version (ADR-0025 d4, d5), with their lengths; read by the
+/// `memories_author` index (ADR-0052 d5, open question 7).
 const POSTINGS_OWN_HELD: &str = "SELECT m.id, m.search_len FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
-        AND ($2::uuid[] IS NULL OR m.author_key_id = ANY($2::uuid[])) \
+        AND (m.author_key_id = ANY($2::uuid[]) \
+          OR (m.scan_finding IS NULL AND '00000000-0000-0000-0000-000000000000'::uuid = ANY($2::uuid[]))) \
         AND m.workarea_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement \
         AND (m.valid_until_us IS NULL OR m.valid_until_us > $5::int8)";
 
@@ -4016,7 +4036,7 @@ impl PgStore {
                     .bind(
                         sqlx::query(&held)
                             .bind(tenant_id)
-                            .bind((!own.any_author).then_some(&own.author_key_ids))
+                            .bind(held_authors(own))
                             .bind(&own.nodes)
                             .bind(query.query)
                             .bind(kinds)
@@ -4211,8 +4231,9 @@ struct ScopeBinds<'a> {
     tenant_id: Uuid,
     nodes: &'a [Uuid],
     kinds: &'a [&'static str],
-    /// `None` reads every author's held rows on `held_nodes`, inside an
-    /// in-progress scope only (ADR-0030 d3).
+    /// The held rows' author keys ([`held_authors`]): inside an in-progress
+    /// scope it names the nil id too, every author's unflagged held rows on
+    /// `held_nodes` (ADR-0030 d3); empty, no held row.
     authors: Option<&'a [Uuid]>,
     held_nodes: &'a [Uuid],
     /// How the origin filters narrow the candidates (ADR-0057 d4).
@@ -4628,10 +4649,7 @@ impl Retriever for PgStore {
                 .own_held
                 .as_ref()
                 .map_or((Some(Vec::new()), Vec::new()), |own| {
-                    (
-                        (!own.any_author).then(|| own.author_key_ids.clone()),
-                        own.nodes.clone(),
-                    )
+                    (Some(held_authors(own)), own.nodes.clone())
                 });
         let k = i64::try_from(query.k).unwrap_or(i64::MAX);
         let all = query.match_mode == MatchMode::All;
@@ -5701,8 +5719,11 @@ impl JournalStore for PgStore {
                 // author on the nodes join the tips (ADR-0030 d3).
                 sql.push(" AND ((m.status = 'promoted' AND m.is_tip)");
                 if !held.is_empty() {
-                    sql.push(
+                    // A version the scan held stays its author's (ADR-0065
+                // d5, amended 2026-11-10).
+                sql.push(
                         " OR (m.status = 'held' AND NOT m.retirement \
+                         AND m.scan_finding IS NULL \
                          AND m.kind IN ('memory', 'derived_fact') AND m.workarea_id = ANY(",
                     )
                     .push_bind(held.clone())
@@ -6708,9 +6729,11 @@ impl JournalStore for PgStore {
                 ))
                 .push_bind(selection.reader_key_id)
                 // Inside an in-progress scope, any author's held memory or
-                // derived fact (ADR-0030 d3).
+                // derived fact the scan did not hold (ADR-0030 d3; ADR-0065
+                // d5, amended 2026-11-10).
                 .push(format!(
                     " OR ({row}.status = 'held' AND NOT {row}.retirement \
+                     AND {row}.scan_finding IS NULL \
                      AND {row}.kind IN ('memory', 'derived_fact') AND {row}.workarea_id = ANY("
                 ))
                 .push_bind(selection.held_nodes.clone())

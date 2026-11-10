@@ -7,7 +7,7 @@ answers: what replaces the marker scanner; how the rule set is named, versioned 
 
 # ADR-0065 — The scan is a versioned, compiled-in rule set that vetoes leaked keys and holds what a reviewer should judge
 
-**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05
+**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05 · amended 2026-11-10 (d5, d14, d15: every rule reads the normalised view, a tag sequence passes only whole and RGI, a scan-held version stays author-only in an in-progress scope)
 
 **Amends:** ADR-0019 (d4: the scanner port gains `version()`, the plugin's identity on the events
 it informs, as d4 already asks); ADR-0057 (d2, d6, d18: the secret-shaped path list becomes one
@@ -147,7 +147,10 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   reader, so ordinary imperatives ("run the tests first") pass. Unicode: any bidirectional
   override or isolate (U+202A–U+202E, U+2066–U+2069) holds; more than three invisible format
   characters (U+200B, U+2060–U+2064, U+FEFF, U+180E, U+206A–U+206F) hold; any tag character
-  (U+E0000–U+E007F) outside an emoji flag sequence holds. Joiners and the soft hyphen are left
+  (U+E0000–U+E007F) outside an RGI emoji tag sequence holds. Amended 2026-11-10: the three RGI
+  tag sequences, the subdivision flags of England, Scotland and Wales (U+1F3F4, the id as tag
+  letters, U+E007F), are matched whole; a U+1F3F4 followed by any other tag characters is a
+  hidden payload and holds, where the first build skipped every tag character after the prefix. Joiners and the soft hyphen are left
   alone, because scripts and emoji use them. Encoding: a run of 400 or more base64 characters
   that mixes cases and digits at 4.5 bits per character or more holds, as a payload no reviewer
   can read. A hold costs a reviewer's look and refuses nothing. A veto on a heuristic would
@@ -274,15 +277,30 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   admission metric, and `info()`, which `/readyz` reads. One call per window is a scaling limit,
   tracked as #140.
 
-- **d14 — The veto rules also read the text as copy-paste mangles it.** A token copied from a web
+- **d14 — Every rule also reads the text as copy-paste mangles it** (amended 2026-11-10; the first
+  build ran the veto rules alone over the view). A token copied from a web
   page, a chat or an editor arrives with a zero-width space, a joiner or a soft hyphen inside
   it, a no-break space in a PEM header, or a fullwidth letter from an input method. Where a
-  field holds any of these, the scan builds a second view: U+00AD, U+200B–U+200D, U+2060 and
-  U+FEFF removed, U+00A0 made a space, then NFKC. It runs the rules over that view and keeps
-  its veto findings that the text itself did not already give. Hold findings come from the text
-  as written, so the invisible-character rule still sees the characters the view removed. A
-  pure ASCII field builds no view. Deliberate evasion (homoglyphs, percent or HTML encoding, a
-  token split across lines, base64) is not undone: the scan is for accidents.
+  field holds any of these, the scan builds a second view: Unicode's default-ignorable code points
+  removed (U+00AD, U+034F, U+061C, U+115F–U+1160, U+17B4–U+17B5, U+180B–U+180F, U+200B–U+200F,
+  U+202A–U+202E, U+2060–U+206F, U+3164, U+FE00–U+FE0F, U+FEFF, U+FFA0, U+FFF0–U+FFFB,
+  U+1BCA0–U+1BCA3, U+1D173–U+1D17A, U+E0000–U+E0FFF), U+00A0 made a space, then NFKC. No case
+  fold: the injection patterns match either case already, and folding would hide an upper-case
+  key from the veto patterns. The order is fixed: every pattern and run rule over the text as
+  written; the invisible-character rules over the text as written, since the view removes what
+  they count; then every pattern and run rule, veto and hold alike, over the view, keeping each
+  rule the text did not already report. An injection phrase split by a zero-width character or
+  written in fullwidth forms is held, which the first build let through. A pure ASCII field
+  builds no view. Homoglyphs, percent or HTML encoding, a token split across lines and base64
+  are still not undone.
+
+- **d15 — A version the scan held stays its author's inside an in-progress scope** (added
+  2026-11-10, amending [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md) d3). ADR-0030 serves every
+  author's held memory to readers inside an in-progress root. A held version whose
+  `scan_finding` is set is not among them: its author reads it, and a reviewer, as R3 has it,
+  and no other key does, by id, listing, recall under any pipeline, or claim edge, in either
+  store. The first build served it, so a hold finding reached other agents' context unreviewed,
+  which is what the hold exists to prevent.
 
 ## Consequences
 
@@ -298,6 +316,11 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   now refused where it used to pass (d4).
 - Rows written before this change are not re-scanned at admission (d1). `oml admin rescan`
   finds them (d13), and a person retires them. Nothing retires them on its own.
+- After an upgrade to the 2026-11-10 amendment, run `oml admin rescan`: it reports, by rule, the
+  stored versions that d5's and d14's amended rules now hold. It changes nothing, so a reported
+  version keeps the state it has and, being scanned clean at admission, carries no
+  `scan_finding`; d15 does not cover it. A person reads each with `oml admin read` and demotes
+  or retires it. A version the scan held at admission is covered by d15 at once.
 - A rule that needs changing waits for `oml-scan/2`. That is slower than a toggle, and it is what
   keeps a journalled verdict reproducible.
 
