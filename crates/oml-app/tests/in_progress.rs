@@ -381,6 +381,79 @@ async fn unreviewed_rows_are_served_inside_an_in_progress_scope_and_invisible_fr
     );
 }
 
+/// A held row the scan held stays its author's inside an in-progress scope:
+/// another reader there neither recalls, lists nor reads it, while the
+/// author still does, and a held row the scan passed is served as before
+/// (ADR-0030 d3; ADR-0065 d5, amended 2026-11-10).
+#[tokio::test]
+async fn a_held_row_the_scan_flagged_stays_its_authors_inside_an_in_progress_scope() {
+    let w = world().await;
+    w.mark(w.proj).await;
+    let flagged = w
+        .write(&w.ann, "f1", "the canary drains first [needs-human]", w.proj)
+        .await;
+    let clean = w
+        .write(&w.ann, "f2", "the canary rolls back on error", w.proj)
+        .await;
+    let sorted = |mut ids: Vec<Uuid>| {
+        ids.sort();
+        ids
+    };
+
+    // Another reader inside: the clean row alone, by recall, listing and id.
+    assert_eq!(
+        World::ids(&w.recall_with(&w.bob, "canary", w.proj, Some(true)).await),
+        vec![clean]
+    );
+    assert_eq!(w.listed(&w.bob, w.proj).await, vec![clean]);
+    assert!(matches!(
+        w.app.get_memory(w.bob.value.as_str(), flagged).await,
+        Err(AppError::NotFound)
+    ));
+    w.app
+        .get_memory(w.bob.value.as_str(), clean)
+        .await
+        .expect("the clean row inside");
+
+    // The author: both rows, by recall, by its own listing and by id.
+    assert_eq!(
+        sorted(World::ids(&w.recall(&w.ann, "canary", w.proj).await)),
+        sorted(vec![flagged, clean])
+    );
+    let own: Vec<Uuid> = w
+        .app
+        .list_memories(
+            w.ann.value.as_str(),
+            &ListRequest {
+                own: true,
+                workarea: Some(w.proj.into()),
+                claim_key: None,
+                state: None,
+                kind: None,
+                since: None,
+                until: None,
+                limit: 50,
+                cursor: None,
+                anchor: oml_app::types::AnchorFilter::default(),
+                author: None,
+                tip: None,
+            },
+        )
+        .await
+        .expect("own list")
+        .items
+        .iter()
+        .map(|m| m.memory.memory_id)
+        .collect();
+    assert_eq!(sorted(own), sorted(vec![flagged, clean]));
+    let got = w
+        .app
+        .get_memory(w.ann.value.as_str(), flagged)
+        .await
+        .expect("the author reads its flagged row");
+    assert_eq!(got.memory.status, MemoryStatus::Held);
+}
+
 /// Law 2: only a dreamer key a person holds sets the mode.
 #[tokio::test]
 async fn only_a_persons_key_sets_the_mode() {
