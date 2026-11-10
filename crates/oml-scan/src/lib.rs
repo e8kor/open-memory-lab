@@ -131,6 +131,7 @@ pub fn rule_ids() -> Vec<(&'static str, &'static str, Action)> {
     out.push(("encoding.base64_blob", "base64-blob", Action::Hold));
     out.push(("unicode.invisible", "invisible-format", Action::Hold));
     out.push(("unicode.invisible", "tag-characters", Action::Hold));
+    out.push(("unicode.invisible", "variation-run", Action::Hold));
     out.push(("format.scan_bound", "scan-bound", Action::Veto));
     out
 }
@@ -218,12 +219,23 @@ impl RuleSet {
         }
         // The order is fixed (d14, amended 2026-11-10): first every pattern
         // and run rule over the text as written; then the invisible-character
-        // rules over the text as written, since the view removes what they
-        // count; then every pattern and run rule again over the normalised
-        // view, veto and hold alike, keeping each rule the text itself did
-        // not already report. A zero-width character or a fullwidth form
-        // inside an injection phrase hides it from the first pass, never
-        // from the third.
+        // rules over the text as written, since the views remove what they
+        // count; then every pattern and run rule again over each normalised
+        // view, veto and hold alike, keeping each rule no earlier pass
+        // reported. The first view deletes the removable characters, which
+        // undoes one inside a word; the second puts a space where each was,
+        // which undoes one used as the space between words. A view that
+        // normalises past the bound is vetoed as the text would be (d9).
+        let views = normalised(text);
+        if views.iter().any(|v| v.len() > MAX_SCAN_BYTES) {
+            return vec![Finding {
+                class: "format.scan_bound",
+                rule: "scan-bound",
+                action: Action::Veto,
+                field: field.to_owned(),
+                line: 1,
+            }];
+        }
         let mut out = self.matched(field, text);
         if let Some((start, rule)) = invisible(text) {
             out.push((
@@ -231,8 +243,8 @@ impl RuleSet {
                 code_finding("unicode.invisible", rule, Action::Hold, field, text, start),
             ));
         }
-        if let Some(view) = normalised(text) {
-            for (start, f) in self.matched(field, &view) {
+        for view in &views {
+            for (start, f) in self.matched(field, view) {
                 if !out.iter().any(|(_, g)| g.rule == f.rule) {
                     out.push((start, f));
                 }
@@ -428,26 +440,38 @@ fn removable(c: char) -> bool {
     )
 }
 
-/// The text with what hides a token or a phrase undone, or `None` when it
-/// is already that text: removable characters gone, NBSP a space, NFKC
-/// (d14). Not case-folded: the hold patterns match either case already,
-/// and folding would hide an upper-case key from the veto patterns.
-fn normalised(text: &str) -> Option<String> {
+/// The text with what hides a token or a phrase undone, none when it is
+/// already that text: NBSP a space, NFKC, and the removable characters
+/// deleted in one view and made spaces in the other (d14). Not
+/// case-folded: the hold patterns match either case already, and folding
+/// would hide an upper-case key from the veto patterns.
+fn normalised(text: &str) -> Vec<String> {
     use unicode_normalization::UnicodeNormalization as _;
     use unicode_normalization::{IsNormalized, is_nfkc_quick};
     let plain = text.is_ascii()
         || (!text.chars().any(|c| removable(c) || c == '\u{00A0}')
             && is_nfkc_quick(text.chars()) == IsNormalized::Yes);
     if plain {
-        return None;
+        return Vec::new();
     }
-    let view: String = text
-        .chars()
-        .filter(|&c| !removable(c))
-        .map(|c| if c == '\u{00A0}' { ' ' } else { c })
-        .nfkc()
-        .collect();
-    (view != text).then_some(view)
+    let view = |sep: Option<char>| -> String {
+        text.chars()
+            .filter_map(|c| {
+                if removable(c) {
+                    sep
+                } else if c == '\u{00A0}' {
+                    Some(' ')
+                } else {
+                    Some(c)
+                }
+            })
+            .nfkc()
+            .collect()
+    };
+    let mut views = vec![view(None), view(Some(' '))];
+    views.dedup();
+    views.retain(|v| v != text);
+    views
 }
 
 fn line_of(text: &str, start: usize) -> usize {
@@ -602,13 +626,25 @@ const RGI_TAG_SEQUENCES: [&str; 3] = [
 /// zero-width or invisible format characters, or any Unicode tag character
 /// outside an RGI emoji tag sequence, read whole (amended 2026-11-10): a
 /// flag prefix with any other tag characters after it is a hidden payload,
-/// not a flag. Joiners (U+200C, U+200D) and the soft hyphen are left alone:
+/// not a flag; and two or more variation selectors in a row
+/// (`variation-run`, amended the same day). Joiners (U+200C, U+200D) and the soft hyphen are left alone:
 /// scripts and emoji use them.
 fn invisible(text: &str) -> Option<(usize, &'static str)> {
     let mut first = None;
     let mut n = 0;
+    let mut selectors = 0;
     let mut chars = text.char_indices();
     while let Some((i, c)) = chars.next() {
+        // One variation selector picks a glyph for the character before it;
+        // two or more in a row choose nothing and can carry a byte each.
+        if matches!(c, '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}') {
+            selectors += 1;
+            if selectors > 1 {
+                return Some((i, "variation-run"));
+            }
+            continue;
+        }
+        selectors = 0;
         if c == '\u{1F3F4}'
             && let Some(flag) = RGI_TAG_SEQUENCES.iter().find(|f| text[i..].starts_with(*f))
         {
