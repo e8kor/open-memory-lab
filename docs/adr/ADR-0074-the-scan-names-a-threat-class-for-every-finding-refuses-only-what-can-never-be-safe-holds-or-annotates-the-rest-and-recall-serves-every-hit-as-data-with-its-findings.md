@@ -14,7 +14,47 @@ classes of d3 below; d5: a hold finding requires a person's verdict; d13: the re
 recording mode; d14: one decoding pass for the classes d6 names), ADR-0050 (d6: `annotate` is
 an advisory finding of that decision, and gains the classes below), ADR-0038 (d1: the server
 instructions describe findings), ADR-0029 (d6: the hook's entries escape hidden characters), ADR-0030 (d3: a held version with
-a hold finding stays author-only inside an in-progress subtree, d20)
+a hold finding stays author-only inside an in-progress subtree, d20; a held version scanned under
+an older rule set stays author-only until rescanned, d28), ADR-0045 (d2: adding an allowlist
+entry or changing its user or admin flag needs a person session, d25), ADR-0046 (d2, as ADR-0055
+d2 amended it, and ADR-0044 d8: a person approving a hold finding their own agent wrote counts
+only in a single-person tenant, d26)
+
+**Builds on:** ADR-0065's amendment of 2026-11-10 (d5, d14, d15, and ADR-0030 d3), the decision
+behind `oml-scan/1.1`; this record cites it and does not re-decide it (d28).
+
+### Decisions at a glance
+
+| d | Decision |
+|---|---|
+| d1 | Three verdicts, `refuse`, `hold`, `annotate`; a class names one; only what no true memory needs refuses |
+| d2 | A hold finding is approved only by a person: a confirmed person session (web or local) with a fresh sign-in and a reviewer grant, never the author key |
+| d3 | Thirteen threat classes, each with its detection, verdict, false-positive handling and what the reviewer sees |
+| d4 | Injection: tool coercion, fake frames, self-replication split into hold and annotate, ten languages; "addressed to the reader" defined once |
+| d5 | One hidden-character table generated from vendored Unicode data; exact RGI tag sequences; confusables annotate |
+| d6 | Views in a fixed order: raw, clean, decoded from both, then fold, collapse, letters-only and skeleton; an exhausted decode budget holds |
+| d7 | A fetch on render or a data-carrying link holds; a link lying about its host holds |
+| d8 | Executable content annotates; a credential read sent to the network holds |
+| d9 | SSRF-shaped URLs annotate from one address table; a metadata credential path holds |
+| d10 | Provider-shaped presigned URLs refuse; generic query secrets hold |
+| d11 | Contradiction is flagged, never held, and never names a claim the viewer cannot read |
+| d12 | Recall serves findings with hits, escapes hidden characters, defangs exfil URLs, caps served size, and scans the assembled answer |
+| d13 | An opt-in local classifier annotates off the write path and journals its score |
+| d14 | `oml-scan/<major>.<minor>` over hashed data; a recorded rescan never demotes; a secret found after approval is withheld |
+| d15 | A red-team corpus with twins, a held-out set and mutations; gates on transform invariance and non-regression |
+| d16 | The write-time budget of ADR-0065 d9, with every view built |
+| d17 | The reviewer sees every finding; groups only for locator classes, never across authors; doctor names each failure |
+| d18 | Six phases (#213–#218), each closed by named tests; the dry run's 1 % gate binds the rule-set author over the floors |
+| d19 | The person lane: refer, dismiss, no expiry, a per-key cap, per-author order |
+| d20 | Inside an in-progress subtree, a version with a hold finding stays author-only |
+| d21 | Rule-set fixes ship as minors with their own rescan warning |
+| d22 | A tenant scan policy: ceilings and allowlists within fixed floors, `secret.*` fixed at refuse, every change journalled |
+| d23 | Findings are a list per version |
+| d24 | Steering and guardrails: stricter verdicts; a steering version from any key but a person session needs a person |
+| d25 | Acts that define a person or weaken the scan need a person session, never a bearer key, and are journalled |
+| d26 | Same-user approval of a hold finding counts in a single-person tenant, marked `same_user`; in a team another person is required |
+| d27 | Without web sign-in, a local person session bound to an OS user and a second factor; with neither, `review_route: none` and a doctor error |
+| d28 | `oml-scan/1.1` is the fix's rule set; held versions scanned under `/1` stay author-only in progress until `rescan --record-held` |
 
 ## Context
 
@@ -152,7 +192,9 @@ the deliberate case.
 
 ### Three defects on `main`
 
-Read on `main` at `71e4fc4c`. Each is fixed in phase 1 (d18), not in this record.
+Read on `main` at `71e4fc4c`. Each is decided by ADR-0065's amendment of 2026-11-10 (d5, d14,
+d15) on the branch `fix/scan-bypasses`, which ships as `oml-scan/1.1` in phase 1 (d18, d28); this
+record does not re-decide them.
 
 - **Hold rules never read the normalised view.** `Scanner::findings` builds the view (zero-width
   characters and soft hyphens removed, NBSP a space, NFKC) and keeps only the veto findings from
@@ -171,6 +213,28 @@ Read on `main` at `71e4fc4c`. Each is fixed in phase 1 (d18), not in this record
   (`crates/adapters/oml-pg/src/lib.rs:5705`, `:6713`) test status, retirement and kind only, never
   `scan_finding`. Inside an in-progress subtree a held memory with an `injection.*` or
   `unicode.*` finding reaches every reader there before anyone reviews it.
+
+### Who `main` treats as a person
+
+Two definitions are in force on `main`, and neither is a credential an agent cannot hold.
+
+- **A `held_by: human` dreamer key.** The bulk verdict (`require_person_reviewer`,
+  `crates/oml-app/src/app.rs:395-403`) and the in-progress mode (`may_set_mode`,
+  `crates/oml-domain/src/in_progress.rs:174-176`) admit any dreamer key whose `held_by` is
+  `human`. `held_by` is the issuing admin's word (ADR-0055 d1), so a bearer admin key can issue
+  one.
+- **A session key.** A session key has no value an agent can present (ADR-0045 d6). But the
+  allowlist that names its person is kept by any admin key, bearer included:
+  `POST /v2/web/emails` checks the key's role alone (`crates/oml-app/src/app/web.rs:74-80`) and
+  stores `admin: req.admin` as given (`:101`), on a new entry or on the tenant's existing one
+  (`WebEmailOutcome::Changed`). An agent that holds a bearer admin key can therefore list an
+  account it controls as an admin person. The `oml-admin:issue-agent-key` skill already runs
+  `oml` under the operator's stored admin key.
+
+This grants nothing on `main` that the bearer admin key could not already do: it can issue a
+`held_by: human` dreamer key with any grant, and no verb on `main` trusts a session key above
+that. It becomes an escalation the moment d2 trusts a session key, so d25 closes it in the same
+phase.
 
 Decided, not built.
 
@@ -226,24 +290,49 @@ flowchart TD
   whose allowlist entry names its user (ADR-0045 d6). An approving verdict on a version with an
   unresolved hold finding (one no person dismissed, d19) therefore counts only when the key that
   gives it satisfies all of:
-    1. `credential = session` and `session_user` is set: the identity kind is a signed-in person;
-    2. `role = dreamer`, `held_by = human`, no `crew_id`, no `profile`: the predicate ADR-0055 d1
+    1. `credential = session` and `session_user` is set, opened by a web sign-in (ADR-0045) or a
+       local person session (d27): the identity kind is a person;
+    2. the person is **confirmed**: the allowlist entry or local binding behind the session was
+       added by the tenant's bootstrap or by another person session, never by a bearer key alone
+       (d25);
+    3. the sign-in is **fresh**: the session was opened, or re-proved, within the last 15
+       minutes (chosen, not measured). A web sign-in for a hold verdict is a new authorization
+       request with `prompt=login` and, for Google, `max_age=900`, whose ID token's `auth_time`
+       is checked; GitHub's OAuth flow carries no `auth_time`, so a GitHub sign-in counts by the
+       server's own clock and the verdict records `auth_time: unattested`. A local session
+       re-proves with its second factor (d27);
+    4. `role = dreamer`, `held_by = human`, no `crew_id`, no `profile`: the predicate ADR-0055 d1
        and ADR-0030 d1 already use for a person's reviewer key (`app.rs:396`;
        `in_progress.rs:175`);
-    3. dreamer is in the key's effective access on the version's workarea, through its grants
+    5. dreamer is in the key's effective access on the version's workarea, through its grants
        and the ancestry, as for every verdict: the grant, not the key type, says it may judge
        this row;
-    4. the session's user is not the user of the author key, and the key is not the author key:
-       the reviewer is never the author (R2).
+    6. the key is not the author key (R2). Whether the person may be the author key's user is
+       d26: yes in a single-person tenant, marked `same_user`; no in a team.
 
   Every other key, a `held_by: human` bearer dreamer key included, may reject or refer (d19)
-  and never approve; the attempt answers `review.person_required` with
-  `details.reason: hold_finding` and journals nothing. The verdict event records
-  `credential: session` and the session's sign-in method (OAuth provider or email link,
-  ADR-0045). The residual is an agent driving the person's own signed-in browser; that is the
-  person's act by every test the server can make, and doctor cannot see it. This amends
-  admission's fixed policy for one condition only, the first `human_required` class set the
-  admission page has long described.
+  and never approve; the attempt answers `review.person_required` with `details.reason` one of
+  `hold_finding`, `unconfirmed_person`, `stale_sign_in` or `same_user_in_team`, and journals
+  nothing. The bulk verdict (ADR-0055) skips a hold-finding row for any key that fails this
+  predicate and names it in the result as `person_required`; it never approves it. The verdict
+  event records `credential: session`, the sign-in method (Google, GitHub, email link or
+  `local`), `auth_time` and `same_user`.
+
+  **Two definitions of a person, and why they differ.** ADR-0055 d1's bulk review and ADR-0030
+  d1's mode setting keep `held_by: human` (Context, "Who `main` treats as a person"): they guard
+  against an agent's crew acting in bulk or freezing a workarea, where the admin's word is the
+  control. d2 guards against a model being talked round by the text it judges, where the admin's
+  word is not enough, because a bearer key works from any shell an agent runs. A hold verdict
+  needs both.
+
+  **The residual.** An agent driving the person's own signed-in browser, within the freshness
+  window, is the person's act by every test the server can make, and doctor cannot see it. So
+  is an agent with shell access that reads the browser's cookie store (on Linux often protected
+  by a fixed key) and replays the OML session cookie with `curl` against the `/web` forms within
+  the window, or replays the provider's cookie to complete a new sign-in without the person. The
+  window bounds the first two; `prompt=login` bounds the third for Google and not for GitHub.
+  This amends admission's fixed policy for one condition only, the first `human_required` class
+  set the admission page has long described.
 
 - **d3 — The threat taxonomy for stored memories.** Each class below is a row of the
   `oml-scan/2` registry unless marked as a check outside the rule set. "Det." is a
@@ -252,9 +341,9 @@ flowchart TD
 
     | # | Class | Detection | Verdict | False positives | Reviewer sees |
     |---|---|---|---|---|---|
-    | 1 | `injection.override`, `injection.role`, `injection.tool_call` (kept), `injection.frame`, `injection.tool_coercion`, `injection.self_replicate` (new) | det., in English and the languages of d4; model adds `model.injection` | hold | a person rejects, approves or dismisses; benign twins in the corpus (d15) | yes, class, rule, field, line |
+    | 1 | `injection.override`, `injection.role`, `injection.tool_call` (kept), `injection.frame`, `injection.tool_coercion`, `injection.self_replicate` (new) | det., in English and the languages of d4; model adds `model.injection` | hold; a bare "remember this" and a generic turn label annotate (d4) | a person rejects, approves or dismisses; benign twins in the corpus (d15) | yes, class, rule, field, line |
     | 2 | `unicode.bidi`, `unicode.invisible` (kept, fixed in `/1.1`), `unicode.confusable` (new) | det., one character table (d5) | hold; confusable annotates | joiners in script and emoji positions, the soft hyphen and RGI flag sequences pass (d5) | yes, with the code points named |
-    | 3 | `encoding.base64_blob` (kept), `encoding.decoded`, `encoding.decode_budget` (new) | det., decoding to depth 3 (d6) | decoded findings take the inner rule's verdict; a provider token refuses; an exhausted budget annotates | digests, UUIDs and test vectors in the docs corpus must pass | yes, with the decoding chain named |
+    | 3 | `encoding.base64_blob` (kept), `encoding.decoded`, `encoding.decode_budget` (new) | det., decoding to depth 3 (d6) | decoded findings take the inner rule's verdict; a provider token refuses; an exhausted budget holds | digests, UUIDs and test vectors in the docs corpus must pass | yes, with the decoding chain named |
     | 4 | `exfil.render_fetch`, `exfil.link_data` (new) | det., one Markdown and HTML tokenizer (d7) | hold; a plain remote image annotates | an image with no templated or high-entropy part only annotates; README badges are twins | yes, with the host |
     | 5 | `phish.link_mismatch`, `phish.lookalike_host` (new) | det. (d7) | mismatch holds; look-alike annotates | a link whose text is not a host passes | yes, text host and target host |
     | 6 | `exec.pipe_shell`, `exec.destructive`, `exec.credential_read`, `exec.typosquat` (new) | det., in code claims, fenced, indented and inline code and `<pre>` | annotate; a credential read sent to the network holds | annotate costs no review; the corpus counts the noise | yes |
@@ -263,7 +352,7 @@ flowchart TD
     | 9 | `pii.*` (kept, off) | det. | off; hold when on | decided under #177, built under #140 | yes, when on |
     | 10 | format bombs: `json.*`, `yaml.alias_refused`, `mermaid.*` (kept) | det., in the adapters | refuse | unchanged | the writer sees the refusal |
     | 11 | `poison.contradicts` (new, outside the rule set) | det. lexical check now, model later | annotate | flag only, never holds; a person judges (d11) | yes, the contradicted claim if the viewer may read it |
-    | 12 | `poison.retrieval_bait` (new) | det., term-frequency anomaly (d4) | annotate | long glossaries and index pages are twins | yes, the repeated terms counted |
+    | 12 | `poison.retrieval_bait` (new) | det., one term's share of the field's own tokens (d4); keyword stuffing only | annotate | long glossaries and index pages are twins | yes, the repeated terms counted |
     | 13 | `assembly.split_injection` (new, outside the rule set) | det., the hold rules over a joined recall answer (d12) | annotate the answer, never a stored row | flag only | the reader, with the hit ids |
 
     System-prompt leakage (OWASP LLM07:2025) has no class of its own: a captured prompt is text a
@@ -282,10 +371,12 @@ flowchart TD
   targeted such that it would always surface as a search result for a specific user query".
   A memory store is that retrieved data. The eight `oml-scan/1` rules stay, and now read the
   folded and skeleton views (d6). Added, each written for text aimed at the reading agent, so an
-  ordinary imperative passes:
+  ordinary imperative passes. **Addressed to the reader** means one thing in all three rules
+  below: the sentence's subject or vocative is the second person ("you", "your"), "the
+  assistant", "the agent", "the model" or "the AI", or the sentence is an imperative with no
+  subject at the start of a line. One compiled predicate serves all three.
     - `injection.tool_coercion` / `tool-coercion`: an imperative naming a tool the reader holds,
-      addressed to the reader ("you", "the assistant", an unaddressed imperative at the start of
-      a line) and followed by an argument, or a sentence that redefines what such a tool does or
+      addressed to the reader and followed by an argument, or a sentence that redefines what such a tool does or
       requires. The tool names are generated at build from `docs/api/mcp-tools.json` and the
       plugin's tool catalogue, so they cannot drift from what ships, plus a fixed list of harness
       tools (a shell, a file write, a fetch). "The deploy job runs `make release`" passes; the
@@ -298,16 +389,23 @@ flowchart TD
       line-start turn label, and a `"role":` object inside a JSON claim, annotate instead of
       holding, since documented transcripts and API examples carry both; a chat excerpt kept
       under ADR-0063 (`origin.kind = chat`) is not read for turn labels at all.
-    - `injection.self_replicate` / `persist-me`, hold: a demand that the reader store, save,
-      remember, repeat or copy this text, or text like it, into memory, notes or every later
-      answer. It is MITRE ATLAS AML.T0061 *LLM Prompt Self-Replication* in a memory store's
-      shape, where the reader holds a write tool. Cohen et al., *Morris II*
-      ([arXiv:2403.02531](https://arxiv.org/abs/2403.02531), not fetched in this round), is the
-      worm form.
-    - `poison.retrieval_bait` / `term-stuffing`, annotate: a field where one term, or a set of
-      terms that are rare in the tenant's index, repeats far above the field's length would
-      predict, the AML.T0070 "always surface" shape. The thresholds are set by the corpus
-      (d15).
+    - `injection.self_replicate`, in two rules, each addressed to the reader. It is MITRE ATLAS
+      AML.T0061 *LLM Prompt Self-Replication* in a memory store's shape, where the reader holds a
+      write tool. Cohen et al., *Morris II* ([arXiv:2403.02531](https://arxiv.org/abs/2403.02531),
+      not fetched in this round), is the worm form.
+        - `persist-verbatim`, hold: a demand to copy *this text* verbatim, to write it into other
+          memories or notes, or to repeat it in every later answer. That is the worm's shape.
+        - `persist-me`, annotate: a plain "remember this" or "save this". Chat capture
+          (ADR-0063) is full of people telling an agent to remember something, and those are not
+          attacks.
+      Neither rule reads the user turns of a chat excerpt (`origin.kind = chat`); a user's own
+      instruction to their agent is the conversation, not a payload.
+    - `poison.retrieval_bait` / `term-stuffing`, annotate: a field where one term's share of the
+      field's own tokens passes a bound the corpus sets (d15), the AML.T0070 "always surface"
+      shape in its keyword form. The rule reads the field alone and never the tenant's index, so
+      it stays in the rule set and the pin reproduces it (ADR-0065 d1). It detects keyword
+      stuffing only: bait written to land near a query in embedding space (AML.T0070 against the
+      hybrid pipeline, ADR-0053) passes it, and an annotation changes no rank.
     - **Other languages.** The override and role phrases of `/1` gain fixed equivalents in
       German, French, Spanish, Portuguese, Italian, Polish, Ukrainian, Russian, Chinese and
       Japanese, a list chosen, not measured, compiled in and part of the rule set's identity.
@@ -343,7 +441,12 @@ flowchart TD
       the bidi controls (U+202A–U+202E, U+2066–U+2069, U+061C, U+200E, U+200F), every
       `Default_Ignorable_Code_Point`, the tag block, the variation selectors (U+FE00–U+FE0F,
       U+E0100–U+E01EF) other than one selector directly after a base that takes it, the Hangul
-      fillers (U+115F, U+1160, U+3164, U+FFA0), U+034F and U+1D173–U+1D17A. Detection, d12's
+      fillers (U+115F, U+1160, U+3164, U+FFA0), U+034F and U+1D173–U+1D17A, and by name the
+      interlinear annotation controls U+FFF9–U+FFFB, which are not `Default_Ignorable_Code_Point`
+      but hide text in some renderers. The table is generated at build from the vendored
+      `DerivedCoreProperties.txt` (d14) plus that named list, never typed by hand, so it cannot
+      drift from the Unicode version the rule set pins; `/1.1`'s hand list (ADR-0065 d14 as
+      amended) is replaced by the generated one in `/2.0`. Detection, d12's
       escaping, the hook, the web pages and the CLI read the same table, and a test asserts that
       the sets they escape and detect are equal. ZWJ and ZWNJ pass only singly between two
       characters that are not joiners; a run of two or more counts toward `invisible-format`.
@@ -364,42 +467,70 @@ flowchart TD
   hidden codes and data poisoning", and ATLAS AML.T0068 *LLM Prompt Obfuscation* covers
   instructions hidden "to avoid detection from humans, large language model (LLM) guardrails,
   or other detection mechanisms". On `main` the normalised view runs the veto rules only, so a
-  hold rule never sees it (Context). `/2` builds the views of each field in this order:
+  hold rule never sees it (Context). `/2` builds the views of each field in this order. Case
+  folding never precedes a decoder, since base64's and hex's case carries data.
     1. **Raw.** The field as stored, and, for a version with a title, the title and body joined
        by one newline, so a phrase split across the two is one text.
-    2. **Decoded**, up to depth 3 or until a pass changes nothing: base64 and base64url runs of 24
-       or more characters, `%XX` runs of 8 or more escapes (so `%25XX` decodes twice), hex runs of
-       32 or more digits, HTML entities, `\uXXXX`, `\xXX` and JSON string escapes, base32 and
-       quoted-printable. A decoding becomes a view only when it is valid UTF-8 and at least 60 %
-       printable. All depths together may produce at most twice the field's bytes, a separate
-       decode budget that never counts against the 1 MiB `scan-bound`, so a benign 900 KiB claim
-       is not refused for its views; when the budget runs out the version annotates
-       `encoding.decode_budget`. Compressed data (gzip, zlib) is not inflated: `base64-blob`
-       holds it. Every decoded byte is smaller than its source (base64 yields three bytes for
-       four, hex one for two), so the bytes over all depths stay within the budget's bound.
-    3. **Ignorables removed:** every character of d5's table, outside the passes it names.
-    4. **Spaces:** every `Zs` character, NBSP included, becomes U+0020.
-    5. **Folded:** `toNFKC_Casefold` (NFKC with full case folding, Unicode's
-       `NFKC_Casefold` property), so fullwidth and compatibility forms meet their ASCII letters.
-    6. **Separators collapsed**, for the phrase rules only: each run of whitespace, punctuation
-       and `_` becomes one space, so a phrase joined by underscores or slashes matches.
-    7. **Skeleton:** TR39's skeleton of the folded text, for the phrase rules and d5's listed
-       words. The rules' own literals are compiled through steps 3–7 at build, so a pattern and a
-       text always meet in the same form.
+    2. **Clean.** Every character of d5's table removed, outside the passes it names; every `Zs`
+       character, NBSP included, made U+0020; then NFKC. No case fold. This is the step that
+       puts a base64 run split by U+200B back together, turns `％６９` into `%69` and turns a
+       fullwidth base64 alphabet into ASCII before any decoder reads it.
+    3. **Decoded**, from **both** the raw and the clean view, up to depth 3 or until a pass changes
+       nothing.
+        - **One unescaped view.** HTML entities, `\uXXXX`, `\xXX`, JSON string escapes,
+          quoted-printable and `%XX` are undone together in one pass, and that pass yields one
+          view, counted once. A whole token (a run between spaces) that holds any `%XX` or
+          entity is decoded, not only a run of 8 or more escapes, so `ign%6Fre` and
+          `ign&#111;re` become the word they spell. `%25XX` and a double entity decode at the
+          next depth.
+        - **Span decoders.** Base64 and base64url runs of 24 or more characters, hex runs of 32
+          or more digits and base32 runs are decoded span by span, in order of the span's
+          entropy, highest first, so a buried payload is read before a padding of low-entropy
+          runs. A decoding becomes a view only when it is valid UTF-8 and at least 60 %
+          printable.
+        - **The budget** counts only the bytes the decoders produce from decoded spans, never
+          context copied around them, and is at most twice the field's bytes over all depths. It
+          never counts against the 1 MiB `scan-bound`, so a benign 900 KiB claim is not refused
+          for its views. **When the budget runs out the version holds** as
+          `encoding.decode_budget`, as `base64-blob` holds what it cannot read: what the scan
+          could not finish reading, a person reads. Compressed data (gzip, zlib) is not
+          inflated: `base64-blob` holds it.
+       Each decoded view then passes step 2 before any rule reads it.
+    4. **For every view so far** (raw, clean and each decoded view):
+        - **Folded:** `toNFKC_Casefold` (Unicode's `NFKC_Casefold`), so fullwidth and
+          compatibility forms meet their ASCII letters;
+        - **Separators collapsed:** each run of whitespace, punctuation and `_` becomes one
+          space, so a phrase joined by underscores or slashes matches;
+        - **Letters only:** every character that is not a letter removed, so `i-g-n-o-r-e
+          p.r.e.v.i.o.u.s` reads `ignoreprevious`;
+        - **Skeleton:** TR39's skeleton of the folded text.
 
-    Which rule reads which view: the secret rules read raw, decoded and the step-5 view without
-    the case fold (a provider prefix such as `AKIA` is case-sensitive), and never the skeleton;
-    the keyword and entropy rules read raw only, since decoded binary scores high on entropy by
-    nature; the injection, exfil, phish, exec and SSRF rules read every view; the hidden-character
-    rules read raw only, since steps 3–4 remove what they look for. A finding records the view as
-    `via` (`raw`, `decoded:base64>percent`, `folded`, `skeleton`), and findings are deduplicated by
-    rule as today. A provider token on a decoded view refuses, because base64 of a key is still
-    the key; an injection finding on any view holds. Each transform has its evasion test in
-    phase 2: a zero-width space inside a phrase word, fullwidth letters, a homoglyph letter, mixed
-    case, a phrase joined by `_` and by `/`, a phrase split between title and body, base64 at
-    depths 1, 2 and 3, `%25` double percent-encoding and a double entity, each of which must hold
-    as the plain phrase does. The 24-character, 8-escape, 32-digit and 60 % floors and the factor
-    of two are chosen, not measured, and are set by the corpus (d15).
+    **Which rule reads which view.** A skeleton maps letters to letters (`rn` to `m`, `1` and
+    `I` to `l`) and the letters-only view drops word boundaries, so neither can be read by a
+    regex: `\w`, `\b`, `[a-z]` and alternations change meaning under both. The **skeleton and
+    letters-only views are read by a literal phrase set alone**: one Aho–Corasick automaton per
+    view over the phrase literals of the injection rules in every d4 language and d5's listed
+    words, each literal compiled at build through the same steps (its skeleton, and its letters
+    with spaces removed). Literal phrases are long enough that the letters-only view costs little
+    in false positives; the corpus measures it (d15). **Regexes read raw, clean, decoded,
+    folded and collapsed.** The secret rules read raw, clean and decoded, never folded or
+    skeleton, since a provider prefix such as `AKIA` is case-sensitive; the keyword and entropy
+    rules read raw only, since decoded binary scores high on entropy by nature; the
+    hidden-character rules read raw only, since step 2 removes what they look for. A finding
+    records the view as `via` (`raw`, `clean`, `decoded:base64>unescaped`, `folded`, `letters`,
+    `skeleton`), and findings are deduplicated by rule as today. A provider token on a decoded
+    view refuses, because base64 of a key is still the key; an injection finding on any view
+    holds.
+
+    **Evasion tests**, each of which must hold as the plain phrase does, in phase 2 and in d15's
+    mutation suite: a zero-width space inside a phrase word, fullwidth letters, a homoglyph
+    letter, mixed case, a phrase joined by `_` and by `/`, a phrase with its letters spaced out
+    by `-`, `.` or spaces, a phrase split between title and body, base64 at depths 1, 2 and 3,
+    base64 split by U+200B into runs under 24 characters, `&#x200B;` inside a base64 run, a
+    fullwidth base64 alphabet, fullwidth percent escapes, `%25` double percent-encoding, a
+    double entity, a partial encoding (`ign%6Fre`, `ign&#111;re`), and a payload behind a
+    padding of escapes meant to spend the budget. The 24-character, 8-escape, 32-digit and 60 %
+    floors and the factor of two are chosen, not measured, and are set by the corpus (d15).
 
 - **d7 — Exfiltration and phishing vectors: a fetch on render holds, a link carrying data
   holds, a link that lies about its host holds.** ATLAS AML.T0077 *LLM Response Rendering*:
@@ -425,7 +556,9 @@ flowchart TD
     - `exfil.render_fetch` / `remote-image-data`, hold: a remote fetching URL whose query value,
       fragment or path segment is templated (`{…}`, `[…]`, `$NAME`, `%s`) or passes the entropy
       floor of ADR-0065 d3. A fixed `?branch=main` on a badge is neither, so a synced README
-      only annotates.
+      only annotates. A path segment shaped as a UUID or a hex digest and ending in a file
+      extension (`/3f2a…9c.png`, a CDN's screenshot) is exempt from the entropy test, since
+      content-addressed storage names files that way.
     - `exfil.render_fetch` / `remote-image`, annotate: any other remote fetching URL. It is the
       vector even with a fixed URL, and a note pointing at a diagram is ordinary.
     - `exfil.link_data` / `templated-link`, hold: a link whose URL holds a templated part next
@@ -561,7 +694,7 @@ flowchart TD
       out … at prompting and response times" is met by never emitting the code points raw.
     - **Fetching URLs are defanged where a model reads them.** For a hit with an `exfil.*` or
       `phish.*` finding, the hook frame writes each such URL's scheme as `hxxps` and the MCP
-      text content writes its `:` as `:`, which decodes to the signed bytes in `text` and
+      text content writes its `:` as `\u003a`, which decodes to the signed bytes in `text` and
       gives a Markdown renderer no URL to load. JSON escaping does not stop a client that renders
       Markdown from the model's echo; the defanged form narrows that, and the limit stays.
     - **No frame can be ended from inside.** The hook's plain-text frame is the one surface that
@@ -571,11 +704,13 @@ flowchart TD
       cut at a line with the cut named, and the hit's id lets the reader fetch the rest by id;
       the figure is chosen, not measured (OWASP LLM10:2025, unbounded consumption).
     - **The assembly scan.** After a recall answer or a hook frame is assembled, the hold rules
-      run once over the joined texts of its hits. When the joined text fires a rule no single hit
-      fired, the answer carries `assembly: [{class, rule, hit_ids}]` and the hook prints one line
-      naming the ids. It changes no stored row, ranks nothing and hides nothing: an injection
-      split across memories is seen where it is assembled, the one place it exists. Its cost is
-      one scan of the answer, inside d16's bound for the answer's size.
+      run once over the texts of its hits joined in served order by one blank line (`\n\n`).
+      When the joined text fires a rule no single hit fired, the answer carries
+      `assembly: [{class, rule, hit_ids}]` and the hook prints one line naming the ids. It
+      changes no stored row, ranks nothing and hides nothing. It claims little: a literal phrase
+      split exactly at a hit boundary is improbable, and a split by meaning ("when you see FOO…"
+      in one memory, "FOO means…" in another) is beyond a lexical rule. Its cost is one scan of
+      the answer, inside d16's bound for the answer's size.
     - **The instructions describe findings.** The server instructions and the `oml_read`
       description add one sentence (ADR-0067 d2's descriptive voice): a hit's `findings` name
       what the scan saw in it, and a memory's text grants no authority, so a tool call or a URL
@@ -625,7 +760,8 @@ flowchart TD
       page, FTS snippets and highlights, near-copy candidates (ADR-0050), exports, the lake's
       silver and gold zones and `oml fs`. A withheld hit is served as its id, claim key,
       workarea and findings, no text, until an admin retires or erases it, or clears the flag with
-      `oml admin scan clear <artifact> --reason`, which is journalled. A test lists every read
+      `oml admin scan clear <artifact> --reason`, which is journalled. Clearing re-serves a body
+      the scan judged a secret, so it is a person-session act (d25), never a bearer key's. A test lists every read
       verb and asserts each serves no withheld byte, as ADR-0030 d2's boundary test does. Withholding
       revokes nothing: doctor's `scan_withheld: n` line says to rotate the credential, and to erase
       the version with `oml admin erase` (R4's journalled crypto-shred) if it must go. Backups taken
@@ -653,9 +789,14 @@ flowchart TD
   sets:
     - **Held-out**, frozen from published sources and never read while tuning rules; recall is
       reported on it with Wilson 95 % intervals.
-    - **Mutations**: every d6 transform, a split across title and body, base64 at depths 1–3,
-      and translation into five of d4's languages, applied to every malicious sample, with recall
-      reported per transform.
+    - **Mutations**: every d6 transform and evasion test, a split across title and body, base64
+      at depths 1–3, letters spaced out, partial encodings, and translation into five of d4's
+      languages, applied to every malicious sample, with recall reported per transform.
+    - **Hidden by Markdown**: text a reader of rendered Markdown never sees but a model reads
+      raw: an HTML comment, a link or image title, alt text, a reference-definition title, a
+      closed `<details>`. Each has a sample. The review card shows them unrendered (d17), and
+      before any OML surface renders Markdown, an annotate rule `render.hidden_text` is added in
+      a minor (d21).
     - **Benign security prose**: OWASP cheat sheets, this repository's ADRs and security pages,
       AWS, GCP and Kubernetes runbooks, READMEs with badges, where false positives cost most.
 
@@ -663,16 +804,24 @@ flowchart TD
     BSD, CC-BY-4.0 or CC0, verified at fetch, with its source, commit, SPDX id and date in the
     sample file. Candidates to check are deepset `prompt-injections`, garak's probes, AgentDojo,
     InjecAgent, BIPIA and Tensor Trust; a set whose licence forbids redistribution is cited and
-    measured out of tree, never committed. `cargo run --release -p oml-scan --example redteam`
+    measured out of tree, never committed. The corpus is live injection text in a repository
+    coding agents read, so every malicious sample is stored base64-encoded and decoded by the
+    harness, never as plain text; a secret sample is stored in two halves joined at test time, so
+    push protection and the repository's own scan never see a whole token. `cargo run --release -p oml-scan --example redteam`
     reports per class precision, recall, the twins' false-positive rate and the held-out and
     per-transform recall, and the existing `fp_rate` example keeps reporting the public corpora
     of ADR-0065 d12. No rate is printed for a class with fewer than 50 malicious samples and 50
     twins. The gates, chosen, not measured:
     - refuse classes: no refusal on any benign sample, and at least 99 % recall on a
       provider-token set;
-    - hold classes: at most 1 % of the benign security prose held, at least 70 % held-out recall
-      for English direct injection, other languages and indirect injection reported without a
-      gate; no rise in documents with a refuse or hold finding on SciFact, NFCorpus or LoCoMo,
+    - hold classes: at most 1 % of the benign security prose held; **transform invariance**,
+      recall on each mutation at least the plain sample's recall less 5 points (chosen); **no
+      regression** against `/1` on any sample `/1` holds; held-out recall reported with Wilson
+      95 % intervals per language and for indirect injection, without a gate, as the baseline
+      #218's classifier is measured against. Deterministic rules over diverse published
+      paraphrase sets may sit well under any fixed recall bar, and a hard bar would push the
+      rules wide until the 1 % benign gate fails; a deterministic scan can promise that a
+      transform does not lose what the plain text catches; no rise in documents with a refuse or hold finding on SciFact, NFCorpus or LoCoMo,
       which are 0 % today, and LongMemEval reported beside its 0.021 % under `/1`;
     - annotate classes: the rate reported per class, with a warning when more than 5 % of benign
       documents carry one, since a chip on everything is read as nothing.
@@ -701,12 +850,22 @@ flowchart TD
   card with an unresolved hold finding says "needs a person"; to any other key it offers Reject
   and Refer, never Approve, with `review.person_required`. The bulk table gains one column,
   Findings, with the count and the strongest verdict (`1 hold · 2 annotate`), and groups
-  person-lane rows by `(class, rule, host or source)` so one sync's forty badge holds are one
-  decision; a group never mixes rules. The finding mark is added to the design system first
+  person-lane rows only for **locator classes**, where the locator is the judgement:
+  `exfil.*` by host, `ssrf.*` by address class, `phish.*` by the pair of text host and target
+  host, `exec.typosquat` by package. One sync's forty badge holds are then one decision. A group
+  never mixes rules or authors, and it lists each item with its field, line and highlighted span,
+  so the person sees every item they clear. `injection.*`, `unicode.*` and `encoding.*` are never
+  grouped: one malicious item among forty benign twins written to explain the same phrase would
+  otherwise be cleared with them (d19). The finding mark is added to the design system first
   (ADR-0069): amber for a hold, grey for annotate, never the triangle `stale` already uses.
   Doctor adds: `scan: oml-scan/2.0, n rules`; `scan_rescan_due` (d14); `scan_person_queue` with
   the count and the oldest age of unresolved hold findings (d19); `scan_person_reviewer` for a
-  workarea holding one where no person may review; `scan_withheld: n` (d14);
+  workarea holding one where no person may review, or where every person who may is the author's
+  user in a team (d26); `scan_person_queue_top_author` with the author key holding the most
+  unresolved hold findings and its count (d19); `scan_person_minted_by_bearer: n` for persons
+  not yet confirmed (d25); `scan_person_refusals` counting bearer attempts at a person-session
+  act since start (d25); `scan_held_unrescanned: n` for held versions scanned under an older
+  set (d28); `scan_withheld: n` (d14);
   `scan_policy` with the tenant's effective policy (d22); and, when on, `scan_classifier` with the
   model's id and digest and whether it loaded.
 
@@ -716,26 +875,55 @@ flowchart TD
        red-team corpus and the `redteam` report under `/1`, as the baseline; the rescan reads the
        title and the format views as admission does; the findings list of d23 replaces
        `scan_finding`; the review card and the bulk table show every stored finding;
-       `oml-scan/1.1` fixes the tag-sequence bypass and runs every rule over the normalised view
-       (d5, d6); a held version with a hold finding stops being served unreviewed in progress
-       (d20). Then the `/2` rules run read-only over a restored copy of a live tenant's store, by
+       `oml-scan/1.1`, ADR-0065's amendment of 2026-11-10, fixes the tag-sequence bypass and runs
+       every rule over the normalised view, and a held version with a hold finding stops being
+       served unreviewed in progress (d5, d6, d20, d28); held versions scanned under `/1` stay
+       author-only in progress until `oml admin rescan --record-held` scans them (d28). Then the `/2` rules run read-only over a restored copy of a live tenant's store, by
        the plain `oml admin rescan` with the new set loaded, and the hold, annotate and refuse
-       rates per class are published beside the corpus report. Tests:
+       rates per class and per origin kind (`chat`, `sync`, `web`, `agent`, none) are published
+       beside the corpus report, since load follows origin. The store is a restored copy of
+       memory.doublegate.io's, read on that host and never copied off it, with rates published
+       as aggregates only, no sample text and no claim keys; a second, synthetic tenant fed by
+       `oml sync` of a few public repositories and a chat-capture fixture is reported beside it.
+       Tests:
        `the_rescan_finds_what_admission_finds_in_a_titled_json_claim`,
        `the_review_card_names_every_scan_finding`, `every_corpus_sample_states_its_expected_verdict`,
        `a_black_flag_followed_by_tag_encoded_text_holds`,
        `a_zero_width_space_inside_an_override_phrase_still_holds`, `fullwidth_injection_text_holds`,
-       `a_held_version_with_a_hold_finding_is_never_served_unreviewed_in_progress`.
+       `a_held_version_with_a_hold_finding_is_never_served_unreviewed_in_progress`,
+       `the_rule_set_after_the_fix_is_oml_scan_1_1`,
+       `a_held_version_scanned_under_an_older_rule_set_is_author_only_in_progress_until_rescanned`,
+       `rescan_record_held_records_findings_on_held_versions_and_touches_no_promoted_one`.
     2. **`oml-scan/2` rules, the person lane and the tenant policy (#214).** d2–d10, d19, d22,
        d24, gated on phase 1's dry run: a class whose measured hold rate on the live copy exceeds
        1 % of versions ships at `annotate` in `2.0` and moves to `hold` only in a later minor once
-       its rule is tightened; the threshold is chosen, not measured. Tests: one true positive and
+       its rule is tightened; the threshold is chosen, not measured. This gate binds the rule
+       set's author and overrides d22's floors in `2.0`: a floor binds tenants, and says what a
+       tenant may never lower once a class ships at `hold`. d25, d26 and d27 ship with d2 in this
+       phase, since d2 trusts a session key from the moment it lands. Tests: one true positive and
        one benign twin per rule, and the evasion tests of d6;
+       `a_payload_behind_budget_padding_still_holds`;
+       `zero_width_split_base64_of_an_override_holds`; `fullwidth_percent_encoding_holds`;
+       `every_phrase_literal_matches_its_own_skeleton_view`;
+       `a_bearer_admin_cannot_lower_a_scan_ceiling`;
+       `a_bearer_admin_cannot_clear_a_withheld_body`;
+       `a_bearer_admin_cannot_add_a_web_email_or_set_its_admin_flag`;
+       `a_person_minted_by_a_bearer_admin_cannot_approve_a_hold_finding`;
+       `a_hold_verdict_after_the_freshness_window_is_refused_as_stale_sign_in`;
+       `a_person_may_approve_a_hold_finding_their_own_agent_wrote_in_a_single_person_tenant_marked_same_user`;
+       `in_a_team_a_hold_finding_needs_a_person_other_than_the_authors_user`;
+       `with_no_sign_in_and_no_local_person_a_hold_finding_reports_review_route_none_and_doctor_errors`;
+       `a_local_person_session_needs_the_bound_os_user_and_its_second_factor`;
+       `a_bulk_verdict_never_approves_a_hold_finding_with_a_bearer_key`;
+       `an_injection_finding_cannot_be_dismissed_as_a_group`;
+       `a_key_over_its_person_queue_cap_is_refused_by_name`;
+       `a_steering_version_from_a_bearer_key_needs_a_person`;
        `a_crew_reviewer_cannot_approve_a_version_with_a_hold_finding`;
        `a_user_api_key_cannot_approve_a_version_with_a_hold_finding`;
        `review_next_never_serves_a_hold_finding_to_a_key_that_cannot_approve_it`;
        `a_referral_is_journalled_and_never_counts_as_a_verdict`;
-       `a_secret_class_cannot_be_lowered_below_refuse`; `an_allowlist_entry_expires`;
+       `a_secret_class_cannot_be_lowered_below_refuse`; `an_allowlist_never_applies_to_a_secret_class`;
+       `an_allowlist_entry_expires`;
        `a_provider_token_in_base64_is_refused`; `the_address_table_has_one_copy`;
        `the_hidden_character_table_is_one_table_on_every_surface`;
        `the_scan_bounds_hold_under_oml_scan_2_with_every_view`.
@@ -769,15 +957,26 @@ flowchart TD
       /v2/review/next` never serves it to a key that cannot approve it (d2), so a crew is never
       handed an item it can only put back; it takes `needs=person` to serve only that lane, and the
       admin page's review list and `GET /v2/review/held` show the lane first for a session key.
+      The lane is ordered per author key, oldest first within each, with each author's count
+      shown, so one key's flood does not bury another's item.
+    - **A cap per key.** One key may hold at most 50 unresolved hold-finding versions, chosen,
+      not measured. Past it, a write that carries a hold finding is refused
+      `submission.person_queue_full`, naming the cap and the count, and journals nothing: the
+      author is told, and the lane stays readable. Without the cap any writer key can bury the
+      lane, since the test marker alone makes a hold finding and nothing expires.
     - **Refer.** A key that may review but not approve a hold finding may refer it: `oml review
       refer <id> --note`, `POST /v2/review/refer`, journalled `review.referred` with the note. A
-      referral is not a verdict, never counts toward ratification, and is shown on the card.
+      referral is not a verdict, never counts toward ratification, and is shown on the card. The
+      note is agent-written text on a person's card, so admission scans it as it scans a body, the
+      card renders it escaped with hidden characters made visible (d12), and it is labelled with
+      the referring key's name.
     - **Dismiss.** A person (d2's predicate) may dismiss one finding on one version as a false
       positive: `oml review dismiss <id> --finding <rule> --reason`, `POST /v2/review/dismiss`,
       journalled `scan.finding_dismissed` with the reason. The finding stays on the record and on
       every hit with `dismissed: {by, at, reason}`; once every hold finding on a version is
       dismissed it leaves the person lane and any reviewer may judge it. A dismissal is how a
-      person clears a group (d17) without approving content they have not read. A refuse-class
+      person clears a group of a locator class (d17) without approving content they have not
+      read; a finding of any other class is dismissed one item at a time. A refuse-class
       finding is never dismissed this way; `oml admin scan clear` is its route (d14).
     - **No expiry.** A held-item expiry is not built (admission: "a held-item expiry is not
       available"; `held_expires_at` is served as null, ADR-0025 d13). When one is built, a version
@@ -790,9 +989,10 @@ flowchart TD
       condition holds for the workarea, so an agent can tell its user the write waits for a
       person. The rule, field and line are the reviewer's, which keeps the writer from tuning
       text against the exact rule; the rules are open source, so the class costs nothing to show.
-      A new version of the same claim key from the same author whose text differs from a held
-      predecessor mainly around a hold finding's span is annotated `scan.evasion_suspected`, and
-      the card shows both versions.
+      `scan.evasion_suspected` annotates a new version whose text differs from a held version
+      mainly around a hold finding's span, when the two are of the same claim key from the same
+      author, of any claim key from any key of the same user or principal within 24 hours
+      (chosen), or of any authors whose folded views hash equal. The card shows both versions.
 
 - **d20 — Inside an in-progress subtree, a version with a hold finding stays author-only.**
   ADR-0030 d3 serves another author's held `memory` and `derived_fact` versions, labelled
@@ -810,25 +1010,41 @@ flowchart TD
 - **d21 — Phases and rule sets ship small fixes as minors.** A defect in a shipped rule, such as
   the two of d5 and d6, ships as the next minor of the current major (`oml-scan/1.1`), with its
   own corpus sample and its own rescan warning, rather than waiting for the next major. A minor
-  never adds a class.
+  never adds a class. A change that changes what a rule matches always moves the rule set's
+  name, so ADR-0065 d1's "same text, same findings" holds per name; the fix of d28 is that case.
 
 - **d22 — Each tenant has a scan policy: a verdict ceiling per class, allowlists that expire,
   dismissals, and an audit trail.** A tenant whose ops workareas trip a class daily needs a lever
   other than waiting for the next rule set.
-    - **Ceiling.** An admin may lower a class's `hold` to `annotate`, for the tenant or for one
-      workarea subtree. The class is never disabled: its findings are still recorded and served.
-      `secret.*`, `format.*`, the format adapters' refusals and `anchor.secret_path` stay `refuse`
-      and cannot be lowered; `injection.override`, `injection.role`,
-      `injection.self_replicate` and `unicode.invisible` / `tag-characters` stay `hold`. No
-      ceiling applies to steering or guardrail versions (d24).
+    - **Ceiling.** A person session (d25) may lower a class's `hold` to `annotate`, for the
+      tenant or for one workarea subtree; any admin key may raise one. The class is never
+      disabled: its findings are still recorded and served. **Fixed floors**, which no ceiling,
+      allowlist, dismissal or setting lowers: every `secret.*` rule that refuses (the provider
+      shapes, the `/1` refuse rules, `secret.url_query` / `presigned-url`), `format.*`, the
+      format adapters' refusals and `anchor.secret_path` are fixed at `refuse`; the rules of
+      `secret.*` that hold, such as `secret.url_query` / `query-secret`, are fixed at `hold`;
+      `injection.override`, `injection.role`, `injection.self_replicate` / `persist-verbatim`
+      and `unicode.invisible` / `tag-characters` are fixed at `hold`. No ceiling applies to
+      steering or guardrail versions (d24).
     - **Allowlists.** Hosts for `exfil.render_fetch`, `phish.*` and `ssrf.*` (the team's internal
       domain, `img.shields.io`), address ranges for `ssrf.internal`, and package names for
-      `exec.typosquat`. A listed match annotates instead of holding. Every entry carries an
+      `exec.typosquat`. A listed match annotates instead of holding. An allowlist never applies to
+      a `secret.*` rule: a `?token=` on an allowlisted internal host is held as anywhere else.
+      Adding or extending an entry is a person-session act (d25); removing or shortening one is
+      open to any admin key. Every entry carries an
       expiry, at most 180 days after it is added, chosen, not measured; an expired entry stops
       applying and doctor names it a week before.
     - **Dismissal** is d19's, per finding and per version, journalled.
+    - **External origin.** `scan.person_for_external = on` makes a version whose declared
+      `origin.kind` is external (ADR-0063 web capture, `oml sync` of a repository the tenant does
+      not own, tool output) need a person when it carries any finding, annotate included. It is
+      off by default. `origin.kind` is the writer's declaration, so an attacker leaves it out and
+      the setting binds only honest writers: it is a lever on load, not a control, and the docs
+      say so. Turning it off is a widening and a person-session act (d25). This answers the
+      former question 2.
     - **Audit.** The policy is versioned; every change journals `scan.policy_changed` with the
-      old and new entries, the actor and a reason. A finding records the `rule_set` and the
+      old and new entries, the actor key, its credential, the sign-in method and `auth_time`,
+      and a reason. A finding records the `rule_set` and the
       `policy_version` it was found under, so ADR-0065 d1's "same text, same findings" holds for
       the pair. `oml admin scan policy show` and doctor's `scan_policy` print the effective
       policy. A change to the policy changes no stored finding; the next recorded rescan applies
@@ -853,7 +1069,138 @@ flowchart TD
   `exfil.*`, `phish.*` and `ssrf.*` finding that would annotate holds instead, so it needs a
   person; and tenant ceilings (d22) do not apply. A hold finding recorded after approval
   withholds the version from the session-start context until a person re-approves it (d14).
-  Whether every steering version, finding or not, needs a person is open (question 1).
+  **A steering version from any key but a person session needs a person, finding or not.**
+  Steering is served first and never cut, which makes it the highest-value target, and an agent
+  writes it rarely; a person's look on agent-written steering is a small cost. It is held with
+  `needs_person: true` and `details.reason: steering_by_agent` in the person lane. A guardrail
+  does not: its rule is a deterministic predicate never executed as text (ADR-0037 d8), and its
+  body is still scanned under this decision. This answers the former question 1.
+
+- **d25 — An act that defines a person or weakens the scan needs a person session, never a
+  bearer key, and is journalled.** d2 trusts a session key above every bearer key, so whatever
+  makes a session key, or makes d2 unnecessary, must not be open to a bearer key. A bearer admin
+  key is realistic in an agent's hands: the `oml-admin:issue-agent-key` skill runs `oml` under
+  the operator's stored admin key, and on `main` that key lists any email as an admin person
+  (Context, "Who `main` treats as a person"). The acts, each refused to a bearer or connection
+  key with `admin.person_required` naming the act, and each journalled with the actor key, its
+  credential, the sign-in method, `auth_time` and a reason when it succeeds:
+    - **Defining a person.** Adding an allowlist entry, or changing an entry's user or admin
+      flag (`web.email_allowed`, `web.email_changed`; amends ADR-0045 d2), binding a local person
+      (d27), and adding a grant to a session key (ADR-0045 d10's `grant_review` and
+      `grant_curation`, already page acts). Removing an entry stays open to any admin key, since
+      it only narrows (ADR-0045 d13).
+    - **Weakening the scan.** Lowering a ceiling, adding or extending an allowlist entry, turning
+      `scan.person_for_external` off (d22), `oml admin scan clear` (d14) and dismissing a finding
+      (d19). Raising a ceiling, removing or shortening an allowlist entry and recording a rescan
+      stay open to any admin key.
+
+  The person session must meet d2's conditions 1 to 3 (a confirmed person, freshly signed in)
+  and hold the admin capacity, the `<user>-admin` session key of ADR-0045 d6, or a local person
+  session bound as an admin (d27). The CLI keeps these verbs: it prints a one-time link to the
+  admin page's form for the act, which a person completes signed in; it never performs them with
+  the stored key.
+
+  **The root of trust.** A tenant's first allowlist entry, or first local person binding, is
+  added by its bootstrap admin key as ADR-0045 d2 has it, journalled with `bootstrap: true`; a
+  tenant with any confirmed person admits no further bootstrap entry. An entry that exists
+  before this is built, added by any bearer key, is **unconfirmed**: its session may review
+  ordinary items and may never approve or dismiss a hold finding or perform an act above, until
+  a confirmed admin person re-confirms it on the admin page (`web.email_confirmed`). Doctor's
+  `scan_person_minted_by_bearer: n` counts them, and `scan_person_refusals` counts bearer
+  attempts at these acts since start, a signal that an agent is trying. The residual is the
+  bootstrap itself: an agent holding the bootstrap admin key of a tenant with no person yet can
+  name the first one, and doctor's line shows that entry with `bootstrap: true` for the operator
+  to recognise.
+
+- **d26 — A person's verdict on a hold finding their own agent wrote counts in a single-person
+  tenant, marked `same_user`, and a team needs another person.** ADR-0044 d8 and ADR-0046 d2 let
+  a person ratify or approve their own agents' work through another key, marked `same_user`, so
+  that a solo user can move their own work. d2's first draft refused the author's user outright,
+  which would leave every hold finding in a solo user's root unapprovable and, since dismissal
+  shares d2's predicate, undismissable, with no expiry. This record amends ADR-0046 d2 (as
+  ADR-0055 d2 amended it) and ADR-0044 d8 for hold findings only:
+    - **A single-person tenant** is one whose confirmed persons (d25), web and local together,
+      name one user. There, a person's approval or dismissal of a hold finding on a version an
+      agent key of their own user wrote counts, and the verdict records `same_user: true` and
+      `tenant_persons: 1`. The threat d2 guards against is a model talked round by the text it
+      judges, not a person approving their own agent's text.
+    - **A team**, two or more confirmed users, needs a person whose user differs from the author
+      key's: a same-user approval answers `review.person_required` with
+      `details.reason: same_user_in_team`. In a team, a hold finding inside one person's user
+      root therefore needs an admin to grant another person review on that root
+      (`grant_review`), which shows that root's held rows to them; the cost is said plainly, and
+      the operator may still choose otherwise (Q4).
+    - **A change in headcount** changes no recorded verdict. A tenant that gains a second person
+      starts refusing same-user approvals of hold findings from then on; the approvals already
+      given stay, marked.
+    - Doctor's `scan_person_reviewer` also fires, as an error, where a workarea holds an
+      unresolved hold finding and every person who may review it there is the author's user in
+      a team.
+
+  Ordinary items are unchanged: outside hold findings, ADR-0044 d8 and ADR-0046 d2 stand as
+  written in a team too.
+
+- **d27 — Without web sign-in, a person is a local session bound to an OS user and proved by a
+  second factor; without either, hold findings report no route and doctor errors.** Session keys
+  exist only where ADR-0045's providers are configured (`Provider::ALL` is Google and GitHub,
+  `crates/oml-domain/src/web.rs:55`), so a self-hosted, CLI-only deployment has no person, and
+  every hold finding would be a refusal in effect with the body kept.
+    - **The local person session.** A boot setting `[[person]]` binds an OS user on the lead's
+      host to an ADR-0044 user (`os_user = "eugene"`, `user = "eugene"`, `admin = true|false`).
+      Boot settings are the operator's file, which no key reaches. `oml person enrol`, run once by
+      that OS user over the lead's local socket, enrols a TOTP second factor (RFC 6238): the lead
+      generates the seed, prints it once as a QR code and text to that terminal and keeps it in
+      its store; re-enrolment needs the current factor or a confirmed admin person (d25).
+      The first enrolment of a tenant is its bootstrap (d25), journalled with `bootstrap: true`.
+      `oml person sign-in` opens a session: the lead reads the peer's uid off the Unix socket
+      (`SO_PEERCRED`), never off the request, requires it to be the bound OS user, and requires a
+      current TOTP code. The session is a session key like ADR-0045 d6's, `credential = session`,
+      `session_user` set, sign-in method `local`, with no value: acts go over that socket
+      connection and end with it, and it lasts 15 minutes, which is d2's freshness window. It is
+      refused on `/v1`, `/v2` and `/mcp` as every session key is.
+    - **What it proves.** The peer uid proves the OS user; the second factor proves a person
+      holding the authenticator, which lives on another device. An agent running as the same OS
+      user reaches the socket and cannot produce the code. The residual: an agent that can read
+      the authenticator (a TOTP app on the same desktop, or the person typing the code into the
+      agent's terminal) is the person by every test the server can make. A WebAuthn security key
+      may replace TOTP in a later record.
+    - **With neither.** Where no provider is configured and no `[[person]]` is bound, a write
+      with a hold finding answers `review_route: none`, and doctor's `scan_person_reviewer` is
+      an **error** naming both routes. Nothing is approved by an admin's CLI verdict marked as
+      unverified: that is a bearer act, and it reopens what d25 closes.
+
+- **d28 — `oml-scan/1.1` is the fix's rule set, and a held version scanned under `/1` stays
+  author-only in progress until a recorded rescan reads it.** ADR-0065's amendment of
+  2026-11-10 on `fix/scan-bypasses` decides the three shipped defects: every rule reads the
+  normalised view (its d14), a tag sequence passes only whole and RGI (its d5), and a version
+  the scan held stays its author's inside an in-progress scope (its d15, amending ADR-0030 d3).
+  This record takes that as decided. Three points make the two records one:
+    - **The name moves.** The fix changes what rules match, so it ships as `oml-scan/1.1`
+      (d21; ADR-0065 d1: same text, same findings, per name). The branch as read keeps
+      `RULESET = "oml-scan/1"` (`crates/oml-scan/src/lib.rs:31` on `fix/scan-bypasses` at
+      `cc1454ed`); it must change to `oml-scan/1.1` before it merges, with `scan_rescan_due`
+      warning from then on.
+    - **The upgrade window is closed.** A held version admitted before the upgrade was scanned
+      under `/1`, so it carries no `scan_finding` for a phrase `/1.1` now catches, and ADR-0065
+      d15 does not cover it. Inside an in-progress scope, a held version whose admission event's
+      `scanner_version` is older than the composed rule set is served as a hold-finding version
+      is (d20): to its author and its reviewers only, until a recorded rescan has read it under
+      the current set. If the rescan finds a hold finding, d20 applies; if it finds nothing, the
+      version returns to ADR-0030 d3's served set. Outside in-progress scopes nothing changes,
+      since R3 already keeps a held row its author's and its reviewers'.
+    - **`oml admin rescan --record-held` ships with `/1.1`, in phase 1.** It walks held versions
+      only, in the same windows as `oml admin rescan`, and journals `scan.findings_recorded` for
+      every held version it reads, naming the rule set and the findings, an empty list when there
+      are none, so the version's current rule set is on record. Recording a
+      finding on a held version only narrows who sees it, so it is safe before phase 4's
+      `--record`, which extends the same verb to every version. Doctor's
+      `scan_held_unrescanned: n` counts held versions scanned under an older set. The upgrade
+      notes and ADR-0065's consequence for the amendment say: after upgrading to `/1.1`, run
+      `oml admin rescan --record-held`; until it runs, sibling agents in an in-progress scope do
+      not see held versions written before the upgrade. Promoted versions are as ADR-0065's
+      consequence has them: the plain `oml admin rescan` reports them, and a person demotes or
+      retires each.
+
 
 ## Consequences
 
@@ -886,6 +1233,19 @@ flowchart TD
 - [Security](../architecture/security.md)'s "Hostile content after the gate" gains the findings,
   escaping and defanging of d12 in phase 3; its advice to operators stays.
 - Six issues in the Later milestone, #213 to #218, on #200, each linked to #177 and #140.
+- A bearer admin key, the one the `oml` CLI stores, no longer adds or promotes a web person,
+  lowers a scan ceiling, extends an allowlist or clears a withheld body; the CLI hands each of
+  these to the admin page as a link (d25). An operator who scripted `oml web allow` for every
+  new colleague does it on the admin page from the second person on.
+- A person approving a hold finding signs in again when their sign-in is more than 15 minutes
+  old (d2). A GitHub sign-in's freshness is the server's own clock, recorded as unattested.
+- A team tenant's hold findings in one person's user root need a second person, who is granted
+  review on that root and sees its held rows (d26).
+- A CLI-only deployment that wants hold findings approved binds a `[[person]]` in its boot
+  settings and enrols a TOTP authenticator; without one, doctor errors while any hold finding
+  waits (d27).
+- After the upgrade to `oml-scan/1.1`, sibling agents in an in-progress scope do not see held
+  versions written before it until `oml admin rescan --record-held` has run (d28).
 
 ## Rejected alternatives
 
@@ -895,6 +1255,13 @@ flowchart TD
 | **Let any reviewer key clear a hold finding** | The reviewer most likely to be talked round by an injection is a model, which is why ADR-0065 kept models out of the write path. A person's verdict is the one control that does not read the text as a model does. |
 | **A person defined by key type: a user key not issued as an agent key, or any `held_by: human` key** | `held_by` is an admin's declaration and a bearer key works from any shell an agent runs; a user key in `OML_API_KEY` approves over HTTP. Only a session key cannot be presented by an agent (d2). |
 | **A CLI approval on a TTY counts as a person** | An agent runs commands in a pseudo-terminal as easily as a person does, so a TTY proves nothing the server can check. |
+| **A bearer admin key may lower a ceiling, extend an allowlist, clear a withheld body or add a web person** | Each makes d2's person unnecessary or makes one, and the stored admin key is in agents' hands through the CLI. A person session for widenings and person-defining acts, with any admin key free to narrow, keeps the lever and closes the route (d25). |
+| **An admin's CLI verdict on a hold finding, marked `person_unverified`, where there is no sign-in** | It is a bearer act, so it reopens what d25 closes; the mark tells an auditor after the fact and stops nothing. A local session bound to an OS user and a second factor proves a person (d27). |
+| **Refuse a person's approval of their own agent's hold finding everywhere** | A solo user's hold findings could then never be approved or dismissed, and nothing expires, so they would wait forever (d26). |
+| **Allow it in teams too** | In a team another person exists, and a person reviewing their own agent's flagged text is the weakest review the tenant can give it; d26 asks for the stronger one where it is available. |
+| **A hard 70 % held-out recall gate for hold classes** | Deterministic rules over diverse published paraphrase sets are unlikely to reach it, and chasing it widens the rules until the 1 % benign gate fails. Transform invariance and non-regression are what a deterministic scan can promise; held-out recall is reported (d15). |
+| **Group dismissal for every class** | A group mixes a malicious item with benign twins written to explain the same phrase, and one dismissal clears all of them. Groups are kept for locator classes, never across authors (d17). |
+| **`poison.retrieval_bait` against the tenant's index** | It would not reproduce from the pin (ADR-0065 d1); a field-local share keeps it in the rule set (d4). |
 | **Tenant-trusted crews may clear holds** | It reopens the model-reviewer hole d2 closes. The tenant's lever is the explicit, journalled ceiling of d22, which a person sets per class. |
 | **A hold-finding version expires on the normal clock** | A true runbook in a crew-only workarea would age out with nobody told. It stays held, and the age is on doctor (d19). |
 | **A model classifier in the write path, or one that can hold** | Not reproducible from a pin, adds a model's latency and failure to every write, and is itself an injection target (ADR-0065). Off the path and annotate-only keeps the deterministic verdict the record. |
@@ -903,7 +1270,9 @@ flowchart TD
 | **Demote an approved memory when a new rule fires** | A machine would reverse a person's verdict, and a heuristic false positive would silently remove a true memory from recall. Only a refuse-class finding withholds the body, by an admin's recorded rescan, reversibly. |
 | **Rescan automatically on upgrade** | It changes what readers see without anyone's act. Doctor's warning and an admin's `--record` make the change a journalled decision. |
 | **One level of decoding** | `base64(base64(…))`, `%25XX` and double entities each evade it with one command. Decoding shrinks its output, so depth 3 under a budget of twice the field costs a bounded, small multiple (d6). |
-| **Unbounded recursive decoding** | A crafted input could keep decoding; the depth and the budget bound it, and the budget's annotation says when it ran out. |
+| **Unbounded recursive decoding** | A crafted input could keep decoding; the depth and the budget bound it, and an exhausted budget holds. |
+| **An exhausted decode budget annotates** | Padding a field with escapes spends the budget before the payload is read, so the version would pass with one annotation. What the scan could not finish reading, a person reads (d6). |
+| **Regexes over the skeleton view** | A skeleton maps letters to letters and changes what `\w`, `\b` and `[a-z]` match, so a regex would both miss and over-match; a literal phrase set reads it (d6). |
 | **The normalised view for veto rules only** | It leaves every hold rule open to one zero-width space or a fullwidth letter, the deliberate case this record is about. |
 | **Accept any tag run after U+1F3F4** | That is the shipped bypass: a flag prefix lets an ASCII-smuggled payload through. Only the listed sequences pass. |
 | **Serve findings' references to every reader** | A contradiction finding would name a claim the reader may not read; claim keys are names, so that is a read-scope leak (d11). |
@@ -913,20 +1282,20 @@ flowchart TD
 
 ## Open questions
 
-The seven questions of the first draft are answered above: who is a person (d2; tenant crews
-rejected); operations workareas (no silencing mode, d22); withholding at once, with a cap and
-provider shapes only (d14); corpus sources and licences (d15); the 5 ms budget measured before it
-gates, and no wider scope at write (d11, d16); `pii.*` in a later minor, off by default (d10);
-injection only in the first classifier (d13). What is left is the operator's choice:
+The seven questions of the first draft are answered above. The three of the second draft are
+answered at the reviewer's recommendation: every steering version from a key other than a person
+session needs a person and a guardrail does not (d24, former question 1); an external origin with
+any finding needs a person only under an off-by-default setting documented as a load lever, not
+a control (d22, former question 2); the dry run reads a restored copy of memory.doublegate.io's
+store on that host, never copied off it, publishes per-class and per-origin rates as aggregates
+only, with no sample text and no claim keys, and adds a second, synthetic tenant fed by `oml sync`
+of a few public repositories and a chat-capture fixture so the rates are not one operator's
+habits (d18, former question 3). What is left is the operator's choice:
 
-- **Q1.** Should every `steering` and `guardrail` version need a person, finding or not (d24)?
-  It closes the case of a steering row that passes every rule, and costs a person's review on
-  every steering write.
-- **Q2.** Should a version from an external source (ADR-0063 web capture, `oml sync` of a
-  repository the tenant does not own, tool output) need a person when it carries any finding,
-  annotate included? The default proposed is off, with the setting in the tenant policy (d22).
-- **Q3.** Which store does phase 1's dry run read: a restored copy of memory.doublegate.io's
-  tenant, or another tenant the operator names, and may its per-class rates be published?
+- **Q4.** In a team tenant, a hold finding in a person's own user root needs another person
+  (d26), who must then be granted review on that root and sees its held rows. Is that cost
+  accepted, or should a same-user approval also count inside the author's own user root in a
+  team, marked `same_user`, keeping d26's rule for shared workareas only?
 
 ## Review log
 
@@ -980,3 +1349,50 @@ artifact. What changed:
   the dry run and gains the person lane and the tenant policy; #215 may land before #214; #216
   and #217 gain the read-surface and reviewer-scope tests.
 - **Open questions.** The seven are answered; three operator choices remain.
+
+**Round 2, 2026-11-10.** One holistic review (detection, security, operator and reviewer):
+2 blockers, 11 majors, 11 minors, every one taken. What changed:
+
+- **A bearer admin key could stand in for the person (B1).** Adding a web person or changing
+  its admin flag, binding a local person, lowering a ceiling, extending an allowlist, turning the
+  external-origin setting off, clearing a withheld body and dismissing need a person session;
+  any admin key may still narrow. Each act is journalled with the credential, method and
+  `auth_time`. Entries a bearer key added stay unconfirmed until a person re-confirms them;
+  doctor counts them and bearer attempts (d25; amends ADR-0045 d2). `secret.*`'s refuse rules
+  are fixed at refuse and its hold rules at hold; allowlists never apply to it (d22, m2).
+  On `main` this route exists (`crates/oml-app/src/app/web.rs:74-80`, `:101`) and grants
+  nothing a bearer admin key cannot already do; it is not a shipped defect, and d25 lands with
+  d2 so it never becomes one (Context).
+- **No person could exist in two deployments (B2).** A person's approval of their own agent's
+  hold finding counts in a single-person tenant, marked `same_user`; a team needs another person
+  (d26; amends ADR-0046 d2 and ADR-0044 d8). Without web sign-in, a local person session bound
+  to an OS user by the socket's peer credentials and proved by a TOTP factor; with neither,
+  `review_route: none` and a doctor error (d27).
+- **Cookie replay (M8).** A hold verdict needs a sign-in within 15 minutes, `prompt=login` and
+  Google's `max_age`; `auth_time` is recorded, unattested for GitHub; replay is in the residual
+  (d2).
+- **The fix branch (M9).** ADR-0065's 2026-11-10 amendment is cited as decided; the fix must
+  name itself `oml-scan/1.1`; held versions scanned under `/1` stay author-only in progress until
+  `oml admin rescan --record-held`, which ships with `/1.1`; the hidden-character table is
+  generated from `DerivedCoreProperties.txt` with U+FFF9–U+FFFB named (d5, d28).
+- **Normalisation (M1–M4).** A clean view before decoding; decoders read raw and clean; one
+  unescaped view; the budget counts decoded bytes, spans by entropy first, and an exhausted
+  budget holds; whole tokens with any escape decode; a letters-only view; the skeleton and
+  letters-only views are read by a literal phrase set alone (d6).
+- **Taxonomy (M5, M11, m11).** `persist-me` split into a held verbatim-copy rule and an
+  annotated "remember this", user chat turns skipped; the dry-run gate binds the rule set's
+  author over the floors; retrieval bait is field-local and named as keyword-stuffing only;
+  "addressed to the reader" is one predicate (d4, d18).
+- **The person lane (M6, M7, m3, m4, m8).** Groups only for locator classes and never across
+  authors; a per-key cap of 50 with `submission.person_queue_full`; per-author order; the bulk
+  verdict skips hold-finding rows for bearer keys and the two definitions of a person are
+  named; referral notes are scanned, escaped and labelled; evasion detection widened (d2, d17,
+  d19).
+- **Measurement (M10, m5, m6, m9).** Transform invariance and non-regression gate; held-out
+  recall reported, ungated; Markdown-hidden samples and `render.hidden_text`; the corpus stored
+  encoded; dry-run rates per origin kind (d15, d18).
+- **Minors m1, m7, m10.** The defanged colon is written `\u003a`; the assembly scan names its
+  separator and claims less; UUID- and digest-shaped path segments skip the entropy test (d7,
+  d12).
+- **Open questions.** The three are answered at the reviewer's recommendations (d18, d22,
+  d24); one operator choice remains, Q4.
