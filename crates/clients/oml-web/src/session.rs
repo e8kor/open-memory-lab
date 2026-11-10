@@ -107,11 +107,22 @@ impl PageCalls {
 
 /// A resolved session: its token, the `web` capacity's record, and whether
 /// the entry is an admin's (its `admin` credential resolves).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Session {
     token: String,
     pub whoami: Whoami,
     pub admin: bool,
+}
+
+/// No debug output prints the session token.
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("token", &"<redacted>")
+            .field("whoami", &self.whoami)
+            .field("admin", &self.admin)
+            .finish()
+    }
 }
 
 impl Session {
@@ -202,6 +213,27 @@ mod tests {
         let ids = calls.next_ids();
         assert_eq!(ids.request_id, None);
         assert_eq!(ids.correlation_id, long);
+    }
+
+    #[test]
+    fn a_sessions_debug_output_never_prints_its_token() {
+        let session = Session {
+            token: "the-secret-session-token".to_owned(),
+            whoami: Whoami {
+                key_id: "k".to_owned(),
+                name: Some("alice-web".to_owned()),
+                role: "user".to_owned(),
+                tenant: None,
+                user: None,
+            },
+            admin: false,
+        };
+        let shown = format!("{session:?}");
+        assert!(!shown.contains("the-secret-session-token"), "{shown}");
+        assert!(
+            !shown.contains(&session.credential(Capacity::Web)),
+            "{shown}"
+        );
     }
 
     #[test]

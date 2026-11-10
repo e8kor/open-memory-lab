@@ -202,7 +202,8 @@ fn csrf_refused(ids: &RequestIds) -> Response {
     )
 }
 
-/// The `csrf_token` field of a form body, unescaped, if it is sent once.
+/// The `csrf_token` field of a form body as sent, not percent-decoded (the
+/// token is lower-case hex, which a form never escapes), if it is sent once.
 fn csrf_field(body: &[u8]) -> Option<String> {
     let text = std::str::from_utf8(body).ok()?;
     let mut sent = text

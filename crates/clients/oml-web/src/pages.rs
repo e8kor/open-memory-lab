@@ -14,7 +14,7 @@ use axum::extract::{Query, State};
 use axum::response::Response;
 use http::{StatusCode, Uri};
 use oml_page::web::{attr, shell, text, user_tabs, workarea_label};
-use oml_sdk::{Error, WorkareaNode};
+use oml_sdk::WorkareaNode;
 
 use crate::session::{PageCalls, Session, call};
 use crate::{Capacity, Web, frame, outcome};
@@ -83,28 +83,38 @@ pub async fn user_page(
     }
 }
 
-/// Every workarea under the person's root, a page of the tree at a time.
+/// The most tree pages the selector reads: 50 pages of 200, so 10,000
+/// workareas. A constant of the build, unmeasured (#170).
+pub const TREE_PAGES_MAX: usize = 50;
+
+/// Every workarea under the person's root, a page of the tree at a time,
+/// or the request id of the call that ended the listing: a failed call, a
+/// cursor the API repeats, or a listing past [`TREE_PAGES_MAX`] pages.
 async fn workareas(
     web: &Web,
     credential: &str,
     calls: &PageCalls,
     root: &str,
-) -> Result<Vec<WorkareaNode>, (Error, String)> {
+) -> Result<Vec<WorkareaNode>, String> {
     let mut nodes = Vec::new();
     let mut cursor: Option<String> = None;
-    loop {
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..TREE_PAGES_MAX {
         let ids = calls.next_ids();
+        let request_id = ids.request_id.clone().unwrap_or_default();
         let page = web
             .api
             .workarea_tree(&call(credential, &ids), root, TREE_PAGE, cursor.as_deref())
             .await
-            .map_err(|e| (e, ids.request_id.unwrap_or_default()))?;
+            .map_err(|_| request_id.clone())?;
         nodes.extend(page.items);
-        cursor = page.next_cursor;
-        if cursor.is_none() {
-            return Ok(nodes);
+        match page.next_cursor {
+            None => return Ok(nodes),
+            Some(next) if !seen.insert(next.clone()) => return Err(request_id),
+            Some(next) => cursor = Some(next),
         }
     }
+    Err(calls.made().last().cloned().unwrap_or_default())
 }
 
 /// The guardrails in force at the selected workarea, read-only: the scope,
@@ -161,7 +171,7 @@ async fn guardrails(web: &Web, session: &Session, calls: &PageCalls, fields: &Fi
             }
             body.push_str("</select></label><button type=\"submit\">Show</button></form>");
         }
-        Err((_, request_id)) => {
+        Err(request_id) => {
             let _ = write!(
                 body,
                 r#"<p class="error" role="status">The workarea list is unavailable (request <code>{}</code>).</p>"#,

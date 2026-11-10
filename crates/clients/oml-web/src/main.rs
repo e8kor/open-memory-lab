@@ -51,7 +51,9 @@ async fn main() -> ExitCode {
             for _ in 0..DISCOVERY_ATTEMPTS {
                 match api.issuer().await {
                     Ok(issuer) => {
-                        found = Some(issuer.trim_end_matches('/').to_owned());
+                        // The lead's Issuer has no trailing slash (it refuses one), so
+                        // this is the spelling its own same-origin check compares.
+                        found = Some(issuer);
                         break;
                     }
                     Err(_) => tokio::time::sleep(Duration::from_secs(1)).await,

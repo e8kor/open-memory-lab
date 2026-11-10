@@ -231,3 +231,24 @@ async fn auth_invalid_from_whoami_sends_the_person_to_sign_in() {
     assert_eq!(headers[header::LOCATION], SIGN_IN_PATH);
     assert!(calls.iter().all(|(p, _)| p == "/v2/whoami"), "{calls:?}");
 }
+
+#[tokio::test]
+async fn a_tree_cursor_the_api_repeats_ends_the_listing_instead_of_looping() {
+    let looping = json!({
+        "items": [{"id": ROOT, "name": "alice", "path": "universe.alice"}],
+        "next_cursor": "same",
+    });
+    let (status, _, page, calls, _) = page(Answers {
+        tree: Some(looping),
+        ..all()
+    })
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(!page.contains("<select name=\"workarea\">"), "{page}");
+    assert!(page.contains("The workarea list is unavailable"), "{page}");
+    let tree_calls = calls.iter().filter(|(p, _)| p.contains("/tree")).count();
+    assert_eq!(
+        tree_calls, 2,
+        "the second page repeats the first's cursor: {calls:?}"
+    );
+}

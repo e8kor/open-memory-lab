@@ -76,6 +76,11 @@ with each page that moves, and this route grows with it.
 For each page, `oml-web` reads the session cookie and derives the person's capacity credential
 from it. The cookie never reaches the API. The first call, `GET /v2/whoami`, checks the session.
 With no session, or one the server no longer accepts, the person is sent to sign in.
+Beside it, `oml-web` presents the session's admin credential to `GET /v2/whoami`. That
+credential resolves only for an admin's entry, and it decides whether the page draws the
+Administration tab. For everyone else, each page load adds one refused call (`auth.invalid`) to
+the server's request log and its metrics. Do not alert on those
+refusals as failed sign-ins.
 
 Each API call carries `X-Correlation-Id` set to the page's request id and `X-Request-Id`
 `<page id>.<n>`. The page's own log line, `"service": "oml-web"`, names the acting key and the
