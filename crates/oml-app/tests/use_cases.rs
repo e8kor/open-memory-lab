@@ -2223,7 +2223,7 @@ async fn issuance_journals_the_key_then_each_grant_with_its_own_seq_as_its_epoch
             "credential": "bearer",
             // A tenant key names no user (ADR-0044 d2).
             "user": null,
-            // Sent none, the issuance default (proposed ADR-0037 d4).
+            // Sent none, the issuance default (ADR-0037 d4).
             "guardrail_scope": "ancestors",
         })
     );
@@ -8876,7 +8876,7 @@ async fn the_app_tells_its_observer_the_key_a_credential_named_and_the_workarea_
 }
 
 // ---------------------------------------------------------------------------
-// Guardrails (proposed ADR-0037): the kind, its admission and review (S1),
+// Guardrails (ADR-0037): the kind, its admission and review (S1),
 // and its read under the key's guardrail scope (S2)
 // ---------------------------------------------------------------------------
 
@@ -9368,7 +9368,7 @@ async fn key_issued_journals_the_guardrail_scope() {
 
 /// A `key.issued` journalled before the build carries no `guardrail_scope`:
 /// its key holds the issuance default, and nothing in the journal is
-/// rewritten (proposed ADR-0037 d4).
+/// rewritten (ADR-0037 d4).
 #[tokio::test]
 async fn a_key_issued_without_guardrail_scope_folds_as_ancestors() {
     let tenant = Uuid::from_u128(0xA700);

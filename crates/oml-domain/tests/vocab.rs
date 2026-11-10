@@ -1,6 +1,6 @@
 //! The CURIE grammar over a tenant's prefix registry, the reserved `oml:`
 //! prefix and its upper-vocabulary register, the vocabulary claim kinds,
-//! and a term's structural `term_status` (ADR-0021 d1, d2; ADR-0027 d7;
+//! and a term's structural `term_status` (ADR-0021 d1, d2; ADR-0027 [proposed in #10, unmerged] d7;
 //! ontologies.md; openapi.yaml `Curie`).
 
 use oml_domain::MemoryKind;

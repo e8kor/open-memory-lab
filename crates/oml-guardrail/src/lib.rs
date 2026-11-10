@@ -1,4 +1,4 @@
-//! Guardrail rules — the part of proposed ADR-0037 both the server and the
+//! Guardrail rules — the part of ADR-0037 both the server and the
 //! agent plugin's hooks read: the rule grammar `oml-gr/1` and its tool
 //! classes (d8), the severity and effect it names (d2, d8), the linear-time
 //! glob (d8), the check before a tool call (d8, d9) and the rule cache's

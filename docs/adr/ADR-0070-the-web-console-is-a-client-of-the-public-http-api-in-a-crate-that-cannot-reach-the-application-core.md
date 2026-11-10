@@ -1,19 +1,23 @@
 <!--
 id: adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core
 tier: engineering
-status: proposed
-answers: why the web pages stop calling oml-app's use cases and call the public HTTP API instead; which crate serves the pages and what it may depend on; how a signed-in person's session becomes an API credential without a key value at rest or in the browser; which middleware layer owns the request id, the session, CSRF, CSP, rate limits, audit and error mapping; how oml-web reaches the API in the lead and when it runs on its own; which existing operation serves each web call and which operations are new; what stays in the auth context; the bounded contexts; the migration phases and the test that proves parity; the overhead budget; what it amends in ADR-0042 and ADR-0045
+status: accepted design · 2026-11-07, amended 2026-11-10
+answers: why the web pages stop calling oml-app's use cases and call the public HTTP API instead; which crate serves the pages and what it may depend on; how a signed-in person's session becomes an API credential without a key value at rest or in the browser; which middleware layer owns the request id, the session, CSRF, CSP, rate limits, audit and error mapping; how oml-web, always its own process, reaches the API; which existing operation serves each web call and which operations are new; what stays in the auth context; the bounded contexts; the migration phases and the test that proves parity; the overhead budget; what it amends in ADR-0042 and ADR-0045
 -->
 
 # ADR-0070 — The web console is a client of the public HTTP API, in a crate that cannot reach the application core
 
-**Status:** proposed · 2026-11-06
+**Status:** accepted design · 2026-11-07, amended 2026-11-10
 
 **Amends:** ADR-0045 (d1: the page routes move to `oml-web` and the sign-in routes to the auth
 context; d6: a session key gains a per-session credential; d7: that credential, never the
 cookie, reaches the API, and only through the web client; d14: the page's line and the API's
 lines share a correlation id; d16: the new and changed operations below), ADR-0042 (d2:
 `credential: session` is now written on the API's own lines as well as on the page's)
+
+**Amended in place:** 2026-11-10, by the operator's decision that `oml-web` runs only as its own
+process (d1, d2, d3, d4, d7, d8, d9 and d10 revised; d11 and d12 new). What changed and why is in
+[The amendment of 2026-11-10](#the-amendment-of-2026-11-10); the decisions below read as amended.
 
 ## Context
 
@@ -60,13 +64,20 @@ must stay true. Third, the Occam rule of the
 traces to a documented use case, merges into an existing operation where one job is one
 operation, and defaults whatever the server can derive.
 
+**The operator decided on 2026-11-10 that `oml-web` is a separate process only.** Their words:
+"`oml-web` is a separate process only: its own binary and deployable, over the public HTTP API.
+Middleware (session → `omls_` credential, CSRF, CSP, rate limit, audit) lives in oml-web, with an
+optional external gateway in front. The in-process mode is dropped." The same decision gives the
+landing page its own folder, build and release archive, served by Caddy (d12).
+
 Decided, not built. The build follows #163, #166 and #167.
 
 ## Decision
 
-- **d1 — `oml-web` is its own crate, depends on the Rust SDK, axum, tower and one shared page
-  crate, and a test fails when its dependency graph reaches the application core.** The
-  crate lives at `crates/clients/oml-web` and holds the pages, their forms, their templates,
+- **d1 — `oml-web` is its own crate and its own binary, depends on the Rust SDK, axum, tower and
+  one shared page crate, and a test fails when its dependency graph reaches the application
+  core.** The crate lives at `crates/clients/oml-web`, builds the `oml-web` binary, the one
+  process that serves the pages (d4), and holds the pages, their forms, their templates,
   the Mermaid frame route of ADR-0056 d9 (`web/render.rs`) and the middleware of d3. Its normal dependencies are `oml-sdk` (d9), `axum`, `tower`,
   `http`, `serde`, `serde_json` and `oml-page`, a new crate with no I/O that holds what the
   connect page and the web pages share today through `oauth/page.rs`: `escape`,
@@ -102,10 +113,16 @@ Decided, not built. The build follows #163, #166 and #167.
   expiry, an entry change), so no revocation is needed; nothing at rest can be decrypted into
   it. Two gates keep [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
   d7: an `omls_` credential is refused on `/mcp` always, and on `/v1` and `/v2` unless the
-  request carries `OML-Web-Client` equal to the web client secret (`auth.invalid`,
-  `details.reason: session_outside_web`). The secret is a boot key of the lead,
-  `web.client_secret`; in-process the composition mints one per boot and hands it to both
-  sides, so both modes pass the same check (d4). An agent that reads the cookie therefore
+  request proves `oml-web`'s client identity (`auth.invalid`, `details.reason:
+  session_outside_web`). The identity is one of two, and the lead accepts the one it is
+  configured for: a web-client secret, `web.client_secret`, set to the same value on the lead
+  and on `oml-web` and sent as `OML-Web-Client`, compared in constant time; or mutual TLS, where
+  the lead terminates TLS on the listener `oml-web` reaches and `web.client_ca` names the CA
+  whose certificate, with the subject in `web.client_subject`, is `oml-web`'s. The secret is the
+  default, since it needs no PKI on one host; mTLS is for a hop that leaves the host. A client
+  certificate forwarded by a gateway in a header is not an identity: it is a field, and the
+  lead refuses it. Neither value is logged, and `oml quickstart` writes one secret to an
+  owner-only file that both processes read (d4). An agent that reads the cookie therefore
   still reaches no API with it, and an agent's bearer key still reaches no page. Which
   capacity an action uses is `oml-web`'s compiled table (`issue_key` → `web`, `verdict` →
   `review`, `curate` → `curate`, `allow_email` → `admin`, and so on), never a form field.
@@ -113,47 +130,81 @@ Decided, not built. The build follows #163, #166 and #167.
   holds no dreamer grant, and is refused every review verb by the API whatever the table says
   (R1, [ADR-0001](ADR-0001-the-constitution.md)). The cost is stated: a defect in the table
   can make an act run as another of the same person's capacities, never as anyone else, and
-  the API's verb rules still bind it; and whoever holds both the cookie and the client secret
-  acts as the person, which is the operator's process boundary.
+  the API's verb rules still bind it; and whoever holds both the cookie and `oml-web`'s client
+  identity acts as the person, which is the operator's process boundary.
 
-- **d3 — Seven layers wrap every page request, outermost first, and each concern has one
-  owner.**
+- **d3 — Seven layers wrap every page request, outermost first, each concern has one owner,
+  and the stack lives in `oml-web`; an external gateway in front is optional.** The layers are
+  `tower` layers of the `oml-web` binary, so a deployment with nothing in front of it (local
+  development, d4) has all of them. A gateway the operator puts in front (Caddy, an ingress, an
+  API gateway) may add TLS, its own rate limit, a web application firewall or access logs; it
+  replaces none of the layers below and `oml-web` never trusts a header the gateway sets for
+  identity, the session or CSRF. The one setting a gateway touches is `server.trusted_proxies`
+  of [ADR-0042](ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md),
+  read the same way by `oml-web` for the client address on its line.
 
     | # | Layer | Owner | What it does, and why it sits there |
     |---|---|---|---|
     | 1 | Request id and traffic log | `oml-web`, the [ADR-0042](ADR-0042-every-request-logs-one-line-under-an-id-the-caller-may-name-and-metrics-stay-off-the-public-port.md) layer reused from `oml-page`'s line type | Honours or mints `X-Request-Id`, writes the page's `http_request` line with `credential: session`, the acting key, `web_action` and the route template. Each inner API call carries `X-Correlation-Id` set to the page's request id and `X-Request-Id` `<page id>.<n>`, so one `jq` filter finds the page line and its API lines. Outermost, so a refusal by any inner layer is still logged. |
     | 2 | Human-only gate | `oml-web` | An `Authorization` header on a page route answers `access.verb_ceiling` `web_is_human_only` before anything is read (ADR-0045 d7). |
-    | 3 | Session load | `oml-web` reads the cookie; the API decides | Reads `__Host-oml_session` and derives the `web` credential; the first API call of the page, `GET /v2/whoami`, is the check. No session, or `auth.invalid` from the API, renders the sign-in page (d6). `oml-web` never judges a session itself. |
+    | 3 | Session load | `oml-web` reads the cookie; the API decides | Reads `__Host-oml_session` and derives the `web` credential; the first API call of the page, `GET /v2/whoami`, is the check. No session, or `auth.invalid` from the API, sends a `303` to the lead's sign-in page (d4, d6). `oml-web` never judges a session itself. |
     | 4 | Same-origin and CSRF | `oml-web` | Every `POST` passes the existing `same_origin` check against the public origin and carries `csrf_token` = SHA-256 over the fixed purpose and the session token, compared in constant time (ADR-0045 d8, unchanged). Every form also carries a random nonce, and the `Idempotency-Key` of the act's API call is the hex SHA-256 over the session token and that nonce, so a resubmitted form replays instead of repeating. The API never sees a form, so CSRF belongs to the layer that renders forms. |
     | 5 | Response headers and CSP | `oml-web` | `default-src 'none'`, `style-src` naming the one stylesheet's digest, `script-src` naming only the hashes of the scripts that page carries (none today; #167's copy script on `/web/start`), `form-action 'self'`, `frame-ancestors 'none'`, `base-uri 'none'`, `no-store`, `nosniff`, `Referrer-Policy: same-origin`; the frame route keeps its own policy. Digests computed at compile time from `oml-page`. |
     | 6 | Rate limit | `oml-web` for fan-out, the API for acts | A page view becomes several API calls, so `oml-web` caps the requests one session has in flight and answers `limit.rate` with `Retry-After` past it; the cap is a constant of the build, unmeasured ([#170](https://github.com/e8kor/open-memory-lab/issues/170)). Every act stays under its key's limits at the API, as for any client ([FR-8](../product/roadmap.md)). Provider-call caps stay with sign-in in the auth context (ADR-0045 d15). |
-    | 7 | Error mapping | `oml-web` | The API's envelope (`code`, `details`) becomes a page outcome: `access.not_found` the not-found page, `auth.invalid` the sign-in page, `request.validation` the form again with `details.field` marked, `limit.*` the retry page, `review.*` and `workarea.*` the message the page shows today. A code the table does not name renders the generic refusal page with the request id. |
+    | 7 | Error mapping | `oml-web` | The API's envelope (`code`, `details`) becomes a page outcome: `access.not_found` the not-found page, `auth.invalid` the sign-in redirect, `request.validation` the form again with `details.field` marked, `limit.*` the retry page, `review.*` and `workarea.*` the message the page shows today. A code the table does not name renders the generic refusal page with the request id. |
 
-    **Audit is the API's journal, not a layer of `oml-web`.** Every act and every admin read
-    is journalled by the use case behind its operation, under the session key, as today;
+    **Audit is two records with two owners.** The page-level audit is `oml-web`'s line
+    (layer 1): who acted, as which capacity, which `web_action`, and the request ids of the API
+    calls it made. The record of what happened is the API's journal: every act and every admin
+    read is journalled by the use case behind its operation, under the session key, as today.
     `oml-web` writes no journal event and keeps no store, so a page cannot record anything the
-    API would not. Its line (layer 1) is the page-level trace beside it.
+    API would not.
 
-- **d4 — In the lead, `oml-web` calls the API in-process through the same router the listener
-  serves; on its own, over HTTP to `web.api_url`; both pass the same bytes through the same
-  stack.** The SDK sends through one trait, `Transport`, taking an `http::Request` with a
-  serialized body and answering an `http::Response`. In the lead, the composition builds the
-  API router once, serves it on the listener, and hands `oml-web` a clone of the same
-  `Router` as a `tower` service: each call is `oneshot`, so it passes the traffic guard, the
-  route table, authentication, the idempotency store and the body limits exactly as a
-  network request does, with no socket. Standalone, `oml-web` is the `oml-web` binary with
-  `web.api_url` and `web.client_secret` set, and its transport is an HTTP client; the public
-  origin, for the same-origin check, is read from the API's
-  `/.well-known/oauth-authorization-server` `issuer` at start, so it is not a third setting.
-  A standalone `oml-web` sits behind the same public origin as the lead, routed by path, since
-  `__Host-` cookies bind one host; the auth routes of d6 stay on the lead. In-process is
-  preferred over the loopback hop the operator named, because a loopback listener adds a
-  socket, a second accept path and a peer address of `127.0.0.1` on every API line without
-  making the boundary any more real: the boundary is the `Transport` trait and the serialized
-  request, which are identical in both modes. The cost: the in-process API line shows no
-  client address (the page line holds the person's), and a standalone deployment of more
-  than one `oml-web` replica needs session affinity for the frame route, whose sources are
-  held in memory.
+- **d4 — `oml-web` runs only as its own process and reaches the API over HTTP at `web.api_url`,
+  which is required; the lead serves no page, and the deployment routes by path.** The SDK
+  sends through one trait, `Transport`, taking an `http::Request` with a serialized body and
+  answering an `http::Response`; the `oml-web` binary's one implementation is a pooled HTTP
+  client to `web.api_url`, and `oml-web` refuses to start without it, naming the setting. There
+  is no in-process mode: the lead does not link `oml-web`, and no composition hands it the API
+  router. `oml-web`'s settings are `web.api_url`, `web.listen`, its client identity (d2), and
+  `web.public_url`, the origin its same-origin check compares a `POST`'s `Origin` against, which
+  defaults to the API's `/.well-known/oauth-authorization-server` `issuer`, read at start. The
+  `omls_` credential and the client secret cross the hop, so a plain `http://`
+  `web.api_url` is accepted only for a loopback host (`127.0.0.0/8`, `::1`, `localhost`). For any
+  other host `oml-web` refuses to start with `web.api_url: plain http to a non-loopback host sends
+  session credentials in clear; use https://, or set web.allow_plain_http_api = true for a private
+  network`; with `web.allow_plain_http_api = true` it starts and logs one warning naming the host
+  at every start. `web.api_url` carries no userinfo, query or fragment. Across a LAN the hop is
+  `https://` or mutual TLS (d2); `oml quickstart`'s compose network reaches the lead at a service
+  name, so it sets the opt-in explicitly. The doctor line lives in `oml-web`, whose settings the
+  lead's `oml doctor` cannot read: `oml-web --doctor` prints `web.api_url` as `ok`, `warn` (plain
+  http allowed by the opt-in) or `fail` (plain http refused), and `oml doctor` run with `oml-web`'s
+  environment gives the same line. Test:
+  `a_plain_http_api_url_to_a_non_loopback_host_is_refused_unless_allowed`.
+
+    | Shape | Browser reaches | `oml-web` reaches the API at |
+    |---|---|---|
+    | Production | Caddy (or another proxy) on the public origin: `/web` and `/web/*` to `oml-web`, except the auth routes of d6 (`/web/sign-in`, `/web/callback/*`, `/web/sign-up` and the sign-up terms page); those, `/v1/*`, `/v2/*`, `/mcp`, `/oauth/*` and `/.well-known/*` to the lead; the landing paths to static files (d12) | the lead's listener on loopback or the LAN, not back through the public proxy |
+    | Local development | three services started by `oml quickstart` (its compose file gains `oml-web` and the router): the lead, `oml-web`, and a path router (Caddy, as a third compose service) in front of both, routing exactly as production does, so the browser sees one origin, `web.public_url` keeps its default and there is no `web.page_url` setting | the lead's address on the host or on the compose network |
+    | Kubernetes | the chart's Ingress routes as production does, to two Deployments | the lead's Service |
+
+    `__Host-` cookies bind one host, so production puts both behind the same public origin.
+    A person with no live session who opens a page is sent with a `303` to the lead's
+    `/web/sign-in`, carrying the page as `next`; the redirect is relative, which works because
+    every shape has one public origin. `GET /web/sign-in` is a new route: sign-in rendered at
+    `GET /web` until now, and the lead's route table moves with it (phase d). The lead accepts
+    `next` only as a same-origin relative path: it starts with `/web`, holds no `//`, no `\`, no
+    `@` and no scheme, is percent-decoded once and checked again, and anything else is dropped to
+    `/web`. The redirect target is built from the lead's configured public origin, never from a
+    request header. Test: `a_next_outside_web_or_naming_another_origin_returns_to_web`. This replaces d10 (e)'s pass-through, which
+    needed the sign-in renderer in the same process. The boundary is the `Transport` trait and
+    the serialized request, as before, and now also a socket, a second accept path and a peer
+    address on every API line. The cost: two processes to deploy, start, upgrade and monitor
+    instead of one; one network hop per API call (d8); a version skew window during an upgrade,
+    in which `oml-web` must tolerate an API one release ahead or behind (the API's rings
+    already promise additive change, and `oml-web` reads unknown fields as absent); and more
+    than one `oml-web` replica needs session affinity for the frame route, whose sources are
+    held in memory.
 
 - **d5 — Every web call maps to an existing operation, a changed one or one of ten new ones;
   the wire is held here until phase (a) builds it.** Following
@@ -249,8 +300,9 @@ Decided, not built. The build follows #163, #166 and #167.
   terms page, and the sign-in page itself. It owns session rows, the capacity credentials of
   d2 and the provider exchanges. It stays in `oml-transport-http`, in one `auth` module that
   gathers today's `oauth/` and the sign-in half of `web/`. The auth route's renderer
-  produces the sign-in page under the fixed URL `/web`; `oml-web` does not render it and
-  has no dependency on the auth module, so the wall holds even for the unauthenticated page.
+  produces the sign-in page at `/web/sign-in`, where `oml-web` sends a person with no session
+  (d4); `oml-web` does not render it and has no dependency on the auth module, so the wall
+  holds even for the unauthenticated page.
 
     ```mermaid
     flowchart LR
@@ -287,8 +339,8 @@ Decided, not built. The build follows #163, #166 and #167.
 
     | Phase | Builds | Check that closes it |
     |---|---|---|
-    | (a) | `omls_` credentials and the web client secret (d2); the ten new operations and six changes (d5), each with its use case, its contract entries and its tests; `oml-sdk` (d9) | `check_contract_sync.py`, `generate_sdks.py --check`, and per operation a test named after its sentence, among them `an_omls_credential_without_the_web_client_is_auth_invalid`, `an_omls_credential_on_mcp_is_refused`, `a_capacity_credential_ends_with_its_session`, `the_admin_capacity_ends_when_the_entry_loses_admin`, `a_bearer_user_key_cannot_export_or_request_deletion` |
-    | (b) | `oml-page`, `oml-web` with the layers of d3, mounted by the lead in front of the old handlers; pages move one at a time behind the same URLs, the old handler deleted in the commit that moves its page | the page suites, unchanged (below), green after each page moves; `oml_web_reaches_no_application_crate` |
+    | (a) | `omls_` credentials and `oml-web`'s client identity, the secret or mTLS (d2); the ten new operations and six changes (d5), each with its use case, its contract entries and its tests; `oml-sdk` (d9) | `check_contract_sync.py`, `generate_sdks.py --check`, and per operation a test named after its sentence, among them `an_omls_credential_without_the_web_client_is_auth_invalid`, `an_omls_credential_on_mcp_is_refused`, `a_capacity_credential_ends_with_its_session`, `the_admin_capacity_ends_when_the_entry_loses_admin`, `a_bearer_user_key_cannot_export_or_request_deletion` |
+    | (b) | `oml-page`, the `oml-web` binary with the layers of d3; the proxy routes of d4 send each moved page's URL to it; pages move one at a time behind the same URLs, the old handler deleted in the commit that moves its page | the page suites, unchanged (below), green after each page moves; `oml_web_reaches_no_application_crate` |
     | (c) | the `web_*` use cases deleted: the logic behind a new operation is renamed to that operation's use case, the sign-in ones move to `oml-app`'s auth module, the rest go | `grep -rn 'pub async fn web_' crates/oml-app --include='*.rs' | grep -v 'crates/oml-app/src/app/auth.rs'` is empty; the workspace builds and every suite passes |
     | (d) | the walls: the dependency test is a required CI check, and `the_lead_serves_no_page_route_outside_oml_web_and_auth` asserts the route table | both tests required on `main` |
 
@@ -296,27 +348,45 @@ Decided, not built. The build follows #163, #166 and #167.
     `main` before the `web_pages.rs` additions in this change), #167's `open_signup_pg.rs` page cases and the Chromium
     scripts (`tests/chromium/atlas.py`, `render_frame_chromium.rs`), moved to
     `crates/clients/oml-web/tests/` with their assertions untouched. Only the rig changes: it
-    builds the lead's composed router, `oml-web` included, and seeds through the app as today
-    (a dev-dependency). The suite runs twice, once over the in-process transport and once over
-    a loopback listener with `web.api_url` set, so the two modes of d4 are asserted equal on
-    every page. A test that has to change its assertions is a behaviour change, named in the
+    starts the lead on a loopback listener and `oml-web` with `web.api_url` set to it, as two
+    servers in the test process, and seeds through the app as today (a dev-dependency). The
+    suite runs once, over that loopback hop, which is the one transport there is (d4). A test that has to change its assertions is a behaviour change, named in the
     change that makes it.
 
-- **d8 — The budget is p95 page time plus API time no more than 5 ms above today's, in-process;
-  the overhead is unmeasured until phase (b) measures it.** A page view becomes one to four
-  API calls (the Memories view: `whoami`, the listing, the tree with counts, the offers), and
-  each adds serialization both ways, a route match, an `omls_` digest lookup (an indexed read;
-  today one `web_caller` per request already does it once) and, on a `POST`, an idempotency
-  row. The 5 ms p95 is a budget the operator can hold the build to, not a measurement: the
-  benchmark of each page, before and after, on the [FR-25](../product/roadmap.md) harness is
-  [#170](https://github.com/e8kor/open-memory-lab/issues/170)'s exit. Over budget, the remedy is fewer calls per page (a field on an existing
-  operation), never a cache of resolved sessions, which would let authority outlive the list.
-  Standalone, the network adds its own time; no budget is set for it.
+- **d8 — The budget is p95 page time no more than 5 ms above today's with the API on loopback,
+  and 5 ms plus two round trips on a LAN; a page makes at most two sequential calls, over pooled
+  keep-alive connections, each under a timeout, and a page whose secondary call fails renders
+  without that part.** A page view becomes one to four API calls (the Memories view: `whoami`,
+  the listing, the tree with counts, the offers), and each adds serialization both ways, a route
+  match, an `omls_` digest lookup (an indexed read; today one `web_caller` per request already
+  does it once), on a `POST` an idempotency row, and now a network hop. Four rules hold the hop
+  down:
+    - **Two sequential calls at most.** `whoami` first, since it decides the session, then the
+      page's other calls concurrently; so a LAN adds two round trips, not four.
+    - **Pooled keep-alive connections.** One connection pool per `oml-web` process, HTTP/1.1
+      keep-alive (HTTP/2 when the hop is TLS), bounded in size, so no call pays a TCP or TLS
+      handshake in the steady state.
+    - **A timeout per call.** `web.api_timeout`, a constant of the build until measured; a call
+      past it is a failure of that call, with the request id of d3 layer 1.
+    - **Partial-page failure states.** A page names its primary call (the listing, the memory,
+      the queue) and its secondary ones (counts, offers, usage). A failed or timed-out secondary
+      call renders the page with that part marked unavailable and the request id beside it; a
+      failed primary call renders the error page of d3 layer 7; a failed `whoami` the sign-in
+      redirect or the error page. An act (`POST`) is never partial: it fails whole, and its
+      idempotency key makes the resubmit a replay.
+
+    The 5 ms p95 and the LAN allowance are budgets the operator can hold the build to, not
+    measurements: the benchmark of each page, before and after, over loopback and over a LAN,
+    on the [FR-25](../product/roadmap.md) harness, the pool size and the call timeout are
+    [#170](https://github.com/e8kor/open-memory-lab/issues/170)'s exit. Over budget, the remedy
+    is fewer calls per page (a field on an existing operation), never a cache of resolved
+    sessions, which would let authority outlive the list. A hop over the public internet is
+    not a supported shape and has no budget.
 
 - **d9 — The Rust SDK is a hand-written thin typed client whose operation table a check holds
   to `openapi.yaml`.** `sdks/rust`, crate `oml-sdk`: one method per served operation, request
   and response types with `serde`, the error envelope as one error type, and the `Transport`
-  trait of d4 with two implementations. No Rust generator is pinned today:
+  trait of d4 with one implementation, the pooled HTTP client; a test may supply its own. No Rust generator is pinned today:
   `scripts/generate_sdks.py` drives `openapi-python-client` and `openapi-typescript`, and the document is OpenAPI 3.1 with
   many responses typed only as `object`, so a generated layer would carry untyped values where
   the pages need fields. The check: `oml-sdk`'s test reads `openapi.yaml` and fails when an
@@ -328,14 +398,64 @@ Decided, not built. The build follows #163, #166 and #167.
 - **d10 — The operator's answers of 2026-11-06 to this record's open choices.** Each is folded
   into the decision it governs; this list is where each answer is found.
     - **(a) Identity.** A session-derived `omls_` credential per capacity, accepted only with
-      the web client secret and never on `/mcp`: accepted (d2).
+      the web client secret and never on `/mcp`: accepted (d2), and widened on 2026-11-10 to
+      the secret or mutual TLS (d11).
     - **(b) Transport.** In the lead, the in-process `oneshot` through the same router the
-      listener serves, in place of a loopback hop: accepted (d4).
+      listener serves, in place of a loopback hop: accepted (d4), and reversed on 2026-11-10
+      (d11): `oml-web` is its own process over HTTP only.
     - **(c) SDK.** A hand-written thin client held to `openapi.yaml` by a contract check:
       accepted (d9).
     - **(d) Ring.** The new operations go on `/v2`, the current API version: confirmed (d5).
     - **(e) Sign-in page.** `GET /web` with no live session passes through to the auth
-      context's sign-in page, with no redirect: accepted (d6).
+      context's sign-in page, with no redirect: accepted (d6), and revised on 2026-11-10 (d4):
+      with the sign-in renderer in another process, `oml-web` answers a `303` to the lead's
+      `/web/sign-in`.
+
+- **d11 — The operator's decision of 2026-11-10: `oml-web` is a separate process only.** Folded
+  into the decisions it governs, and listed here so each part is found:
+    - **(a) Process.** `oml-web` is its own binary and deployable over the public HTTP API, and
+      the in-process mode of the earlier d4 is dropped (d1, d4).
+    - **(b) Middleware.** Session to `omls_` credential, CSRF, CSP, rate limit and the
+      page-level audit line live in `oml-web`; an external gateway in front is optional and
+      replaces none of them (d3).
+    - **(c) Client identity.** The API accepts an `omls_` credential only from `oml-web`'s
+      client identity, a web-client secret or mutual TLS, and never on `/mcp` (d2).
+    - **(d) Budget.** The overhead budget is restated for a network hop on loopback or a LAN,
+      with pooling, keep-alive, a timeout per call and partial-page failure states (d8).
+    - **(e) Landing.** The landing page is a deployable of its own (d12).
+
+- **d12 — The landing page is a separate deployable: static files built from `site/` and
+  shipped as their own release archive, served by the proxy, by neither the lead nor
+  `oml-web`.** Its sources and its build live in `site/` of this repository; `site/build.py`
+  writes `site/dist/` from them and from the design system's generated CSS
+  ([ADR-0069](ADR-0069-oml-s-design-system-is-the-source-of-truth-for-every-surface.md), whose
+  `scripts/gen_design_tokens.py` still owns the tokens), and CI fails when `site/dist/` differs
+  from what the build writes. Each release attaches `oml-site-<version>.tar.gz`, summed in
+  `SHA256SUMS` and signed like the other archives. Caddy serves `/`, `/teams`, `/personal`,
+  `/privacy` and `/terms` from the extracted archive and routes every other path as d4's table
+  says. The cost: one more archive per release and one more deploy step; the landing can lag
+  or lead the server by a release, which is why it names a shipped release and links the
+  release map rather than describing planned work.
+
+## The amendment of 2026-11-10
+
+The record as first accepted on 2026-11-07 mounted `oml-web` in the lead by default, calling the API
+through a `oneshot` on the same `Router`, with a standalone mode as the second option. The
+operator reversed that on 2026-11-10 (d11): one process shape is simpler to reason about and to
+secure than two, the boundary becomes a socket nobody can bypass with a function call, and the
+web console can be deployed, scaled and restarted without the server. What moved:
+
+| Decision | Was | Is |
+|---|---|---|
+| d1 | a library crate the lead mounts | a library and the `oml-web` binary |
+| d2 | `OML-Web-Client` secret, minted per boot in-process | the secret or mutual TLS, configured on both processes |
+| d3 | the layers, owner by owner | the same layers, all in the `oml-web` process; a gateway optional and never trusted for identity |
+| d4 | in-process `oneshot` by default, `web.api_url` standalone | `web.api_url` required; production, local and Kubernetes shapes routed by path |
+| d7 | parity run twice, in-process and loopback | parity run once, over the loopback hop |
+| d8 | 5 ms p95 in-process | 5 ms on loopback, plus two round trips on a LAN; pooling, keep-alive, timeouts, partial pages |
+| d9 | two `Transport` implementations | one |
+| d10 (b), (e) | in-process; sign-in passes through | reversed; a `303` to the lead's sign-in |
+| d12 | (none) | the landing as its own deployable |
 
 ## Consequences
 
@@ -343,11 +463,16 @@ Decided, not built. The build follows #163, #166 and #167.
   code and keeps the API, the auth context and the traffic layer.
 - [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
   d6's "a session key has no value, so it cannot be presented on `/v1`, `/v2` or `/mcp`"
-  becomes: it is presented on `/v1` and `/v2` only by its per-session credential, only with
-  the web client secret, and never on `/mcp`. d7's tests stay and gain the two of phase (a).
+  becomes: it is presented on `/v1` and `/v2` only by its per-session credential, only from
+  `oml-web`'s client identity (the secret or mutual TLS), and never on `/mcp`. d7's tests stay and gain the two of phase (a).
   d18 gains a row: `auth.invalid` `session_outside_web`, with the doctor line
-  `warn web: web.client_secret unset; oml-web cannot reach the API` when `oml-web` runs
-  standalone without it.
+  `warn web: no web client identity set; oml-web cannot reach the API` when the lead has
+  neither `web.client_secret` nor `web.client_ca`, and `oml-web` refuses to start without its
+  own half, naming the setting.
+- Two processes ship and run where one did: the release adds the `oml-web` binary and the
+  landing archive (d12), the Helm chart a second Deployment, the compose file a second
+  service, and `oml quickstart` starts both. `oml doctor` gains a line for an unreachable
+  `web.api_url` from `oml-web`'s side.
 - The `http_request` line of the API now records `credential: session` for the inner calls,
   correlated to the page line (ADR-0042 d2, d6). Log volume per page view grows with its calls.
 - `docs/api/http-api.md`, `openapi.yaml`, `errors.md` and the SDKs gain the ten operations and
@@ -367,5 +492,7 @@ Decided, not built. The build follows #163, #166 and #167.
 | **The session cookie presented to the API as is, with a capacity header** | The session token would be one credential for every capacity, and the acting key would be named by a header beside it, which d6 of ADR-0045 forbids in spirit: identity read off a field rather than off the credential. |
 | **A browser SPA over the API** | Puts a script and a token in the browser, against ADR-0045 d7 and d8 (no script, nothing an agent can lift), and gives every page a machine interface. |
 | **A GraphQL or backend-for-frontend aggregate API** | A second contract shaped for one client, which the CLI, the SDKs and the agents do not get; it is the same-use-cases shape moved one layer out. Fewer calls per page are bought with a field on an existing operation (d8). |
-| **A loopback TCP hop in-process** | The operator's first wording. It adds a socket, a listener and a peer address without making the boundary more real than the in-process `Transport` call through the same router; the loopback mode is kept as the second run of the parity suite (d7). |
+| **A loopback TCP hop in-process** | The operator's first wording. A listener inside the lead's process adds a socket without separating anything that runs: a crash, a restart or an upgrade still takes both. Superseded by d4's separate process. |
+| **In-process by default** (this record's d4 as accepted on 2026-11-07) | The lead mounts `oml-web` and calls the API through a `oneshot` on its own router. Cheapest per call, but the wall is a crate graph inside one address space: the lead links the pages, one deploy and one restart carry both, and the per-boot secret lives in memory both sides share. Rejected 2026-11-10 (d11). |
+| **Dual mode: in-process by default, standalone as an option** | Two transports, two compositions and two parity runs to keep equal, and the shape most deployments would run is the one that proves the boundary least. Rejected 2026-11-10 (d11). |
 | **A generated Rust SDK** | No pinned Rust generator reads the 3.1 document into useful types today, and a generated layer full of untyped objects would push field names back into page code (d9). Reopen when the schemas are typed and a generator is pinned. |

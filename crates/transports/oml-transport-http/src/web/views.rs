@@ -268,7 +268,7 @@ where
 
     /// The guardrails in force at the selected workarea, read-only. The page
     /// shows the scope and each rule's source path; it writes, supersedes and
-    /// retires none (proposed ADR-0037 d17).
+    /// retires none (ADR-0037 d17).
     async fn guardrails_view(
         &self,
         web: &oml_app::app::Caller,
@@ -1481,7 +1481,7 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     .map_err(app_error)?;
                 // No page supersedes or retires a guardrail: it is written
                 // with its severity and rule on the API or the command line
-                // (proposed ADR-0037 d17).
+                // (ADR-0037 d17).
                 if read.memory.kind == MemoryKind::Guardrail {
                     return Err(ApiError::validation(
                         "a guardrail is superseded and retired on the API or the command line, with its severity and rule, never on this page",
@@ -1741,7 +1741,7 @@ fn anchor_line(anchor: Option<&oml_app::domain::anchor::Anchor>) -> String {
 
 /// A version's valid time as one line for a reviewer, and on a held
 /// successor the end approving it gives the version it replaces, so a
-/// verdict is given on what it makes true (proposed ADR-0059 d2, d4).
+/// verdict is given on what it makes true (ADR-0059 d2, d4).
 fn valid_line(m: &ServedMemory) -> String {
     let valid = &m.memory.valid;
     let mut line = if valid.is_open() {

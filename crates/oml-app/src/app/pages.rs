@@ -304,7 +304,7 @@ where
             };
             let req = IssueKeyRequest {
                 profile: None,
-                // The issuance default; a page offers no scope (proposed ADR-0037
+                // The issuance default; a page offers no scope (ADR-0037
                 // d17, d18 Q5).
                 guardrail_scope: None,
                 role,
@@ -452,7 +452,7 @@ where
         };
         let req = IssueKeyRequest {
             profile: None,
-            // The issuance default; a page offers no scope (proposed ADR-0037
+            // The issuance default; a page offers no scope (ADR-0037
             // d17, d18 Q5).
             guardrail_scope: None,
             role,
@@ -640,7 +640,7 @@ where
         let name = key_name(user, Capacity::Curate.suffix())?;
         let req = IssueKeyRequest {
             profile: None,
-            // The issuance default; a page offers no scope (proposed ADR-0037
+            // The issuance default; a page offers no scope (ADR-0037
             // d17, d18 Q5).
             guardrail_scope: None,
             role: Role::Writer,

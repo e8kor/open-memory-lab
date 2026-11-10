@@ -30,7 +30,7 @@ CATEGORIES = {
     "Sources and sync": [47, 57, 61, 62, 63],
     "Integrations and agents": [14, 22, 25, 28, 29, 31, 37, 38, 39, 40, 67],
     "Operations and security": [15, 16, 23, 26, 33, 34, 41, 42, 43, 44, 45, 46, 58],
-    "Architecture and platform": [6, 8, 18, 19, 24, 66],
+    "Architecture and platform": [6, 8, 18, 19, 24, 66, 70],
 }
 BLURB = {
     "Trust and governance": "The rules that make a write held, reviewed by someone else and signed.",
@@ -45,8 +45,8 @@ BLURB = {
 
 
 # Records the page leaves out although they are accepted: ADR-0061 ships in a release after v0.6.0,
-# and ADR-0066 is about how this repository tracks work, which readers of the site do not need.
-HELD_BACK = {61, 66}
+# ADR-0070 is an accepted design that is decided and not built, and ADR-0066 is about how this repository tracks work, which readers of the site do not need.
+HELD_BACK = {61, 66, 70}
 
 
 def record(path: pathlib.Path) -> tuple[int, str, str, str]:

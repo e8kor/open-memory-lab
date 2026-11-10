@@ -1188,7 +1188,7 @@ async fn an_admin_reads_a_users_root_by_the_users_name_and_creates_none() {
 }
 
 // ---------------------------------------------------------------------------
-// Guardrails under user roots (proposed ADR-0037 d16, build step S6)
+// Guardrails under user roots (ADR-0037 d16, build step S6)
 // ---------------------------------------------------------------------------
 
 use oml_app::domain::guardrail::{GuardrailScope, Severity};

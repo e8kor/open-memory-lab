@@ -9,7 +9,7 @@ use saphyr_parser::{Event, Parser, Span};
 use crate::common::{MAX_DEPTH, MAX_SCALARS, check_source};
 use crate::fragment::{self, Entry};
 
-pub struct Yaml;
+pub(crate) struct Yaml;
 
 fn refuse(reason: &'static str, message: &str, span: Span) -> FormatRefusal {
     FormatRefusal::new(

@@ -7,7 +7,7 @@ use oml_app::ports::{FormatChange, FormatDiff, Parsed, ScanView};
 
 /// One scalar with the path of keys and indexes that leads to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Entry {
+pub(crate) struct Entry {
     pub path: Vec<String>,
     /// The key that names it, decoded, when its parent is a mapping.
     pub value: String,
@@ -57,7 +57,7 @@ fn keyed_secret(entry: &Entry) -> bool {
 /// The search text, the scan views and the keyed-secret finding of a
 /// document's scalars, in document order.
 #[must_use]
-pub fn parsed(entries: &[Entry], keys: &[Entry]) -> Parsed {
+pub(crate) fn parsed(entries: &[Entry], keys: &[Entry]) -> Parsed {
     let mut lines = Vec::new();
     let mut views = Vec::new();
     let mut veto = None;
@@ -91,7 +91,7 @@ pub fn parsed(entries: &[Entry], keys: &[Entry]) -> Parsed {
 /// The structural diff of two documents: equal when every path holds the
 /// same scalar, whatever the order of keys or the layout of the source.
 #[must_use]
-pub fn diff(old: &[Entry], new: &[Entry]) -> FormatDiff {
+pub(crate) fn diff(old: &[Entry], new: &[Entry]) -> FormatDiff {
     let map = |entries: &[Entry]| -> BTreeMap<String, String> {
         entries
             .iter()

@@ -1,0 +1,31 @@
+[package]
+name = "oml-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The web console, its own process and a client of the public HTTP API (ADR-0070 d1, d4)."
+
+# The wall (ADR-0070 d1): normal dependencies are oml-page and the HTTP
+# stack only. tests/dependencies.rs fails when the graph reaches a
+# workspace crate other than oml-page.
+[dependencies]
+oml-page = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+http = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["net", "signal"] }
+getrandom = { workspace = true }
+
+[lib]
+name = "oml_web"
+path = "src/lib.rs"
+
+[[bin]]
+name = "oml-web"
+path = "src/main.rs"
+
+[lints]
+workspace = true

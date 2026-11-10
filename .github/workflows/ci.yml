@@ -466,6 +466,10 @@ jobs:
           python-version: "3.12"
       - run: python scripts/check_plugin.py
       - run: python scripts/check_agent_kit.py
+      # The defects a linter finds without opinion: unused names, placeholder-less
+      # f-strings, closures over a loop variable (F, E9, B023).
+      - uses: astral-sh/setup-uv@v6
+      - run: uvx ruff@0.17.4 check --isolated scripts --select F,E9,B023
       # Claude Code's own validator, which errors on a reference to an
       # undeclared option and on an MCP url that is not absolute; 2.1.281 is
       # the first that checks MCP entries (ADR-0040 d2, d5).

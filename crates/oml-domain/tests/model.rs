@@ -163,7 +163,7 @@ fn nfc_normalizes_decomposed_text() {
     assert_eq!(nfc(""), "");
 }
 
-/// Kind `guardrail` is proposed ADR-0037 d1's: a kind the domain names, not
+/// Kind `guardrail` is ADR-0037 d1's: a kind the domain names, not
 /// yet in `openapi.yaml`'s submit enum, which changes with its route
 /// (d14).
 #[test]

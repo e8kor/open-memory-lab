@@ -9,7 +9,7 @@ use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use crate::common::{MAX_DEPTH, MAX_SCALARS, check_source};
 use crate::fragment::{self, Entry};
 
-pub struct Json;
+pub(crate) struct Json;
 
 /// A parsed value reduced to what the adapter reads.
 enum Node {

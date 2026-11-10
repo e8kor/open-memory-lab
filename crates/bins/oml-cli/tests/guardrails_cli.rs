@@ -1,4 +1,4 @@
-//! The CLI's guardrail flags through the real binary (proposed ADR-0037 d4,
+//! The CLI's guardrail flags through the real binary (ADR-0037 d4,
 //! d10; d18 Q8): `--guardrail-scope` on `oml keys issue` and
 //! `oml keys issue-agent`, and `--severity` and `--rule` on `oml write`,
 //! against a fixture that answers with a canned body and records what the

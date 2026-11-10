@@ -2,7 +2,7 @@
 //! registry, the vocabulary claim kinds, a term's structural `term_status`,
 //! a deprecation's successors, and the register of `oml:` upper-vocabulary
 //! labels — pure functions over values the caller has already read
-//! (ADR-0021 d1, d2, d3; ADR-0027 d7).
+//! (ADR-0021 d1, d2, d3; ADR-0027 [proposed in #10, unmerged] d7).
 //!
 //! The rules are declared on `docs/architecture/ontologies.md` ("A
 //! vocabulary is a workarea with a prefix", "The term lifecycle", "CURIEs

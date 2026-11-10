@@ -3,6 +3,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/shared/oml-page",
+    "crates/clients/oml-web",
     "crates/oml-guardrail",
     "crates/oml-scan",
     "crates/oml-domain",
@@ -18,21 +20,26 @@ members = [
     "crates/bins/oml-cli",
     "crates/bins/oml-lakewriter",
     "testing/oml-port-contracts",
+    "testing/oml-test-pg",
 ]
 
 [workspace.package]
-version = "0.6.2"
+version = "0.6.3"
 edition = "2024"
 # MSRV = pinned stable minus two minor releases (ci-and-toolchain.md MSRV window)
 rust-version = "1.97"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+oml-page = { path = "crates/shared/oml-page" }
+oml-web = { path = "crates/clients/oml-web" }
 oml-app = { path = "crates/oml-app" }
 oml-domain = { path = "crates/oml-domain" }
 oml-guardrail = { path = "crates/oml-guardrail" }
 oml-scan = { path = "crates/oml-scan" }
 oml-port-contracts = { path = "testing/oml-port-contracts" }
+# Throwaway databases for the Postgres suites; a dev-dependency only.
+oml-test-pg = { path = "testing/oml-test-pg" }
 # Dev-dependency surface only: the oml-cli end-to-end test composes the real
 # lead in-process; the CLI binary itself depends on no server crate.
 oml-server-lead = { path = "crates/bins/oml-server-lead", default-features = false }

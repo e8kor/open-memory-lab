@@ -8,6 +8,18 @@ answers: "what each OML release changed for users and operators, newest first"
 
 Newest first. Each release is a signed tag on the [releases page](https://github.com/e8kor/open-memory-lab/releases).
 
+## 0.6.3
+
+Released 2026-11-10.
+
+- Fixed three ways content the secret scanner should hold reached other agents. The rule set is now `oml-scan/1.1`: it reads every memory through normalised views, so invisible and format characters, combining marks, fullwidth forms and the braille blank placed inside or between the words of an injection phrase no longer hide it, and a run of variation selectors is held. Each stored version now records the rule set it was scanned under (migration 0038 reads existing versions as `oml-scan/1`). Inside an in-progress workarea, another author's held version is served only when the current rule set scanned it and found nothing, in recall, listings, reads by id and claim edges.
+- Added `oml admin rescan --record-held` (`POST /v2/admin/rescan`), which records the findings of every held version under the current rule set and journals each as `scan.findings_recorded`. **After you upgrade, run `oml admin rescan --record-held`.** Until it has run, sibling agents in an in-progress workarea do not see held versions written before the upgrade. Migration 0038 has no down step, and a server older than `oml-scan/1.1` ignores the new column.
+- Added two `oml doctor` lines, `scan_held_unrescanned` and `scan_rescan_due`, which tell you when held versions still wait for that rescan.
+- Fixed the weekly recall benchmark, which failed on its first call because it asked for pipelines that need a model while booting the five that do not. The web traffic dashboard gains the sign-in failure panel the observability page already described.
+- Fixed `oml sync`: the first `--allow-public-server` explains the disclosure and records consent for the source clone, and later syncs of that clone reuse it. `oml workareas tree` accepts a positional root. The user page no longer opens held or rejected memories written by any of the person's agent keys, the workarea table keeps intermediate parents in each "Name to use" label, and the Guardrails page offers a workarea selector. Chat failures name a retry command and quickstart quotes the paths in the Docker commands it prints.
+- Added design records, none implemented: a distributed provider with a standby lead and read nodes (ADR-0073), recall across the trusted workareas a key already reads (ADR-0072), threat classes for every scan finding (ADR-0074), and the web console as a client of the public API (ADR-0070).
+- Changed internals only: one shared Postgres test fixture, and `ruff` now checks `scripts/` in CI.
+
 ## 0.6.2
 
 Released 2026-11-06.
