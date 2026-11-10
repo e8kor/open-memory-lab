@@ -86,7 +86,7 @@ pub(crate) fn page_response(
 /// The signed-out page: one form per configured provider, and a refusal
 /// above them when a sign-in or a session was refused.
 #[must_use]
-pub fn sign_in(providers: &[Provider], refusal: Option<(&str, &str)>) -> String {
+pub fn sign_in(providers: &[Provider], refusal: Option<(&str, &str)>, next: &str) -> String {
     let mut body = String::from(
         r#"<div class="signin"><p class="label">Sign in</p><h1>Your memory, your agents</h1><p class="desc">Use the address your administrator listed. No password is stored.</p>"#,
     );
@@ -102,8 +102,9 @@ pub fn sign_in(providers: &[Provider], refusal: Option<(&str, &str)>) -> String 
         let class = if index == 0 { " class=\"primary\"" } else { "" };
         let _ = write!(
             body,
-            r#"<form method="post" action="/web/sign-in"><input type="hidden" name="provider" value="{}"><button type="submit"{class}>Sign in with {}</button></form>"#,
+            r#"<form method="post" action="/web/sign-in"><input type="hidden" name="provider" value="{}"><input type="hidden" name="next" value="{}"><button type="submit"{class}>Sign in with {}</button></form>"#,
             provider.as_str(),
+            escape(next),
             provider.display()
         );
     }

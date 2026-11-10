@@ -164,8 +164,12 @@ pub async fn load(State(web): State<Web>, mut req: Request, next: Next) -> Respo
         .get::<Arc<PageCalls>>()
         .cloned()
         .unwrap_or_else(|| Arc::new(PageCalls::new("page")));
+    let page = req
+        .uri()
+        .path_and_query()
+        .map_or_else(|| "/web".to_owned(), |pq| pq.as_str().to_owned());
     let Some(token) = cookie(req.headers(), SESSION_COOKIE) else {
-        return outcome::sign_in();
+        return outcome::sign_in(&page);
     };
     let web_credential = capacity_credential(&token, Capacity::Web.as_str());
     let admin_credential = capacity_credential(&token, Capacity::Admin.as_str());
@@ -177,7 +181,7 @@ pub async fn load(State(web): State<Web>, mut req: Request, next: Next) -> Respo
     let (me, admin) = tokio::join!(web.api.whoami(&web_call), web.api.whoami(&admin_call));
     let whoami = match me {
         Ok(whoami) => whoami,
-        Err(e) => return outcome::page(&e, calls.page_id()),
+        Err(e) => return outcome::page(&e, calls.page_id(), &page),
     };
     calls.acting_as(whoami.name.as_deref());
     req.extensions_mut().insert(Session {

@@ -83,7 +83,11 @@ async fn readyz_is_ready_when_the_api_is_ready_and_names_a_web_client_identity()
 async fn readyz_is_unavailable_when_the_api_is_unreachable_unready_or_has_no_web_client_identity() {
     for (answer, check, why) in [
         (None, "api", "unreachable"),
-        (Some((503, lead("unavailable", "secret"))), "api", "unavailable"),
+        (
+            Some((503, lead("unavailable", "secret"))),
+            "api",
+            "unavailable",
+        ),
         (Some((200, lead("ok", "none"))), "web_client", "none"),
     ] {
         let (status, body, _) = probe(answer).await;

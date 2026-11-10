@@ -204,7 +204,8 @@ pub fn session_key_names(user: &Name) -> Vec<Name> {
 
 /// What a sign-in in progress carries in its sealed cookie (ADR-0045 d3):
 /// the provider, the `state` the callback must echo, the PKCE verifier, the
-/// nonce for Google, and when it started, in seconds since the epoch.
+/// nonce for Google, when it started, in seconds since the epoch, and the
+/// page to return to, `next`, as the sign-in page admitted it (ADR-0070 d4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignInState {
     pub provider: Provider,
@@ -212,6 +213,7 @@ pub struct SignInState {
     pub verifier: String,
     pub nonce: Option<String>,
     pub started_at: i64,
+    pub next: Option<String>,
 }
 
 impl SignInState {
@@ -227,6 +229,7 @@ impl SignInState {
             verifier: hex::encode(verifier),
             nonce: provider.uses_nonce().then(|| hex::encode(nonce)),
             started_at: now,
+            next: None,
         }
     }
 
@@ -245,6 +248,7 @@ impl SignInState {
             "v": self.verifier,
             "n": self.nonce,
             "t": self.started_at,
+            "x": self.next,
         })
         .to_string()
         .into_bytes()
@@ -264,6 +268,7 @@ impl SignInState {
                 v => Some(v.as_str()?.to_owned()),
             },
             started_at: value.get("t")?.as_i64()?,
+            next: value.get("x").and_then(Value::as_str).map(str::to_owned),
         })
     }
 

@@ -686,5 +686,8 @@ async fn a_signed_out_session_cookie_goes_to_sign_in_from_a_moved_page() {
     assert_eq!(status, StatusCode::SEE_OTHER);
     let (status, headers, _) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails");
+    assert_eq!(
+        headers[header::LOCATION],
+        "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails"
+    );
 }

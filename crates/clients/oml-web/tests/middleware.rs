@@ -247,7 +247,10 @@ async fn a_page_route_without_a_session_cookie_goes_to_sign_in_without_calling_t
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(response.headers()[header::LOCATION], "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails");
+    assert_eq!(
+        response.headers()[header::LOCATION],
+        "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails"
+    );
     let line: serde_json::Value = serde_json::from_str(&lines.lock().unwrap()[0]).unwrap();
     assert!(line.get("api_request_ids").is_none(), "{line}");
 }

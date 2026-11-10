@@ -98,6 +98,77 @@ pub fn request_id_admitted(value: &[u8]) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
 }
 
+/// Where a person with no session signs in: the lead's sign-in page
+/// (ADR-0070 d4, d6).
+pub const SIGN_IN_PATH: &str = "/web/sign-in";
+
+/// Where a page sends a person with no session: the lead's sign-in page,
+/// relative, carrying `next`, the page's own path and query, percent-encoded
+/// so it is one query value (ADR-0070 d4). Every shape has one public origin,
+/// so the relative redirect lands on the lead.
+#[must_use]
+pub fn sign_in_location(next: &str) -> String {
+    let mut out = String::from(SIGN_IN_PATH);
+    out.push_str("?next=");
+    for b in next.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(b));
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// The longest `next` the lead keeps; a longer one is dropped to `/web`.
+pub const NEXT_MAX: usize = 2048;
+
+/// `next` as the lead keeps it, or `/web` (ADR-0070 d4): a same-origin
+/// relative path whose path is `/web` or starts with `/web/`, at most
+/// [`NEXT_MAX`] bytes of visible ASCII, holding no `//`, no `\`, no `@`
+/// and no `:` before its query; `raw` is the value as its query decoded it,
+/// and the same rule holds once more after one more percent-decoding, so an
+/// encoded `//` or `\` is refused too. Anything else is `/web`.
+#[must_use]
+pub fn admitted_next(raw: &str) -> String {
+    fn holds(value: &str) -> bool {
+        let path = value.split('?').next().unwrap_or("");
+        (path == "/web" || path.starts_with("/web/"))
+            && !value.contains("//")
+            && !value.contains('\\')
+            && !value.contains('@')
+            && !path.contains(':')
+    }
+    let decoded = percent_decode(raw);
+    // The value kept is `raw`, so only it must be visible ASCII; the
+    // decoded form may hold a space a query encoded.
+    let visible = raw.len() <= NEXT_MAX && raw.bytes().all(|b| b.is_ascii_graphic());
+    if visible && holds(raw) && decoded.as_deref().is_some_and(holds) {
+        raw.to_owned()
+    } else {
+        "/web".to_owned()
+    }
+}
+
+/// `value` with each `%XX` decoded once; `None` when an escape is broken or
+/// the bytes are not UTF-8.
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = value.get(i + 1..i + 3)?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
 /// Current compile-time digests are created from a byte string. The web
 /// stylesheet's digest moves here after it is exacted (ADR-0069).
 pub fn sha256_hex(input: &str) -> String {
@@ -109,6 +180,50 @@ pub fn sha256_hex(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_next_outside_web_or_naming_another_origin_returns_to_web() {
+        for kept in [
+            "/web",
+            "/web?view=guardrails",
+            "/web/admin",
+            "/web/start?x=a%20b",
+        ] {
+            assert_eq!(admitted_next(kept), kept);
+        }
+        for dropped in [
+            "",
+            "web",
+            "/webfoo",
+            "/v2/keys",
+            "//evil.example",
+            "https://evil.example/web",
+            "/web//evil.example",
+            "/web/\\evil",
+            "/web@evil.example",
+            "/web:8080",
+            "/web/%2F%2Fevil.example",
+            "/web/%5Cevil",
+            "/web/%40evil",
+            "/web/%zz",
+            "/web/ a",
+            "/web/\u{e9}",
+        ] {
+            assert_eq!(admitted_next(dropped), "/web", "{dropped:?}");
+        }
+        assert_eq!(
+            admitted_next(&format!("/web/{}", "a".repeat(NEXT_MAX))),
+            "/web"
+        );
+    }
+
+    #[test]
+    fn the_sign_in_location_carries_the_page_as_one_query_value() {
+        assert_eq!(
+            sign_in_location("/web?view=guardrails&workarea=a b"),
+            "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails%26workarea%3Da%20b"
+        );
+    }
 
     #[test]
     fn escape_preserves_clean_text() {

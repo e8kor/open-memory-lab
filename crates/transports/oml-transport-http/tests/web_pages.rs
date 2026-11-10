@@ -2128,7 +2128,10 @@ async fn a_sign_in_returns_to_its_next_on_the_public_origin() {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let location = headers[header::LOCATION].to_str().expect("ASCII").to_owned();
+    let location = headers[header::LOCATION]
+        .to_str()
+        .expect("ASCII")
+        .to_owned();
     let (sealed, _) = set_cookie(&headers, SIGN_IN_COOKIE).expect("the sign-in cookie");
     let state = query_param(&location, "state").expect("a state");
     let nonce = query_param(&location, "nonce").expect("a nonce");
@@ -2140,15 +2143,12 @@ async fn a_sign_in_returns_to_its_next_on_the_public_origin() {
     );
     let (status, headers, _) = send(
         &rig.router,
-        Request::get(format!(
-            "/web/callback/google?code=c&state={}",
-            pct(&state)
-        ))
-        .header(header::COOKIE, format!("{SIGN_IN_COOKIE}={sealed}"))
-        .header(header::HOST, "evil.example")
-        .header("x-forwarded-host", "evil.example")
-        .body(Body::empty())
-        .expect("a request"),
+        Request::get(format!("/web/callback/google?code=c&state={}", pct(&state)))
+            .header(header::COOKIE, format!("{SIGN_IN_COOKIE}={sealed}"))
+            .header(header::HOST, "evil.example")
+            .header("x-forwarded-host", "evil.example")
+            .body(Body::empty())
+            .expect("a request"),
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
@@ -2167,7 +2167,10 @@ async fn a_sign_in_returns_to_its_next_on_the_public_origin() {
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let location = headers[header::LOCATION].to_str().expect("ASCII").to_owned();
+    let location = headers[header::LOCATION]
+        .to_str()
+        .expect("ASCII")
+        .to_owned();
     let (sealed, _) = set_cookie(&headers, SIGN_IN_COOKIE).expect("the sign-in cookie");
     let state = query_param(&location, "state").expect("a state");
     let nonce = query_param(&location, "nonce").expect("a nonce");

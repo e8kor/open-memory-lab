@@ -8,6 +8,7 @@
 //! lead. [`PAGES`] is that routing table, and [`serves`] its reading.
 
 pub mod config;
+pub mod doctor;
 pub mod frame;
 pub mod middleware;
 pub mod outcome;
@@ -29,13 +30,18 @@ pub use middleware::Layers;
 /// is up, not that the API is.
 pub const HEALTH_PATH: &str = "/web/healthz";
 
+/// The readiness probe: ready when the API answers its own `/readyz` as
+/// ready and names a web client identity, so the probe sees the hop. On
+/// `oml-web`'s own listener; the proxy sends the public `/readyz` to the
+/// lead (ADR-0070 d4).
+pub const READY_PATH: &str = "/readyz";
+
 /// The session cookie the lead's sign-in sets (ADR-0045 d5).
 pub const SESSION_COOKIE: &str = "__Host-oml_session";
 
 /// Where a person with no live session is sent: the lead's sign-in page,
-/// which the lead renders at `GET /web` with no session until phase (d)
-/// moves it to `GET /web/sign-in` (ADR-0070 d4, d10 (e)).
-pub const SIGN_IN_PATH: &str = "/web";
+/// with the page they asked for as `next` (ADR-0070 d4, d6).
+pub use oml_page::SIGN_IN_PATH;
 
 /// The pages this process serves, as `(method, path, view)`: the proxy
 /// sends a request here when its method and path match and its query names
@@ -50,6 +56,8 @@ pub fn serves(method: &str, path: &str, query: Option<&str>) -> bool {
     if path == HEALTH_PATH {
         return true;
     }
+    // READY_PATH is the probe of oml-web's own listener; the public
+    // /readyz is the lead's, so the proxy never sends it here.
     let views: Vec<&str> = query
         .unwrap_or("")
         .split('&')
@@ -114,6 +122,55 @@ async fn health() -> axum::Json<serde_json::Value> {
     }))
 }
 
+/// [`READY_PATH`]: one unauthenticated call to the API's `/readyz`. `200`
+/// when it is ready and accepts a web client identity; `503` naming the
+/// check that failed otherwise.
+async fn ready(axum::extract::State(web): axum::extract::State<Web>) -> axum::response::Response {
+    use axum::response::IntoResponse as _;
+    let (api, web_client) = match web.api.readyz().await {
+        Ok(ready) if ready.status == "ok" => {
+            let identity = ready.web_client.unwrap_or_else(|| "unknown".to_owned());
+            ("ok".to_owned(), identity)
+        }
+        Ok(ready) => (
+            format!("unavailable: the API answered {}", ready.status),
+            String::new(),
+        ),
+        Err(oml_sdk::Error::Transport(e)) => (format!("unreachable: {e}"), String::new()),
+        Err(oml_sdk::Error::Api(e)) => (
+            format!("unavailable: the API answered {}", e.status),
+            String::new(),
+        ),
+        Err(e) => (format!("unavailable: {e}"), String::new()),
+    };
+    let web_client = if web_client == "none" {
+        "none: the API accepts no capacity credential; set web.client_secret on the lead".to_owned()
+    } else {
+        web_client
+    };
+    let ok = api == "ok" && !web_client.starts_with("none");
+    let status = if ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    let mut checks = serde_json::Map::new();
+    checks.insert("api".to_owned(), json!(api));
+    if !web_client.is_empty() {
+        checks.insert("web_client".to_owned(), json!(web_client));
+    }
+    (
+        status,
+        axum::Json(json!({
+            "status": if ok { "ok" } else { "unavailable" },
+            "service": "oml-web",
+            "version": env!("CARGO_PKG_VERSION"),
+            "checks": checks,
+        })),
+    )
+        .into_response()
+}
+
 /// Every path no page serves; it passes the same layers as a page.
 async fn not_found() -> StatusCode {
     StatusCode::NOT_FOUND
@@ -132,6 +189,7 @@ pub fn router(web: Web) -> Router {
         .with_state(web.clone());
     Router::new()
         .route(HEALTH_PATH, get(health))
+        .route(READY_PATH, get(ready).with_state(web.clone()))
         .merge(pages)
         .fallback(not_found)
         .layer(

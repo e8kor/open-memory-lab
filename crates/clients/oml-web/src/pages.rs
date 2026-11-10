@@ -73,7 +73,10 @@ pub async fn user_page(
         }
     };
     match fields.get("view") {
-        Some("guardrails") => guardrails(&web, &session, &calls, &fields).await,
+        Some("guardrails") => {
+            let next = uri.path_and_query().map_or("/web", |pq| pq.as_str());
+            guardrails(&web, &session, &calls, &fields, next).await
+        }
         _ => refused(
             StatusCode::NOT_FOUND,
             "access.not_found",
@@ -123,7 +126,13 @@ async fn workareas(
 /// The set is the page's primary call and the tree its secondary one, made
 /// together after the session's check (ADR-0070 d8): a failed set is the
 /// error page, a failed tree the page without its selector.
-async fn guardrails(web: &Web, session: &Session, calls: &PageCalls, fields: &Fields) -> Response {
+async fn guardrails(
+    web: &Web,
+    session: &Session,
+    calls: &PageCalls,
+    fields: &Fields,
+    next: &str,
+) -> Response {
     let Some(root) = session.whoami.user.as_ref().map(|u| u.id.clone()) else {
         return refused(
             StatusCode::NOT_FOUND,
@@ -141,7 +150,7 @@ async fn guardrails(web: &Web, session: &Session, calls: &PageCalls, fields: &Fi
     );
     let set = match set {
         Ok(set) => set,
-        Err(e) => return outcome::page(&e, calls.page_id()),
+        Err(e) => return outcome::page(&e, calls.page_id(), next),
     };
     let scope = match set.guardrail_scope.as_str() {
         "workarea" => "This workarea only.".to_owned(),

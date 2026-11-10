@@ -228,7 +228,10 @@ async fn auth_invalid_from_whoami_sends_the_person_to_sign_in() {
     })
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails");
+    assert_eq!(
+        headers[header::LOCATION],
+        "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails"
+    );
     assert!(calls.iter().all(|(p, _)| p == "/v2/whoami"), "{calls:?}");
 }
 
