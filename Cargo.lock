@@ -3866,6 +3866,7 @@ dependencies = [
  "hex",
  "oml-guardrail",
  "oml-scan",
+ "oml-web-credential",
  "proptest",
  "serde_json",
  "sha2 0.10.9",
@@ -4011,6 +4012,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oml-sdk"
+version = "0.6.3"
+dependencies = [
+ "axum",
+ "http",
+ "reqwest 0.13.5",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "oml-server-lead"
 version = "0.6.3"
 dependencies = [
@@ -4062,6 +4076,7 @@ dependencies = [
  "http-body",
  "oml-app",
  "oml-format",
+ "oml-page",
  "prometheus-client",
  "ring",
  "serde",
@@ -4080,11 +4095,27 @@ dependencies = [
  "axum",
  "getrandom 0.2.17",
  "http",
+ "oml-app",
+ "oml-format",
+ "oml-guardrail",
  "oml-page",
+ "oml-sdk",
+ "oml-transport-http",
+ "oml-web-credential",
+ "reqwest 0.13.5",
  "serde",
  "serde_json",
  "tokio",
  "tower",
+ "uuid",
+]
+
+[[package]]
+name = "oml-web-credential"
+version = "0.6.3"
+dependencies = [
+ "hex",
+ "sha2 0.10.9",
 ]
 
 [[package]]

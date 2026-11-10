@@ -1,0 +1,29 @@
+[package]
+name = "oml-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "A hand-written, typed client of OML's public HTTP API, covering the operations its consumers call; a check holds its operation table to docs/api/openapi.yaml (ADR-0070 d9)."
+
+# No server crate: the SDK is a client of the wire, as oml-cli is, and
+# oml-web's wall (ADR-0070 d1) walks through it.
+[dependencies]
+http = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The pooled keep-alive client of ADR-0070 d8, over rustls with ring, the
+# provider the lead's own clients use; HTTP/2 where the hop is TLS.
+reqwest = { workspace = true, features = ["http2"] }
+rustls = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+axum = { workspace = true }
+
+[lib]
+name = "oml_sdk"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

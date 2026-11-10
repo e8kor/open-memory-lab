@@ -1,5 +1,6 @@
 //! The wall of ADR-0070 d1: `oml-web`'s normal and build dependencies reach
-//! no application crate, and of the workspace's own crates only `oml-page`.
+//! no application crate, and of the workspace's own crates only `oml-page`,
+//! `oml-sdk` and `oml-web-credential`.
 //! Dev-dependencies are outside the walk.
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -57,9 +58,10 @@ const FORBIDDEN: &[&str] = &[
     "sqlx",
 ];
 
-/// The workspace crates `oml-web` may reach: the shared page crate, and the
-/// Rust SDK once it exists (ADR-0070 d9).
-const WORKSPACE_ALLOWED: &[&str] = &["oml-page", "oml-sdk"];
+/// The workspace crates `oml-web` may reach: the shared page crate, the
+/// Rust SDK (ADR-0070 d9), and the leaf that derives the session's
+/// credential and CSRF token, which the auth context links too (d2).
+const WORKSPACE_ALLOWED: &[&str] = &["oml-page", "oml-sdk", "oml-web-credential"];
 
 struct Graph {
     names: HashMap<String, String>,
@@ -156,7 +158,7 @@ fn oml_web_reaches_no_application_crate() {
 }
 
 #[test]
-fn of_the_workspace_crates_oml_web_reaches_only_oml_page_and_the_sdk() {
+fn of_the_workspace_crates_oml_web_reaches_only_oml_page_the_sdk_and_the_credential() {
     let g = graph();
     let bad: Vec<String> = reached(&g)
         .into_iter()
@@ -167,9 +169,10 @@ fn of_the_workspace_crates_oml_web_reaches_only_oml_page_and_the_sdk() {
 }
 
 #[test]
-fn the_wall_walk_sees_oml_page_and_axum() {
+fn the_wall_walk_sees_oml_page_the_sdk_and_axum() {
     // A walk that reaches nothing would pass both tests above vacuously.
     let names: BTreeSet<String> = reached(&graph()).into_iter().map(|(n, _)| n).collect();
-    assert!(names.contains("oml-page"), "{names:?}");
-    assert!(names.contains("axum"), "{names:?}");
+    for name in ["oml-page", "oml-sdk", "oml-web-credential", "axum"] {
+        assert!(names.contains(name), "{name}: {names:?}");
+    }
 }

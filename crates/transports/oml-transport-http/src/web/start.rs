@@ -31,11 +31,12 @@ use super::{
     unique_fields, unix_now,
 };
 use crate::error::{ApiError, ErrorContext, map_app_error};
-use crate::oauth::page::{base64_32, escape, sha256};
 use crate::oauth::{form_pairs, require_media, same_origin};
 use crate::traffic::{ClientAddr, Rid, WebLine};
 use crate::{ApiState, retry_chain};
 use oml_app::ports::HandleSealer as _;
+use oml_page::digest::{base64_32, sha256};
+use oml_page::escape;
 
 /// The pending sign-up's cookie: the admitted identity, sealed, for the
 /// terms page's ten minutes (ADR-0068 d2).
