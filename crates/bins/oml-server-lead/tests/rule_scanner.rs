@@ -1,4 +1,4 @@
-//! The scanner the lead composes is the `oml-scan/1` rule set (ADR-0065):
+//! The scanner the lead composes is the `oml-scan/1.1` rule set (ADR-0065):
 //! it vetoes a secret, holds an instruction aimed at the reader, passes
 //! prose, keeps the PoC markers, names its version for the journal, and
 //! counts findings by rule, never by value. No database.
@@ -73,7 +73,7 @@ fn the_poc_markers_still_veto_and_hold_in_the_lead() {
 
 #[test]
 fn the_lead_names_its_rule_set_and_counts_findings_by_rule() {
-    assert_eq!(RuleScanner.version(), Some("oml-scan/1"));
+    assert_eq!(RuleScanner.version(), Some("oml-scan/1.1"));
     let _ = scan("memory", "x [oml:hold]");
     let counts = scan_counts();
     assert!(
@@ -90,7 +90,7 @@ fn the_lead_names_its_rule_set_and_counts_findings_by_rule() {
 #[test]
 fn the_lead_describes_its_rule_set_and_reports_findings_without_counting() {
     let info = RuleScanner.info().expect("the lead pins a rule set");
-    assert_eq!(info.version, "oml-scan/1");
+    assert_eq!(info.version, "oml-scan/1.1");
     assert!(info.rules > 30, "{info:?}");
     assert!(!info.pii, "personal-data rules are off by default");
     let token = fake_github_token();

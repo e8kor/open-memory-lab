@@ -109,7 +109,10 @@ Questions revision 1 left open are settled below at their recommended answers, e
   scoped inside that root (d2). Served held versions are of kinds `memory` and `derived_fact`;
   a held `steering` or `guardrail` version, and a held retirement version, stay author-only,
   since steering and guardrails are served first and never cut and must be reviewed text
-  (ADR-0025 d8; ADR-0037). Rejected, demoted and erased versions are served as everywhere else
+  (ADR-0025 d8; ADR-0037). A version the scan held, or one the server's rule set has not yet
+  scanned, stays author-only too (amended 2026-11-10,
+  [ADR-0065](ADR-0065-the-scan-is-a-versioned-compiled-in-rule-set-that-vetoes-leaked-keys-and-holds-what-a-reviewer-should-judge.md)
+  d15). Rejected, demoted and erased versions are served as everywhere else
   (not at all), so what review or a curator turned down never returns to an agent's context.
   Everywhere outside an in-progress subtree, and in every `committed` and `validated` workarea,
   R3 holds without exception: a held row is its author's and its reviewer's alone. R2 holds

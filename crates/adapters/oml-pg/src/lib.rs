@@ -37,8 +37,8 @@ use oml_app::ports::{
     claim_subject,
 };
 use oml_app::search::{
-    Access, Candidate, CandidateScope, MatchMode, MatchedToken, PostingsHealth, RetrievalQuery,
-    Retrieved, RetrieverKind, SparsePending, SparsePosting, SparseTenant,
+    Access, Candidate, CandidateScope, MatchMode, MatchedToken, OwnHeldScope, PostingsHealth,
+    RetrievalQuery, Retrieved, RetrieverKind, SparsePending, SparsePosting, SparseTenant,
 };
 use oml_app::types::{
     AdminSearch, AdminState, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
@@ -723,15 +723,17 @@ pub const RECALL_FTS: &str = "SELECT m.id, m.body_bytes, \
      LIMIT $5";
 
 /// The own held recall statement `recall_own_held` runs, binding `$1` the
-/// tenant, `$2` the author keys, `$3` the readable nodes, `$4` the query,
-/// `$5` the kinds and `$6` `k`; pruned to the tenant's partition as
-/// [`RECALL_FTS`] is (ADR-0034 d11).
+/// tenant, `$2` the author keys (the own key set, and inside an in-progress
+/// scope the mark of the server's rule set), `$3` the readable nodes, `$4`
+/// the query, `$5` the kinds and `$6` `k`; pruned to the tenant's partition
+/// as [`RECALL_FTS`] is (ADR-0034 d11).
 pub const RECALL_OWN_HELD: &str = "SELECT m.id, m.body_bytes, \
             ts_rank(to_tsvector('simple', COALESCE(m.search_text, m.claim)), \
                     plainto_tsquery('simple', $4), 0) AS score \
      FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
-       AND ($2::uuid[] IS NULL OR m.author_key_id = ANY($2::uuid[])) \
+       AND (m.author_key_id = ANY($2::uuid[]) \
+         OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, ''), 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
        AND NOT m.retirement AND m.kind = ANY($5::text[]) \
        AND m.workarea_id = ANY($3::uuid[]) /*anchor*/ \
        AND to_tsvector('simple', COALESCE(m.search_text, m.claim)) @@ plainto_tsquery('simple', $4) \
@@ -792,7 +794,8 @@ pub const WIDEN_LINEAGE: &str = "WITH RECURSIVE \
 
 /// The candidate scope every search statement but `keyword-all`'s reads,
 /// binding `$1` the tenant, `$2` the promoted nodes, `$3` the kinds, `$4`
-/// the own held author keys and `$5` their nodes: promoted served tips on
+/// the own held author keys ([`held_authors`]) and `$5` their nodes:
+/// promoted served tips on
 /// the readable nodes, and the own held rows of the keys on theirs, never a
 /// retirement version (ADR-0025 d4, d8; ADR-0049 d2). Row security stays the
 /// fence beneath it (ADR-0034 d11). A version whose valid time ended at or
@@ -804,8 +807,36 @@ const SEARCH_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
        AND (m.valid_until_us IS NULL OR m.valid_until_us > $NOW::int8) \
        AND m.kind = ANY($3::text[]) \
        AND ((m.status = 'promoted' AND m.is_tip AND m.workarea_id = ANY($2::uuid[])) \
-         OR (m.status = 'held' AND ($4::uuid[] IS NULL OR m.author_key_id = ANY($4::uuid[])) \
-             AND m.workarea_id = ANY($5::uuid[])))";
+         OR (m.status = 'held' AND m.workarea_id = ANY($5::uuid[]) \
+             AND (m.author_key_id = ANY($4::uuid[]) \
+               OR (m.scan_finding IS NULL \
+                   AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, ''), 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($4::uuid[])))))";
+
+/// The author keys a held search statement binds: the own key set, and,
+/// inside an in-progress scope, the mark of the server's rule set too
+/// ([`scanner_mark`]), which admits every author's held row the scan did
+/// not hold and last read under that rule set (ADR-0030 d3; ADR-0065 d15).
+/// The statements compare a row's own mark, computed from its
+/// `scanned_under`, only beside `m.scan_finding IS NULL`, so a row the
+/// scan held, or one an older rule set passed, stays its author's.
+fn held_authors(own: &OwnHeldScope) -> Vec<Uuid> {
+    let mut keys = own.author_key_ids.clone();
+    if own.any_author {
+        keys.push(scanner_mark(own.current_scanner.as_deref()));
+    }
+    keys
+}
+
+/// A rule-set version as an id the held statements' author array can carry:
+/// the first 16 bytes of SHA-256 over the version, the empty string for
+/// none, as the statements compute it from `m.scanned_under`. A key id
+/// equal to one is a 2^-122 chance at most (ids are minted v4 or v7).
+fn scanner_mark(version: Option<&str>) -> Uuid {
+    let digest = Sha256Hash::digest(version.unwrap_or("").as_bytes()).0;
+    let mut first = [0_u8; 16];
+    first.copy_from_slice(&digest[..16]);
+    Uuid::from_bytes(first)
+}
 
 /// `sql` with its `$NOW` placeholder numbered `$n`: the request's now as
 /// a bound `int8`, so the expiry cut compares a column with a parameter,
@@ -986,12 +1017,13 @@ const POSTINGS_COUNTS: &str = "SELECT NULL::int8 AS token_id, COALESCE(sum(c.row
      GROUP BY c.token_id";
 
 /// The own held rows a recall may rank: the held versions of the keys `$2`
-/// on their nodes `$3` of the kinds `$4`, never a retirement version
-/// (ADR-0025 d4, d5), with their lengths; read by the `memories_author`
-/// index (ADR-0052 d5, open question 7).
+/// ([`held_authors`]) on their nodes `$3` of the kinds `$4`, never a
+/// retirement version (ADR-0025 d4, d5), with their lengths; read by the
+/// `memories_author` index (ADR-0052 d5, open question 7).
 const POSTINGS_OWN_HELD: &str = "SELECT m.id, m.search_len FROM memories m \
      WHERE m.tenant_id = $1 AND m.status = 'held' \
-        AND ($2::uuid[] IS NULL OR m.author_key_id = ANY($2::uuid[])) \
+        AND (m.author_key_id = ANY($2::uuid[]) \
+          OR (m.scan_finding IS NULL AND encode(substring(sha256(convert_to(COALESCE(m.scanned_under, ''), 'UTF8')) FROM 1 FOR 16), 'hex')::uuid = ANY($2::uuid[]))) \
         AND m.workarea_id = ANY($3::uuid[]) AND m.kind = ANY($4::text[]) AND NOT m.retirement \
         AND (m.valid_until_us IS NULL OR m.valid_until_us > $5::int8)";
 
@@ -1875,7 +1907,8 @@ fn held_by_from_str(s: &str) -> Result<HeldBy, StoreError> {
 const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.version, \
      m.kind, m.claim, m.claim_digest, m.body_bytes, m.status, m.is_tip, m.retirement, \
      m.replaces_artifact_id, m.author_principal, m.author_key_id, m.derives_from, \
-     m.lineage_principals, m.lineage_key_ids, m.scan_finding, m.severity, m.rule, \
+     m.lineage_principals, m.lineage_key_ids, m.scan_finding, m.scanned_under, \
+     m.severity, m.rule, \
      m.valid_from, m.valid_until, m.valid_from_us, m.valid_until_us, \
      m.anchor_repo, m.anchor_uri, m.anchor_rev, m.anchor_path, m.anchor_fragment, \
      m.anchor_hash, m.anchor_hasher, m.source_check_rev, m.source_check_result, \
@@ -1927,6 +1960,7 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         lineage_principals: row.try_get("lineage_principals").map_err(backend)?,
         lineage_key_ids: row.try_get("lineage_key_ids").map_err(backend)?,
         scan_finding: row.try_get("scan_finding").map_err(backend)?,
+        scanned_under: row.try_get("scanned_under").map_err(backend)?,
         created_at: EventTime::parse(&created).map_err(backend)?,
         guardrail,
         valid: Box::new(valid_from_row(row)?),
@@ -2393,14 +2427,23 @@ async fn insert_memory(
     } else {
         (String::new(), String::new())
     };
+    // A version a versioned scanner read names `scanned_under` last
+    // (ADR-0065 d15); one without, as a test double's, names none.
+    let scanner_n = origin_n + usize::from(m.origin_kind.is_some());
+    let (scanner_column, scanner_value) = if m.scanned_under.is_some() {
+        (", scanned_under".to_owned(), format!(", ${scanner_n}"))
+    } else {
+        (String::new(), String::new())
+    };
     let sql = format!(
         "INSERT INTO memories (id, tenant_id, workarea_id, claim, claim_digest, status, \
          created_event_id, created_at, claim_key, author_principal, \
          author_key_id, derives_from, lineage_principals, lineage_key_ids, scan_finding, \
          version, kind, body_bytes, is_tip, promoted_at, retirement, replaces_artifact_id, \
-         severity, rule{columns}{origin_column}) \
+         severity, rule{columns}{origin_column}{scanner_column}) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, ($8)::timestamptz, $9, $10, $11, $12, $13, $14, \
-         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24{values}{origin_value})"
+         $15, $16, $17, $18, $19, ($20)::timestamptz, $21, $22, $23, $24{values}{origin_value}\
+         {scanner_value})"
     );
     let mut insert = sqlx::query(&sql)
         .bind(m.memory_id)
@@ -2445,6 +2488,9 @@ async fn insert_memory(
     }
     if let Some(kind) = m.origin_kind {
         insert = insert.bind(kind.as_str());
+    }
+    if let Some(scanner) = m.scanned_under.as_deref() {
+        insert = insert.bind(scanner);
     }
     insert.execute(&mut **tx).await.map_err(backend)?;
     // The format, the title and the derived search text in the same
@@ -3412,6 +3458,27 @@ async fn apply_fold(
             .await
             .map_err(backend)?;
         }
+        MetadataFold::FindingsRecorded {
+            scanned_under,
+            versions,
+        } => {
+            // Held versions alone; a finding already on the row stays
+            // (ADR-0065 d13, d15).
+            let (ids, findings): (Vec<Uuid>, Vec<Option<String>>) = versions.into_iter().unzip();
+            sqlx::query(
+                "UPDATE memories m SET scanned_under = $2, \
+                 scan_finding = COALESCE(m.scan_finding, u.finding) \
+                 FROM unnest($3::uuid[], $4::text[]) AS u(id, finding) \
+                 WHERE m.tenant_id = $1 AND m.id = u.id AND m.status = 'held'",
+            )
+            .bind(tenant_id)
+            .bind(scanned_under)
+            .bind(ids)
+            .bind(findings)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
         MetadataFold::TipSuperseded {
             successor,
             replaced,
@@ -4016,7 +4083,7 @@ impl PgStore {
                     .bind(
                         sqlx::query(&held)
                             .bind(tenant_id)
-                            .bind((!own.any_author).then_some(&own.author_key_ids))
+                            .bind(held_authors(own))
                             .bind(&own.nodes)
                             .bind(query.query)
                             .bind(kinds)
@@ -4211,8 +4278,10 @@ struct ScopeBinds<'a> {
     tenant_id: Uuid,
     nodes: &'a [Uuid],
     kinds: &'a [&'static str],
-    /// `None` reads every author's held rows on `held_nodes`, inside an
-    /// in-progress scope only (ADR-0030 d3).
+    /// The held rows' author keys ([`held_authors`]): inside an in-progress
+    /// scope it names the server's rule-set mark too, every author's
+    /// unflagged held rows scanned under it on `held_nodes` (ADR-0030 d3;
+    /// ADR-0065 d15); empty, no held row.
     authors: Option<&'a [Uuid]>,
     held_nodes: &'a [Uuid],
     /// How the origin filters narrow the candidates (ADR-0057 d4).
@@ -4623,16 +4692,12 @@ impl Retriever for PgStore {
             )));
         }
         let kinds = hit_kinds(&scope.kinds);
-        let (authors, held_nodes): (Option<Vec<Uuid>>, Vec<Uuid>) =
-            scope
-                .own_held
-                .as_ref()
-                .map_or((Some(Vec::new()), Vec::new()), |own| {
-                    (
-                        (!own.any_author).then(|| own.author_key_ids.clone()),
-                        own.nodes.clone(),
-                    )
-                });
+        let (authors, held_nodes): (Option<Vec<Uuid>>, Vec<Uuid>) = scope
+            .own_held
+            .as_ref()
+            .map_or((Some(Vec::new()), Vec::new()), |own| {
+                (Some(held_authors(own)), own.nodes.clone())
+            });
         let k = i64::try_from(query.k).unwrap_or(i64::MAX);
         let all = query.match_mode == MatchMode::All;
         let mut tx = self.pool.begin().await.map_err(backend)?;
@@ -5696,17 +5761,26 @@ impl JournalStore for PgStore {
                     .push_bind(masked.clone())
                     .push("::uuid[]))");
             }
-            ListingScope::Tips { nodes, held } => {
+            ListingScope::Tips {
+                nodes,
+                held,
+                current_scanner,
+            } => {
                 // Inside an in-progress scope the held versions of every
                 // author on the nodes join the tips (ADR-0030 d3).
                 sql.push(" AND ((m.status = 'promoted' AND m.is_tip)");
                 if !held.is_empty() {
+                    // A version the scan held stays its author's (ADR-0065
+                    // d5, amended 2026-11-10).
                     sql.push(
                         " OR (m.status = 'held' AND NOT m.retirement \
+                         AND m.scan_finding IS NULL \
                          AND m.kind IN ('memory', 'derived_fact') AND m.workarea_id = ANY(",
                     )
                     .push_bind(held.clone())
-                    .push("::uuid[]))");
+                    .push("::uuid[]) AND m.scanned_under IS NOT DISTINCT FROM ")
+                    .push_bind(current_scanner.clone())
+                    .push("::text)");
                 }
                 sql.push(") AND m.workarea_id = ANY(")
                     .push_bind(nodes.clone())
@@ -5808,6 +5882,32 @@ impl JournalStore for PgStore {
             greatest_version: greatest.map(version).transpose()?,
             live: row.try_get("live").map_err(backend)?,
         })
+    }
+
+    async fn scan_backlog(
+        &self,
+        tenant_id: Uuid,
+        current: Option<&str>,
+    ) -> Result<(u64, u64), StoreError> {
+        // One pass over the tenant's partition; doctor reads it once per
+        // run (ADR-0074 d28).
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let (held, all): (i64, i64) = sqlx::query_as(
+            "SELECT count(*) FILTER (WHERE status = 'held'), count(*) FROM memories \
+             WHERE tenant_id = $1 AND status <> 'erased' \
+               AND scanned_under IS DISTINCT FROM $2::text",
+        )
+        .bind(tenant_id)
+        .bind(current)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok((
+            u64::try_from(held).map_err(backend)?,
+            u64::try_from(all).map_err(backend)?,
+        ))
     }
 
     async fn held_count(&self, tenant_id: Uuid, nodes: &[Uuid]) -> Result<u64, StoreError> {
@@ -6708,13 +6808,19 @@ impl JournalStore for PgStore {
                 ))
                 .push_bind(selection.reader_key_id)
                 // Inside an in-progress scope, any author's held memory or
-                // derived fact (ADR-0030 d3).
+                // derived fact the scan did not hold (ADR-0030 d3; ADR-0065
+                // d5, amended 2026-11-10).
                 .push(format!(
                     " OR ({row}.status = 'held' AND NOT {row}.retirement \
+                     AND {row}.scan_finding IS NULL \
                      AND {row}.kind IN ('memory', 'derived_fact') AND {row}.workarea_id = ANY("
                 ))
                 .push_bind(selection.held_nodes.clone())
-                .push("::uuid[])))");
+                .push(format!(
+                    "::uuid[]) AND {row}.scanned_under IS NOT DISTINCT FROM "
+                ))
+                .push_bind(selection.current_scanner.clone())
+                .push("::text))");
         }
         if let Some(artifact_id) = selection.artifact_id {
             sql.push(" AND (e.src_artifact_id = ")

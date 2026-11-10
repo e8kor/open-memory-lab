@@ -690,6 +690,10 @@ Report by rule and location which stored versions current rules would refuse or 
 oml admin rescan [OPTIONS]
 ```
 
+| Option | Meaning |
+|---|---|
+| `--record-held` | Also record each held version's findings under current rules, so a held version written before an upgrade is served inside an in-progress workarea again when nothing is found; journals scan.findings_recorded |
+
 
 ## `oml write`
 

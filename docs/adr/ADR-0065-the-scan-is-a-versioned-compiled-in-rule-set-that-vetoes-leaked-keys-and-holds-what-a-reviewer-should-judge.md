@@ -7,7 +7,7 @@ answers: what replaces the marker scanner; how the rule set is named, versioned 
 
 # ADR-0065 — The scan is a versioned, compiled-in rule set that vetoes leaked keys and holds what a reviewer should judge
 
-**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05
+**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05 · amended 2026-11-10 (d1, d5, d13, d14, d15, as ADR-0074 d28 shapes them: the rule set becomes `oml-scan/1.1`; every rule reads the normalised view; a tag sequence passes only whole and RGI; a version records the rule set it was scanned under, and inside an in-progress scope another author's held version is served only when the server's rule set scanned it and found nothing; `oml admin rescan --record-held` records held versions)
 
 **Amends:** ADR-0019 (d4: the scanner port gains `version()`, the plugin's identity on the events
 it informs, as d4 already asks); ADR-0057 (d2, d6, d18: the secret-shaped path list becomes one
@@ -45,6 +45,12 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   is a new version (`oml-scan/2`). A verdict taken under `/1` stays valid against `/1`, and
   nothing is re-scanned retroactively ([admission](../architecture/admission.md), the rule-set
   registry). Same text, same findings: the set holds no state but its counters (d11).
+  Amended 2026-11-10: the changes to d5 and d14 below are `oml-scan/1.1`, a fix's minor
+  ([ADR-0074](ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md)
+  d21, d28), which `version()`, `/readyz` and every submission event from then on report. Each
+  stored version records the rule set it was scanned under, `memories.scanned_under` (migration
+  0038): admission's, or the recording rescan's (d13). The migration reads every row stored
+  before it as `oml-scan/1`.
 
 - **d2 — Each rule names a finding class, a rule id and one action.** Classes keep admission's
   `family.condition` vocabulary, so a review policy's `human_required_classes` can name them. The
@@ -147,7 +153,14 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   reader, so ordinary imperatives ("run the tests first") pass. Unicode: any bidirectional
   override or isolate (U+202A–U+202E, U+2066–U+2069) holds; more than three invisible format
   characters (U+200B, U+2060–U+2064, U+FEFF, U+180E, U+206A–U+206F) hold; any tag character
-  (U+E0000–U+E007F) outside an emoji flag sequence holds. Joiners and the soft hyphen are left
+  (U+E0000–U+E007F) outside an RGI emoji tag sequence holds. Amended 2026-11-10: the three RGI
+  tag sequences, the subdivision flags of England, Scotland and Wales (U+1F3F4, the id as tag
+  letters, U+E007F), are matched whole; a U+1F3F4 followed by any other tag characters is a
+  hidden payload and holds, where the first build skipped every tag character after the prefix.
+  Two or more variation selectors in a row (U+FE00–U+FE0F, U+E0100–U+E01EF) hold as
+  `variation-run`: one picks a glyph for the character before it, and a run picks nothing and
+  can carry a byte each. A joiner or another removable character between two selectors does
+  not end the run. Joiners and the soft hyphen are left
   alone, because scripts and emoji use them. Encoding: a run of 400 or more base64 characters
   that mixes cases and digits at 4.5 bits per character or more holds, as a payload no reviewer
   can read. A hold costs a reviewer's look and refuses nothing. A veto on a heuristic would
@@ -272,17 +285,63 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   each finding, and exits 1 when any finding vetoes, so a script can gate on it. The scanner
   port gains `findings()`, which reports without counting, so a rescan does not inflate the
   admission metric, and `info()`, which `/readyz` reads. One call per window is a scaling limit,
-  tracked as #140.
+  tracked as #140. Amended 2026-11-10 (ADR-0074 d28): `POST /v2/admin/rescan`, the same window
+  and answer, also records what it read of the window's held versions, and
+  `oml admin rescan --record-held` calls it; the plain verb keeps the read. Each held version
+  takes the server's rule set as its `scanned_under`, and a finding the rescan made becomes its
+  `scan_finding` unless it has one, journalled once per window as `scan.findings_recorded` with
+  each version's id and findings, an empty list when there are none, never its text; the
+  answer counts them as `recorded`. Nothing is promoted, rejected, demoted or deleted, and a
+  promoted version is not recorded: review already read it. It reads exactly what admission
+  reads: the body, the title and every view the version's format decodes, beside the anchor. It
+  takes no Idempotency-Key: a repeat reads the window again and journals again, and leaves the
+  same state. Every answer, read or recording, counts the tenant's versions scanned under
+  another rule set, `held_unrescanned` and `rescan_due`, which doctor reads with an admin key
+  as `scan_held_unrescanned` and `scan_rescan_due` (ADR-0074 d28), each a warning while above
+  zero.
 
-- **d14 — The veto rules also read the text as copy-paste mangles it.** A token copied from a web
+- **d14 — Every rule also reads the text as copy-paste mangles it** (amended 2026-11-10; the first
+  build ran the veto rules alone over the view). A token copied from a web
   page, a chat or an editor arrives with a zero-width space, a joiner or a soft hyphen inside
   it, a no-break space in a PEM header, or a fullwidth letter from an input method. Where a
-  field holds any of these, the scan builds a second view: U+00AD, U+200B–U+200D, U+2060 and
-  U+FEFF removed, U+00A0 made a space, then NFKC. It runs the rules over that view and keeps
-  its veto findings that the text itself did not already give. Hold findings come from the text
-  as written, so the invisible-character rule still sees the characters the view removed. A
-  pure ASCII field builds no view. Deliberate evasion (homoglyphs, percent or HTML encoding, a
-  token split across lines, base64) is not undone: the scan is for accidents.
+  field holds any of these, the scan builds two more views, each with U+00A0 made a space and
+  then NFKC: in the first, Unicode's default-ignorable code points are removed (U+00AD, U+034F,
+  U+061C, U+115F–U+1160, U+17B4–U+17B5, U+180B–U+180F, U+200B–U+200F, U+202A–U+202E,
+  U+2060–U+206F, U+3164, U+FE00–U+FE0F, U+FEFF, U+FFA0, U+FFF0–U+FFFB, U+1BCA0–U+1BCA3,
+  U+1D173–U+1D17A, U+E0000–U+E0FFF), which undoes one inside a word; in the second each becomes a
+  space, which undoes one used as the space between words. A view longer than d9's bound is
+  vetoed as `format.scan_bound`, as the text would be. No case
+  fold: the injection patterns match either case already, and folding would hide an upper-case
+  key from the veto patterns. The order is fixed: every pattern and run rule over the text as
+  written; the invisible-character rules over the text as written, since the view removes what
+  they count; then every pattern and run rule, veto and hold alike, over each view, keeping each
+  rule no earlier pass reported. A pure ASCII field builds neither. Last comes ADR-0074 d6's
+  letters-only view, built for every field: NFKD, lower case, the removable characters gone, and
+  every code point that is not a letter or a digit (Unicode L* and N*) dropped, so spaces,
+  punctuation, combining marks, the braille blank U+2800 and any invisible character go alike.
+  Only the injection phrases of three words or more read it, each written without separators
+  (`ignoreallpreviousinstructions`), since the view has no word boundaries; markup rules, which
+  name symbols, do not. An injection phrase hidden by any mix of characters inside and between
+  its words, or by combining marks or fullwidth forms, is held, which the first build let
+  through, and OML's own documentation still scans clean. Still not undone, and known:
+  mixed-script confusables (a Cyrillic о, small capitals), tracked as
+  [#225](https://github.com/e8kor/open-memory-lab/issues/225) for ADR-0074's skeleton view;
+  percent or HTML encoding, a token split across lines, and base64.
+
+- **d15 — Inside an in-progress scope, another author's held version is served only when the
+  server's rule set scanned it and found nothing** (added 2026-11-10, amending
+  [ADR-0030](ADR-0030-an-in-progress-workarea-serves-unreviewed-memories-inside-it-and-nothing-leaves-until-a-person-commits-it.md)
+  d3). ADR-0030 serves every author's held memory to readers inside an in-progress root. A held
+  version is among them only when its `scan_finding` is empty and its `scanned_under` is the
+  server's own (`None` matching `None` for a scanner that pins no version). Any other held version
+  stays its author's and its reviewer's, as R3 has it, by id, listing, recall under every
+  pipeline and claim edge, in both stores. The first build served a version the scan held, so a
+  hold finding reached other agents' context unreviewed. The stamp covers what the finding
+  cannot: a version an older rule set passed carries no finding, though the current rules may
+  hold it, so it waits for `oml admin rescan --record-held` to read it (d13). Rejected: rescanning each such
+  version on every read, which puts the scan in the read path and still records nothing a
+  reviewer can see; and serving unstamped versions until the operator runs the rescan, which
+  is the leak this decision closes.
 
 ## Consequences
 
@@ -298,6 +357,15 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   now refused where it used to pass (d4).
 - Rows written before this change are not re-scanned at admission (d1). `oml admin rescan`
   finds them (d13), and a person retires them. Nothing retires them on its own.
+- After an upgrade to `oml-scan/1.1`, run `oml admin rescan --record-held`. Until it runs,
+  sibling agents in an in-progress workarea do not see held versions written before the
+  upgrade (d15): it records each held version under `/1.1`, keeps the ones the amended rules
+  flag their author's, and serves the rest inside again. A promoted version it reports keeps its
+  state; a person reads each with `oml admin read` and demotes or retires it. Doctor warns with
+  `scan_held_unrescanned` until the rescan has run. Migration 0038 has no down step: a server
+  rolled back to a build before `/1.1` ignores `scanned_under` and serves as the three defects
+  did, and a version an older build writes during a rolling deploy carries no `scanned_under`, so
+  it stays its author's until the rescan reads it.
 - A rule that needs changing waits for `oml-scan/2`. That is slower than a toggle, and it is what
   keeps a journalled verdict reproducible.
 
