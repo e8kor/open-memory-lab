@@ -530,7 +530,7 @@ sequenceDiagram
   2. **A thin answer.** The answer has fewer than `k` hits and some candidate has E > 0.
      *Dropped by the phase 1 eval (d11), 2026-11-10:* on scopes of 12 to 25 memories at `k`
      10 it fired on 102 of the 121 queries the scope answered, silent on 16% where d11 asks
-     90%, while rule 1 alone was silent on 92% with 93% precision on the cross split
+     90%, while rule 1 alone was silent on 92% with 94% precision on the cross split
      ([Phase 1 as built](#phase-1-as-built-2026-11-10)).
   A hit count alone would rarely fire, since OR-semantics BM25 returns `k` weak hits from almost
   any populated scope; a candidate that is proportionally richer in the query's rare words is the
@@ -657,7 +657,7 @@ left a reading open, or named a surface main does not have, the build took the r
 | d4.2, d5, d13 test 9a | No source is ever unreachable: `search.sources.missing` and `503 cluster.source_unavailable` are not served, and test 9a proves its first half | both are ADR-0073's, which is proposed; on one database every node of R answers or the recall fails whole, as a scope does today |
 | d5 | The tenant policy is read and set at `GET` and `POST /v2/federation`, admin by key role, and from the CLI with `oml search federation`; `max_sources` is 0 to 64; a list name is a workarea name or id, as a scope is | d5 names the fields and the event, not the route; 64 keeps a list's validation and a wide recall's selection bounded |
 | d8 | The recall body has no `explain` member, so a cut's workarea paths are not served; `search.sources.cut` serves its count and lower bound | ADR-0049 d6's block is served as `search` on every answer; serving the paths waits for a member that asks for them |
-| d8, d11 | The widen hint fires on rule 1 alone, a candidate twice as rich per row with a word on two of its rows; rule 2, the thin answer, is dropped | d11's gate, measured: with both rules the hint was silent on 15.7% of the scope-answerable queries (90% asked) with 93.3% precision on the cross split; rule 1 alone was silent on 91.7% with 92.6% precision. Rule 2 fired on 101 of 102 firings, because a scope of 12 to 25 memories rarely holds `k` 10 matches. d11 changes the hint by amendment when it fails; the factor 2 and the floor stand |
+| d8, d11 | The widen hint fires on rule 1 alone, a candidate twice as rich per row with a word on two of its rows; rule 2, the thin answer, is dropped | d11's gate, measured: with both rules the hint was silent on 15.7% of the scope-answerable queries (90% asked) with 93.3% precision on the cross split; rule 1 alone was silent on 91.7% with 93.5% precision. Rule 2 fired on 101 of 102 firings, because a scope of 12 to 25 memories rarely holds `k` 10 matches. d11 changes the hint by amendment when it fails; the factor 2 and the floor stand |
 | d9 | `query_digest` gains `sources` only under `wide` or a list, so a `scope` recall digests as it did before | ADR-0059's members joined the digest the same way, only when sent |
 | d12 | The doctor line naming a key above 1,000 candidates reads the keys the lead met since it started, served to a tenant admin by `GET /v2/federation` | no use case lists a tenant's keys with their access, and a doctor line decides nothing |
 | d13 test 7 | On PostgreSQL the 100,000-row comparison runs by hand (`--ignored`); CI runs it at 5,000 rows; the double runs it at 100,000 | copying 100,000 rows through the postings and similar-key triggers takes minutes |
