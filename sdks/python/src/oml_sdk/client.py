@@ -49,6 +49,7 @@ from .generated.models import (
     RecallRequestKindsItem,
     RecallRequestMatch,
     RecallRequestSearch,
+    RecallRequestSourcesType0,
     RecallResponse,
     Serve,
     SubmitAccepted,
@@ -94,6 +95,7 @@ READ_RECALL = (
     "anchor_repo",
     "anchor_path_prefix",
     "origin_kinds",
+    "sources",
 )
 READ_LISTING = (
     "own",
@@ -407,6 +409,7 @@ class OmlClient:
         anchor_repo: str | None = None,
         anchor_path_prefix: str | None = None,
         origin_kinds: Sequence[str] | None = None,
+        sources: str | Sequence[str] | None = None,
     ) -> Memory | RecallResponse | MemoryPage:
         """Read in `oml_read`'s three modes (ADR-0039 d4). `artifact_id`
         fetches one version with its text, a `Memory`. `query` recalls over
@@ -414,6 +417,8 @@ class OmlClient:
         caller's own held rows with `include_unreviewed`, a `RecallResponse`.
         Neither lists one page, newest first, of the key's own rows, or with
         `own=False` the promoted tips of `workarea`'s subtree, a `MemoryPage`.
+        A recall's `sources` is `"scope"`, `"wide"` or a list of workarea names
+        searched alone, where the tenant enabled federation (ADR-0072 d5).
         An argument outside the mode, and `query` beside `artifact_id`, raise
         `request.validation` naming it before anything is sent; only the
         fields given are sent."""
@@ -426,6 +431,7 @@ class OmlClient:
             "max_tokens": max_tokens,
             "search": search,
             "match": match,
+            "sources": sources,
         }
         listing = {
             "own": own,
@@ -472,6 +478,11 @@ class OmlClient:
                 origin_kinds=[OriginKind(k) for k in origin_kinds]
                 if origin_kinds is not None
                 else UNSET,
+                sources=UNSET
+                if sources is None
+                else RecallRequestSourcesType0(sources)
+                if isinstance(sources, str)
+                else list(sources),
             )
             return self._send(
                 lambda: recall_memories.sync_detailed(client=self._api, body=request)

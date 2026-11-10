@@ -32,6 +32,7 @@ Each flag below belongs to `oml read`. The same fields exist on the `oml_read` M
 | Your own held memories too | `--include-unreviewed` | off |
 | Memories anchored in one repository | `--anchor-repo`, `--anchor-path-prefix` | no filter |
 | Memories from one origin | `--origin-kind`, repeatable | no filter |
+| Workareas beyond the scope | `--sources wide` or `--sources legal,product` | `scope`; needs federation on |
 
 The API also takes `max_tokens` and `include_text` ([token budgets](#token-budgets)). Without `--query`, `oml read` lists instead of searching. Run `oml read --help` for the listing flags.
 
@@ -128,6 +129,24 @@ The benchmarks run every pipeline through the same served path as an agent. The 
 | `bm25-sparse` | 0.730 | 83.7 ms |
 
 `bm25-postings` ranks the same as `bm25` and answers faster because an index serves it under row security. `bm25-sparse` ranks higher but stays opt-in, because its latency at larger scope misses the 50 ms bar. See [benchmarks](../benchmarks/index.md) for the scale runs.
+
+## Searching beyond the scope
+
+`sources` says where a recall searches ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). It is off until a tenant admin enables federation (`oml search federation --enabled on`); until then `wide` and a list are refused, never answered as `scope`.
+
+| `sources` | Searches | Scores with the statistics of |
+|---|---|---|
+| `scope` (default) | the workarea's subtree, as before | the subtree |
+| `wide` | the subtree, plus the `committed` and `validated` workareas the key reads elsewhere that accept federated reads | the subtree and every such workarea, searched or not |
+| a list of names | exactly the listed workareas, answered whole or refused | the listed workareas |
+
+Below the tenant's `max_sources` (8 by default), `wide` searches every such workarea. Above it, it searches those holding the largest share of the query's matching rows, each word weighted by its rarity, ties broken by name; `search.sources.cut` counts the rest. A large workarea ranks high only by holding most of the matches, so `universe` beside a crew of a few hundred memories is chosen on its share, not its size.
+
+The statistics are fixed before any workarea is chosen, so no hit's score depends on which workareas were searched: with `bm25`, the answer for any searched set is the full search's answer restricted to that set. The same query, key, memories and settings give the same answer; selection reads no clock, no randomness and no model.
+
+The answer says what it searched. Under `wide` or a list, `search.sources` lists each workarea searched with `via` (`scope` or `federated`), its estimate and the query words its rows hold, and each hit carries `via` beside its `workarea_path`. A `scope` answer on a federated tenant carries `search.widen` when a workarea the key reads elsewhere holds the query's words at least twice as often per memory as the scope, on at least two memories, or when the answer is short of `k` and such a workarea holds any of them. It names no workarea; a retry with `sources: "wide"` searches them. Every name and number in an answer is of a workarea the key reads.
+
+Each `scope` and `wide` recall of a federated tenant reads the per-workarea word counts of every such workarea, exact and never sampled; a list reads the listed ones. A tenant with federation off reads nothing more. [Workareas](workareas.md#federated-recall) covers the settings and how to make a workarea findable without granting it.
 
 ## What search does not do
 

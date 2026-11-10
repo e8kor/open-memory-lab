@@ -126,6 +126,12 @@ pub mod event_types {
     /// An admin key turned the tenant's recall query text on or off
     /// (ADR-0054 d3).
     pub const TELEMETRY_SETTINGS_SET: &str = "telemetry.settings_set";
+    /// A tenant admin set the tenant's federation policy: `enabled`,
+    /// `default_sources` and `max_sources` (ADR-0072 d5).
+    pub const FEDERATION_POLICY_SET: &str = "federation.policy_set";
+    /// A person's dreamer key or a tenant admin set a workarea's federation
+    /// field, `accept_federated` (ADR-0072 d5).
+    pub const WORKAREA_FEDERATION_SET: &str = "workarea.federation_set";
     /// An admin key read the tenant's recall events: how many, how many
     /// carried query text, and the page's bounds (ADR-0054 d2, as amended).
     pub const TELEMETRY_EVENTS_READ: &str = "telemetry.events_read";

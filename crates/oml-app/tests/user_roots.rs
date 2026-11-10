@@ -214,6 +214,7 @@ async fn approve(app: &TestApp, reviewer: &str, id: Uuid) {
 
 fn recall(query: &str, workarea: Option<&str>) -> RecallRequest {
     RecallRequest {
+        sources: None,
         timings: false,
         anchor: oml_app::types::AnchorFilter::default(),
         query: query.to_owned(),

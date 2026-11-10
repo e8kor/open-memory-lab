@@ -986,6 +986,70 @@ fn bm25_sql_within(anchor: &str) -> String {
     )
 }
 
+/// The served versions on the reference set `$10` of a federated recall
+/// (ADR-0072 d4.2, d7): promoted tips of the kinds `$3`, unexpired at
+/// `$NOW`, never a held row. Every BM25 statistic is taken over these rows,
+/// never over the searched ones.
+const REFERENCE_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
+       AND (m.valid_until_us IS NULL OR m.valid_until_us > $NOW::int8) \
+       AND m.kind = ANY($3::text[]) AND m.status = 'promoted' AND m.is_tip \
+       AND m.workarea_id = ANY($10::uuid[])";
+
+/// [`bm25_sql_within`] under a reference set (ADR-0072 d7): the row count,
+/// the mean length and each form's document frequency are taken over
+/// [`REFERENCE_SCOPE`], `$10` the reference nodes, and the anchor's binds
+/// start at `$11`; the scored rows are the candidate scope's, so a row's
+/// score is a function of the row, the query and the reference set alone.
+/// A scored row holding a form no reference row holds scores it with a
+/// document frequency of 0. Exported so the suite plans the statement the
+/// adapter runs.
+#[must_use]
+pub fn bm25_reference_sql_within(anchor: &str) -> String {
+    // The filter narrows the scored rows, never the term frequencies the
+    // document frequencies count.
+    let within = if anchor.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "WHERE EXISTS (SELECT 1 FROM memories m WHERE m.tenant_id = $1 AND m.id = tf.id{anchor})"
+        )
+    };
+    let words = SEARCH_WORDS.replace("$1", "$6");
+    with_now(
+        &format!(
+            "WITH {words}, \
+         forms AS (SELECT DISTINCT kept.w, f FROM kept \
+                   CROSS JOIN LATERAL unnest(array_append(COALESCE(ts_lexize('english_stem', kept.w), '{{}}'::text[]), kept.w)) f), \
+         q AS (SELECT string_agg(DISTINCT '''' || replace(replace(f, '\\', '\\\\'), '''', '''''') || '''', ' | ')::tsquery AS tq, \
+                      array_agg(DISTINCT f) AS fa FROM forms), \
+         stats AS (SELECT count(*)::float8 AS n, GREATEST(COALESCE(avg(m.search_len), 1), 1)::float8 AS avgdl \
+                   FROM memories m WHERE {REFERENCE_SCOPE}), \
+         df AS (SELECT u.lexeme, count(*)::float8 AS df \
+                FROM memories m CROSS JOIN q \
+                CROSS JOIN LATERAL unnest(ts_filter(setweight(m.search_vector, 'A', q.fa), '{{a}}')) u \
+                WHERE {REFERENCE_SCOPE} AND m.search_vector @@ q.tq GROUP BY u.lexeme), \
+         tf AS MATERIALIZED (SELECT m.id, m.body_bytes, m.search_len::float8 AS dl, u.lexeme, \
+                                    GREATEST(cardinality(u.positions), 1)::float8 AS tf \
+                             FROM memories m CROSS JOIN q \
+                             CROSS JOIN LATERAL unnest(ts_filter(setweight(m.search_vector, 'A', q.fa), '{{a}}')) u \
+                             WHERE {SEARCH_SCOPE} AND m.search_vector @@ q.tq), \
+         per AS (SELECT tf.id, tf.body_bytes, forms.w, \
+                        max(ln(1 + (s.n - COALESCE(df.df, 0) + 0.5) / (COALESCE(df.df, 0) + 0.5)) \
+                            * tf.tf * 2.2 / (tf.tf + 1.2 * (0.25 + 0.75 * tf.dl / s.avgdl))) AS c \
+                 FROM tf LEFT JOIN df USING (lexeme) JOIN forms ON forms.f = tf.lexeme CROSS JOIN stats s \
+                 {within} \
+                 GROUP BY tf.id, tf.body_bytes, forms.w), \
+         scored AS (SELECT id, body_bytes, sum(c) AS score, array_agg(w ORDER BY w COLLATE \"C\") AS words \
+                    FROM per GROUP BY id, body_bytes) \
+         SELECT id, body_bytes, score::float4 AS score, words AS matched FROM scored \
+         WHERE (NOT $8 OR cardinality(words) = (SELECT count(*) FROM kept)) \
+         ORDER BY score DESC, id ASC \
+         LIMIT $7"
+        ),
+        9,
+    )
+}
+
 /// The forms the `bm25` and `bm25_postings` retrievers read for `$1`: each
 /// kept query word ([`SEARCH_WORDS`]) with its exact form and its English
 /// stem, one row per distinct (word, form), in byte order (ADR-0049 d12;
@@ -1015,6 +1079,40 @@ const POSTINGS_COUNTS: &str = "SELECT NULL::int8 AS token_id, COALESCE(sum(c.row
      WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) AND c.token_id = ANY($4::int8[]) \
      GROUP BY c.token_id";
+
+/// The reference set's counts per node (ADR-0072 d4.2, d12): for each node
+/// of `$2`, a row with no token holding its served versions of the memory
+/// kinds `$3`; then each token of `$4` with its document frequency there.
+/// Read by the counts' primary keys, `workarea_id = ANY` and `token_id =
+/// ANY` being leakproof equalities.
+const REFERENCE_COUNTS: &str = "SELECT c.workarea_id, NULL::int8 AS token_id, \
+            COALESCE(sum(c.rows), 0)::int8 AS n \
+     FROM search_workarea_rows c \
+     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+       AND c.memory_kind = ANY($3::int2[]) \
+     GROUP BY c.workarea_id \
+     UNION ALL \
+     SELECT c.workarea_id, c.token_id, sum(c.rows)::int8 \
+     FROM search_term_rows c \
+     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+       AND c.memory_kind = ANY($3::int2[]) AND c.token_id = ANY($4::int8[]) \
+     GROUP BY c.workarea_id, c.token_id";
+
+/// The served versions on the reference nodes `$2` of the kinds `$3` whose
+/// valid time ended at or before the request's now `$4`, with their node:
+/// the rows the counts hold that the reference set does not (ADR-0072
+/// d4.2). Read by the `memories_valid_until` index's condition.
+const REFERENCE_EXPIRED: &str = "SELECT m.id, m.workarea_id FROM memories m \
+     WHERE m.tenant_id = $1 AND m.valid_until_us <= $4::int8 AND m.status = 'promoted' \
+       AND m.is_tip AND NOT m.retirement AND m.workarea_id = ANY($2::uuid[]) \
+       AND m.kind = ANY($3::text[])";
+
+/// Which tokens of `$3` each expired version `$2` holds, from its postings
+/// by the `(memory_id)` index.
+const REFERENCE_EXPIRED_TOKENS: &str = "SELECT DISTINCT p.memory_id, p.token_id \
+     FROM search_postings p \
+     WHERE p.tenant_id = $1 AND p.memory_id = ANY($2::uuid[]) AND p.kind = 1 \
+       AND p.token_id = ANY($3::int8[])";
 
 /// The own held rows a recall may rank: the held versions of the keys `$2`
 /// ([`held_authors`]) on their nodes `$3` of the kinds `$4`, never a
@@ -2937,6 +3035,38 @@ async fn apply_fold(
         MetadataFold::TenantGenesis { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::AdminRead => {}
+        MetadataFold::FederationPolicySet(policy) => {
+            sqlx::query(
+                "UPDATE tenants SET federation_enabled = $2, federation_default_sources = $3, \
+                 federation_max_sources = $4 WHERE id = $1",
+            )
+            .bind(tenant_id)
+            .bind(policy.enabled)
+            .bind(policy.default_sources.as_str())
+            .bind(i32::try_from(policy.max_sources).map_err(backend)?)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+        }
+        MetadataFold::WorkareaFederationSet {
+            workarea_id,
+            accept_federated,
+        } => {
+            let updated = sqlx::query(
+                "UPDATE workareas SET accept_federated = $3 WHERE tenant_id = $1 AND id = $2",
+            )
+            .bind(tenant_id)
+            .bind(workarea_id)
+            .bind(accept_federated)
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if updated.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "workarea {workarea_id} is not held by this tenant"
+                )));
+            }
+        }
         MetadataFold::SearchDefaultSet { pipeline } => {
             sqlx::query("UPDATE tenants SET search_default = $2 WHERE id = $1")
                 .bind(tenant_id)
@@ -4301,6 +4431,10 @@ struct ScopeBinds<'a> {
     /// The request's now, the least `int8` under `include_expired`: every
     /// statement's expiry bound (proposed ADR-0059 d3).
     expired_at: i64,
+    /// A federated recall's reference set: every BM25 statistic and the
+    /// pruned words are taken over its served rows alone (ADR-0072 d4.2,
+    /// d7).
+    reference: Option<&'a [Uuid]>,
 }
 
 /// What the `bm25_postings` retriever read: the query's words, its list,
@@ -4390,21 +4524,28 @@ impl PgStore {
         scope: &ScopeBinds<'_>,
         query: RetrievalQuery<'_>,
     ) -> Result<Vec<Candidate>, StoreError> {
-        let sql = bm25_sql_within(&scope.anchor.row("m", 10));
+        // Under a reference set its nodes are `$10` and the anchor's binds
+        // follow (ADR-0072 d7).
+        let sql = match scope.reference {
+            None => bm25_sql_within(&scope.anchor.row("m", 10)),
+            Some(_) => bm25_reference_sql_within(&scope.anchor.row("m", 11)),
+        };
+        let mut statement = sqlx::query(&sql)
+            .bind(scope.tenant_id)
+            .bind(scope.nodes)
+            .bind(scope.kinds)
+            .bind(scope.authors)
+            .bind(scope.held_nodes)
+            .bind(query.query)
+            .bind(i64::try_from(query.k).unwrap_or(i64::MAX))
+            .bind(query.match_mode == MatchMode::All)
+            .bind(scope.expired_at);
+        if let Some(reference) = scope.reference {
+            statement = statement.bind(reference);
+        }
         scope
             .anchor
-            .bind(
-                sqlx::query(&sql)
-                    .bind(scope.tenant_id)
-                    .bind(scope.nodes)
-                    .bind(scope.kinds)
-                    .bind(scope.authors)
-                    .bind(scope.held_nodes)
-                    .bind(query.query)
-                    .bind(i64::try_from(query.k).unwrap_or(i64::MAX))
-                    .bind(query.match_mode == MatchMode::All)
-                    .bind(scope.expired_at),
-            )
+            .bind(statement)
             .fetch_all(&mut **tx)
             .await
             .map_err(backend)?
@@ -4459,10 +4600,12 @@ impl PgStore {
             t
         };
         // The readable rows: the served versions' counts on the readable
-        // nodes, and the own held rows read by the author index.
+        // nodes, and the own held rows read by the author index; under a
+        // reference set, its served versions' counts alone (ADR-0072 d4.2).
+        let counted_nodes = scope.reference.unwrap_or(scope.nodes);
         let counted: Vec<(Option<i64>, i64, i64)> = sqlx::query_as(POSTINGS_COUNTS)
             .bind(scope.tenant_id)
-            .bind(scope.nodes)
+            .bind(counted_nodes)
             .bind(&memory_kinds)
             .bind(&tokens)
             .fetch_all(&mut **tx)
@@ -4486,7 +4629,7 @@ impl PgStore {
         // on the readable nodes are taken out by id (proposed ADR-0059 d3).
         let expired: Vec<(Uuid, i32)> = sqlx::query_as(POSTINGS_EXPIRED)
             .bind(scope.tenant_id)
-            .bind(scope.nodes)
+            .bind(counted_nodes)
             .bind(scope.kinds)
             .bind(scope.expired_at)
             .fetch_all(&mut **tx)
@@ -4528,16 +4671,20 @@ impl PgStore {
                     .await
                     .map_err(backend)?
             };
-        rows += held.len() as u64;
-        total_len += held
-            .iter()
-            .map(|(_, len)| u64::try_from(*len).unwrap_or(0))
-            .sum::<u64>();
+        // Under a reference set the own held rows are scored and never
+        // counted: R holds served rows alone (ADR-0072 d7).
+        if scope.reference.is_none() {
+            rows += held.len() as u64;
+            total_len += held
+                .iter()
+                .map(|(_, len)| u64::try_from(*len).unwrap_or(0))
+                .sum::<u64>();
+        }
         if rows == 0 {
             return Ok(empty(terms));
         }
         let held_ids: Vec<Uuid> = held.iter().map(|(id, _)| *id).collect();
-        if !held_ids.is_empty() {
+        if !held_ids.is_empty() && scope.reference.is_none() {
             let held_counted: Vec<(i64, i64)> = sqlx::query_as(POSTINGS_OWN_HELD_DF)
                 .bind(scope.tenant_id)
                 .bind(&held_ids)
@@ -4769,6 +4916,7 @@ impl Retriever for PgStore {
             held_nodes: &held_nodes,
             anchor: &anchor,
             expired_at,
+            reference: scope.reference.as_deref(),
         };
         let mut access = Access::Scan;
         let mut pruned = Vec::new();
@@ -4813,6 +4961,11 @@ impl Retriever for PgStore {
                     c.matched.retain(|piece| terms.contains(piece));
                 }
                 list
+            }
+            // A federated recall's `bm25` takes its statistics over the
+            // reference set (ADR-0072 d7).
+            RetrieverKind::Bm25 if scope.reference.is_some() => {
+                Self::bm25_scan(&mut tx, &scoped, query).await?
             }
             RetrieverKind::KeywordAny | RetrieverKind::Bm25 | RetrieverKind::Trigram => {
                 if kind == RetrieverKind::Trigram {
@@ -5688,6 +5841,220 @@ impl JournalStore for PgStore {
             .map(EventTime::parse)
             .transpose()
             .map_err(backend)
+    }
+
+    async fn federation_policy(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<oml_app::federation::FederationPolicy, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row: Option<(bool, String, i32)> = sqlx::query_as(
+            "SELECT federation_enabled, federation_default_sources, federation_max_sources \
+             FROM tenants WHERE id = $1",
+        )
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let Some((enabled, default_sources, max_sources)) = row else {
+            return Ok(oml_app::federation::FederationPolicy::default());
+        };
+        Ok(oml_app::federation::FederationPolicy {
+            enabled,
+            default_sources: oml_app::federation::DefaultSources::parse(&default_sources)
+                .ok_or_else(|| {
+                    StoreError::Backend(format!(
+                        "default_sources {default_sources:?} is not a mode"
+                    ))
+                })?,
+            max_sources: u32::try_from(max_sources).map_err(backend)?,
+        })
+    }
+
+    async fn federation_declining(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+    ) -> Result<Vec<Uuid>, StoreError> {
+        if nodes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let declining: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM workareas WHERE tenant_id = $1 AND id = ANY($2::uuid[]) \
+             AND NOT accept_federated ORDER BY id",
+        )
+        .bind(tenant_id)
+        .bind(nodes)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(declining)
+    }
+
+    /// The reference set's counts (ADR-0072 d4.2, d12): the query's forms,
+    /// then per node the served versions' counts and each form's document
+    /// frequency, read by the counts' primary keys with leakproof
+    /// equalities; then the versions expired at the request's now taken
+    /// out by id. A word's frequency is its most frequent form's.
+    async fn reference_counts(
+        &self,
+        tenant_id: Uuid,
+        scope: &oml_app::federation::CountsScope,
+        query: &str,
+    ) -> Result<oml_app::federation::ReferenceCounts, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let forms: Vec<(String, String)> = sqlx::query_as(&search_forms_sql())
+            .bind(query)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        let mut words: Vec<String> = forms.iter().map(|(w, _)| w.clone()).collect();
+        words.dedup();
+        let kinds = hit_kinds(&scope.kinds);
+        let memory_kinds: Vec<i16> = kinds
+            .iter()
+            .filter_map(|k| match *k {
+                "memory" => Some(1_i16),
+                "derived_fact" => Some(2_i16),
+                _ => None,
+            })
+            .collect();
+        let tokens: Vec<i64> = {
+            let mut t: Vec<i64> = forms.iter().map(|(_, f)| token_id(f)).collect();
+            t.sort_unstable();
+            t.dedup();
+            t
+        };
+        let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
+        let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
+        if !scope.nodes.is_empty() {
+            let counted: Vec<(Uuid, Option<i64>, i64)> = sqlx::query_as(REFERENCE_COUNTS)
+                .bind(tenant_id)
+                .bind(&scope.nodes)
+                .bind(&memory_kinds)
+                .bind(&tokens)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(backend)?;
+            for (node, token, n) in counted {
+                let n = u64::try_from(n).map_err(backend)?;
+                match token {
+                    None => *rows.entry(node).or_default() += n,
+                    Some(token) => *df.entry((node, token)).or_default() += n,
+                }
+            }
+            if let Some(now) = scope.expired_at {
+                let expired: Vec<(Uuid, Uuid)> = sqlx::query_as(REFERENCE_EXPIRED)
+                    .bind(tenant_id)
+                    .bind(&scope.nodes)
+                    .bind(&kinds)
+                    .bind(now)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                if !expired.is_empty() {
+                    let home: BTreeMap<Uuid, Uuid> = expired.iter().copied().collect();
+                    for node in home.values() {
+                        if let Some(r) = rows.get_mut(node) {
+                            *r = r.saturating_sub(1);
+                        }
+                    }
+                    let ids: Vec<Uuid> = home.keys().copied().collect();
+                    let held: Vec<(Uuid, i64)> = sqlx::query_as(REFERENCE_EXPIRED_TOKENS)
+                        .bind(tenant_id)
+                        .bind(&ids)
+                        .bind(&tokens)
+                        .fetch_all(&mut *tx)
+                        .await
+                        .map_err(backend)?;
+                    for (memory_id, token) in held {
+                        if let Some(node) = home.get(&memory_id)
+                            && let Some(d) = df.get_mut(&(*node, token))
+                        {
+                            *d = d.saturating_sub(1);
+                        }
+                    }
+                }
+            }
+        }
+        tx.commit().await.map_err(backend)?;
+        // Each word's forms, in the words' order.
+        let word_forms: Vec<Vec<i64>> = words
+            .iter()
+            .map(|w| {
+                let mut f: Vec<i64> = forms
+                    .iter()
+                    .filter(|(fw, _)| fw == w)
+                    .map(|(_, f)| token_id(f))
+                    .collect();
+                f.sort_unstable();
+                f.dedup();
+                f
+            })
+            .collect();
+        let nodes: BTreeMap<Uuid, oml_app::domain::federation::SourceCounts> = rows
+            .iter()
+            .map(|(node, n)| {
+                (
+                    *node,
+                    oml_app::domain::federation::SourceCounts {
+                        rows: *n,
+                        df: word_forms
+                            .iter()
+                            .map(|fs| {
+                                fs.iter()
+                                    .map(|t| df.get(&(*node, *t)).copied().unwrap_or(0))
+                                    .max()
+                                    .unwrap_or(0)
+                            })
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+        // The words a pruning pipeline drops, decided over the set's sums
+        // as `bm25_postings` decides them (ADR-0052 d6; ADR-0072 d4.2).
+        let pruned = if scope.prunes {
+            let total_rows: u64 = rows.values().sum();
+            let entries: Vec<Vec<(i64, u64)>> = word_forms
+                .iter()
+                .map(|fs| {
+                    fs.iter()
+                        .map(|t| {
+                            let n: u64 = df
+                                .iter()
+                                .filter(|((_, tok), _)| tok == t)
+                                .map(|(_, n)| *n)
+                                .sum();
+                            (*t, n)
+                        })
+                        .filter(|(_, n)| *n > 0)
+                        .collect()
+                })
+                .collect();
+            self.prune
+                .pruned(&entries, total_rows)
+                .into_iter()
+                .map(|i| words[i].clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(oml_app::federation::ReferenceCounts {
+            words,
+            pruned,
+            nodes,
+        })
     }
 
     async fn steering_in_force(

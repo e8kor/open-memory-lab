@@ -130,6 +130,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
         .await
         .expect("submit");
     let req = RecallRequest {
+        sources: None,
         timings: false,
         anchor: oml_app::types::AnchorFilter::default(),
         query: "deploy fridays".to_owned(),

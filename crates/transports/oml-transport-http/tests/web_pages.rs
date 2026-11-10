@@ -1924,6 +1924,7 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
         .recall(
             rig.boot.admin_key.value.as_str(),
             &oml_app::types::RecallRequest {
+                sources: None,
                 timings: false,
                 anchor: oml_app::types::AnchorFilter::default(),
                 query: "zebra".to_owned(),

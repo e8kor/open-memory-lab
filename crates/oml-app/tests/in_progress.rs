@@ -237,6 +237,7 @@ impl World {
             .recall(
                 key.value.as_str(),
                 &RecallRequest {
+                    sources: None,
                     timings: false,
                     include_expired: false,
                     now: None,
@@ -359,6 +360,7 @@ async fn unreviewed_rows_are_served_inside_an_in_progress_scope_and_invisible_fr
             .recall(
                 stranger.value.as_str(),
                 &RecallRequest {
+                    sources: None,
                     timings: false,
                     include_expired: false,
                     now: None,

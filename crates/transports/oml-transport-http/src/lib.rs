@@ -20,6 +20,7 @@
 
 mod console;
 pub mod error;
+mod federation;
 pub mod mcp;
 pub mod oauth;
 mod rescan;
@@ -123,6 +124,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/workareas/{workarea}/offers"),
     ("POST", "/v2/workareas/{workarea}/crew"),
     ("POST", "/v2/workareas/{workarea}/mode"),
+    ("POST", "/v2/workareas/{workarea}/federation"),
     ("POST", "/v2/workareas/{workarea}/transitions"),
     (
         "POST",
@@ -150,6 +152,8 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/admin/rescan"),
     ("GET", "/v2/search"),
     ("POST", "/v2/search/default"),
+    ("GET", "/v2/federation"),
+    ("POST", "/v2/federation"),
     ("GET", "/v2/usage/settings"),
     ("POST", "/v2/usage/settings"),
     ("GET", "/v2/usage/events"),
@@ -357,6 +361,7 @@ where
             ("GET", "/v2/workareas/{workarea}/offers") => get(Self::workarea_offers),
             ("POST", "/v2/workareas/{workarea}/crew") => post(Self::set_workarea_crew),
             ("POST", "/v2/workareas/{workarea}/mode") => post(Self::set_workarea_mode),
+            ("POST", "/v2/workareas/{workarea}/federation") => post(Self::set_workarea_federation),
             ("POST", "/v2/workareas/{workarea}/transitions") => post(Self::propose_transition),
             ("POST", "/v2/workareas/{workarea}/transitions/{transition_id}/ratify") => {
                 post(Self::ratify_transition)
@@ -383,6 +388,8 @@ where
             ("POST", "/v2/admin/rescan") => post(Self::rescan_record_route),
             ("GET", "/v2/search") => get(Self::search_settings),
             ("POST", "/v2/search/default") => post(Self::set_search_default),
+            ("GET", "/v2/federation") => get(Self::federation_settings),
+            ("POST", "/v2/federation") => post(Self::set_federation_policy),
             ("GET", "/v2/usage/settings") => get(Self::usage_settings),
             ("POST", "/v2/usage/settings") => post(Self::set_usage_settings),
             ("GET", "/v2/usage/events") => get(Self::usage_events),
@@ -925,6 +932,7 @@ where
             }
         };
         let workarea = optional_reference("/workarea", req.workarea.as_deref())?;
+        let sources = parse_sources(req.sources.as_ref())?;
         // Feedback on the key's last recall rides this one: refused by its
         // field before the recall runs, never changing what it answers
         // (ADR-0054 d6).
@@ -956,6 +964,7 @@ where
                         req.origin_kinds.as_deref(),
                         "/",
                     )?,
+                    sources,
                 },
             )
             .await
@@ -971,7 +980,7 @@ where
             .hits
             .iter()
             .map(|hit| {
-                json!({
+                let mut value = json!({
                     "memory": memory_json(&hit.served, include_text),
                     // A reranked hit's score is its relevance, printed as set
                     // (ADR-0053 d7).
@@ -992,7 +1001,13 @@ where
                         })).collect::<Vec<_>>(),
                         "expanded": hit.tokens.iter().filter(|t| t.expanded).map(|t| t.token.as_str()).collect::<Vec<_>>(),
                     },
-                })
+                });
+                // A federated answer's hit says whether its workarea is the
+                // scope's or another team's (ADR-0072 d8).
+                if let (Some(via), Some(obj)) = (hit.source, value.as_object_mut()) {
+                    obj.insert("via".to_owned(), Value::from(via.as_str()));
+                }
+                value
             })
             .collect();
         // What ran and what the query was read as (ADR-0049 d5, d6).
@@ -1021,6 +1036,24 @@ where
                 })),
             },
         });
+        // `search.sources` under wide or a list, and `search.widen` on a
+        // scope answer of a federated tenant; a tenant with federation off
+        // answers neither (ADR-0072 d8).
+        if let Some(search) = response.get_mut("search").and_then(Value::as_object_mut) {
+            if let Some(report) = &result.sources {
+                search.insert("sources".to_owned(), sources_json(report));
+            }
+            if let Some(widen) = &result.widen {
+                search.insert(
+                    "widen".to_owned(),
+                    json!({
+                        "sources": "wide",
+                        "candidates": widen.candidates,
+                        "matches_at_least": widen.matches_at_least,
+                    }),
+                );
+            }
+        }
         // The budget object is present if and only if max_tokens was sent
         // (retrieval.md token budgets; ADR-0025 d7).
         if let (Some(budget), Some(obj)) = (&result.budget, response.as_object_mut()) {
@@ -2959,6 +2992,59 @@ struct RecallBody {
     anchor_repo: Option<String>,
     anchor_path_prefix: Option<String>,
     origin_kinds: Option<Vec<String>>,
+    /// Where to search: `scope`, `wide` or a list of workareas (ADR-0072
+    /// d5); parsed by [`parse_sources`].
+    sources: Option<Value>,
+}
+
+/// `sources` on recall (ADR-0072 d5): a string is a mode, `scope` or
+/// `wide`, and an array a fixed set of workarea names or ids; any other
+/// shape, and a non-string element, is `request.validation` at `/sources`.
+fn parse_sources(value: Option<&Value>) -> Result<Option<oml_app::federation::Sources>, ApiError> {
+    use oml_app::federation::Sources;
+    let refused = |message: &str| {
+        ApiError::validation(message.to_owned()).with_details(json!({ "field": "/sources" }))
+    };
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(mode)) => match mode.as_str() {
+            "scope" => Ok(Some(Sources::Scope)),
+            "wide" => Ok(Some(Sources::Wide)),
+            other => Err(refused(&format!(
+                "sources is scope, wide or a list of workareas, not {other:?}"
+            ))),
+        },
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_str().map(str::to_owned).ok_or_else(|| {
+                    refused("every element of a sources list is a workarea name or id")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|names| Some(Sources::List(names))),
+        Some(_) => Err(refused("sources is scope, wide or a list of workareas")),
+    }
+}
+
+/// `search.sources` (ADR-0072 d8): the mode, the candidates considered, the
+/// sources searched with why, and the tail cut.
+fn sources_json(report: &oml_app::federation::SourcesReport) -> Value {
+    json!({
+        "mode": report.mode,
+        "considered": report.considered,
+        "searched": report.searched.iter().map(|s| json!({
+            "workarea_id": s.workarea_id,
+            "workarea_path": s.workarea_path,
+            "via": s.via.as_str(),
+            "estimate": s.estimate,
+            "matched": { "words": s.matched_words },
+        })).collect::<Vec<_>>(),
+        "cut": {
+            "count": report.cut.count,
+            "matches_at_least": report.cut.matches_at_least,
+        },
+    })
 }
 
 /// openapi.yaml `SourceCheckRequest`, closed (ADR-0057 d5).
@@ -4456,6 +4542,11 @@ pub fn workarea_view_json(info: &WorkareaInfo) -> Value {
             ),
         );
         obj.insert("policy".to_owned(), info.policy.clone());
+        // The node's federation field, beside the policy (ADR-0072 d5).
+        obj.insert(
+            "federation".to_owned(),
+            json!({ "accept_federated": info.federation.accept_federated }),
+        );
         obj.insert(
             "pending_transitions".to_owned(),
             info.pending_transitions

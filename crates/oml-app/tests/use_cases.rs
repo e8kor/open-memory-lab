@@ -217,6 +217,7 @@ fn submit_into(idem: &str, body: &str, workarea_id: Uuid) -> SubmitRequest {
 
 fn recall_req(query: &str) -> RecallRequest {
     RecallRequest {
+        sources: None,
         timings: false,
         anchor: oml_app::types::AnchorFilter::default(),
         query: query.to_owned(),
@@ -1201,6 +1202,7 @@ async fn an_x_oml_workarea_outside_the_grants_is_not_found() {
             .recall(
                 &agent.value,
                 &RecallRequest {
+                    sources: None,
                     timings: false,
                     workarea: Some(node.into()),
                     ..recall_req("x")
@@ -1304,6 +1306,7 @@ async fn a_global_denial_takes_a_granted_subtree_out_of_recall() {
         .recall(
             &reader.value,
             &RecallRequest {
+                sources: None,
                 timings: false,
                 workarea: Some(quarantine.into()),
                 ..recall_req("canary")
@@ -1709,6 +1712,7 @@ fn hit_ids_of(recall: &RecallResult) -> Vec<Uuid> {
 /// A recall of `query` at `scope`.
 fn recall_at(query: &str, scope: Uuid) -> RecallRequest {
     RecallRequest {
+        sources: None,
         timings: false,
         workarea: Some(scope.into()),
         ..recall_req(query)
@@ -1930,6 +1934,7 @@ async fn kinds_filters_hits_only() {
             .recall(
                 &reader.value,
                 &RecallRequest {
+                    sources: None,
                     timings: false,
                     kinds: kinds.clone(),
                     ..recall_req("canary")
@@ -4033,6 +4038,7 @@ fn tokens(text: &str) -> u64 {
 /// A recall of `query` that takes the calling key's own held rows too.
 fn own_held(query: &str) -> RecallRequest {
     RecallRequest {
+        sources: None,
         timings: false,
         include_unreviewed: Some(true),
         ..recall_req(query)
@@ -4042,6 +4048,7 @@ fn own_held(query: &str) -> RecallRequest {
 /// A recall of `query` under a budget of `max_tokens`.
 fn budgeted(query: &str, max_tokens: u64) -> RecallRequest {
     RecallRequest {
+        sources: None,
         timings: false,
         max_tokens: Some(max_tokens),
         ..recall_req(query)
@@ -4219,6 +4226,7 @@ async fn own_held_rows_count_against_k_and_the_budget() {
         .recall(
             &author.value,
             &RecallRequest {
+                sources: None,
                 timings: false,
                 max_tokens: Some(tokens(held_text)),
                 ..own_held(query)
@@ -4333,6 +4341,7 @@ async fn include_own_held_never_widens_the_workareas_served() {
         .recall(
             &author.value,
             &RecallRequest {
+                sources: None,
                 timings: false,
                 workarea: Some(quotes.into()),
                 ..own_held("canary")
@@ -4351,6 +4360,7 @@ async fn include_own_held_never_widens_the_workareas_served() {
             .recall(
                 &author.value,
                 &RecallRequest {
+                    sources: None,
                     timings: false,
                     workarea: Some(scope.into()),
                     ..own_held("canary")
@@ -4627,6 +4637,7 @@ async fn a_recall_without_max_tokens_carries_no_budget_object() {
 async fn max_tokens_with_include_bodies_false_is_request_validation() {
     let (app, reader, _steering, _hits, _s, _t) = budget_fixture().await;
     let bodiless = RecallRequest {
+        sources: None,
         timings: false,
         include_text: false,
         ..recall_req("canary")
@@ -4635,6 +4646,7 @@ async fn max_tokens_with_include_bodies_false_is_request_validation() {
         .recall(
             &reader.value,
             &RecallRequest {
+                sources: None,
                 timings: false,
                 max_tokens: Some(500),
                 ..bodiless.clone()
@@ -4680,6 +4692,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     );
     assert_eq!(
         digest(RecallRequest {
+            sources: None,
             timings: false,
             workarea: Some(crew.into()),
             ..recall_req("canary")
@@ -4699,6 +4712,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     );
     assert_ne!(
         digest(RecallRequest {
+            sources: None,
             timings: false,
             include_text: false,
             ..recall_req("canary")
@@ -4710,6 +4724,7 @@ async fn query_digest_changes_when_max_tokens_or_include_own_held_change() {
     // Only the order and repetition of kinds entries never matter, and the
     // query digests as its NFC text.
     let kinds = |kinds: Vec<MemoryKind>| RecallRequest {
+        sources: None,
         timings: false,
         kinds,
         ..recall_req("canary")
@@ -4844,6 +4859,7 @@ async fn a_name_the_key_holds_no_grant_on_answers_not_found_with_the_same_body_a
             app.recall(
                 key,
                 &RecallRequest {
+                    sources: None,
                     timings: false,
                     workarea: Some(target),
                     ..recall_req("copper")
@@ -5824,6 +5840,7 @@ async fn an_admin_keys_recall_is_refused() {
             .recall(
                 &boot.admin_key.value,
                 &RecallRequest {
+                    sources: None,
                     timings: false,
                     workarea: scope,
                     ..recall_req("anything")
@@ -9467,6 +9484,7 @@ async fn recall_never_serves_kind_guardrail() {
         .recall(
             &author.value,
             &RecallRequest {
+                sources: None,
                 timings: false,
                 include_unreviewed: Some(true),
                 ..recall_req("canary")
@@ -13384,6 +13402,7 @@ async fn a_page_of_brief_edges_lists_pending_and_ratified_newest_first_to_a_read
 /// A recall naming `search`, under `match`.
 fn searched(query: &str, search: Option<&str>, all: bool) -> RecallRequest {
     RecallRequest {
+        sources: None,
         timings: false,
         search: search.map(ToOwned::to_owned),
         match_mode: if all {
@@ -13691,6 +13710,7 @@ async fn a_recall_reads_each_served_workareas_ancestry_once_however_many_hits_it
                 .recall(
                     key.as_str(),
                     &RecallRequest {
+                        sources: None,
                         timings: false,
                         k,
                         search: Some("keyword-any".to_owned()),

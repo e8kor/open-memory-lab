@@ -1,14 +1,16 @@
 <!--
 id: adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read
 tier: engineering
-status: proposed
+status: accepted · phase 1 built for v0.7.0 (#205), 2026-11-10
 answers: what recall searches today and what federated recall adds; who gains from it and how the gain is measured; which workareas are trusted sources and why no new flag; what a workarea's descriptor holds, who writes and reviews it, how it is scanned and how far it can move a selection; why advertising grants nothing and whether a key can discover a workarea it cannot read; how a recall chooses its sources (candidates, the reference set, the selection estimate, the cap, the descriptor slots, the tail) and why a hit's score never depends on which sources were selected; the `sources` argument, its two modes and its fixed list, answered whole or refused; the hint that tells an agent to widen; the per-workarea and tenant policies; what each answer and each refusal may name; what makes the answer repeatable; the cost, limits and latency budget; the eval; the three phases and their leakage tests; what the operator still has to answer
 -->
 
 # ADR-0072 — Recall searches the trusted workareas a key already reads, chosen per query by reviewed descriptors, and never widens what it may read
 
-**Status:** proposed · 2026-11-08 · revised after review round 1, 2026-11-08, round 2,
-2026-11-10 and round 3, 2026-11-10 (review log at the end)
+**Status:** accepted · 2026-11-10, with the operator's decisions on both open questions;
+phase 1 built for v0.7.0 (#205), see [Phase 1 as built](#phase-1-as-built-2026-11-10) · proposed
+2026-11-08 · revised after review round 1, 2026-11-08, round 2, 2026-11-10 and round 3,
+2026-11-10 (review log at the end)
 
 **In short.** Recall can search the trusted workareas a key already reads: `sources: "wide"`, or a
 fixed list such as `sources: ["acme.legal", "acme.product"]`. It is off until a tenant admin enables
@@ -143,7 +145,7 @@ source shares one index and one set of statistics (d7). OML is the mix ReDDE war
 `universe` near 100,000 memories ([scale](../benchmarks/scale.md)) beside crews of hundreds, and
 it has what ReDDE's correction needs: exact sizes and exact contents.
 
-Decided, not built.
+Decided; phase 1 built (#205).
 
 ## Decision
 
@@ -639,6 +641,24 @@ sequenceDiagram
     | 1 | `sources` (`"scope"`, `"wide"`, a list), d1's trust set, R with its expired subtraction and pruned words, d4's estimate and cap, d5's policies (`enabled`, `default_sources`, `max_sources`, `accept_federated`), d7, d8 with the widen hint, d9, the eval's cross and skew splits, the directory recipe | #205 | after the candidate-count distribution is reported | (1) an unreadable W (a per-grant deny on a child of a readable parent) whose rows match every query changes no byte of `sources`, `considered`, `cut`, `widen`, hits, scores, `did_you_mean`, `explain` counts or `recall_events`, against W absent; (2) the same for W readable but `development`, in progress or `accept_federated: false`; (3) a reader of the scope without reader on W reads the scope workarea: W's id and name are absent from the whole body; (4) an unreadable W named in a `sources` list gives `access.not_found` byte-identical to a nonexistent name, and a list with one unusable name is refused whole, never answered from the rest, with the latency of an unreadable name compared to an absent one over many runs, and each list-shape refusal (empty, duplicate, over `max_sources`, `Cc`) in the order of d5; (5) reader on S revoked, then a recall at once: S absent, no candidate cache; (6) a scope hit's score is identical whether source X is selected or not, and the `bm25` answer for any searched set equals the union's restricted to it, on `bm25` and on `bm25-postings` with a selection whose postings would cross `POSTING_BUDGET`; (7) timing over many runs, W with 0 against 100,000 matching rows: p50 and p95 within noise; (8) with federation off `scope` reproduces today byte for byte and `wide` and a list are refused; (9a) a list's scores and answer are byte-identical whatever the unlisted workareas hold, and whether any of them is unreachable; an unreachable listed unit refuses `503 cluster.source_unavailable` and an unreachable candidate under `wide` is in `missing` and absent from `reference_workarea_ids`; (9b) the widen hint stays silent on a scope whose rate equals the candidates', fires on one 2 times richer, and ignores a candidate's single stray row |
     | 2 | kind `descriptor`, d3's hold rule, check and yield, memory-kind-3 postings, the `selector` setting and the `described` selector with `descriptor_slots` | #206 | only if, after phase 1, content selection's recall on the skew split is below 0.90 or more than two queries below the exact ReDDE analogue (d11), **and** a tenant's measured candidate count exceeds `max_sources`; its admission gate is d11's numeric floor, and open question 1 is decided (2026-11-10: a person promotes a descriptor) | (9) held, rejected and superseded descriptors select exactly what no descriptor selects, and a held descriptor is not served to a non-author; (10) a descriptor on an unreadable W changes no byte; (11) an adversarial descriptor matching every query lowers selection recall by at most one query and displaces at most `descriptor_slots` sources; (12) a descriptor version with a hold finding, at write or added by a rescan after promotion, selects exactly what no descriptor selects, whether a person approved it or dismissed the finding, and no descriptor text appears in any recall answer; (13) kind-3 postings are never hits and do not change R's statistics |
     | 3 | d10's ontology and question lists, fused by RRF into the descriptor score | #207 | after ADR-0051 and #201 land, and phase 2 is built | (14) a term or question held only by unreadable rows selects nothing and changes no count; (15) a question of a held, demoted or erased memory never scores a source, and erasure removes its postings |
+
+## Phase 1 as built (2026-11-10)
+
+Phase 1 (#205) built d1, d4 to d9, d12 and the phase 1 row of d13 as decided. Where a decision
+left a reading open, or named a surface main does not have, the build took the reading below:
+
+| Decision | Reading | Why |
+|---|---|---|
+| d4.4, d8 | A word's `df` in a source is its most frequent form's, the exact word or its English stem, from the per-workarea counts | the counts are kept per form; the BM25 statements score a word by its best form, and a row holding both forms is counted once by neither sum, so the most frequent form is exact where the sum would double count |
+| d4.2, d5, d13 test 9a | No source is ever unreachable: `search.sources.missing` and `503 cluster.source_unavailable` are not served, and test 9a proves its first half | both are ADR-0073's, which is proposed; on one database every node of R answers or the recall fails whole, as a scope does today |
+| d5 | The tenant policy is read and set at `GET` and `POST /v2/federation`, admin by key role, and from the CLI with `oml search federation`; `max_sources` is 0 to 64; a list name is a workarea name or id, as a scope is | d5 names the fields and the event, not the route; 64 keeps a list's validation and a wide recall's selection bounded |
+| d8 | The recall body has no `explain` member, so a cut's workarea paths are not served; `search.sources.cut` serves its count and lower bound | ADR-0049 d6's block is served as `search` on every answer; serving the paths waits for a member that asks for them |
+| d8 | "Fewer than `k` hits" counts the hits after the `k` cut and the relevance floor, before the token budget | a budget cut thins an answer that searched well |
+| d9 | `query_digest` gains `sources` only under `wide` or a list, so a `scope` recall digests as it did before | ADR-0059's members joined the digest the same way, only when sent |
+| d12 | The doctor line naming a key above 1,000 candidates reads the keys the lead met since it started, served to a tenant admin by `GET /v2/federation` | no use case lists a tenant's keys with their access, and a doctor line decides nothing |
+| d13 test 7 | On PostgreSQL the 100,000-row comparison runs by hand (`--ignored`); CI runs it at 5,000 rows; the double runs it at 100,000 | copying 100,000 rows through the postings and similar-key triggers takes minutes |
+
+The eval (d11) is `eval/recall/federated.sh`; its numbers are in [the recall report](https://github.com/e8kor/open-memory-lab/blob/main/eval/recall/REPORT.md#federated-recall).
 
 ## Consequences
 

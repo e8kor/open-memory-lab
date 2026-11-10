@@ -294,6 +294,37 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn federation_policy(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<oml_app::federation::FederationPolicy, StoreError>> + Send
+    {
+        timed("federation_policy", self.inner.federation_policy(tenant_id))
+    }
+
+    fn federation_declining(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send {
+        timed(
+            "federation_declining",
+            self.inner.federation_declining(tenant_id, nodes),
+        )
+    }
+
+    fn reference_counts(
+        &self,
+        tenant_id: Uuid,
+        scope: &oml_app::federation::CountsScope,
+        query: &str,
+    ) -> impl Future<Output = Result<oml_app::federation::ReferenceCounts, StoreError>> + Send {
+        timed(
+            "reference_counts",
+            self.inner.reference_counts(tenant_id, scope, query),
+        )
+    }
+
     fn guardrail_rows(
         &self,
         tenant_id: Uuid,

@@ -179,6 +179,8 @@ pub struct Metrics {
     reranks: Family<RerankLabels, Counter>,
     bulk_items: Family<BulkLabels, Counter>,
     unreviewed_hits: Counter,
+    recall_sources: Family<ModeLabels, Counter>,
+    federated_hits: Counter,
     handler_panics: Counter,
     mode_changes: Family<ModeLabels, Counter>,
     curation_acts: Family<ActLabels, Counter>,
@@ -328,6 +330,8 @@ impl Default for Metrics {
         let reranks = Family::<RerankLabels, Counter>::default();
         let bulk_items = Family::<BulkLabels, Counter>::default();
         let unreviewed_hits = Counter::default();
+        let recall_sources = Family::<ModeLabels, Counter>::default();
+        let federated_hits = Counter::default();
         let handler_panics = Counter::default();
         let mode_changes = Family::<ModeLabels, Counter>::default();
         let curation_acts = Family::<ActLabels, Counter>::default();
@@ -389,6 +393,18 @@ impl Default for Metrics {
             "oml_recall_unreviewed_hits",
             "recall hits served labelled unreviewed",
             unreviewed_hits.clone(),
+        );
+        // The mode is a closed set: scope, wide or list, counted on a
+        // tenant with federation on (ADR-0072 Consequences).
+        registry.register(
+            "oml_recall_sources",
+            "recalls of a tenant with federation on, by sources mode: scope, wide or list",
+            recall_sources.clone(),
+        );
+        registry.register(
+            "oml_recall_federated_hits",
+            "recall hits served from a federated source, outside the recall's scope",
+            federated_hits.clone(),
         );
         // The mode is a closed set: in_progress or standard (ADR-0030 d5).
         registry.register(
@@ -462,6 +478,8 @@ impl Default for Metrics {
             reranks,
             bulk_items,
             unreviewed_hits,
+            recall_sources,
+            federated_hits,
             handler_panics,
             mode_changes,
             curation_acts,
@@ -539,6 +557,20 @@ impl Metrics {
 
     pub(crate) fn unreviewed_hits(&self, n: u64) {
         self.unreviewed_hits.inc_by(n);
+    }
+
+    /// One recall of a federated tenant, by its sources mode (ADR-0072
+    /// Consequences).
+    pub(crate) fn recall_sources(&self, mode: &'static str) {
+        self.recall_sources
+            .get_or_create(&ModeLabels {
+                mode: mode.to_owned(),
+            })
+            .inc();
+    }
+
+    pub(crate) fn federated_hits(&self, n: u64) {
+        self.federated_hits.inc_by(n);
     }
 
     /// One workarea mode set by a person's key (ADR-0030 d5).

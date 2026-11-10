@@ -248,6 +248,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/workareas/{workarea}/federation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Whether recalls scoped elsewhere may search this workarea when they ask for wider sources (ADR-0072).
+         * @description Requires: a dreamer key held_by human with dreamer effective access on the node, or an admin key; every other key is refused before any lookup with access.verb_ceiling, details.reason federation_is_human_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still recalls there by naming it as the scope. Setting the value the node holds journals nothing; otherwise journals workarea.federation_set. Since v0.7.0.
+         */
+        post: operations["setWorkareaFederation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/crews": {
         parameters: {
             query?: never;
@@ -1042,6 +1062,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/federation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tenant's federation policy.
+         * @description Requires: admin key role (ADR-0072 d5). wide_keys names, for doctor, each key whose recall met more than 1,000 candidate sources since the lead started (d12). Since v0.7.0.
+         */
+        get: operations["federationSettings"];
+        put?: never;
+        /**
+         * Set the tenant's federation policy; each field sent replaces its value.
+         * @description Requires: admin key role (ADR-0072 d5). max_sources above 64 is request.validation at /max_sources, and a default_sources other than scope or wide at /default_sources. Journalled as federation.policy_set with the policy, the previous one and the admin key; a change that changes nothing journals nothing. Since v0.7.0.
+         */
+        post: operations["setFederationPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/usage/settings": {
         parameters: {
             query?: never;
@@ -1725,6 +1769,8 @@ export interface components {
             include_expired?: boolean;
             /** @description The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired and anchors the query's relative dates (last week, three days ago) (proposed ADR-0059 d5). */
             now?: components["schemas"]["ValidEnd"];
+            /** @description Where to search (ADR-0072 d5). scope, the default, is the workarea's subtree as always. wide adds the committed and validated workareas the key already reads outside it that accept federated reads: all of them up to the tenant's max_sources, above it those holding the largest share of the query's matching rows. A list of 1 to max_sources distinct workarea names or ids searches exactly those, answered whole or refused. Every hit of wide or a list is scored with one set of statistics fixed before any selection, so no hit's score depends on which sources were selected (d7). Absent, the tenant's federation.default_sources. Refusals, in this order: an empty list, a name twice, more than max_sources names, or a non-string element is request.validation at /sources; wide or a list with federation off is request.validation at /sources; wide or a list on bm25-sparse is request.validation at /search; then each name in order: one the key cannot read and one that does not exist are the same access.not_found with details.field /sources/<i>, and a readable name that is not committed or validated, or lies outside the scope on a workarea declining federated reads, is request.validation at /sources/<i> with details.reason source_untrusted or source_declines_federation. Since v0.7.0. */
+            sources?: ("scope" | "wide") | string[];
         };
         /** @description Which hits of this key's earlier recall answered its question and which did not (ADR-0054 d6). Checked before the read runs: at most 20 ids, each named once, a recall_id this key received in the last 24 hours, and only ids that recall served it; anything else is request.validation naming the field (/feedback/recall_id, /feedback/useful/0, ...) and the read is not run. A key's explicit labels past 1000 a UTC day answer limit.rate. A valid member changes nothing the read answers. */
         Feedback: {
@@ -1747,6 +1793,11 @@ export interface components {
                 /** @description The pipeline's score, comparable within one answer only; ties break by artifact_id ascending. */
                 score: number;
                 matched: components["schemas"]["RecallMatched"];
+                /**
+                 * @description Under sources wide or a list only: scope when the hit's workarea is the recall's scope or under it, federated when it is another workarea the key reads; memory.workarea_path names it (ADR-0072 d8).
+                 * @enum {string}
+                 */
+                via?: "scope" | "federated";
             }[];
             /** @description Present if and only if max_tokens was sent. */
             budget?: components["schemas"]["RecallBudget"];
@@ -1818,6 +1869,59 @@ export interface components {
             floor: number | null;
             /** @description How many of the first k candidates the floor withheld; hits empty with below_floor above 0 means nothing scored above the floor (ADR-0053 d6). */
             below_floor: number;
+            sources?: components["schemas"]["RecallSources"];
+            /** @description On a sources scope answer of a tenant with federation on, when a workarea the key reads outside the scope holds the query's words at least twice as often per row as the scope, on at least two of its rows, or when the answer has fewer than k hits and such a workarea holds any of them: a retry with sources wide would search it. It names no workarea (ADR-0072 d8). */
+            widen?: {
+                /** @enum {string} */
+                sources: "wide";
+                /** @description The workareas outside the scope that hold a query word. */
+                candidates: number;
+                /** @description A lower bound on their rows holding a query word: the largest count of one word, summed over them. */
+                matches_at_least: number;
+            };
+        };
+        /** @description Under sources wide or a list: what was searched and why (ADR-0072 d8). Every name and number is of a workarea the key reads (d6). */
+        RecallSources: {
+            /** @enum {string} */
+            mode: "wide" | "list";
+            /** @description Under wide, the trusted workareas the key reads outside the scope that accept federated reads; for a list, the names listed. */
+            considered: number;
+            /** @description The scope's nodes first, then the federated sources in selection order; for a list, the listed nodes in the order sent. */
+            searched: {
+                /** Format: uuid */
+                workarea_id: string;
+                workarea_path: string;
+                /** @enum {string} */
+                via: "scope" | "federated";
+                /** @description The share of the matching rows it holds, weighted by each word's rarity over every source searched or considered: the order selection reads above max_sources (d4.4). */
+                estimate: number;
+                matched: {
+                    /** @description For a federated source, the query words its rows hold; empty for the scope. */
+                    words: string[];
+                };
+            }[];
+            /** @description The workareas holding a query word that wide did not search because max_sources was reached; their statistics still scored every hit. */
+            cut: {
+                count: number;
+                matches_at_least: number;
+            };
+        };
+        /** @description The tenant's federation policy (ADR-0072 d5), and for doctor the keys whose recall met more than 1,000 candidate sources since the lead started (d12). */
+        FederationSettings: {
+            /** @description Whether recall may search beyond its scope when asked; off by default. */
+            enabled: boolean;
+            /**
+             * @description What an absent sources reads; never a list.
+             * @enum {string}
+             */
+            default_sources: "scope" | "wide";
+            /** @description The most workareas a wide recall searches beside its scope, and the most a list names; 8 by default. */
+            max_sources: number;
+            wide_keys: {
+                /** Format: uuid */
+                key_id: string;
+                candidates: number;
+            }[];
         };
         /**
          * @description What a recall's reranking stage did (ADR-0053 d5).
@@ -2145,6 +2249,11 @@ export interface components {
             /** @description The calling key's permission epoch as declared in docs/architecture/workareas.md (ADR-0025 d14). */
             permission_epoch: number;
             policy: components["schemas"]["ReviewPolicy"];
+            /** @description The node's federation field (ADR-0072 d5). */
+            federation?: {
+                /** @description Whether recalls scoped elsewhere that ask for wider sources may search this node; true by default. It grants nothing. */
+                accept_federated: boolean;
+            };
             /** @description The node's live proposals in proposal order, the pending rows whose from is the node's status (ADR-0039 d9; ADR-0046 d3). */
             pending_transitions: components["schemas"]["Transition"][];
             brief: components["schemas"]["Brief"];
@@ -3878,6 +3987,54 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkareaView"];
+                };
+            };
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    setWorkareaFederation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                workarea: components["parameters"]["WorkareaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "accept_federated": false
+                 *     }
+                 */
+                "application/json": {
+                    accept_federated: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The field as it now is. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        accept_federated: boolean;
+                    };
                 };
             };
             415: components["responses"]["UnsupportedMedia"];
@@ -6276,6 +6433,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SearchSettings"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    federationSettings: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The policy. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "enabled": false,
+                     *       "default_sources": "scope",
+                     *       "max_sources": 8,
+                     *       "wide_keys": []
+                     *     }
+                     */
+                    "application/json": components["schemas"]["FederationSettings"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    setFederationPolicy: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "enabled": true
+                 *     }
+                 */
+                "application/json": {
+                    enabled?: boolean;
+                    /** @enum {string} */
+                    default_sources?: "scope" | "wide";
+                    max_sources?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description The policy as it now is. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FederationSettings"];
                 };
             };
             403: components["responses"]["Forbidden"];

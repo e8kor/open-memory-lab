@@ -372,6 +372,7 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                     rig.tenant_id,
                     RetrieverKind::KeywordAll,
                     &CandidateScope {
+                        reference: None,
                         anchor: oml_app::types::AnchorFilter::default(),
                         promoted_nodes: vec![wa],
                         kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
@@ -5892,10 +5893,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 39,
-        "every migration through 0039_web_session_credentials"
-    );
+    assert_eq!(applied, 40, "every migration through 0040_federated_recall");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7246,6 +7244,7 @@ async fn bm25_list(
             tenant,
             RetrieverKind::Bm25,
             &CandidateScope {
+                reference: None,
                 anchor: oml_app::types::AnchorFilter::default(),
                 promoted_nodes: vec![wa],
                 kinds: oml_app::types::HIT_KINDS.to_vec(),
@@ -7340,10 +7339,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 39,
-        "every migration through 0039_web_session_credentials"
-    );
+    assert_eq!(applied, 40, "every migration through 0040_federated_recall");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8219,10 +8215,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 39,
-        "every migration through 0039_web_session_credentials"
-    );
+    assert_eq!(applied, 40, "every migration through 0040_federated_recall");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8248,6 +8241,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                     tenant,
                     RetrieverKind::Bm25Postings,
                     &CandidateScope {
+                        reference: None,
                         anchor: oml_app::types::AnchorFilter::default(),
                         promoted_nodes: vec![wa, Uuid::from_u128(0xE3)],
                         kinds: oml_app::types::HIT_KINDS.to_vec(),
@@ -9273,5 +9267,132 @@ async fn the_expiry_cut_is_an_index_condition_for_the_serving_role_under_row_sec
             .any(|l| l.contains("Index Cond") && l.contains("valid_until_us <=")),
         "the expiry cut is an index condition under the policy: {plan}"
     );
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// Federated recall (ADR-0072 phase 1)
+// ---------------------------------------------------------------------------
+
+/// Federated recall's phase 1 leakage and invariance laws on PostgreSQL, as
+/// the serving role under row security, exactly as the double passes them
+/// (ADR-0072 d13): `bm25` and `bm25-postings` at the served limits.
+#[tokio::test]
+async fn federated_recall_passes_the_leakage_suite() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::federation::run_federation_suite(
+        || fresh_search_store(&created),
+        &["bm25", "bm25-postings"],
+    )
+    .await;
+    drop_dbs(&created).await;
+}
+
+/// Test 6 on `bm25-postings` under limits so small that a selection's
+/// postings cross the posting budget: the pruned words are the reference
+/// set's, so no selection moves a score (ADR-0072 d4.2, d7).
+#[tokio::test]
+async fn a_selection_crossing_the_posting_budget_moves_no_score() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created)
+        .await
+        .with_prune_limits(oml_pg::PruneLimits {
+            frequent_share: 0.2,
+            posting_budget: 4,
+        });
+    oml_port_contracts::federation::a_hits_score_never_depends_on_which_sources_were_selected(
+        store,
+        "bm25-postings",
+    )
+    .await;
+    drop_dbs(&created).await;
+}
+
+/// Test 7 on PostgreSQL at CI's size: an unreadable workarea of 5,000 rows
+/// matching every query moves neither p50 nor p95 of a wide recall
+/// (ADR-0072 d6, d13).
+#[tokio::test]
+async fn federated_recall_timing_does_not_depend_on_an_unreadable_workarea() {
+    unreadable_rows_move_no_timing(5_000).await;
+}
+
+/// Test 7 at the record's size, run by hand (`--ignored --nocapture`):
+/// 100,000 rows, copied through the postings and similar-key triggers in
+/// several minutes (ADR-0072 d13).
+#[tokio::test]
+#[ignore = "a measurement: 100,000 rows, several minutes"]
+async fn federated_recall_timing_does_not_depend_on_100k_unreadable_rows() {
+    unreadable_rows_move_no_timing(100_000).await;
+}
+
+/// An unreadable workarea of `copies` rows matching every query, copied in
+/// by SQL as the owner, moves neither p50 nor p95 of a wide recall, on
+/// `bm25-postings` and on `bm25`.
+async fn unreadable_rows_move_no_timing(copies: u32) {
+    use oml_port_contracts::federation::{assert_within_noise, timing_sample, timing_world};
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let t = timing_world(fresh_search_store(&created).await).await;
+    let mut without = BTreeMap::new();
+    for search in ["bm25-postings", "bm25"] {
+        without.insert(search, timing_sample(&t, search, 40).await);
+    }
+    let mut owner = owner_conn(&t.world.store).await;
+    let columns: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name::text FROM information_schema.columns \
+         WHERE table_name = 'memories' AND table_schema = 'public' \
+           AND is_generated = 'NEVER' ORDER BY ordinal_position",
+    )
+    .fetch_all(&mut owner)
+    .await
+    .expect("columns");
+    let names: Vec<&str> = columns
+        .iter()
+        .map(String::as_str)
+        .filter(|c| !matches!(*c, "search_vector" | "search_len"))
+        .collect();
+    let pick = |c: &str| match c {
+        "id" => "gen_random_uuid()".to_owned(),
+        "claim_key" => "claim_key || '-copy-' || g".to_owned(),
+        other => other.to_owned(),
+    };
+    let sql = format!(
+        "INSERT INTO memories ({}) SELECT {} FROM memories, generate_series(1, $3) g \
+         WHERE tenant_id = $1 AND id = $2",
+        names.join(", "),
+        names.iter().map(|c| pick(c)).collect::<Vec<_>>().join(", "),
+    );
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, false)")
+        .bind(t.world.tenant.to_string())
+        .execute(&mut owner)
+        .await
+        .expect("tenant");
+    sqlx::query(&sql)
+        .bind(t.world.tenant)
+        .bind(t.template)
+        .bind(i32::try_from(copies).expect("copies fit an int4"))
+        .execute(&mut owner)
+        .await
+        .expect("copy the template into W");
+    println!("copied {copies} rows into W");
+    for table in ["memories", "search_postings", "search_term_rows"] {
+        sqlx::query(&format!("ANALYZE {table}"))
+            .execute(&mut owner)
+            .await
+            .expect("analyze");
+    }
+    drop(owner);
+    for search in ["bm25-postings", "bm25"] {
+        let with = timing_sample(&t, search, 40).await;
+        assert_within_noise(without.remove(search).expect("sampled"), with);
+    }
     drop_dbs(&created).await;
 }

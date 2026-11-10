@@ -515,6 +515,16 @@ enum WorkareasCommand {
         #[arg(value_parser = ["in_progress", "standard"])]
         mode: String,
     },
+    /// Set whether recalls scoped elsewhere may search this workarea when
+    /// they ask for wider sources; grants nothing. Person-held dreamer keys or
+    /// an admin key; journals workarea.federation_set.
+    Federation {
+        /// Workarea id or name.
+        workarea: String,
+        /// `on` lets federated recalls search it (the default); `off` declines.
+        #[arg(value_parser = ["on", "off"])]
+        accept: String,
+    },
     /// Set a workarea's crew record (admin key).
     Crew {
         #[command(subcommand)]
@@ -655,6 +665,21 @@ enum SearchCommand {
     SetDefault {
         /// Served pipeline name; `deployment` clears the tenant override.
         pipeline: String,
+    },
+    /// Show the tenant's federation policy; each option changes it and
+    /// journals federation.policy_set. Recall searches beyond its scope only
+    /// when enabled and asked (sources wide or a list).
+    Federation {
+        /// `on` lets recalls ask for wider sources; `off` refuses them.
+        #[arg(long, value_parser = ["on", "off"])]
+        enabled: Option<String>,
+        /// The sources an absent `sources` reads: `scope` or `wide`.
+        #[arg(long, value_parser = ["scope", "wide"])]
+        default_sources: Option<String>,
+        /// The most workareas a wide recall searches beside its scope, and
+        /// the most a sources list names, 0 to 64.
+        #[arg(long)]
+        max_sources: Option<u32>,
     },
 }
 
@@ -930,6 +955,11 @@ struct ReadArgs {
     /// them all, any-word hits are returned and marked fallback.
     #[arg(long = "match", requires = "query")]
     match_mode: Option<String>,
+    /// Where to search: scope (default), wide (also the committed workareas
+    /// this key reads elsewhere), or comma-separated workarea names searched
+    /// alone. Needs federation on (`oml search federation`).
+    #[arg(long, requires = "query")]
+    sources: Option<String>,
     /// Subtree (id or name) to read; defaults to the key's workarea, or all
     /// workareas this key wrote in for --own.
     #[arg(long, conflicts_with = "artifact_id")]
@@ -1725,6 +1755,30 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
         }
 
         Command::Workareas {
+            command: WorkareasCommand::Federation { workarea, accept },
+        } => {
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.post(
+                &format!("/v2/workareas/{}/federation", segment(workarea)?),
+                &json!({ "accept_federated": accept == "on" }),
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "workarea {workarea} {} federated reads",
+                    if response["accept_federated"] == true {
+                        "accepts"
+                    } else {
+                        "declines"
+                    }
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+
+        Command::Workareas {
             command: WorkareasCommand::Mode { workarea, mode },
         } => {
             let client = resolve(cli, &stored)?;
@@ -2428,6 +2482,13 @@ fn run_read(cli: &Cli, stored: &Credentials, args: &ReadArgs) -> Result<ExitCode
         }
         if !args.origin_kinds.is_empty() {
             body["origin_kinds"] = json!(args.origin_kinds);
+        }
+        // A mode is a string and anything else a list (ADR-0072 d5).
+        if let Some(sources) = &args.sources {
+            body["sources"] = match sources.as_str() {
+                "scope" | "wide" => json!(sources),
+                list => json!(list.split(',').map(str::trim).collect::<Vec<_>>()),
+            };
         }
         let read = CallOpts {
             auth: true,
@@ -3531,6 +3592,45 @@ fn run_search(
     let client = resolve(cli, stored)?;
     let settings = match command {
         SearchCommand::Show => client.get("/v2/search")?.1,
+        SearchCommand::Federation {
+            enabled,
+            default_sources,
+            max_sources,
+        } => {
+            let policy = if enabled.is_none() && default_sources.is_none() && max_sources.is_none()
+            {
+                client.get("/v2/federation")?.1
+            } else {
+                let mut body = serde_json::Map::new();
+                if let Some(on) = enabled {
+                    body.insert("enabled".to_owned(), Value::from(on == "on"));
+                }
+                if let Some(d) = default_sources {
+                    body.insert("default_sources".to_owned(), Value::from(d.as_str()));
+                }
+                if let Some(m) = max_sources {
+                    body.insert("max_sources".to_owned(), Value::from(*m));
+                }
+                client
+                    .post("/v2/federation", &Value::Object(body), &write_opts())?
+                    .1
+            };
+            if cli.json {
+                print_json(&policy);
+            } else {
+                println!(
+                    "federation: {}",
+                    if policy["enabled"] == true {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                );
+                println!("default sources: {}", field(&policy, "default_sources"));
+                println!("max sources: {}", field(&policy, "max_sources"));
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
         SearchCommand::SetDefault { pipeline } => {
             let name = (pipeline != "deployment").then_some(pipeline.as_str());
             client
@@ -4590,6 +4690,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut default_node: Option<Value> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
+    let mut federation_settings: Option<Value> = None;
     // The chat workarea's path and whether the server takes origin_kinds
     // (ADR-0063 d13).
     let mut chat_server: Vec<String> = Vec::new();
@@ -4669,6 +4770,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             // d8).
             if is_admin {
                 search_settings = client.get("/v2/search").ok().map(|(_, v)| v);
+                // The tenant's federation policy and its wide keys
+                // (ADR-0072 d12, Consequences).
+                federation_settings = client.get("/v2/federation").ok().map(|(_, v)| v);
                 // One event's window, read for the counts it carries
                 // (ADR-0074 d28).
                 scan_backlog = client.get("/v2/admin/rescan?limit=1").ok().map(|(_, v)| v);
@@ -4685,7 +4789,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut web = web_doctor(ready.as_ref(), admin_emails, scrape.as_ref());
     web.extend(signup_doctor(signup_overview.as_ref()));
     let web_warn = web.iter().any(|line| line.starts_with("warn"));
-    let search = search_doctor(ready.as_ref(), search_settings.as_ref(), scrape.as_ref());
+    let mut search = search_doctor(ready.as_ref(), search_settings.as_ref(), scrape.as_ref());
+    search.extend(federation_doctor(federation_settings.as_ref()));
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
     let review = review_doctor(me.as_ref().and_then(|m| m.as_ref().ok()));
     let in_progress = in_progress_doctor(
@@ -4997,6 +5102,30 @@ fn formats_doctor(ready: Option<&(u16, Value)>) -> Option<String> {
         enabled.len(),
         adapters.join(", ")
     ))
+}
+
+/// The federation lines (ADR-0072 d12, Consequences), read by an admin
+/// key: federation on with `max_sources` 0, and each key whose recall met
+/// more than 1,000 candidate sources since the lead started.
+fn federation_doctor(settings: Option<&Value>) -> Vec<String> {
+    let Some(settings) = settings else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    if settings["enabled"] == true && settings["max_sources"] == 0 {
+        lines.push(
+            "warn federation is on with max_sources 0: a wide recall searches its scope alone and every sources list is refused; set it with: oml search federation --max-sources 8"
+                .to_owned(),
+        );
+    }
+    for key in settings["wide_keys"].as_array().into_iter().flatten() {
+        lines.push(format!(
+            "warn key {} reads {} trusted workareas outside its scopes, above 1,000: each recall of a federated tenant reads their counts, so its statistics read grows with them",
+            key["key_id"].as_str().unwrap_or("?"),
+            key["candidates"]
+        ));
+    }
+    lines
 }
 
 fn search_doctor(

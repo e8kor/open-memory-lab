@@ -47,5 +47,5 @@ def generated_operations() -> set[tuple[str, str]]:
 def test_the_generated_sdk_carries_no_operation_the_server_does_not_route() -> None:
     declared = declared_operations()
     assert ("GET", "/v2/whoami") in declared
-    assert len(declared) == 80
+    assert len(declared) == 83
     assert generated_operations() == declared
