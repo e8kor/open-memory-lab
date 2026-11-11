@@ -279,6 +279,9 @@ struct UnnamedWorkarea {
 struct TenantState {
     events: Vec<crate::domain::SignedEnvelope>,
     memories: BTreeMap<Uuid, MemoryRecord>,
+    /// The findings list, in the order recorded (ADR-0074 d23), as
+    /// `scan_findings` holds it.
+    findings: Vec<(Uuid, crate::types::VersionFinding)>,
     /// Each workarea's memory ids, so a read names the rows of its nodes
     /// alone and its work never depends on another node's rows (ADR-0072
     /// d6's timing row).
@@ -1622,8 +1625,16 @@ fn apply_fold(
             let key_id = connection.key_id;
             void_unopened_codes(state, key_id, seq);
         }
-        MetadataFold::MemoryHeld { memory, enqueue } => {
+        MetadataFold::MemoryHeld {
+            memory,
+            enqueue,
+            findings,
+        } => {
             require_free_ordinal(state, &memory)?;
+            for mut f in findings.into_vec() {
+                f.event_seq = Some(seq);
+                state.findings.push((memory.memory_id, f));
+            }
             if enqueue {
                 state.queue.push(QueueEntry {
                     memory_id: memory.memory_id,
@@ -1676,13 +1687,27 @@ fn apply_fold(
             scanned_under,
             versions,
         } => {
-            for (memory_id, finding) in versions {
-                if let Some(memory) = state.memories.get_mut(&memory_id)
+            for v in versions {
+                if let Some(memory) = state.memories.get_mut(&v.memory_id)
                     && memory.status == MemoryStatus::Held
                 {
                     memory.scanned_under.clone_from(&scanned_under);
                     if memory.scan_finding.is_none() {
-                        memory.scan_finding = finding;
+                        memory.scan_finding = v.summary;
+                    }
+                    // A finding the list holds by class, rule and field
+                    // stays as first recorded (scan_findings_one).
+                    for mut f in v.findings {
+                        let held = state.findings.iter().any(|(id, g)| {
+                            *id == v.memory_id
+                                && g.class == f.class
+                                && g.rule == f.rule
+                                && g.field == f.field
+                        });
+                        if !held {
+                            f.event_seq = Some(seq);
+                            state.findings.push((v.memory_id, f));
+                        }
                     }
                 }
             }
@@ -2922,13 +2947,30 @@ impl JournalStore for MemStore {
             }))
     }
 
+    async fn scan_findings(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+    ) -> Result<Vec<(Uuid, crate::types::VersionFinding)>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .findings
+            .iter()
+            .filter(|(id, _)| memory_ids.contains(id))
+            .cloned()
+            .collect())
+    }
+
     async fn scan_backlog(
         &self,
         tenant_id: Uuid,
         current: Option<&str>,
-    ) -> Result<(u64, u64), StoreError> {
+    ) -> Result<crate::ports::ScanBacklog, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
-            return Ok((0, 0));
+            return Ok(crate::ports::ScanBacklog::default());
         };
         let state = tenant.lock().expect("tenant lock");
         let older: Vec<&MemoryRecord> = state
@@ -2940,7 +2982,20 @@ impl JournalStore for MemStore {
             .iter()
             .filter(|m| m.status == MemoryStatus::Held)
             .count();
-        Ok((held as u64, older.len() as u64))
+        let unlisted = state
+            .memories
+            .values()
+            .filter(|m| {
+                m.status == MemoryStatus::Held
+                    && m.scan_finding.is_some()
+                    && !state.findings.iter().any(|(id, _)| *id == m.memory_id)
+            })
+            .count();
+        Ok(crate::ports::ScanBacklog {
+            held_unrescanned: held as u64,
+            rescan_due: older.len() as u64,
+            findings_unlisted: unlisted as u64,
+        })
     }
 
     async fn held_count(&self, tenant_id: Uuid, nodes: &[Uuid]) -> Result<u64, StoreError> {

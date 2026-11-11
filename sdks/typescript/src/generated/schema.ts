@@ -1649,6 +1649,8 @@ export interface components {
             rule?: unknown;
             /** @description On a held guardrail alone: every reader of it is told that every key reading its workarea will load the rule once it binds (ADR-0037 d10). */
             load_warning?: string;
+            /** @description Every finding stored on the version, in the order recorded, on the review serve, the held listing and the named read alone; absent elsewhere, so an empty list means the scan found nothing (ADR-0074 d17, d23). */
+            scan_findings?: components["schemas"]["ScanFinding"][];
             /** @description The authoring principal; null on a version in universe served to a key outside its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its source (ADR-0044 d9). */
             principal?: string | null;
             /** @description The authoring key's id; null wherever principal is (ADR-0044 d9). The web console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since v0.7.0. */
@@ -2126,6 +2128,37 @@ export interface components {
          * @enum {string}
          */
         Stale: "changed" | "removed";
+        /** @description One finding of a version's findings list (ADR-0074 d23): where the scan fired and why, never the matched text (ADR-0065 d8). */
+        ScanFinding: {
+            /** @description The threat class, injection.override. */
+            class: string;
+            /** @description The rule id, ignore-instructions. */
+            rule: string;
+            /**
+             * @description refuse appears only on a finding a recording rescan made on a version already stored (ADR-0074 d14).
+             * @enum {string}
+             */
+            verdict: "refuse" | "hold" | "annotate";
+            /** @description The rule set it was found under, oml-scan/1.1. */
+            rule_set: string | null;
+            /** @description /body, /title, or /body/ and a decoded view's path; null on a finding migrated from the single stored finding. */
+            field: string | null;
+            /** @description The 1-based line of the field the match starts on. */
+            line: number | null;
+            /** @description The view the rule read: raw, clean, spaced or letters (ADR-0074 d6). */
+            via: string | null;
+            /** @description The match's byte range, start and end, in that view. */
+            span: number[] | null;
+            /**
+             * @description Who recorded it.
+             * @enum {string}
+             */
+            found_by: "admission" | "rescan";
+            /** @description The seq of the journal event that recorded it. */
+            event_seq: number | null;
+            /** @description On a finding migrated from the version's single scan_finding, the text that held. */
+            migrated_from: string | null;
+        };
         SourceChecked: {
             /** @description The commit or page version the span was compared at. */
             rev: string;
@@ -2982,7 +3015,15 @@ export interface components {
                 action: "veto" | "hold";
                 /** @description The field and line, /body line 3. */
                 at: string;
+                /** @description The field the findings list stores it under: /body, /title, /body/ and a decoded view's path, or an anchor field (ADR-0074 d23). */
+                field?: string;
+                /** @description The version's origin kind, or null for one stored without: the dry run's rates per origin (ADR-0074 d18). */
+                origin?: string | null;
             }[];
+            /** @description The versions scanned, counted by origin kind, none for a version stored without one: the denominators of the dry run's rates (ADR-0074 d18). */
+            scanned_by_origin?: {
+                [key: string]: number;
+            };
             by_rule: {
                 class: string;
                 rule: string;
@@ -2998,6 +3039,8 @@ export interface components {
             held_unrescanned: number;
             /** @description After this call, every stored version, erased ones aside, last scanned under another rule set: doctor's scan_rescan_due (ADR-0074 d28). */
             rescan_due: number;
+            /** @description After this call, held versions whose stored scan finding has no row in the findings list, written by a server older than migration 0043: doctor's scan_findings_unlisted (ADR-0074 d23). */
+            findings_unlisted?: number;
         };
         /** @description The build that answered (http-api.md "Health"). Times are UTC, YYYY-MM-DDTHH:MM:SSZ; a field nothing could supply is the string unknown. */
         Build: {

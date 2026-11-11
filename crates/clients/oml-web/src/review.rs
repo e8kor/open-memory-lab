@@ -38,7 +38,7 @@ use oml_page::web::{
 use oml_sdk::encode;
 
 use crate::acts::Refusal;
-use crate::card::{anchor_line, card, valid_line};
+use crate::card::{anchor_line, card, findings_cell, valid_line};
 use crate::pages::{Fields, refused};
 use crate::session::{PageCalls, Session, call};
 use crate::{Capacity, Web, acts, outcome};
@@ -267,16 +267,16 @@ async fn held(view: &ViewCtx<'_>, fields: &Fields) -> Result<String, Refusal> {
         ),
     );
     let mut rows = String::from(
-        "<table><tr><th></th><th>Claim key</th><th>Workarea</th><th>From</th><th>Held since</th><th>Text</th><th>Source</th><th>Valid</th></tr>",
+        "<table><tr><th></th><th>Claim key</th><th>Workarea</th><th>From</th><th>Held since</th><th>Findings</th><th>Text</th><th>Source</th><th>Valid</th></tr>",
     );
     if listing.items.is_empty() {
-        rows.push_str(r#"<tr><td colspan="8" class="dim">Nothing waits for you here.</td></tr>"#);
+        rows.push_str(r#"<tr><td colspan="9" class="dim">Nothing waits for you here.</td></tr>"#);
     }
     for (i, item) in listing.items.iter().enumerate() {
         let m = item.memory();
         let _ = write!(
             rows,
-            r#"<tr><td><input type="checkbox" name="pick_{i:03}" value="{}"{}></td><td class="mono">{}</td><td class="mono">{}</td><td class="mono">{}{}</td><td class="mono">{}</td><td class="text">{}</td><td class="mono">{}</td><td class="mono">{}</td></tr>"#,
+            r#"<tr><td><input type="checkbox" name="pick_{i:03}" value="{}"{}></td><td class="mono">{}</td><td class="mono">{}</td><td class="mono">{}{}</td><td class="mono">{}</td><td class="mono findings">{}</td><td class="text">{}</td><td class="mono">{}</td><td class="mono">{}</td></tr>"#,
             attr(&m.artifact_id),
             if all { " checked" } else { "" },
             short(&m.claim_key),
@@ -284,6 +284,7 @@ async fn held(view: &ViewCtx<'_>, fields: &Fields) -> Result<String, Refusal> {
             short(m.principal.as_deref().unwrap_or("")),
             if item.same_user { " (you)" } else { "" },
             short(&item.held_since),
+            findings_cell(m),
             text(m.text.as_deref().unwrap_or_default()),
             anchor_line(m.anchor.as_ref()),
             valid_line(m)

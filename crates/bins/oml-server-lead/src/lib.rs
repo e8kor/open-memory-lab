@@ -1384,14 +1384,34 @@ impl Scanner for RuleScanner {
         off_the_executor(envelope.body.len(), || {
             RULES.findings(scanned_field(envelope), envelope.body)
         })
-        .into_iter()
-        .map(|f| oml_app::ports::ScanFinding {
-            class: f.class.to_owned(),
-            rule: f.rule.to_owned(),
-            veto: f.action == oml_scan::Action::Veto,
-            at: f.location(),
-        })
+        .iter()
+        .map(port_finding)
         .collect()
+    }
+
+    /// One scan, counted once: the verdict and every finding behind it,
+    /// the holds of a held version or the vetoes of a refused one
+    /// (ADR-0074 d23).
+    fn assess(
+        &self,
+        envelope: &AdmissionEnvelope<'_>,
+    ) -> (ScanOutcome, Vec<oml_app::ports::ScanFinding>) {
+        let field = scanned_field(envelope);
+        let verdict = off_the_executor(envelope.body.len(), || {
+            RULES.scan(&[(field, envelope.body)])
+        });
+        let outcome = match (&verdict, verdict.reason()) {
+            (oml_scan::Verdict::Veto(_), Some(reason)) => ScanOutcome::Veto(reason),
+            (oml_scan::Verdict::Hold(_), Some(reason)) => ScanOutcome::Hold(reason),
+            _ => ScanOutcome::Pass,
+        };
+        let found = match &verdict {
+            oml_scan::Verdict::Pass => Vec::new(),
+            oml_scan::Verdict::Hold(f) | oml_scan::Verdict::Veto(f) => {
+                f.iter().map(port_finding).collect()
+            }
+        };
+        (outcome, found)
     }
 
     fn info(&self) -> Option<oml_app::ports::ScannerInfo> {
@@ -1400,6 +1420,22 @@ impl Scanner for RuleScanner {
             rules: RULES.rules(),
             pii: RULES.options().pii,
         })
+    }
+}
+
+/// A rule-set finding as the scanner port carries it: its place in the
+/// scanned text, never the text (ADR-0065 d8; ADR-0074 d23).
+fn port_finding(f: &oml_scan::Finding) -> oml_app::ports::ScanFinding {
+    oml_app::ports::ScanFinding {
+        class: f.class.to_owned(),
+        rule: f.rule.to_owned(),
+        veto: f.action == oml_scan::Action::Veto,
+        at: f.location(),
+        place: Some(oml_app::ports::FindingPlace {
+            line: u32::try_from(f.line).unwrap_or(u32::MAX),
+            via: f.via.to_owned(),
+            span: (f.span.0 as u64, f.span.1 as u64),
+        }),
     }
 }
 

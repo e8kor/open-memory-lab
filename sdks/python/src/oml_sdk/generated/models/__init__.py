@@ -227,12 +227,16 @@ from .rescan_report_by_rule_item import RescanReportByRuleItem
 from .rescan_report_by_rule_item_action import RescanReportByRuleItemAction
 from .rescan_report_findings_item import RescanReportFindingsItem
 from .rescan_report_findings_item_action import RescanReportFindingsItemAction
+from .rescan_report_scanned_by_origin import RescanReportScannedByOrigin
 from .review_next_body import ReviewNextBody
 from .review_policy import ReviewPolicy
 from .review_queue_response_200 import ReviewQueueResponse200
 from .review_queue_response_200_items_item import ReviewQueueResponse200ItemsItem
 from .revoke_connection_body import RevokeConnectionBody
 from .role import Role
+from .scan_finding import ScanFinding
+from .scan_finding_found_by import ScanFindingFoundBy
+from .scan_finding_verdict import ScanFindingVerdict
 from .search_settings import SearchSettings
 from .search_settings_valid_time import SearchSettingsValidTime
 from .serve import Serve
@@ -564,12 +568,16 @@ __all__ = (
     "RescanReportByRuleItemAction",
     "RescanReportFindingsItem",
     "RescanReportFindingsItemAction",
+    "RescanReportScannedByOrigin",
     "ReviewNextBody",
     "ReviewPolicy",
     "ReviewQueueResponse200",
     "ReviewQueueResponse200ItemsItem",
     "RevokeConnectionBody",
     "Role",
+    "ScanFinding",
+    "ScanFindingFoundBy",
+    "ScanFindingVerdict",
     "SearchSettings",
     "SearchSettingsValidTime",
     "Serve",

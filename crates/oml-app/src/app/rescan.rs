@@ -16,13 +16,12 @@ use oml_domain::{MemoryStatus, Role, event_types};
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{App, require_role, scan_targets};
+use super::{App, require_role, scan_targets, version_finding};
 use crate::ports::{
-    AdmissionEnvelope, Clock, IdGen, JournalStore, MetadataFold, Parsed, ScanFinding, Scanner,
-    Signer,
+    AdmissionEnvelope, Clock, IdGen, JournalStore, MetadataFold, Parsed, RecordedVersion,
+    ScanFinding, Scanner, Signer,
 };
-use crate::types::MemoryRecord;
-use crate::types::{AppError, Bearer};
+use crate::types::{AppError, Bearer, FoundBy, MemoryRecord, VersionFinding};
 
 /// The most journal events one rescan call reads.
 pub const RESCAN_MAX_EVENTS: usize = 1000;
@@ -35,7 +34,13 @@ pub struct RescanHit {
     pub workarea_id: Uuid,
     pub version: u32,
     pub state: MemoryStatus,
+    /// The version's origin kind (`chat`, `sync`, `web`, `agent`), or
+    /// `None` for one stored before origins were recorded: the dry run's
+    /// rates per origin (ADR-0074 d18).
+    pub origin: Option<&'static str>,
     pub finding: ScanFinding,
+    /// The field the findings list stores it under (ADR-0074 d23).
+    pub field: String,
 }
 
 /// What one rescan window found.
@@ -45,6 +50,9 @@ pub struct RescanReport {
     pub scanner_version: Option<&'static str>,
     /// Versions scanned in this window: every stored state but erased.
     pub scanned: u64,
+    /// The versions scanned, counted by origin kind, `none` for a version
+    /// with none: the denominators of the dry run's rates (ADR-0074 d18).
+    pub scanned_by_origin: BTreeMap<&'static str, u64>,
     /// Every finding, in journal order.
     pub hits: Vec<RescanHit>,
     /// Findings counted by class, rule and whether they veto.
@@ -60,15 +68,18 @@ pub struct RescanReport {
     /// After this call, every stored version so scanned, erased ones aside:
     /// doctor's `scan_rescan_due`.
     pub rescan_due: u64,
+    /// After this call, held versions whose `scan_finding` has no row in
+    /// the findings list: doctor's `scan_findings_unlisted` (ADR-0074 d23).
+    pub findings_unlisted: u64,
 }
 
 /// A finding as a version's `scan_finding` carries it, as admission's
 /// reason names one: `class: rule at place` (d8).
-fn finding_reason(found: &[ScanFinding]) -> Option<String> {
+fn finding_reason(found: &[(String, ScanFinding)]) -> Option<String> {
     (!found.is_empty()).then(|| {
         found
             .iter()
-            .map(|f| format!("{}: {} at {}", f.class, f.rule, f.at))
+            .map(|(_, f)| format!("{}: {} at {}", f.class, f.rule, f.at))
             .collect::<Vec<_>>()
             .join("; ")
     })
@@ -116,7 +127,7 @@ where
     /// the list admission reads ([`super::scan_targets`]). A source its
     /// format no longer accepts is a hold, so the version stays its
     /// author's (ADR-0065 d15).
-    fn stored_findings(&self, tenant_id: Uuid, row: &MemoryRecord) -> Vec<ScanFinding> {
+    fn stored_findings(&self, tenant_id: Uuid, row: &MemoryRecord) -> Vec<(String, ScanFinding)> {
         let parsed = self
             .formats
             .resolve(&row.format.media_type)
@@ -131,27 +142,36 @@ where
         let parsed = match parsed {
             Ok(parsed) => parsed,
             Err(reason) => {
-                found.push(ScanFinding {
-                    class: "format.invalid".to_owned(),
-                    rule: reason,
-                    veto: false,
-                    at: "/body".to_owned(),
-                });
+                found.push((
+                    "/body".to_owned(),
+                    ScanFinding {
+                        class: "format.invalid".to_owned(),
+                        rule: reason,
+                        veto: false,
+                        at: "/body".to_owned(),
+                        place: None,
+                    },
+                ));
                 Parsed::default()
             }
         };
         // The format's own rule, `secret.keyed_value at <key path>`
         // (ADR-0056 d6): a veto, placed at its key path.
         if let Some(veto) = &parsed.veto {
-            found.push(ScanFinding {
-                class: "secret.keyed_value".to_owned(),
-                rule: "keyed-value".to_owned(),
-                veto: true,
-                at: veto
-                    .strip_prefix("secret.keyed_value at ")
-                    .unwrap_or(veto)
-                    .to_owned(),
-            });
+            let at = veto
+                .strip_prefix("secret.keyed_value at ")
+                .unwrap_or(veto)
+                .to_owned();
+            found.push((
+                format!("/body/{}", at.replace('.', "/")),
+                ScanFinding {
+                    class: "secret.keyed_value".to_owned(),
+                    rule: "keyed-value".to_owned(),
+                    veto: true,
+                    at,
+                    place: None,
+                },
+            ));
         }
         for target in scan_targets(row.kind, &row.body, &row.format, &parsed) {
             for mut f in self.scanner.findings(&AdmissionEnvelope {
@@ -162,7 +182,7 @@ where
                 if let Some(at) = target.at {
                     f.at = format!("{} at {at}", f.at);
                 }
-                found.push(f);
+                found.push((target.field(), f));
             }
         }
         found
@@ -200,21 +220,30 @@ where
             self.journal.memories(tenant_id, &ids).await?
         };
         let mut scanned = 0;
+        let mut scanned_by_origin: BTreeMap<&'static str, u64> = BTreeMap::new();
         let mut hits = Vec::new();
         let current = self.scanner.version();
-        let mut recorded: Vec<(Uuid, Vec<ScanFinding>)> = Vec::new();
+        let mut recorded: Vec<(Uuid, Vec<(String, ScanFinding)>)> = Vec::new();
         for row in rows.iter().filter(|r| r.status != MemoryStatus::Erased) {
             scanned += 1;
+            let origin = row.origin_kind.map(|o| o.as_str());
+            *scanned_by_origin
+                .entry(origin.unwrap_or("none"))
+                .or_default() += 1;
             let mut found = self.stored_findings(tenant_id, row);
             if let Some(anchor) = row.anchor.as_deref() {
                 for (field, value) in anchor.scanned() {
                     if field == "/anchor/path" && anchor_grammar::secret_shaped(value) {
-                        found.push(ScanFinding {
-                            class: "anchor.secret_path".to_owned(),
-                            rule: "secret-path".to_owned(),
-                            veto: true,
-                            at: field.to_owned(),
-                        });
+                        found.push((
+                            field.to_owned(),
+                            ScanFinding {
+                                class: "anchor.secret_path".to_owned(),
+                                rule: "secret-path".to_owned(),
+                                veto: true,
+                                at: field.to_owned(),
+                                place: None,
+                            },
+                        ));
                     }
                     // Any finding in an anchor refuses (ADR-0057 d2).
                     for mut f in self.scanner.findings(&AdmissionEnvelope {
@@ -224,19 +253,21 @@ where
                     }) {
                         f.veto = true;
                         f.at = f.at.replacen("/anchor", field, 1);
-                        found.push(f);
+                        found.push((field.to_owned(), f));
                     }
                 }
             }
             if record_held && row.status == MemoryStatus::Held {
                 recorded.push((row.memory_id, found.clone()));
             }
-            hits.extend(found.into_iter().map(|finding| RescanHit {
+            hits.extend(found.into_iter().map(|(field, finding)| RescanHit {
                 artifact_id: row.memory_id,
                 workarea_id: row.workarea_id,
                 version: row.version,
                 state: row.status,
+                origin,
                 finding,
+                field,
             }));
         }
         let mut by_rule: BTreeMap<(String, String, bool), u64> = BTreeMap::new();
@@ -265,7 +296,7 @@ where
                     "scanned_under": current,
                     "versions": recorded.iter().map(|(id, found)| json!({
                         "artifact_id": id.to_string(),
-                        "findings": found.iter().map(|f| json!({
+                        "findings": found.iter().map(|(_, f)| json!({
                             "class": f.class,
                             "rule": f.rule,
                             "action": if f.veto { "veto" } else { "hold" },
@@ -280,17 +311,27 @@ where
                     scanned_under: current.map(str::to_owned),
                     versions: recorded
                         .iter()
-                        .map(|(id, found)| (*id, finding_reason(found)))
+                        .map(|(id, found)| RecordedVersion {
+                            memory_id: *id,
+                            summary: finding_reason(found),
+                            findings: found
+                                .iter()
+                                .map(|(field, f)| {
+                                    version_finding(f, field.clone(), current, FoundBy::Rescan)
+                                })
+                                .collect::<Vec<VersionFinding>>(),
+                        })
                         .collect(),
                 },
                 None,
             )
             .await?;
         }
-        let (held_unrescanned, rescan_due) = self.journal.scan_backlog(tenant_id, current).await?;
+        let backlog = self.journal.scan_backlog(tenant_id, current).await?;
         Ok(RescanReport {
             scanner_version: self.scanner.version(),
             scanned,
+            scanned_by_origin,
             hits,
             by_rule: by_rule
                 .into_iter()
@@ -298,8 +339,9 @@ where
                 .collect(),
             next_after_seq,
             recorded: recorded_n,
-            held_unrescanned,
-            rescan_due,
+            held_unrescanned: backlog.held_unrescanned,
+            rescan_due: backlog.rescan_due,
+            findings_unlisted: backlog.findings_unlisted,
         })
     }
 }

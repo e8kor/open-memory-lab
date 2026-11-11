@@ -271,7 +271,15 @@ impl RuleSet {
         if let Some((span, rule)) = invisible(text) {
             out.push((
                 span.0,
-                code_finding("unicode.invisible", rule, Action::Hold, field, text, span, "raw"),
+                code_finding(
+                    "unicode.invisible",
+                    rule,
+                    Action::Hold,
+                    field,
+                    text,
+                    span,
+                    "raw",
+                ),
             ));
         }
         for (via, view) in &views {

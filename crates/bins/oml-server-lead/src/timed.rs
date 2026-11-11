@@ -411,8 +411,20 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         &self,
         tenant_id: Uuid,
         current: Option<&str>,
-    ) -> impl Future<Output = Result<(u64, u64), StoreError>> + Send {
+    ) -> impl Future<Output = Result<oml_app::ports::ScanBacklog, StoreError>> + Send {
         timed("scan_backlog", self.inner.scan_backlog(tenant_id, current))
+    }
+
+    fn scan_findings(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+    ) -> impl Future<Output = Result<Vec<(Uuid, oml_app::types::VersionFinding)>, StoreError>> + Send
+    {
+        timed(
+            "scan_findings",
+            self.inner.scan_findings(tenant_id, memory_ids),
+        )
     }
 
     fn held_count(

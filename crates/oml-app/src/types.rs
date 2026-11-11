@@ -1249,6 +1249,99 @@ pub struct ServedMemory {
     /// [`oml_domain::guardrail::LOAD_WARNING`] on a held guardrail, else
     /// `None` (proposed ADR-0037 d10, amending ADR-0012 d5).
     pub load_warning: Option<&'static str>,
+    /// Every finding stored on the version, on the surfaces that read them
+    /// (the review serve, the held listing and the named read, ADR-0074 d17,
+    /// d23); `None` where the surface does not read them, so an empty list
+    /// always means the scan found nothing.
+    pub scan_findings: Option<Vec<VersionFinding>>,
+}
+
+/// What a stored finding does (ADR-0074 d1): a refuse-class finding is only
+/// ever stored by a rescan on a version already admitted (d14), since
+/// admission stores nothing it refuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FindingVerdict {
+    Refuse,
+    Hold,
+    Annotate,
+}
+
+impl FindingVerdict {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Refuse => "refuse",
+            Self::Hold => "hold",
+            Self::Annotate => "annotate",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "refuse" => Some(Self::Refuse),
+            "hold" => Some(Self::Hold),
+            "annotate" => Some(Self::Annotate),
+            _ => None,
+        }
+    }
+}
+
+/// Who recorded a stored finding (ADR-0074 d23). The classifier and the
+/// contradiction check record theirs in later phases (#217, #218).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoundBy {
+    Admission,
+    Rescan,
+}
+
+impl FoundBy {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Admission => "admission",
+            Self::Rescan => "rescan",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "admission" => Some(Self::Admission),
+            "rescan" => Some(Self::Rescan),
+            _ => None,
+        }
+    }
+}
+
+/// One finding on a stored version, a row of the findings list (ADR-0074
+/// d23): its class, rule and verdict, the rule set it was found under, where
+/// it fired (the field, the line, the view the rule read and the byte range
+/// in that view), who recorded it and under which event. Never the matched
+/// text (ADR-0065 d8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionFinding {
+    pub class: String,
+    pub rule: String,
+    pub verdict: FindingVerdict,
+    /// The rule set it was found under; `None` for a scanner that pins none.
+    pub rule_set: Option<String>,
+    /// `/body`, `/title`, or `/body/` and a decoded view's path; `None` on a
+    /// finding migrated from the single stored finding, which named none.
+    pub field: Option<String>,
+    /// The 1-based line of the field the match starts on.
+    pub line: Option<u32>,
+    /// The view the rule read: `raw`, `clean`, `spaced`, `letters`.
+    pub via: Option<String>,
+    /// The match's byte range in that view.
+    pub span: Option<(u64, u64)>,
+    pub found_by: FoundBy,
+    /// The seq of the event that recorded it; the store sets it at commit,
+    /// so a finding about to be committed carries `None`.
+    pub event_seq: Option<u64>,
+    /// On a finding migrated from a version's single `scan_finding`
+    /// (migration 0043), the text that column held, `class: rule at place`.
+    pub migrated_from: Option<String>,
 }
 
 impl MemoryRecord {
