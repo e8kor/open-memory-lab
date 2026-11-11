@@ -176,9 +176,9 @@ Below the tenant's `max_sources` (8 by default), `wide` searches every such work
 
 The statistics are fixed before any workarea is chosen, so no hit's score depends on which workareas were searched. With `bm25`, the answer for any searched set is the full search's answer restricted to that set. The same query, key, memories and settings give the same answer. Selection reads no clock, no randomness and no model.
 
-The answer says what it searched. Under `wide` or a list, `search.sources` lists each workarea searched with `via`, `scope` or `federated`. It adds the workarea's estimate and the query words its rows hold. Each hit carries `via` beside its `workarea_path`. Every name and number in an answer is of a workarea the key reads.
+The answer says what it searched. Under `wide` or a list, `search.sources` lists each workarea searched with `via`, `scope` or `federated`. It adds the workarea's estimate and the query words its rows hold. Each hit carries `via` beside its `workarea_path`. A `scope` answer carries `search.widen` when another workarea the key reads is richer in the query's words. It must hold them at least twice as often per memory as the scope, on at least two memories. The hint names no workarea; a retry with `sources: "wide"` searches them. Every name and number in an answer is of a workarea the key reads.
 
-A `wide` recall reads the word counts of every such workarea, exact and never sampled, and a list reads the listed ones. A `scope` recall reads nothing for federation, whether the tenant has it on or off. [Workareas](workareas.md#federated-recall) covers the settings and how to make a workarea findable without granting it.
+A `wide` recall reads the word counts of every such workarea, exact and never sampled, and a list reads the listed ones. A `scope` recall reads none of them. On a federated tenant it reads its widen signal instead. The signal holds those counts as the server last built them, in the background, per key and scope. A signal serves for at most 300 seconds, and only under the grants it was built with. A `scope` answer without one carries no hint, and the server builds it for the next recall. [Workareas](workareas.md#federated-recall) covers the settings and how to make a workarea findable without granting it.
 
 ## What search does not do
 

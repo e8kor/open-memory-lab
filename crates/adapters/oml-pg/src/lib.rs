@@ -1184,6 +1184,31 @@ const REFERENCE_EXPIRED: &str = "SELECT m.id, m.workarea_id FROM memories m \
        AND m.is_tip AND NOT m.retirement AND m.workarea_id = ANY($2::uuid[]) \
        AND m.kind = ANY($3::text[])";
 
+/// Each node of `$2`'s served versions of the memory kinds `$3`: the widen
+/// signal's rows (ADR-0072 d8, as built by #244).
+const VOCABULARY_ROWS: &str = "SELECT c.workarea_id, COALESCE(sum(c.rows), 0)::int8 \
+     FROM search_workarea_rows c \
+     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+       AND c.memory_kind = ANY($3::int2[]) \
+     GROUP BY c.workarea_id";
+
+/// Every token's count per node of `$2`, [`REFERENCE_COUNTS`]' second half
+/// without its token filter, cut at `$4` rows so a vocabulary past the
+/// signal's cap is never read whole: the widen signal's read, made off the
+/// request path (ADR-0072 d8, as built by #244).
+const VOCABULARY_TERMS: &str = "SELECT c.workarea_id, c.token_id, sum(c.rows)::int8 \
+     FROM search_term_rows c \
+     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+       AND c.memory_kind = ANY($3::int2[]) \
+     GROUP BY c.workarea_id, c.token_id \
+     LIMIT $4";
+
+/// Every token each expired version `$2` holds, from its postings by the
+/// `(memory_id)` index.
+const VOCABULARY_EXPIRED_TOKENS: &str = "SELECT DISTINCT p.memory_id, p.token_id \
+     FROM search_postings p \
+     WHERE p.tenant_id = $1 AND p.memory_id = ANY($2::uuid[]) AND p.kind = 1";
+
 /// Which tokens of `$3` each expired version `$2` holds, from its postings
 /// by the `(memory_id)` index.
 const REFERENCE_EXPIRED_TOKENS: &str = "SELECT DISTINCT p.memory_id, p.token_id \
@@ -5608,6 +5633,91 @@ pub const SPARSE_MAX_ATTEMPTS: i32 = 5;
 /// pass skips them meanwhile (ADR-0052 d15; L1 on review).
 pub const SPARSE_LEASE_SECS: i64 = 300;
 
+impl PgStore {
+    /// A query's counts from per-(node, form) counts (ADR-0072 d4.2): each
+    /// word's frequency is its most frequent form's, and the words a
+    /// pruning pipeline drops are decided over the nodes' sums as
+    /// `bm25_postings` decides them (ADR-0052 d6). Shared by the reference
+    /// counts and the widen signal's lookup, so the two cannot disagree.
+    fn counts_of_forms(
+        &self,
+        forms: &[(String, String)],
+        rows: &BTreeMap<Uuid, u64>,
+        df: &BTreeMap<(Uuid, i64), u64>,
+        prunes: bool,
+    ) -> oml_app::federation::ReferenceCounts {
+        let mut words: Vec<String> = forms.iter().map(|(w, _)| w.clone()).collect();
+        words.dedup();
+        // Each word's forms, in the words' order.
+        let word_forms: Vec<Vec<i64>> = words
+            .iter()
+            .map(|w| {
+                let mut f: Vec<i64> = forms
+                    .iter()
+                    .filter(|(fw, _)| fw == w)
+                    .map(|(_, f)| token_id(f))
+                    .collect();
+                f.sort_unstable();
+                f.dedup();
+                f
+            })
+            .collect();
+        let nodes: BTreeMap<Uuid, oml_app::domain::federation::SourceCounts> = rows
+            .iter()
+            .map(|(node, n)| {
+                (
+                    *node,
+                    oml_app::domain::federation::SourceCounts {
+                        rows: *n,
+                        df: word_forms
+                            .iter()
+                            .map(|fs| {
+                                fs.iter()
+                                    .map(|t| df.get(&(*node, *t)).copied().unwrap_or(0))
+                                    .max()
+                                    .unwrap_or(0)
+                            })
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+        // The words a pruning pipeline drops, decided over the set's sums
+        // as `bm25_postings` decides them (ADR-0052 d6; ADR-0072 d4.2).
+        let pruned = if prunes {
+            let total_rows: u64 = rows.values().sum();
+            let entries: Vec<Vec<(i64, u64)>> = word_forms
+                .iter()
+                .map(|fs| {
+                    fs.iter()
+                        .map(|t| {
+                            let n: u64 = df
+                                .iter()
+                                .filter(|((_, tok), _)| tok == t)
+                                .map(|(_, n)| *n)
+                                .sum();
+                            (*t, n)
+                        })
+                        .filter(|(_, n)| *n > 0)
+                        .collect()
+                })
+                .collect();
+            self.prune
+                .pruned(&entries, total_rows)
+                .into_iter()
+                .map(|i| words[i].clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        oml_app::federation::ReferenceCounts {
+            words,
+            pruned,
+            nodes,
+        }
+    }
+}
+
 impl JournalStore for PgStore {
     async fn user_usage(
         &self,
@@ -6054,8 +6164,6 @@ impl JournalStore for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;
-        let mut words: Vec<String> = forms.iter().map(|(w, _)| w.clone()).collect();
-        words.dedup();
         let kinds = hit_kinds(&scope.kinds);
         let memory_kinds: Vec<i16> = kinds
             .iter()
@@ -6124,73 +6232,139 @@ impl JournalStore for PgStore {
             }
         }
         tx.commit().await.map_err(backend)?;
-        // Each word's forms, in the words' order.
-        let word_forms: Vec<Vec<i64>> = words
+        Ok(self.counts_of_forms(&forms, &rows, &df, scope.prunes))
+    }
+
+    async fn vocabulary_counts(
+        &self,
+        tenant_id: Uuid,
+        scope: &oml_app::federation::CountsScope,
+        max_pairs: usize,
+    ) -> Result<Option<oml_app::federation::VocabularyCounts>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // The database cancels the read itself before the lead's timeout
+        // stops the build, so no aggregate outlives a stopped build.
+        sqlx::query(&format!(
+            "SET LOCAL statement_timeout = '{}s'",
+            oml_app::app::WIDEN_SIGNAL_STATEMENT_SECS
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let kinds = hit_kinds(&scope.kinds);
+        let memory_kinds: Vec<i16> = kinds
             .iter()
-            .map(|w| {
-                let mut f: Vec<i64> = forms
-                    .iter()
-                    .filter(|(fw, _)| fw == w)
-                    .map(|(_, f)| token_id(f))
-                    .collect();
-                f.sort_unstable();
-                f.dedup();
-                f
+            .filter_map(|k| match *k {
+                "memory" => Some(1_i16),
+                "derived_fact" => Some(2_i16),
+                _ => None,
             })
             .collect();
-        let nodes: BTreeMap<Uuid, oml_app::domain::federation::SourceCounts> = rows
-            .iter()
-            .map(|(node, n)| {
+        let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
+        let mut counted: Vec<(Uuid, i64, i64)> = Vec::new();
+        // Each expired version's (node, token), subtracted from the counts.
+        let mut expired_pairs: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
+        if !scope.nodes.is_empty() {
+            let per_node: Vec<(Uuid, i64)> = sqlx::query_as(VOCABULARY_ROWS)
+                .bind(tenant_id)
+                .bind(&scope.nodes)
+                .bind(&memory_kinds)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(backend)?;
+            for (node, n) in per_node {
+                *rows.entry(node).or_default() += u64::try_from(n).map_err(backend)?;
+            }
+            // At most one row past the cap is read, so a vocabulary too large
+            // to hold is never read whole.
+            counted = sqlx::query_as(VOCABULARY_TERMS)
+                .bind(tenant_id)
+                .bind(&scope.nodes)
+                .bind(&memory_kinds)
+                .bind(i64::try_from(max_pairs.saturating_add(1)).unwrap_or(i64::MAX))
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(backend)?;
+            if counted.len() > max_pairs {
+                tx.commit().await.map_err(backend)?;
+                return Ok(None);
+            }
+            if let Some(now) = scope.expired_at {
+                let expired: Vec<(Uuid, Uuid)> = sqlx::query_as(REFERENCE_EXPIRED)
+                    .bind(tenant_id)
+                    .bind(&scope.nodes)
+                    .bind(&kinds)
+                    .bind(now)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                if !expired.is_empty() {
+                    let home: BTreeMap<Uuid, Uuid> = expired.iter().copied().collect();
+                    for node in home.values() {
+                        if let Some(r) = rows.get_mut(node) {
+                            *r = r.saturating_sub(1);
+                        }
+                    }
+                    let ids: Vec<Uuid> = home.keys().copied().collect();
+                    let held: Vec<(Uuid, i64)> = sqlx::query_as(VOCABULARY_EXPIRED_TOKENS)
+                        .bind(tenant_id)
+                        .bind(&ids)
+                        .fetch_all(&mut *tx)
+                        .await
+                        .map_err(backend)?;
+                    for (memory_id, token) in held {
+                        if let Some(node) = home.get(&memory_id) {
+                            *expired_pairs.entry((*node, token)).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+        tx.commit().await.map_err(backend)?;
+        // Taken out of the rows as read, with no second copy: the read's
+        // 32 bytes a row and the signal's 16 a pair are the build's peak.
+        Ok(Some(oml_app::federation::VocabularyCounts::from_counts(
+            rows,
+            counted.into_iter().map(|(node, token, n)| {
+                let less = expired_pairs.get(&(node, token)).copied().unwrap_or(0);
                 (
-                    *node,
-                    oml_app::domain::federation::SourceCounts {
-                        rows: *n,
-                        df: word_forms
-                            .iter()
-                            .map(|fs| {
-                                fs.iter()
-                                    .map(|t| df.get(&(*node, *t)).copied().unwrap_or(0))
-                                    .max()
-                                    .unwrap_or(0)
-                            })
-                            .collect(),
-                    },
+                    node,
+                    token,
+                    u64::try_from(n).unwrap_or(0).saturating_sub(less),
                 )
-            })
-            .collect();
-        // The words a pruning pipeline drops, decided over the set's sums
-        // as `bm25_postings` decides them (ADR-0052 d6; ADR-0072 d4.2).
-        let pruned = if scope.prunes {
-            let total_rows: u64 = rows.values().sum();
-            let entries: Vec<Vec<(i64, u64)>> = word_forms
-                .iter()
-                .map(|fs| {
-                    fs.iter()
-                        .map(|t| {
-                            let n: u64 = df
-                                .iter()
-                                .filter(|((_, tok), _)| tok == t)
-                                .map(|(_, n)| *n)
-                                .sum();
-                            (*t, n)
-                        })
-                        .filter(|(_, n)| *n > 0)
-                        .collect()
-                })
-                .collect();
-            self.prune
-                .pruned(&entries, total_rows)
-                .into_iter()
-                .map(|i| words[i].clone())
-                .collect()
-        } else {
-            Vec::new()
-        };
-        Ok(oml_app::federation::ReferenceCounts {
-            words,
-            pruned,
-            nodes,
-        })
+            }),
+        )))
+    }
+
+    /// The query's forms, one statement over no table, then their counts out
+    /// of the vocabulary as [`Self::reference_counts`] reads them.
+    async fn counts_from_vocabulary(
+        &self,
+        vocabulary: &oml_app::federation::VocabularyCounts,
+        query: &str,
+        prunes: bool,
+    ) -> Result<oml_app::federation::ReferenceCounts, StoreError> {
+        let forms: Vec<(String, String)> = sqlx::query_as(&search_forms_sql())
+            .bind(query)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
+        for (_, form) in &forms {
+            let token = token_id(form);
+            for node in vocabulary.rows.keys() {
+                let n = vocabulary.df(node, token);
+                if n > 0 {
+                    df.insert((*node, token), n);
+                }
+            }
+        }
+        Ok(self.counts_of_forms(&forms, &vocabulary.rows, &df, prunes))
     }
 
     async fn steering_in_force(
