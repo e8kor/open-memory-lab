@@ -1368,6 +1368,44 @@ where
         self.workarea_offers(&caller, &caller, workarea_id).await
     }
 
+    /// [`Self::workarea_offers_for`], and beside the offers each act a
+    /// dropdown names that is not offered now with the refusal its verb
+    /// would answer: proposing either rung, putting the workarea in
+    /// progress and committing it. A confirmation reads the refusal off
+    /// the wire, as the lead's page read it from
+    /// [`Self::workarea_offer_check`] (ADR-0045 d28; ADR-0070 d5).
+    pub async fn workarea_offers_explained_for(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        workarea: Reference,
+    ) -> Result<(WorkareaOffers, Vec<(WorkareaOffer, AppError)>), AppError> {
+        let caller = self.authenticate_bearer(bearer.into()).await?;
+        let workarea_id = self
+            .resolve(&caller.key, NamedKind::Workarea, &workarea)
+            .await?;
+        let offers = self.workarea_offers(&caller, &caller, workarea_id).await?;
+        let mut refused = Vec::new();
+        for act in [
+            WorkareaOffer::Propose(WorkareaStatus::Committed),
+            WorkareaOffer::Propose(WorkareaStatus::Validated),
+            WorkareaOffer::InProgress,
+            WorkareaOffer::Commit,
+        ] {
+            if offers.offers.contains(&act) {
+                continue;
+            }
+            match self
+                .workarea_offer_check(&caller, &caller, workarea_id, act)
+                .await
+            {
+                Ok(()) => {}
+                Err(AppError::Store(e)) => return Err(AppError::Store(e)),
+                Err(e) => refused.push((act, e)),
+            }
+        }
+        Ok((offers, refused))
+    }
+
     // -- the admin read -----------------------------------------------------
 
     /// `POST /v2/admin/memories/search` (ADR-0045 d21): admin key role

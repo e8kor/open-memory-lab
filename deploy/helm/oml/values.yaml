@@ -79,6 +79,10 @@ web:
   ingressPaths:
     - path: /web/guardrails
       pathType: Exact
+    - path: /web/workareas
+      pathType: Exact
+    - path: /web/admin/workareas
+      pathType: Exact
   # Hints, never claims (docs/operations/capacity.md).
   resources: {}
 

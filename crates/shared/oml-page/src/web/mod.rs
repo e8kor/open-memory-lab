@@ -66,6 +66,26 @@ pub fn content_security_policy(form_origins: &[&str], frame_src: Option<&str>) -
 /// The Atlas tab's link, which is also its active marker.
 pub const ATLAS_TAB: &str = "/web?view=memories&amp;display=atlas";
 
+/// The user page's Workareas view, which `oml-web` serves (ADR-0070 d7 (b)).
+pub const USER_WORKAREAS_PATH: &str = "/web/workareas";
+
+/// The admin page's Workareas view, which `oml-web` serves (ADR-0070 d7 (b)).
+pub const ADMIN_WORKAREAS_PATH: &str = "/web/admin/workareas";
+
+/// The admin page's tabs, `(href, text)`; the lead's admin views and
+/// `oml-web`'s draw the same nav.
+pub const ADMIN_TABS: [(&str, &str); 9] = [
+    ("/web/admin", "People"),
+    ("/web/admin/users", "Quotas"),
+    ("/web/admin?view=queue", "Queue"),
+    ("/web/admin?view=memories", "Memories"),
+    (ADMIN_WORKAREAS_PATH, "Workareas"),
+    ("/web/admin?view=review", "Review"),
+    ("/web/admin?view=held", "Bulk review"),
+    ("/web/admin?view=curate", "Curate"),
+    ("/web", "Your page"),
+];
+
 /// The user page's tabs, `(href, text)`, with the administration tab for
 /// an admin's session; the lead's pages and `oml-web`'s draw the same nav.
 #[must_use]
@@ -78,7 +98,7 @@ pub fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
         ("/web?view=review", "Review"),
         (ATLAS_TAB, "Atlas"),
         ("/web", "Keys"),
-        ("/web?view=workarea", "Workareas"),
+        (USER_WORKAREAS_PATH, "Workareas"),
         ("/web/guardrails", "Guardrails"),
     ];
     if admin {

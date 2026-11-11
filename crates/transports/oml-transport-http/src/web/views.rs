@@ -26,7 +26,7 @@ use super::page::{attr, form, hidden, input, select, shell, short, state_tag, te
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::oauth::percent_encode;
 use crate::{ApiState, retry_chain};
-use oml_page::web::{ATLAS_TAB, user_tabs, workarea_label};
+use oml_page::web::{ADMIN_TABS, ADMIN_WORKAREAS_PATH, ATLAS_TAB, USER_WORKAREAS_PATH, user_tabs};
 
 /// The public server the plugins and the agent kit connect to unless told
 /// otherwise (ADR-0043).
@@ -156,35 +156,38 @@ fn grant_line(role: Role, path: &str) -> String {
 /// The user page's views `oml-web` serves, each at a path of its own
 /// (ADR-0070 d7 (b) as amended): the lead answers `GET /web?view=<view>`
 /// with a `303` to that fixed path, and no longer renders the view.
-pub const MOVED_VIEWS: &[(&str, &str)] = &[("guardrails", "/web/guardrails")];
+pub const MOVED_VIEWS: &[(&str, &str)] = &[
+    ("guardrails", "/web/guardrails"),
+    ("workarea", USER_WORKAREAS_PATH),
+];
+
+/// The admin page's views `oml-web` serves, each at a path of its own: the
+/// lead answers `GET /web/admin?view=<view>` with a `303` there.
+pub const MOVED_ADMIN_VIEWS: &[(&str, &str)] = &[("workarea", ADMIN_WORKAREAS_PATH)];
+
+/// The acts of a view `oml-web` serves: the lead runs none of them and
+/// answers each with a `303` to the view's own path, on the user page and
+/// on the admin page alike (ADR-0070 d7 (b)).
+pub const MOVED_ACTIONS: &[&str] = &["workarea_mode", "workarea_transition", "workarea_ratify"];
 
 /// The fixed path a moved view lives at, for a query whose one `view` names
-/// it; `None` otherwise.
+/// one of `moved`; `None` otherwise.
 #[must_use]
-pub fn moved_view(query: &str) -> Option<&'static str> {
+pub fn moved_view_of(moved: &[(&str, &'static str)], query: &str) -> Option<&'static str> {
     let pairs = crate::oauth::form_pairs(query.as_bytes()).ok()?;
     let mut views = pairs.iter().filter(|(n, _)| n == "view");
     let (_, view) = views.next()?;
     if views.next().is_some() {
         return None;
     }
-    MOVED_VIEWS
-        .iter()
-        .find(|(v, _)| v == view)
-        .map(|(_, path)| *path)
+    moved.iter().find(|(v, _)| v == view).map(|(_, path)| *path)
 }
 
-const ADMIN_TABS: [(&str, &str); 9] = [
-    ("/web/admin", "People"),
-    ("/web/admin/users", "Quotas"),
-    ("/web/admin?view=queue", "Queue"),
-    ("/web/admin?view=memories", "Memories"),
-    ("/web/admin?view=workarea", "Workareas"),
-    ("/web/admin?view=review", "Review"),
-    ("/web/admin?view=held", "Bulk review"),
-    ("/web/admin?view=curate", "Curate"),
-    ("/web", "Your page"),
-];
+/// [`moved_view_of`] the user page's [`MOVED_VIEWS`].
+#[must_use]
+pub fn moved_view(query: &str) -> Option<&'static str> {
+    moved_view_of(MOVED_VIEWS, query)
+}
 
 impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
 where
@@ -238,10 +241,6 @@ where
                     "/web?view=memories"
                 },
                 self.memories_view(&web, session, &csrf, query).await?,
-            ),
-            "workarea" => (
-                "/web?view=workarea",
-                self.workarea_view(&web, session, &csrf, query).await?,
             ),
             "review" => ("/web?view=review", review_start("/web", &csrf)),
             // A view oml-web serves: the proxy routes it there, so the lead
@@ -436,58 +435,6 @@ where
         Ok(super::memories::list_view("/web", &list, Some(&page), lede))
     }
 
-    async fn workarea_view(
-        &self,
-        web: &oml_app::app::Caller,
-        session: &WebSessionRecord,
-        csrf: &str,
-        query: &Fields,
-    ) -> Result<String, ApiError> {
-        let root = web.key().user.ok_or_else(ApiError::not_found)?;
-        let tree = self
-            .app
-            .workarea_tree(Bearer::Session(web), Reference::Id(root), None, 200)
-            .await
-            .map_err(app_error)?;
-        let nodes: Vec<super::workareas::Node> = tree
-            .items
-            .iter()
-            .map(|node| super::workareas::Node {
-                id: node.workarea.workarea_id,
-                path: node.path.clone(),
-                name: workarea_label(&node.path).to_owned(),
-            })
-            .collect();
-        // Every act here is the person's reviewer key's: a dreamer key a
-        // person holds proposes, ratifies another key's proposal, and sets
-        // the mode (ADR-0009 d3; ADR-0030 d1; ADR-0045 d28).
-        let review = self.caller(session, Capacity::Review).await?;
-        let mut body = format!(
-            r#"<h1>Workareas</h1><p class="desc">Under <code>universe.{}</code>. Apply asks you to confirm.</p>"#,
-            short(session.user.as_str())
-        );
-        body.push_str(
-            &self
-                .workarea_table("/web", csrf, &review, &review, &nodes, query)
-                .await?,
-        );
-        body.push_str("<details class=\"help\"><summary>?</summary>In progress: your agents recall each other's unreviewed memories inside it, and nothing leaves it until you commit, which needs every memory in it reviewed.</details>");
-        body.push_str("<h2>New workarea</h2>");
-        body.push_str(&form(
-            "/web",
-            "create_workarea",
-            csrf,
-            &format!(
-                "{}{}",
-                input("name", "name", "", true),
-                input("parent", "inside (blank: your root)", "", false)
-            ),
-            "Create",
-            true,
-        ));
-        Ok(body)
-    }
-
     /// One act of the user page (ADR-0045 d9): review as `<user>-review`,
     /// every other act as `<user>-web`.
     pub(crate) async fn user_page_act(
@@ -558,16 +505,14 @@ where
                 })
                 .await
                 .map_err(app_error)?;
-                Ok(Outcome::Redirect(
-                    "/web?view=workarea&done=created".to_owned(),
-                ))
+                Ok(Outcome::Redirect(format!(
+                    "{USER_WORKAREAS_PATH}?done=created"
+                )))
             }
-            "workarea_mode" | "workarea_transition" | "workarea_ratify" => {
-                let review = self.caller(session, Capacity::Review).await?;
-                Ok(Outcome::Redirect(
-                    self.workarea_act("/web", action, &review, &review, fields)
-                        .await?,
-                ))
+            // An act of the Workareas view, which oml-web serves: run
+            // nothing, and send the person to the view (ADR-0070 d7 (b)).
+            action if MOVED_ACTIONS.contains(&action) => {
+                Ok(Outcome::Redirect(USER_WORKAREAS_PATH.to_owned()))
             }
             "review_next" | "verdict" => {
                 self.review_act("/web", token, session, action, fields)
@@ -724,11 +669,11 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
                     .await?,
             ),
             "review" => ("/web/admin?view=review", review_start("/web/admin", &csrf)),
-            "workarea" => (
-                "/web/admin?view=workarea",
-                self.admin_workarea_view(&admin, session, &csrf, query)
-                    .await?,
-            ),
+            // A view oml-web serves: the proxy routes it there (ADR-0070
+            // d7 (b)).
+            view if MOVED_ADMIN_VIEWS.iter().any(|(v, _)| *v == view) => {
+                return Err(ApiError::not_found());
+            }
             "held" => (
                 "/web/admin?view=held",
                 self.held_view(session, query, &csrf).await?,
@@ -1134,47 +1079,6 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
         Ok(body)
     }
 
-    /// The tenant's tree with each workarea's dropdown (ADR-0045 d28): the
-    /// admin key reads the tree as structure (ADR-0026 d15) and proposes
-    /// and ratifies; the mode is the person's reviewer key's.
-    async fn admin_workarea_view(
-        &self,
-        admin: &oml_app::app::Caller,
-        session: &WebSessionRecord,
-        csrf: &str,
-        query: &Fields,
-    ) -> Result<String, ApiError> {
-        let tree = self
-            .app
-            .workarea_tree(
-                Bearer::Session(admin),
-                Reference::Name(Name::parse(oml_app::domain::name::UNIVERSE).expect("a name")),
-                None,
-                200,
-            )
-            .await
-            .map_err(app_error)?;
-        let nodes: Vec<super::workareas::Node> = tree
-            .items
-            .iter()
-            .map(|node| super::workareas::Node {
-                id: node.workarea.workarea_id,
-                path: node.path.clone(),
-                name: workarea_label(&node.path).to_owned(),
-            })
-            .collect();
-        let review = self.caller(session, Capacity::Review).await?;
-        let mut body = String::from(
-            r#"<h1>Workareas</h1><p class="desc">Apply asks you to confirm.</p><details class="help"><summary>?</summary>Status changes run as your admin key and need a second key to ratify; in progress and commit run as your reviewer key.</details>"#,
-        );
-        body.push_str(
-            &self
-                .workarea_table("/web/admin", csrf, admin, &review, &nodes, query)
-                .await?,
-        );
-        Ok(body)
-    }
-
     async fn queue_view(&self, admin: &oml_app::app::Caller) -> Result<String, ApiError> {
         let rows = self.app.web_queue(admin).await.map_err(app_error)?;
         let mut body = String::from(
@@ -1328,16 +1232,10 @@ OML_API_KEY={}</pre></div><p><a href="/web">Back to your keys</a></p>"#,
             "bulk_confirm" | "bulk_verdict" => {
                 return self.bulk_act(token, session, action, fields).await;
             }
-            "workarea_mode" | "workarea_transition" | "workarea_ratify" => {
-                // Transitions as the admin key, which ADR-0009 admits by
-                // role; the mode as the person's reviewer key, a dreamer
-                // key a person holds (ADR-0030 d1; ADR-0045 d28).
-                let admin = self.caller(session, Capacity::Admin).await?;
-                let review = self.caller(session, Capacity::Review).await?;
-                return Ok(Outcome::Redirect(
-                    self.workarea_act("/web/admin", action, &admin, &review, fields)
-                        .await?,
-                ));
+            // An act of the Workareas view, which oml-web serves: run
+            // nothing, and send the person to the view (ADR-0070 d7 (b)).
+            action if MOVED_ACTIONS.contains(&action) => {
+                return Ok(Outcome::Redirect(ADMIN_WORKAREAS_PATH.to_owned()));
             }
             "curate" => {
                 fields.only(&["source", "text", "claim_key"])?;

@@ -81,7 +81,9 @@ def sync_detailed(
     is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now:
     propose the next rung, ratify a live proposal another key made, put the workarea in progress, or
     commit an in-progress root; a commit the held rows refuse is not offered and names their count.
-    Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
+    refused names each of proposing committed, proposing validated, mode in_progress and mode standard
+    that is not offered, with the code and message its verb would refuse it with now, so a confirmation
+    names the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -130,7 +132,9 @@ def sync(
     is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now:
     propose the next rung, ratify a live proposal another key made, put the workarea in progress, or
     commit an in-progress root; a commit the held rows refuse is not offered and names their count.
-    Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
+    refused names each of proposing committed, proposing validated, mode in_progress and mode standard
+    that is not offered, with the code and message its verb would refuse it with now, so a confirmation
+    names the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -174,7 +178,9 @@ async def asyncio_detailed(
     is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now:
     propose the next rung, ratify a live proposal another key made, put the workarea in progress, or
     commit an in-progress root; a commit the held rows refuse is not offered and names their count.
-    Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
+    refused names each of proposing committed, proposing validated, mode in_progress and mode standard
+    that is not offered, with the code and message its verb would refuse it with now, so a confirmation
+    names the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -221,7 +227,9 @@ async def asyncio(
     is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now:
     propose the next rung, ratify a live proposal another key made, put the workarea in progress, or
     commit an in-progress root; a commit the held rows refuse is not offered and names their count.
-    Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
+    refused names each of proposing committed, proposing validated, mode in_progress and mode standard
+    that is not offered, with the code and message its verb would refuse it with now, so a confirmation
+    names the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved

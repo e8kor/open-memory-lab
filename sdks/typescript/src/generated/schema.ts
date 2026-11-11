@@ -197,7 +197,7 @@ export interface paths {
         };
         /**
          * The transitions, the mode change and the commit the caller's verbs admit on a workarea now.
-         * @description Requires: reader effective access on the workarea, or the admin key role; one the caller cannot read is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now: propose the next rung, ratify a live proposal another key made, put the workarea in progress, or commit an in-progress root; a commit the held rows refuse is not offered and names their count. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
+         * @description Requires: reader effective access on the workarea, or the admin key role; one the caller cannot read is access.not_found (R3). Each act is offered only where the verb's own check admits the caller now: propose the next rung, ratify a live proposal another key made, put the workarea in progress, or commit an in-progress root; a commit the held rows refuse is not offered and names their count. refused names each of proposing committed, proposing validated, mode in_progress and mode standard that is not offered, with the code and message its verb would refuse it with now, so a confirmation names the refusal without acting. Journals nothing (ADR-0045 d28; ADR-0070 d5). Since v0.6.4.
          */
         get: operations["getWorkareaOffers"];
         put?: never;
@@ -239,7 +239,7 @@ export interface paths {
         put?: never;
         /**
          * A person's key puts a workarea in progress, or commits it back to standard (ADR-0030).
-         * @description Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool reaches it.
+         * @description Requires: a dreamer key held_by human with dreamer effective access on the node; every other key is refused before any lookup with access.verb_ceiling, details.reason mode_is_human_only (ADR-0030 d1). in_progress is refused with 409 workarea.in_progress_refused, details.reason universe, status (not development) or nested (an ancestor or descendant is in progress). standard on an in-progress root is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held, dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing; otherwise journals workarea.mode_set. The answer is the node as the key reads it. A resubmission under the same Idempotency-Key and body answers the recorded node with Idempotency-Replay: true and sets nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4). No MCP tool reaches it.
          */
         post: operations["setWorkareaMode"];
         delete?: never;
@@ -323,7 +323,7 @@ export interface paths {
         put?: never;
         /**
          * Propose a forward status transition; pending until a second party ratifies.
-         * @description Requires: dreamer or admin. Forward only; validated refused while any child is not validated (workarea.transition_refused).
+         * @description Requires: dreamer or admin. Forward only; validated refused while any child is not validated (workarea.transition_refused). A resubmission under the same Idempotency-Key and body answers the recorded proposal with Idempotency-Replay: true and proposes nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
          */
         post: operations["proposeTransition"];
         delete?: never;
@@ -343,7 +343,7 @@ export interface paths {
         put?: never;
         /**
          * Ratify a pending transition; journalled with the policy snapshot.
-         * @description Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2 extends to transitions). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1).
+         * @description Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2 extends to transitions). A held_by: service key is refused with access.verb_ceiling before any lookup (ADR-0025 d1). A resubmission under the same Idempotency-Key answers the recorded ratification with Idempotency-Replay: true and ratifies nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
          */
         post: operations["ratifyTransition"];
         delete?: never;
@@ -1115,13 +1115,13 @@ export interface paths {
         };
         /**
          * The sign-in page without a session; the user page with one.
-         * @description Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys, setup, memories, workarea, review), q, memory, workarea. Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
+         * @description Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys, setup, memories, review), q, memory, workarea. Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
          */
         get: operations["userPage"];
         put?: never;
         /**
          * One act of the user page, named by action.
-         * @description Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off, create_workarea, review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key, which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9). An issued key's value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.
+         * @description Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off, create_workarea, review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key, which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea answers 303 /web/workareas?done=created. workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.
          */
         post: operations["userPageAct"];
         delete?: never;
@@ -1223,13 +1223,13 @@ export interface paths {
         };
         /**
          * The admin page, for a session whose allowlist entry is an admin's.
-         * @description Any other session answers access.not_found. Views by query: view (people, queue, review, curate, memories), q, memory. The memories view and one memory's attribution are the admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
+         * @description Any other session answers access.not_found. Views by query: view (people, queue, review, curate, memories), q, memory; view=workarea answers 303 /web/admin/workareas, which oml-web serves, carrying nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4). The memories view and one memory's attribution are the admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
          */
         get: operations["adminPage"];
         put?: never;
         /**
          * One act of the admin page, named by action, run as the capacity it needs.
-         * @description Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
+         * @description Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web runs at /web/admin/workareas over the API: the lead runs none of them and answers 303 /web/admin/workareas (ADR-0070 d7 (b); since v0.6.4). Since v0.5.0.
          */
         post: operations["adminPageAct"];
         delete?: never;
@@ -2725,6 +2725,16 @@ export interface components {
                 /** @description The held rows that withhold the commit, or null. */
                 held: number | null;
             };
+            /** @description Each act of propose committed, propose validated, mode in_progress and mode standard that is not offered, with the refusal its verb would answer now (ADR-0045 d28). Since v0.6.4. */
+            refused: {
+                /** @enum {string} */
+                op: "propose" | "mode";
+                /** @enum {string} */
+                to: "committed" | "validated" | "in_progress" | "standard";
+                /** @description The error code the act's verb would answer. */
+                code: string;
+                message: string;
+            }[];
         };
         KeyIssued: components["schemas"]["Key"] & {
             /** @description The secret — returned exactly once, journalled as issued-without-value. */
@@ -3774,7 +3784,21 @@ export interface operations {
                      *       "commit": {
                      *         "offered": false,
                      *         "held": null
-                     *       }
+                     *       },
+                     *       "refused": [
+                     *         {
+                     *           "op": "propose",
+                     *           "to": "validated",
+                     *           "code": "workarea.transition_refused",
+                     *           "message": "validated follows committed: the workarea is development"
+                     *         },
+                     *         {
+                     *           "op": "mode",
+                     *           "to": "standard",
+                     *           "code": "request.validation",
+                     *           "message": "the workarea is already in that mode, so there is nothing to do"
+                     *         }
+                     *       ]
                      *     }
                      */
                     "application/json": components["schemas"]["WorkareaOffers"];
@@ -6492,7 +6516,7 @@ export interface operations {
                     "text/html": string;
                 };
             };
-            /** @description A view oml-web now serves at its own path, view=guardrails: to the fixed /web/guardrails, carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4. */
+            /** @description A view oml-web now serves at its own path, view=guardrails or view=workarea: to the fixed /web/guardrails or /web/workareas, carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4. */
             303: {
                 headers: {
                     [name: string]: unknown;
@@ -6527,7 +6551,7 @@ export interface operations {
                     "text/html": string;
                 };
             };
-            /** @description After sign_out, to /web. */
+            /** @description After sign_out, to /web; after create_workarea, to /web/workareas?done=created; for workarea_mode, workarea_transition and workarea_ratify, to /web/workareas, having run nothing. */
             303: {
                 headers: {
                     [name: string]: unknown;
@@ -6722,6 +6746,13 @@ export interface operations {
                     "text/html": string;
                 };
             };
+            /** @description view=workarea, which oml-web serves at its own path: to the fixed /web/admin/workareas, carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description access.not_found, on a page. */
             404: {
                 headers: {
@@ -6758,6 +6789,13 @@ export interface operations {
                 content: {
                     "text/html": string;
                 };
+            };
+            /** @description For workarea_mode, workarea_transition and workarea_ratify, to /web/admin/workareas, having run nothing (ADR-0070 d7 (b)). Since v0.6.4. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

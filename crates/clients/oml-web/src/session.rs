@@ -44,6 +44,7 @@ pub struct PageCalls {
     next: AtomicUsize,
     made: Mutex<Vec<String>>,
     acting: Mutex<Option<String>>,
+    action: Mutex<Option<String>>,
 }
 
 /// The ids of one API call.
@@ -62,6 +63,7 @@ impl PageCalls {
             next: AtomicUsize::new(0),
             made: Mutex::new(Vec::new()),
             acting: Mutex::new(None),
+            action: Mutex::new(None),
         }
     }
 
@@ -103,6 +105,17 @@ impl PageCalls {
     pub fn acting(&self) -> Option<String> {
         self.acting.lock().expect("unpoisoned").clone()
     }
+
+    /// Records the form's `action`, the page line's `web_action`.
+    pub fn act(&self, action: &str) {
+        *self.action.lock().expect("unpoisoned") = Some(action.to_owned());
+    }
+
+    /// The form's `action`, where the request was an act.
+    #[must_use]
+    pub fn action(&self) -> Option<String> {
+        self.action.lock().expect("unpoisoned").clone()
+    }
 }
 
 /// A resolved session: its token, the `web` capacity's record, and whether
@@ -130,6 +143,20 @@ impl Session {
     #[must_use]
     pub fn credential(&self, capacity: Capacity) -> String {
         capacity_credential(&self.token, capacity.as_str())
+    }
+
+    /// The session's CSRF token, which every form of its pages carries
+    /// (ADR-0045 d8).
+    #[must_use]
+    pub fn csrf(&self) -> String {
+        oml_web_credential::csrf_token(&self.token)
+    }
+
+    /// The `Idempotency-Key` of the act a form with `nonce` makes
+    /// (ADR-0070 d3 layer 4).
+    #[must_use]
+    pub fn act_key(&self, nonce: &str) -> String {
+        oml_web_credential::act_idempotency_key(&self.token, nonce)
     }
 
     /// The header's "who": the person and their organisation, as the lead's

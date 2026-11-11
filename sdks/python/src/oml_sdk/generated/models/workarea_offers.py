@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.workarea_offers_mode_change_type_0 import (
         WorkareaOffersModeChangeType0,
     )
+    from ..models.workarea_offers_refused_item import WorkareaOffersRefusedItem
     from ..models.workarea_offers_transitions_item import WorkareaOffersTransitionsItem
 
 
@@ -31,6 +32,8 @@ class WorkareaOffers:
         mode_change (None | WorkareaOffersModeChangeType0): Putting the workarea in progress, where offered; null
             otherwise.
         commit (WorkareaOffersCommit):
+        refused (list[WorkareaOffersRefusedItem]): Each act of propose committed, propose validated, mode in_progress
+            and mode standard that is not offered, with the refusal its verb would answer now (ADR-0045 d28). Since v0.6.4.
     """
 
     workarea_id: UUID
@@ -39,6 +42,7 @@ class WorkareaOffers:
     transitions: list[WorkareaOffersTransitionsItem]
     mode_change: None | WorkareaOffersModeChangeType0
     commit: WorkareaOffersCommit
+    refused: list[WorkareaOffersRefusedItem]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -65,6 +69,11 @@ class WorkareaOffers:
 
         commit = self.commit.to_dict()
 
+        refused = []
+        for refused_item_data in self.refused:
+            refused_item = refused_item_data.to_dict()
+            refused.append(refused_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -75,6 +84,7 @@ class WorkareaOffers:
                 "transitions": transitions,
                 "mode_change": mode_change,
                 "commit": commit,
+                "refused": refused,
             }
         )
 
@@ -86,6 +96,7 @@ class WorkareaOffers:
         from ..models.workarea_offers_mode_change_type_0 import (
             WorkareaOffersModeChangeType0,
         )
+        from ..models.workarea_offers_refused_item import WorkareaOffersRefusedItem
         from ..models.workarea_offers_transitions_item import (
             WorkareaOffersTransitionsItem,
         )
@@ -123,6 +134,13 @@ class WorkareaOffers:
 
         commit = WorkareaOffersCommit.from_dict(d.pop("commit"))
 
+        refused = []
+        _refused = d.pop("refused")
+        for refused_item_data in _refused:
+            refused_item = WorkareaOffersRefusedItem.from_dict(refused_item_data)
+
+            refused.append(refused_item)
+
         workarea_offers = cls(
             workarea_id=workarea_id,
             status=status,
@@ -130,6 +148,7 @@ class WorkareaOffers:
             transitions=transitions,
             mode_change=mode_change,
             commit=commit,
+            refused=refused,
         )
 
         workarea_offers.additional_properties = d

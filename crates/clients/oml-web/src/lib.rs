@@ -3,7 +3,7 @@
 //! 2026-11-10, `oml-web` runs only as its own process, with `web.api_url`
 //! required). `tests/dependencies.rs` holds the wall.
 //!
-//! Phase (b) moves the pages here one at a time behind their URLs; the
+//! Phase (b) moves the pages here one at a time, each to a path of its own; the
 //! reverse proxy sends each moved page's URL here and every other to the
 //! lead. [`PAGES`] is that routing table, and [`serves`] its reading.
 
@@ -14,6 +14,7 @@ pub mod middleware;
 pub mod outcome;
 pub mod pages;
 pub mod session;
+pub mod workareas;
 
 use std::sync::Arc;
 
@@ -49,7 +50,21 @@ pub use oml_page::SIGN_IN_PATH;
 /// (ADR-0070 d4, d7 (b) as amended). `deploy/caddy/Caddyfile`, both compose
 /// files and the chart's `web.ingressPaths` route the same set
 /// (`tests/routes.rs`).
-pub const PAGES: &[(&str, &str)] = &[("GET", GUARDRAILS_PATH)];
+pub const PAGES: &[(&str, &str)] = &[
+    ("GET", GUARDRAILS_PATH),
+    ("GET", USER_WORKAREAS_PATH),
+    ("POST", USER_WORKAREAS_PATH),
+    ("GET", ADMIN_WORKAREAS_PATH),
+    ("POST", ADMIN_WORKAREAS_PATH),
+];
+
+/// The user page's Workareas view and its acts (ADR-0045 d28), moved from
+/// `GET /web?view=workarea` and the user page's workarea actions.
+pub use oml_page::web::USER_WORKAREAS_PATH;
+
+/// The admin page's Workareas view and its acts, moved from
+/// `GET /web/admin?view=workarea` and the admin page's workarea actions.
+pub use oml_page::web::ADMIN_WORKAREAS_PATH;
 
 /// The Guardrails view's own path (ADR-0037 d17), moved from
 /// `GET /web?view=guardrails`.
@@ -184,6 +199,14 @@ async fn not_found() -> StatusCode {
 pub fn router(web: Web) -> Router {
     let pages = Router::new()
         .route(GUARDRAILS_PATH, get(pages::guardrails_page))
+        .route(
+            USER_WORKAREAS_PATH,
+            get(workareas::user_page).post(workareas::user_act),
+        )
+        .route(
+            ADMIN_WORKAREAS_PATH,
+            get(workareas::admin_page).post(workareas::admin_act),
+        )
         .route_layer(axum::middleware::from_fn_with_state(
             web.clone(),
             session::load,
@@ -217,8 +240,13 @@ mod tests {
     fn the_proxy_sends_only_the_moved_pages_paths_here() {
         // Route-by-path (ADR-0070 d7 (b) as amended): the query plays no part.
         assert!(serves("GET", "/web/guardrails"));
+        assert!(serves("GET", "/web/workareas"));
+        assert!(serves("POST", "/web/workareas"));
+        assert!(serves("GET", "/web/admin/workareas"));
+        assert!(serves("POST", "/web/admin/workareas"));
         assert!(serves("GET", "/web/healthz"));
         assert!(!serves("GET", "/web"));
+        assert!(!serves("POST", "/web"));
         assert!(!serves("POST", "/web/guardrails"));
         assert!(!serves("GET", "/web/guardrails/x"));
         assert!(!serves("GET", "/web/admin"));

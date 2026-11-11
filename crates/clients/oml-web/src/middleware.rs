@@ -3,7 +3,8 @@
 //! Layer 3, the session load, is [`crate::session::load`] on the page
 //! routes, inside these, so a form is refused before any API call; layer 7
 //! is [`crate::outcome`]. Layer 6, the per-session cap on calls in flight,
-//! is not built yet (#170).
+//! is not built yet (#170); a page that fans out bounds its own calls
+//! ([`crate::workareas::FAN_OUT`]).
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -158,6 +159,9 @@ pub async fn ids_and_log(State(layers): State<Layers>, mut req: Request, next: N
     if let Some(key) = calls.acting() {
         line["credential"] = json!("session");
         line["key"] = json!(key);
+    }
+    if let Some(action) = calls.action() {
+        line["web_action"] = json!(action);
     }
     let made = calls.made();
     if !made.is_empty() {

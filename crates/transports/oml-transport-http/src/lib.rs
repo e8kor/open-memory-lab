@@ -1856,9 +1856,19 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         let node = reference("workarea", workarea)?;
         let req: TransitionBody = parse_json(headers, body)?;
+        // A resubmission under the same key answers the recorded proposal
+        // and proposes nothing again (ADR-0070 d3 layer 4).
+        let caller = st.console_caller(headers).await?;
+        let digest = console::act_digest(workarea, body);
+        if let Some(replayed) = st
+            .replayed(&caller, "workarea.transition", &idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
+        }
         let to = match req.to.as_str() {
             "committed" => WorkareaStatus::Committed,
             "validated" => WorkareaStatus::Validated,
@@ -1872,7 +1882,11 @@ where
         let proposal = retry_chain(|| st.app.propose_transition(acting.bearer(), node.clone(), to))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
+        st.record_outcome(
+            &caller,
+            "workarea.transition",
+            &idem,
+            &digest,
             StatusCode::ACCEPTED,
             &json!({
                 "transition_id": proposal.transition_id,
@@ -1883,7 +1897,8 @@ where
                 "proposed_by_key_id": proposal.proposer_key_id,
                 "ratified_by_key_id": Value::Null,
             }),
-        ))
+        )
+        .await
     }
 
     async fn ratify_transition(
@@ -1909,12 +1924,20 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         let node = reference("workarea", workarea)?;
         let transition_id = Uuid::parse_str(transition_id).map_err(|_| {
             ApiError::validation(format!("transition_id {transition_id:?} is not an id"))
                 .with_details(json!({ "field": "transition_id" }))
         })?;
+        let caller = st.console_caller(headers).await?;
+        let digest = console::act_digest(workarea, &Bytes::from(transition_id.to_string()));
+        if let Some(replayed) = st
+            .replayed(&caller, "workarea.ratify", &idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
+        }
         let ratified = retry_chain(|| {
             st.app
                 .ratify_transition(acting.bearer(), node.clone(), transition_id)
@@ -1925,7 +1948,11 @@ where
             WorkareaStatus::Validated => WorkareaStatus::Committed,
             _ => WorkareaStatus::Development,
         };
-        Ok(json_response(
+        st.record_outcome(
+            &caller,
+            "workarea.ratify",
+            &idem,
+            &digest,
             StatusCode::OK,
             &json!({
                 "transition_id": transition_id,
@@ -1936,7 +1963,8 @@ where
                 "proposed_by_key_id": Value::Null,
                 "ratified_by_key_id": Value::Null,
             }),
-        ))
+        )
+        .await
     }
 
     async fn list_edges(
@@ -2741,7 +2769,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         let workarea = reference("workarea", workarea_id)?;
         let req: WorkareaModeBody = parse_json(headers, body)?;
         let mode = WorkareaMode::parse(&req.mode).ok_or_else(|| {
@@ -2751,6 +2779,14 @@ where
             ))
             .with_details(json!({ "field": "/mode" }))
         })?;
+        let caller = st.console_caller(headers).await?;
+        let digest = console::act_digest(workarea_id, body);
+        if let Some(replayed) = st
+            .replayed(&caller, "workarea.mode", &idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
+        }
         let updated = retry_chain(|| {
             st.app
                 .set_workarea_mode(acting.bearer(), workarea.clone(), mode)
@@ -2762,7 +2798,15 @@ where
             .workarea_info(acting.bearer(), Some(Reference::Id(updated.workarea_id)))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(StatusCode::OK, &workarea_view_json(&info)))
+        st.record_outcome(
+            &caller,
+            "workarea.mode",
+            &idem,
+            &digest,
+            StatusCode::OK,
+            &workarea_view_json(&info),
+        )
+        .await
     }
 
     async fn set_workarea_crew(

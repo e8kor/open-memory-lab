@@ -31,6 +31,24 @@ pub fn csrf_matches(session_token: &str, sent: &str) -> bool {
     constant_time_eq(csrf_token(session_token).as_bytes(), sent.as_bytes())
 }
 
+/// Binds an act's idempotency key to its purpose, so it is no other digest
+/// of the session token.
+const ACT_PURPOSE: &[u8] = b"oml web act\0";
+
+/// The `Idempotency-Key` of the API call a page's form makes: the
+/// lower-case hex of SHA-256 over a fixed purpose, the session token and
+/// the form's random nonce, so the same form sent again replays and no
+/// other session's form names the same key (ADR-0070 d3 layer 4).
+#[must_use]
+pub fn act_idempotency_key(session_token: &str, nonce: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(ACT_PURPOSE);
+    hasher.update(session_token.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(nonce.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
 /// The prefix of a capacity credential, the per-session value `oml-web`
 /// presents to the API as one of the person's session keys (ADR-0070 d2).
 pub const CAPACITY_CREDENTIAL_PREFIX: &str = "omls_";
@@ -105,4 +123,19 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         return false;
     }
     a.iter().zip(b).fold(0_u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_acts_key_is_the_same_for_the_same_form_and_differs_by_nonce_and_session() {
+        let key = act_idempotency_key("token-a", "nonce-1");
+        assert_eq!(key, act_idempotency_key("token-a", "nonce-1"));
+        assert_ne!(key, act_idempotency_key("token-a", "nonce-2"));
+        assert_ne!(key, act_idempotency_key("token-b", "nonce-1"));
+        assert_ne!(key, csrf_token("token-a"));
+        assert_eq!(key.len(), 64);
+    }
 }

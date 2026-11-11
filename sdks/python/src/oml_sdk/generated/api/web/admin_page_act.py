@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -29,10 +29,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> str | None:
+) -> Any | str | None:
     if response.status_code == 200:
         response_200 = response.text
         return response_200
+
+    if response.status_code == 303:
+        response_303 = cast(Any, None)
+        return response_303
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -42,7 +46,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[str]:
+) -> Response[Any | str]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -55,14 +59,17 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: AdminPageActBody,
-) -> Response[str]:
+) -> Response[Any | str]:
     """One act of the admin page, named by action, run as the capacity it needs.
 
      Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email,
     set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede
     (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as
     <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the
-    lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
+    lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). workarea_mode,
+    workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web runs at
+    /web/admin/workareas over the API: the lead runs none of them and answers 303 /web/admin/workareas
+    (ADR-0070 d7 (b); since v0.6.4). Since v0.5.0.
 
     Args:
         body (AdminPageActBody):
@@ -72,7 +79,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[str]
+        Response[Any | str]
     """
 
     kwargs = _get_kwargs(
@@ -90,14 +97,17 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: AdminPageActBody,
-) -> str | None:
+) -> Any | str | None:
     """One act of the admin page, named by action, run as the capacity it needs.
 
      Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email,
     set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede
     (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as
     <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the
-    lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
+    lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). workarea_mode,
+    workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web runs at
+    /web/admin/workareas over the API: the lead runs none of them and answers 303 /web/admin/workareas
+    (ADR-0070 d7 (b); since v0.6.4). Since v0.5.0.
 
     Args:
         body (AdminPageActBody):
@@ -107,7 +117,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        str
+        Any | str
     """
 
     return sync_detailed(
@@ -120,14 +130,17 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: AdminPageActBody,
-) -> Response[str]:
+) -> Response[Any | str]:
     """One act of the admin page, named by action, run as the capacity it needs.
 
      Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email,
     set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede
     (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as
     <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the
-    lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
+    lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). workarea_mode,
+    workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web runs at
+    /web/admin/workareas over the API: the lead runs none of them and answers 303 /web/admin/workareas
+    (ADR-0070 d7 (b); since v0.6.4). Since v0.5.0.
 
     Args:
         body (AdminPageActBody):
@@ -137,7 +150,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[str]
+        Response[Any | str]
     """
 
     kwargs = _get_kwargs(
@@ -153,14 +166,17 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: AdminPageActBody,
-) -> str | None:
+) -> Any | str | None:
     """One act of the admin page, named by action, run as the capacity it needs.
 
      Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email,
     set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede
     (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as
     <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the
-    lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). Since v0.5.0.
+    lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). workarea_mode,
+    workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web runs at
+    /web/admin/workareas over the API: the lead runs none of them and answers 303 /web/admin/workareas
+    (ADR-0070 d7 (b); since v0.6.4). Since v0.5.0.
 
     Args:
         body (AdminPageActBody):
@@ -170,7 +186,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        str
+        Any | str
     """
 
     return (

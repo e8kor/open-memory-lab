@@ -12,10 +12,16 @@ SDKs do. It holds no store and writes no journal. The server keeps the API, sign
 that has not moved yet.
 
 The pages move one at a time, and each moved page gets its own path under `/web/`. In this build
-`oml-web` serves one page, the Guardrails view of the user page, at `GET /web/guardrails`. The
-server answers the view's old address, `GET /web?view=guardrails`, with a redirect to
-`/web/guardrails`, so bookmarks keep working. Run `oml-web` behind the same proxy as the server
-before you upgrade: a deployment that sends `/web/guardrails` to the server shows not found.
+`oml-web` serves two views: the Guardrails view of the user page at `GET /web/guardrails`, and
+the Workareas view at `/web/workareas` on the user page and `/web/admin/workareas` on the admin
+page. The Workareas view is the first that acts: putting a workarea in progress, committing it,
+and proposing or ratifying a status change are confirmed there and run through the API as the
+person's session keys, and a confirmation sent twice runs once. The server answers the old
+addresses, `GET /web?view=guardrails`, `GET /web?view=workarea` and `GET /web/admin?view=workarea`,
+with a redirect to the new paths, so bookmarks keep working; a form from an old page that posts a
+workarea act to the server runs nothing and lands on the Workareas view. Creating a workarea is
+still the server's act. Run `oml-web` behind the same proxy as the server before you upgrade: a
+deployment that sends these paths to the server shows not found.
 
 `oml-web` ships everywhere the server does:
 
@@ -83,7 +89,7 @@ included. For Caddy (`deploy/caddy/Caddyfile` adds the landing pages):
 
 ```caddyfile
 memory.example.com {
-	@oml_web path /web/guardrails
+	@oml_web path /web/guardrails /web/workareas /web/admin/workareas
 	reverse_proxy @oml_web 127.0.0.1:8091
 	reverse_proxy 127.0.0.1:8090
 }
