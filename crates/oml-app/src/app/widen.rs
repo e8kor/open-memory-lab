@@ -69,8 +69,17 @@ impl Default for WidenLimits {
 /// `accept_federated` change moves C. Other changes reach the hint within
 /// [`WIDEN_SIGNAL_MAX_AGE_SECS`].
 #[must_use]
-pub fn drops_widen_signals(_event_type: &str) -> bool {
-    false
+pub fn drops_widen_signals(event_type: &str) -> bool {
+    use oml_domain::event_types as e;
+    matches!(
+        event_type,
+        e::LIFECYCLE_ERASE
+            | "lifecycle.demote"
+            | e::WORKAREA_MODE_SET
+            | e::WORKAREA_STATUS_TRANSITION
+            | e::FEDERATION_POLICY_SET
+            | e::WORKAREA_FEDERATION_SET
+    )
 }
 
 /// What a signal is built for: one key's recalls at one scope over one set
@@ -182,16 +191,41 @@ impl WidenSignals {
         let Ok(mut held) = self.held.lock() else {
             return;
         };
-        held.insert(key, Arc::new(signal));
-        while held.values().map(|s| s.vocabulary.pairs()).sum::<usize>() > self.limits.held_pairs {
-            let Some(oldest) = held
-                .iter()
+        let tenant = key.tenant_id;
+        held.insert(key.clone(), Arc::new(signal));
+        let share = self.limits.tenant_pairs;
+        let tenant_total = |held: &BTreeMap<SignalKey, Arc<WidenSignal>>, t: Uuid| -> usize {
+            held.iter()
+                .filter(|(k, _)| k.tenant_id == t)
+                .map(|(_, s)| s.vocabulary.pairs())
+                .sum()
+        };
+        let oldest = |held: &BTreeMap<SignalKey, Arc<WidenSignal>>,
+                      keep: &dyn Fn(&SignalKey) -> bool|
+         -> Option<SignalKey> {
+            held.iter()
+                .filter(|(k, _)| **k != key && keep(k))
                 .min_by_key(|(_, s)| s.built_at_us)
                 .map(|(k, _)| k.clone())
+        };
+        while tenant_total(&held, tenant) > share {
+            let Some(k) = oldest(&held, &|k| k.tenant_id == tenant) else {
+                break;
+            };
+            held.remove(&k);
+        }
+        while held.values().map(|s| s.vocabulary.pairs()).sum::<usize>() > self.limits.held_pairs {
+            let over: BTreeSet<Uuid> = held
+                .keys()
+                .map(|k| k.tenant_id)
+                .filter(|t| tenant_total(&held, *t) > share)
+                .collect();
+            let Some(k) = oldest(&held, &|k| over.contains(&k.tenant_id))
+                .or_else(|| oldest(&held, &|_| true))
             else {
                 break;
             };
-            held.remove(&oldest);
+            held.remove(&k);
         }
     }
 
@@ -203,13 +237,7 @@ impl WidenSignals {
     }
 
     /// Whether `key` was marked less than [`WIDEN_SIGNAL_MAX_AGE_SECS`] ago.
-    #[allow(clippy::unused_self, reason = "the red commit's stub")]
-    fn is_marked(&self, _key: &SignalKey, _now_us: i64) -> bool {
-        false
-    }
-
-    #[allow(dead_code, reason = "the red commit's stub")]
-    fn is_marked_built(&self, key: &SignalKey, now_us: i64) -> bool {
+    fn is_marked(&self, key: &SignalKey, now_us: i64) -> bool {
         self.marked.lock().is_ok_and(|m| {
             m.get(key)
                 .is_some_and(|at| now_us - at < WIDEN_SIGNAL_MAX_AGE_SECS * 1_000_000)

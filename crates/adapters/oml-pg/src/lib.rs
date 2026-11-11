@@ -6277,10 +6277,14 @@ impl JournalStore for PgStore {
                 .bind(tenant_id)
                 .bind(&scope.nodes)
                 .bind(&memory_kinds)
-                .bind(i64::try_from(max_pairs.saturating_add(1)).map_or(i64::MAX, |_| i64::MAX))
+                .bind(i64::try_from(max_pairs.saturating_add(1)).unwrap_or(i64::MAX))
                 .fetch_all(&mut *tx)
                 .await
                 .map_err(backend)?;
+            if counted.len() > max_pairs {
+                tx.commit().await.map_err(backend)?;
+                return Ok(None);
+            }
             if let Some(now) = scope.expired_at {
                 let expired: Vec<(Uuid, Uuid)> = sqlx::query_as(REFERENCE_EXPIRED)
                     .bind(tenant_id)

@@ -2751,7 +2751,7 @@ impl JournalStore for MemStore {
         &self,
         tenant_id: Uuid,
         scope: &crate::federation::CountsScope,
-        _max_pairs: usize,
+        max_pairs: usize,
     ) -> Result<Option<crate::federation::VocabularyCounts>, StoreError> {
         self.federation_reads.fetch_add(1, Ordering::SeqCst);
         let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
@@ -2774,6 +2774,9 @@ impl JournalStore for MemStore {
                 *n += 1;
                 for w in words(&m.body) {
                     *df.entry((m.workarea_id, form_key(&w))).or_default() += 1;
+                }
+                if df.len() > max_pairs {
+                    return Ok(None);
                 }
             }
         }
