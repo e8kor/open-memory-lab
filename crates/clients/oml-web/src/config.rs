@@ -21,6 +21,15 @@ pub const KEY_CLIENT_SECRET: &str = "web.client_secret";
 /// for a private network (ADR-0070 d4). Off unless set to `true`.
 pub const KEY_ALLOW_PLAIN_HTTP: &str = "web.allow_plain_http_api";
 
+/// The public origin the same-origin check compares a form's `Origin`
+/// against (ADR-0070 d4). Unset, it is the API's
+/// `/.well-known/oauth-authorization-server` `issuer`, read at start.
+pub const KEY_PUBLIC_URL: &str = "web.public_url";
+
+/// Each API call's timeout, `web.api_timeout` of ADR-0070 d8: a constant of
+/// the build until #170 measures the hop.
+pub const API_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Where the pages listen when `web.listen` is unset: loopback, beside the
 /// lead's `127.0.0.1:8090`, for the reverse proxy in front of both.
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:8091";
@@ -79,6 +88,8 @@ pub struct Config {
     /// `web.allow_plain_http_api`: the `http://` hop to a non-loopback host
     /// is allowed, and the process logs a warning at every start.
     pub allow_plain_http_api: bool,
+    /// `web.public_url`, or `None` to read the API's issuer at start.
+    pub public_url: Option<String>,
 }
 
 /// Whether `authority` (`host[:port]`, no userinfo) names a loopback host.
@@ -157,12 +168,27 @@ impl Config {
                 "must be at least 32 characters",
             ));
         }
+        let public_url = match get(KEY_PUBLIC_URL) {
+            None => None,
+            Some(url) => {
+                let url = url.trim().trim_end_matches('/').to_owned();
+                url.strip_prefix("https://")
+                    .or_else(|| url.strip_prefix("http://"))
+                    .filter(|h| !h.is_empty() && !h.contains(['/', '@', '?', '#']))
+                    .ok_or(ConfigError::Invalid(
+                        KEY_PUBLIC_URL,
+                        "must be an origin: http:// or https://, a host and no path",
+                    ))?;
+                Some(url)
+            }
+        };
         let warn_plain = plain && allow_plain_http_api && !is_loopback_host(rest);
         Ok(Self {
             api_url,
             listen,
             client_secret: ClientSecret(secret),
             allow_plain_http_api: warn_plain,
+            public_url,
         })
     }
 }
@@ -277,6 +303,29 @@ mod tests {
             ])
             .unwrap_err();
             assert!(matches!(err, ConfigError::Invalid(KEY_API_URL, _)), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_public_url_is_an_origin_or_unset() {
+        let base = [
+            ("OML_WEB__API_URL", "http://127.0.0.1:8090"),
+            ("OML_WEB__CLIENT_SECRET", SECRET),
+        ];
+        assert_eq!(load(&base).unwrap().public_url, None);
+        let mut with = base.to_vec();
+        with.push(("OML_WEB__PUBLIC_URL", "https://memory.example/"));
+        assert_eq!(
+            load(&with).unwrap().public_url.as_deref(),
+            Some("https://memory.example")
+        );
+        for bad in ["memory.example", "https://memory.example/web", "https://"] {
+            let mut with = base.to_vec();
+            with.push(("OML_WEB__PUBLIC_URL", bad));
+            assert!(
+                matches!(load(&with), Err(ConfigError::Invalid(KEY_PUBLIC_URL, _))),
+                "{bad}"
+            );
         }
     }
 

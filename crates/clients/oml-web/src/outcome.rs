@@ -1,8 +1,13 @@
 //! Layer 7 of ADR-0070 d3: the API's error envelope becomes a page outcome.
 //! A pure table, so every code the pages can meet is answered in one place
-//! and a code the table does not name is the generic refusal.
+//! and a code the table does not name is the generic refusal; then
+//! [`page`] answers the outcome as a page.
 
-use http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use http::{HeaderValue, StatusCode, header};
+use oml_sdk::{Error, TransportError};
+
+use crate::SIGN_IN_PATH;
 
 /// What a page shows for an API refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,18 +40,14 @@ impl PageOutcome {
         }
     }
 
-    /// The status the page answers with. The sign-in page and a form shown
-    /// again are pages the browser should render, not errors it should
-    /// retry, so they answer with their own codes rather than the API's.
+    /// The status the page answers with: the sign-in outcome is a `303` to
+    /// the sign-in page (ADR-0070 d3 layer 3); every other keeps the API's
+    /// own status, so a page refuses with the status the lead's page did.
     #[must_use]
-    pub fn status(self) -> StatusCode {
+    pub fn status(self, api_status: StatusCode) -> StatusCode {
         match self {
-            Self::NotFound => StatusCode::NOT_FOUND,
-            Self::SignIn => StatusCode::UNAUTHORIZED,
-            Self::FormAgain => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::Retry => StatusCode::TOO_MANY_REQUESTS,
-            Self::Message => StatusCode::CONFLICT,
-            Self::Refused => StatusCode::FORBIDDEN,
+            Self::SignIn => StatusCode::SEE_OTHER,
+            _ => api_status,
         }
     }
 }
@@ -61,8 +62,77 @@ pub fn of_envelope(body: &[u8]) -> PageOutcome {
         .unwrap_or(PageOutcome::Refused)
 }
 
+/// The `303` to the sign-in page.
+#[must_use]
+pub fn sign_in() -> Response {
+    (
+        StatusCode::SEE_OTHER,
+        [(header::LOCATION, HeaderValue::from_static(SIGN_IN_PATH))],
+    )
+        .into_response()
+}
+
+/// An HTML answer with `status`.
+#[must_use]
+pub fn html(status: StatusCode, body: String) -> Response {
+    let mut response = (status, body).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response
+}
+
+/// The page for a call that has no usable answer, naming the page's
+/// request id: an API refusal as its outcome, a timeout as `504`, and an
+/// unreachable API or an answer not in the operation's shape as `502`
+/// (ADR-0070 d3 layer 7, d8).
+#[must_use]
+pub fn page(error: &Error, request_id: &str) -> Response {
+    match error {
+        Error::Api(e) => {
+            let outcome = PageOutcome::of_code(&e.code);
+            if outcome == PageOutcome::SignIn {
+                return sign_in();
+            }
+            let status = StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_GATEWAY);
+            let mut response = html(
+                outcome.status(status),
+                oml_page::web::refusal_page(&e.code, &e.message, Some(request_id)),
+            );
+            if outcome == PageOutcome::Retry
+                && let Some(after) = e
+                    .retry_after
+                    .as_deref()
+                    .and_then(|v| HeaderValue::from_str(v).ok())
+            {
+                response.headers_mut().insert(header::RETRY_AFTER, after);
+            }
+            response
+        }
+        Error::Transport(TransportError::Timeout) => html(
+            StatusCode::GATEWAY_TIMEOUT,
+            oml_page::web::refusal_page(
+                "unavailable",
+                "the server did not answer this page in time; try again",
+                Some(request_id),
+            ),
+        ),
+        Error::Transport(TransportError::Unreachable(_)) | Error::Decode { .. } => html(
+            StatusCode::BAD_GATEWAY,
+            oml_page::web::refusal_page(
+                "unavailable",
+                "the server could not answer this page; try again",
+                Some(request_id),
+            ),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use oml_sdk::ApiError;
+
     use super::*;
 
     #[test]
@@ -97,8 +167,48 @@ mod tests {
     }
 
     #[test]
-    fn the_sign_in_outcome_answers_401_and_the_generic_refusal_403() {
-        assert_eq!(PageOutcome::SignIn.status(), StatusCode::UNAUTHORIZED);
-        assert_eq!(PageOutcome::Refused.status(), StatusCode::FORBIDDEN);
+    fn the_sign_in_outcome_redirects_and_every_other_keeps_the_apis_status() {
+        assert_eq!(
+            PageOutcome::SignIn.status(StatusCode::UNAUTHORIZED),
+            StatusCode::SEE_OTHER
+        );
+        assert_eq!(
+            PageOutcome::Refused.status(StatusCode::FORBIDDEN),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            PageOutcome::FormAgain.status(StatusCode::BAD_REQUEST),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    fn api(status: u16, code: &str) -> Error {
+        Error::Api(Box::new(ApiError {
+            status,
+            code: code.to_owned(),
+            message: "the message".to_owned(),
+            details: serde_json::Value::Null,
+            request_id: Some("req_api".to_owned()),
+            retry_after: Some("30".to_owned()),
+        }))
+    }
+
+    #[test]
+    fn each_failure_answers_its_page_status() {
+        let response = page(&api(404, "access.not_found"), "page-7");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let response = page(&api(429, "limit.rate"), "page-7");
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "30");
+        let response = page(&api(401, "auth.invalid"), "page-7");
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.headers()[header::LOCATION], SIGN_IN_PATH);
+        let response = page(&Error::Transport(TransportError::Timeout), "page-7");
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        let response = page(
+            &Error::Transport(TransportError::Unreachable("refused".to_owned())),
+            "page-7",
+        );
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     }
 }

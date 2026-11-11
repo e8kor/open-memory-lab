@@ -12,14 +12,13 @@ use serde_json::json;
 use uuid::Uuid;
 
 use oml_app::app::{AdminMemory, Capacity, OwnKey};
-use oml_app::domain::guardrail::{FrameOptions, GuardrailScope, render_frame};
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::web::{Email, csrf_token};
 use oml_app::domain::{MemoryKind, Role};
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::{
-    AppError, Bearer, GuardrailRequest, MemoryRecord, NamedServe, ServedMemory, SubmitRequest,
-    SubmitVerb, SupersedeRequest, Verdict, VerdictRequest, WebEmailRequest, WebSessionRecord,
+    AppError, Bearer, MemoryRecord, NamedServe, ServedMemory, SubmitRequest, SubmitVerb,
+    SupersedeRequest, Verdict, VerdictRequest, WebEmailRequest, WebSessionRecord,
 };
 use oml_app::types::{BULK_VERDICT_MAX, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest};
 
@@ -27,18 +26,13 @@ use super::page::{attr, form, hidden, input, select, shell, short, state_tag, te
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::oauth::percent_encode;
 use crate::{ApiState, retry_chain};
+use oml_page::web::{ATLAS_TAB, user_tabs, workarea_label};
 
 /// The public server the plugins and the agent kit connect to unless told
 /// otherwise (ADR-0043).
 pub const DEFAULT_SERVER: &str = "https://memory.doublegate.io";
 
 const GUIDES: &str = "https://e8kor.github.io/open-memory-lab/guides";
-
-/// The workarea name a person uses, with the tenant root removed and every
-/// intermediate parent retained.
-fn workarea_label(path: &str) -> &str {
-    path.strip_prefix("universe.").unwrap_or(path)
-}
 
 /// What an act answers.
 pub(crate) enum Outcome {
@@ -159,26 +153,9 @@ fn grant_line(role: Role, path: &str) -> String {
     format!("{} on {}", role.as_str(), short(path))
 }
 
-/// The Atlas tab's link, which is also its active marker.
-const ATLAS_TAB: &str = "/web?view=memories&amp;display=atlas";
-
-fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
-    // The design system's shared user nav (ADR-0069 d3): Start, Memories,
-    // Review, Atlas, Keys; then this page's Workareas and Guardrails.
-    let mut tabs = vec![
-        ("/web/start", "Start"),
-        ("/web?view=memories", "Memories"),
-        ("/web?view=review", "Review"),
-        (ATLAS_TAB, "Atlas"),
-        ("/web", "Keys"),
-        ("/web?view=workarea", "Workareas"),
-        ("/web?view=guardrails", "Guardrails"),
-    ];
-    if admin {
-        tabs.push(("/web/admin", "Administration"));
-    }
-    tabs
-}
+/// The user page's views `oml-web` serves (ADR-0070 d7 (b)): the proxy
+/// sends `GET /web?view=<view>` there, and the lead no longer renders them.
+pub const MOVED_VIEWS: &[&str] = &["guardrails"];
 
 const ADMIN_TABS: [(&str, &str); 9] = [
     ("/web/admin", "People"),
@@ -250,10 +227,10 @@ where
                 self.workarea_view(&web, session, &csrf, query).await?,
             ),
             "review" => ("/web?view=review", review_start("/web", &csrf)),
-            "guardrails" => (
-                "/web?view=guardrails",
-                self.guardrails_view(&web, query).await?,
-            ),
+            // A view oml-web serves: the proxy routes it there, so the lead
+            // answers it as an unknown page rather than as another view
+            // (ADR-0070 d7 (b)).
+            view if MOVED_VIEWS.contains(&view) => return Err(ApiError::not_found()),
             _ => ("/web", self.keys_view(&web, session, &csrf).await?),
         };
         Ok(shell(
@@ -264,88 +241,6 @@ where
             query.get("done"),
             &body,
         ))
-    }
-
-    /// The guardrails in force at the selected workarea, read-only. The page
-    /// shows the scope and each rule's source path; it writes, supersedes and
-    /// retires none (ADR-0037 d17).
-    async fn guardrails_view(
-        &self,
-        web: &oml_app::app::Caller,
-        query: &Fields,
-    ) -> Result<String, ApiError> {
-        let request = GuardrailRequest {
-            workarea: query
-                .get("workarea")
-                .map(|_| query.reference("workarea"))
-                .transpose()?,
-        };
-        let set = self
-            .app
-            .guardrails(Bearer::Session(web), &request)
-            .await
-            .map_err(app_error)?;
-        let root = web.key().user.ok_or_else(ApiError::not_found)?;
-        let mut workareas = Vec::new();
-        let mut cursor = None;
-        loop {
-            let page = self
-                .app
-                .workarea_tree(
-                    Bearer::Session(web),
-                    Reference::Id(root),
-                    cursor.as_deref(),
-                    200,
-                )
-                .await
-                .map_err(app_error)?;
-            cursor = page.next_cursor;
-            workareas.extend(page.items);
-            if cursor.is_none() {
-                break;
-            }
-        }
-        let frame = render_frame(
-            &crate::guardrail_set_json(&set),
-            &FrameOptions {
-                origin: "this server",
-                checked: false,
-                whole_over_cap: true,
-            },
-        )
-        .map_err(ApiError::internal)?;
-        let scope = match set.guardrail_scope {
-            GuardrailScope::Workarea => "This workarea only.",
-            GuardrailScope::Ancestors => "This workarea and its readable parent workareas.",
-        };
-        let mut body = format!(
-            r#"<h1>Guardrails</h1><p class="desc">Read-only here; change them with the API or the CLI.</p><p>Rules in force at <code>{}</code>.</p><p><strong>Scope:</strong> {} Each rule names its source workarea.</p><form class="row" method="get" action="/web"><input type="hidden" name="view" value="guardrails"><label>Workarea<select name="workarea">"#,
-            text(&set.scope_path),
-            scope,
-        );
-        for node in &workareas {
-            let id = node.workarea.workarea_id.to_string();
-            let label = workarea_label(&node.path);
-            let _ = write!(
-                body,
-                r#"<option value="{}"{}>{}</option>"#,
-                attr(&id),
-                if node.workarea.workarea_id == set.scope_node {
-                    " selected"
-                } else {
-                    ""
-                },
-                text(label)
-            );
-        }
-        body.push_str("</select></label><button type=\"submit\">Show</button></form><ul>");
-        let mut lines = frame.text.lines();
-        let _header = lines.next();
-        for line in lines {
-            let _ = write!(body, "<li>{}</li>", text(line.trim_start_matches("- ")));
-        }
-        body.push_str("</ul>");
-        Ok(body)
     }
 
     async fn keys_view(

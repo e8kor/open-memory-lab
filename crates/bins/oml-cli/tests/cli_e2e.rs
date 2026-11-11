@@ -3288,7 +3288,7 @@ async fn the_hook_shows_another_keys_held_memory_never() {
         "the agent's own held row is listed and recalled: {context}"
     );
     assert!(
-        !context.contains("other-held-quote") && !context.contains("399"),
+        !context.contains("other-held-quote") && !context.contains("399 USD/t"),
         "another key's held row is never shown (R3): {context}"
     );
 

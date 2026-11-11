@@ -1,0 +1,7 @@
+The web console is mid-move to oml-web; PR 2 ships it.
+
+ADR-0070 phase (b) (#189) moved GET /web?view=guardrails from the server to oml-web, and no
+release archive, image, compose file, Helm chart or `oml quickstart` ships or starts oml-web yet.
+A release cut now would serve a Guardrails tab that answers not found. The change that ships
+oml-web deletes this file. While it exists, .github/workflows/release.yml refuses every tag
+(scripts/check_release_hold.py).

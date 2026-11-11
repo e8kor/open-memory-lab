@@ -19,7 +19,8 @@ lines share a correlation id; d16: the new and changed operations below), ADR-00
 process (d1, d2, d3, d4, d7, d8, d9 and d10 revised; d11 and d12 new). What changed and why is in
 [The amendment of 2026-11-10](#the-amendment-of-2026-11-10); the decisions below read as amended.
 Amended again on 2026-11-10 by phase (a) as built (d2, d3, d5 and d7 revised): see
-[Phase (a) as built](#phase-a-as-built-2026-11-10).
+[Phase (a) as built](#phase-a-as-built-2026-11-10). Amended by the first change of phase (b)
+(d1, d3, d4, d8 and d9 revised): see [Phase (b) as built](#phase-b-as-built-2026-11-10).
 
 ## Context
 
@@ -496,6 +497,27 @@ hold, or a promise the build cannot keep yet, the record now says what was built
 | d5 tree | `{held, promoted, rejected}` | `{promoted, held, in_progress, other}` | the Atlas draws held rows inside an in-progress scope apart, and the use case counts so |
 | d5 | `Idempotency-Key` taken | replayed by the console's acts; the key operations serve a session key | ADR-0070 d3 layer 4 depends on replay; d5's table maps the page's key acts to them |
 | d7 | `oml-sdk` in (a) | `oml-sdk` in (b) | its one consumer is `oml-web` |
+
+## Phase (b) as built (2026-11-10)
+
+The first change of phase (b) (#189) built `oml-sdk`, `oml-web`'s layers and the hop, and moved
+one page, the Guardrails view (`GET /web?view=guardrails`), the one
+`design/web-client-separation.md` orders first. Where it reads a decision
+differently, the record says so here:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d1 | `oml-web` depends on `oml-sdk`, `oml-page` and the HTTP stack | also `oml-web-credential`, a leaf of `sha2` and `hex` that `oml-domain` re-exports | the capacity credential and the CSRF token are derived on both sides of the hop; one implementation, outside the application core, keeps the two equal |
+| d1 | `oml-page` holds the stylesheet and the helpers | also the page chrome (`shell`, `document`, the tabs), the marks, the same-origin rule, and `gen_design_tokens.py` writes into it | a moved page draws the same header as the lead's pages, asserted equal by `a_moved_page_draws_the_header_and_tabs_the_leads_pages_draw`; #230's identical check is one function both call |
+| d3 layer 3 | a `303` to the lead's `/web/sign-in` | a `303` to `/web` | the lead renders sign-in at `GET /web` with no session until phase (d) adds `GET /web/sign-in`; the change that moves `GET /web` itself adds it first |
+| d3 layers 3, 4 | the session load, then same-origin and CSRF | same-origin and CSRF first, on the cookie alone | a forged form is refused before any API call |
+| d3 layer 1 | the page line names `web_action` | names `credential: session`, the acting key and `api_request_ids` | no moved page acts yet; `web_action` joins with the first act |
+| d3 layer 6 | the per-session cap on calls in flight | not built | it is a constant without a measurement (#170); it lands with the pages that fan out |
+| d3 layer 7 | `request.validation` the form again, the outcome's own status | each refusal keeps the API's status; a timeout `504`, an unreachable API `502`, each page naming the request id | a page refuses with the status the lead's page did, so the moved assertions hold |
+| d8 | two sequential calls at most | the Guardrails view's workarea selector pages the tree, 200 nodes a call | the tree with `counts=true` answers in one call but stops at 2000 nodes and counts rows the selector does not show; past 200 workareas the selector costs one more call per page of them |
+| d8 | (silent) | an admin's tab is drawn when the `admin` credential's `whoami` resolves, beside the `web` one in the first round trip | no field of the `web` key's record says the entry is an admin's |
+| d9 | `oml-sdk`'s test reads `openapi.yaml`, run by `generate_sdks.py --check` | `OPERATIONS` in `sdks/rust/src/lib.rs`, read by `check_contract_sync.py`, which also checks the query and body field names, and every field of the response struct and of each struct it holds against the 2xx schema at that depth; `oml-sdk`'s test holds each method to its entry | the operator chose the contract script; it already holds the served surfaces to one another |
+| (none) | (none) | the guardrail lines are read in `oml-web` from the wire, held equal to `oml-guardrail`'s frame by a test | `oml-web` may not link `oml-guardrail` (d1); the test is the one renderer's guard |
 
 ## Consequences
 
