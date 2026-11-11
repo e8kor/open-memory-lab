@@ -3956,6 +3956,7 @@ components:
           properties:
             declared: { type: integer, minimum: 0 }
             expired: { type: integer, minimum: 0 }
+            untimed: { type: integer, minimum: 0, description: 'Promoted versions with no promoted_at, which a row folded before migration 0005 can be: an as-of read never serves one and serves the version before it in its place (ADR-0059 d16).' }
 
     UsageSettings:
       type: object

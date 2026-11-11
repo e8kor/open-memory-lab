@@ -385,7 +385,8 @@ the reading is recorded here before the code.
       (ADR-0030 d3). A version held at the instant and promoted since was not the tip then and is
       not held now, so it is absent.
     - Every row an as-of read serves is therefore one today's get serves the caller: access never
-      widens, and a denial issued today hides the past too (ADR-0036's rejected "grants at S").
+      widens, and a denial issued today hides the past too (the grants held at the instant are
+      rejected below).
 
 - **d16 — The row's own recorded times answer the instant; no interval table is built.** On
   main, a claim's tip moves only by `lifecycle.promote` and a ratified `lifecycle.supersede`,
@@ -398,7 +399,10 @@ the reading is recorded here before the code.
   failover or a clock step ([storage](../architecture/storage.md#time)), and then one instant can
   name a set of facts that is not a prefix of the chain; it never names a row the key cannot read
   today. ADR-0036's watermark returns when a read must name one exact prefix, such as the
-  repeatable recall of #176.
+  repeatable recall of #176. A promoted version with no `promoted_at`, which a row folded before
+  migration 0005 can be, is served at no instant, and the version it replaced stands in for it:
+  `GET /v2/search` counts them as `valid_time.untimed`, and `oml doctor` warns `as_of: <n>
+  promoted versions have no promoted_at` when the count is above zero.
 
 - **d17 — No future, and no echo.** An `as_of` after the lead's clock at the request is
   `request.validation` naming `as_of`: the instant has not happened, and a read of it would answer
@@ -418,8 +422,10 @@ the reading is recorded here before the code.
   `keyword-any`'s statement with every word required. `search.pipeline` names the pipeline asked.
   An as-of recall reads its scope alone: `sources` other than `scope` is `request.validation`
   naming `/sources`, and a tenant whose default is `wide` reads `scope` (ADR-0072 d5 stays as it
-  is for every other recall). The request digest gains `as_of` when sent, as it gained `now`
-  (d5), so a recall that sends none digests as before.
+  is for every other recall). `did_you_mean` is empty at an instant: the vocabulary it reads is
+  today's (ADR-0049 d6), and a word only a version recorded after the instant holds would name
+  a version that did not exist then. The request digest gains `as_of` when sent, as it gained
+  `now` (d5), so a recall that sends none digests as before.
 
 - **d19 — The listing and get at an instant.** `as_of` reads the scoped listing (ADR-0039 d4):
   the tips at the instant on the served nodes and, inside an in-progress scope, the held rows of
@@ -427,43 +433,71 @@ the reading is recorded here before the code.
   `request.validation` naming `as_of`, since the own listing serves every state and has no tip to
   take; `oml_read`'s listing, whose `own` defaults to true, reads the scoped listing when `as_of`
   is sent without `own`. Get at an instant answers `access.not_found` for a version recorded
-  after it, and otherwise exactly as get answers today.
+  after it, and otherwise exactly as get answers today. Get takes `as_of` as its one query
+  parameter, and any other is now `request.validation`, as the listing's unknown parameters are.
+  A refusal names the field as the surface spells it: `as_of` for the HTTP query parameter,
+  `/as_of` for the recall body's member and for `oml_read`'s argument in every mode.
 
 - **d20 — One index serves the tip probe: migration 0041.** A version promoted by the instant
-  is the tip then when it is today's tip, since a tip moves only forward (d16); otherwise the
-  probe "the greatest version of this claim promoted at or before the instant", correlated so it
-  runs once per replaced candidate, reads `memories_tip_moves` on (`tenant_id`, `workarea_id`,
+  is the tip then when it is today's tip, since a tip moves only forward (d16); the PostgreSQL
+  statements and the in-memory store both take that short cut, and an act that makes a
+  replaced version the tip again removes it with the interval fold. Otherwise the probe "the
+  greatest version of this claim promoted at or before the instant", correlated so it runs once
+  per replaced candidate, reads `memories_tip_moves` on (`tenant_id`, `workarea_id`,
   `claim_key`, `version`) `INCLUDE` (`promoted_at`) where `promoted_at` is set, backwards by an
   index-only scan whose index condition is the claim, under row security: equality on `uuid`
   and `text`, `int4gt` and `timestamptz_le` are leakproof (`pg_proc.proleakproof`, PostgreSQL 18,
-  checked 2026-11-11). It holds only the promoted versions, every state of them, so an erased
-  successor still ends its predecessor's tip. Created `ON ONLY` the parent and per partition,
-  then attached, under a 5 s lock wait, as 0026 (d11). The instant is inlined in the search
-  statements as a literal of the validated fixed-width form, since binding it would renumber
-  every statement's parameters, and such a statement is not cached. Cost, measured 2026-11-11
-  by `crates/adapters/oml-pg/tests/as_of_timing.rs` on `bm25`, over a worst case where every row
-  matches every query and every claim has one replaced version: a recall at an instant reads the
-  replaced versions beside the tips and probes once per replaced row in each of `bm25`'s two
-  scope reads. At 10,000 rows on CI, today p50 80 ms and p95 85 ms, at an instant 168 ms and 173
-  ms (2.0×); at 100,000 rows on the shared host under load, today 490 ms and 541 ms, at an
-  instant 1,736 ms and 2,284 ms (3.5× and 4.2×). A postings pipeline at an instant is read by
-  the scan, so `bm25-postings` pays the same: 1,720 ms p50 at 100,000 rows against its 519 ms
-  today. The tests bound the ratio at 3× and 5×. A tip set materialized once per statement is
-  the next step when an as-of use needs it faster.
+  checked 2026-11-11). It holds the promoted versions of every state, so an erased successor
+  still ends its predecessor's tip. The instant is inlined in the search statements as a literal,
+  safe because an `EventTime` exists only through `EventTime::parse`, which admits digits and
+  separators alone; binding it would renumber every statement's parameters, and such a statement
+  is planned each time, never cached.
+    - **The migration's cost on a live database.** Unlike 0026's indexes (d11), empty at
+      creation, this one holds every promoted version, so each partition's build reads its
+      tenant's promoted rows under a SHARE lock that makes that tenant's writes wait until it
+      ends. 0041 is a `-- no-transaction` migration of one `DO` statement that creates the
+      parent's index `ON ONLY`, then builds, attaches and commits each partition's in turn, so a
+      write waits only for its own tenant's build, never for the others'. `CREATE INDEX
+      CONCURRENTLY`, which would let writes run, cannot run inside a `DO` block or a
+      multi-statement string, and the partitions are known only at run time. Each transaction
+      waits at most 5 s for its lock, then the migration fails; every step is skipped when done,
+      so running it again resumes. Forward-only, as every migration here: undoing it is `DROP
+      INDEX memories_tip_moves`. After it, every promotion writes one more index entry.
+    - **The read's cost, measured 2026-11-11** by `crates/adapters/oml-pg/tests/as_of_timing.rs`
+      on `bm25` over a corpus where every row matches every query and every claim is a chain of
+      `k` versions. At an instant a recall reads all `k` versions of each claim where today's
+      reads the tip, and probes once per replaced version in each of `bm25`'s two scope reads, so
+      the cost grows with `k`; two-version chains are the cheapest history. Each sample pairs a
+      recall of today with one at the instant, back to back, and the figure is the median of the
+      pairs' ratios. At `k` 2 and 10,000 rows: 2.0 on CI (today p50 80 ms, at the instant 168 ms)
+      and 2.05 on the shared host. At `k` 5 and 20,000 rows on the shared host: 3.2 (81 ms against
+      280 ms; 4,000 tips today against 20,000 rows read). At `k` 2 and 100,000 rows on the shared
+      host under load, measured before the pairing: p50 490 ms against 1,736 ms, p95 541 ms against
+      2,284 ms (3.5 and 4.2). `bm25-postings` at an instant is read by the scan and pays the same,
+      3.2 at `k` 5. CI gates one figure: the median pair ratio at `k` 2 and 10,000 rows stays at or
+      below 3. The `k` 5 and 100,000-row runs are measurements, run by hand and never gated. A tip
+      set computed once per statement is the next step when an as-of use needs it faster.
 
-- **d21 — Laws, each a test named after its sentence, red before the code**, run over both
-  stores by `oml-port-contracts`: `an_as_of_read_serves_the_tip_the_claim_had_then`,
-  `a_version_recorded_after_the_instant_does_not_exist_at_it`,
-  `an_as_of_read_applies_todays_grants_and_denials`,
-  `an_as_of_read_never_serves_a_version_erased_today_and_no_earlier_version_stands_in`,
-  `a_retired_claim_serves_its_earlier_tip_before_the_retirement_and_nothing_after`,
+- **d21 — Laws, each a test named after its sentence, red before the code.** Over both
+  stores, from `oml-port-contracts::as_of`: `an_as_of_read_serves_the_tip_the_claim_had_then`
+  (in recall over every pipeline served, steering, the listing, and get, where a version recorded
+  after the instant is not found), `an_as_of_read_applies_todays_grants_and_denials`,
+  `an_as_of_read_never_serves_a_version_erased_today` (PostgreSQL's runner names it
+  `an_as_of_read_never_serves_a_version_erased_today_and_no_earlier_version_stands_in`),
+  `a_retired_claim_serves_its_earlier_tip_before_the_retirement`,
   `held_rows_at_an_instant_follow_todays_rules`,
-  `an_as_of_read_serves_only_what_todays_get_serves_the_caller`,
-  `an_as_of_after_the_leads_clock_is_refused`, and
-  `every_pipeline_answers_an_as_of_recall_over_the_scope_at_the_instant`; on PostgreSQL,
+  `inside_an_in_progress_scope_held_rows_at_an_instant_follow_todays_rules` (ADR-0030 d3's
+  other authors' held rows, recall and the listing), and
+  `an_as_of_after_the_leads_clock_is_refused`; each recall law also checks that every row served
+  at an instant is one today's get serves the caller. On PostgreSQL:
   `the_tip_probe_is_an_index_condition_for_the_serving_role_under_row_security`,
-  `migration_0041_is_live_safe_and_leaves_every_partitions_index_attached`, and the timing pair
-  `an_as_of_recall_keeps_its_p95_near_todays` (CI's size) and its 100,000-row run by hand.
+  `migration_0041_builds_each_partitions_index_in_its_own_transaction_and_a_retry_resumes`,
+  `a_promoted_version_without_promoted_at_is_counted_for_doctor_and_served_at_no_instant`, and
+  the timing gate `an_as_of_recall_costs_at_most_three_times_todays_over_two_version_chains`,
+  with the measurements `the_as_of_recall_cost_at_100k_rows` and
+  `the_as_of_recall_cost_over_five_version_chains`. Over HTTP,
+  `as_of_reads_the_tip_at_an_instant_over_http`; over MCP,
+  `oml_read_takes_as_of_in_every_mode_and_answers_as_http_does`.
 
 ## Rejected alternatives
 
@@ -482,3 +516,11 @@ the reading is recorded here before the code.
 | **d17 — An instant after the lead's clock read as now** | The same request would answer differently once the instant passed, and recall's read log would hold an answer no later replay gives. |
 | **d18 — Refusing every pipeline that reads postings under `as_of`** | `bm25-postings` is the default, so most as-of recalls would be refused; its counts are today's, and `bm25`'s scan over the scope at the instant is the ranking it approximates (ADR-0052 d4). |
 | **d18 — Federated sources at an instant** | The reference set and the candidates are today's (ADR-0072 d4.2), so their statistics would mix two instants; no use asks for it yet (ADR-0039 Occam). |
+| **d14 — `as_of_seq`, a journal seq, beside or instead of the instant** | A seq is the chain's own order, but answering at a seq names a key's tenant's event count to it, and bisecting seqs times events it cannot read (ADR-0036's own reason for never echoing one). No use asks for a seq; the instant answers the question asked. |
+| **d14 — A date accepted as its first or its last instant** | "As of 10 October" reads as the day's start to one reader and its end to another, and the two answers differ by a day of writes; refusing it costs one `T00:00:00Z`. |
+| **d14 — `tip_as_of` on every item** | Every promoted item an as-of listing or recall serves was the tip at the instant, so the flag would be constant there; get at an instant answers existence alone. |
+| **d15 — The grants the key held at the instant** | A revoked key's past would stay readable, and a denial issued for cause could be stepped around by naming an earlier instant. Today's grants make an as-of read a subset of today's get. |
+| **d15 — Serving the tip at the instant though it is demoted or erased today, or the version before it** | Demotion and erasure are journalled acts on what is served now (R4); the version before it was not what OML held at the instant. |
+| **d19 — `as_of` on the own listing** | The own listing serves every state of the key's rows and has no tip to take; existence alone would be `until`, which it already takes. |
+| **d20 — `CREATE INDEX CONCURRENTLY` per partition** | It cannot run inside a `DO` block or a multi-statement string, the forms a sqlx migration runs, and the partitions are known only at run time; a build per partition, committed one at a time, bounds each tenant's wait to its own rows. |
+| **d20 — A gated p95 ratio** | Thirty unpaired samples on a shared runner make p95 one burst of load; the median of paired ratios moves with the code, not the host. |

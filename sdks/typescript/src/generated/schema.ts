@@ -1928,6 +1928,8 @@ export interface components {
             valid_time?: {
                 declared: number;
                 expired: number;
+                /** @description Promoted versions with no promoted_at, which a row folded before migration 0005 can be: an as-of read never serves one and serves the version before it in its place (ADR-0059 d16). */
+                untimed?: number;
             };
         };
         UsageSettings: {
