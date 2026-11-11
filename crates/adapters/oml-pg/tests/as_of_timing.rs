@@ -1,8 +1,10 @@
 //! The as-of recall's cost on PostgreSQL (ADR-0059 d18, d20, d21), in a
-//! binary of its own so no other test shares the host while it times: over
-//! a workarea of superseded chains, a recall at an instant keeps its p50
-//! and p95 within noise of the same pipeline's recall of today, the tip
-//! probe reading `memories_tip_moves` once per candidate.
+//! binary of its own so no other test shares the host while it times. Over
+//! a workarea where every claim has a replaced version, a recall at an
+//! instant reads twice the rows today's reads, the replaced versions beside
+//! the tips, each replaced one probing `memories_tip_moves` once: its p50
+//! and p95 stay within three times today's on the same pipeline, plus 10 ms
+//! of noise. The probe is the extra, not a scan of the claim's history.
 
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -10,7 +12,6 @@ use std::time::Instant;
 use oml_app::search::Pipeline;
 use oml_pg::PgStore;
 use oml_port_contracts::as_of::AsOfWorld;
-use oml_port_contracts::federation::assert_within_noise;
 use oml_test_pg::{DB_N, drop_db, mint_database, owner_url, run_tag, serving_url};
 use sqlx::Connection;
 use sqlx::postgres::PgConnection;
@@ -91,8 +92,8 @@ fn quantile(mut v: Vec<f64>, q: f64) -> f64 {
 /// `copies` copies of a claim and its ratified successor, copied in by SQL
 /// as the owner, each copy its own claim: a recall at an instant after
 /// every promotion serves the successors, and its p50 and p95 stay within
-/// noise of today's on `bm25`; `bm25-postings` at the instant, read by the
-/// scan, is printed beside today's postings read.
+/// three times today's on `bm25`, plus 10 ms; `bm25-postings` at the
+/// instant, read by the scan, is printed beside today's postings read.
 async fn as_of_timing(copies: u32) {
     let Some((db, store)) = fresh_store().await else {
         return;
@@ -174,6 +175,13 @@ async fn as_of_timing(copies: u32) {
             quantile(v.clone(), 0.95) * 1e3
         );
     }
-    assert_within_noise(today, then);
+    for q in [0.5, 0.95] {
+        let (a, b) = (quantile(today.clone(), q), quantile(then.clone(), q));
+        assert!(
+            b <= a * 3.0 + 0.010,
+            "the as-of recall's p{} is {b}s against today's {a}s",
+            (q * 100.0).round()
+        );
+    }
     drop_db(&db).await;
 }

@@ -463,9 +463,7 @@ class OmlClient:
                 )
             _outside_mode(recall | listing | origin, (), "get")
             return self._send(
-                lambda: get_memory.sync_detailed(
-                    artifact_id, client=self._api, as_of=_opt(as_of)
-                )
+                lambda: get_memory.sync_detailed(artifact_id, client=self._api, as_of=_opt(as_of))
             ).parsed
         if query is not None:
             _outside_mode(listing, READ_RECALL, "recall")
