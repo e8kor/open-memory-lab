@@ -189,6 +189,7 @@ impl World {
 
 fn recall(query: &str) -> RecallRequest {
     RecallRequest {
+        sources: None,
         timings: false,
         anchor: oml_app::types::AnchorFilter::default(),
         query: query.to_owned(),
@@ -236,6 +237,7 @@ async fn bm25_rerank_reorders_the_first_stages_head_by_the_rerankers_relevance()
         .recall(
             &w.reader,
             &RecallRequest {
+                sources: None,
                 timings: false,
                 search: Some("keyword-any".to_owned()),
                 ..recall("deploy friday")
@@ -300,6 +302,7 @@ async fn an_own_held_row_is_reranked_by_the_same_function_as_a_promoted_one() {
         .recall(
             &w.writer,
             &RecallRequest {
+                sources: None,
                 timings: false,
                 include_unreviewed: Some(true),
                 ..recall("rotate signing key")
@@ -420,6 +423,7 @@ async fn a_pipeline_that_does_not_rerank_never_calls_the_reranker() {
         .recall(
             &w.reader,
             &RecallRequest {
+                sources: None,
                 timings: false,
                 search: Some("keyword-any".to_owned()),
                 ..recall("deploy saturday")

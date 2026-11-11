@@ -4,7 +4,7 @@
     python scripts/lint_practices.py migrations|ports|like [--root DIR] [--no-allowlist]
 
 migrations  every migration not in lint_allow/migrations.txt sets lock_timeout, adds CHECK and
-            FOREIGN KEY constraints NOT VALID and validates them (in that or a later
+            FOREIGN KEY constraints NOT VALID (an inline CHECK on an added column too) and validates them (in that or a later
             migration, and only in a migration marked `-- no-transaction`), and on a partitioned table creates indexes ON ONLY the parent and
             ATTACHes the per-partition indexes.
 ports       no localhost:5432, 127.0.0.1:5432 or PGPORT:-5432 default in tests or scripts.
@@ -78,6 +78,12 @@ def lint_migrations(root: Path, use_allow: bool = True) -> list[str]:
                     problems.append(f"{f.name}: constraint {name} is not added NOT VALID")
                 elif name not in validated and not esc("constraint"):
                     problems.append(f"{f.name}: constraint {name} is never VALIDATEd")
+            # A CHECK written on an added column is validated by a full scan
+            # under the table's lock, as an ADD CONSTRAINT ... CHECK is.
+            if (re.search(r"ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?\w+[^,;]*?\bCHECK\s*\(", stmt, re.I | re.S)
+                    and not esc("column-check")):
+                problems.append(f"{f.name}: an inline CHECK on an added column is validated under the "
+                                "table's lock; add it as a constraint NOT VALID, or escape it with its reason")
             for m in re.finditer(r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s+ON\s+(ONLY\s+)?(\w+)", stmt, re.I):
                 iname, only, table = m.group(1).lower(), m.group(2), m.group(3).lower()
                 if table in part and not esc("index"):

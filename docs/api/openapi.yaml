@@ -696,6 +696,47 @@ paths:
         '415': { $ref: '#/components/responses/UnsupportedMedia' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/workareas/{workarea}/federation:
+    post:
+      tags: [workareas]
+      operationId: setWorkareaFederation
+      summary: Whether recalls scoped elsewhere may search this workarea when they ask for wider sources (ADR-0072).
+      description: 'Requires: a dreamer key held_by human with dreamer effective access on the node, or an admin key; every other key is refused before any lookup with access.verb_ceiling, details.reason federation_is_human_only (ADR-0072 d5). It grants nothing: off, a key that reads the node still recalls there by naming it as the scope. Setting the value the node holds journals nothing; otherwise journals workarea.federation_set. Since v0.7.0.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/WorkareaId' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              accept_federated: false
+            schema:
+              type: object
+              additionalProperties: false
+              required: [accept_federated]
+              properties:
+                accept_federated: { type: boolean }
+      responses:
+        '200':
+          description: The field as it now is.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [accept_federated]
+                properties:
+                  accept_federated: { type: boolean }
+        '415': { $ref: '#/components/responses/UnsupportedMedia' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/crews:
     get:
       tags: [crews]
@@ -2364,6 +2405,67 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         default: { $ref: '#/components/responses/Error' }
 
+  /v2/federation:
+    get:
+      tags: [search]
+      operationId: federationSettings
+      summary: The tenant's federation policy.
+      description: 'Requires: admin key role (ADR-0072 d5). wide_keys names, for doctor, each key whose recall met more than 1,000 candidate sources since the lead started (d12). Since v0.7.0.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+      responses:
+        '200':
+          description: The policy.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              example:
+                enabled: false
+                default_sources: scope
+                max_sources: 8
+                wide_keys: []
+              schema: { $ref: '#/components/schemas/FederationSettings' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [search]
+      operationId: setFederationPolicy
+      summary: Set the tenant's federation policy; each field sent replaces its value.
+      description: 'Requires: admin key role (ADR-0072 d5). max_sources above 64 is request.validation at /max_sources, and a default_sources other than scope or wide at /default_sources. Journalled as federation.policy_set with the policy, the previous one and the admin key; a change that changes nothing journals nothing. Since v0.7.0.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              enabled: true
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                enabled: { type: boolean }
+                default_sources: { type: string, enum: [scope, wide] }
+                max_sources: { type: integer, minimum: 0, maximum: 64 }
+      responses:
+        '200':
+          description: The policy as it now is.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FederationSettings' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/usage/settings:
     get:
       tags: [usage]
@@ -3654,6 +3756,27 @@ components:
         timings: { type: boolean, description: "Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d14). Since v0.5.9." }
         include_expired: { type: boolean, default: false, description: 'true also serves memories whose valid_until has passed, which recall hides by default; get and the listings always serve them (proposed ADR-0059 d3).' }
         now: { $ref: '#/components/schemas/ValidEnd', description: "The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired and anchors the query's relative dates (last week, three days ago) (proposed ADR-0059 d5)." }
+        sources:
+          description: >-
+            Where to search (ADR-0072 d5). scope, the default, is the workarea's subtree as
+            always. wide adds the committed and validated workareas the key already reads outside
+            it that accept federated reads: all of them up to the tenant's max_sources, above it
+            those holding the largest share of the query's matching rows. A list of 1 to
+            max_sources distinct workarea names or ids searches exactly those, answered whole or
+            refused. Every hit of wide or a list is scored with one set of statistics fixed before
+            any selection, so no hit's score depends on which sources were selected (d7). Absent,
+            the tenant's federation.default_sources. Refusals, in this order: an empty list, a
+            name twice, more than max_sources names, or a non-string element is
+            request.validation at /sources; wide or a list with federation off is
+            request.validation at /sources; wide or a list on bm25-sparse is request.validation at
+            /search; then each name in order: one the key cannot read and one that does not exist
+            are the same access.not_found with details.field /sources/<i>, and a readable name
+            that is not committed or validated, or lies outside the scope on a workarea declining
+            federated reads, is request.validation at /sources/<i> with details.reason
+            source_untrusted or source_declines_federation. Since v0.7.0.
+          oneOf:
+            - { type: string, enum: [scope, wide] }
+            - { type: array, minItems: 1, items: { type: string, minLength: 1 } }
 
     Feedback:
       type: object
@@ -3690,6 +3813,7 @@ components:
               memory: { $ref: '#/components/schemas/Memory' }
               score: { type: number, description: 'The pipeline''s score, comparable within one answer only; ties break by artifact_id ascending.' }
               matched: { $ref: '#/components/schemas/RecallMatched' }
+              via: { type: string, enum: [scope, federated], description: 'Under sources wide or a list only: scope when the hit''s workarea is the recall''s scope or under it, federated when it is another workarea the key reads; memory.workarea_path names it (ADR-0072 d8).' }
         budget:
           $ref: '#/components/schemas/RecallBudget'
           description: Present if and only if max_tokens was sent.
@@ -3754,6 +3878,62 @@ components:
             - { type: 'null' }
         floor: { type: [number, 'null'], description: 'The relevance floor applied to this answer (search.rerank.floor), only when the rerank was applied; null when none was.' }
         below_floor: { type: integer, minimum: 0, description: 'How many of the first k candidates the floor withheld; hits empty with below_floor above 0 means nothing scored above the floor (ADR-0053 d6).' }
+        sources: { $ref: '#/components/schemas/RecallSources' }
+    RecallSources:
+      type: object
+      additionalProperties: false
+      description: >-
+        Under sources wide or a list: what was searched and why (ADR-0072 d8). Every name and
+        number is of a workarea the key reads (d6).
+      required: [mode, considered, searched, cut]
+      properties:
+        mode: { type: string, enum: [wide, list] }
+        considered: { type: integer, minimum: 0, description: 'Under wide, the trusted workareas the key reads outside the scope that accept federated reads; for a list, the names listed.' }
+        searched:
+          type: array
+          description: The scope's nodes first, then the federated sources in selection order; for a list, the listed nodes in the order sent.
+          items:
+            type: object
+            additionalProperties: false
+            required: [workarea_id, workarea_path, via, estimate, matched]
+            properties:
+              workarea_id: { type: string, format: uuid }
+              workarea_path: { type: string }
+              via: { type: string, enum: [scope, federated] }
+              estimate: { type: number, minimum: 0, description: 'The share of the matching rows it holds, weighted by each word''s rarity over every source searched or considered: the order selection reads above max_sources (d4.4).' }
+              matched:
+                type: object
+                additionalProperties: false
+                required: [words]
+                properties:
+                  words: { type: array, items: { type: string }, description: 'For a federated source, the query words its rows hold; empty for the scope.' }
+        cut:
+          type: object
+          additionalProperties: false
+          description: The workareas holding a query word that wide did not search because max_sources was reached; their statistics still scored every hit.
+          required: [count, matches_at_least]
+          properties:
+            count: { type: integer, minimum: 0 }
+            matches_at_least: { type: integer, minimum: 0 }
+
+    FederationSettings:
+      type: object
+      additionalProperties: false
+      description: The tenant's federation policy (ADR-0072 d5), and for doctor the keys whose recall met more than 1,000 candidate sources since the lead started (d12).
+      required: [enabled, default_sources, max_sources, wide_keys]
+      properties:
+        enabled: { type: boolean, description: 'Whether recall may search beyond its scope when asked; off by default.' }
+        default_sources: { type: string, enum: [scope, wide], description: 'What an absent sources reads; never a list.' }
+        max_sources: { type: integer, minimum: 0, maximum: 64, description: 'The most workareas a wide recall searches beside its scope, and the most a list names; 8 by default.' }
+        wide_keys:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [key_id, candidates]
+            properties:
+              key_id: { type: string, format: uuid }
+              candidates: { type: integer, minimum: 0 }
 
     RerankOutcome:
       type: string
@@ -4140,6 +4320,13 @@ components:
               items: { type: string, enum: [recall, read, graph_read, events_tail, remember, learn, attach, supersede, propose, review] }
             permission_epoch: { type: integer, description: 'The calling key''s permission epoch as declared in docs/architecture/workareas.md (ADR-0025 d14).' }
             policy: { $ref: '#/components/schemas/ReviewPolicy' }
+            federation:
+              type: object
+              additionalProperties: false
+              description: The node's federation field (ADR-0072 d5).
+              required: [accept_federated]
+              properties:
+                accept_federated: { type: boolean, description: 'Whether recalls scoped elsewhere that ask for wider sources may search this node; true by default. It grants nothing.' }
             pending_transitions:
               type: array
               description: The node's live proposals in proposal order, the pending rows whose from is the node's status (ADR-0039 d9; ADR-0046 d3).

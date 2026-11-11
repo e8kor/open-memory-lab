@@ -260,6 +260,27 @@
             "default": "any",
             "description": "Recall, default any. all: only rows holding every query word are hits; when none does, the any-word hits are served and search.fallback says any_term."
           },
+          "sources": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "scope",
+                  "wide"
+                ]
+              },
+              {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            ],
+            "description": "Recall only: where to search. scope (the default) is the workarea and its subtree; wide adds the committed and validated workareas this key already reads elsewhere, chosen by how many of their rows hold the query's words; a list such as [\"acme.legal\", \"acme.product\"] searches exactly those workareas, answered whole or refused. Each hit then names its workarea_path and via, scope or federated. Refused unless a tenant admin enabled federation. Refused in get and listing modes."
+          },
           "include_expired": {
             "type": "boolean",
             "default": false,

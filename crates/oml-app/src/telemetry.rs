@@ -145,6 +145,10 @@ pub struct RecallEvent {
     pub query_text: String,
     /// The served hits in rank order, at most [`HITS_STORED`].
     pub hits: Vec<(Uuid, f32)>,
+    /// What a federated tenant's recall searched: `sources`, the federated
+    /// nodes and the reference set's, for the replay (ADR-0072 d9); `None`
+    /// with federation off.
+    pub federation: Option<crate::federation::FederationRecord>,
 }
 
 /// A key's committed act that may label its recent recall: a get by id, a

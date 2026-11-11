@@ -10,6 +10,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod federation;
+
 use core::future::{Future, poll_fn};
 use core::pin::pin;
 use core::task::Poll;
@@ -939,6 +941,7 @@ pub trait KeywordAllReads: Retriever {
         k: usize,
     ) -> impl Future<Output = Result<Vec<Candidate>, StoreError>> + Send {
         let scope = CandidateScope {
+            reference: None,
             anchor: oml_app::types::AnchorFilter::default(),
             promoted_nodes: readable.to_vec(),
             kinds: kinds.to_vec(),
@@ -975,6 +978,7 @@ pub trait KeywordAllReads: Retriever {
         k: usize,
     ) -> impl Future<Output = Result<Vec<Candidate>, StoreError>> + Send {
         let scope = CandidateScope {
+            reference: None,
             anchor: oml_app::types::AnchorFilter::default(),
             promoted_nodes: Vec::new(),
             kinds: kinds.to_vec(),
@@ -1579,6 +1583,7 @@ pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: Jour
     hold(&mut other_tenant, store, foreign).await.expect("hold");
 
     let scope = |nodes: Vec<Uuid>| CandidateScope {
+        reference: None,
         expired_at: None,
         anchor: oml_app::types::AnchorFilter::default(),
         promoted_nodes: Vec::new(),
@@ -9868,6 +9873,7 @@ async fn retriever_fixture<S: JournalStore>(
 
 fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
     CandidateScope {
+        reference: None,
         anchor: oml_app::types::AnchorFilter::default(),
         promoted_nodes: vec![wa],
         kinds: HIT_KINDS.to_vec(),
@@ -9980,6 +9986,7 @@ pub async fn a_retriever_never_returns_a_row_outside_the_scope<S: JournalStore>(
                     );
                 }
                 let empty = CandidateScope {
+                    reference: None,
                     anchor: oml_app::types::AnchorFilter::default(),
                     promoted_nodes: Vec::new(),
                     kinds: HIT_KINDS.to_vec(),
@@ -10800,6 +10807,7 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_nothing_is_pruned<S: JournalS
             {
                 for k in 1..=12 {
                     let scope = CandidateScope {
+                        reference: None,
                         anchor: oml_app::types::AnchorFilter::default(),
                         kinds: kinds.clone(),
                         ..scope_of(wa, own_held)
@@ -10864,6 +10872,7 @@ pub async fn bm25_postings_ranks_as_bm25_does_when_a_readable_row_has_expired<S:
     for query in POSTINGS_QUERIES {
         for (own_held, expired_at) in [(None, Some(now)), (Some(own), Some(now)), (None, None)] {
             let scope = CandidateScope {
+                reference: None,
                 expired_at,
                 ..scope_of(wa, own_held)
             };
@@ -11448,6 +11457,7 @@ pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>
         "the own held row joins only when its key is named"
     );
     let empty = CandidateScope {
+        reference: None,
         promoted_nodes: Vec::new(),
         kinds: HIT_KINDS.to_vec(),
         own_held: None,
@@ -11495,6 +11505,7 @@ pub async fn an_expired_memory_is_outside_every_retrievers_scope<S: JournalStore
         }
         for expired_at in [Some(now), None] {
             let scope = CandidateScope {
+                reference: None,
                 expired_at,
                 ..scope_of(wa, None)
             };
@@ -11711,6 +11722,7 @@ pub async fn similar_candidates_are_the_scopes_served_tips_and_own_held_rows_hol
         .map(|(_, k)| k)
         .collect();
     let scope = |nodes: Vec<Uuid>, keys_: Vec<Uuid>| CandidateScope {
+        reference: None,
         promoted_nodes: nodes.clone(),
         kinds: vec![
             MemoryKind::Memory,

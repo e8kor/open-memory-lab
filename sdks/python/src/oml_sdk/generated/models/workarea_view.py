@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ..models.whoami_ref import WhoamiRef
     from ..models.workarea_view_children_item import WorkareaViewChildrenItem
     from ..models.workarea_view_edges_item import WorkareaViewEdgesItem
+    from ..models.workarea_view_federation import WorkareaViewFederation
 
 
 T = TypeVar("T", bound="WorkareaView")
@@ -66,6 +67,7 @@ class WorkareaView:
             created_at (datetime.datetime | Unset):
             in_progress_root (None | Unset | WhoamiRef): The in-progress workarea this node lies inside, itself for a root,
                 by id and name; null outside every in-progress subtree (ADR-0030 d13).
+            federation (WorkareaViewFederation | Unset): The node's federation field (ADR-0072 d5).
     """
 
     id: str
@@ -86,6 +88,7 @@ class WorkareaView:
     mode: WorkareaMode | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
     in_progress_root: None | Unset | WhoamiRef = UNSET
+    federation: WorkareaViewFederation | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -157,6 +160,10 @@ class WorkareaView:
         else:
             in_progress_root = self.in_progress_root
 
+        federation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.federation, Unset):
+            federation = self.federation.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -186,6 +193,8 @@ class WorkareaView:
             field_dict["created_at"] = created_at
         if in_progress_root is not UNSET:
             field_dict["in_progress_root"] = in_progress_root
+        if federation is not UNSET:
+            field_dict["federation"] = federation
 
         return field_dict
 
@@ -198,6 +207,7 @@ class WorkareaView:
         from ..models.whoami_ref import WhoamiRef
         from ..models.workarea_view_children_item import WorkareaViewChildrenItem
         from ..models.workarea_view_edges_item import WorkareaViewEdgesItem
+        from ..models.workarea_view_federation import WorkareaViewFederation
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -305,6 +315,13 @@ class WorkareaView:
 
         in_progress_root = _parse_in_progress_root(d.pop("in_progress_root", UNSET))
 
+        _federation = d.pop("federation", UNSET)
+        federation: WorkareaViewFederation | Unset
+        if isinstance(_federation, Unset):
+            federation = UNSET
+        else:
+            federation = WorkareaViewFederation.from_dict(_federation)
+
         workarea_view = cls(
             id=id,
             name=name,
@@ -324,6 +341,7 @@ class WorkareaView:
             mode=mode,
             created_at=created_at,
             in_progress_root=in_progress_root,
+            federation=federation,
         )
 
         workarea_view.additional_properties = d

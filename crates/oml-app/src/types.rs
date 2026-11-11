@@ -936,6 +936,8 @@ pub struct WorkareaInfo {
     /// The review policy in force, the one a transition's `policy_snapshot`
     /// records (ADR-0039 d9; ADR-0046 d3).
     pub policy: serde_json::Value,
+    /// The node's federation field, served beside `policy` (ADR-0072 d5).
+    pub federation: crate::federation::WorkareaFederation,
     /// The node's live proposals in proposal order, as the status read lists
     /// them (workareas.md, the status read lists only live proposals).
     pub pending_transitions: Vec<TransitionView>,
@@ -1694,6 +1696,9 @@ pub struct RecallRequest {
     pub now: Option<String>,
     /// `anchor_repo` and `anchor_path_prefix` (ADR-0057 d4).
     pub anchor: AnchorFilter,
+    /// `sources`: where to search (ADR-0072 d5); `None` is the tenant's
+    /// `federation.default_sources`, `scope` unless an admin set `wide`.
+    pub sources: Option<crate::federation::Sources>,
 }
 
 /// One recall hit: the row as the calling key is served it, and the store's
@@ -1721,6 +1726,9 @@ pub struct RecallHit {
     /// `matched.rank_before`: the hit's rank in the first stage's list, from
     /// 1, for a hit the reranker scored (ADR-0053 d7).
     pub rank_before: Option<u32>,
+    /// The hit's `via` under `wide` or a list: whether its workarea is the
+    /// scope's or a federated source; `None` under `scope` (ADR-0072 d8).
+    pub source: Option<crate::federation::Via>,
 }
 
 /// What the reranking stage did to one recall (ADR-0053 d5, d7):
@@ -1824,6 +1832,11 @@ pub struct RecallResult {
     /// The date window the query named, read by rule `oml-when/1`
     /// (`search.window`; proposed ADR-0059 d6).
     pub window: Option<Window>,
+    /// `search.sources` under `wide` or a list (ADR-0072 d8).
+    pub sources: Option<crate::federation::SourcesReport>,
+    /// What the recall event records of the sources (ADR-0072 d9); `None`
+    /// on a tenant with federation off.
+    pub federation: Option<crate::federation::FederationRecord>,
 }
 
 /// The guardrail read (proposed ADR-0037 d5): the scope node is the key's
@@ -2830,6 +2843,38 @@ pub enum AppError {
     /// `access.verb_ceiling`, reason `mode_is_human_only`).
     #[error("a workarea's mode is set by a person's key: a {} key held by {} is refused (ADR-0030 d1, access.verb_ceiling)", .role.as_str(), .held_by.as_str())]
     ModeHumanOnly { role: Role, held_by: HeldBy },
+    /// Only a person's dreamer key or a tenant admin sets a workarea's
+    /// federation field (ADR-0072 d5; errors.md `access.verb_ceiling`,
+    /// reason `federation_is_human_only`).
+    #[error("a workarea's federation field is set by a person's dreamer key or a tenant admin: a {} key held by {} is refused (ADR-0072 d5, access.verb_ceiling)", .role.as_str(), .held_by.as_str())]
+    FederationHumanOnly { role: Role, held_by: HeldBy },
+    /// The shape of `sources`, `wide` or a list on a tenant with federation
+    /// off, or a policy value out of range (ADR-0072 d5;
+    /// `request.validation` with `details.field`).
+    #[error("{message} (ADR-0072 d5, request.validation, field {field})")]
+    SourcesInvalid {
+        field: &'static str,
+        message: String,
+    },
+    /// `wide` or a list on a `Cc` pipeline, whose bounds are not yet taken
+    /// over the reference set (ADR-0072 d7.2; `request.validation`, field
+    /// `/search`).
+    #[error(
+        "{pipeline} normalises each list by its own bounds, so wide and a list are refused on it (ADR-0072 d7.2, request.validation, field /search)"
+    )]
+    SourcesUnderCc { pipeline: String },
+    /// A listed name the key cannot read or that does not exist, the same
+    /// for both (ADR-0072 d5, d6; `access.not_found`, field
+    /// `/sources/<index>`).
+    #[error("not found (ADR-0072 d6, access.not_found, field /sources/{index})")]
+    SourceNotFound { index: usize },
+    /// A readable listed name that is not a usable source (ADR-0072 d5;
+    /// `request.validation`, field `/sources/<index>`).
+    #[error("sources/{index} is not a usable source: {} (ADR-0072 d5, request.validation)", .reason.as_str())]
+    SourceRefused {
+        index: usize,
+        reason: crate::federation::SourceRefusal,
+    },
     /// A curator key asked for a verb or a scope it never reaches (ADR-0030
     /// d9; errors.md `access.verb_ceiling`, reason `curator_narrow_only` or
     /// `curator_outside_in_progress`).

@@ -17,6 +17,7 @@ recall finds what an agent asks for, and where it fails. The findings are in
 | `check_data.py` | CI check: the data parses and every label resolves (job `recall-eval-data`) |
 | `served.sh` | boots a lead against a throwaway database, loads the set and runs `run.py` once per served search pipeline, then `gate.py` (job `recall-eval`) |
 | `gate.py` | each pipeline's gate (ADR-0049 d9; `bm25-rerank`'s from ADR-0053 d9); fails when the default misses its gate or a category falls by more than one query, or when `keyword-all` does not reproduce v0.5.0 |
+| `federated.sh`, `federated.py` | the federated recall eval (ADR-0072 d11): one committed workarea per topic, `sources` scope, wide and the union on a scoped and a cross split, the widen hint, and a skew split padded with SciFact abstracts |
 | `results/` | one JSON per method (summary per category, and per query the ranked ids and latency), and `tables.md` |
 
 ### `corpus.json`

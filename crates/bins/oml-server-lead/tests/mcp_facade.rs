@@ -2963,8 +2963,12 @@ fn outside_the_input_schema(result: &Value) -> bool {
 
 /// A value of the type `schema` declares: the first enum member, an
 /// integer's minimum, one item of an array and every property of an object,
-/// so a closed nested argument is held to the catalog too.
+/// so a closed nested argument is held to the catalog too; for a `oneOf`, a
+/// value of its first alternative.
 fn type_valid(schema: &Value, tag: &str) -> Value {
+    if let Some(first) = schema["oneOf"].as_array().and_then(|a| a.first()) {
+        return type_valid(first, tag);
+    }
     if let Some(first) = schema["enum"]
         .as_array()
         .and_then(|members| members.first())

@@ -5,6 +5,7 @@
 //! denials on each request, in the one refusal order of roles-and-keys.md
 //! (ADR-0025 d1).
 
+mod federation;
 mod pages;
 mod rescan;
 mod search;
@@ -12,6 +13,7 @@ mod signup;
 mod sparse;
 mod usage;
 mod web;
+pub use federation::WideKey;
 pub use pages::{
     AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted, OwnKey, QueueRow,
     REGION_COUNT_MAX, Region, Regions, VerdictTrail, WebListRequest, WorkareaOffer, WorkareaOffers,
@@ -117,7 +119,7 @@ use crate::types::{
 };
 
 use crate::search::{
-    Access, CandidateScope, DID_YOU_MEAN_BELOW, Fused, MatchMode, OwnHeldScope, Pipeline,
+    Access, CandidateScope, DID_YOU_MEAN_BELOW, Fused, Fusion, MatchMode, OwnHeldScope, Pipeline,
     RetrievalQuery, RetrieverKind, SearchConfig, Stage, TIME_DEPTH, Timings, apply_floor,
     fuse_capped, order_time_list, pipeline_access, pruned_words, query_terms, rerank_order,
 };
@@ -226,6 +228,10 @@ pub struct App<J, S, C, I, Sc> {
     /// Open sign-up and its counters; `None` where the deployment has no
     /// sign-up tenant, and then no quotas (ADR-0068 d1, d5).
     signup: Option<Arc<signup::SignupState>>,
+    /// Each key whose recall met more than `CANDIDATES_DOCTOR` candidate
+    /// sources since the lead started, by tenant, with the most it met: the
+    /// doctor line a tenant admin reads (ADR-0072 d12). It decides nothing.
+    wide_keys: std::sync::Mutex<BTreeMap<(Uuid, Uuid), usize>>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -1027,6 +1033,7 @@ fn recall_query_digest(
     req: &RecallRequest,
     scope: Uuid,
     pipeline: Pipeline,
+    federation: Option<&crate::federation::FederationRecord>,
 ) -> Result<String, AppError> {
     let mut kinds: Vec<&str> = req.kinds.iter().map(|kind| kind.as_str()).collect();
     kinds.sort_unstable();
@@ -1056,6 +1063,14 @@ fn recall_query_digest(
         }
         if let Some(now) = &req.now {
             members.insert("now".to_owned(), Value::from(now.as_str()));
+        }
+        // `sources` only when it searched wider than the scope, `wide` or
+        // the list's workarea ids, so a `scope` recall digests as it did
+        // before (ADR-0072 d9).
+        if let Some(record) = federation
+            && record.sources != "scope"
+        {
+            members.insert("sources".to_owned(), record.sources.clone());
         }
     }
     Ok(sha256_digest_string(&canonical_bytes(&doc)?))
@@ -1333,6 +1348,7 @@ where
             sparse: None,
             formats: Arc::new(crate::ports::ProseFormats),
             signup: None,
+            wide_keys: std::sync::Mutex::default(),
         }
     }
 
@@ -3302,11 +3318,21 @@ where
         };
         // The node's in-progress root, read off the ancestry (ADR-0030 d13).
         let in_progress_root = ancestry.iter().find(|w| w.in_progress).cloned();
+        // The node's federation field, served beside the policy (ADR-0072
+        // d5).
+        let federation = crate::federation::WorkareaFederation {
+            accept_federated: self
+                .journal
+                .federation_declining(tenant_id, &[node])
+                .await?
+                .is_empty(),
+        };
         Ok(WorkareaInfo {
             in_progress_root,
             stale_versions,
             path: derived_path(&ancestry),
             policy: review_policy(),
+            federation,
             pending_transitions,
             brief,
             workarea,
@@ -4688,6 +4714,7 @@ where
         let readable = self.nodes_with(caller, workarea, Role::Reader).await?;
         let hit_nodes = with_universe(caller, &readable, &scope_ancestry);
         let scope = CandidateScope {
+            reference: None,
             promoted_nodes: hit_nodes.clone(),
             kinds: SIMILAR_KINDS.to_vec(),
             own_held: Some(OwnHeldScope {
@@ -5859,8 +5886,27 @@ where
             self.observer
                 .recall_stage(result.pipeline.as_str(), stage.as_str(), *seconds);
         }
+        // The mode and the federated hits of a federated tenant's recall
+        // (ADR-0072 Consequences).
+        if let Some(record) = &result.federation {
+            // A `scope` recall records nothing, so the mode is wide or list.
+            self.observer.recall_sources(if record.sources.is_string() {
+                "wide"
+            } else {
+                "list"
+            });
+            let federated = result
+                .hits
+                .iter()
+                .filter(|h| h.source == Some(crate::federation::Via::Federated))
+                .count() as u64;
+            if federated > 0 {
+                self.observer.federated_hits(federated);
+            }
+        }
         if let Some(telemetry) = &self.telemetry {
             telemetry.offer(TelemetryItem::Recall(Box::new(RecallEvent {
+                federation: result.federation.clone(),
                 tenant_id: caller.key.tenant_id,
                 recall_id: result.recall_id,
                 created_at: self.clock.now(),
@@ -5971,6 +6017,46 @@ where
             .into_iter()
             .filter(|kind| req.kinds.is_empty() || req.kinds.contains(kind))
             .collect();
+        // A recall naming no `sources` reads the tenant's default with its
+        // default pipeline, off one row; one naming them reads only the
+        // pipeline's default, as before federation (ADR-0072 d12).
+        let (pipeline, policy) = if req.sources.is_none() {
+            let (tenant_default, policy) = self.journal.recall_defaults(key.tenant_id).await?;
+            (
+                self.pipeline_from(req.search.as_deref(), tenant_default)?,
+                Some(policy),
+            )
+        } else {
+            (
+                self.pipeline_for(key.tenant_id, req.search.as_deref())
+                    .await?,
+                None,
+            )
+        };
+        // Where the recall searches under `sources`: the scope's served
+        // nodes, plus the sources `wide` selects, or a list's nodes alone;
+        // and the reference set every BM25 statistic is taken over, fixed
+        // before any selection (ADR-0072 d4, d5, d7).
+        let expired_at = (!req.include_expired).then_some(now_us);
+        let plan = self
+            .plan_sources(
+                caller, req, policy, scope, &hit_nodes, &kinds, pipeline, &query, expired_at,
+            )
+            .await?;
+        let promoted: BTreeSet<Uuid> = plan.promoted.iter().copied().collect();
+        // Under a list, own held rows come from a listed node alone.
+        let within = |nodes: &[Uuid]| -> Vec<Uuid> {
+            match &plan.held_within {
+                Some(listed) => nodes
+                    .iter()
+                    .filter(|n| listed.contains(n))
+                    .copied()
+                    .collect(),
+                None => nodes.to_vec(),
+            }
+        };
+        let readable = within(&readable);
+        let inside = within(&inside);
         // The candidate scope is the core's, never an adapter's: the
         // readable hit nodes, the kinds, and the own held rows only when
         // asked — the own key set is the calling key alone until rotation is
@@ -5979,7 +6065,8 @@ where
         // search uses (d22); on the readable set, which already excludes the
         // key's global denials (ADR-0025 d4; ADR-0049 d2).
         let candidate_scope = CandidateScope {
-            promoted_nodes: hit_nodes.clone(),
+            reference: plan.reference.clone(),
+            promoted_nodes: plan.promoted.clone(),
             kinds: kinds.clone(),
             own_held: include_unreviewed.then(|| OwnHeldScope {
                 author_key_ids: caller.own_key_ids(),
@@ -5995,18 +6082,28 @@ where
             }),
             // An ended version is outside the scope unless asked for: a
             // visibility rule, never a weight (proposed ADR-0059 d3).
-            expired_at: (!req.include_expired).then_some(now_us),
+            expired_at,
             anchor: req.anchor.clone(),
         };
-        let pipeline = self
-            .pipeline_for(key.tenant_id, req.search.as_deref())
-            .await?;
         timings.lap(Stage::Scope, lap);
+        // A fused pipeline ranks by position, so under a reference set its
+        // lists are read over the whole set and restricted to the searched
+        // nodes after fusion: a hit's fused score is then the union's, and
+        // no selection moves it (ADR-0072 d7, as built).
+        let fused_over_reference =
+            plan.reference.is_some() && matches!(pipeline.fusion(), Fusion::Rrf { .. });
+        let retrieval_scope = match (&plan.reference, fused_over_reference) {
+            (Some(reference), true) => CandidateScope {
+                promoted_nodes: reference.clone(),
+                ..candidate_scope.clone()
+            },
+            _ => candidate_scope.clone(),
+        };
         let ran = self
             .run_pipeline(
                 key.tenant_id,
                 pipeline,
-                &candidate_scope,
+                &retrieval_scope,
                 &query,
                 window.as_ref(),
                 req,
@@ -6026,7 +6123,7 @@ where
         let own = caller.own_key_ids();
         let admits = |m: &MemoryRecord| {
             let admitted = match m.status {
-                MemoryStatus::Promoted => m.is_tip && hit_nodes.contains(&m.workarea_id),
+                MemoryStatus::Promoted => m.is_tip && promoted.contains(&m.workarea_id),
                 MemoryStatus::Held => {
                     include_unreviewed
                         && ((own.contains(&m.author_key_id) && readable.contains(&m.workarea_id))
@@ -6047,6 +6144,21 @@ where
         // late or failing leaves the first stage's order and says so
         // (ADR-0053 d1, d5).
         let mut rows: BTreeMap<Uuid, MemoryRecord> = BTreeMap::new();
+        // The fused list read over the reference set keeps the searched
+        // nodes' rows alone, before any cut.
+        if fused_over_reference && !candidates.is_empty() {
+            let ids: Vec<Uuid> = candidates.iter().map(|c| c.memory_id).collect();
+            rows.extend(
+                self.journal
+                    .memories(key.tenant_id, &ids)
+                    .await?
+                    .into_iter()
+                    .filter(|m| admits(m))
+                    .map(|m| (m.memory_id, m)),
+            );
+            candidates.retain(|c| rows.contains_key(&c.memory_id));
+            lap = timings.lap(Stage::Hydrate, lap);
+        }
         let mut rerank = RerankOutcome::NotRun;
         if pipeline.reranks()
             && let Some(reranker) = self.reranker.as_deref()
@@ -6213,6 +6325,7 @@ where
             // ancestors the caller can read (ADR-0025 d3).
             if admits(&m) {
                 served_ids.push(m.memory_id);
+                let home = m.workarea_id;
                 hits.push(RecallHit {
                     served: self.served_in(caller, m, &mut ancestries).await?,
                     score: candidate.score,
@@ -6221,6 +6334,16 @@ where
                     tokens: candidate.tokens.clone(),
                     rerank: candidate.rerank,
                     rank_before: candidate.rank_before,
+                    // Each hit of a federated answer says whether its
+                    // workarea is the scope's or another team's (ADR-0072
+                    // d8).
+                    source: plan.report.as_ref().map(|_| {
+                        if plan.federated.contains(&home) {
+                            crate::federation::Via::Federated
+                        } else {
+                            crate::federation::Via::Scope
+                        }
+                    }),
                 });
             }
         }
@@ -6232,7 +6355,7 @@ where
             hits,
             budget,
             served_ids,
-            query_digest: recall_query_digest(&query, req, scope, pipeline)?,
+            query_digest: recall_query_digest(&query, req, scope, pipeline, plan.record.as_ref())?,
             pipeline,
             terms,
             fallback,
@@ -6244,6 +6367,8 @@ where
             pruned: ran.pruned,
             timings,
             window,
+            sources: plan.report,
+            federation: plan.record,
         })
     }
 
@@ -6461,13 +6586,30 @@ where
                     served: self.served_pipelines(),
                 });
         }
-        let tenant_default = self
-            .journal
-            .tenant_search_default(tenant_id)
-            .await?
+        let tenant_default = self.journal.tenant_search_default(tenant_id).await?;
+        self.pipeline_from(None, tenant_default)
+    }
+
+    /// The pipeline a recall runs: the one it names, which the deployment
+    /// must serve, else the tenant's default where served, else the
+    /// deployment's (ADR-0049 d4).
+    fn pipeline_from(
+        &self,
+        requested: Option<&str>,
+        tenant_default: Option<String>,
+    ) -> Result<Pipeline, AppError> {
+        if let Some(name) = requested {
+            return Pipeline::parse(name)
+                .filter(|p| self.search.serves(*p))
+                .ok_or_else(|| AppError::SearchUnavailable {
+                    name: name.to_owned(),
+                    served: self.served_pipelines(),
+                });
+        }
+        Ok(tenant_default
             .and_then(|name| Pipeline::parse(&name))
-            .filter(|p| self.search.serves(*p));
-        Ok(tenant_default.unwrap_or_else(|| self.search.default_pipeline()))
+            .filter(|p| self.search.serves(*p))
+            .unwrap_or_else(|| self.search.default_pipeline()))
     }
 
     /// The served pipeline names, comma-separated, for a refusal's text.

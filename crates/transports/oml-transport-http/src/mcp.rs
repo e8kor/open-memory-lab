@@ -215,11 +215,15 @@ struct ReadArgs {
     anchor_path_prefix: Option<String>,
     /// The kind filter, in recall and listing modes (ADR-0063 d3).
     origin_kinds: Option<Vec<String>>,
+    /// Where a recall searches: `scope`, `wide` or a list of workareas
+    /// (ADR-0072 d5).
+    sources: Option<Value>,
 }
 
 /// `oml_read`'s modes and the arguments each takes (ADR-0039 d4).
 const READ_GET: [&str; 1] = ["artifact_id"];
-const READ_RECALL: [&str; 13] = [
+const READ_RECALL: [&str; 14] = [
+    "sources",
     "origin_kinds",
     "query",
     "workarea",
@@ -709,6 +713,7 @@ where
             ("anchor_repo", args.anchor_repo.is_some()),
             ("anchor_path_prefix", args.anchor_path_prefix.is_some()),
             ("origin_kinds", args.origin_kinds.is_some()),
+            ("sources", args.sources.is_some()),
         ];
         if let Some((field, _)) = sent
             .iter()
@@ -765,6 +770,7 @@ where
                     args.anchor_path_prefix.map(Value::from),
                 ),
                 ("origin_kinds", args.origin_kinds.clone().map(Value::from)),
+                ("sources", args.sources.clone()),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -965,6 +971,12 @@ fn recall_output(result: &Value) -> Value {
                     let mut item = recall_item(&hit["memory"], Some(&hit["score"]));
                     if let Some(obj) = item.as_object_mut() {
                         obj.insert("matched".to_owned(), hit["matched"].clone());
+                        // A federated answer's hit names whether it came
+                        // from the scope or another team's workarea; its
+                        // `workarea_path` is the claim item's (ADR-0072 d8).
+                        if let Some(via) = hit.get("via") {
+                            obj.insert("via".to_owned(), via.clone());
+                        }
                     }
                     item
                 })
