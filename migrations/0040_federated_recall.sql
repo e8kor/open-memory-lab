@@ -23,6 +23,7 @@
 -- inline checks hold for the default every existing row takes.
 
 SET LOCAL lock_timeout = '5s';
+-- lint:allow column-check tenants holds one row per tenant, so validating the two inline checks scans a handful of rows under the lock
 
 ALTER TABLE tenants
     ADD COLUMN federation_enabled boolean NOT NULL DEFAULT false,
@@ -54,5 +55,7 @@ ALTER TABLE recall_events
 COMMENT ON COLUMN recall_events.sources IS
     'The recall''s sources on a federated tenant: "scope", "wide" or the list''s workarea ids; '
     'NULL with federation off (ADR-0072 d9).';
+COMMENT ON COLUMN recall_events.federated_workarea_ids IS
+    'The federated nodes a wide recall or a list searched beyond its scope (ADR-0072 d9).';
 COMMENT ON COLUMN recall_events.reference_workarea_ids IS
     'The reference set''s nodes, whose statistics scored every hit, for the replay (ADR-0072 d9).';
