@@ -59,7 +59,7 @@ async fn reranker_double_passes_the_suite() {
 async fn federated_recall_double_passes_the_leakage_suite() {
     contracts::federation::run_federation_suite(
         || async { MemStore::new().answering_bm25_with_any_word() },
-        &["bm25", "bm25-postings"],
+        &["bm25", "bm25-postings", "bm25-postings-time"],
     )
     .await;
 }

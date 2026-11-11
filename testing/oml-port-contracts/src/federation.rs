@@ -16,7 +16,7 @@ use std::time::Instant;
 
 use oml_app::App;
 use oml_app::domain::access::Covers;
-use oml_app::domain::in_progress::WorkareaMode;
+use oml_app::domain::in_progress::{KeyProfile, WorkareaMode};
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::{HeldBy, MemoryKind, Role, WorkareaStatus};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
@@ -99,6 +99,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
                     Pipeline::Bm25Postings,
                     Pipeline::KeywordAny,
                     Pipeline::Bm25Sparse,
+                    Pipeline::Bm25PostingsTime,
                 ],
                 Pipeline::Bm25,
             )
@@ -265,9 +266,18 @@ impl<S: JournalStore + Clone> FedWorld<S> {
 
     /// One claim on `node`, approved by the reviewer, a person.
     pub async fn promote(&self, node: &str, body: &str) -> Uuid {
+        let id = self.hold(node, body).await;
+        self.app
+            .post_verdict(self.reviewer.value.as_str(), id, Verdict::Approve, None)
+            .await
+            .expect("approve");
+        id
+    }
+
+    /// One claim on `node` by the writer, left held.
+    pub async fn hold(&self, node: &str, body: &str) -> Uuid {
         let n = self.idem.fetch_add(1, Ordering::Relaxed);
-        let id = self
-            .app
+        self.app
             .submit_memory(
                 self.writer.value.as_str(),
                 &SubmitRequest {
@@ -292,12 +302,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
             .await
             .expect("submit")
             .receipt
-            .memory_id;
-        self.app
-            .post_verdict(self.reviewer.value.as_str(), id, Verdict::Approve, None)
-            .await
-            .expect("approve");
-        id
+            .memory_id
     }
 
     /// `node` moves to `committed`: the admin proposes, the person ratifies.
@@ -345,6 +350,22 @@ impl<S: JournalStore + Clone> FedWorld<S> {
         search: &str,
         k: usize,
     ) -> Result<RecallResult, AppError> {
+        self.recall_held(key, query, scope, sources, search, k, false)
+            .await
+    }
+
+    /// [`Self::recall`], with the key's own held rows when `held`.
+    #[allow(clippy::too_many_arguments, reason = "one recall's fields")]
+    pub async fn recall_held(
+        &self,
+        key: &IssuedKey,
+        query: &str,
+        scope: &str,
+        sources: Option<Sources>,
+        search: &str,
+        k: usize,
+        held: bool,
+    ) -> Result<RecallResult, AppError> {
         self.app
             .recall(
                 key.value.as_str(),
@@ -354,7 +375,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
                     workarea: Some(self.node(scope).into()),
                     kinds: Vec::new(),
                     include_text: true,
-                    include_unreviewed: Some(false),
+                    include_unreviewed: Some(held),
                     max_tokens: None,
                     search: Some(search.to_owned()),
                     match_mode: MatchMode::Any,
@@ -593,11 +614,32 @@ pub async fn a_list_is_answered_whole_or_refused_in_d5s_order<S: JournalStore + 
     w.create("secret", "crew").await;
     w.promote("secret", "invoice retry policy").await;
     w.commit("secret").await;
+    // Unreadable nodes a status or a policy would refuse if it were read
+    // before the read check: a `development` one and a declining one.
+    w.create("secret-dev", "crew").await;
+    w.promote("secret-dev", "invoice retry policy").await;
+    w.create("secret-declining", "crew").await;
+    w.promote("secret-declining", "invoice retry policy").await;
+    w.commit("secret-declining").await;
+    // A declining node inside the scope, which a list may name.
+    w.create("home-annex", "home").await;
+    w.promote("home-annex", "invoice annex").await;
+    w.commit("home-annex").await;
+    for node in ["secret-declining", "home-annex", "product"] {
+        w.app
+            .set_workarea_federation(
+                w.reviewer.value.as_str(),
+                Reference::Id(w.node(node)),
+                false,
+            )
+            .await
+            .expect("decline federated reads");
+    }
     let key = w
         .key(
             Role::Reader,
             &["crew", "legal", "product", "drafts"],
-            &["secret"],
+            &["secret", "secret-dev", "secret-declining"],
         )
         .await;
     let list = |names: &[&str]| {
@@ -638,6 +680,84 @@ pub async fn a_list_is_answered_whole_or_refused_in_d5s_order<S: JournalStore + 
     assert_eq!(
         unreadable,
         format!("{:?}", AppError::SourceNotFound { index: 1 })
+    );
+    // The read check comes before any status or policy: an unreadable
+    // development node and an unreadable declining one are the same bytes as
+    // an absent name, at their index (d5, d6).
+    for hidden in ["secret-dev", "secret-declining"] {
+        assert_eq!(
+            refusal(
+                w.recall(
+                    &key,
+                    "invoice",
+                    "home",
+                    list(&["legal", hidden]),
+                    "bm25",
+                    10
+                )
+                .await,
+            ),
+            absent,
+            "{hidden} was refused apart from an absent name"
+        );
+    }
+    // The first unusable name decides, whatever follows it.
+    assert_eq!(
+        refusal(
+            w.recall(
+                &key,
+                "invoice",
+                "home",
+                list(&["legal", "nowhere", "drafts"]),
+                "bm25",
+                10,
+            )
+            .await,
+        ),
+        absent
+    );
+    let first_untrusted = refusal(
+        w.recall(
+            &key,
+            "invoice",
+            "home",
+            list(&["legal", "drafts", "nowhere"]),
+            "bm25",
+            10,
+        )
+        .await,
+    );
+    assert!(
+        first_untrusted.contains("SourceRefused { index: 1, reason: Untrusted }"),
+        "{first_untrusted}"
+    );
+    // A readable node outside the scope that declines is refused by its
+    // reason; one inside the scope is searched.
+    let declining = refusal(
+        w.recall(
+            &key,
+            "invoice",
+            "home",
+            list(&["legal", "product"]),
+            "bm25",
+            10,
+        )
+        .await,
+    );
+    assert!(
+        declining.contains("SourceRefused { index: 1, reason: DeclinesFederation }"),
+        "{declining}"
+    );
+    let inside = w
+        .recall(&key, "invoice", "home", list(&["home-annex"]), "bm25", 10)
+        .await
+        .expect("a declining node inside the scope may be listed");
+    assert!(
+        inside
+            .hits
+            .iter()
+            .all(|h| h.served.memory.workarea_id == w.node("home-annex"))
+            && !inside.hits.is_empty()
     );
     // Refused whole: a list with one untrusted name answers nothing.
     let untrusted = refusal(
@@ -1172,6 +1292,220 @@ pub async fn the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row<
     }
 }
 
+/// Held rows are never federated: under `wide` and a list, with
+/// `include_unreviewed`, the writer's own held row on a candidate is never a
+/// hit, while its held row in the scope is (ADR-0072 d7).
+pub async fn a_held_row_is_never_federated<S: JournalStore + Clone>(store: S) {
+    let w = FedWorld::seeded(store).await;
+    let elsewhere = w.hold("legal", "invoice retry policy held elsewhere").await;
+    let here = w.hold("home", "invoice retry policy held here").await;
+    for sources in [
+        Some(Sources::Wide),
+        Some(Sources::List(vec!["legal".to_owned(), "home".to_owned()])),
+    ] {
+        for search in ["bm25", "bm25-postings"] {
+            let answer = w
+                .recall_held(
+                    &w.writer,
+                    "invoice retry policy",
+                    "home",
+                    sources.clone(),
+                    search,
+                    100,
+                    true,
+                )
+                .await
+                .expect("a recall with the writer's held rows");
+            let ids: Vec<Uuid> = answer
+                .hits
+                .iter()
+                .map(|h| h.served.memory.memory_id)
+                .collect();
+            assert!(
+                !ids.contains(&elsewhere),
+                "{search} {sources:?} served a held row of a federated source"
+            );
+            assert!(
+                ids.contains(&here),
+                "{search} {sources:?} lost the writer's held row in the scope"
+            );
+        }
+    }
+}
+
+/// A held row's score is the same on the scan and on the postings under a
+/// reference set, a word no row of the set holds scoring nothing on either
+/// (ADR-0072 d7; ADR-0052 d4).
+pub async fn a_held_row_scores_alike_on_the_scan_and_the_postings<S: JournalStore + Clone>(
+    store: S,
+) {
+    let w = FedWorld::seeded(store).await;
+    let held = w.hold("home", "invoice zebra stripes").await;
+    for sources in [
+        Some(Sources::Wide),
+        Some(Sources::List(vec!["home".to_owned(), "legal".to_owned()])),
+    ] {
+        let score = |search: &'static str| {
+            let w = &w;
+            let sources = sources.clone();
+            async move {
+                w.recall_held(
+                    &w.writer,
+                    "invoice zebra",
+                    "home",
+                    sources,
+                    search,
+                    100,
+                    true,
+                )
+                .await
+                .expect("a recall with the writer's held rows")
+                .hits
+                .iter()
+                .find(|h| h.served.memory.memory_id == held)
+                .map(|h| h.score)
+                .expect("the held row is a hit")
+            }
+        };
+        let (scan, postings) = (score("bm25").await, score("bm25-postings").await);
+        assert!(
+            (scan - postings).abs() <= 1e-4 * scan.abs().max(1.0),
+            "{sources:?}: the scan scored the held row {scan}, the postings {postings}"
+        );
+    }
+}
+
+/// The policies are a person's or an admin's act: an agent's or a
+/// curator's key never sets `accept_federated`, no key but an admin sets the
+/// tenant's policy, each change is journalled with what it replaced, a
+/// change that changes nothing journals nothing, and `max_sources` past 64
+/// is refused at its field (ADR-0072 d5).
+pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store: S) {
+    let w = FedWorld::seeded(store).await;
+    let root = w.node("universe");
+    let dreamer = |held_by: HeldBy, profile: Option<KeyProfile>| {
+        let w = &w;
+        async move {
+            w.app
+                .issue_key(
+                    w.admin.as_str(),
+                    &IssueKeyRequest {
+                        profile,
+                        role: Role::Dreamer,
+                        name: fresh("fed-dreamer"),
+                        principal: format!("fed-{}", NAMES.fetch_add(1, Ordering::Relaxed)),
+                        held_by: Some(held_by),
+                        default_workarea: None,
+                        crew: None,
+                        grants: vec![
+                            grant(root, Role::Dreamer, Vec::new()),
+                            grant(root, Role::Reader, Vec::new()),
+                            grant(root, Role::Writer, Vec::new()),
+                        ],
+                        connect_code: false,
+                        user: None,
+                        guardrail_scope: None,
+                    },
+                )
+                .await
+                .expect("issue a dreamer")
+        }
+    };
+    for (key, what) in [
+        (dreamer(HeldBy::Agent, None).await, "an agent's dreamer key"),
+        (
+            dreamer(HeldBy::Agent, Some(KeyProfile::Curator)).await,
+            "a curator key",
+        ),
+        (w.writer.clone(), "a writer key"),
+        (w.reader.clone(), "a reader key"),
+    ] {
+        let refused = w
+            .app
+            .set_workarea_federation(key.value.as_str(), Reference::Id(w.node("legal")), false)
+            .await
+            .expect_err(what);
+        assert!(
+            matches!(refused, AppError::FederationHumanOnly { .. }),
+            "{what}: {refused:?}"
+        );
+        let refused = w
+            .app
+            .set_federation_policy(
+                key.value.as_str(),
+                FederationPolicyChange {
+                    enabled: Some(false),
+                    ..FederationPolicyChange::default()
+                },
+            )
+            .await
+            .expect_err(what);
+        assert!(
+            matches!(refused, AppError::VerbCeiling { .. }),
+            "{what}: {refused:?}"
+        );
+    }
+    // A person's reviewer key and an admin may; each change is journalled
+    // with what it replaced, and a repeat journals nothing.
+    let events = |kind: &'static str| {
+        let w = &w;
+        async move {
+            w.store
+                .events_range(w.tenant, 0, 100_000)
+                .await
+                .expect("the chain")
+                .into_iter()
+                .filter(|e| e.envelope.event_type == kind)
+                .map(|e| e.envelope.payload)
+                .collect::<Vec<_>>()
+        }
+    };
+    let before = events("workarea.federation_set").await.len();
+    for (key, accept) in [(w.reviewer.value.as_str(), false), (w.admin.as_str(), true)] {
+        for _ in 0..2 {
+            w.app
+                .set_workarea_federation(key, Reference::Id(w.node("legal")), accept)
+                .await
+                .expect("a person's key or an admin sets it");
+        }
+    }
+    let set = events("workarea.federation_set").await;
+    assert_eq!(set.len(), before + 2, "a repeat journalled: {set:?}");
+    assert_eq!(set[before]["from"], true);
+    assert_eq!(set[before]["value"], false);
+    assert_eq!(set[before + 1]["from"], false);
+    assert_eq!(set[before + 1]["field"], "accept_federated");
+    let before = events("federation.policy_set").await.len();
+    for _ in 0..2 {
+        w.max_sources(5).await;
+    }
+    let set = events("federation.policy_set").await;
+    assert_eq!(set.len(), before + 1, "a repeat journalled: {set:?}");
+    assert_eq!(set[before]["from"]["max_sources"], 8);
+    assert_eq!(set[before]["policy"]["max_sources"], 5);
+    let over = w
+        .app
+        .set_federation_policy(
+            w.admin.as_str(),
+            FederationPolicyChange {
+                max_sources: Some(65),
+                ..FederationPolicyChange::default()
+            },
+        )
+        .await
+        .expect_err("max_sources past 64");
+    assert!(
+        matches!(
+            over,
+            AppError::SourcesInvalid {
+                field: "/max_sources",
+                ..
+            }
+        ),
+        "{over:?}"
+    );
+}
+
 async fn kiwi_hint<S: JournalStore + Clone>(
     w: &FedWorld<S>,
     key: &IssuedKey,
@@ -1202,4 +1536,7 @@ where
     with_federation_off_scope_is_todays_answer_and_wider_is_refused(make().await).await;
     a_lists_answer_depends_on_the_listed_workareas_alone(make().await).await;
     the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row(make().await).await;
+    a_held_row_is_never_federated(make().await).await;
+    a_held_row_scores_alike_on_the_scan_and_the_postings(make().await).await;
+    the_policies_are_never_an_agents_act(make().await).await;
 }

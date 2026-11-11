@@ -9290,7 +9290,7 @@ async fn federated_recall_passes_the_leakage_suite() {
     let created = Mutex::new(Vec::new());
     oml_port_contracts::federation::run_federation_suite(
         || fresh_search_store(&created),
-        &["bm25", "bm25-postings"],
+        &["bm25", "bm25-postings", "bm25-postings-time"],
     )
     .await;
     drop_dbs(&created).await;
