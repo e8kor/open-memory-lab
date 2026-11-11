@@ -157,6 +157,17 @@ fn keyword_ranked<'a>(
 
 /// Whether `m` counts in a reference set (ADR-0072 d4.2): a served tip of
 /// the kinds, never a retirement, unexpired at `expired_at`.
+/// This store's key for a form, its word: FNV-1a over the word's bytes, an
+/// opaque key as PostgreSQL's token id is.
+fn form_key(word: &str) -> i64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in word.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    i64::from_ne_bytes(h.to_ne_bytes())
+}
+
 fn reference_row(m: &MemoryRecord, kinds: &[MemoryKind], expired_at: Option<i64>) -> bool {
     served_tip(m)
         && HIT_KINDS.contains(&m.kind)
@@ -382,6 +393,33 @@ pub struct MemStore {
     /// the declining nodes and the reference counts — shared by every
     /// handle, so a law can hold that a recall made none (ADR-0072 d12).
     federation_reads: Arc<AtomicU64>,
+    /// How many widen-signal reads the store answered: a held signal's
+    /// query forms, read on a `scope` recall in place of any count
+    /// (ADR-0072 d8, d12, as built by #244).
+    widen_signal_reads: Arc<AtomicU64>,
+    /// Whether the next vocabulary read yields once before it reads, so a
+    /// test can commit while a widen signal's build is in flight (#244).
+    pause_vocabulary: Arc<AtomicBool>,
+}
+
+/// A future that is pending once, waking itself, then ready: a point where
+/// a test's other future runs.
+struct YieldOnce(bool);
+
+impl Future for YieldOnce {
+    type Output = ();
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        if self.0 {
+            std::task::Poll::Ready(())
+        } else {
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
 }
 
 /// Work a test lands between a use case's reads and its commit: run once,
@@ -442,6 +480,17 @@ impl MemStore {
     #[must_use]
     pub fn federation_reads(&self) -> u64 {
         self.federation_reads.load(Ordering::SeqCst)
+    }
+
+    /// Makes the next vocabulary read yield once before it reads (#244).
+    pub fn pause_next_vocabulary_read(&self) {
+        self.pause_vocabulary.store(true, Ordering::SeqCst);
+    }
+
+    /// How many widen-signal reads every handle of this store answered.
+    #[must_use]
+    pub fn widen_signal_reads(&self) -> u64 {
+        self.widen_signal_reads.load(Ordering::SeqCst)
     }
 
     /// The store that answers the `bm25` retriever with its any-word list:
@@ -2717,6 +2766,81 @@ impl JournalStore for MemStore {
                 }
             }
         }
+        Ok(crate::federation::ReferenceCounts {
+            words,
+            pruned: Vec::new(),
+            nodes,
+        })
+    }
+
+    /// Every word's counts over the nodes, as [`Self::reference_counts`]
+    /// counts a query's words: a federation read, made off the request path.
+    async fn vocabulary_counts(
+        &self,
+        tenant_id: Uuid,
+        scope: &crate::federation::CountsScope,
+        max_pairs: usize,
+    ) -> Result<Option<crate::federation::VocabularyCounts>, StoreError> {
+        self.federation_reads.fetch_add(1, Ordering::SeqCst);
+        if self.pause_vocabulary.swap(false, Ordering::SeqCst) {
+            YieldOnce(false).await;
+        }
+        let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
+        let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
+        if let Some(tenant) = self.tenant_existing(tenant_id) {
+            let state = tenant.lock().expect("tenant lock");
+            let held = scope
+                .nodes
+                .iter()
+                .filter_map(|n| state.by_workarea.get(n))
+                .flatten()
+                .filter_map(|id| state.memories.get(id));
+            for m in held {
+                if !reference_row(m, &scope.kinds, scope.expired_at) {
+                    continue;
+                }
+                let Some(n) = rows.get_mut(&m.workarea_id) else {
+                    continue;
+                };
+                *n += 1;
+                for w in words(&m.body) {
+                    *df.entry((m.workarea_id, form_key(&w))).or_default() += 1;
+                }
+                if df.len() > max_pairs {
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(Some(crate::federation::VocabularyCounts::from_counts(
+            rows,
+            df.into_iter().map(|((node, form), n)| (node, form, n)),
+        )))
+    }
+
+    /// The query's words looked up in the vocabulary: one signal read, no
+    /// count read. This store prunes nothing.
+    async fn counts_from_vocabulary(
+        &self,
+        vocabulary: &crate::federation::VocabularyCounts,
+        query: &str,
+        _prunes: bool,
+    ) -> Result<crate::federation::ReferenceCounts, StoreError> {
+        self.widen_signal_reads.fetch_add(1, Ordering::SeqCst);
+        let words: Vec<String> = words(query).into_iter().collect();
+        let keys: Vec<i64> = words.iter().map(|w| form_key(w)).collect();
+        let nodes = vocabulary
+            .rows
+            .iter()
+            .map(|(node, n)| {
+                (
+                    *node,
+                    oml_domain::federation::SourceCounts {
+                        rows: *n,
+                        df: keys.iter().map(|k| vocabulary.df(node, *k)).collect(),
+                    },
+                )
+            })
+            .collect();
         Ok(crate::federation::ReferenceCounts {
             words,
             pruned: Vec::new(),

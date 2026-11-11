@@ -13,6 +13,7 @@ mod signup;
 mod sparse;
 mod usage;
 mod web;
+mod widen;
 pub use federation::WideKey;
 pub use pages::{
     AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted, OwnKey, QueueRow,
@@ -24,6 +25,11 @@ pub use signup::{DRAWS_MAX, Person, SignupState, StartStatus, UserDisabled, User
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
+pub use widen::{
+    WIDEN_SIGNAL_BUILD_SECS, WIDEN_SIGNAL_MAX_AGE_SECS, WIDEN_SIGNAL_PAIRS_HELD,
+    WIDEN_SIGNAL_REFRESH_SECS, WIDEN_SIGNAL_STATEMENT_SECS, WIDEN_SIGNAL_TENANT_PAIRS, WidenBuild,
+    WidenLimits, WidenRefresh, drops_widen_signals,
+};
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -232,6 +238,9 @@ pub struct App<J, S, C, I, Sc> {
     /// sources since the lead started, by tenant, with the most it met: the
     /// doctor line a tenant admin reads (ADR-0072 d12). It decides nothing.
     wide_keys: std::sync::Mutex<BTreeMap<(Uuid, Uuid), usize>>,
+    /// The widen hint's signals, built off the request path, and the ones
+    /// recalls asked for (ADR-0072 d8, as built by #244).
+    widen: widen::WidenSignals,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -1354,6 +1363,7 @@ where
             formats: Arc::new(crate::ports::ProseFormats),
             signup: None,
             wide_keys: std::sync::Mutex::default(),
+            widen: widen::WidenSignals::default(),
         }
     }
 
@@ -2210,8 +2220,7 @@ where
         idempotency: Option<IdempotencyPut>,
     ) -> Result<CommitReceipt, AppError> {
         Ok(self
-            .journal
-            .commit(commit_request(event, fold, idempotency))
+            .commit_requests(vec![commit_request(event, fold, idempotency)])
             .await?)
     }
 
@@ -2222,14 +2231,40 @@ where
         links: Vec<(SignedEnvelope, MetadataFold)>,
     ) -> Result<CommitReceipt, AppError> {
         Ok(self
-            .journal
-            .commit_chain(
+            .commit_requests(
                 links
                     .into_iter()
                     .map(|(event, fold)| commit_request(event, fold, None))
                     .collect(),
             )
             .await?)
+    }
+
+    /// The one path every use case commits through: one request alone, or
+    /// several as one transaction. An erasure, a demotion, or a change to
+    /// what is trusted or federated drops its tenant's widen signals once
+    /// it commits (#244). A commit that fails after the database committed
+    /// drops nothing; the signal's 300 s bound covers it.
+    async fn commit_requests(
+        &self,
+        mut requests: Vec<CommitRequest>,
+    ) -> Result<CommitReceipt, StoreError> {
+        let drops: BTreeSet<Uuid> = requests
+            .iter()
+            .filter(|r| widen::drops_widen_signals(&r.event.envelope.event_type))
+            .map(|r| r.event.envelope.tenant_id)
+            .collect();
+        let receipt = if requests.len() == 1 {
+            self.journal
+                .commit(requests.pop().expect("one request"))
+                .await?
+        } else {
+            self.journal.commit_chain(requests).await?
+        };
+        for tenant_id in drops {
+            self.widen.drop_tenant(tenant_id);
+        }
+        Ok(receipt)
     }
 
     fn mint_key(
@@ -5813,7 +5848,7 @@ where
                     ),
                     commit_request(ratification, fold, None),
                 ];
-                let committed = match self.journal.commit_chain(links).await {
+                let committed = match self.commit_requests(links).await {
                     Err(StoreError::TipMoved { .. }) => {
                         return Err(AppError::TipConflict {
                             current_tip: self
@@ -6380,6 +6415,30 @@ where
             candidates.retain(|c| rows.get(&c.memory_id).is_some_and(admits));
             (candidates, below_floor) = apply_floor(candidates, floor);
         }
+        // The widen hint, on a `scope` answer at the server's now: read off
+        // the key's precomputed signal, never off the candidates or their
+        // counts, and absent where no usable signal is held (ADR-0072 d8,
+        // d12, as built by #244).
+        let widen = if plan.report.is_none()
+            && req.as_of.is_none()
+            && req.now.is_none()
+            && policy.is_none_or(|p| p.enabled)
+        {
+            let prunes = pipeline.retrievers().contains(&RetrieverKind::Bm25Postings)
+                && req.match_mode == MatchMode::Any;
+            self.widen_hint(
+                caller,
+                scope,
+                &hit_nodes,
+                &kinds,
+                req.include_expired,
+                prunes,
+                &query,
+            )
+            .await
+        } else {
+            None
+        };
         // Spellings only for an empty or thin result, fewer hits than
         // `DID_YOU_MEAN_BELOW` (or than `k` when it asks fewer) before the
         // budget cut, for the
@@ -6498,6 +6557,7 @@ where
             timings,
             window,
             sources: plan.report,
+            widen,
             federation: plan.record,
         })
     }
