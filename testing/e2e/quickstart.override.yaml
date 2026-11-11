@@ -10,3 +10,8 @@ services:
       OML_WEB__GITHUB__CLIENT_ID: e2e
       OML_WEB__GITHUB__CLIENT_SECRET: e2e-double-not-a-secret
       OML_E2E_SIGN_IN_EMAIL: e2e@example.com
+  oml-web:
+    environment:
+      # One origin with the lead's issuer, so a form oml-web serves passes
+      # the same-origin check the lead's forms pass (ADR-0045 d8).
+      OML_WEB__PUBLIC_URL: https://localhost:8080

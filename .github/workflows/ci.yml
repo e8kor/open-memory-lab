@@ -724,6 +724,10 @@ jobs:
             OML_OAUTH__ISSUER=https://oml.test:8088 OML_WEB__GITHUB__CLIENT_ID=e2e \
             OML_WEB__GITHUB__CLIENT_SECRET=e2e-double-not-a-secret OML_E2E_SIGN_IN_EMAIL=e2e@example.com
           kubectl --namespace oml rollout status deployment/oml-server-lead --timeout=300s
+          # oml-web's public origin is the issuer, so its forms pass the
+          # same-origin check the lead's pass (ADR-0045 d8).
+          kubectl --namespace oml set env deployment/oml-web OML_WEB__PUBLIC_URL=https://oml.test:8088
+          kubectl --namespace oml rollout status deployment/oml-web --timeout=300s
       - name: Claim the enrollment token through port-forward, then the quickstart
         run: |
           docker create --name oml-cli "$IMAGE:$VERSION" >/dev/null

@@ -28,6 +28,8 @@ fail() {
     echo "signed-in page: $*" >&2
     exit 1
 }
+# A helper that fails under set -e names the line, rather than exiting silently.
+trap 'echo "signed-in page: line $LINENO failed: $BASH_COMMAND" >&2' ERR
 header() { # <file> <lower-case name>: the first value, without CR
     grep -i "^$2:" "$1" | head -1 | cut -d' ' -f2- | tr -d '\r'
 }
