@@ -173,6 +173,58 @@ async fn a_stopped_build_marks_its_own_signal_and_the_builds_behind_it_go_on() {
     .await;
 }
 
+/// The refresh a recall spawns runs each build under its timeout: a build
+/// whose read never returns is stopped, counted as failed and marked, and
+/// the builds behind it go on. This is the call the transport spawns, with
+/// its timer, not the loop's steps run by hand (#268).
+#[tokio::test]
+async fn the_refresh_stops_a_build_past_its_timeout_and_builds_the_ones_behind_it() {
+    use std::time::Duration;
+
+    use oml_app::app::WidenLimits;
+    use oml_app::federation::Sources;
+    let store = MemStore::new().answering_bm25_with_any_word();
+    let limits = WidenLimits {
+        build_timeout: Duration::from_millis(100),
+        ..WidenLimits::default()
+    };
+    let (w, key) = contracts::federation::kiwi_world_within(store.clone(), true, limits).await;
+    for scope in ["home", "legal", "product"] {
+        let answer = w
+            .recall(&key, "kiwi", scope, Some(Sources::Scope), "bm25", 10)
+            .await
+            .expect("scope");
+        assert!(answer.widen.is_none());
+    }
+    store.hang_next_vocabulary_read();
+    let refresh = w.app.refresh_widen_signals_with(tokio::time::sleep);
+    let built = tokio::time::timeout(Duration::from_secs(10), refresh)
+        .await
+        .expect("the refresh never stopped the build whose read hung");
+    assert_eq!(built, 2, "the builds behind the stopped one went on");
+    let (settings, _) = w
+        .app
+        .federation_settings(w.admin.as_str())
+        .await
+        .expect("settings");
+    assert_eq!(settings.widen_signal.failed, 1);
+    assert!(
+        settings
+            .widen_signal
+            .last_failure
+            .as_deref()
+            .is_some_and(|f| f.contains("stopped")),
+        "{:?}",
+        settings.widen_signal.last_failure
+    );
+    // home, asked for first, hung and was stopped: it is marked.
+    assert_eq!(contracts::federation::kiwi_hint(&w, &key, 10).await, None);
+    assert!(
+        !w.app.widen_signals_wanted(),
+        "the stopped signal was asked for again within the bound"
+    );
+}
+
 /// A build that began before a status transition committed, and read its
 /// counts after the commit's drop, is discarded: the next recall carries no
 /// hint from it, and asks for a signal built after the drop (#244, review

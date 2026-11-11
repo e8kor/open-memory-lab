@@ -1325,7 +1325,7 @@ pub async fn kiwi_world<S: JournalStore + Clone>(
 }
 
 /// [`kiwi_world`] under the widen signal's bounds `limits`.
-async fn kiwi_world_within<S: JournalStore + Clone>(
+pub async fn kiwi_world_within<S: JournalStore + Clone>(
     store: S,
     orchard: bool,
     limits: WidenLimits,
