@@ -369,6 +369,9 @@ pub struct MemStore {
     /// fail once: a step after an act's commit that fails.
     fail_children_after_commit: Arc<AtomicBool>,
     fail_next_children: Arc<AtomicBool>,
+    /// The next commit panics once it has applied: a defect in an act
+    /// after its commit landed.
+    panic_after_commit: Arc<AtomicBool>,
     /// `similar_candidates` ignores its scope (a store that regressed), so
     /// a test proves the core admits by recall's rule on its own.
     widen_similar: Arc<AtomicBool>,
@@ -582,8 +585,18 @@ impl MemStore {
             .store(true, Ordering::SeqCst);
     }
 
+    /// Panics once the next commit has applied, as a defect after an act's
+    /// commit would (#233).
+    pub fn panic_after_next_commit(&self) {
+        self.panic_after_commit.store(true, Ordering::SeqCst);
+    }
+
     /// What runs after a commit applied, outside the tenant's lock.
     async fn after_commit(&self) {
+        assert!(
+            !self.panic_after_commit.swap(false, Ordering::SeqCst),
+            "a defect after the commit applied"
+        );
         if self
             .fail_children_after_commit
             .swap(false, Ordering::SeqCst)

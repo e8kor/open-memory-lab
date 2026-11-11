@@ -530,3 +530,48 @@ async fn a_step_that_fails_after_the_act_committed_holds_the_key_so_the_resubmis
         "the resubmission journalled nothing"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_refused_before_its_act_runs_frees_its_key() {
+    let w = world().await;
+    // `prefix` is refused after the key is claimed and before the act runs.
+    let body = json!({"name": "early", "parent": "universe", "prefix": "ex"});
+    let (status, _, first) = send(
+        &w.router,
+        "/v2/workareas",
+        &w.admin,
+        "c-8",
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{first}");
+    let started = std::time::Instant::now();
+    let (status, _, again) = send(&w.router, "/v2/workareas", &w.admin, "c-8", Some(body)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{again}");
+    assert_eq!(again["error"]["code"], first["error"]["code"]);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "the claim was released, so the resubmission did not wait it out"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panic_after_the_act_committed_is_answered_as_a_handler_panic_and_holds_the_key() {
+    let w = world().await;
+    let body = json!({"name": "panicked", "parent": "universe"});
+    w.store.panic_after_next_commit();
+    let (status, _, first) = send(
+        &w.router,
+        "/v2/workareas",
+        &w.admin,
+        "c-9",
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{first}");
+    assert_eq!(first["error"]["details"]["reason"], "handler_panic");
+    let (status, _, again) = send(&w.router, "/v2/workareas", &w.admin, "c-9", Some(body)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{again}");
+    assert_eq!(again["error"]["code"], "idempotency.in_progress");
+    assert_eq!(created(&w, "panicked").await, 1, "created once");
+}

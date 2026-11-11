@@ -103,3 +103,83 @@ async fn a_request_line_sums_the_store_port_calls_it_made() {
     );
     assert!(line["auth_ms"].is_number(), "{line}");
 }
+
+/// A web console act runs in a task of its own, and its store calls are
+/// still the request's: a creation's line counts more calls than a create
+/// refused before its act ran (ADR-0042 d14; #233).
+#[tokio::test]
+async fn a_console_acts_store_calls_count_on_its_request_line() {
+    let store = Timed::new(MemStore::new());
+    let app = App::new(
+        store.clone(),
+        MemSigner::new([3; 32]),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    )
+    .with_observer(Arc::new(ScopeObserver));
+    let boot = app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: Name::parse("acme").expect("a name"),
+            admin_key_name: Name::parse("root-admin").expect("a name"),
+            admin_principal: "alice-admin".to_owned(),
+        })
+        .await
+        .expect("bootstrap, outside any request");
+    let router = ApiState::new(
+        Arc::new(app),
+        store,
+        Arc::new(|| Box::pin(async { true })),
+        true,
+        None,
+    )
+    .into_router();
+    let buf = Buf::default();
+    let sink = buf.clone();
+    let guard = tracing::subscriber::set_default(log_subscriber(move || sink.clone()));
+    for (idem, body) in [
+        // Refused after the claim and before the act runs.
+        (
+            "c-1",
+            json!({"name": "early", "parent": "universe", "prefix": "ex"}),
+        ),
+        ("c-2", json!({"name": "made", "parent": "universe"})),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/v2/workareas")
+                    .header(
+                        header::AUTHORIZATION,
+                        format!("Bearer {}", boot.admin_key.value),
+                    )
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("idempotency-key", idem)
+                    .body(Body::from(body.to_string()))
+                    .expect("a request"),
+            )
+            .await
+            .expect("the router answers");
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("a body");
+    }
+    drop(guard);
+    let text = String::from_utf8(buf.0.lock().expect("unpoisoned").clone()).expect("UTF-8");
+    let lines: Vec<Value> = text
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).expect("a JSON line"))
+        .filter(|l| l["event"] == "http_request")
+        .collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(
+        (lines[0]["status"].as_u64(), lines[1]["status"].as_u64()),
+        (Some(400), Some(201))
+    );
+    let refused = lines[0]["store_calls"].as_u64().expect("a count");
+    let acted = lines[1]["store_calls"].as_u64().expect("a count");
+    assert!(
+        acted >= refused + 3,
+        "the act's own calls, its commit and its record among them, count: {refused} then {acted}"
+    );
+}
