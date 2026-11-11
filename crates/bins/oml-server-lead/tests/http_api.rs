@@ -9065,6 +9065,117 @@ async fn an_admin_sets_the_tenants_default_pipeline_and_the_next_recall_runs_it(
     drop_db(&rig.db_name).await;
 }
 
+/// A recall naming no pipeline, under a tenant default a lead restarted
+/// with a narrower `search.enabled` does not serve, is refused with one
+/// envelope over HTTP and over `oml_read`; a request naming a served
+/// pipeline still runs on both, and the settings name no effective pipeline
+/// (ADR-0049 d15).
+#[tokio::test]
+async fn http_and_mcp_refuse_a_recall_under_an_unserved_tenant_default_with_one_envelope() {
+    let Some((rig, admin, _crew, agent, dreamer, reader)) = own_held_rig().await else {
+        return;
+    };
+    promoted_over_http(&rig.router, &agent, &dreamer, "q1", "deploys nightly").await;
+    let (status, _, set) = send(
+        &rig.router,
+        "POST",
+        "/v2/search/default",
+        Call::auth(&admin)
+            .idem("search-postings")
+            .body(json!({"pipeline": "bm25-postings"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{set}");
+
+    let narrow = oml_server_lead::start_lead_with(
+        &rig.store,
+        rig.signing.clone(),
+        None,
+        oml_fetch::PinnedFetcher,
+        oml_transport_http::traffic::Traffic::default(),
+        None,
+        oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
+        Some(
+            oml_app::search::SearchConfig::new(
+                &[
+                    oml_app::search::Pipeline::KeywordAny,
+                    oml_app::search::Pipeline::Bm25,
+                ],
+                oml_app::search::Pipeline::Bm25,
+            )
+            .expect("served"),
+        ),
+        None,
+    )
+    .await
+    .expect("a narrower lead starts over the same store")
+    .router;
+
+    let (status, http) =
+        recall_over_http(&narrow, &reader, None, json!({"query": "deployed"})).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{http}");
+    assert_envelope(&http, "settings.invalid");
+    assert_eq!(http["error"]["retryable"], false, "{http}");
+    assert_eq!(
+        http["error"]["details"],
+        json!({
+            "reason": "search_default_unserved",
+            "tenant_default": "bm25-postings",
+            "served": ["keyword-any", "bm25"],
+        }),
+        "{http}"
+    );
+    let mcp = |id: u64, args: Value| {
+        Call::auth(&reader).body(json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": {"name": "oml_read", "arguments": args},
+        }))
+    };
+    let (status, _, rpc) = send(
+        &narrow,
+        "POST",
+        "/mcp",
+        mcp(1, json!({"query": "deployed"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rpc}");
+    assert_eq!(rpc["result"]["isError"], true, "{rpc}");
+    assert_eq!(
+        rpc["result"]["structuredContent"]["error"], http["error"],
+        "one refusal on both surfaces"
+    );
+
+    let (status, named) = recall_over_http(
+        &narrow,
+        &reader,
+        None,
+        json!({"query": "deployed", "search": "bm25"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{named}");
+    assert_eq!(named["search"]["pipeline"], "bm25", "{named}");
+    assert_eq!(hit_ids(&named).len(), 1, "{named}");
+    let (_, _, rpc) = send(
+        &narrow,
+        "POST",
+        "/mcp",
+        mcp(2, json!({"query": "deployed", "search": "bm25"})),
+    )
+    .await;
+    assert_eq!(rpc["result"]["isError"], false, "{rpc}");
+    assert_eq!(
+        rpc["result"]["structuredContent"]["search"]["pipeline"], "bm25",
+        "{rpc}"
+    );
+
+    let (status, _, settings) = send(&narrow, "GET", "/v2/search", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    assert_eq!(settings["tenant_default"], "bm25-postings", "{settings}");
+    assert_eq!(settings["effective"], Value::Null, "{settings}");
+
+    drop_db(&rig.db_name).await;
+}
+
 /// `did_you_mean` is offered only when a recall is empty or thin, fewer
 /// than three hits, and then from the scope's maintained vocabulary under
 /// any pipeline but `keyword-all`; a recall with enough hits offers none,
