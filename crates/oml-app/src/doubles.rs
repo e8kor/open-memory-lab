@@ -421,6 +421,9 @@ pub struct MemStore {
     /// Whether the next vocabulary read yields once before it reads, so a
     /// test can commit while a widen signal's build is in flight (#244).
     pause_vocabulary: Arc<AtomicBool>,
+    /// The keys `key` answers absent while a user root's listing still
+    /// names them: a key gone between a use case's listing and its read.
+    vanished_keys: Arc<Mutex<BTreeSet<Uuid>>>,
 }
 
 /// A future that is pending once, waking itself, then ready: a point where
@@ -734,6 +737,16 @@ impl MemStore {
         if let Some(key) = state.keys.get_mut(&key_id) {
             key.user = user;
         }
+    }
+
+    /// Makes `key` answer `key_id` absent from now on while
+    /// `web_user_keys` still lists it: a key gone since a use case listed
+    /// its user root's keys, which no verb does (ADR-0068 d8, #277).
+    pub fn vanish_key(&self, key_id: Uuid) {
+        self.vanished_keys
+            .lock()
+            .expect("vanished lock")
+            .insert(key_id);
     }
 
     /// Test visibility: how many names have been looked up through
@@ -3563,6 +3576,14 @@ impl JournalStore for MemStore {
     }
 
     async fn key(&self, tenant_id: Uuid, key_id: Uuid) -> Result<Option<KeyRecord>, StoreError> {
+        if self
+            .vanished_keys
+            .lock()
+            .expect("vanished lock")
+            .contains(&key_id)
+        {
+            return Ok(None);
+        }
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
         };

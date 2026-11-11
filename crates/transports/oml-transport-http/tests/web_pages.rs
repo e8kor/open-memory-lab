@@ -2231,16 +2231,10 @@ async fn a_close_whose_closing_commit_loses_the_chain_race_journals_each_event_o
     assert_eq!(done["journal_seq"], closed[0], "{done}");
 }
 
-/// A key under the person's root that no denial can cut off, as an admin
-/// key there is (`DenialOnAdminKey`), is skipped: the disable denies every
-/// other key, journals `web.user_disabled` once, answers 200, and a
-/// resubmission under the same key replays it, so no refusal ever follows
-/// the disable's first commit (ADR-0068 d8, #266).
-#[tokio::test]
-async fn a_disable_skips_a_key_it_cannot_deny_denies_the_rest_and_a_resubmission_replays() {
-    use oml_app::domain::event_types::{KEY_DENIED, WEB_USER_DISABLED};
-    let rig = rig().await;
-    let _ = alice_with_two_keys(&rig).await;
+/// An admin key of the tenant whose row names alice's root, as only a
+/// direct row edit makes one (no verb issues an admin key under a user
+/// root): the fixture of #277.
+async fn stray_admin_under_alice(rig: &Rig) -> uuid::Uuid {
     let stray = rig
         .app
         .issue_key(
@@ -2261,35 +2255,166 @@ async fn a_disable_skips_a_key_it_cannot_deny_denies_the_rest_and_a_resubmission
         )
         .await
         .expect("an admin key");
-    let root = key_named(&rig, "alice-web")
+    let root = key_named(rig, "alice-web")
         .await
         .user
         .expect("alice's root");
     rig.store
         .set_key_user(rig.boot.tenant_id, stray.key_id, Some(root));
-    let request = || {
-        Request::post("/v2/web/users/alice/disable")
+    stray.key_id
+}
+
+/// Whether `key_id` carries a denial on any node.
+async fn denied(rig: &Rig, key_id: uuid::Uuid) -> bool {
+    rig.store
+        .key_access(rig.boot.tenant_id, key_id)
+        .await
+        .expect("the key's access")
+        .is_some_and(|a| !a.denials.is_empty())
+}
+
+/// An admin key whose row names the person's root is a corrupt row, not a
+/// key the person holds, and no denial can cut it off: the disable refuses
+/// before its first commit with `workarea.admin_key_under_root`, naming the
+/// key, journals nothing and denies no key, the stray one included; once
+/// the row is repaired the disable cuts off the person's keys (ADR-0068 d8,
+/// d11; #277).
+#[tokio::test]
+async fn a_disable_is_refused_by_name_while_an_admin_key_names_the_persons_root_and_journals_nothing()
+ {
+    use oml_app::domain::event_types::{KEY_DENIED, WEB_USER_DISABLED};
+    let rig = rig().await;
+    let _ = alice_with_two_keys(&rig).await;
+    let stray = stray_admin_under_alice(&rig).await;
+    let (status, refused) = as_admin(
+        &rig,
+        "/v2/web/users/alice/disable",
+        "disable-stray",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(
+        refused["error"]["code"], "workarea.admin_key_under_root",
+        "{refused}"
+    );
+    assert_eq!(
+        refused["error"]["details"]["key"], "stray-admin",
+        "{refused}"
+    );
+    assert_eq!(refused["error"]["details"]["user"], "alice", "{refused}");
+    assert!(journalled(&rig, WEB_USER_DISABLED).await.is_empty());
+    assert!(journalled(&rig, KEY_DENIED).await.is_empty());
+    assert!(!denied(&rig, stray).await, "the stray key is not denied");
+    rig.store.set_key_user(rig.boot.tenant_id, stray, None);
+    let (status, done) = as_admin(
+        &rig,
+        "/v2/web/users/alice/disable",
+        "disable-repaired",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert_eq!(done["keys_cut_off"], 2, "{done}");
+    assert_eq!(journalled(&rig, WEB_USER_DISABLED).await.len(), 1);
+    assert_eq!(journalled(&rig, KEY_DENIED).await.len(), 2);
+    assert!(
+        !denied(&rig, stray).await,
+        "the repaired key is not alice's"
+    );
+}
+
+/// A deletion close disables the person first, so it is refused the same
+/// way and closes nothing while an admin key names the root (ADR-0068 d6,
+/// d8; #277).
+#[tokio::test]
+async fn a_deletion_close_is_refused_by_name_while_an_admin_key_names_the_persons_root() {
+    use oml_app::domain::event_types::{WEB_DELETION_CLOSED, WEB_USER_DISABLED};
+    let rig = rig().await;
+    let cookie = alice_with_two_keys(&rig).await;
+    let (status, asked) =
+        as_web(&rig, &cookie, "web", "/v2/web/deletion-requests", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{asked}");
+    let _ = stray_admin_under_alice(&rig).await;
+    let (status, refused) = as_admin(
+        &rig,
+        "/v2/web/users/alice/deletion/close",
+        "close-stray",
+        json!({ "outcome": "deleted" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(
+        refused["error"]["code"], "workarea.admin_key_under_root",
+        "{refused}"
+    );
+    assert!(journalled(&rig, WEB_USER_DISABLED).await.is_empty());
+    assert!(journalled(&rig, WEB_DELETION_CLOSED).await.is_empty());
+}
+
+/// A key gone between the disable's listing and its denial (`NotFound`)
+/// is skipped: every other key is cut off, `web.user_disabled` is
+/// journalled once, the answer counts only the keys cut off, and a
+/// resubmission under the same key replays it (ADR-0068 d8; #266, #277).
+#[tokio::test]
+async fn a_disable_skips_a_key_gone_since_the_listing_and_cuts_off_the_rest() {
+    use oml_app::domain::event_types::{KEY_DENIED, WEB_USER_DISABLED};
+    let rig = rig().await;
+    let _ = alice_with_two_keys(&rig).await;
+    let gone = key_named(&rig, "alice-laptop").await.key_id;
+    let kept = key_named(&rig, "alice-phone").await.key_id;
+    rig.store.vanish_key(gone);
+    let (status, done) = as_admin(
+        &rig,
+        "/v2/web/users/alice/disable",
+        "disable-gone",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert_eq!(done["keys_cut_off"], 1, "{done}");
+    assert_eq!(journalled(&rig, WEB_USER_DISABLED).await.len(), 1);
+    assert_eq!(journalled(&rig, KEY_DENIED).await.len(), 1);
+    assert!(denied(&rig, kept).await, "the listed key is cut off");
+    assert!(!denied(&rig, gone).await, "the gone key is skipped");
+    let (status, again) = as_admin(
+        &rig,
+        "/v2/web/users/alice/disable",
+        "disable-gone",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again, done, "the resubmission replays");
+    assert_eq!(journalled(&rig, WEB_USER_DISABLED).await.len(), 1);
+}
+
+/// `GET /v2/web/users` names, per person, each live admin key whose row
+/// names their root, which `oml doctor` warns about (ADR-0068 d11; #277).
+#[tokio::test]
+async fn the_users_listing_names_an_admin_key_whose_row_names_a_persons_root() {
+    let rig = rig().await;
+    let _ = alice_with_two_keys(&rig).await;
+    let listed = || async {
+        let request = Request::get("/v2/web/users")
             .header(
                 header::AUTHORIZATION,
                 format!("Bearer {}", rig.boot.admin_key.value),
             )
-            .header(header::CONTENT_TYPE, "application/json")
-            .header("idempotency-key", "disable-stray")
-            .body(Body::from("{}"))
-            .expect("a request")
+            .body(Body::empty())
+            .expect("a request");
+        let (status, _, body) = send(&rig.router, request).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let v: Value = serde_json::from_str(&body).expect("JSON");
+        v["users"]
+            .as_array()
+            .expect("users")
+            .iter()
+            .find(|u| u["user"] == "alice")
+            .expect("alice")
+            .clone()
     };
-    let (status, _, body) = send(&rig.router, request()).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let done: Value = serde_json::from_str(&body).expect("JSON");
-    assert_eq!(done["keys_cut_off"], 2, "{done}");
-    assert_eq!(journalled(&rig, WEB_USER_DISABLED).await.len(), 1);
-    assert_eq!(journalled(&rig, KEY_DENIED).await.len(), 2);
-    let (status, headers, again) = send(&rig.router, request()).await;
-    assert_eq!(status, StatusCode::OK, "{again}");
-    assert_eq!(headers["idempotency-replay"], "true", "{again}");
-    assert_eq!(
-        journalled(&rig, WEB_USER_DISABLED).await.len(),
-        1,
-        "the resubmission replays"
-    );
+    assert_eq!(listed().await["admin_keys"], json!([]));
+    let _ = stray_admin_under_alice(&rig).await;
+    assert_eq!(listed().await["admin_keys"], json!(["stray-admin"]));
 }
