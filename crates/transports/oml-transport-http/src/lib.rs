@@ -381,7 +381,7 @@ where
             ("POST", "/v2/web/users/{user}/disable") => post(Self::disable_user),
             ("POST", "/v2/web/users/{user}/deletion/close") => post(Self::close_deletion),
             ("POST", "/v2/web/session/end") => post(Self::end_session),
-            ("GET", "/v2/web/export") => get(Self::web_export),
+            ("GET", "/v2/web/export") => get(Self::export_web_person),
             ("POST", "/v2/web/deletion-requests") => post(Self::request_deletion),
             ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),

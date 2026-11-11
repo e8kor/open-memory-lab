@@ -37,7 +37,8 @@ d4 revised): see [The client secret as built](#the-client-secret-as-built-2026-1
 second half of the sixth change (6b), Start, setup, the admin overview and the users page through
 `oml-web` (d3, d5, d6 and d7 (b) revised): see the seventh table of Phase (b) as built. Amended by
 phase (c), the `web_*` use cases out of `oml-app`'s core (d7 (b) and (c) revised): see
-[Phase (c) as built](#phase-c-as-built-2026-11-11).
+[Phase (c) as built](#phase-c-as-built-2026-11-11). Amended by phase (d), the walls as required checks (d7 (d)
+revised): see [Phase (d) as built](#phase-d-as-built-2026-11-11).
 
 ## Context
 
@@ -709,7 +710,7 @@ decision differently:
 Phase (c) (#190) takes the `web_*` use cases out of `oml-app`'s core. It changes no answer: the
 operations and their refusals, the lead's routes and redirects, the journal, and every metric and
 log name are as phase (b) left them, and the workspace's suites pass before and after with the
-same counts, test binary by test binary (1,962 passed and 15 ignored in 150 test binaries, against a throwaway PostgreSQL). The exit check,
+same counts, test binary by test binary, against a throwaway PostgreSQL. The exit check,
 `grep -rn 'pub async fn web_' crates/oml-app --include='*.rs' | grep -v 'crates/oml-app/src/app/auth.rs'`,
 prints nothing.
 
@@ -760,6 +761,53 @@ Where it reads a decision differently:
 | d7 (c) | the sign-in ones move to the auth module | they move under their `web_` names, and the exit check reads every module but `auth.rs` | the auth context owns them and no page calls them; a rename would touch every sign-in test and the oml-web parity rig for no reader |
 | d7 (c) | (silent on names on the wire and in metrics) | the refusal's verb names (`access.verb_ceiling` naming `web_emails` and `web_users`), the store port's methods (`web_queue`, `web_session_open`, `web_session` and the rest) and the `store_port` span names the lead's traces carry from them keep their names | a verb name is on the wire and a span name is in trace queries; changing either is a behaviour change, which this phase is not |
 | d7 (b), d7 (d) | (silent on when the old URLs stop answering) | the lead's `303`s to `oml-web`'s paths stay through v0.7.0: `views.rs` (`MOVED_VIEWS`, `MOVED_ADMIN_VIEWS`, `moved_action`, `moved_memories`), the moved acts in the two page `action` sets and `GET`/`POST /web/admin`, so a bookmark or a form cached under v0.6 lands on its new path. They are deleted in v0.7.1, leaving the lead `GET /web` without a session (the sign-in page) and the sign-out act; until then phase (d)'s `the_lead_serves_no_page_route_outside_oml_web_and_auth` names them as the lead's redirects | v0.7.0 is the release that moves the pages, so its upgrade is the one that meets old URLs; a redirect runs nothing and costs one route, and one release of it is chosen, not measured |
+
+## Phase (d) as built (2026-11-11)
+
+Phase (d) (#191) makes the walls checks a pull request cannot merge past. It changes no answer:
+the one code change renames the transport's handler of `GET /v2/web/export` from `web_export` to
+`export_web_person`, the use case it calls, which phase (c) left under its old name.
+
+**The two tests.** `oml_web_reaches_no_application_crate`, with its two companions in
+`crates/clients/oml-web/tests/dependencies.rs`, is the dependency wall of d1, unchanged.
+`the_lead_serves_no_page_route_outside_oml_web_and_auth`, in
+`crates/clients/oml-web/tests/lead_routes.rs`, is the route wall. It names each of the lead's eight
+web routes and asserts that `WEB_ROUTES` is exactly them: `GET` and `POST /web` (the sign-in page
+without a session, and the sign-out act), `GET` and `POST /web/sign-in`,
+`GET /web/callback/{provider}` (which draws the terms page for a new address), `POST /web/sign-up`,
+and `GET` and `POST /web/admin`, the old admin page URL, which answers only `303`s. It asserts that
+the API table holds only `/v1/`, `/v2/` and the probes and the OAuth table only `/oauth/` and
+`/.well-known/`, and that every path of `oml_web::PAGES` and `oml_web::PREFIXES` is, on the lead,
+answered as an unknown path is. A page route added to the lead fails it whether it is added to
+`WEB_ROUTES`, to another table, or to the router directly at one of `oml-web`'s paths.
+
+**The job.** CI's `crate walls (oml-web)` job in `ci.yml` runs both test targets,
+`cargo test --locked -p oml-web --test dependencies --test lead_routes`, without Postgres. It runs
+whenever the `cargo` category does, and `ci ok (ci)` waits for it. `cargo test (Postgres)` runs both
+again inside the workspace run.
+
+**The required checks.** Branch protection is a repository setting that only the operator can
+change. The operator marks these five checks required on `main`, by these exact names:
+
+- `ci ok (ci)`
+- `ci ok (docs)`
+- `ci ok (spikes)`
+- `ci ok (practices)`
+- `crate walls (oml-web)`
+
+The first four are #179's roll-ups. A job skipped by its path filter reports success, so each of
+the five reports on every pull request. `m0-spikes.yml` now also runs on `merge_group` like the
+other three workflows, and `scripts/tests/test_ci_paths.py` fails any workflow with a final check
+that does not. A merge queue can therefore be turned on once the checks are required, and each queued
+group then runs the same five checks. Whether to turn it on is the operator's decision; this change
+does not.
+
+Where it reads a decision differently:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d7 (d) | both tests required on `main` | the tests run in one job, `crate walls (oml-web)`, and that job's name is the required check; the route wall lives in `oml-web`'s tests, beside the dependency wall | the lead's router is built by `oml-transport-http`, which `oml-web`'s tests already start for the parity rig, so the route wall reads `oml_web::PAGES` without a new dependency; one job builds both test targets once, without Postgres |
+| d7 (d) | (silent on the old URLs' `303`s) | the test names `GET`/`POST /web/admin` as redirects, and `GET`/`POST /web` keep their `?view=` and moved-act `303`s beside the sign-in page and sign-out, until the operator decides whether v0.7.1 deletes them as Phase (c) as built records | deleting a route there deletes its row in the test, in the same change |
 
 ## Consequences
 
