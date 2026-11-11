@@ -406,6 +406,61 @@ async fn a_recall_line_names_its_search_pipeline_and_never_the_query() {
     }
 }
 
+/// A recall that ran the deployment's default in place of an unserved
+/// tenant default counts as a fallback on its request line and on
+/// `oml_recalls_total` (ADR-0049 d15).
+#[tokio::test]
+async fn a_recall_under_an_unserved_tenant_default_counts_as_a_fallback_on_the_request_line_and_the_metric()
+ {
+    let store = MemStore::new();
+    let wide = observed(&store);
+    let boot = tenant(&wide).await;
+    let writer = key(&wide, &boot, "agent-7", false).await;
+    wide.set_search_default(&boot.admin_key.value, Some("keyword-all"))
+        .await
+        .expect("served where it was chosen");
+    let narrow = observed(&store).with_search(
+        oml_app::search::SearchConfig::new(
+            &[oml_app::search::Pipeline::KeywordAny],
+            oml_app::search::Pipeline::KeywordAny,
+        )
+        .expect("a configuration"),
+    );
+    let traffic = Traffic::new(TrustedProxies::default());
+    let scrape = oml_transport_http::traffic::metrics::router(Arc::clone(traffic.metrics()));
+    let router = state(&store, narrow).with_traffic(traffic).into_router();
+
+    let (guard, captured) = Captured::start();
+    let (status, _, answer) = send(
+        &router,
+        Request::post("/v1/memories/recall")
+            .header(header::AUTHORIZATION, format!("Bearer {}", writer.value))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"query": "zebra quartz"}).to_string()))
+            .expect("a request"),
+    )
+    .await;
+    drop(guard);
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&answer));
+    assert_eq!(json_of(&answer)["search"]["fallback"], "tenant_default_unserved");
+
+    let lines = captured.events("http_request");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(lines[0]["search"], "keyword-any");
+    assert_eq!(lines[0]["search_fallback"], true, "{}", lines[0]);
+
+    let (_, _, text) = send(
+        &scrape,
+        Request::get("/metrics").body(Body::empty()).expect("a request"),
+    )
+    .await;
+    let text = String::from_utf8(text).expect("UTF-8");
+    assert!(
+        text.contains(r#"oml_recalls_total{pipeline="keyword-any",fallback="true",access="scan"} 1"#),
+        "{text}"
+    );
+}
+
 #[tokio::test]
 async fn a_probe_answered_200_writes_no_line_and_an_unmatched_path_logs_unmatched_without_a_replaced_id()
  {
