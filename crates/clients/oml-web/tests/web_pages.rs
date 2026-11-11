@@ -1729,7 +1729,7 @@ async fn the_user_page_opens_its_agents_held_rows_and_a_person_approves_their_ow
         act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains("the deploy window is tuesday"), "{page}");
-    let serve_id = format!("srv_{}", memory.simple());
+    let serve_id = field_of(&page, "serve_id");
     let (status, _, page) = act_and_follow(
         &rig,
         &cookie,
@@ -2157,12 +2157,13 @@ async fn the_review_card_shows_the_source_the_format_and_what_it_will_be_found_b
         "what it will be found by: {page}"
     );
     // The drawing is the lead's render frame, which only the lead mints
-    // (ADR-0056 d9): the moved card links the memory's own page, which
-    // frames it (ADR-0070, Phase (b) as built).
+    // (ADR-0056 d9): the moved card says where it shows once promoted and
+    // links nothing (ADR-0070, Phase (b) as built).
     assert!(
-        page.contains(&format!(r#"href="/web?view=memories&amp;memory={memory}""#)),
+        page.contains("The drawing shows on the memory's own page once it is promoted"),
         "{page}"
     );
+    assert!(!page.contains(&format!("memory={memory}")), "{page}");
 }
 
 // -- the Review and Keys views: what the move adds (ADR-0070 d3 layer 4) ----
@@ -2230,6 +2231,84 @@ async fn a_key_value_is_shown_once_on_the_redirect_target_and_never_in_a_url_or_
 }
 
 #[tokio::test]
+async fn an_issue_sent_twice_at_once_issues_one_key_and_the_surviving_cookie_opens_to_its_value() {
+    // A double click sends the same form twice before either answers: the
+    // second waits for the first and replays it without the value, so it
+    // sets no cookie over the first's (ADR-0070 d3 layer 4).
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    let fields = [
+        ("action", "issue_key".to_owned()),
+        ("csrf_token", csrf_of(&page)),
+        ("name", "laptop".to_owned()),
+        ("role", "writer".to_owned()),
+        ("nonce", field_of(&page, "nonce")),
+    ];
+    let fields: Vec<(&str, &str)> = fields.iter().map(|(n, v)| (*n, v.as_str())).collect();
+    let (a, b) = tokio::join!(
+        send(&rig.router, post("/web/keys", &fields, Some(&cookie))),
+        send(&rig.router, post("/web/keys", &fields, Some(&cookie))),
+    );
+    let mut sealed = Vec::new();
+    for (status, headers, page) in [a, b] {
+        assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+        assert_eq!(headers[header::LOCATION], "/web/keys");
+        if let Some((value, _)) = set_cookie(&headers, ONCE_COOKIE) {
+            sealed.push(value);
+        }
+    }
+    assert_eq!(sealed.len(), 1, "one answer carries the value: {sealed:?}");
+    let (_, _, page) = send(
+        &rig.router,
+        get(
+            "/web/keys",
+            Some(&format!("{cookie}; {ONCE_COOKIE}={}", sealed[0])),
+        ),
+    )
+    .await;
+    let value = value_of(&page);
+    let laptop = key_named(&rig, "alice-laptop").await;
+    let presented = rig
+        .app
+        .caller(oml_app::types::Bearer::Key(&value))
+        .await
+        .expect("the shown value is a live key");
+    assert_eq!(presented.key().key_id, laptop.key_id);
+    // A new connect code sent twice at once: one answer carries the code.
+    act(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[
+            ("action", "connect_key"),
+            ("name", "phone"),
+            ("role", "writer"),
+        ],
+    )
+    .await;
+    let (_, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    let fields = [
+        ("action", "connect_code".to_owned()),
+        ("csrf_token", csrf_of(&page)),
+        ("key", "alice-phone".to_owned()),
+        ("nonce", field_of(&page, "nonce")),
+    ];
+    let fields: Vec<(&str, &str)> = fields.iter().map(|(n, v)| (*n, v.as_str())).collect();
+    let (a, b) = tokio::join!(
+        send(&rig.router, post("/web/keys", &fields, Some(&cookie))),
+        send(&rig.router, post("/web/keys", &fields, Some(&cookie))),
+    );
+    let mut sealed = 0;
+    for (status, headers, page) in [a, b] {
+        assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+        assert_eq!(headers[header::LOCATION], "/web/keys");
+        sealed += usize::from(set_cookie(&headers, ONCE_COOKIE).is_some());
+    }
+    assert_eq!(sealed, 1, "one answer carries the code");
+}
+
+#[tokio::test]
 async fn a_connect_code_is_shown_once_on_the_redirect_target() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
@@ -2264,12 +2343,15 @@ async fn a_connect_code_is_shown_once_on_the_redirect_target() {
 
 #[tokio::test]
 async fn a_bulk_confirmation_records_nothing_and_its_verdict_lands_on_the_view_and_replays() {
+    // Bulk review is the admin page's (ADR-0055 d1): an admin reviews their
+    // own agent's writes, marked as by the same user.
     let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let cookie = signed_in(&rig, "sub-boss", "boss@example.com").await;
     let value = laptop_key(&rig, &cookie).await;
     let a = agent_writes(&rig, &value, "Decision one.").await;
     let b = agent_writes(&rig, &value, "Decision two.").await;
-    let (status, _, page) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    let (status, _, page) = send(&rig.router, get("/web/admin/review", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(
         page.contains(&format!(r#"name="pick_000" value="{a}">"#)),
@@ -2279,7 +2361,7 @@ async fn a_bulk_confirmation_records_nothing_and_its_verdict_lands_on_the_view_a
     let (status, _, confirm) = act(
         &rig,
         &cookie,
-        "/web/review",
+        "/web/admin/review",
         &[
             ("action", "bulk_confirm"),
             ("verdict", "approve"),
@@ -2310,17 +2392,20 @@ async fn a_bulk_confirmation_records_nothing_and_its_verdict_lands_on_the_view_a
         ("artifact_ids", &field_of(&confirm, "artifact_ids")),
         ("nonce", &field_of(&confirm, "nonce")),
     ];
-    let (status, headers, _) = act(&rig, &cookie, "/web/review", &form).await;
+    let (status, headers, _) = act(&rig, &cookie, "/web/admin/review", &form).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let location = headers[header::LOCATION].to_str().unwrap().to_owned();
-    assert!(location.starts_with("/web/review?done=bulk"), "{location}");
+    assert!(
+        location.starts_with("/web/admin/review?done=bulk"),
+        "{location}"
+    );
     let (_, _, page) = send(&rig.router, get(&location, Some(&cookie))).await;
     assert!(
         page.contains("2 approved, 0 rejected, 0 skipped."),
         "{page}"
     );
     assert!(page.contains("same user"), "{page}");
-    let (_, again, _) = act(&rig, &cookie, "/web/review", &form).await;
+    let (_, again, _) = act(&rig, &cookie, "/web/admin/review", &form).await;
     let location = again[header::LOCATION].to_str().unwrap().to_owned();
     let (_, _, page) = send(&rig.router, get(&location, Some(&cookie))).await;
     assert!(
@@ -2336,6 +2421,160 @@ async fn a_bulk_confirmation_records_nothing_and_its_verdict_lands_on_the_view_a
         .filter(|e| e.envelope.event_type == "review.approve")
         .count();
     assert_eq!(approvals, 2, "acted once");
+}
+
+#[tokio::test]
+async fn the_persons_review_page_holds_no_bulk_review_and_refuses_its_acts() {
+    // Bulk review is the admin page's only (ADR-0055 d1); the person's page
+    // holds review next (ADR-0070, Phase (b) as built).
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "Decision one.").await;
+    let (status, _, page) = send(&rig.router, get("/web/review", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Review next"), "{page}");
+    assert!(!page.contains("Bulk review"), "{page}");
+    assert!(!page.contains("pick_000"), "{page}");
+    let id = memory.to_string();
+    for fields in [
+        [
+            ("action", "bulk_confirm"),
+            ("verdict", "approve"),
+            ("pick_000", id.as_str()),
+        ],
+        [
+            ("action", "bulk_verdict"),
+            ("verdict", "approve"),
+            ("artifact_ids", id.as_str()),
+        ],
+    ] {
+        let (status, _, page) = act(&rig, &cookie, "/web/review", &fields).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{page}");
+        assert!(page.contains("not one of this page"), "{page}");
+    }
+    let held = rig
+        .store
+        .memory(rig.boot.tenant_id, memory)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(held.status.as_str(), "held");
+}
+
+#[tokio::test]
+async fn the_served_card_is_read_by_the_memory_the_redirect_names_never_by_the_serve_id() {
+    // The serve id is opaque in the contract (openapi.yaml `serve_id`): the
+    // redirect names the served memory beside it, and the view reads the
+    // card by that alone.
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "the deploy window is tuesday").await;
+    let (status, headers, _) =
+        act(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let location = headers[header::LOCATION].to_str().unwrap().to_owned();
+    assert_eq!(
+        query_param(&location, "memory").as_deref(),
+        Some(memory.to_string().as_str()),
+        "{location}"
+    );
+    let serve_id = query_param(&location, "serve").expect("the serve id");
+    let (status, _, page) = send(
+        &rig.router,
+        get(
+            &format!("/web/review?serve=an-opaque-serve&memory={memory}"),
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("the deploy window is tuesday"), "{page}");
+    assert_eq!(field_of(&page, "serve_id"), "an-opaque-serve");
+    let (status, _, page) = send(
+        &rig.router,
+        get(&format!("/web/review?serve={serve_id}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "no memory named: {page}");
+}
+
+#[tokio::test]
+async fn a_resubmitted_verdict_replays_its_claim_of_the_next_item_too() {
+    // The claim after a verdict runs under a key derived from the verdict's
+    // nonce, so a double submit lands on the same next item.
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    for body in ["Decision one.", "Decision two.", "Decision three."] {
+        agent_writes(&rig, &value, body).await;
+    }
+    let (_, _, page) =
+        act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
+    let fields = [
+        ("action", "verdict".to_owned()),
+        ("csrf_token", csrf_of(&page)),
+        ("serve_id", field_of(&page, "serve_id")),
+        ("verdict", "approve".to_owned()),
+        ("nonce", field_of(&page, "nonce")),
+    ];
+    let fields: Vec<(&str, &str)> = fields.iter().map(|(n, v)| (*n, v.as_str())).collect();
+    let mut locations = Vec::new();
+    for _ in 0..2 {
+        let (status, headers, page) =
+            send(&rig.router, post("/web/review", &fields, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+        locations.push(headers[header::LOCATION].to_str().unwrap().to_owned());
+    }
+    assert!(locations[0].contains("&done=verdict"), "{locations:?}");
+    assert_eq!(locations[0], locations[1]);
+}
+
+#[tokio::test]
+async fn a_reviewer_who_is_not_the_author_gets_the_diagrams_source_and_no_link_to_a_page_that_would_not_open()
+ {
+    let rig = rig().await;
+    let (_, memory) = person_with_a_diagram(&rig).await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, _) = act(
+        &rig,
+        &admin,
+        "/web/admin",
+        &[
+            ("action", "grant_review"),
+            ("user", "boss"),
+            ("workarea", "alice"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (status, _, page) = act_and_follow(
+        &rig,
+        &admin,
+        "/web/admin/review",
+        &[("action", "review_next")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("flowchart LR"), "the complete source: {page}");
+    assert!(
+        page.contains("The drawing shows on the memory's own page once it is promoted"),
+        "{page}"
+    );
+    assert!(
+        !page.contains(&format!("memory={memory}")),
+        "no link to the memory's page: {page}"
+    );
+    // Why there is no link: the held memory's own page is not the
+    // reviewer's to open (#189 moves it with the drawing).
+    let (status, _, _) = send(
+        &rig.router,
+        get(&format!("/web?view=memories&memory={memory}"), Some(&admin)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -2400,17 +2639,46 @@ async fn the_admin_keys_page_lists_a_persons_keys_and_cuts_one_off() {
         "{page}"
     );
     assert!(!page.contains("alice-web"), "session keys are not listed");
+    assert!(
+        page.contains(r#"<input type="hidden" name="user" value="alice">"#),
+        "the cut-off carries the listed user: {page}"
+    );
     let (status, headers, _) = act(
         &rig,
         &admin,
         "/web/admin/keys",
-        &[("action", "cut_off"), ("key", "alice-laptop")],
+        &[
+            ("action", "cut_off"),
+            ("key", "alice-laptop"),
+            ("user", "alice"),
+        ],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/web/admin/keys?done=cut+off");
-    let (_, _, page) = send(&rig.router, get("/web/admin/keys?user=alice", Some(&admin))).await;
-    assert!(page.contains("cut off"), "{page}");
+    assert_eq!(
+        headers[header::LOCATION],
+        "/web/admin/keys?user=alice&done=cut+off",
+        "the act lands back on the same list"
+    );
+    let location = headers[header::LOCATION].to_str().unwrap().to_owned();
+    let (_, _, page) = send(&rig.router, get(&location, Some(&admin))).await;
+    assert!(
+        page.contains("alice-laptop") && page.contains("cut off"),
+        "{page}"
+    );
+    // The person's own cut-off names no user.
+    let (status, _, page) = act(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[
+            ("action", "cut_off"),
+            ("key", "alice-laptop"),
+            ("user", "alice"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{page}");
 }
 
 #[tokio::test]
