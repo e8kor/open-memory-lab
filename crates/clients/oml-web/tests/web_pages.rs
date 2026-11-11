@@ -1559,6 +1559,402 @@ async fn person_with_a_diagram(rig: &Rig) -> (String, uuid::Uuid) {
     (cookie, memory)
 }
 
+fn frame_token(page: &str) -> String {
+    let at = page.find("src=\"/web/render/").expect("an iframe") + "src=\"/web/render/".len();
+    page[at..at + page[at..].find('"').expect("an end")].to_owned()
+}
+
+impl Rig {
+    /// The journal's last sequence number.
+    async fn head(&self) -> u64 {
+        self.store
+            .chain_head(self.boot.tenant_id)
+            .await
+            .expect("a head")
+            .expect("a chain")
+            .seq
+    }
+}
+
+// -- the memory's own page, curation and the frame (ADR-0045 d10, d12, d21;
+// ADR-0056 d9), moved to oml-web
+
+#[tokio::test]
+async fn the_parent_pages_carry_no_script_and_frame_only_the_render_route() {
+    let rig = rig().await;
+    let (cookie, memory) = person_with_a_diagram(&rig).await;
+    let _ = memory;
+    let (status, headers, page) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={memory}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(!page.contains("<script"), "the parent page has no script");
+    assert!(
+        page.contains("<iframe sandbox=\"allow-scripts\" src=\"/web/render/"),
+        "{page}"
+    );
+    assert!(
+        !page.contains("allow-same-origin"),
+        "the frame is an opaque origin"
+    );
+    assert!(
+        page.contains("flowchart LR"),
+        "the source is beside the drawing: {page}"
+    );
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(
+        csp.contains(&format!("frame-src {ISSUER}/web/render/;")),
+        "{csp}"
+    );
+    assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+    assert!(
+        !csp.contains("script-src"),
+        "no page may run a script: {csp}"
+    );
+}
+
+#[tokio::test]
+async fn the_render_frame_answers_under_its_own_policy_with_the_source_escaped() {
+    let rig = rig().await;
+    let (cookie, memory) = person_with_a_diagram(&rig).await;
+    let _ = memory;
+    let (_, _, page) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={memory}"), Some(&cookie)),
+    )
+    .await;
+    let token = frame_token(&page);
+    let (status, headers, body) = send(
+        &rig.router,
+        get(&format!("/web/render/{token}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert_eq!(csp, oml_web::render::frame_policy(ISSUER));
+    for want in [
+        "sandbox allow-scripts;",
+        "default-src 'none'",
+        "connect-src 'none'",
+        "img-src 'none'",
+        "form-action 'none'",
+        "base-uri 'none'",
+        "frame-ancestors https://oml.example.com",
+    ] {
+        assert!(csp.contains(want), "{want} in {csp}");
+    }
+    assert!(!csp.contains("unsafe-eval"), "{csp}");
+    assert!(!csp.contains("allow-same-origin"), "{csp}");
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert!(
+        body.contains("<pre class=\"mermaid\">flowchart LR"),
+        "{body}"
+    );
+    assert!(
+        body.contains("-&gt;") || body.contains("--&gt;") || body.contains("&gt;"),
+        "escaped: {body}"
+    );
+    assert!(body.contains(&oml_web::render::bundle_path()), "{body}");
+}
+
+#[tokio::test]
+async fn a_render_token_is_bound_to_its_session_and_expires() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", false).await;
+    let (cookie, memory) = person_with_a_diagram(&rig).await;
+    let _ = memory;
+    let (_, _, page) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={memory}"), Some(&cookie)),
+    )
+    .await;
+    let token = frame_token(&page);
+    let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
+    for (who, path) in [
+        (Some(bob.as_str()), format!("/web/render/{token}")),
+        (None, format!("/web/render/{token}")),
+        (Some(cookie.as_str()), format!("/web/render/{}0", token)),
+        (Some(cookie.as_str()), "/web/render/forged".to_owned()),
+    ] {
+        let (status, _, body) = send(&rig.router, get(&path, who)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+        assert!(!body.contains("flowchart"), "{body}");
+    }
+    let (status, headers, body) =
+        send(&rig.router, get(&oml_web::render::bundle_path(), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers[header::CONTENT_TYPE],
+        "text/javascript; charset=utf-8"
+    );
+    assert!(
+        headers[header::CACHE_CONTROL]
+            .to_str()
+            .unwrap()
+            .contains("immutable")
+    );
+    assert!(!body.is_empty());
+    let (status, _, _) = send(&rig.router, get("/web/assets/mermaid-0000.js", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "no other file is served");
+}
+
+#[tokio::test]
+async fn a_render_token_names_the_diagram_and_carries_no_source_so_a_large_one_draws() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    // About 56 KiB of source: under the 64 KiB cap, and a URL path of that
+    // size, once sealed and encoded, is more than a server will accept.
+    let mut big = String::from("flowchart LR\n");
+    for i in 0..100 {
+        big.push_str(&format!("  N{i}[\"{}\"] --> N{}\n", "x".repeat(540), i + 1));
+    }
+    big.push_str("  N100[\"the last node\"]\n");
+    assert!(big.len() > 55_000 && big.len() < 64 * 1024, "{}", big.len());
+    let memory = agent_writes_diagram_of(&rig, &value, &big).await;
+    let (_, _, page) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={memory}"), Some(&cookie)),
+    )
+    .await;
+    let token = frame_token(&page);
+    assert!(
+        token.len() < 1024,
+        "a token names the diagram, it does not carry it: {} bytes",
+        token.len()
+    );
+    let (status, _, body) = send(
+        &rig.router,
+        get(&format!("/web/render/{token}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", &body[..body.len().min(300)]);
+    assert!(
+        body.contains("the last node"),
+        "the whole source is drawn from"
+    );
+}
+
+#[tokio::test]
+async fn the_admin_memory_page_renders_the_admin_read_with_its_attribution() {
+    // Moved from the lead's the_admin_read_serves_text_and_attribution_and_journals_the_read,
+    // whose API half stays there.
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let memory = agent_writes(&rig, &value, "zebra crossing secret").await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, page) = send(
+        &rig.router,
+        get(&format!("/web/admin/memory?id={memory}"), Some(&boss)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains("zebra crossing secret") && page.contains("alice-laptop"),
+        "{page}"
+    );
+    assert!(page.contains("No verdict yet."), "{page}");
+    assert!(
+        page.contains(&format!(r#"href="/web/admin/curate?memory={memory}""#)),
+        "{page}"
+    );
+    // A person who is not an admin, and the person's own page, get no
+    // admin read.
+    let (status, _, _) = send(
+        &rig.router,
+        get(&format!("/web/admin/memory?id={memory}"), Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn the_admin_page_supersedes_and_retires_no_guardrail() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let id = agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let head = rig.head().await;
+    for retirement in [None, Some(("retirement", "yes"))] {
+        let target = id.to_string();
+        let mut fields = vec![
+            ("action", "supersede"),
+            ("memory", target.as_str()),
+            ("expected_version", "1"),
+            ("text", "Run the tests sometimes."),
+        ];
+        fields.extend(retirement);
+        let (status, _, body) = act(&rig, &admin, "/web/admin/memory", &fields).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body.contains("guardrail"), "{body}");
+    }
+    // The admin read itself is journalled; no version was written.
+    let events = rig
+        .store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap();
+    assert!(
+        events
+            .iter()
+            .all(|e| !e.envelope.event_type.starts_with("submission.")),
+        "{:?}",
+        events
+            .iter()
+            .map(|e| &e.envelope.event_type)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn a_resubmitted_supersede_form_proposes_one_version_and_lands_on_the_memory() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let id = agent_writes(&rig, &value, "the build takes ten minutes").await;
+    // Approved first, so the reviewer key may propose its successor.
+    let (status, _, _) = act_and_follow(
+        &rig,
+        &cookie,
+        "/web/review",
+        &[
+            ("action", "verdict"),
+            ("serve_id", &format!("srv_{}", id.simple())),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, _) = act(
+        &rig,
+        &admin,
+        "/web/admin",
+        &[
+            ("action", "grant_review"),
+            ("user", "boss"),
+            ("workarea", "alice"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (_, _, page) = send(
+        &rig.router,
+        get(&format!("/web/admin/memory?id={id}"), Some(&admin)),
+    )
+    .await;
+    let nonce = field_of(&page, "nonce");
+    let target = id.to_string();
+    let fields = [
+        ("action", "supersede"),
+        ("memory", target.as_str()),
+        ("expected_version", "1"),
+        ("text", "the build takes twelve minutes"),
+        ("nonce", nonce.as_str()),
+    ];
+    let head = rig.head().await;
+    for _ in 0..2 {
+        let (status, headers, body) = act(&rig, &admin, "/web/admin/memory", &fields).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+        assert_eq!(
+            headers[header::LOCATION],
+            format!("/web/admin/memory?id={id}&done=proposed").as_str()
+        );
+    }
+    let events = rig
+        .store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap();
+    let proposed = events
+        .iter()
+        .filter(|e| e.envelope.event_type.starts_with("submission."))
+        .count();
+    assert_eq!(
+        proposed, 1,
+        "one version proposed, the second send replayed"
+    );
+    let (_, _, landed) = send(
+        &rig.router,
+        get(
+            &format!("/web/admin/memory?id={id}&done=proposed"),
+            Some(&admin),
+        ),
+    )
+    .await;
+    assert!(
+        landed.contains("Proposed: held until reviewed."),
+        "{landed}"
+    );
+}
+
+#[tokio::test]
+async fn the_old_memory_and_curate_urls_go_through_the_lead_to_the_moved_pages_own_paths() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let id = agent_writes(&rig, &value, "an old link still opens").await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for (old, who, new) in [
+        (
+            format!("/web?view=memories&memory={id}"),
+            cookie.as_str(),
+            format!("/web/memory?id={id}"),
+        ),
+        (
+            format!("/web/admin?view=memories&memory={id}"),
+            boss.as_str(),
+            format!("/web/admin/memory?id={id}"),
+        ),
+        (
+            "/web/admin?view=curate".to_owned(),
+            boss.as_str(),
+            "/web/admin/curate".to_owned(),
+        ),
+    ] {
+        let (status, headers, _) = send(&rig.router, get(&old, Some(who))).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
+        assert_eq!(headers[header::LOCATION], new.as_str(), "{old}");
+        let (status, _, page) = send(&rig.router, get(&new, Some(who))).await;
+        assert_eq!(status, StatusCode::OK, "{new}: {page}");
+    }
+    // Each moved page draws the header and tabs, the admin's naming Curate
+    // at its own path.
+    let (_, _, curate) = send(&rig.router, get("/web/admin/curate", Some(&boss))).await;
+    assert!(
+        curate.contains(r#"href="/web/admin/curate""#) && curate.contains("<h1>Curate</h1>"),
+        "{curate}"
+    );
+    // Without a session each goes to the lead's sign-in, and the admin
+    // pages are not found for a person who is not an admin.
+    for path in ["/web/memory", "/web/admin/memory", "/web/admin/curate"] {
+        let (status, headers, _) = send(&rig.router, get(path, None)).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{path}");
+        assert!(
+            headers[header::LOCATION]
+                .to_str()
+                .unwrap()
+                .starts_with("/web/sign-in"),
+            "{path}"
+        );
+    }
+    for path in [
+        format!("/web/admin/memory?id={id}"),
+        "/web/admin/curate".to_owned(),
+    ] {
+        let (status, _, _) = send(&rig.router, get(&path, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
+}
+
 // -- the Review and Keys views (ADR-0045 d9, d11, d13; ADR-0055 d10), moved to oml-web
 
 #[tokio::test]
@@ -1731,10 +2127,7 @@ async fn the_user_page_opens_its_agents_held_rows_and_a_person_approves_their_ow
     assert!(page.contains(">held<"), "{page}");
     let (status, _, opened) = send(
         &rig.router,
-        get(
-            &format!("/web?view=memories&memory={memory}"),
-            Some(&cookie),
-        ),
+        get(&format!("/web/memory?id={memory}"), Some(&cookie)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{opened}");
@@ -1743,7 +2136,7 @@ async fn the_user_page_opens_its_agents_held_rows_and_a_person_approves_their_ow
     let bob = signed_in(&rig, "sub-bob", "bob@example.com").await;
     let (status, _, hidden) = send(
         &rig.router,
-        get(&format!("/web?view=memories&memory={memory}"), Some(&bob)),
+        get(&format!("/web/memory?id={memory}"), Some(&bob)),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{hidden}");
@@ -1940,10 +2333,14 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
         .await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{action}: {body}");
     }
+    // A curator designation takes effect at the next sign-in: the session's
+    // capacity credentials are those its entry reached when it opened
+    // (ADR-0070 d2 as built).
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
     let (status, _, body) = act(
         &rig,
         &admin,
-        "/web/admin",
+        "/web/admin/curate",
         &[
             ("action", "curate"),
             ("source", &source.to_string()),
@@ -2180,14 +2577,14 @@ async fn the_review_card_shows_the_source_the_format_and_what_it_will_be_found_b
         page.contains("Checkout (A) calls Payments (B)."),
         "what it will be found by: {page}"
     );
-    // The drawing is the lead's render frame, which only the lead mints
-    // (ADR-0056 d9): the moved card says where it shows once promoted and
-    // links nothing (ADR-0070, Phase (b) as built).
+    // The drawing beside it, in the sandboxed frame oml-web now mints
+    // (ADR-0056 d9), as the lead's card drew it; the recorded exception of
+    // the fifth change is closed (#189).
     assert!(
-        page.contains("The drawing shows on the memory's own page once it is promoted"),
+        page.contains("<iframe sandbox=\"allow-scripts\" src=\"/web/render/"),
         "{page}"
     );
-    assert!(!page.contains(&format!("memory={memory}")), "{page}");
+    assert!(!page.contains(&format!("id={memory}")), "{page}");
 }
 
 // -- the Review and Keys views: what the move adds (ADR-0070 d3 layer 4) ----
@@ -2556,8 +2953,10 @@ async fn a_resubmitted_verdict_replays_its_claim_of_the_next_item_too() {
 }
 
 #[tokio::test]
-async fn a_reviewer_who_is_not_the_author_gets_the_diagrams_source_and_no_link_to_a_page_that_would_not_open()
- {
+async fn a_reviewer_who_is_not_the_author_sees_the_held_diagram_drawn_on_the_card() {
+    // The exit criterion of #189 named in the review of #249: the Review
+    // card draws a held Mermaid claim for a reviewer who is neither its
+    // author nor the agent's owner, from the source the API served them.
     let rig = rig().await;
     let (_, memory) = person_with_a_diagram(&rig).await;
     rig.allow("boss@example.com", "boss", true).await;
@@ -2574,7 +2973,7 @@ async fn a_reviewer_who_is_not_the_author_gets_the_diagrams_source_and_no_link_t
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let (status, _, page) = act_and_follow(
+    let (status, headers, page) = act_and_follow(
         &rig,
         &admin,
         "/web/admin/review",
@@ -2584,18 +2983,31 @@ async fn a_reviewer_who_is_not_the_author_gets_the_diagrams_source_and_no_link_t
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(page.contains("flowchart LR"), "the complete source: {page}");
     assert!(
-        page.contains("The drawing shows on the memory's own page once it is promoted"),
-        "{page}"
+        page.contains("<iframe sandbox=\"allow-scripts\" src=\"/web/render/"),
+        "the drawing: {page}"
     );
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
     assert!(
-        !page.contains(&format!("memory={memory}")),
-        "no link to the memory's page: {page}"
+        csp.contains(&format!("frame-src {ISSUER}/web/render/;")),
+        "{csp}"
     );
-    // Why there is no link: the held memory's own page is not the
-    // reviewer's to open (#189 moves it with the drawing).
+    let token = frame_token(&page);
+    let (status, _, frame) = send(
+        &rig.router,
+        get(&format!("/web/render/{token}"), Some(&admin)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{frame}");
+    assert!(
+        frame.contains("<pre class=\"mermaid\">flowchart LR"),
+        "{frame}"
+    );
+    // Still no link to the held memory's own page, which is not the
+    // reviewer's to open.
+    assert!(!page.contains(&format!("id={memory}")), "{page}");
     let (status, _, _) = send(
         &rig.router,
-        get(&format!("/web?view=memories&memory={memory}"), Some(&admin)),
+        get(&format!("/web/memory?id={memory}"), Some(&admin)),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -3342,7 +3754,7 @@ async fn the_filters_narrow_the_list() {
     // The widened own-key set also opens a rejected agent row by id.
     let (status, _, rejected) = send(
         &rig.router,
-        get(&format!("/web?view=memories&memory={held}"), Some(&cookie)),
+        get(&format!("/web/memory?id={held}"), Some(&cookie)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{rejected}");
@@ -3591,21 +4003,31 @@ async fn the_old_memories_urls_go_through_the_lead_to_the_moved_pages_own_paths(
         assert_eq!(status, StatusCode::OK, "{page}");
         assert!(page.contains("<h1>Memories</h1>"), "{new}: {page}");
     }
-    // One memory opened by its id is still the lead's view, and the list's
-    // rows link to it.
+    // The list's rows link to one memory's own page, which the old link
+    // reaches through the lead.
     let (_, _, list) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
     assert!(
         list.contains(&format!(
-            r#"<a href="/web?view=memories&amp;memory={memory}">this memory</a>"#
+            r#"<a href="/web/memory?id={memory}">this memory</a>"#
         )),
         "{list}"
     );
-    let (status, _, opened) = send(
+    let (status, headers, _) = send(
         &rig.router,
         get(
             &format!("/web?view=memories&memory={memory}"),
             Some(&cookie),
         ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        headers[header::LOCATION],
+        format!("/web/memory?id={memory}").as_str()
+    );
+    let (status, _, opened) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={memory}"), Some(&cookie)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{opened}");
