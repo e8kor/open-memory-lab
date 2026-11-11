@@ -287,7 +287,8 @@ def cmd_run(a):
             "rows_in_scope": a.rows,
             "foreign_hits": foreign, "success_rel": bench.success_rel, "notes": bench.notes,
             "summary": summary,
-            "per_query": {q: {**runs[q], "scores": per[q]} for q in runs},
+            "per_query": {q.id: {**runs[q.id], "category": q.category, "scores": per[q.id]}
+                          for q in bench.queries},
         }
         name = f"{a.dataset}_{pipeline.replace('-', '_')}" + (f"_k{a.k}" if a.k != K else "")
         (out / f"{name}.json").write_text(json.dumps(result, indent=1))

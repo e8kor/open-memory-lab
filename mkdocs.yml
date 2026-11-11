@@ -157,6 +157,7 @@ nav:
   - Benchmarks:
       - benchmarks/index.md
       - Synthetic recall set: benchmarks/recall-synthetic.md
+      - Grown recall set: benchmarks/recall-grown.md
       - BEIR SciFact: benchmarks/beir-scifact.md
       - BEIR NFCorpus: benchmarks/beir-nfcorpus.md
       - LoCoMo: benchmarks/locomo.md
