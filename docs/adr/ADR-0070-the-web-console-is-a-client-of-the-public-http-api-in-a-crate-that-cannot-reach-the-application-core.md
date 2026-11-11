@@ -35,7 +35,9 @@ table of Phase (b) as built.
 Amended on 2026-11-11 by the web client secret's storage, rule and rotation (#230, #242; d2 and
 d4 revised): see [The client secret as built](#the-client-secret-as-built-2026-11-11). Amended by the
 second half of the sixth change (6b), Start, setup, the admin overview and the users page through
-`oml-web` (d3, d5, d6 and d7 (b) revised): see the seventh table of Phase (b) as built.
+`oml-web` (d3, d5, d6 and d7 (b) revised): see the seventh table of Phase (b) as built. Amended by
+phase (c), the `web_*` use cases out of `oml-app`'s core (d7 (b) and (c) revised): see
+[Phase (c) as built](#phase-c-as-built-2026-11-11).
 
 ## Context
 
@@ -701,6 +703,63 @@ decision differently:
 | d5 | `oml-web` read an answer with neither the value nor the code as a replay | it reads `Idempotency-Replay: true` (`oml_sdk::KeyIssued::replayed`, `ConnectCode::replayed`); an answer without the secret that is not a replay is refused `unavailable` (`502`), naming it, and sets no cookie | the header is the contract's replay signal; a body missing its secret is a fault, not a replay |
 | d5 | the connect code's expiry shown as its instant | "expires in N minutes (HH:MM UTC)", the minutes read on `oml-web`'s clock; an instant that is not UTC is shown as served | the person reads how long they have, not a timestamp |
 | d2 (the seventh table) | each console act resolves its caller for the claim, then acts through the request's credential, which resolves it again | the act runs as the caller it resolved for the claim (`Bearer::Session`), whose grants are read again, so creating a workarea, a transition, a ratification, a mode change, issuing a key and the two allowlist acts each cost one request of the key's rate (`a_workarea_create_by_an_agent_key_costs_one_request_of_its_rate`) | a bearer key at its rate was refused by its own act's second charge; a new connect code by a bearer key still resolves twice, since the use case takes the key's value |
+
+## Phase (c) as built (2026-11-11)
+
+Phase (c) (#190) takes the `web_*` use cases out of `oml-app`'s core. It changes no answer: the
+operations and their refusals, the lead's routes and redirects, the journal, and every metric and
+log name are as phase (b) left them, and the workspace's suites pass before and after with the
+same counts, test binary by test binary (1,962 passed and 15 ignored in 150 test binaries, against a throwaway PostgreSQL). The exit check,
+`grep -rn 'pub async fn web_' crates/oml-app --include='*.rs' | grep -v 'crates/oml-app/src/app/auth.rs'`,
+prints nothing.
+
+**Moved to the auth module, under their names.** `crates/oml-app/src/app/auth.rs` holds what d6
+keeps in the auth context: `web_sign_in_start`, `web_admit`, `web_sign_up` and
+`check_signup_policy`, `web_ensure_keys`, `web_session_open`, `web_session`, `web_sign_out` (which
+`POST /v2/web/session/end` and the sign-out act both call), `web_session_of_credential`,
+`web_credential_caller` (the API's resolution of an `omls_` credential), `web_caller`, and
+`web_has_agent_key`, which picks the callback's landing (ADR-0068 d10). `web.rs` keeps the
+allowlist alone and is now `emails.rs`.
+
+**Renamed to the operation they serve.**
+
+| Was | Is | Serves |
+|---|---|---|
+| `web_emails` | `list_web_emails` | `GET /v2/web/emails` |
+| `web_users` | `list_web_users` | `GET /v2/web/users` |
+| `web_deletions` | `pending_deletions`, private | `GET /v2/web/users` |
+| `web_set_quota` | `set_web_user_quota` | `POST /v2/web/users/{user}/quota` |
+| `web_disable_user` | `disable_web_user` | `POST /v2/web/users/{user}/disable` |
+| `web_close_deletion` | `close_web_deletion` | `POST /v2/web/users/{user}/deletion/close` |
+| `web_request_deletion` | `request_web_deletion` | `POST /v2/web/deletion-requests` |
+| `web_export` | `export_web_person` | `GET /v2/web/export` |
+| `web_grant_review`, `web_grant_curation` | `grant_review_capacity`, `grant_curation_capacity` | `POST /v2/web/users/{user}/capacities` |
+| `web_own_keys`, `web_keys_of_user` | `list_own_keys`, `list_keys_of_user` | `GET /v2/keys` |
+| `web_path` | `workarea_path` | `GET /v2/keys`, a grant's path |
+| `web_issue_key` | `issue_own_key` | `POST /v2/keys` as `<user>-web` |
+| `web_connect_code` | `mint_own_connect_code` | `POST /v2/keys/{key}/connect-codes` as `<user>-web` |
+| `web_cut_off` | `cut_off_key` | `POST /v2/keys/{key}/denials` as `<user>-web` or `<user>-admin` |
+| `web_queue` | `review_queue` | `GET /v2/review/queue` |
+| `web_memories` | `list_memories_with_own` | `GET /v1/memories?with_own=true` |
+| `web_regions` | `user_regions` | `GET /v2/workareas/{workarea}/tree?counts=true` for a user key |
+| `web_start_status` | `whoami_start` | `GET /v2/whoami?start=true` |
+| `web_own_limits` | `whoami_limits`, private | `GET /v2/whoami`'s `person` |
+
+**Deleted.** `web_other_admin` (the last admin entry is now the API's `keep_an_admin`, checked in
+the act's transaction), `web_all_entries` (the overview pages through `GET /v2/web/emails`) and
+`web_deletion_pending` (the onboarding page reads `GET /v2/whoami`'s `person`): none had a caller
+after phase (b). The lead's `web::page` stops re-exporting `form`, `glyph_svg`, `hidden`, `input`,
+`select`, `state_tag`, `text` and `textarea`, which only the moved pages drew; it keeps what the
+sign-in page and the terms page draw.
+
+Where it reads a decision differently:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d7 (c) | the logic behind a new operation is renamed to that operation's use case | a use case behind a `/v2/web/*` operation takes the operation's id in snake case (`listWebEmails` is `list_web_emails`); one behind `/v2/keys*`, the queue, the capacities or a changed read names what it serves (`issue_own_key`, `review_queue`, `grant_review_capacity`, `list_memories_with_own`), since `issue_key`, `mint_connect_code`, `list_memories` and `workarea_tree` already name the bearer key's path, which the session key's does not share | an operation id is unique on the wire but not in `oml-app`, where the bearer use case already holds it |
+| d7 (c) | the sign-in ones move to the auth module | they move under their `web_` names, and the exit check reads every module but `auth.rs` | the auth context owns them and no page calls them; a rename would touch every sign-in test and the oml-web parity rig for no reader |
+| d7 (c) | (silent on names on the wire and in metrics) | the refusal's verb names (`access.verb_ceiling` naming `web_emails` and `web_users`), the store port's methods (`web_queue`, `web_session_open`, `web_session` and the rest) and the `store_port` span names the lead's traces carry from them keep their names | a verb name is on the wire and a span name is in trace queries; changing either is a behaviour change, which this phase is not |
+| d7 (b), d7 (d) | (silent on when the old URLs stop answering) | the lead's `303`s to `oml-web`'s paths stay through v0.7.0: `views.rs` (`MOVED_VIEWS`, `MOVED_ADMIN_VIEWS`, `moved_action`, `moved_memories`), the moved acts in the two page `action` sets and `GET`/`POST /web/admin`, so a bookmark or a form cached under v0.6 lands on its new path. They are deleted in v0.7.1, leaving the lead `GET /web` without a session (the sign-in page) and the sign-out act; until then phase (d)'s `the_lead_serves_no_page_route_outside_oml_web_and_auth` names them as the lead's redirects | v0.7.0 is the release that moves the pages, so its upgrade is the one that meets old URLs; a redirect runs nothing and costs one route, and one release of it is chosen, not measured |
 
 ## Consequences
 

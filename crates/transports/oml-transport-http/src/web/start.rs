@@ -381,7 +381,7 @@ where
         }
     }
 
-    // -- GET /web/start -------------------------------------------------------
+    // -- the callback's landing ---------------------------------------------
 
     /// The callback's redirect after an admitted sign-in (ADR-0068 d10):
     /// `/web/start` while the person holds no agent key, `/web` after.
