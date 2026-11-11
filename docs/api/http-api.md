@@ -141,7 +141,7 @@ Requires: reader effective access on the subtree.
 | `as_of` | string | no | Recall memory as it was at this past instant, under today's grants: each claim's tip then, the caller's held rows recorded by then, and the steering in force then; scores are today's. |
 | `sources` | object | no | Where to search. scope, the default, is the workarea's subtree as always. wide adds the committed and validated workareas the key already reads outside it that accept federated reads: all of them up to the tenant's max_sources, above it those holding the largest share of the query's matching rows. |
 
-**Responses.** `200` Steering first and never ranked, then scored hits.; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `422` A 422-class refusal (submission.scan_veto, upload.digest_mismatch, settings.*, …).; `429` 429 limit.rate or limit.quota — retryable; Retry-After says when.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
+**Responses.** `200` Steering first and never ranked, then scored hits.; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `429` 429 limit.rate or limit.quota — retryable; Retry-After says when.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
 
 ### `GET /v1/memories/{artifact_id}`

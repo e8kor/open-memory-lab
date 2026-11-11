@@ -70,7 +70,7 @@ reviewer key and checks one save end to end. For TLS or Kubernetes: [run your ow
 
 Recall ranks by `bm25-postings` out of the box: keyword scoring, no model, the same answer for
 the same query. `bm25-sparse` finds more. On our recall eval it puts an answer in the top five
-for 0.983 of queries, against 0.934. It needs a 260 MB model and CPU to encode each write, and
+for 0.983 of queries, against 0.934. It needs a 268 MB model and CPU to encode each write, and
 it is slower than the default above a few thousand memories in scope.
 [Choosing a pipeline](docs/architecture/retrieval.md#which-one-to-use).
 

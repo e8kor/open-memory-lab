@@ -396,22 +396,6 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "search {name:?} is not served here; served: {served}"
         ))
         .with_details(json!({ "field": "/search", "served": served.split(", ").collect::<Vec<_>>() })),
-        AppError::SearchDefaultUnserved {
-            tenant_default,
-            served,
-        } => ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "settings.invalid",
-            "A journalled setting the deployment does not accept is refused by name, never replaced by another value (ADR-0049 d15).",
-            format!(
-                "this tenant's default search {tenant_default:?} is not served here; name a served pipeline with search, or an admin sets a served default"
-            ),
-        )
-        .with_details(json!({
-            "reason": "search_default_unserved",
-            "tenant_default": tenant_default,
-            "served": served.split(", ").collect::<Vec<_>>(),
-        })),
         AppError::ConnectCodeLifetime { seconds, max } => ApiError::validation(format!(
             "ttl_seconds {seconds} is outside 1 to {max}, the span a connect code may live"
         ))

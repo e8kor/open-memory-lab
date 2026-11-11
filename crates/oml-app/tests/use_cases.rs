@@ -13725,7 +13725,10 @@ async fn a_recall_naming_sources_under_an_unserved_tenant_default_runs_the_deplo
         .await
         .expect("the sources path falls back the same way");
     assert_eq!(recall.pipeline.as_str(), "keyword-any");
-    assert_eq!(recall.tenant_default_unserved.as_deref(), Some("keyword-all"));
+    assert_eq!(
+        recall.tenant_default_unserved.as_deref(),
+        Some("keyword-all")
+    );
     assert_eq!(recall.hits.len(), 1);
 }
 
@@ -13766,7 +13769,11 @@ async fn search_settings_name_the_pipeline_that_runs_and_flag_a_tenant_default_n
     let narrow = narrow_over(store);
     let settings = narrow.search_settings(admin).await.expect("settings");
     assert_eq!(settings.tenant_default.as_deref(), Some("keyword-all"));
-    assert_eq!(settings.effective.as_str(), "keyword-any", "what actually runs");
+    assert_eq!(
+        settings.effective.as_str(),
+        "keyword-any",
+        "what actually runs"
+    );
     assert!(!settings.tenant_default_served);
     let cleared = narrow.set_search_default(admin, None).await.expect("clear");
     assert_eq!(cleared.effective.as_str(), "keyword-any");

@@ -104,7 +104,7 @@ server:
     note: The search pipelines the server offers, a TOML array in the file and comma-separated in the environment. A request naming a pipeline that is not listed is refused with `request.validation`.
   search.default:
     default: "`bm25-postings`"
-    note: "The pipeline a recall uses when neither the request nor the tenant names one. It must be in `search.enabled`. Where the server loads the sparse model, `bm25-sparse` finds more and costs CPU at write time: see [which one to use](../architecture/retrieval.md#which-one-to-use). Removing a pipeline from `search.enabled` that a tenant chose as its default makes that tenant's recalls that name no pipeline fail with `settings.invalid` until its admin chooses another."
+    note: "The pipeline a recall uses when neither the request nor the tenant names one. It must be in `search.enabled`. Where the server loads the sparse model, `bm25-sparse` finds more and costs CPU at write time: see [which one to use](../architecture/retrieval.md#which-one-to-use). Removing a pipeline from `search.enabled` that a tenant chose as its default makes that tenant's recalls that name no pipeline run this default instead, marked `search.fallback: tenant_default_unserved`, until its admin chooses another."
   search.timings:
     default: "`false`"
     note: "`true` lets a recall ask for each stage's milliseconds. Off by default because stage times over rows a key cannot read reveal how many there are."

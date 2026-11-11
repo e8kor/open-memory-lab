@@ -22,9 +22,11 @@ class SearchSettings:
         enabled (list[str]): The pipelines the deployment serves (search.enabled).
         deployment_default (str): search.default.
         tenant_default (None | str): The tenant's journalled default; a name the deployment no longer serves stays here,
-            and effective is then null.
-        effective (None | str): The pipeline a recall naming none runs now; null while tenant_default names a pipeline
-            the deployment does not serve, when such a recall is refused with settings.invalid (ADR-0049 d15).
+            and tenant_default_served is then false.
+        effective (str): The pipeline a recall naming none runs now.
+        tenant_default_served (bool): false while tenant_default names a pipeline the deployment does not serve, so
+            effective is the deployment's default and each such recall answers search.fallback tenant_default_unserved
+            (ADR-0049 d15); true otherwise. Since v0.7.1.
         postings (PostingsHealth | Unset): The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present
             on GET /v2/search where the deployment serves bm25-postings or a sparse pipeline; absent from the answer to POST
             /v2/search/default.
@@ -35,7 +37,8 @@ class SearchSettings:
     enabled: list[str]
     deployment_default: str
     tenant_default: None | str
-    effective: None | str
+    effective: str
+    tenant_default_served: bool
     postings: PostingsHealth | Unset = UNSET
     valid_time: SearchSettingsValidTime | Unset = UNSET
 
@@ -47,8 +50,9 @@ class SearchSettings:
         tenant_default: None | str
         tenant_default = self.tenant_default
 
-        effective: None | str
         effective = self.effective
+
+        tenant_default_served = self.tenant_default_served
 
         postings: dict[str, Any] | Unset = UNSET
         if not isinstance(self.postings, Unset):
@@ -66,6 +70,7 @@ class SearchSettings:
                 "deployment_default": deployment_default,
                 "tenant_default": tenant_default,
                 "effective": effective,
+                "tenant_default_served": tenant_default_served,
             }
         )
         if postings is not UNSET:
@@ -92,12 +97,9 @@ class SearchSettings:
 
         tenant_default = _parse_tenant_default(d.pop("tenant_default"))
 
-        def _parse_effective(data: object) -> None | str:
-            if data is None:
-                return data
-            return cast(None | str, data)
+        effective = d.pop("effective")
 
-        effective = _parse_effective(d.pop("effective"))
+        tenant_default_served = d.pop("tenant_default_served")
 
         _postings = d.pop("postings", UNSET)
         postings: PostingsHealth | Unset
@@ -118,6 +120,7 @@ class SearchSettings:
             deployment_default=deployment_default,
             tenant_default=tenant_default,
             effective=effective,
+            tenant_default_served=tenant_default_served,
             postings=postings,
             valid_time=valid_time,
         )

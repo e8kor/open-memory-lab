@@ -3651,13 +3651,16 @@ fn run_search(
             .flatten()
             .filter_map(Value::as_str)
             .collect();
-        // None while the tenant's default is not served here (ADR-0049 d15).
-        println!(
-            "effective: {}",
-            settings["effective"].as_str().unwrap_or(
-                "none: a recall naming no pipeline is refused until the tenant's default is served"
-            )
-        );
+        // The deployment's default runs while the tenant's is not served
+        // here (ADR-0049 d15).
+        if settings["tenant_default_served"] == false {
+            println!(
+                "effective: {} (the tenant's default is not served here)",
+                field(&settings, "effective")
+            );
+        } else {
+            println!("effective: {}", field(&settings, "effective"));
+        }
         println!(
             "tenant default: {}",
             settings["tenant_default"]
@@ -5204,14 +5207,15 @@ fn search_doctor(
                 .to_owned(),
         );
     }
-    // A tenant default the deployment does not serve refuses every recall
-    // naming no pipeline (ADR-0049 d15).
+    // A tenant default the deployment does not serve: recalls naming no
+    // pipeline run the deployment's default, marked (ADR-0049 d15).
     if let Some(settings) = settings
         && let Some(tenant) = settings["tenant_default"].as_str()
         && settings["effective"].as_str() != Some(tenant)
     {
         lines.push(format!(
-            "warn search_tenant_default: this tenant's default {tenant} is not served here, so a recall naming no pipeline is refused (settings.invalid); oml search set-default <pipeline>, or serve {tenant}"
+            "warn search_tenant_default: this tenant's default {tenant} is not served here, so a recall naming no pipeline runs {}, marked search.fallback tenant_default_unserved; oml search set-default <pipeline>, or serve {tenant}",
+            settings["effective"].as_str().unwrap_or("the deployment's default")
         ));
     }
     let recall_counts = scrape.map(|scrape| {

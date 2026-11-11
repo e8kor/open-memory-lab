@@ -1810,6 +1810,11 @@ pub struct RecallResult {
     /// Set when `match: all` found no row with every term and the any-term
     /// list was served instead (ADR-0049 d5).
     pub fallback: bool,
+    /// The tenant's journalled default, by name, when the recall named no
+    /// pipeline and the deployment does not serve that default, so its own
+    /// default ranked the hits instead; answered as `search.fallback:
+    /// "tenant_default_unserved"` (ADR-0049 d15).
+    pub tenant_default_unserved: Option<String>,
     /// Spellings from readable rows for terms no hit matched, from a
     /// pipeline with a trigram list, when no hit holds every term
     /// (`explain.did_you_mean`; ADR-0049 d6).
@@ -2673,17 +2678,6 @@ pub enum AppError {
         "search {name:?} is not served here; served: {served} (configuration.md search.enabled, request.validation)"
     )]
     SearchUnavailable { name: String, served: String },
-    /// A recall names no pipeline and the tenant's journalled default is one
-    /// this deployment does not serve: refused, never replaced by the
-    /// deployment's default (ADR-0049 d15). `served` lists the names it
-    /// does serve.
-    #[error(
-        "this tenant's default search {tenant_default:?} is not served here; served: {served}; name a pipeline with search, or an admin sets a served default (ADR-0049 d15, settings.invalid)"
-    )]
-    SearchDefaultUnserved {
-        tenant_default: String,
-        served: String,
-    },
     #[error(
         "after_seq {after_seq} is beyond head_seq {head_seq} (http-api.md events tail, request.validation)"
     )]

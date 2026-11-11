@@ -1421,6 +1421,32 @@ pub fn scan_counts() -> Vec<(&'static str, &'static str, &'static str, u64)> {
 
 /// Every tenant id, under the 0003 startup-enumeration policy (the ordinary
 /// RLS context names one tenant; the startup sweep must see them all).
+/// Each of `tenants` whose journalled default search pipeline `search`
+/// does not serve, with that name, in `tenants`' order: what the start warns
+/// about (ADR-0049 d15).
+///
+/// # Errors
+///
+/// The store's error, naming the read.
+pub async fn unserved_tenant_defaults(
+    store: &PgStore,
+    tenants: &[Uuid],
+    search: &SearchConfig,
+) -> Result<Vec<(Uuid, String)>, String> {
+    let mut out = Vec::new();
+    for &tenant in tenants {
+        let chosen = oml_app::ports::JournalStore::tenant_search_default(store, tenant)
+            .await
+            .map_err(|e| format!("search: reading tenant {tenant}'s default: {e}"))?;
+        if let Some(name) = chosen
+            && !oml_app::search::Pipeline::parse(&name).is_some_and(|p| search.serves(p))
+        {
+            out.push((tenant, name));
+        }
+    }
+    Ok(out)
+}
+
 pub async fn enumerate_tenants(pool: &PgPool) -> Result<Vec<Uuid>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("SELECT set_config('oml.startup_check', 'on', true)")
@@ -1865,6 +1891,18 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
         .await
         .map_err(|e| format!("tenant enumeration: {e}"))?;
     let fork_check = startup_fork_check(store, signing_key.verifying_key(), &tenants).await;
+    // A tenant whose default this lead does not serve gets the deployment's
+    // default, marked in each answer; the start names it for the operator,
+    // who alone can serve it again (ADR-0049 d15).
+    for (tenant, pipeline) in unserved_tenant_defaults(store, &tenants, &search).await? {
+        tracing::warn!(
+            event = "search_tenant_default_unserved",
+            tenant = %tenant,
+            pipeline = %pipeline,
+            deployment_default = search.default_pipeline().as_str(),
+            "a tenant's default search pipeline is not in search.enabled: its recalls naming no pipeline run the deployment's default, marked search.fallback tenant_default_unserved"
+        );
+    }
     let app = lead_app(store, signing_key)
         .with_brief_max_tokens(brief_max_tokens)
         .with_search(search);
