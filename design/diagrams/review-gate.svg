@@ -17,7 +17,7 @@
   <path class="edge" d="M48 110H126" marker-end="url(#gw)"/>
   <circle class="held" cx="150" cy="110" r="18" stroke-width="4.5" stroke-linecap="round" stroke-dasharray="86.0 27.1" transform="rotate(-20 150 110)"/><text class="t" x="150" y="80" text-anchor="middle">held</text>
   <path class="edge" d="M174 110H444" marker-end="url(#gw)"/>
-  <rect class="scan" x="240" y="94" width="6" height="32" rx="2"/><text class="t-dim" x="243" y="84" text-anchor="middle">scan</text><text class="t-faint" x="243" y="144" text-anchor="middle">secrets</text>
+  <rect class="scan" x="240" y="94" width="6" height="32" rx="2"/><text class="t-dim" x="243" y="84" text-anchor="middle">scan</text><text class="t-faint" x="243" y="144" text-anchor="middle">secrets · injection</text>
   <path class="gateline" d="M330 31V90M330 130V229"/><rect class="post" x="324" y="84" width="12" height="6" rx="2"/><rect class="post" x="324" y="130" width="12" height="6" rx="2"/>
   <circle class="prom" cx="468" cy="110" r="18"/><text class="t" x="468" y="80" text-anchor="middle">promoted</text>
   <path class="edge" d="M490 110H576" marker-end="url(#gw)"/>
