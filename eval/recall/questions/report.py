@@ -40,17 +40,23 @@ def main():
     grown = json.loads((Path(__file__).resolve().parents[1] / "queries-grown.json").read_text())
     pc = grown["person_check"]
     if pc["status"] == "done":
-        fixed = ", ".join(sorted(pc.get("corrections", {})))
+        m = pc["marks"]
+        rel = {q["id"]: q["relevant"] for q in grown["queries"]}
+        fixed = "; ".join(f"{k}, marked {v['mark']}, now labels "
+                          + ", ".join(f"{mid} grade {gr}" for mid, gr in sorted(rel[k].items()))
+                          + " as the operator chose"
+                          for k, v in sorted(pc.get("corrections", {}).items()))
         checked = (f"**Labels checked.** {pc['checked_by'].capitalize()} checked a seeded tenth of the "
-                   f"grown set's labels on {pc['date']}: {pc['bad_labels']} of {pc['checked']} wrong "
-                   f"({fixed}, corrected in version {grown['version']}, which this run uses).")
+                   f"grown set's labels ({pc['checked']}) on {pc['date']}: {m['correct']} marked correct, "
+                   f"{m['unsure']} unsure, {m['wrong']} wrong; {pc['corrected_labels']} label corrected "
+                   f"({fixed}). This run uses version {grown['version']}, with the correction")
         caveat = ""
     else:
         checked = "**Provisional: pending the 10% label check** of the grown set."
         caveat = "Provisional until the label check passes."
     out = ["# ADR-0075 phase 0: generated questions against `bm25-sparse`\n",
            checked + " (`person_check` in "
-           "`eval/recall/queries-grown.json`.) Offline: no server was built or run; the lexemes are "
+           "`eval/recall/queries-grown.json`). Offline: no server was built or run; the lexemes are "
            "migration 0020's, computed in a throwaway PostgreSQL, and the gate is ADR-0075 d12 "
            "(the operator's decision of 2026-11-11).\n",
            f"Generator: `{gen['model']}` at `{gen['revision'][:12]}` (weights SHA-256 "
@@ -63,6 +69,9 @@ def main():
            "|---|---|---|"]
     for p, x in r["parity"].items():
         out.append(f"| `{p}` | {x['success@5_agree']} of {x['n']} | {x['top1_agree']} of {x['n']} |")
+    for p, x in r["parity"].items():
+        if x["success@5_differ"]:
+            out.append(f"\n`{p}` differs from the served run on {', '.join(x['success@5_differ'])}.")
     out += ["", "## Success@5\n",
             "| pipeline | all (786) | question-shaped (687) | other (99) | nDCG@10, question-shaped |",
             "|---|---|---|---|---|"]

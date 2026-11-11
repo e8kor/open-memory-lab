@@ -278,7 +278,7 @@ def paired_boot(a, b, seed=SEED):
 def mcnemar(a, b):
     w = sum(1 for x, y in zip(a, b) if x > y)
     lo = sum(1 for x, y in zip(a, b) if x < y)
-    return w, lo, (tail(w + lo, w) if w + lo else 1.0)
+    return w, lo, (min(1.0, tail(w + lo, w)) if w + lo else 1.0)  # the sum can round above 1
 
 
 def main():
@@ -384,13 +384,17 @@ def main():
         g_ = json.loads((root / f"bench/results/per-query/recall-grown/{p}.json").read_text())["queries"]
         s_ = json.loads((root / f"recall/results/served_{p.replace('-', '_')}.json").read_text())["per_query"]
         agree = top1 = 0
+        differ = []
         for q in queries:
             # the served ranking, scored with this set's labels (a person may have corrected one)
             srv = (g_ if q["set"] == "grown" else s_)[q["id"]]["ranked"]
             srv5, srv1 = metrics.success_at(srv, q["relevant"], 5), srv[:1]
             agree += srv5 == scores[p][q["id"]]["s5"]
+            if srv5 != scores[p][q["id"]]["s5"]:
+                differ.append(q["id"])
             top1 += srv1 == runs[p][q["id"]][:1]
-        served[p] = {"success@5_agree": agree, "top1_agree": top1, "n": len(queries),
+        served[p] = {"success@5_agree": agree, "success@5_differ": differ, "top1_agree": top1,
+                     "n": len(queries),
                      "served_success@5_all": round(sum(
                          metrics.success_at((g_ if q["set"] == "grown" else s_)[q["id"]]["ranked"],
                                             q["relevant"], 5) for q in queries) / len(queries), 4)}
