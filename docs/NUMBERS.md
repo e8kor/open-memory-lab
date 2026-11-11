@@ -94,6 +94,7 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0073 | `design/distributed-nodes` |  | a leader signs every write and nodes serve the workareas placed on them, each read routed to the closest less busy replica fresh enough for it | reserved |
 | adr | 0074 | `design/scan-expansion` |  | the scan names a threat class for every finding, refuses only what can never be safe, holds or annotates the rest, and recall serves every hit as data with its findings | reserved |
 | adr | 0075 | `design/hypothetical-questions` | #239 | each approved memory is indexed by the questions it answers, generated off the request path, scanned, stored with their generator, and matched only by an opt-in pipeline | reserved |
+| adr | 0076 | `docs/adr-no-default-server` | #265 | releases ship no default server and setup asks for the server or reads it from the key or the environment | reserved |
 | fr | 1 | `main` |  | Erasure destroys body and attachment bytes by destroying their keys; a | used |
 | fr | 2 | `main` |  | Review throughput is unmeasured. The design's gate is only as useful a | used |
 | fr | 3 | `main` |  | The lake mirror claims exactly-once application of every event across  | used |
@@ -274,3 +275,4 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0039 | `feat/web-api-phase-a` | #188 | web session credentials | reserved |
 | migration | 0040 | `feat/federated-recall-p1` | #205 | federated recall | reserved |
 | migration | 0041 | `feat/as-of-reads` |  | as of tips | reserved |
+| migration | 0042 | `fix/idempotency-atomic` | #233 | idempotency claims | reserved |

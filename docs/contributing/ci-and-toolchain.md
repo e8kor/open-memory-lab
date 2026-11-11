@@ -175,7 +175,11 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
   binary must also carry no program interpreter. Both musl legs compile ring's C with `musl-gcc`, the
   wrapper Ubuntu's `musl-tools` ships for the runner's own architecture, named in
   `CC_x86_64_unknown_linux_musl` and `CC_aarch64_unknown_linux_musl` of the job's env, and link
-  Rust's self-contained musl with the runner's own `cc`, so no cross toolchain is pinned. The
+  Rust's self-contained musl with the runner's own `cc`, so no cross toolchain is pinned.
+  `scripts/musl_toolchain.sh` installs `musl-tools` under a time limit and, when Ubuntu's mirrors
+  cannot be reached (every run on 2026-11-11 failed resolving them), puts a `musl-gcc` on the
+  path that runs Zig 0.15.2's clang and musl from the `ziglang` wheel on PyPI, checked against its
+  SHA-256, so the jobs' `CC_<target>` and `cargo build` lines are the same on either path. The
   name is needed on the arm64 runner: the `cc` crate (1.10.0 in `Cargo.lock`) counts
   `aarch64-unknown-linux-musl` as a cross compile there and would otherwise call
   `aarch64-linux-musl-gcc`, which `musl-tools` does not ship

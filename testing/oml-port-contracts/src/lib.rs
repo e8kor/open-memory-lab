@@ -35,9 +35,10 @@ use oml_app::domain::{
 use oml_app::doubles::FakeSparseEncoder;
 use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
-    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen, IdempotencyPut,
-    IdempotencyRecord, IdempotencyScope, JournalStore, KeyringStore, MetadataFold, OutboxRow,
-    Reranker, Retriever, Scanner, Signer, StoreError, SubjectRow,
+    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen,
+    IdempotencyClaim, IdempotencyPut, IdempotencyRecord, IdempotencyScope, JournalStore,
+    KeyringStore, MetadataFold, OutboxRow, Reranker, Retriever, Scanner, Signer, StoreError,
+    SubjectRow,
 };
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, OwnHeldScope, PostingsHealth, RetrievalQuery,
@@ -2171,6 +2172,215 @@ pub async fn a_second_record_under_one_idempotency_scope_commits_nothing<S: Jour
         store.idempotency_get(&scope).await.expect("get"),
         Some(put(&winner).record),
         "the first record stands"
+    );
+}
+
+/// An act's claim scope for the claim laws: a key's web console act, no
+/// workarea, as `App::act_scope` builds it (ADR-0070 d5).
+fn act_claim_scope(tenant_id: Uuid, idem_key: &str) -> IdempotencyScope {
+    IdempotencyScope {
+        tenant_id,
+        key_id: Uuid::from_u128(0xD233),
+        workarea_id: Uuid::nil(),
+        idem_key: format!("keys.issue:{idem_key}"),
+    }
+}
+
+/// Of two concurrent claims under one scope exactly one acts, and the other
+/// finds the claim in progress under the same digest; once the act settles
+/// its outcome, a claim replays that record, which a commit-time lookup
+/// reads too, and a claim in progress is never read as a record. Only the
+/// claim's own attempt settles it (http-api.md idempotency; ADR-0070 d5;
+/// #233).
+pub async fn of_two_concurrent_claims_under_one_scope_one_acts_and_the_other_replays_its_record<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(233);
+    rig.seed_chain(store, 0).await;
+    let scope = act_claim_scope(rig.tenant_id, "form-1");
+    let (a, b) = (Uuid::from_u128(0xC1A1), Uuid::from_u128(0xC1A2));
+    let (first, second) = both(
+        store.idempotency_claim(&scope, "sha256:aa", a),
+        store.idempotency_claim(&scope, "sha256:aa", b),
+    )
+    .await;
+    let (first, second) = (first.expect("claim"), second.expect("claim"));
+    let (won, lost) = match (&first, &second) {
+        (IdempotencyClaim::Claimed, _) => (a, b),
+        (_, IdempotencyClaim::Claimed) => (b, a),
+        _ => panic!("one of two concurrent claims acts: {first:?} {second:?}"),
+    };
+    let mut claims = [first, second];
+    claims.sort_by_key(|c| !matches!(c, IdempotencyClaim::Claimed));
+    assert_eq!(
+        claims,
+        [
+            IdempotencyClaim::Claimed,
+            IdempotencyClaim::InProgress {
+                request_digest: "sha256:aa".to_owned()
+            }
+        ],
+        "exactly one of two concurrent claims acts"
+    );
+    assert_eq!(
+        store.idempotency_get(&scope).await.expect("get"),
+        None,
+        "a claim in progress is no record to replay"
+    );
+    let record = IdempotencyRecord {
+        request_digest: "sha256:aa".to_owned(),
+        response: json!({ "status": 201, "body": { "key_id": "k-1" } }),
+    };
+    let put = IdempotencyPut {
+        scope: scope.clone(),
+        record: record.clone(),
+    };
+    assert!(
+        !store
+            .idempotency_settle(put.clone(), lost)
+            .await
+            .expect("settle"),
+        "the attempt that lost the claim settles nothing"
+    );
+    store
+        .idempotency_release(&scope, lost)
+        .await
+        .expect("release");
+    assert!(
+        !store
+            .idempotency_settle(
+                IdempotencyPut {
+                    record: IdempotencyRecord {
+                        request_digest: "sha256:bb".to_owned(),
+                        ..record.clone()
+                    },
+                    ..put.clone()
+                },
+                won,
+            )
+            .await
+            .expect("settle"),
+        "a settle under another digest writes nothing, and the loser's release dropped nothing"
+    );
+    assert!(
+        store
+            .idempotency_settle(put.clone(), won)
+            .await
+            .expect("settle")
+    );
+    assert_eq!(
+        store
+            .idempotency_claim(&scope, "sha256:aa", Uuid::from_u128(0xC1A3))
+            .await
+            .expect("claim"),
+        IdempotencyClaim::Recorded(record.clone()),
+        "a claim after the settle replays the record"
+    );
+    assert_eq!(
+        store.idempotency_get(&scope).await.expect("get"),
+        Some(record.clone())
+    );
+    assert!(
+        !store.idempotency_settle(put, won).await.expect("settle"),
+        "a recorded outcome is settled once"
+    );
+    store
+        .idempotency_release(&scope, won)
+        .await
+        .expect("release");
+    assert_eq!(
+        store.idempotency_get(&scope).await.expect("get"),
+        Some(record),
+        "a release never drops a recorded outcome"
+    );
+}
+
+/// A claim whose act committed and whose record was never written, as when
+/// the process dies between them, holds its scope: a retry under the same
+/// key finds it in progress and never acts again. Only its own attempt's
+/// release frees the scope, so a late release of an earlier attempt never
+/// drops a later one's claim (http-api.md idempotency; #233).
+pub async fn a_claim_left_unsettled_holds_its_scope_and_only_a_release_frees_it<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(234);
+    rig.seed_chain(store, 0).await;
+    let scope = act_claim_scope(rig.tenant_id, "form-2");
+    let (first, retry, later) = (
+        Uuid::from_u128(0xC2A1),
+        Uuid::from_u128(0xC2A2),
+        Uuid::from_u128(0xC2A3),
+    );
+    assert_eq!(
+        store
+            .idempotency_claim(&scope, "sha256:aa", first)
+            .await
+            .expect("claim"),
+        IdempotencyClaim::Claimed
+    );
+    // The act commits here and the process stops before it settles.
+    for _ in 0..2 {
+        assert_eq!(
+            store
+                .idempotency_claim(&scope, "sha256:aa", retry)
+                .await
+                .expect("claim"),
+            IdempotencyClaim::InProgress {
+                request_digest: "sha256:aa".to_owned()
+            },
+            "a retry never acts again"
+        );
+    }
+    store
+        .idempotency_release(&scope, retry)
+        .await
+        .expect("release");
+    assert!(
+        matches!(
+            store
+                .idempotency_claim(&scope, "sha256:aa", retry)
+                .await
+                .expect("claim"),
+            IdempotencyClaim::InProgress { .. }
+        ),
+        "a release by another attempt drops nothing"
+    );
+    let other = act_claim_scope(rig.tenant_id, "form-3");
+    assert_eq!(
+        store
+            .idempotency_claim(&other, "sha256:cc", retry)
+            .await
+            .expect("claim"),
+        IdempotencyClaim::Claimed,
+        "another key's claim is its own"
+    );
+    store
+        .idempotency_release(&scope, first)
+        .await
+        .expect("release");
+    assert_eq!(
+        store
+            .idempotency_claim(&scope, "sha256:aa", later)
+            .await
+            .expect("claim"),
+        IdempotencyClaim::Claimed,
+        "a released claim is claimed again"
+    );
+    store
+        .idempotency_release(&scope, first)
+        .await
+        .expect("release");
+    assert!(
+        matches!(
+            store
+                .idempotency_claim(&scope, "sha256:aa", retry)
+                .await
+                .expect("claim"),
+            IdempotencyClaim::InProgress { .. }
+        ),
+        "a late release of the first attempt never drops the later claim"
     );
 }
 
@@ -7139,6 +7349,16 @@ where
     ))
     .await;
     Box::pin(journal_idempotency_roundtrip(&new_store().await)).await;
+    Box::pin(
+        of_two_concurrent_claims_under_one_scope_one_acts_and_the_other_replays_its_record(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(
+        a_claim_left_unsettled_holds_its_scope_and_only_a_release_frees_it(&new_store().await),
+    )
+    .await;
     Box::pin(a_second_record_under_one_idempotency_scope_commits_nothing(
         &new_store().await,
     ))

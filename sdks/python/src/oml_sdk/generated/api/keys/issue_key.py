@@ -108,8 +108,12 @@ def sync_detailed(
     epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no
     value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or
     operator role, held_by service and a deployment without oauth.issuer are refused with 422
-    oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a
-    retried issuance answers name.taken and its code is minted again with oml keys connect-code.
+    oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before
+    the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-
+    Replay: true and issues nothing again, without value and without connect_code.code, which the first
+    answer alone carries; the same key with another body is idempotency.digest_mismatch, and a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
 
     Args:
         x_request_id (str | Unset):
@@ -172,8 +176,12 @@ def sync(
     epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no
     value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or
     operator role, held_by service and a deployment without oauth.issuer are refused with 422
-    oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a
-    retried issuance answers name.taken and its code is minted again with oml keys connect-code.
+    oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before
+    the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-
+    Replay: true and issues nothing again, without value and without connect_code.code, which the first
+    answer alone carries; the same key with another body is idempotency.digest_mismatch, and a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
 
     Args:
         x_request_id (str | Unset):
@@ -231,8 +239,12 @@ async def asyncio_detailed(
     epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no
     value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or
     operator role, held_by service and a deployment without oauth.issuer are refused with 422
-    oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a
-    retried issuance answers name.taken and its code is minted again with oml keys connect-code.
+    oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before
+    the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-
+    Replay: true and issues nothing again, without value and without connect_code.code, which the first
+    answer alone carries; the same key with another body is idempotency.digest_mismatch, and a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
 
     Args:
         x_request_id (str | Unset):
@@ -293,8 +305,12 @@ async def asyncio(
     epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no
     value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or
     operator role, held_by service and a deployment without oauth.issuer are refused with 422
-    oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a
-    retried issuance answers name.taken and its code is minted again with oml keys connect-code.
+    oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before
+    the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-
+    Replay: true and issues nothing again, without value and without connect_code.code, which the first
+    answer alone carries; the same key with another body is idempotency.digest_mismatch, and a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
 
     Args:
         x_request_id (str | Unset):

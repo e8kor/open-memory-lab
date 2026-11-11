@@ -348,7 +348,7 @@ constant, a policy choice; nothing about OML is measured, and what would need me
     without the code, and a replay returns that body with `Idempotency-Replay: true`,
     so no idempotency record holds a connect code and the first answer is the only one that
     carries it. A bearer key's replay stays as ADR-0014 d3 has it; that its stored response holds
-    the value is #127, opened by this record. This amends ADR-0014 d3
+    the value is #127, opened by this record. (Amended by [ADR-0070](ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md), its idempotency claims table of 2026-11-11: every key's issuance and connect code claim their key before they act, and a replay of either carries neither the value nor the code.) This amends ADR-0014 d3
     for the two connect-code responses ("returns the stored response" returns it without the
     code) and ADR-0028 d1 (`issue-agent`'s output). On a replayed answer,
     `oml keys issue-agent --connect-code` and `oml keys connect-code` print no code, name the key

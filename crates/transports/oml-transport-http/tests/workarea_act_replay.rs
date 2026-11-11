@@ -4,8 +4,11 @@
 //! replay the recorded outcome under the same `Idempotency-Key` and request,
 //! with `Idempotency-Replay: true` and nothing acted again, and refuse the
 //! same key on another request with `idempotency.digest_mismatch`
-//! (ADR-0070 d3 layer 4, d5). Each test is named after the sentence it
-//! proves.
+//! (ADR-0070 d3 layer 4, d5). Each act claims its key before it acts, so two
+//! sends of one form act once, a send waits on another attempt's claim and
+//! answers its outcome, and a claim whose record was lost holds the key
+//! rather than letting a retry act again (#233). Each test is named after
+//! the sentence it proves.
 
 mod support;
 
@@ -17,10 +20,12 @@ use tower::ServiceExt as _;
 use uuid::Uuid;
 
 use oml_app::domain::access::Covers;
-use oml_app::domain::name::Name;
-use oml_app::domain::{HeldBy, Role};
+use oml_app::domain::name::{Name, NamedKind};
+use oml_app::domain::{HeldBy, Role, Sha256Hash};
 use oml_app::doubles::MemStore;
-use oml_app::ports::JournalStore as _;
+use oml_app::ports::{
+    IdempotencyClaim, IdempotencyPut, IdempotencyRecord, IdempotencyScope, JournalStore as _,
+};
 use oml_app::types::{BootstrapRequest, GrantRequest, IssueKeyRequest};
 
 use support::{app, state};
@@ -285,4 +290,288 @@ async fn a_creation_replays_under_the_same_key_and_request_and_refuses_the_key_o
         "created once"
     );
     assert!(root.iter().all(|n| n.name.as_str() != "other"), "{root:?}");
+}
+
+// -- the claim an act takes on its key before it acts (#233) ---------------
+
+/// The claim scope and request digest `POST /v2/workareas` takes for
+/// `body` under `idem` as the admin key (ADR-0070 d5): the act's name
+/// beside the key, no workarea, and the digest over the empty path user
+/// and the body's bytes.
+async fn create_claim(w: &World, idem: &str, body: &Value) -> (IdempotencyScope, String) {
+    let key_id = w
+        .store
+        .resolve_name(w.tenant, NamedKind::Key, &name("acme-admin"))
+        .await
+        .expect("a lookup")
+        .expect("the admin key");
+    let mut bytes = b"\n".to_vec();
+    bytes.extend_from_slice(body.to_string().as_bytes());
+    (
+        IdempotencyScope {
+            tenant_id: w.tenant,
+            key_id,
+            workarea_id: Uuid::nil(),
+            idem_key: format!("workarea.create:{idem}"),
+        },
+        Sha256Hash::digest(&bytes).to_prefixed(),
+    )
+}
+
+async fn created(w: &World, name: &str) -> usize {
+    let root = w
+        .store
+        .resolve_name(w.tenant, NamedKind::Workarea, &self::name("universe"))
+        .await
+        .expect("a lookup")
+        .expect("the root");
+    w.store
+        .workarea_children(w.tenant, root)
+        .await
+        .expect("children")
+        .iter()
+        .filter(|n| n.name.as_str() == name)
+        .count()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_concurrent_creates_under_one_key_create_once_and_answer_alike() {
+    let w = world().await;
+    let body = json!({"name": "twice", "parent": "universe"});
+    let ((s1, h1, b1), (s2, h2, b2)) = tokio::join!(
+        send(
+            &w.router,
+            "/v2/workareas",
+            &w.admin,
+            "c-2",
+            Some(body.clone())
+        ),
+        send(
+            &w.router,
+            "/v2/workareas",
+            &w.admin,
+            "c-2",
+            Some(body.clone())
+        ),
+    );
+    assert_eq!(
+        (s1, s2),
+        (StatusCode::CREATED, StatusCode::CREATED),
+        "{b1} {b2}"
+    );
+    assert_eq!(
+        [replayed(&h1), replayed(&h2)]
+            .iter()
+            .filter(|r| **r)
+            .count(),
+        1,
+        "one send acts and the other replays it"
+    );
+    assert_eq!(b1, b2, "both answers agree");
+    assert_eq!(created(&w, "twice").await, 1, "created once");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_send_whose_key_another_attempt_holds_waits_and_answers_that_attempts_outcome() {
+    let w = world().await;
+    let body = json!({"name": "held", "parent": "universe"});
+    let (scope, digest) = create_claim(&w, "c-3", &body).await;
+    assert_eq!(
+        w.store
+            .idempotency_claim(&scope, &digest, Uuid::from_u128(0xC3))
+            .await
+            .unwrap(),
+        IdempotencyClaim::Claimed,
+        "another attempt, in another process, holds the key"
+    );
+    let settle = {
+        let store = w.store.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            store
+                .idempotency_settle(
+                    IdempotencyPut {
+                        scope,
+                        record: IdempotencyRecord {
+                            request_digest: digest,
+                            response: json!({"status": 201, "body": {"answered": "first"}}),
+                        },
+                    },
+                    Uuid::from_u128(0xC3),
+                )
+                .await
+                .unwrap()
+        })
+    };
+    let (status, headers, again) =
+        send(&w.router, "/v2/workareas", &w.admin, "c-3", Some(body)).await;
+    assert!(settle.await.unwrap(), "the other attempt settled");
+    assert_eq!(status, StatusCode::CREATED, "{again}");
+    assert!(replayed(&headers));
+    assert_eq!(
+        again,
+        json!({"answered": "first"}),
+        "the first attempt's answer"
+    );
+    assert_eq!(created(&w, "held").await, 0, "this send acted nothing");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_send_whose_key_a_stopped_attempt_holds_answers_in_progress_and_acts_nothing() {
+    let w = world().await;
+    let body = json!({"name": "stuck", "parent": "universe"});
+    let (scope, digest) = create_claim(&w, "c-4", &body).await;
+    w.store
+        .idempotency_claim(&scope, &digest, Uuid::from_u128(0xC4))
+        .await
+        .unwrap();
+    let (status, headers, refused) =
+        send(&w.router, "/v2/workareas", &w.admin, "c-4", Some(body)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(refused["error"]["code"], "idempotency.in_progress");
+    assert!(headers.contains_key(header::RETRY_AFTER), "{headers:?}");
+    assert_eq!(created(&w, "stuck").await, 0, "nothing acted");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_act_whose_record_is_lost_still_answers_and_its_retry_acts_nothing() {
+    let w = world().await;
+    let body = json!({"name": "lost", "parent": "universe"});
+    w.store.fail_next_idempotency_settle();
+    let (status, headers, first) = send(
+        &w.router,
+        "/v2/workareas",
+        &w.admin,
+        "c-5",
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "the act committed: {first}");
+    assert!(!replayed(&headers));
+    let (status, _, retry) = send(&w.router, "/v2/workareas", &w.admin, "c-5", Some(body)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{retry}");
+    assert_eq!(retry["error"]["code"], "idempotency.in_progress");
+    assert_eq!(created(&w, "lost").await, 1, "the retry acted nothing");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_act_frees_its_key_so_the_resubmission_acts_again() {
+    let w = world().await;
+    let body = json!({"name": "later", "parent": "nowhere"});
+    let (status, _, first) = send(
+        &w.router,
+        "/v2/workareas",
+        &w.admin,
+        "c-6",
+        Some(body.clone()),
+    )
+    .await;
+    assert!(status.is_client_error(), "{first}");
+    let code = first["error"]["code"].clone();
+    assert_ne!(code, "idempotency.in_progress");
+    let (status, _, again) = send(&w.router, "/v2/workareas", &w.admin, "c-6", Some(body)).await;
+    assert!(status.is_client_error(), "{again}");
+    assert_eq!(
+        again["error"]["code"], code,
+        "the resubmission acted again and was refused alike"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_dropped_after_its_act_committed_never_lets_the_resubmission_act_again() {
+    let w = world().await;
+    let body = json!({"name": "dropped", "parent": "universe"});
+    let park = w.store.park_after_next_commit();
+    let first = {
+        let router = w.router.clone();
+        let admin = w.admin.clone();
+        let body = body.clone();
+        tokio::spawn(async move { send(&router, "/v2/workareas", &admin, "c-7", Some(body)).await })
+    };
+    while !park.reached() {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    // The act committed; the client gives up, as oml-web's call timeout
+    // does, and its request is dropped before the outcome is recorded.
+    first.abort();
+    assert!(first.await.is_err(), "the request was dropped");
+    park.open();
+    let (status, headers, again) =
+        send(&w.router, "/v2/workareas", &w.admin, "c-7", Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "{again}");
+    assert!(
+        replayed(&headers),
+        "the resubmission replays the act: {again}"
+    );
+    assert_eq!(created(&w, "dropped").await, 1, "created once");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_step_that_fails_after_the_act_committed_holds_the_key_so_the_resubmission_acts_nothing()
+{
+    let w = world().await;
+    let path = format!("/v2/workareas/{}/mode", w.draft);
+    let body = json!({"mode": "in_progress"});
+    w.store.fail_workarea_children_after_next_commit();
+    let (status, _, first) = send(&w.router, &path, &w.ann, "m-9", Some(body.clone())).await;
+    assert!(
+        status.is_server_error(),
+        "the read after the commit failed: {first}"
+    );
+    let node = w.store.workarea(w.tenant, w.draft).await.unwrap().unwrap();
+    assert!(node.in_progress, "the act committed");
+    let head = w.store.chain_head(w.tenant).await.unwrap();
+    let (status, _, again) = send(&w.router, &path, &w.ann, "m-9", Some(body)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{again}");
+    assert_eq!(again["error"]["code"], "idempotency.in_progress");
+    assert_eq!(
+        w.store.chain_head(w.tenant).await.unwrap(),
+        head,
+        "the resubmission journalled nothing"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_refused_before_its_act_runs_frees_its_key() {
+    let w = world().await;
+    // `prefix` is refused after the key is claimed and before the act runs.
+    let body = json!({"name": "early", "parent": "universe", "prefix": "ex"});
+    let (status, _, first) = send(
+        &w.router,
+        "/v2/workareas",
+        &w.admin,
+        "c-8",
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{first}");
+    let started = std::time::Instant::now();
+    let (status, _, again) = send(&w.router, "/v2/workareas", &w.admin, "c-8", Some(body)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{again}");
+    assert_eq!(again["error"]["code"], first["error"]["code"]);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "the claim was released, so the resubmission did not wait it out"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panic_after_the_act_committed_is_answered_as_a_handler_panic_and_holds_the_key() {
+    let w = world().await;
+    let body = json!({"name": "panicked", "parent": "universe"});
+    w.store.panic_after_next_commit();
+    let (status, _, first) = send(
+        &w.router,
+        "/v2/workareas",
+        &w.admin,
+        "c-9",
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{first}");
+    assert_eq!(first["error"]["details"]["reason"], "handler_panic");
+    let (status, _, again) = send(&w.router, "/v2/workareas", &w.admin, "c-9", Some(body)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{again}");
+    assert_eq!(again["error"]["code"], "idempotency.in_progress");
+    assert_eq!(created(&w, "panicked").await, 1, "created once");
 }
