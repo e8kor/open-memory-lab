@@ -67,7 +67,7 @@ made with none.
 
 ### `queries-grown.json`
 
-`{"version": 1, "corpus_version": 1, "provenance": {...}, "person_check": {...}, "queries":
+`{"version": 2, "corpus_version": 1, "provenance": {...}, "person_check": {...}, "queries":
 [{id, category, query, relevant: {memory_id: 2}, answer_span: {memory_id: words}, fold, origin}]}`.
 
 ADR-0075's phase 0 needs a set large enough to see a 3.3-point success@5 gain with 90% power,
@@ -90,8 +90,22 @@ seeds, and how many drafts each check dropped.
 Each query labels one memory, grade 2, the one it was drafted from. Its `fold` is that memory's,
 so five-fold cross-validation, how phase 0 tunes `w_q`, never tunes on one query of a memory and
 scores on its sibling, and the near-duplicate check keeps the synthetic set's 121 queries out.
-`person_check.sample` is a seeded tenth of the ids; a person checks those labels, and
-`status` stays `pending` until one has.
+`person_check.sample` is a seeded tenth of the ids (67, seed 20261111); a person checks those
+labels, and `status` stays `pending` until one has.
+
+The operator checked the sample on 2026-11-11 (`grow/person_check.json`): 58 marked correct, 6
+unsure, 3 wrong, and **one label of 67 (1.5%) was wrong**. g0113, "What database table contains
+financial records for the team?", labelled only m033 (the invoices table); by accounting practice
+the record is the ledger, so version 2 labels m038 and m037 (ledger entries) grade 2 and keeps m033
+grade 1. The eight other marks that are not "correct" question the fictional Tallyline stack the
+corpus describes (its cloud provider, Kotlin, Gradle), not whether the labelled memory answers the
+query, and notes on answer spans do not change memory-level scoring. `grow.py build` applies the
+correction by query id; the query keeps fold 3, the fold of m033, which it was drafted from, so
+m038 (fold 0) is the one memory a query of another fold also labels. The served baselines on the
+benchmark pages were measured on version 1. Rescored from their stored top 10 on version 2,
+`bm25-sparse` and `bm25-sparse-rrf` lose g0113 (success@5 0.956 to 0.955 and 0.947 to 0.946) and
+`bm25-postings` and `bm25-rerank` do not change; ADR-0075 phase 0 (`eval/bench/results/phase0/`)
+was rerun on version 2.
 
 `grow/pass1.jsonl` is the model's raw output, one line per memory, so the set rebuilds from
 the committed files alone:
