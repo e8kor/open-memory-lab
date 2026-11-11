@@ -239,17 +239,13 @@ async fn sec_fetch_site_same_origin_is_admitted_as_the_lead_admits_it() {
 async fn a_page_route_without_a_session_cookie_goes_to_sign_in_without_calling_the_api() {
     let (app, lines) = rig();
     let response = app
-        .oneshot(
-            Request::get("/web?view=guardrails")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::get("/web/guardrails").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(
         response.headers()[header::LOCATION],
-        "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails"
+        "/web/sign-in?next=%2Fweb%2Fguardrails"
     );
     let line: serde_json::Value = serde_json::from_str(&lines.lock().unwrap()[0]).unwrap();
     assert!(line.get("api_request_ids").is_none(), "{line}");

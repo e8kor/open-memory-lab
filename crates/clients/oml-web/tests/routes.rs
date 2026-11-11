@@ -1,6 +1,7 @@
-//! Every path router the repository ships sends `oml-web` exactly the pages
-//! of [`oml_web::PAGES`] and every other path to the lead (ADR-0070 d4): the
-//! reference Caddyfile, the docker profile's and `oml quickstart`'s.
+//! Every path router the repository ships sends `oml-web` exactly the paths
+//! of [`oml_web::PAGES`] and every other path to the lead, by path alone
+//! (ADR-0070 d4, d7 (b) as amended): the reference Caddyfile, the docker
+//! profile's, `oml quickstart`'s, and the Helm chart's default Ingress paths.
 
 use std::path::Path;
 
@@ -17,33 +18,29 @@ fn read(relative: &str) -> String {
         .replace("\r\n", "\n")
 }
 
+fn paths() -> String {
+    oml_web::PAGES
+        .iter()
+        .map(|(_, path)| *path)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[test]
-fn every_shipped_router_sends_oml_web_its_pages_and_the_lead_the_rest() {
+fn every_shipped_router_sends_oml_web_its_paths_and_the_lead_the_rest() {
     for relative in ROUTERS {
         let text = read(relative);
-        let matchers = text.matches("@oml_web {").count();
-        assert_eq!(matchers, 1, "{relative}: one oml-web matcher");
-        for (method, path, view) in oml_web::PAGES {
-            for line in [
-                format!("method {method}"),
-                format!("path {path}"),
-                format!("query view={view}"),
-            ] {
-                assert!(text.contains(&line), "{relative}: {line}");
-            }
-        }
-        // One matcher line per page, and nothing else matched to oml-web.
+        let matcher: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("@oml_web "))
+            .collect();
         assert_eq!(
-            text.matches("query view=").count(),
-            oml_web::PAGES.len(),
-            "{relative}"
+            matcher,
+            [format!("@oml_web path {}", paths())],
+            "{relative}: one path matcher naming exactly oml_web::PAGES"
         );
-        assert_eq!(
-            text.matches("reverse_proxy @oml_web ").count(),
-            1,
-            "{relative}"
-        );
-        // The fall-through, after the matcher, is the lead.
+        assert!(!text.contains("query "), "{relative}: no query routing");
         let routes: Vec<&str> = text
             .lines()
             .map(str::trim)
@@ -57,6 +54,17 @@ fn every_shipped_router_sends_oml_web_its_pages_and_the_lead_the_rest() {
         assert!(
             routes[1].ends_with(":8090") || routes[1].ends_with("oml-server:8080"),
             "{relative}: {routes:?}"
+        );
+    }
+}
+
+#[test]
+fn the_charts_default_ingress_paths_are_oml_webs_pages() {
+    let values = read("deploy/helm/oml/values.yaml");
+    for (_, path) in oml_web::PAGES {
+        assert!(
+            values.contains(&format!("- path: {path}\n      pathType: Exact")),
+            "values.yaml web.ingressPaths routes {path}"
         );
     }
 }

@@ -198,11 +198,11 @@ mod tests {
         let response = page(&api(429, "limit.rate"), "page-7", "/web");
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(response.headers()[header::RETRY_AFTER], "30");
-        let response = page(&api(401, "auth.invalid"), "page-7", "/web?view=guardrails");
+        let response = page(&api(401, "auth.invalid"), "page-7", "/web/guardrails");
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert_eq!(
             response.headers()[header::LOCATION],
-            "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails"
+            "/web/sign-in?next=%2Fweb%2Fguardrails"
         );
         let response = page(&Error::Transport(TransportError::Timeout), "page-7", "/web");
         assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);

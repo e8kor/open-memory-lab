@@ -123,7 +123,7 @@ async fn page(
     });
     let response = app
         .oneshot(
-            Request::get("/web?view=guardrails")
+            Request::get("/web/guardrails")
                 .header("x-request-id", "page-42")
                 .header(header::COOKIE, format!("{SESSION_COOKIE}={TOKEN}"))
                 .body(Body::empty())
@@ -230,7 +230,7 @@ async fn auth_invalid_from_whoami_sends_the_person_to_sign_in() {
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(
         headers[header::LOCATION],
-        "/web/sign-in?next=%2Fweb%3Fview%3Dguardrails"
+        "/web/sign-in?next=%2Fweb%2Fguardrails"
     );
     assert!(calls.iter().all(|(p, _)| p == "/v2/whoami"), "{calls:?}");
 }

@@ -2043,23 +2043,44 @@ async fn a_key_issued_on_the_user_page_takes_the_default_guardrail_scope_and_the
 }
 
 #[tokio::test]
-async fn the_lead_no_longer_serves_the_guardrails_view() {
-    // oml-web serves it (ADR-0070 d7 (b)); its assertions moved to
-    // crates/clients/oml-web/tests/web_pages.rs unchanged. The lead answers
-    // the URL as no page rather than as another view.
+async fn the_lead_answers_the_old_guardrails_url_with_a_redirect_to_its_own_path() {
+    // oml-web serves the view at /web/guardrails (ADR-0070 d7 (b) as
+    // amended): the lead sends the old ?view= form there, to a fixed target
+    // that carries nothing from the request, signed in or not.
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (status, _, page) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
-    assert!(page.contains("access.not_found"), "{page}");
-    assert!(!page.contains("Rules in force at"), "{page}");
+    for (old, cookie) in [
+        ("/web?view=guardrails", Some(cookie.as_str())),
+        (
+            "/web?view=guardrails&workarea=%2F%2Fevil.example",
+            Some(cookie.as_str()),
+        ),
+        ("/web?view=guardrails", None),
+    ] {
+        let (status, headers, page) = send(&rig.router, get(old, cookie)).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{old}: {page}");
+        assert_eq!(headers[header::LOCATION], "/web/guardrails", "{old}");
+        assert!(!page.contains("Rules in force at"), "{page}");
+    }
+    // The lead serves no page at the moved path.
+    let (status, _, _) = send(&rig.router, get("/web/guardrails", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-/// The `next` field the sign-in page's provider forms carry.
-fn next_field(page: &str) -> Option<String> {
-    let marker = r#"name="next" value=""#;
-    let start = page.find(marker)? + marker.len();
-    Some(page[start..start + page[start..].find('"')?].replace("&amp;", "&"))
+#[tokio::test]
+async fn a_sign_in_form_that_repeats_a_field_is_refused() {
+    let rig = rig().await;
+    for fields in [
+        [("provider", "google"), ("provider", "github")],
+        [("next", "/web"), ("next", "/web/admin")],
+    ] {
+        let mut all = fields.to_vec();
+        if all[0].0 == "next" {
+            all.push(("provider", "google"));
+        }
+        let (status, _, page) = send(&rig.router, post("/web/sign-in", &all, None)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{fields:?}: {page}");
+    }
 }
 
 #[tokio::test]

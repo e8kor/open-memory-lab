@@ -89,6 +89,15 @@ async fn readyz_is_unavailable_when_the_api_is_unreachable_unready_or_has_no_web
             "unavailable",
         ),
         (Some((200, lead("ok", "none"))), "web_client", "none"),
+        // A lead that names no identity proves none: fail closed.
+        (
+            Some((
+                200,
+                json!({"status": "ok", "checks": {}, "oauth_issuer": null}),
+            )),
+            "web_client",
+            "unknown",
+        ),
     ] {
         let (status, body, _) = probe(answer).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");

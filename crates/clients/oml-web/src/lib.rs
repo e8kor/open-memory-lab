@@ -212,18 +212,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_proxy_sends_only_the_moved_views_here() {
-        assert!(serves("GET", "/web", Some("view=guardrails")));
-        assert!(serves("GET", "/web", Some("view=guardrails&workarea=w")));
-        assert!(serves("GET", "/web/healthz", None));
-        assert!(!serves("GET", "/web", None));
-        assert!(!serves("GET", "/web", Some("view=keys")));
-        assert!(!serves("POST", "/web", Some("view=guardrails")));
-        assert!(!serves("GET", "/web/admin", Some("view=guardrails")));
-        assert!(!serves(
-            "GET",
-            "/web",
-            Some("view=guardrails&view=guardrails")
-        ));
+    fn the_proxy_sends_only_the_moved_pages_paths_here() {
+        // Route-by-path (ADR-0070 d7 (b) as amended): the query plays no part.
+        assert!(serves("GET", "/web/guardrails"));
+        assert!(serves("GET", "/web/healthz"));
+        assert!(!serves("GET", "/web"));
+        assert!(!serves("POST", "/web/guardrails"));
+        assert!(!serves("GET", "/web/guardrails/x"));
+        assert!(!serves("GET", "/web/admin"));
+        assert!(PAGES.iter().all(|(_, path)| path.starts_with("/web/")));
     }
 }
