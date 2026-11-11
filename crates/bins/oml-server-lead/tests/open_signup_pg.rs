@@ -977,9 +977,10 @@ async fn quotas_refuse_past_their_limit_with_limit_quota_and_an_admin_raises_the
     let Some(rig) = rig(Some(|mut p| {
         p.quotas.keys = 1;
         p.quotas.memories = 1;
-        // The person's web key pays the same rate per API call, and an
-        // oml-web page makes several (ADR-0070 d2 as built, seventh table).
-        p.quotas.requests_per_minute = 20;
+        // The agent key is held to four a minute; the person's own pages,
+        // which spend several of their web key's requests per view, keep
+        // the session keys' floor (ADR-0070, the seventh table).
+        p.quotas.requests_per_minute = 4;
         p
     }))
     .await
@@ -1016,10 +1017,10 @@ async fn quotas_refuse_past_their_limit_with_limit_quota_and_an_admin_raises_the
             .iter()
             .any(|(_, p)| p.to_string().contains("The second fact"))
     );
-    // Past twenty requests in a minute the key is refused; fifty requests
+    // Past four requests in a minute the key is refused; ten requests
     // cross at most one minute boundary, so one of them is refused.
     let mut refused = None;
-    for _ in 0..50 {
+    for _ in 0..10 {
         let (status, headers, body) = json(&rig, api("GET", "/v1/memories", &key, None)).await;
         if status == StatusCode::TOO_MANY_REQUESTS {
             refused = Some((headers, body));
