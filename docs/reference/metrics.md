@@ -23,7 +23,7 @@ Histograms use bucket bounds that start at 1 ms and double sixteen times, to 32.
 | `oml_mcp_call_duration_seconds` | histogram | `tool`, `mode`, `outcome` | Calls on `/mcp`. `outcome` is `result`, `tool_error` or `rpc_error`. `mode` is empty for a tool without modes. |
 | `oml_idempotency_replays_total` | counter | none | Responses that carried `Idempotency-Replay: true`. |
 | `oml_idempotency_conflicts_total` | counter | none | Requests refused in the idempotency error family. |
-| `oml_idempotency_unsettled_total` | counter | none | Web console acts that left their `Idempotency-Key` claimed and unrecorded: the act committed and its outcome could not be written, or a refused act's claim could not be released. A resubmission under that key answers `409 idempotency.in_progress` and acts nothing. The lead's log carries one `idempotency_unsettled` line per act; doctor's `handlers` line warns on any. |
+| `oml_idempotency_unsettled_total` | counter | none | Web console acts that left their `Idempotency-Key` claimed and unrecorded: the act committed and its outcome could not be written, a step after its commit failed, it stopped mid-act, or a refused act's claim could not be released. A resubmission under that key answers `409 idempotency.in_progress` and acts nothing. The lead's log carries one `idempotency_unsettled` line per act, naming the act, the key id and the claim id; doctor's `handlers` line warns on any. |
 | `oml_oauth_token_requests_total` | counter | `grant_type`, `outcome` | `POST /oauth/token` calls by RFC outcome. A rise in `invalid_grant` on `refresh_token` means lost refresh answers or stolen tokens. |
 | `oml_web_exchanges_failed_total` | counter | `provider`, `reason` | Failed Google or GitHub sign-in exchanges. |
 
