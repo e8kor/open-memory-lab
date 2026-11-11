@@ -52,6 +52,12 @@ pub struct Finding {
     pub field: String,
     /// The 1-based line of the field the match starts on.
     pub line: usize,
+    /// The view the rule read when it fired (ADR-0074 d6, d23): `raw`, the
+    /// field as written; `clean`, the removable characters deleted; `spaced`,
+    /// each made a space; `letters`, the letters-only view.
+    pub via: &'static str,
+    /// The match's byte range in that view: a place, never the text.
+    pub span: (usize, usize),
 }
 
 impl Finding {
@@ -236,6 +242,8 @@ impl RuleSet {
                 action: Action::Veto,
                 field: field.to_owned(),
                 line: 1,
+                via: "raw",
+                span: (0, text.len()),
             }];
         }
         // The order is fixed (d14, amended 2026-11-10): first every pattern
@@ -248,24 +256,26 @@ impl RuleSet {
         // which undoes one used as the space between words. A view that
         // normalises past the bound is vetoed as the text would be (d9).
         let views = normalised(text);
-        if views.iter().any(|v| v.len() > MAX_SCAN_BYTES) {
+        if views.iter().any(|(_, v)| v.len() > MAX_SCAN_BYTES) {
             return vec![Finding {
                 class: "format.scan_bound",
                 rule: "scan-bound",
                 action: Action::Veto,
                 field: field.to_owned(),
                 line: 1,
+                via: "raw",
+                span: (0, text.len()),
             }];
         }
-        let mut out = self.matched(field, text);
-        if let Some((start, rule)) = invisible(text) {
+        let mut out = self.matched(field, text, "raw");
+        if let Some((span, rule)) = invisible(text) {
             out.push((
-                start,
-                code_finding("unicode.invisible", rule, Action::Hold, field, text, start),
+                span.0,
+                code_finding("unicode.invisible", rule, Action::Hold, field, text, span, "raw"),
             ));
         }
-        for view in &views {
-            for (start, f) in self.matched(field, view) {
+        for (via, view) in &views {
+            for (start, f) in self.matched(field, view, via) {
                 if !out.iter().any(|(_, g)| g.rule == f.rule) {
                     out.push((start, f));
                 }
@@ -287,45 +297,47 @@ impl RuleSet {
     }
 
     /// The pattern and run rules over one text, with each finding's start.
-    fn matched(&self, field: &str, text: &str) -> Vec<(usize, Finding)> {
+    fn matched(&self, field: &str, text: &str, via: &'static str) -> Vec<(usize, Finding)> {
         let mut out: Vec<(usize, Finding)> = Vec::new();
         for (rule, re) in RULES.iter().zip(COMPILED.iter()) {
             // The personal-data rules do not run while they are off (d6).
             if rule.pii && !self.options.pii {
                 continue;
             }
-            if let Some(start) = first_match(rule, re, text) {
+            if let Some(span) = first_match(rule, re, text) {
                 out.push((
-                    start,
-                    code_finding(rule.class, rule.id, rule.action, field, text, start),
+                    span.0,
+                    code_finding(rule.class, rule.id, rule.action, field, text, span, via),
                 ));
             }
         }
-        if let Some(start) = base64_run(text) {
+        if let Some(span) = base64_run(text) {
             out.push((
-                start,
+                span.0,
                 code_finding(
                     "encoding.base64_blob",
                     "base64-blob",
                     Action::Hold,
                     field,
                     text,
-                    start,
+                    span,
+                    via,
                 ),
             ));
         }
         if out.iter().any(|(_, f)| f.rule == "aws-access-key-id")
-            && let Some(start) = aws_secret_near_id(text)
+            && let Some(span) = aws_secret_near_id(text)
         {
             out.push((
-                start,
+                span.0,
                 code_finding(
                     "secret.assignment",
                     "aws-secret-near-id",
                     Action::Veto,
                     field,
                     text,
-                    start,
+                    span,
+                    via,
                 ),
             ));
         }
@@ -350,15 +362,15 @@ impl RuleSet {
     }
 }
 
-/// Where the rule's first real finding starts, after its second look.
-fn first_match(rule: &Rule, re: &Regex, text: &str) -> Option<usize> {
+/// Where the rule's first real finding lies, after its second look.
+fn first_match(rule: &Rule, re: &Regex, text: &str) -> Option<(usize, usize)> {
     match rule.check {
-        Check::None => re.find(text).map(|m| m.start()),
+        Check::None => re.find(text).map(|m| (m.start(), m.end())),
         Check::Entropy => re
             .captures_iter(text)
             .find(|c| c.get(1).is_some_and(|v| generated(v.as_str())))
             .and_then(|c| c.get(0))
-            .map(|m| m.start()),
+            .map(|m| (m.start(), m.end())),
         Check::Password => re
             .captures_iter(text)
             .find(|c| match (c.get(1), c.get(2)) {
@@ -366,7 +378,7 @@ fn first_match(rule: &Rule, re: &Regex, text: &str) -> Option<usize> {
                 _ => false,
             })
             .and_then(|c| c.get(0))
-            .map(|m| m.start()),
+            .map(|m| (m.start(), m.end())),
     }
 }
 
@@ -376,14 +388,17 @@ fn code_finding(
     action: Action,
     field: &str,
     text: &str,
-    start: usize,
+    span: (usize, usize),
+    via: &'static str,
 ) -> Finding {
     Finding {
         class,
         rule,
         action,
         field: field.to_owned(),
-        line: line_of(text, start),
+        line: line_of(text, span.0),
+        via,
+        span,
     }
 }
 
@@ -392,7 +407,7 @@ const BLOB_MIN: usize = 400;
 
 /// The first run of 400 or more base64 characters that passes the blob
 /// test, counted by hand: one pass, no regex state (d9).
-fn base64_run(text: &str) -> Option<usize> {
+fn base64_run(text: &str) -> Option<(usize, usize)> {
     let b = text.as_bytes();
     let is = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/' | b'_' | b'-');
     let mut i = 0;
@@ -406,7 +421,7 @@ fn base64_run(text: &str) -> Option<usize> {
             i += 1;
         }
         if i - start >= BLOB_MIN && blob(&text[start..i]) {
-            return Some(start);
+            return Some((start, i));
         }
     }
     None
@@ -415,7 +430,7 @@ fn base64_run(text: &str) -> Option<usize> {
 /// A 40-character base64 value within 200 bytes after an AWS access key
 /// id, with the entropy test: the secret half of a pair pasted with no key
 /// name (d3).
-fn aws_secret_near_id(text: &str) -> Option<usize> {
+fn aws_secret_near_id(text: &str) -> Option<(usize, usize)> {
     static ID: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}").expect("compiles")
     });
@@ -434,7 +449,7 @@ fn aws_secret_near_id(text: &str) -> Option<usize> {
                 i += 1;
             }
             if i - start == 40 && generated(&text[start..i]) {
-                return Some(start);
+                return Some((start, i));
             }
         }
     }
@@ -474,10 +489,10 @@ fn removable(c: char) -> bool {
 
 /// The text with what hides a token or a phrase undone, none when it is
 /// already that text: NBSP a space, NFKC, and the removable characters
-/// deleted in one view and made spaces in the other (d14). Not
-/// case-folded: the hold patterns match either case already, and folding
-/// would hide an upper-case key from the veto patterns.
-fn normalised(text: &str) -> Vec<String> {
+/// deleted in one view, `clean`, and made spaces in the other, `spaced`
+/// (d14). Not case-folded: the hold patterns match either case already,
+/// and folding would hide an upper-case key from the veto patterns.
+fn normalised(text: &str) -> Vec<(&'static str, String)> {
     use unicode_normalization::UnicodeNormalization as _;
     use unicode_normalization::{IsNormalized, is_nfkc_quick};
     let plain = text.is_ascii()
@@ -500,9 +515,9 @@ fn normalised(text: &str) -> Vec<String> {
             .nfkc()
             .collect()
     };
-    let mut views = vec![view(None), view(Some(' '))];
-    views.dedup();
-    views.retain(|v| v != text);
+    let mut views = vec![("clean", view(None)), ("spaced", view(Some(' ')))];
+    views.dedup_by(|a, b| a.1 == b.1);
+    views.retain(|(_, v)| v != text);
     views
 }
 
@@ -539,6 +554,8 @@ fn letters_findings(field: &str, text: &str) -> Vec<(usize, Finding)> {
                     action: rule.action,
                     field: field.to_owned(),
                     line: line_of(&folded, start),
+                    via: "letters",
+                    span: (m.start(), m.end()),
                 },
             ));
         }
@@ -701,8 +718,9 @@ const RGI_TAG_SEQUENCES: [&str; 3] = [
 /// not a flag; and two or more variation selectors in a row
 /// (`variation-run`, amended the same day). Joiners (U+200C, U+200D) and the soft hyphen are left alone:
 /// scripts and emoji use them.
-fn invisible(text: &str) -> Option<(usize, &'static str)> {
+fn invisible(text: &str) -> Option<((usize, usize), &'static str)> {
     let mut first = None;
+    let mut last = 0;
     let mut n = 0;
     let mut selectors = 0;
     let mut chars = text.char_indices();
@@ -712,7 +730,7 @@ fn invisible(text: &str) -> Option<(usize, &'static str)> {
         if matches!(c, '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}') {
             selectors += 1;
             if selectors > 1 {
-                return Some((i, "variation-run"));
+                return Some(((i, i + c.len_utf8()), "variation-run"));
             }
             continue;
         }
@@ -729,12 +747,13 @@ fn invisible(text: &str) -> Option<(usize, &'static str)> {
             continue;
         }
         if ('\u{E0000}'..='\u{E007F}').contains(&c) {
-            return Some((i, "tag-characters"));
+            return Some(((i, i + c.len_utf8()), "tag-characters"));
         }
         if invisible_format(c) {
             first.get_or_insert(i);
+            last = i + c.len_utf8();
             n += 1;
         }
     }
-    (n > INVISIBLE_LIMIT).then(|| (first.unwrap_or(0), "invisible-format"))
+    (n > INVISIBLE_LIMIT).then(|| ((first.unwrap_or(0), last), "invisible-format"))
 }
