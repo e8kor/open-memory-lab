@@ -1402,8 +1402,10 @@ mod tests {
 
     #[test]
     fn per_turn_recall_is_skipped_on_timeout_and_stops_after_three_misses() {
-        let url = stub(
-            Duration::from_millis(800),
+        // The stub answers long after the 100 ms budget, so an answer in
+        // time is impossible however loaded the machine is.
+        let (url, seen) = stub_seen(
+            Duration::from_secs(5),
             json!([hit("a1", "promoted", "doc")]),
         );
         let env = Env::new(&[
@@ -1421,22 +1423,31 @@ mod tests {
                 matches!(&out, Err(Some(why)) if why.contains("missed its 100 ms budget")),
                 "{out:?}"
             );
-            assert!(took < Duration::from_millis(600), "took {took:?}");
+            // Skipped, not waited out: the hook returned well before the answer.
+            assert!(took < Duration::from_secs(4), "took {took:?}");
             assert_eq!(
                 ChatCache::load(&chat_cache_path(&var, "s3").expect("p")).misses,
                 n
             );
         }
-        let started = Instant::now();
+        // Each miss sent its one request; wait until the stub has read all of them.
+        let sent = |seen: &Seen| seen.lock().expect("lock").len();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while sent(&seen) < MISSES_MAX as usize && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(sent(&seen), MISSES_MAX as usize, "one request per miss");
         assert_eq!(
             user_prompt(&var, &mut &prompt("s3", "postgres replication lag")[..]),
             Err(None),
             "off for the session"
         );
-        // A request would wait out the 100 ms budget, so under it none was sent; 50 ms failed on a loaded runner.
-        assert!(
-            started.elapsed() < Duration::from_millis(90),
-            "no request sent"
+        // A request sent now would have missed the budget and answered
+        // Err(Some(..)); the count and the cache say none was sent.
+        assert_eq!(sent(&seen), MISSES_MAX as usize, "no request sent");
+        assert_eq!(
+            ChatCache::load(&chat_cache_path(&var, "s3").expect("p")).misses,
+            MISSES_MAX
         );
     }
 }

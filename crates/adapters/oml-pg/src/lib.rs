@@ -32,9 +32,9 @@ use oml_app::domain::{
 };
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
-    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyPut, IdempotencyRecord,
-    IdempotencyScope, JournalStore, MetadataFold, Retriever, StoreError, SubjectRow, TailEvent,
-    TailScan, WebStore, claim_subject,
+    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyClaim, IdempotencyPut,
+    IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, Retriever, StoreError,
+    SubjectRow, TailEvent, TailScan, WebStore, claim_subject,
 };
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, MatchedToken, OwnHeldScope, PostingsHealth,
@@ -7449,7 +7449,7 @@ impl JournalStore for PgStore {
         set_tenant(&mut tx, scope.tenant_id).await?;
         let row = sqlx::query(
             "SELECT request_digest, response FROM idempotency \
-             WHERE tenant_id = $1 AND key = $2",
+             WHERE tenant_id = $1 AND key = $2 AND committed_at IS NOT NULL",
         )
         .bind(scope.tenant_id)
         .bind(scope_key(scope))
@@ -7468,24 +7468,118 @@ impl JournalStore for PgStore {
         }))
     }
 
-    async fn idempotency_put(&self, put: IdempotencyPut) -> Result<bool, StoreError> {
+    async fn idempotency_claim(
+        &self,
+        scope: &IdempotencyScope,
+        request_digest: &str,
+        claim_id: Uuid,
+    ) -> Result<IdempotencyClaim, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, scope.tenant_id).await?;
+        // A claim is a row without `committed_at` whose response names the
+        // claim and when it was taken. A concurrent claim's insert waits on
+        // the primary key until this one commits, then inserts nothing and
+        // reads this row (ADR-0070 d5; #233).
+        let claimed = sqlx::query(
+            "INSERT INTO idempotency (tenant_id, key, request_digest, response, \
+             committed_at) VALUES ($1, $2, $3, \
+             jsonb_build_object('claim', $4::text, 'claimed_at', now()), NULL) \
+             ON CONFLICT (tenant_id, key) DO NOTHING",
+        )
+        .bind(scope.tenant_id)
+        .bind(scope_key(scope))
+        .bind(request_digest.as_bytes())
+        .bind(claim_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?
+        .rows_affected()
+            == 1;
+        let held = if claimed {
+            None
+        } else {
+            sqlx::query(
+                "SELECT request_digest, response, committed_at IS NOT NULL AS recorded \
+                 FROM idempotency WHERE tenant_id = $1 AND key = $2",
+            )
+            .bind(scope.tenant_id)
+            .bind(scope_key(scope))
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(backend)?
+        };
+        tx.commit().await.map_err(backend)?;
+        if claimed {
+            return Ok(IdempotencyClaim::Claimed);
+        }
+        let Some(row) = held else {
+            // Released between the insert and the read: the claimant was
+            // refused, so this attempt waits and claims again.
+            return Ok(IdempotencyClaim::InProgress {
+                request_digest: request_digest.to_owned(),
+            });
+        };
+        let digest = String::from_utf8(
+            row.try_get::<Vec<u8>, _>("request_digest")
+                .map_err(backend)?,
+        )
+        .map_err(backend)?;
+        if row.try_get::<bool, _>("recorded").map_err(backend)? {
+            let response: Option<Value> = row.try_get("response").map_err(backend)?;
+            Ok(IdempotencyClaim::Recorded(IdempotencyRecord {
+                request_digest: digest,
+                response: response.unwrap_or(Value::Null),
+            }))
+        } else {
+            Ok(IdempotencyClaim::InProgress {
+                request_digest: digest,
+            })
+        }
+    }
+
+    async fn idempotency_settle(
+        &self,
+        put: IdempotencyPut,
+        claim_id: Uuid,
+    ) -> Result<bool, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, put.scope.tenant_id).await?;
-        let inserted = sqlx::query(
-            "INSERT INTO idempotency (tenant_id, key, request_digest, response, \
-             committed_at) VALUES ($1, $2, $3, $4, now()) \
-             ON CONFLICT (tenant_id, key) DO NOTHING",
+        let settled = sqlx::query(
+            "UPDATE idempotency SET response = $4, committed_at = now() \
+             WHERE tenant_id = $1 AND key = $2 AND request_digest = $3 \
+             AND committed_at IS NULL AND response ->> 'claim' = $5",
         )
         .bind(put.scope.tenant_id)
         .bind(scope_key(&put.scope))
         .bind(put.record.request_digest.into_bytes())
         .bind(put.record.response)
+        .bind(claim_id.to_string())
         .execute(&mut *tx)
         .await
         .map_err(backend)?
         .rows_affected();
         tx.commit().await.map_err(backend)?;
-        Ok(inserted == 1)
+        Ok(settled == 1)
+    }
+
+    async fn idempotency_release(
+        &self,
+        scope: &IdempotencyScope,
+        claim_id: Uuid,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, scope.tenant_id).await?;
+        sqlx::query(
+            "DELETE FROM idempotency WHERE tenant_id = $1 AND key = $2 \
+             AND committed_at IS NULL AND response ->> 'claim' = $3",
+        )
+        .bind(scope.tenant_id)
+        .bind(scope_key(scope))
+        .bind(claim_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)
     }
 
     async fn brief_edge(

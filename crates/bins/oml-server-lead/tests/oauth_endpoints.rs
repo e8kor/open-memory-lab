@@ -1425,7 +1425,7 @@ async fn a_reviewer_code_is_minted_for_a_confined_key_and_named_on_the_key() {
             .uri(format!("/v2/keys/{key}/connect-codes"))
             .header(header::AUTHORIZATION, format!("Bearer {admin}"))
             .header(header::CONTENT_TYPE, "application/json")
-            .header("idempotency-key", "reviewer-code")
+            .header("idempotency-key", format!("{key}-code-{body}"))
             .body(Body::from(body.to_owned()))
             .expect("request builds")
     };

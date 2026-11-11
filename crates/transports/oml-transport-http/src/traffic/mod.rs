@@ -128,6 +128,24 @@ pub fn trace_id() -> Option<String> {
     SCOPE.try_with(|s| s.trace_id.clone()).ok().flatten()
 }
 
+/// The running request's scope, to carry onto a task the request spawns and
+/// awaits, so what that task resolves and spends is the request's
+/// (ADR-0042 d2, d14; #233).
+pub(crate) fn current_scope() -> Option<Arc<Scope>> {
+    SCOPE.try_with(Arc::clone).ok()
+}
+
+/// Runs `work` inside `scope`, as the request that captured it would.
+pub(crate) async fn within_scope<F: std::future::Future>(
+    scope: Option<Arc<Scope>>,
+    work: F,
+) -> F::Output {
+    match scope {
+        Some(scope) => SCOPE.scope(scope, work).await,
+        None => work.await,
+    }
+}
+
 fn in_scope(f: impl FnOnce(&Scope)) {
     let _outside_a_request = SCOPE.try_with(|scope| f(scope));
 }

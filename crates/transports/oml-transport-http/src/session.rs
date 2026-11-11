@@ -182,6 +182,25 @@ pub(crate) fn session_caller() -> Option<Arc<Caller>> {
     SESSION.try_with(|r| Arc::clone(&r.caller)).ok()
 }
 
+/// The running request's resolved session, to carry onto a task the
+/// request spawns and awaits (#233).
+#[derive(Clone)]
+pub(crate) struct Carried(Option<Resolved>);
+
+/// The running request's session, as [`within_session`] carries it.
+pub(crate) fn current_session() -> Carried {
+    Carried(SESSION.try_with(Clone::clone).ok())
+}
+
+/// Runs `work` with the session `carried` holds, as the request that
+/// captured it would.
+pub(crate) async fn within_session<F: std::future::Future>(carried: Carried, work: F) -> F::Output {
+    match carried.0 {
+        Some(resolved) => SESSION.scope(resolved, work).await,
+        None => work.await,
+    }
+}
+
 /// The session this request's capacity credential derives from, where it
 /// carries one.
 pub(crate) fn session_record() -> Option<Arc<WebSessionRecord>> {

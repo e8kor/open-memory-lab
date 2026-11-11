@@ -98,8 +98,10 @@ def sync_detailed(
     whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers
     access.not_found. Answers the person's row as GET /v2/web/users serves it. A resubmission under the
     same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing
-    again, the outcome recorded after the act's last commit; the same key on another request is
-    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+    again, the key claimed before the act and its outcome recorded after the act's last commit, so a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -150,8 +152,10 @@ def sync(
     whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers
     access.not_found. Answers the person's row as GET /v2/web/users serves it. A resubmission under the
     same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing
-    again, the outcome recorded after the act's last commit; the same key on another request is
-    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+    again, the key claimed before the act and its outcome recorded after the act's last commit, so a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -197,8 +201,10 @@ async def asyncio_detailed(
     whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers
     access.not_found. Answers the person's row as GET /v2/web/users serves it. A resubmission under the
     same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing
-    again, the outcome recorded after the act's last commit; the same key on another request is
-    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+    again, the key claimed before the act and its outcome recorded after the act's last commit, so a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -247,8 +253,10 @@ async def asyncio(
     whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers
     access.not_found. Answers the person's row as GET /v2/web/users serves it. A resubmission under the
     same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing
-    again, the outcome recorded after the act's last commit; the same key on another request is
-    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+    again, the key claimed before the act and its outcome recorded after the act's last commit, so a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4). Since v0.6.4.
 
     Args:
         user (str):
