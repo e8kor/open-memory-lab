@@ -1,0 +1,149 @@
+{
+ "version": 1,
+ "note": "One author-written descriptor per topic workarea (ADR-0072 d2: summary at most 600 characters, at most 8 questions, about empty since no ontology terms are on main). Written from corpus.json alone, before queries.json was read, by the lane that ran the phase 2 gate on 2026-11-11; frozen with the results it produced. The adversarial descriptor is built by fed2.py from the query set and is not stored here.",
+ "descriptors": {
+  "api": {
+   "summary": "The public REST API of the invoicing service: URL versioning and the v1 sunset, the JSON error shape, cursor pagination and page sizes, idempotency keys on POST, the per-key rate limit and 429s, signed webhooks and their retries, the generated OpenAPI document, money as integer minor units with ISO 4217 codes, UTC timestamps, and the Kotlin and Ktor service with its JSON serialization and timeouts.",
+   "questions": [
+    "Which API version is current and when is v1 sunset?",
+    "How does pagination work and what is the maximum page size?",
+    "What happens when a POST is retried without an Idempotency-Key?",
+    "What is the API rate limit per key?",
+    "How are webhooks signed and how long are deliveries retried?",
+    "How are money amounts and currencies represented in the API?",
+    "What does an API error response look like?",
+    "Which language and framework does the api service run on?"
+   ]
+  },
+  "auth": {
+   "summary": "Authentication and authorization: login through OpenID Connect with Auth0, SSO with SAML, API keys stored as hashes, roles and permission checks, two-factor rules, session cookie and CSRF decisions from the pentest, mTLS between services through Linkerd, JWT signing key rotation and JWKS, field-level encryption with per-tenant KMS keys and GDPR erasure, log redaction of secrets, and the deadlines for fixing security findings.",
+   "questions": [
+    "Which identity provider handles user login?",
+    "How are API keys stored and shown?",
+    "Which roles exist and what can each one do?",
+    "Is two-factor authentication required, and for whom?",
+    "Why are session cookies SameSite=strict?",
+    "How often are JWT signing keys rotated?",
+    "How is personal data encrypted and erased?",
+    "How fast must security findings be fixed?"
+   ]
+  },
+  "billing": {
+   "summary": "Invoicing and payments: gapless invoice numbering, voiding and credit notes, VAT per line with half-up rounding, EU reverse charge and VIES validation, Stripe card and SEPA Direct Debit collection with settlement and chargebacks, dunning reminders and suspension, subscription plans and proration, Stripe webhooks and event order, and e-invoicing formats for Italy and Germany.",
+   "questions": [
+    "How are invoice numbers formatted and why are they sequential?",
+    "How is a mistake on an issued invoice corrected?",
+    "How is VAT rounded on an invoice?",
+    "When does reverse charge apply?",
+    "When is a SEPA payment final?",
+    "When are dunning reminders sent and when is an account suspended?",
+    "Which subscription plans exist and how are upgrades prorated?",
+    "Which e-invoice formats are supported?"
+   ]
+  },
+  "ci": {
+   "summary": "Continuous integration and the build: GitHub Actions workflows, Gradle and Kotlin versions and the build cache, Testcontainers and runner pinning, flaky test quarantine, review and merge rules, Conventional Commits and squash merges, container image builds and release tags, SBOMs, Dependabot, static analysis with detekt and eslint, pnpm for the console, and why the Kotlin and Ktor upgrades are blocked.",
+   "questions": [
+    "Which CI system runs the builds and which workflow must pass?",
+    "Why does the CI build sometimes take 14 minutes?",
+    "How is a flaky test handled?",
+    "How many approving reviews does a pull request need?",
+    "How are commit messages and release tags written?",
+    "Why can we not upgrade ktor to 3.0 or Kotlin to 2.0?",
+    "Where are container images pushed and how are SBOMs produced?",
+    "Why were self-hosted runners removed?"
+   ]
+  },
+  "data": {
+   "summary": "The analytics pipeline: the nightly Datastream export from PostgreSQL to BigQuery, dbt models and their layer prefixes, revenue and MRR metrics, the churn definition, Segment product events, Airflow on Cloud Composer and its SLA, BigQuery partition filters and cost, retention of raw and aggregated tables, pseudonymization of personal data, and Looker as the BI tool.",
+   "questions": [
+    "How does invoice and payment data reach BigQuery?",
+    "Where are revenue and MRR computed?",
+    "How are dbt models named?",
+    "Why did the MRR chart double count upgrades?",
+    "How do I avoid an expensive BigQuery scan?",
+    "When is an account counted as churned?",
+    "Why did the nightly finance pipeline miss its SLA?",
+    "How long is analytics data retained?"
+   ]
+  },
+  "database": {
+   "summary": "The primary PostgreSQL database on Cloud SQL: version and the upgrade to 16, standby, replica lag, backups, point-in-time recovery and restore drills; schema conventions such as timestamps, UUIDv7 keys, migrations and safe index creation; the partitioned invoices table and its retention; PgBouncer pooling; the append-only ledger and its bloat; row level security by tenant; and query pitfalls with jsonb and missing indexes.",
+   "questions": [
+    "Which PostgreSQL version runs in production and when was it upgraded?",
+    "What should be done after a major PostgreSQL upgrade?",
+    "How are indexes created on large tables without locking?",
+    "How is the invoices table partitioned and how long is it kept?",
+    "How is the connection pooler configured and what breaks under it?",
+    "How are ledger corrections recorded?",
+    "How does row level security isolate tenants?",
+    "How are backups taken and how long does a restore take?"
+   ]
+  },
+  "deploy": {
+   "summary": "Deploying to Kubernetes: the production and staging clusters, canary rollouts, Helm release naming, upgrades and rollbacks, deploy windows, Argo CD syncing, autoscaling and replica counts, node pools and PDF rendering, image tagging, ingress and certificates, secrets through the External Secrets Operator, database migration jobs before rollout, pod startup time, and reaching the production database through the bastion.",
+   "questions": [
+    "How is the api rolled out to production?",
+    "When are production deploys allowed?",
+    "How is a bad release rolled back?",
+    "Why does a Helm upgrade fail with field is immutable?",
+    "How are container images tagged?",
+    "How do secrets reach pods and what must be done after rotating one?",
+    "How do I reach the production database from a laptop?",
+    "Why do Argo CD applications stay OutOfSync?"
+   ]
+  },
+  "frontend": {
+   "summary": "The customer console: a React single-page app built with Vite and TypeScript, its component and hook naming, TanStack Query for server state, the shared design system package, bundle size and lazy loading, currency and date formatting, translations, Playwright end-to-end tests and their flakes, Sentry error filtering, LaunchDarkly feature flags, zod validation and the generated API client.",
+   "questions": [
+    "Which framework and build tool does the console use?",
+    "How is server state managed in the console?",
+    "Why did the console triple API traffic?",
+    "How are user-facing strings translated?",
+    "Which time zone does the console show dates in?",
+    "How are end-to-end tests run and why do they flake?",
+    "How are feature flags read in the console?",
+    "What must be done after an API change for the console's types?"
+   ]
+  },
+  "incident": {
+   "summary": "Past incidents and how incidents are run: the outages and slowdowns of 2026 with their causes and durations (a broken migration rollout, a stale JWKS cache, delayed invoice emails after a key rotation, a lock from an accidental ALTER TABLE, double-charged SEPA mandates, an expired domain card), the follow-up fixes, severity levels, status page duties of the incident commander, and blameless postmortems.",
+   "questions": [
+    "What caused the March 2026 outage?",
+    "Why did webhook jobs fail after the signing key rotation?",
+    "Why were invoice emails delayed in October 2026?",
+    "How did customers get charged twice and what changed after?",
+    "What are the severity levels?",
+    "When must the status page be updated during an incident?",
+    "When is a postmortem written and where is it kept?",
+    "Why did the marketing site go down?"
+   ]
+  },
+  "observability": {
+   "summary": "Monitoring and on-call: Prometheus metrics and Grafana dashboards, structured JSON logs and their required fields, OpenTelemetry traces and sampling, symptom-based alerting with runbooks, the api SLO, the separate 429 alert, PagerDuty rotation, noisy alerts that were downgraded, counter resets, label cardinality limits and their cost, and uptime checks.",
+   "questions": [
+    "Where are metrics, dashboards and logs kept?",
+    "Which fields must every log line carry?",
+    "How are traces sampled?",
+    "What do alerts page on?",
+    "What is the api SLO?",
+    "How does the on-call rotation work?",
+    "Why are tenant_id and invoice_id not metric labels?",
+    "How should dashboards use Prometheus counters?"
+   ]
+  },
+  "process": {
+   "summary": "How the team works and the rules it keeps: what agents and engineers must never do in production, deploy freezes, new dependencies, generated files, private invoice PDFs with signed URLs, ADRs, pull request size, sprints and branch naming, code owners for billing, no floating point money, the abandoned Rust prototype, where VAT per line is computed, and the PDF renderer, its pinned library version and its concurrency setting.",
+   "questions": [
+    "What may an agent never run against the production database?",
+    "When is deploying to production forbidden?",
+    "How are architecture decisions recorded?",
+    "How large may a pull request be?",
+    "How are branches named and when do sprints start?",
+    "Which type must be used for money in code?",
+    "Where is VAT per line computed?",
+    "How are invoice PDFs rendered and stored?"
+   ]
+  }
+ }
+}

@@ -351,6 +351,73 @@ candidates, so the estimate chooses; the union searches all of them. The **skew*
 - **The cross split** re-scopes the existing labelled queries to a topic holding none of their answers, so it measures what reach buys over the union, not cross-team phrasing; new cross-team queries remain to be written (#205).
 - **The candidate count** over the public server's live keys is read by `cargo run --release -p oml-pg --example federation_candidates -- <owner url>`; that run is the operator's, since this report's host does not reach the public server's database.
 
+## Federated recall, phase 2 gate (ADR-0072 d4.5, d11; #206), 2026-11-11
+
+**Verdict: `described` fails d11's floor on both pipelines, and no descriptor selector could pass
+it on this eval.** Against `content` on the cross and skew splits together (242 queries), success@5
+rises 0.41 points, one query, with a 95% interval of 0.00 to 1.24 points; the floor is 3 points.
+An oracle that gives every selection slot to a source holding an answer gains at most 0.83
+points. The adversarial descriptor also fails its own clause on the skew split.
+
+`EVAL_PHASE2=1 federated.sh` (`fed2.py`) loads the same eleven `committed` topic workareas. The
+cross split runs at `max_sources` 8 of 10 candidates and the skew split at 4, with `database`
+padded with 2,400 SciFact abstracts. For each query it reads the union's ranking from the served
+lead at depth 100, with every candidate's E(s) (`results/fed2.json`), and it replays each selector
+offline: under one list, the answer for a searched set is the union's ranking restricted to it
+(d7.2, test 6). The replay reproduced the served `wide` answer on every query, searched set and
+top 10, 385 of 385 on `bm25-postings`. `bm25-sparse` is a convex combination, which `wide` refuses
+until its bounds are taken over R (d7.2). The replay therefore reads both legs over R and fuses
+them before restricting, the change d7.2 names. The same fusion replays the served `bm25-sparse`
+`scope` answer on 264 of 264 queries. Each topic's descriptor (`descriptors.json`) is a summary
+and eight questions, written from `corpus.json` before `queries.json` was read. It is scored by
+BM25 over the candidates' descriptors alone, through a served `bm25` recall that lists their
+workareas. `descriptor_slots` is 2. α is 0.4, the largest value with the best selection recall on
+a random half of the skew split; on the held-out half, selection recall is 0.984, the same as
+`content`'s.
+
+| pipeline | split | content s@5 | described s@5 | oracle, 2 slots | union | selection recall, content / described |
+|---|---|---:|---:|---:|---:|---:|
+| `bm25-postings` | cross (121) | 0.926 | 0.926 | 0.926 | 0.926 | 0.992 / 0.992 |
+| `bm25-postings` | skew (121) | 0.926 | 0.934 | 0.934 | 0.926 | 0.975 / 0.983 |
+| `bm25-postings` | scoped (121) | 0.926 | 0.926 | 0.926 | 0.926 | n/a |
+| `bm25-sparse` | cross (121) | 0.983 | 0.983 | 0.983 | 0.983 | 0.992 / 0.992 |
+| `bm25-sparse` | skew (121) | 0.942 | 0.950 | 0.959 | 0.959 | 0.975 / 0.983 |
+| `bm25-sparse` | scoped (121) | 0.983 | 0.983 | 0.983 | 0.983 | n/a |
+
+| d11's floor, cross and skew together | `bm25-postings` | `bm25-sparse` |
+|---|---|---|
+| success@5, described − content (≥ +3 points) | **+0.41** [0.00, 1.24]; 1 gained, 0 lost | **+0.41** [0.00, 1.24]; 1 gained, 0 lost |
+| ceiling: oracle in the 2 slots / in every slot | +0.41 / +0.41 | +0.83 [0.00, 2.07] / +0.83 |
+| selection recall does not fall | 0.984 → 0.988, holds | 0.984 → 0.988, holds |
+| scoped split falls by at most one query | 0 gained, 0 lost, holds | 0 gained, 0 lost, holds |
+| **admitted** | **no** | **no** |
+
+Intervals are 95% percentile bootstraps over the paired queries (10,000 resamples, seed 20261111).
+
+- **By category.** The one query gained is q063 (`identifier`) on the skew split, on both
+  pipelines. Every other category shows +0 −0 of 22. The descriptor slots changed the searched
+  set on 2 cross and 26 skew queries; only q063's answer moved.
+- **Why the ceiling is low.** Only 4 of the 242 queries, 1 cross and 3 skew, miss because no
+  source holding their answer was searched. On `bm25-postings`, the other 14 misses in the top 5
+  searched such a source, and its row ranked below 5. Selection cannot move that row, because
+  every hit scores with R's statistics whatever was selected (d7). Three points need about 7 of
+  the 242 queries, so a descriptor selector would have to win back more queries than selection
+  loses here.
+- **The adversarial descriptor** holds every word of every query, more than d2's 600 characters
+  and eight questions allow. Placed on each topic in turn, it lowers selection recall on no cross
+  query. Placed on `observability`, it lowers it on 5 skew queries, where d11 allows one, and it
+  displaces at most 2 sources, `descriptor_slots`. A descriptor held to the schema would match
+  less; that case is not measured.
+- **Phase 2's build condition (d13) is not met either.** On the skew split, content selection
+  recall is 0.975, above the 0.90 trigger. The exact ReDDE analogue, the union's top 100 counted
+  per source, scores 8.3 points **below** `content` on `bm25-postings` (0.843, 10 queries lost)
+  and 6.6 points below on `bm25-sparse`, so `content` is not "more than two queries below" it.
+- **This run** used main at 4db2e6cc. Its `content` cross success@5 is 0.926; phase 1's run
+  reported 0.934 for the same mode. Every comparison here is within this one run.
+- **Not measured.** Memory-kind-3 postings are not built, so the descriptor score comes from a
+  served `bm25` recall over descriptor workareas, with the same tokenizer and the same BM25, and
+  its latency is not measured. On a shared host, union recall p95 on the skew split was 126 ms.
+
 ## Limits of this eval
 
 - **One model wrote the corpus, the queries and the labels.** Their wording

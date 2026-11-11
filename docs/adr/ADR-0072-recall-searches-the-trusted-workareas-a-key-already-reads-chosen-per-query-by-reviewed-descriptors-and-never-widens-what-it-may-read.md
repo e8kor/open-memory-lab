@@ -675,6 +675,31 @@ left a reading open, or named a surface main does not have, the build took the r
 
 The eval (d11) is `eval/recall/federated.sh`; its numbers are in [the recall report](https://github.com/e8kor/open-memory-lab/blob/main/eval/recall/REPORT.md#federated-recall).
 
+## Phase 2 gate as measured (2026-11-11)
+
+d11's floor for `described` was measured offline, before anything of phase 2 is built
+(`eval/recall/fed2.py`; the [recall report](https://github.com/e8kor/open-memory-lab/blob/main/eval/recall/REPORT.md#federated-recall-phase-2-gate-adr-0072-d45-d11-206-2026-11-11)).
+Against `content` on the cross and skew splits together (242 queries), success@5 rises **0.41
+points** on `bm25-postings` (95% interval 0.00 to 1.24) and **0.41 points** on `bm25-sparse` (0.00
+to 1.24). The floor is 3. The ceiling is an oracle that gives every selection slot to a source
+holding an answer, and it gains 0.41 and 0.83 points. Only 4 of the 242 queries miss because no
+answering source was searched; every other miss is ranking, which no selection moves (d7).
+Selection recall rises 0.984 → 0.988, and the scoped split loses no query. On the skew split the
+adversarial descriptor lowers selection recall on 5 queries where d11 allows one. **`described`
+is not admitted.** d13's build condition is not met either: content selection recall on the skew
+split is 0.975, above 0.90, and content scores 8.3 points above the exact ReDDE analogue, not two
+queries below it. #206's closure is the operator's.
+
+| Decision | Reading | Why |
+|---|---|---|
+| d11 | The split is the one phase 1 built: the floor pools the cross and skew splits (242 queries), and "scope-only queries" is the scoped split | d11 names the splits; phase 1 fixed their shape (Phase 1 as built) |
+| d2, d11 | The eval's descriptors were written once from `corpus.json` alone, before the queries were read, by the lane that ran the gate. Each has a summary and eight questions; `about` is empty | a descriptor is its workarea's author's account of it, and an author does not see the queries; ADR-0051's terms are not on main |
+| d4.5 | The descriptor score is BM25 over the candidates' descriptors alone, read from a served `bm25` recall whose `sources` lists one descriptor workarea per candidate | memory-kind-3 postings are not built, and a list's R is the listed nodes alone, which is d4.5's reference set |
+| d7.2, d11 | Each selector is replayed offline from the union's ranking at depth 100. Under `bm25-sparse`, which `wide` refuses, both legs are read over R and fused before the restriction | d7.2 makes a searched set's answer the union's restricted to it, and the replay matched the served `wide` answer on all 385 queries. For `Cc`, fusing over R is the change d7.2 names |
+| d11 | α is the largest of 0.0 to 1.0, in steps of 0.1, with the best selection recall on a seeded half of the skew split (0.4), reported on the held-out half; `descriptor_slots` stays 2 | d11 sets α by selection recall on half the skew split; ties go to the value that fills the fewest slots |
+| d11 | The interval is a paired percentile bootstrap, and the gate also reports an oracle ceiling | d11 names the floor, not how its noise is stated; the ceiling says whether any descriptor could pass |
+| d11 | The adversarial descriptor holds every word of every query, beyond d2's bounds, and replaces each topic's descriptor in turn | "matches every query" is read as its worst case; the bounded case is not measured |
+
 ## Consequences
 
 - `docs/architecture/retrieval.md` gains a section on source selection, and `workareas.md` the
