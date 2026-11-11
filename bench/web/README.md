@@ -17,9 +17,13 @@ Four runs on one host, 8 CPUs, PostgreSQL 18.6 on a throwaway cluster (productio
 beside it. Every figure is an upper bound for one client.
 
 1. **The budget is missed on 16 of the 21 pages with an in-process counterpart** at 6
-   workareas, and on 15 at 48, by +9.5 to +42.7 ms p95 at 6. Within it: the user Workareas view,
-   the Atlas, both Atlas JSON routes and the data export, each dominated by one heavy read the
-   move did not change.
+   workareas, by +6.2 to +42.7 ms p95 (memories +6.2, admin memory +9.1), and on 15 of 21 at 48,
+   by +10.1 to +31.2 ms. Within it at 6: the user Workareas view, the Atlas, both Atlas JSON
+   routes and the data export, each dominated by one heavy read the move did not change. v0.7.0
+   ships with this miss stated, by the operator's decision of 2026-11-11; v0.7.1 fixes it with
+   fewer calls per page ([#286](https://github.com/e8kor/open-memory-lab/issues/286)): a `whoami`
+   that resolves once and reads the person block only when asked, the search's key read beside
+   the recall, and the subtree's offers from the tree call.
 2. **The miss is the session check, not the hop.** Every page opens with one round of two
    `GET /v2/whoami` calls, the web and the admin credentials in parallel. Each takes 7.8 to
    17.4 ms p50 at the lead with 8 to 19 store calls: the credential is resolved for the key and
@@ -44,6 +48,12 @@ beside it. Every figure is an upper bound for one client.
 7. **Rate.** Every page but the two Workareas views spends at most 4 requests of any one session
    key per view, most 1 or 2. The user Workareas view spends 2N of the review key (96 at 48), the
    admin view 2N + 2 of the admin key over its N nodes (100 at 49).
+
+Two readings follow, offered for the operator's acceptance and not yet decisions (ADR-0070's
+table of 2026-11-11): the per-session in-flight cap of d3 layer 6 is not needed, since no page
+but the Workareas views has more than four calls in flight and those are held to `FAN_OUT`; and
+pages need no request-rate share of their own, since the Workareas views need fewer calls
+instead.
 
 ## Files
 
