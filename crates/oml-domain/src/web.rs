@@ -11,8 +11,8 @@ use sha2::{Digest as _, Sha256};
 // the auth context and oml-web cannot derive different values (ADR-0070 d1,
 // d2).
 pub use oml_web_credential::{
-    CAPACITY_CREDENTIAL_PREFIX, base62, capacity_credential, constant_time_eq, csrf_matches,
-    csrf_token, hmac_sha256,
+    CAPACITY_CREDENTIAL_PREFIX, DOCTOR_PROBE_CREDENTIAL, base62, capacity_credential,
+    constant_time_eq, csrf_matches, csrf_token, hmac_sha256,
 };
 
 use crate::Sha256Hash;

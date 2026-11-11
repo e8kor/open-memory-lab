@@ -54,11 +54,13 @@ pub fn compose(project: &str, version: &str, port: u16) -> String {
         .replace("@@PORT@@", &port.to_string())
 }
 
-/// 32 hex digits from the OS random source: a password that needs no
-/// quoting in a URL, in SQL or in `.env`.
+/// 64 hex digits from the OS random source: a password that needs no
+/// quoting in a URL, in SQL or in `.env`, and a web client secret that
+/// holds fewer than the 8 distinct characters its rule asks for below once
+/// in 10^18 draws (32 digits did about once in 27 million; #262).
 #[must_use]
 pub fn password() -> String {
-    let mut bytes = [0_u8; 16];
+    let mut bytes = [0_u8; 32];
     getrandom::getrandom(&mut bytes).expect("the OS random source is available");
     hex::encode(bytes)
 }

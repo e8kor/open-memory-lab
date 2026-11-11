@@ -543,6 +543,13 @@ fn web_client(
             "{key} is set: mutual TLS needs the lead to terminate TLS on the listener oml-web reaches, which this build does not; set {KEY_WEB_CLIENT_SECRET} instead (ADR-0070 d2)"
         )));
     }
+    // Set and empty is a template that lost its secret, not a choice to
+    // run without oml-web (#262).
+    if lookup(KEY_WEB_CLIENT_SECRET).is_some_and(|v| v.is_empty()) {
+        return Err(ConfigError::Invalid(format!(
+            "{KEY_WEB_CLIENT_SECRET} is set and empty; unset it to run without oml-web, or set the secret oml-web sends (ADR-0070 d2)"
+        )));
+    }
     let current = web_secret(lookup, KEY_WEB_CLIENT_SECRET, KEY_WEB_CLIENT_SECRET_FILE)?;
     let previous = web_secret(
         lookup,
@@ -574,7 +581,10 @@ fn web_client(
             "{KEY_WEB_CLIENT_SECRET_PREVIOUS} equals {KEY_WEB_CLIENT_SECRET}; a rotation keeps the old secret beside a new one (#230)"
         ))),
         (Some(previous), Some(until)) => {
-            let until_us = oml_app::domain::valid_time::parse_now(until.trim()).ok_or_else(|| {
+            // A date, month or year alone names a period, not an instant;
+            // each is at most 10 characters (#262).
+            let instant = Some(until.trim()).filter(|t| t.len() > 10);
+            let until_us = instant.and_then(oml_app::domain::valid_time::parse_now).ok_or_else(|| {
                 ConfigError::Invalid(format!(
                     "{KEY_WEB_CLIENT_SECRET_PREVIOUS_UNTIL} {until:?} is not an RFC 3339 instant such as 2026-11-12T09:00:00Z (#230)"
                 ))

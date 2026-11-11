@@ -161,29 +161,36 @@ pub fn client_secret_refusal(secret: &str) -> Option<&'static str> {
 }
 
 /// The secret in the file at `path`, without its one trailing line ending
-/// (`\n` or `\r\n`). On Unix a file group or others may read is refused,
-/// naming its mode, as the keyring is (ADR-0023 d4): a secret file is
-/// owner-only. The error names the path, never the content.
+/// (`\n` or `\r\n`). The file is opened once and its owner and mode read
+/// from that handle, so what is checked is what is read (#262). On Unix a
+/// file group or others may read is refused, naming its mode, as the
+/// keyring is (ADR-0023 d4), and so is a file another user owns: a secret
+/// file is the process's user's, or root's, as systemd's
+/// `LoadCredential=` may give it. The error names the path, never the
+/// content.
 ///
 /// # Errors
-/// The file cannot be read, or others can read it.
+/// The file cannot be read, others can read it, or another user owns it.
 pub fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read as _;
     let shown = path.display();
-    let meta = std::fs::metadata(path).map_err(|e| format!("cannot read {shown}: {e}"))?;
+    let mut file = std::fs::File::open(path).map_err(|e| format!("cannot read {shown}: {e}"))?;
+    let meta = file
+        .metadata()
+        .map_err(|e| format!("cannot read {shown}: {e}"))?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mode = meta.permissions().mode() & 0o777;
-        if mode & 0o077 != 0 {
-            return Err(format!(
-                "{shown} has mode {mode:o}; a secret file is readable by its owner alone (chmod 600)"
-            ));
+        use std::os::unix::fs::MetadataExt as _;
+        let process = rustix::process::geteuid().as_raw();
+        if let Some(why) = ownership_refusal(meta.uid(), meta.mode(), process) {
+            return Err(format!("{shown} {why}"));
         }
     }
     #[cfg(not(unix))]
     let _ = &meta;
-    let mut text =
-        std::fs::read_to_string(path).map_err(|e| format!("cannot read {shown}: {e}"))?;
+    let mut text = String::new();
+    file.read_to_string(&mut text)
+        .map_err(|e| format!("cannot read {shown}: {e}"))?;
     if text.ends_with('\n') {
         text.pop();
         if text.ends_with('\r') {
@@ -192,6 +199,32 @@ pub fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
     }
     Ok(text)
 }
+
+/// Why a secret file owned by `owner` with `mode` is refused to a process
+/// running as `process`, or `None`: another user than the process's or
+/// root owns it, or its group or others may read it (#262).
+#[cfg(unix)]
+fn ownership_refusal(owner: u32, mode: u32, process: u32) -> Option<String> {
+    if owner != process && owner != 0 {
+        return Some(format!(
+            "is owned by uid {owner}, not this process's uid {process} or root; a secret file is its reader's own (chown it)"
+        ));
+    }
+    let mode = mode & 0o777;
+    if mode & 0o077 != 0 {
+        return Some(format!(
+            "has mode {mode:o}; a secret file is readable by its owner alone (chmod 600)"
+        ));
+    }
+    None
+}
+
+/// The capacity credential `oml-web --doctor` presents to learn whether the
+/// lead accepts its secret: well formed and derived from no session, so
+/// the lead resolves it to nothing, and the lead, knowing it, neither logs
+/// nor counts the probe once the secret proved `oml-web` (ADR-0070 d2,
+/// #262).
+pub const DOCTOR_PROBE_CREDENTIAL: &str = "omls_oml-web-doctor-probe-no-session";
 
 #[cfg(test)]
 mod tests {

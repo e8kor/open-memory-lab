@@ -23,7 +23,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 
 use oml_app::app::Caller;
-use oml_app::domain::web::{CAPACITY_CREDENTIAL_PREFIX, constant_time_eq};
+use oml_app::domain::web::{CAPACITY_CREDENTIAL_PREFIX, DOCTOR_PROBE_CREDENTIAL, constant_time_eq};
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::{AppError, WebSessionRecord};
 
@@ -236,6 +236,13 @@ where
             // and never `/mcp` (ADR-0070 d2; ADR-0045 d7).
             crate::traffic::credential(None, None);
             return finish(&rid, Err(ApiError::auth_invalid(SESSION_OUTSIDE_WEB)));
+        }
+        if credential == DOCTOR_PROBE_CREDENTIAL {
+            // `oml-web --doctor`'s probe, proven: answered as any credential
+            // no session holds, and neither logged nor counted (#262).
+            let mut answer = finish(&rid, Err(ApiError::auth_invalid("unknown")));
+            answer.extensions_mut().insert(crate::traffic::Unrecorded);
+            return answer;
         }
         match st.app.web_credential_caller(&credential).await {
             Ok((caller, session)) => {
