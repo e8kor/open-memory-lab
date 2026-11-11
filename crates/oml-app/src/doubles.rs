@@ -511,8 +511,22 @@ impl MemStore {
         self.rows_read.load(Ordering::SeqCst)
     }
 
-    fn count_row_read(&self) {
-        self.rows_read.fetch_add(1, Ordering::SeqCst);
+    /// The rows on `nodes`, read by workarea and counted in
+    /// [`Self::rows_read`]: the one way the recall path's reads reach a
+    /// memory row, so no read of it can skip the count (#278).
+    fn rows_on<'s, 'n>(
+        &self,
+        state: &'s TenantState,
+        nodes: impl Iterator<Item = &'n Uuid>,
+    ) -> impl Iterator<Item = &'s MemoryRecord> {
+        let rows_read = Arc::clone(&self.rows_read);
+        nodes
+            .filter_map(|n| state.by_workarea.get(n))
+            .flatten()
+            .filter_map(|id| state.memories.get(id))
+            .inspect(move |_| {
+                rows_read.fetch_add(1, Ordering::SeqCst);
+            })
     }
 
     /// How many federation reads every handle of this store answered.
@@ -2328,13 +2342,7 @@ impl Retriever for MemStore {
             nodes.extend(own.nodes.iter().copied());
         }
         let rows_of = |nodes: &BTreeSet<Uuid>| -> Vec<&MemoryRecord> {
-            nodes
-                .iter()
-                .filter_map(|n| state.by_workarea.get(n))
-                .flatten()
-                .filter_map(|id| state.memories.get(id))
-                .inspect(|_| self.count_row_read())
-                .collect()
+            self.rows_on(&state, nodes.iter()).collect()
         };
         let scoped = rows_of(&nodes);
         // The scope is the core's: promoted served tips on its nodes, and
@@ -2882,13 +2890,7 @@ impl JournalStore for MemStore {
             .collect();
         if let Some(tenant) = self.tenant_existing(tenant_id) {
             let state = tenant.lock().expect("tenant lock");
-            let rows = scope
-                .nodes
-                .iter()
-                .filter_map(|n| state.by_workarea.get(n))
-                .flatten()
-                .filter_map(|id| state.memories.get(id))
-                .inspect(|_| self.count_row_read());
+            let rows = self.rows_on(&state, scope.nodes.iter());
             for m in rows {
                 if !reference_row(m, &scope.kinds, scope.expired_at) {
                     continue;
@@ -2931,13 +2933,7 @@ impl JournalStore for MemStore {
         let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
         if let Some(tenant) = self.tenant_existing(tenant_id) {
             let state = tenant.lock().expect("tenant lock");
-            let held = scope
-                .nodes
-                .iter()
-                .filter_map(|n| state.by_workarea.get(n))
-                .flatten()
-                .filter_map(|id| state.memories.get(id))
-                .inspect(|_| self.count_row_read());
+            let held = self.rows_on(&state, scope.nodes.iter());
             for m in held {
                 if !reference_row(m, &scope.kinds, scope.expired_at) {
                     continue;
@@ -3003,12 +2999,8 @@ impl JournalStore for MemStore {
         // A promoted version always carries the `promoted_at` its fold
         // stamped, so no row in force is passed over here.
         // The named nodes' rows alone, read by workarea.
-        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = nodes
-            .iter()
-            .filter_map(|n| state.by_workarea.get(n))
-            .flatten()
-            .filter_map(|id| state.memories.get(id))
-            .inspect(|_| self.count_row_read())
+        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = self
+            .rows_on(&state, nodes.iter())
             .filter(|m| served_tip(m) && m.kind == MemoryKind::Steering)
             .filter_map(|m| {
                 let depth = nodes.iter().position(|n| *n == m.workarea_id)?;
@@ -3033,12 +3025,8 @@ impl JournalStore for MemStore {
             return Ok(Vec::new());
         };
         let state = tenant.lock().expect("tenant lock");
-        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = nodes
-            .iter()
-            .filter_map(|n| state.by_workarea.get(n))
-            .flatten()
-            .filter_map(|id| state.memories.get(id))
-            .inspect(|_| self.count_row_read())
+        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = self
+            .rows_on(&state, nodes.iter())
             .filter(|m| m.kind == MemoryKind::Steering && !m.retirement && tip_at(&state, m, as_of))
             .filter_map(|m| {
                 let depth = nodes.iter().position(|n| *n == m.workarea_id)?;

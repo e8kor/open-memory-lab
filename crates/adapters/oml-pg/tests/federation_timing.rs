@@ -152,10 +152,15 @@ async fn fresh_store_on_one_connection() -> Option<(String, PgStore)> {
 }
 
 /// The tuples read so far from the memories and search tables (every
-/// partition), sequential and fetched by index: the backend's pending
-/// counts flushed first, then a fresh snapshot of the statistics
-/// (`pg_stat_force_next_flush`, PostgreSQL 15+). A deterministic count of
-/// a recall's work, which no load moves.
+/// partition): heap tuples read by sequential scans and fetched through an
+/// index (`pg_stat_user_tables`), plus index entries read
+/// (`pg_stat_user_indexes.idx_tup_read`), which is all an index-only scan
+/// counts, as the postings read over the covering `search_postings_served`
+/// is once `VACUUM` sets the visibility map. The backend's pending counts
+/// are flushed first, then a fresh snapshot is read. A deterministic count
+/// of a recall's work, which no load moves.
+///
+/// `pg_stat_force_next_flush()` is PostgreSQL 15 or later; CI runs 17.
 async fn tuples_read(pool: &sqlx::PgPool) -> i64 {
     sqlx::query("SELECT pg_stat_force_next_flush()")
         .execute(pool)
@@ -168,9 +173,13 @@ async fn tuples_read(pool: &sqlx::PgPool) -> i64 {
         .await
         .expect("clear");
     sqlx::query_scalar(
-        "SELECT COALESCE(sum(COALESCE(seq_tup_read, 0) + COALESCE(idx_tup_fetch, 0)), 0)::bigint \
-         FROM pg_stat_user_tables \
-         WHERE relname LIKE 'memories%' OR relname LIKE 'search\\_%'",
+        "SELECT (\
+           (SELECT COALESCE(sum(COALESCE(seq_tup_read, 0) + COALESCE(idx_tup_fetch, 0)), 0) \
+              FROM pg_stat_user_tables \
+             WHERE relname LIKE 'memories%' OR relname LIKE 'search\\_%') \
+         + (SELECT COALESCE(sum(idx_tup_read), 0) \
+              FROM pg_stat_user_indexes \
+             WHERE relname LIKE 'memories%' OR relname LIKE 'search\\_%'))::bigint",
     )
     .fetch_one(pool)
     .await
