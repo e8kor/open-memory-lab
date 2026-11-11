@@ -595,12 +595,27 @@ async fn two_concurrent_allowlist_adds_under_one_key_add_once_and_answer_alike()
     let before = email_events(&w).await;
     let body = json!({"email": "carol@example.com", "user": "carol", "admin": false});
     let ((s1, h1, b1), (s2, h2, b2)) = tokio::join!(
-        send(&w.router, "/v2/web/emails", &w.admin, "e-1", Some(body.clone())),
-        send(&w.router, "/v2/web/emails", &w.admin, "e-1", Some(body.clone())),
+        send(
+            &w.router,
+            "/v2/web/emails",
+            &w.admin,
+            "e-1",
+            Some(body.clone())
+        ),
+        send(
+            &w.router,
+            "/v2/web/emails",
+            &w.admin,
+            "e-1",
+            Some(body.clone())
+        ),
     );
     assert_eq!((s1, s2), (StatusCode::OK, StatusCode::OK), "{b1} {b2}");
     assert_eq!(
-        [replayed(&h1), replayed(&h2)].iter().filter(|r| **r).count(),
+        [replayed(&h1), replayed(&h2)]
+            .iter()
+            .filter(|r| **r)
+            .count(),
         1,
         "one send acts and the other replays it"
     );
@@ -623,12 +638,27 @@ async fn two_concurrent_removals_under_one_key_remove_once_and_answer_alike() {
     let before = email_events(&w).await;
     let body = json!({"email": "dave@example.com"});
     let ((s1, h1, b1), (s2, h2, b2)) = tokio::join!(
-        send(&w.router, "/v2/web/emails/remove", &w.admin, "r-1", Some(body.clone())),
-        send(&w.router, "/v2/web/emails/remove", &w.admin, "r-1", Some(body.clone())),
+        send(
+            &w.router,
+            "/v2/web/emails/remove",
+            &w.admin,
+            "r-1",
+            Some(body.clone())
+        ),
+        send(
+            &w.router,
+            "/v2/web/emails/remove",
+            &w.admin,
+            "r-1",
+            Some(body.clone())
+        ),
     );
     assert_eq!((s1, s2), (StatusCode::OK, StatusCode::OK), "{b1} {b2}");
     assert_eq!(
-        [replayed(&h1), replayed(&h2)].iter().filter(|r| **r).count(),
+        [replayed(&h1), replayed(&h2)]
+            .iter()
+            .filter(|r| **r)
+            .count(),
         1,
         "one send acts and the other replays it"
     );
