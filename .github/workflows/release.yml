@@ -48,6 +48,7 @@ jobs:
   version:
     name: tag equals the workspace version
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
@@ -88,6 +89,7 @@ jobs:
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     env:
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
@@ -154,6 +156,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     env:
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
@@ -191,6 +194,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     env:
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
@@ -228,6 +232,7 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     env:
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
@@ -259,6 +264,7 @@ jobs:
     name: Claude Code plugins and the agent kit
     needs: version
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -285,6 +291,7 @@ jobs:
     name: landing site archive
     needs: version
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -315,6 +322,7 @@ jobs:
     name: SBOMs, SHA256SUMS, signatures
     needs: [version, cli, server, web, lakewriter, agents, site]
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
       id-token: write
@@ -402,6 +410,7 @@ jobs:
             runner: ubuntu-24.04-arm
             arch: ARM64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -456,6 +465,7 @@ jobs:
     name: image index, signed
     needs: [version, image]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -510,6 +520,7 @@ jobs:
     name: GitHub release
     needs: [version, binaries, merge]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     env:
@@ -636,6 +647,7 @@ jobs:
     name: helm chart, packaged and signed
     needs: version
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       id-token: write
@@ -672,6 +684,7 @@ jobs:
     name: helm chart attached to the GitHub release
     needs: [version, merge, chart, publish]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     env:

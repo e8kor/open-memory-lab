@@ -34,11 +34,14 @@ python3 -I -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.
 chmod +x "$dir/ziglang/zig"
 # cc counts zig cc as clang and passes --target=<Rust triple>, which zig
 # does not parse; the wrapper drops it and names the runner's own musl.
+# zig cc turns on UBSan when unoptimised, and the debug builds then fail to
+# link (__ubsan_handle_* undefined in aws-lc-sys); -fno-sanitize=undefined
+# keeps the objects plain C, as musl-gcc's are.
 cat > "$dir/musl-gcc" <<WRAPPER
 #!/usr/bin/env bash
 args=()
 for a in "\$@"; do case "\$a" in --target=*) ;; *) args+=("\$a") ;; esac; done
-exec "$dir/ziglang/zig" cc -target "$(uname -m)-linux-musl" "\${args[@]}"
+exec "$dir/ziglang/zig" cc -target "$(uname -m)-linux-musl" -fno-sanitize=undefined "\${args[@]}"
 WRAPPER
 chmod +x "$dir/musl-gcc"
 "$dir/musl-gcc" --version
