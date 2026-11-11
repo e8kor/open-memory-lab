@@ -496,6 +496,28 @@ mod tests {
     }
 
     #[test]
+    fn one_session_holds_at_most_its_share_and_evicts_only_its_own_sources() {
+        let sealer = Sealer::default();
+        let sources = Sources::default();
+        let other = token(&sealer, &sources, "other", "m", "flowchart LR", 1_000);
+        for i in 0..RENDER_SOURCES_MAX {
+            let _ = token(
+                &sealer,
+                &sources,
+                "busy",
+                &format!("m{i}"),
+                "flowchart LR",
+                1_000 + i as u64,
+            );
+        }
+        assert_eq!(sources.len(), RENDER_SOURCES_PER_SESSION + 1);
+        assert!(
+            open(&sealer, &sources, &other, "other", 1_001).is_some(),
+            "another session's source stays"
+        );
+    }
+
+    #[test]
     fn the_frame_policy_names_the_bundle_and_the_hashed_initialiser_alone() {
         let policy = frame_policy("https://oml.example.com/");
         assert!(policy.contains(&format!(

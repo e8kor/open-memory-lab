@@ -553,6 +553,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_supersession_is_refused_unless_the_read_names_a_kind_other_than_guardrail() {
+        assert!(refuses_supersession(None), "an API that names no kind");
+        assert!(refuses_supersession(Some("guardrail")));
+        assert!(!refuses_supersession(Some("memory")));
+        assert!(!refuses_supersession(Some("derived_fact")));
+    }
+
+    #[test]
     fn a_crafted_notice_shows_only_the_views_own_words() {
         let fields = |q: &str| Fields::of(&format!("/x?{q}").parse::<Uri>().unwrap()).unwrap();
         assert_eq!(

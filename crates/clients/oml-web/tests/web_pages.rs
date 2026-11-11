@@ -1660,7 +1660,7 @@ async fn the_render_frame_answers_under_its_own_policy_with_the_source_escaped()
 }
 
 #[tokio::test]
-async fn a_render_token_is_bound_to_its_session_and_expires() {
+async fn a_render_token_is_bound_to_its_session_and_a_forged_or_altered_one_does_not_open() {
     let rig = rig().await;
     rig.allow("bob@example.com", "bob", false).await;
     let (cookie, memory) = person_with_a_diagram(&rig).await;
@@ -1735,6 +1735,287 @@ async fn a_render_token_names_the_diagram_and_carries_no_source_so_a_large_one_d
         body.contains("the last node"),
         "the whole source is drawn from"
     );
+}
+
+#[tokio::test]
+async fn an_expired_render_token_does_not_open_through_the_route() {
+    let rig = rig().await;
+    let (cookie, memory) = person_with_a_diagram(&rig).await;
+    let token_value = cookie.split_once('=').map_or("", |(_, v)| v);
+    let csrf = oml_web_credential::csrf_token(token_value);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let id = memory.to_string();
+    let live = oml_web::render::mint(&csrf, &id, DIAGRAM, now);
+    let (status, _, _) = send(&rig.router, get(&format!("/web/render/{live}"), Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "a token minted now opens");
+    let expired = oml_web::render::mint(
+        &csrf,
+        &id,
+        DIAGRAM,
+        now - oml_web::render::RENDER_TTL_SECS - 1,
+    );
+    let (status, _, body) =
+        send(&rig.router, get(&format!("/web/render/{expired}"), Some(&cookie))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(!body.contains("flowchart"), "{body}");
+}
+
+#[tokio::test]
+async fn a_memory_whose_text_names_the_render_route_frames_nothing() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let id = agent_writes(&rig, &value, "the frame lives at /web/render/ on oml-web").await;
+    let (status, headers, page) =
+        send(&rig.router, get(&format!("/web/memory?id={id}"), Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(!page.contains("<iframe"), "{page}");
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert!(!csp.contains("frame-src"), "{csp}");
+}
+
+/// The key a memory found by `text` was written by, as the admin reads it.
+async fn author_of(rig: &Rig, text: &str) -> uuid::Uuid {
+    let page = rig
+        .app
+        .admin_search(
+            rig.boot.admin_key.value.as_str(),
+            Some(text),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("the admin reads");
+    page.items
+        .iter()
+        .find(|m| m.memory.body == text)
+        .unwrap_or_else(|| panic!("a memory reading {text}"))
+        .memory
+        .author_key_id
+}
+
+#[tokio::test]
+async fn a_supersession_runs_as_the_curator_on_its_own_claim_and_as_the_reviewer_on_any_other() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let alices = agent_writes(&rig, &value, "the release train leaves on fridays").await;
+    let (status, _, _) = act_and_follow(
+        &rig,
+        &cookie,
+        "/web/review",
+        &[
+            ("action", "verdict"),
+            ("serve_id", &format!("srv_{}", alices.simple())),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for (action, workarea) in [
+        ("grant_curation", "alice"),
+        ("grant_review", "universe"),
+        ("grant_review", "alice"),
+    ] {
+        let (status, _, body) = act(
+            &rig,
+            &admin,
+            "/web/admin",
+            &[("action", action), ("user", "boss"), ("workarea", workarea)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{action}: {body}");
+    }
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, body) = act(
+        &rig,
+        &admin,
+        "/web/admin/curate",
+        &[
+            ("action", "curate"),
+            ("source", &alices.to_string()),
+            ("text", "Releases ship weekly."),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let curate = key_named(&rig, "boss-curate").await.key_id;
+    let review = key_named(&rig, "boss-review").await.key_id;
+    let admin_key = key_named(&rig, "boss-admin").await.key_id;
+    let curated = rig
+        .app
+        .admin_search(
+            rig.boot.admin_key.value.as_str(),
+            Some("weekly"),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("the admin reads")
+        .items[0]
+        .memory
+        .memory_id;
+    // boss-review is outside the curated claim's lineage and approves it.
+    let (status, _, _) = act_and_follow(
+        &rig,
+        &admin,
+        "/web/admin/review",
+        &[
+            ("action", "verdict"),
+            ("serve_id", &format!("srv_{}", curated.simple())),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    for (target, text, writer) in [
+        (curated, "Releases ship every week.", curate),
+        (alices, "the release train leaves on thursdays", review),
+    ] {
+        let target = target.to_string();
+        let (status, _, body) = act(
+            &rig,
+            &admin,
+            "/web/admin/memory",
+            &[
+                ("action", "supersede"),
+                ("memory", &target),
+                ("expected_version", "1"),
+                ("text", text),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{text}: {body}");
+        let author = author_of(&rig, text).await;
+        assert_eq!(author, writer, "{text}");
+        assert_ne!(author, admin_key, "never the admin key");
+    }
+    assert_ne!(author_of(&rig, "the release train leaves on thursdays").await, curate);
+}
+
+#[tokio::test]
+async fn an_admin_without_a_curator_key_on_the_session_is_told_to_sign_in_again_and_nothing_is_written(
+) {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let source = agent_writes(&rig, &value, "a source to curate").await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let head = rig.head().await;
+    let (status, _, body) = act(
+        &rig,
+        &admin,
+        "/web/admin/curate",
+        &[
+            ("action", "curate"),
+            ("source", &source.to_string()),
+            ("text", "a curated copy"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(body.contains("next sign-in"), "{body}");
+    let events = rig
+        .store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap();
+    assert!(events.iter().all(|e| !e.envelope.event_type.starts_with("submission.")));
+}
+
+#[tokio::test]
+async fn a_person_who_is_not_an_admin_posts_to_neither_admin_act() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    let id = agent_writes(&rig, &value, "a row a person cannot supersede here").await;
+    let head = rig.head().await;
+    let target = id.to_string();
+    for (path, fields) in [
+        (
+            "/web/admin/memory",
+            vec![
+                ("action", "supersede"),
+                ("memory", target.as_str()),
+                ("expected_version", "1"),
+                ("text", "replaced"),
+            ],
+        ),
+        (
+            "/web/admin/curate",
+            vec![
+                ("action", "curate"),
+                ("source", target.as_str()),
+                ("text", "a copy"),
+            ],
+        ),
+    ] {
+        let (status, _, body) = act(&rig, &cookie, path, &fields).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+    }
+    let events = rig
+        .store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap();
+    assert!(events.iter().all(|e| !e.envelope.event_type.starts_with("submission.")));
+}
+
+#[tokio::test]
+async fn a_person_reaches_nothing_of_another_persons_root_on_oml_webs_pages() {
+    // The web half of open_signup_pg's isolation, where the pages now live.
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", false).await;
+    let (ada, memory) = person_with_a_diagram(&rig).await;
+    let value = laptop_key(&rig, &ada).await;
+    let held = agent_writes(&rig, &value, "Kilimanjaro budget held for review").await;
+    let promoted = agent_writes(&rig, &value, "Tanganyika vendor shortlist").await;
+    let (status, _, _) = act_and_follow(
+        &rig,
+        &ada,
+        "/web/review",
+        &[
+            ("action", "verdict"),
+            ("serve_id", &format!("srv_{}", promoted.simple())),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, _, page) = send(&rig.router, get(&format!("/web/memory?id={memory}"), Some(&ada))).await;
+    let token = frame_token(&page);
+    let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
+    for path in ["/web/memories", "/web/atlas"] {
+        let (status, _, html) = send(&rig.router, get(path, Some(&bob))).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        for secret in ["Kilimanjaro", "Tanganyika", "flowchart"] {
+            assert!(!html.contains(secret), "{path}: {html}");
+        }
+    }
+    for id in [held, promoted, memory] {
+        let (status, _, html) =
+            send(&rig.router, get(&format!("/web/memory?id={id}"), Some(&bob))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
+        assert!(!html.contains("Kilimanjaro") && !html.contains("Tanganyika"));
+    }
+    let (_, _, review) =
+        act_and_follow(&rig, &bob, "/web/review", &[("action", "review_next")]).await;
+    for secret in ["Kilimanjaro", "Tanganyika", "flowchart"] {
+        assert!(!review.contains(secret), "{review}");
+    }
+    let (status, _, frame) = send(&rig.router, get(&format!("/web/render/{token}"), Some(&bob))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!frame.contains("flowchart"));
 }
 
 #[tokio::test]
