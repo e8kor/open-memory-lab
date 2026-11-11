@@ -17,7 +17,7 @@ use oml_domain::federation::{
 };
 use oml_domain::in_progress::may_set_mode;
 use oml_domain::name::{NamedKind, Reference};
-use oml_domain::{MemoryKind, Role, event_types};
+use oml_domain::{MemoryKind, Role, WorkareaStatus, event_types};
 
 use super::{App, Caller, derived_path, require_role};
 use crate::federation::{
@@ -533,28 +533,64 @@ where
             .map(|g| g.node)
             .collect();
         let mut found: BTreeMap<Uuid, String> = BTreeMap::new();
+        // One ancestry and one subtree read per grant root: each node's
+        // effective access, in-progress root and path follow from its
+        // parent's, parent before child (ADR-0025 d1; ADR-0030 d1).
         for root in roots {
-            let readable: BTreeSet<Uuid> = self
-                .nodes_with(caller, root, Role::Reader)
-                .await?
-                .into_iter()
-                .collect();
-            if readable.is_empty() {
+            let Some(above) = self.journal.workarea_ancestry(tenant_id, root).await? else {
                 continue;
-            }
-            let in_progress = self.subtree_roots(tenant_id, root).await?;
-            let (nodes, root_paths) = self.subtree_paths(tenant_id, root).await?;
-            for node in nodes {
+            };
+            let root_ip = oml_domain::in_progress::in_progress_root_of(
+                &above
+                    .iter()
+                    .map(|w| {
+                        (
+                            w.workarea_id,
+                            w.in_progress,
+                            w.status == WorkareaStatus::Development,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            let mut walk: BTreeMap<Uuid, (Vec<Uuid>, Option<Uuid>, String)> = BTreeMap::new();
+            walk.insert(
+                root,
+                (
+                    above.iter().map(|w| w.workarea_id).collect(),
+                    root_ip,
+                    derived_path(&above),
+                ),
+            );
+            for node in self.journal.workarea_subtree(tenant_id, root).await? {
                 let id = node.workarea_id;
-                if outside.contains(&id) || !readable.contains(&id) || found.contains_key(&id) {
+                if id != root {
+                    let Some((ancestry, ip, path)) =
+                        node.parent_id.and_then(|p| walk.get(&p)).cloned()
+                    else {
+                        continue;
+                    };
+                    // A node that is not `development` is never inside, nor
+                    // is anything beneath it (ADR-0030 d3).
+                    let ip = if node.status != WorkareaStatus::Development {
+                        None
+                    } else if node.in_progress {
+                        Some(id)
+                    } else {
+                        ip
+                    };
+                    let ancestry = std::iter::once(id).chain(ancestry).collect();
+                    walk.insert(id, (ancestry, ip, format!("{path}.{}", node.name.as_str())));
+                }
+                let (ancestry, ip, path) = &walk[&id];
+                if outside.contains(&id)
+                    || found.contains_key(&id)
+                    || !caller.effective(ancestry).contains(&Role::Reader)
+                {
                     continue;
                 }
-                let inside = in_progress.get(&id).copied().flatten().is_some();
-                if is_trusted_source(node.status, inside) {
+                if is_trusted_source(node.status, ip.is_some()) {
                     found.insert(id, node.name.as_str().to_owned());
-                    if let Some(path) = root_paths.get(&id) {
-                        paths.insert(id, path.clone());
-                    }
+                    paths.insert(id, path.clone());
                 }
             }
         }

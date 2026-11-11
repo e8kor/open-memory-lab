@@ -141,7 +141,18 @@ def summarize(rows, queries_by_id, topic_of):
             sel_p.append(len(searched & holding) / len(searched))
             sel_r.append(len(searched & holding) / len(holding))
     mean = lambda v: round(sum(v) / len(v), 3) if v else None  # noqa: E731
+    # success@5 per category, as counts, so d11's one-query rule reads off it.
+    by_category = OrderedDict()
+    for r in rows:
+        q = queries_by_id[r["id"]]
+        if q["category"] == metrics.UNANSWERABLE:
+            continue
+        hit = int(metrics.success_at(r["ranked"], q["relevant"], 5))
+        c = by_category.setdefault(q["category"], [0, 0])
+        c[0] += hit
+        c[1] += 1
     return OrderedDict([
+        ("success@5_by_category", {c: f"{h}/{n}" for c, (h, n) in by_category.items()}),
         ("n", len(s5)), ("success@5", mean(s5)), ("ndcg@10", mean(nd)),
         ("selection_precision", mean(sel_p)), ("selection_recall", mean(sel_r)),
         ("unanswerable_false_hits", round(false_hits / n_un, 3) if n_un else None),

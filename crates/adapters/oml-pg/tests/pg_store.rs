@@ -9435,6 +9435,41 @@ async fn federation_overhead_at_1000_candidates() {
             quantile_of(v, 0.95) * 1e3
         );
     };
+    // d12's budget is the statistics reads': the counts over the 1,000
+    // nodes and the expired subtraction, timed alone.
+    {
+        use oml_app::ports::JournalStore as _;
+        let nodes: Vec<Uuid> = w
+            .store
+            .workarea_subtree(w.tenant, w.node("fleet"))
+            .await
+            .expect("the fleet")
+            .into_iter()
+            .map(|n| n.workarea_id)
+            .collect();
+        let scope = oml_app::federation::CountsScope {
+            nodes,
+            kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
+            expired_at: Some(i64::MAX / 2),
+            prunes: true,
+        };
+        let mut reads = Vec::new();
+        for i in 0..41 {
+            let started = std::time::Instant::now();
+            w.store
+                .reference_counts(
+                    w.tenant,
+                    &scope,
+                    ["invoice retry", "fleet note", "policy"][i % 3],
+                )
+                .await
+                .expect("the counts");
+            if i > 0 {
+                reads.push(started.elapsed().as_secs_f64());
+            }
+        }
+        report("the statistics reads alone", reads);
+    }
     report(
         "scope, federation on",
         fleet_sample(&w, &key, Some(Sources::Scope), 40).await,

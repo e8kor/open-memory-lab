@@ -480,9 +480,9 @@ sequenceDiagram
      default `bm25` among them), the answer for any searched set equals the union's ranking of R
      restricted to that set and then cut by `k` and `max_tokens`: removing a source removes its
      rows and nothing else, and every other pair of hits keeps its order. Under `Rrf` the fused
-     value of a hit depends on ranks, so a newly searched source can move another hit only by
-     placing its own rows above it in a retriever's list on their own scores, never by being
-     selected. `Cc` normalises each list by its own minimum and maximum (ADR-0052 d13), which an
+     value of a hit depends on ranks, so each retriever's list is read over R and restricted to
+     the searched nodes after fusion (as built): a hit's fused value is then the union's, and no
+     selection moves it. `Cc` normalises each list by its own minimum and maximum (ADR-0052 d13), which an
      added source can shift, so `wide` and a list on a `Cc` pipeline are refused
      `request.validation` (`details.field: /search`) until its bounds are taken over R; #205
      names that change.
@@ -505,8 +505,8 @@ sequenceDiagram
   moves it, and the eval measures it (d11).
 
 - **d8 — Explainability: the answer lists the sources it searched and why, each hit says whether
-  it came from the scope or a federated source, and a thin scope answer says that widening would
-  find more.** Under `wide` or a list the answer's `search` (ADR-0049 d6) gains `sources`:
+  it came from the scope or a federated source, and a scope answer says when a candidate is
+  richer per row than the scope.** Under `wide` or a list the answer's `search` (ADR-0049 d6) gains `sources`:
   `{mode, considered, searched: [{workarea_id, workarea_path, via, estimate, matched}],
   cut: {count, matches_at_least}}`, where `mode` is `wide` or `list`, `via` is `scope` or
   `federated`, `considered` is |C|,
@@ -523,17 +523,17 @@ sequenceDiagram
   IDF_R(w) · df_s(w) / n_s, the matches per readable row weighted by rarity, the same weights as
   E(s) over the source's own size; ρ(scope) is taken over served(scope) and `universe` is one more
   candidate with its own, small, rate. `search` gains `widen: {sources: "wide", candidates,
-  matches_at_least}` when either holds:
+  matches_at_least}` when rule 1 holds (rule 2 was dropped by the phase 1 eval):
   1. **A richer source.** Some candidate s has ρ(s) ≥ 2 · ρ(scope) and a kept word w with
      df_s(w) ≥ 2 (a single stray row never fires it); with ρ(scope) = 0 that means any such
      candidate. The factor 2 and the two-row floor are fixed, not tuned per tenant.
   2. **A thin answer.** The answer has fewer than `k` hits and some candidate has E > 0.
      *Dropped by the phase 1 eval (d11), 2026-11-10:* on scopes of 12 to 25 memories at `k`
-     10 it fired on 102 of the 121 queries the scope answered, silent on 16% where d11 asks
+     10 the hint fired on 102 of the 121 queries the scope answered, 101 of them by this rule, silent on 16% where d11 asks
      90%, while rule 1 alone was silent on 92% with 94% precision on the cross split
      ([Phase 1 as built](#phase-1-as-built-2026-11-10)).
-  A hit count alone would rarely fire, since OR-semantics BM25 returns `k` weak hits from almost
-  any populated scope; a candidate that is proportionally richer in the query's rare words is the
+  A hit count alone was expected to fire rarely, since OR-semantics BM25 returns `k` weak hits
+  from a populated scope; the eval found the opposite on scopes of 12 to 25 memories. A candidate that is proportionally richer in the query's rare words is the
   signal that the scope is the wrong place. `candidates` counts the
   candidates with E > 0 and `matches_at_least` is d4.6's lower bound taken over all of C, which an
   agent reads as, for instance, "at least 14 memories in 3 trusted workareas you read share a
@@ -660,7 +660,13 @@ left a reading open, or named a surface main does not have, the build took the r
 | d8, d11 | The widen hint fires on rule 1 alone, a candidate twice as rich per row with a word on two of its rows; rule 2, the thin answer, is dropped | d11's gate, measured: with both rules the hint was silent on 15.7% of the scope-answerable queries (90% asked) with 93.3% precision on the cross split; rule 1 alone was silent on 91.7% with 93.5% precision. Rule 2 fired on 101 of 102 firings, because a scope of 12 to 25 memories rarely holds `k` 10 matches. d11 changes the hint by amendment when it fails; the factor 2 and the floor stand |
 | d9 | `query_digest` gains `sources` only under `wide` or a list, so a `scope` recall digests as it did before | ADR-0059's members joined the digest the same way, only when sent |
 | d12 | The doctor line naming a key above 1,000 candidates reads the keys the lead met since it started, served to a tenant admin by `GET /v2/federation` | no use case lists a tenant's keys with their access, and a doctor line decides nothing |
-| d13 test 7 | On PostgreSQL the 100,000-row comparison runs by hand (`--ignored`); CI runs it at 5,000 rows; the double runs it at 100,000 | copying 100,000 rows through the postings and similar-key triggers takes minutes |
+| d13 test 7 | On PostgreSQL the 100,000-row comparison runs by hand (`--ignored`); CI runs it at 5,000 rows; the double runs it at 100,000. W is timed in two shapes: outside every grant root, and a denied child of a readable root | copying 100,000 rows through the postings and similar-key triggers takes minutes |
+| d7, review M1 | A form no row of R holds scores nothing on the scan, as on the postings, so a key's own held row ranks alike on both | the scan had scored such a form at the largest IDF, raising unreviewed text above reviewed rows, while the postings left it out |
+| d7.2, review M4 | Under `Rrf` the lists are read over R and restricted to the searched nodes after fusion; `Cc` stays refused | a fused value depends on ranks, which a selected source moved; reading over R costs the union's read on those pipelines |
+| d7.2, review m1 | Under a pruning read, the rescore depth `k` × `RESCORE_DEPTH` is taken over the searched rows, so a row past that depth among the union's could in principle enter a narrower search's answer | test 6 holds the law at `k` 1, 3, 10 and 100 under limits whose selections cross the budget; generating over R is the fix should a measurement find it binding |
+| Who gains, d12 | The candidate-count report is `oml-pg`'s `federation_candidates` example, one read of every live key through the core's own C; the measurement at 1,000 candidates is `pg_store`'s `federation_overhead_at_1000_candidates` | this lane has no access to the public server's database, so the live distribution is the operator's run of the report; `max_sources` stays 8 until it is read |
+| d11 | The cross split re-scopes the existing labelled queries to a topic holding none of their answers; no new cross-team queries were written | it measures what reach buys over the union, not cross-team phrasing; new labelled queries are #205's follow-up |
+| d13 | Tests 9 to 15 are not built | they hold descriptors, kind-3 postings, ontology overlap and generated questions, phases 2 and 3, none of which phase 1 builds |
 
 The eval (d11) is `eval/recall/federated.sh`; its numbers are in [the recall report](https://github.com/e8kor/open-memory-lab/blob/main/eval/recall/REPORT.md#federated-recall).
 
@@ -754,7 +760,7 @@ The eval (d11) is `eval/recall/federated.sh`; its numbers are in [the recall rep
 | d7 | **Reserve part of `k` for the scope's hits** | A second ranking rule beside the one ranking; d11's gate fails a mode that crowds scope-answerable queries out. |
 | d8 | **No hint; tell agents always to pass `wide`** | The default would then mean nothing, and every agent would pay `wide`'s search, not only its statistics read. |
 | d8 | **A hint on raw counts of the rarest word** | A raw count carries the size bias E(s) removes, so `universe` or any large candidate fires it on almost every recall and agents learn to ignore it; rates per readable row compare like with like. |
-| d8 | **The hint only on fewer than `k` hits** | Under OR-semantics BM25 a populated scope returns `k` weak hits for almost any query, so the hint would stay silent exactly when the scope answered poorly. |
+| d8 | **The hint only on fewer than `k` hits** | Under OR-semantics BM25 a populated scope returns `k` weak hits for almost any query, so the hint would stay silent exactly when the scope answered poorly. The phase 1 eval reversed the premise on small scopes (fewer than `k` hits on 108 of 121 queries); the rule was dropped (Phase 1 as built). |
 | d12 | **Cache each key's candidate set** | Effective access is cached nowhere ([workareas](../architecture/workareas.md#grants-bind-to-node-ids)); a revoked grant must apply to the next recall. |
 | d12 | **Refuse a recall above a candidate count** | A second, hidden reach limit beside access; the doctor line and the measured budget come first. |
 
