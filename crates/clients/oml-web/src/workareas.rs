@@ -336,6 +336,36 @@ impl Credentials {
             same: side.transitions() == Capacity::Review,
         }
     }
+
+    /// Whether transitions run as `credential`, so a read made with it can
+    /// carry their offers.
+    pub(crate) fn transitions_as(&self, credential: &str) -> bool {
+        self.transitions == credential
+    }
+}
+
+impl NodeOffers {
+    /// One workarea's offers from the transitions capacity's answer and the
+    /// mode capacity's, read apart.
+    pub(crate) fn of(
+        transitions: WorkareaOffers,
+        mode: Result<WorkareaOffers, oml_sdk::Error>,
+    ) -> Self {
+        Self { transitions, mode }
+    }
+}
+
+/// One workarea's offers for the mode and the commit, as the mode
+/// capacity's key sees them.
+pub(crate) async fn mode_offers(
+    api: &Api,
+    credentials: &Credentials,
+    calls: &PageCalls,
+    node: &str,
+) -> Result<WorkareaOffers, oml_sdk::Error> {
+    let ids = calls.next_ids();
+    api.workarea_offers(&call(&credentials.mode, &ids), node)
+        .await
 }
 
 /// One workarea's offers: one call where one key takes every act, two

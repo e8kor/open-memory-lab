@@ -34,7 +34,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// holds the methods to it.
 pub const OPERATIONS: [&str; 40] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
-    "whoami GET /v2/whoami resp:Whoami",
+    "whoami GET /v2/whoami query:person resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workarea resp:GuardrailSet",
     "getWorkareaTree GET /v2/workareas/{workarea}/tree query:limit,cursor resp:WorkareaPage",
     "readyz GET /readyz resp:Ready",
@@ -46,7 +46,7 @@ pub const OPERATIONS: [&str; 40] = [
     "listMemories GET /v1/memories query:with_own,include_text,author,workarea,state,origin_kinds,limit,cursor resp:MemoryPage",
     "recallMemories POST /v1/memories/recall body:query,k,workarea,kinds,include_text,include_unreviewed,origin_kinds resp:RecallResponse",
     "adminSearchMemories POST /v2/admin/memories/search body:query,workarea,state,origin_kind,author,limit,cursor resp:AdminMemoryPage",
-    "getWorkareaTree GET /v2/workareas/{workarea}/tree query:counts resp:WorkareaCounts",
+    "getWorkareaTree GET /v2/workareas/{workarea}/tree query:counts,offers resp:WorkareaCounts",
     "listKeys GET /v2/keys query:user,limit,cursor resp:KeyPage",
     "createWorkarea POST /v2/workareas body:name,parent resp:Workarea",
     "reviewNext POST /v2/review/next resp:Serve",
@@ -699,6 +699,10 @@ pub struct CountedNode {
 pub struct WorkareaCounts {
     pub items: Vec<CountedNode>,
     pub truncated: bool,
+    /// The scope's offers, asked with `offers=true` (#286); absent from
+    /// an API before v0.7.1 and when not asked.
+    #[serde(default)]
+    pub offers: Option<WorkareaOffers>,
 }
 
 /// `POST /v2/review/next`: one served item, claimed by the reviewer key.
@@ -1170,12 +1174,15 @@ impl<T: Transport> Client<T> {
         self.get(None, "/readyz".to_owned()).await
     }
 
-    /// `GET /v2/whoami`.
+    /// `GET /v2/whoami?person=false`: the key's record without the person
+    /// block, which [`Whoami`] does not read, so the API reads none of it
+    /// (#286); an API before v0.7.1 ignores the flag and serves it.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
     pub async fn whoami(&self, call: &Call<'_>) -> Result<Whoami, Error> {
-        self.get(Some(call), "/v2/whoami".to_owned()).await
+        self.get(Some(call), "/v2/whoami?person=false".to_owned())
+            .await
     }
 
     /// `GET /v1/guardrails`, at `workarea` (an id or a name) or at the key's
@@ -1403,7 +1410,8 @@ impl<T: Transport> Client<T> {
     }
 
     /// `GET /v2/workareas/{workarea}/tree?counts=true`: the subtree with
-    /// each node's rows counted by state.
+    /// each node's rows counted by state, and with `offers` the scope's
+    /// offers to the same caller, read beside them (#286).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -1411,10 +1419,12 @@ impl<T: Transport> Client<T> {
         &self,
         call: &Call<'_>,
         workarea: &str,
+        offers: bool,
     ) -> Result<WorkareaCounts, Error> {
+        let asked = if offers { "&offers=true" } else { "" };
         self.get(
             Some(call),
-            format!("/v2/workareas/{}/tree?counts=true", encode(workarea)),
+            format!("/v2/workareas/{}/tree?counts=true{asked}", encode(workarea)),
         )
         .await
     }
@@ -2098,7 +2108,7 @@ mod tests {
                     )
                     .await,
             ),
-            decodes(&client.workarea_counts(&CALL, "alice").await),
+            decodes(&client.workarea_counts(&CALL, "alice", true).await),
             decodes(&client.list_keys(&CALL, Some("alice"), 200, None).await),
             decodes(
                 &client
@@ -2208,6 +2218,8 @@ mod tests {
         }
         assert!(!seen[0].headers().contains_key(AUTHORIZATION));
         assert!(!seen[4].headers().contains_key(AUTHORIZATION));
+        // The record alone: no client of this SDK reads the person block.
+        assert_eq!(seen[1].uri(), "/v2/whoami?person=false");
         assert_eq!(seen[2].uri(), "/v1/guardrails?workarea=alice.proj");
         assert_eq!(
             seen[3].uri(),
@@ -2236,7 +2248,10 @@ mod tests {
         for i in [11, 12] {
             assert!(!seen[i].headers().contains_key(IDEMPOTENCY_KEY), "{i}");
         }
-        assert_eq!(seen[13].uri(), "/v2/workareas/alice/tree?counts=true");
+        assert_eq!(
+            seen[13].uri(),
+            "/v2/workareas/alice/tree?counts=true&offers=true"
+        );
         assert_eq!(seen[15].headers()[IDEMPOTENCY_KEY], "idem-4");
         assert_eq!(
             std::str::from_utf8(seen[15].body()).unwrap(),

@@ -48,6 +48,7 @@ class Whoami:
             profile (None | Unset | WhoamiProfileType1 | WhoamiProfileType2Type1 | WhoamiProfileType3Type1): The key's
                 profile; null for none (ADR-0030 d8).
             person (None | Unset | WhoamiPerson): The person the key's user root names; null for a tenant key (ADR-0070 d5).
+                Absent with person=false (#286).
     """
 
     key_id: str

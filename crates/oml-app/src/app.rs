@@ -24,7 +24,7 @@ pub use pages::{
 };
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
-pub use signup::{DRAWS_MAX, Person, SignupState, StartStatus, UserDisabled, UserRow};
+pub use signup::{DRAWS_MAX, Person, PersonAsk, SignupState, StartStatus, UserDisabled, UserRow};
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
 pub use widen::{
@@ -3754,21 +3754,6 @@ where
     /// store read after the two every request makes (ADR-0039 d15).
     pub async fn whoami(&self, api_key: &str) -> Result<Whoami, AppError> {
         let (key, access) = self.key_and_access(api_key).await?;
-        self.whoami_of_key(key, access).await
-    }
-
-    /// [`Self::whoami`] for whichever credential presented the key: a key
-    /// value, a connection's caller, or a session key's caller from a
-    /// capacity credential (ADR-0070 d5).
-    pub async fn whoami_of(&self, bearer: Bearer<'_>) -> Result<Whoami, AppError> {
-        let key = match bearer {
-            Bearer::Key(value) => return self.whoami(value).await,
-            Bearer::Connection(caller) | Bearer::Session(caller) => {
-                self.authenticate_bearer(bearer).await?;
-                caller.key.clone()
-            }
-        };
-        let access = self.access_of(&key).await?;
         self.whoami_of_key(key, access).await
     }
 
