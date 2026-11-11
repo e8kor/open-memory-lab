@@ -2068,6 +2068,115 @@ async fn the_lead_answers_the_old_guardrails_url_with_a_redirect_to_its_own_path
 }
 
 #[tokio::test]
+async fn the_lead_answers_the_workareas_view_and_its_acts_with_a_redirect_to_their_own_paths() {
+    // oml-web serves the Workareas view and runs its acts at
+    // /web/workareas and /web/admin/workareas (ADR-0070 d7 (b) as amended):
+    // the lead sends the old ?view= forms there, carrying nothing from the
+    // request, and runs none of the old acts.
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for (old, cookie, new) in [
+        (
+            "/web?view=workarea",
+            Some(cookie.as_str()),
+            "/web/workareas",
+        ),
+        (
+            "/web?view=workarea&workarea=alice&op=mode:in_progress",
+            Some(cookie.as_str()),
+            "/web/workareas",
+        ),
+        ("/web?view=workarea", None, "/web/workareas"),
+        (
+            "/web/admin?view=workarea",
+            Some(boss.as_str()),
+            "/web/admin/workareas",
+        ),
+        ("/web/admin?view=workarea", None, "/web/admin/workareas"),
+    ] {
+        let (status, headers, page) = send(&rig.router, get(old, cookie)).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{old}: {page}");
+        assert_eq!(headers[header::LOCATION], new, "{old}");
+    }
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web",
+        &[("action", "create_workarea"), ("name", "proj")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let root = key_named(&rig, "alice-web").await.user.expect("a root");
+    let proj = rig
+        .store
+        .workarea_children(rig.boot.tenant_id, root)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|w| w.name.as_str() == "proj")
+        .expect("proj")
+        .workarea_id;
+    for (cookie, path, fields, new) in [
+        (
+            &cookie,
+            "/web",
+            [
+                ("action", "workarea_mode"),
+                ("workarea", "alice.proj"),
+                ("mode", "in_progress"),
+            ],
+            "/web/workareas",
+        ),
+        (
+            &cookie,
+            "/web",
+            [
+                ("action", "workarea_transition"),
+                ("workarea", "alice.proj"),
+                ("to", "committed"),
+            ],
+            "/web/workareas",
+        ),
+        (
+            &boss,
+            "/web/admin",
+            [
+                ("action", "workarea_transition"),
+                ("workarea", "alice.proj"),
+                ("to", "committed"),
+            ],
+            "/web/admin/workareas",
+        ),
+    ] {
+        let (status, headers, page) = act(&rig, cookie, path, &fields).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{path}: {page}");
+        assert_eq!(headers[header::LOCATION], new, "{path}");
+    }
+    let node = rig
+        .store
+        .workarea(rig.boot.tenant_id, proj)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!node.in_progress, "the lead ran no act");
+    assert!(
+        rig.store
+            .pending_transitions(rig.boot.tenant_id, proj)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the lead proposed nothing"
+    );
+    // The lead serves no page at the moved paths.
+    for path in ["/web/workareas", "/web/admin/workareas"] {
+        let (status, _, _) = send(&rig.router, get(path, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
+}
+
+#[tokio::test]
 async fn a_sign_in_form_that_repeats_a_field_is_refused() {
     let rig = rig().await;
     for fields in [
@@ -2857,18 +2966,7 @@ async fn the_user_page_never_lists_another_authors_held_row_outside_in_progress_
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-    let (status, _, page) = act(
-        &rig,
-        &alice,
-        "/web",
-        &[
-            ("action", "workarea_mode"),
-            ("workarea", "alice.proj"),
-            ("mode", "in_progress"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    put_in_progress(&rig, &alice, "alice.proj").await;
     rig.app
         .submit_memory(
             helper.value.as_str(),
@@ -3143,6 +3241,12 @@ async fn the_atlas_view_is_a_treemap_drawn_on_the_server_with_no_script() {
         "{zoomed}"
     );
     assert!(zoomed.contains("<select name=\"op\""), "{zoomed}");
+    // Apply asks the Workareas view, which oml-web serves at its own path
+    // (ADR-0070 d7 (b)).
+    assert!(
+        zoomed.contains(r#"<form class="row act" method="get" action="/web/workareas">"#),
+        "{zoomed}"
+    );
     // The list links to the Atlas of the same page, filters kept.
     let (_, _, list) = send(
         &rig.router,
@@ -3282,156 +3386,30 @@ async fn the_filters_narrow_the_list() {
     assert_eq!(ids(&page), set(&[by_phone]));
 }
 
-#[tokio::test]
-async fn a_workarea_act_is_confirmed_before_it_runs() {
-    let rig = rig().await;
-    rig.allow("boss@example.com", "boss", true).await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (status, _, _) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[("action", "create_workarea"), ("name", "proj")],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    let root = key_named(&rig, "alice-web").await.user.expect("a root");
-    let proj = rig
-        .store
-        .workarea_children(rig.boot.tenant_id, root)
+/// Puts `workarea` in progress as the signed-in person's reviewer key,
+/// through the app: the act is the Workareas view's, which `oml-web` runs
+/// now (ADR-0070 d7 (b)); these tests read what it changes.
+async fn put_in_progress(rig: &Rig, cookie: &str, workarea: &str) {
+    let token = cookie.split_once('=').expect("a cookie").1;
+    let session = rig
+        .app
+        .web_session(token)
         .await
-        .unwrap()
-        .into_iter()
-        .find(|w| w.name.as_str() == "proj")
-        .expect("proj")
-        .workarea_id;
-    let (status, _, _) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "create_workarea"),
-            ("name", "child"),
-            ("parent", "alice.proj"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    let (_, _, page) = send(&rig.router, get("/web?view=workarea", Some(&cookie))).await;
-    assert!(page.contains("universe.alice.proj.child"), "{page}");
-    assert!(page.contains(">alice.proj.child<"), "{page}");
-    assert!(!page.contains(">alice.child<"), "{page}");
-    assert!(page.contains("<select name=\"op\""), "{page}");
-    assert!(page.contains("value=\"propose:committed\""), "{page}");
-    assert!(page.contains("value=\"mode:in_progress\""), "{page}");
-    assert!(!page.contains("value=\"propose:validated\""), "{page}");
-    assert!(!page.contains("value=\"mode:standard\""), "{page}");
-    // Apply is a GET that changes nothing and asks again.
-    let (status, _, confirm) = send(
-        &rig.router,
-        get(
-            &format!("/web?view=workarea&workarea={proj}&op=mode:in_progress"),
-            Some(&cookie),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{confirm}");
-    let node = || async {
-        rig.store
-            .workarea(rig.boot.tenant_id, proj)
-            .await
-            .unwrap()
-            .unwrap()
-    };
-    assert!(
-        !node().await.in_progress,
-        "nothing ran before the confirmation"
-    );
-    assert!(confirm.contains("value=\"workarea_mode\""), "{confirm}");
-    assert!(confirm.contains("name=\"csrf_token\""), "{confirm}");
-    let (status, _, _) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "workarea_mode"),
-            ("workarea", &proj.to_string()),
-            ("mode", "in_progress"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert!(node().await.in_progress);
-    // An act the key may not take now is refused by name at the
-    // confirmation, with no form to run it.
-    let (status, _, refused) = send(
-        &rig.router,
-        get(
-            &format!("/web?view=workarea&workarea={proj}&op=propose:committed"),
-            Some(&cookie),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{refused}");
-    assert!(
-        refused.contains("workarea.in_progress_refused"),
-        "{refused}"
-    );
-    assert!(
-        !refused.contains("value=\"workarea_transition\""),
-        "{refused}"
-    );
-    // Commit, then propose committed through the dropdown's action.
-    let (status, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "workarea_mode"),
-            ("workarea", &proj.to_string()),
-            ("mode", "standard"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-    let (status, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "workarea_transition"),
-            ("workarea", &proj.to_string()),
-            ("to", "committed"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-    // The proposer is never offered the ratification; the admin is.
-    let (_, _, page) = send(&rig.router, get("/web?view=workarea", Some(&cookie))).await;
-    assert!(!page.contains("value=\"ratify:"), "{page}");
-    assert!(page.contains("proposed: committed"), "{page}");
-    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    let (status, _, page) = send(&rig.router, get("/web/admin?view=workarea", Some(&boss))).await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    let marker = "value=\"ratify:";
-    let at = page
-        .find(marker)
-        .expect("the admin is offered the ratification")
-        + marker.len();
-    let transition = page[at..at + 36].to_owned();
-    let (status, _, page) = act(
-        &rig,
-        &boss,
-        "/web/admin",
-        &[
-            ("action", "workarea_ratify"),
-            ("workarea", &proj.to_string()),
-            ("transition", &transition),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-    assert_eq!(node().await.status.as_str(), "committed");
+        .expect("a read")
+        .expect("a live session");
+    let review = rig
+        .app
+        .web_caller(&session, oml_app::app::Capacity::Review)
+        .await
+        .expect("the person's reviewer key");
+    rig.app
+        .set_workarea_mode(
+            oml_app::types::Bearer::Session(&review),
+            oml_app::domain::name::Reference::parse(workarea).expect("a reference"),
+            oml_app::domain::in_progress::WorkareaMode::InProgress,
+        )
+        .await
+        .expect("the reviewer key puts it in progress");
 }
 
 async fn agent_writes_in(rig: &Rig, value: &str, body: &str, workarea: &str) -> uuid::Uuid {
@@ -3463,178 +3441,6 @@ async fn agent_writes_in(rig: &Rig, value: &str, body: &str, workarea: &str) -> 
         .expect("the agent writes")
         .receipt
         .memory_id
-}
-
-/// `uv run --with playwright`, when uv and a cached Playwright are here.
-fn playwright() -> Option<std::process::Command> {
-    let probe = std::process::Command::new("uv")
-        .args([
-            "run",
-            "--quiet",
-            "--with",
-            "playwright",
-            "python",
-            "-c",
-            "import playwright",
-        ])
-        .output();
-    match probe {
-        Ok(o) if o.status.success() => {
-            let mut command = std::process::Command::new("uv");
-            command.args(["run", "--quiet", "--with", "playwright", "python", "-I"]);
-            Some(command)
-        }
-        _ => None,
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium() {
-    let Some(mut command) = playwright() else {
-        println!("did not run: no Playwright (uv run --with playwright)");
-        return;
-    };
-    let rig = rig().await;
-    rig.allow("boss@example.com", "boss", true).await;
-    let (cookie, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
-    for name in ["payments", "research"] {
-        let (status, _, _) = act(
-            &rig,
-            &cookie,
-            "/web",
-            &[("action", "create_workarea"), ("name", name)],
-        )
-        .await;
-        assert_eq!(status, StatusCode::SEE_OTHER);
-    }
-    let first = agent_writes(
-        &rig,
-        &agent,
-        "The deploy window is Tuesday 14:00 to 16:00 CET",
-    )
-    .await;
-    let _ = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
-    let _ = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "verdict"),
-            ("serve_id", &format!("srv_{}", first.simple())),
-            ("verdict", "approve"),
-        ],
-    )
-    .await;
-    for (body, workarea) in [
-        (
-            "Checkout calls the payments service with an idempotency key per order",
-            "alice.payments",
-        ),
-        (
-            "Refunds above 500 EUR need a second approver",
-            "alice.payments",
-        ),
-        (
-            "The ledger settles at 02:00 UTC; retries wait for it",
-            "alice.payments",
-        ),
-        (
-            "Benchmarks: hybrid recall 0.97 success at 5 on the eval set",
-            "alice.research",
-        ),
-        (
-            "The reranker stays off until it fits the latency budget",
-            "alice.research",
-        ),
-        ("Staging mirrors production schema weekly", "alice"),
-        ("The on-call rotation changes on Mondays", "alice"),
-    ] {
-        agent_writes_in(&rig, &agent, body, workarea).await;
-    }
-    let (status, _, _) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "workarea_mode"),
-            ("workarea", "alice.research"),
-            ("mode", "in_progress"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    let value = |c: &str| c.split_once('=').expect("a cookie").1.to_owned();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("a free port");
-    let port = listener.local_addr().expect("an address").port();
-    let router = rig.router.clone();
-    tokio::spawn(async move { axum::serve(listener, router).await });
-    let script = format!("{}/tests/chromium/atlas.py", env!("CARGO_MANIFEST_DIR"));
-    let shots = std::env::var("OML_WEB_SCREENSHOTS").unwrap_or_default();
-    command.args([
-        script.as_str(),
-        "--port",
-        &port.to_string(),
-        "--issuer",
-        ISSUER,
-        "--cookie",
-        &value(&cookie),
-        "--admin-cookie",
-        &value(&boss),
-        "--shots",
-        &shots,
-    ]);
-    let output = tokio::task::spawn_blocking(move || command.output())
-        .await
-        .expect("the runner joins")
-        .expect("Playwright runs");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "{stdout}\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let report: Value = serde_json::from_str(stdout.trim()).expect("one JSON report");
-    if let Some(why) = report["did_not_run"].as_str() {
-        println!("did not run: {why}");
-        return;
-    }
-    assert_eq!(report["foreign"], json!([]), "no request left the origin");
-    for who in ["person", "admin"] {
-        for theme in ["dark", "light"] {
-            for width in [1280, 375] {
-                let tag = format!("{who}-{theme}-{width}");
-                let at = |k: &str| report[format!("{tag}_{k}")].clone();
-                assert!(at("cards").as_u64().unwrap() >= 8, "{tag}: {report}");
-                assert_eq!(at("folded"), json!(true), "{tag}: compact by default");
-                assert_eq!(at("scripts"), json!(0), "{tag}: the Atlas runs no script");
-                assert!(at("regions").as_u64().unwrap() >= 1, "{tag}: {report}");
-                assert!(
-                    at("rows").as_u64().unwrap() >= at("regions").as_u64().unwrap(),
-                    "{tag}: the table twin holds every drawn region"
-                );
-                assert_eq!(
-                    at("hscroll"),
-                    json!(false),
-                    "{tag}: no page scroll sideways"
-                );
-                assert!(
-                    at("zoomed_url")
-                        .as_str()
-                        .is_some_and(|u| u.starts_with(ISSUER) && u.contains("workarea=")),
-                    "{tag}: a region zooms by a plain link: {report}"
-                );
-            }
-        }
-        assert!(report[format!("{who}-dark-1280_selects")].as_u64().unwrap() >= 1);
-    }
-    for line in report["console"].as_array().unwrap() {
-        let line = line.as_str().unwrap();
-        assert!(!line.contains("Content Security Policy"), "{line}");
-        assert!(!line.starts_with("pageerror"), "{line}");
-    }
 }
 
 fn region<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
@@ -3689,18 +3495,7 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
         .await
         .expect("a tenant agent on alice's root");
     agent_writes(&rig, &helper.value, "helper held outside").await;
-    let (status, _, _) = act(
-        &rig,
-        &alice,
-        "/web",
-        &[
-            ("action", "workarea_mode"),
-            ("workarea", "alice.proj"),
-            ("mode", "in_progress"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
+    put_in_progress(&rig, &alice, "alice.proj").await;
     agent_writes_in(&rig, &helper.value, "helper held inside", "alice.proj").await;
 
     let (status, _, value) = json_of(&rig, "/web/data/memories?view=memories", &alice).await;

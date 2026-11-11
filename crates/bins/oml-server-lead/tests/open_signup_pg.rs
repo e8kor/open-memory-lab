@@ -17,21 +17,25 @@ use tower::ServiceExt as _;
 use oml_app::domain::name::{Name, NamedKind};
 use oml_app::domain::oauth::Issuer;
 use oml_app::domain::signup::{Quotas, SignupMode};
-use oml_app::domain::web::csrf_token;
 use oml_app::domain::web::{GitHubEmail, Provider};
+use oml_app::domain::web::{capacity_credential, csrf_token};
 use oml_app::doubles::MemSignIn;
 use oml_app::ed25519_dalek::SigningKey;
 use oml_app::ports::{IdGen as _, JournalStore as _};
 use oml_app::types::{BootstrapRequest, BootstrapResult, ProviderAnswer, SignupPolicy};
 use oml_fetch::PinnedFetcher;
 use oml_pg::PgStore;
-use oml_server_lead::{OsIds, lead_app, start_lead_with};
+use oml_server_lead::{OsIds, lead_app, start_lead_with, start_lead_with_models};
 use oml_test_pg::{DB_N, drop_db, mint_database, owner_url, run_tag, serving_url};
+use oml_transport_http::session::WebClient;
 use oml_transport_http::traffic::Traffic;
 use oml_transport_http::web::start::SIGN_UP_COOKIE;
 use oml_transport_http::web::{SESSION_COOKIE, SIGN_IN_COOKIE, WebPages};
 
 const ISSUER: &str = "https://oml.example.com";
+/// `oml-web`'s client identity, which the lead accepts a capacity
+/// credential from (ADR-0070 d2).
+const WEB_CLIENT_SECRET: &str = "signup-web-client-secret-0123456789";
 
 fn fresh_name() -> String {
     format!(
@@ -149,7 +153,7 @@ async fn rig(open: Option<fn(SignupPolicy) -> SignupPolicy>) -> Option<Rig> {
     if let Some(open) = open {
         pages = pages.with_signup(open(policy(boot.tenant_id)));
     }
-    let router = start_lead_with(
+    let router = start_lead_with_models(
         &store,
         key.clone(),
         Some(Issuer::parse(ISSUER).expect("a public origin")),
@@ -159,6 +163,8 @@ async fn rig(open: Option<fn(SignupPolicy) -> SignupPolicy>) -> Option<Rig> {
         oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
         None,
         None,
+        None,
+        WebClient::new(Some(WEB_CLIENT_SECRET.to_owned()), None),
     )
     .await
     .expect("the lead starts")
@@ -548,21 +554,34 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
     assert_eq!(status, StatusCode::ACCEPTED, "{held}");
     let ada_user = rig_user(&rig, 21).await;
     let scratch = format!("{ada_user}.scratch");
-    for body in [
-        "action=create_workarea&name=scratch".to_owned(),
-        format!("action=workarea_mode&workarea={scratch}&mode=in_progress"),
-    ] {
-        let (status, _, html) = send(
-            &rig.router,
-            form(
-                "/web",
-                Some(&ada),
-                &format!("{body}&csrf_token={}", csrf(&ada)),
+    let (status, _, html) = send(
+        &rig.router,
+        form(
+            "/web",
+            Some(&ada),
+            &format!(
+                "action=create_workarea&name=scratch&csrf_token={}",
+                csrf(&ada)
             ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{body}: {html}");
-    }
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{html}");
+    // The mode is the Workareas view's act, which oml-web runs as the
+    // person's reviewer key through the API (ADR-0070 d7 (b)).
+    let review = capacity_credential(ada.split_once('=').expect("a cookie").1, "review");
+    let mut request = api(
+        "POST",
+        &format!("/v2/workareas/{scratch}/mode"),
+        &review,
+        Some(json!({"mode": "in_progress"})),
+    );
+    request.headers_mut().insert(
+        "oml-web-client",
+        WEB_CLIENT_SECRET.parse().expect("a header value"),
+    );
+    let (status, _, html) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::OK, "{html}");
     let (status, in_progress) =
         {
             let (status, _, body) = json(

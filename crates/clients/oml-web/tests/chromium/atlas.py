@@ -1,7 +1,8 @@
-"""The Memories list and the Atlas in a real Chromium, driven by Playwright
+"""The Memories list, the Atlas and the Workareas view in a real Chromium, driven by Playwright
 (ADR-0045 d22, d25, d27, d32).
 
-Run by the Rust test `the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium`,
+Run by the Rust test `the_atlas_treemap_draws_and_zooms_with_no_script_in_chromium`
+(crates/clients/oml-web/tests/web_pages.rs),
 which serves the pages on a loopback port and passes it here. The browser
 believes it is on the issuer's https origin: every request to the issuer is
 answered by the loopback server, so the policy the server sends is the one
@@ -125,7 +126,7 @@ def main() -> int:
                         shot("atlas-zoomed")
 
                     if theme == "dark":
-                        page.goto(f"{issuer}{base}?view=workarea")
+                        page.goto(f"{issuer}{base}/workareas")
                         out[f"{tag}_selects"] = page.locator("select[name=op]").count()
                         shot("workareas")
                     ctx.close()

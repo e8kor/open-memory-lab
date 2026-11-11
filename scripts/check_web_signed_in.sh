@@ -9,7 +9,12 @@
 #   1. POST /web/sign-in for GitHub, from the issuer's origin, next the page;
 #   2. the provider's callback with the sealed state, which opens a session;
 #   3. GET /web/guardrails with that session: 200 and the view's content;
-#   4. GET /web?view=guardrails: the lead's 303 to /web/guardrails.
+#   4. GET /web?view=guardrails: the lead's 303 to /web/guardrails;
+#   5. GET /web/workareas: 200 and the Workareas view, from oml-web;
+#   6. one act end to end: the lead creates <user>.proj, oml-web confirms
+#      putting it in progress, and the confirmation's form, sent twice,
+#      runs the act once through the API and lands back on the view;
+#   7. GET /web?view=workarea: the lead's 303 to /web/workareas.
 #
 # Usage: scripts/check_web_signed_in.sh <origin the router answers> <oauth.issuer>
 set -euo pipefail
@@ -55,4 +60,48 @@ code="$(curl -s -o /dev/null -D "$work/old" -w '%{http_code}' \
 location="$(header "$work/old" location)"
 [ "$code $location" = "303 /web/guardrails" ] || fail "GET /web?view=guardrails answered '$code $location'"
 
-echo "signed-in page: $origin served /web/guardrails to a signed-in session through oml-web, and the old URL redirects there"
+jar="Cookie: __Host-oml_session=$session"
+field() { # <file> <name>: the value of the first input named so
+    grep -o "name=\"$2\" value=\"[^\"]*\"" "$1" | head -1 | sed -e 's/.*value="//' -e 's/"$//'
+}
+
+code="$(curl -s -o "$work/workareas.html" -w '%{http_code}' -H "$jar" "$origin/web/workareas")"
+[ "$code" = 200 ] || fail "GET /web/workareas answered $code: $(head -c 400 "$work/workareas.html")"
+grep -q '<h1>Workareas</h1>' "$work/workareas.html" || fail "GET /web/workareas did not draw the Workareas view"
+grep -q '<a href="/web/workareas" class="on"' "$work/workareas.html" || fail "the Workareas tab is not the current one"
+user="$(sed -n 's/.*Under <code>universe\.\([^<]*\)<\/code>.*/\1/p' "$work/workareas.html")"
+[ -n "$user" ] || fail "the Workareas view names no user root"
+csrf="$(field "$work/workareas.html" csrf_token)"
+[ -n "$csrf" ] || fail "the Workareas view carries no csrf_token"
+
+code="$(curl -s -o /dev/null -D "$work/create" -w '%{http_code}' -X POST -H "$jar" \
+    -H "Origin: $issuer" -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "action=create_workarea&name=proj&csrf_token=$csrf" "$origin/web")"
+location="$(header "$work/create" location)"
+[ "$code $location" = "303 /web/workareas?done=created" ] || fail "POST /web create_workarea answered '$code $location'"
+
+code="$(curl -s -o "$work/confirm.html" -w '%{http_code}' -H "$jar" \
+    "$origin/web/workareas?workarea=$user.proj&op=mode:in_progress")"
+[ "$code" = 200 ] || fail "the confirmation answered $code: $(head -c 400 "$work/confirm.html")"
+grep -q 'value="workarea_mode"' "$work/confirm.html" || fail "the confirmation carries no workarea_mode form: $(head -c 400 "$work/confirm.html")"
+nonce="$(field "$work/confirm.html" nonce)"
+[ -n "$nonce" ] || fail "the confirmation's form carries no nonce"
+for attempt in first resubmitted; do
+    code="$(curl -s -o "$work/act.html" -D "$work/act" -w '%{http_code}' -X POST -H "$jar" \
+        -H "Origin: $issuer" -H 'Content-Type: application/x-www-form-urlencoded' \
+        --data "action=workarea_mode&workarea=$user.proj&mode=in_progress&csrf_token=$csrf&nonce=$nonce" \
+        "$origin/web/workareas")"
+    location="$(header "$work/act" location)"
+    [ "$code $location" = "303 /web/workareas?done=mode+set" ] \
+        || fail "the $attempt act answered '$code $location': $(head -c 400 "$work/act.html")"
+done
+code="$(curl -s -o "$work/after.html" -w '%{http_code}' -H "$jar" "$origin/web/workareas?done=mode+set")"
+[ "$code" = 200 ] || fail "GET /web/workareas after the act answered $code"
+grep -q "universe\.$user\.proj</td><td class=\"mono\">$user\.proj</td><td>development</td><td>in progress</td>" "$work/after.html" \
+    || fail "the act did not put $user.proj in progress: $(head -c 600 "$work/after.html")"
+
+code="$(curl -s -o /dev/null -D "$work/old-workareas" -w '%{http_code}' -H "$jar" "$origin/web?view=workarea")"
+location="$(header "$work/old-workareas" location)"
+[ "$code $location" = "303 /web/workareas" ] || fail "GET /web?view=workarea answered '$code $location'"
+
+echo "signed-in page: $origin served /web/guardrails and /web/workareas to a signed-in session through oml-web, ran one act through the API, and the old URLs redirect there"

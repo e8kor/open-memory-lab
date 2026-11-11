@@ -10052,6 +10052,15 @@ async fn the_changed_operations_serve_the_merged_listing_counts_offers_and_named
     assert_eq!(offers["mode"], "standard");
     assert!(offers["transitions"].is_array(), "{offers}");
     assert!(offers["commit"]["offered"].is_boolean(), "{offers}");
+    // A standard workarea is not committed: the act not offered names the
+    // refusal its verb would answer (ADR-0045 d28).
+    let refused = offers["refused"].as_array().expect("refused acts");
+    assert!(
+        refused
+            .iter()
+            .any(|r| r["op"] == "mode" && r["to"] == "standard" && r["code"].is_string()),
+        "{offers}"
+    );
     let (status, _, body) = send(
         &rig.router,
         "GET",
