@@ -29,9 +29,16 @@ lists one person's keys, named by `user`, with a cut-off beside each. The server
 addresses, `GET /web` (signed in), `GET /web?view=guardrails`, `?view=workarea`,
 `?view=memories` (with `display=atlas`, the Atlas), `?view=review`, `?view=keys`, and
 `GET /web/admin?view=workarea`, `?view=memories`, `?view=review`, `?view=held` and `?view=queue`,
-with a redirect to the new paths, so bookmarks keep working; one memory opened by its id,
-`GET /web?view=memories&memory=<id>`, is still the server's. A form from an old page that posts one
-of these views' acts, or a creation, to the server runs nothing and lands on the view. Run
+with a redirect to the new paths, so bookmarks keep working. One memory opened by its id is at
+`/web/memory?id=<id>`, and on the admin page, with its attribution and the form that proposes its
+next version, at `/web/admin/memory?id=<id>`; the admin page's Curate view is at
+`/web/admin/curate`. The server answers `GET /web?view=memories&memory=<id>`,
+`GET /web/admin?view=memories&memory=<id>` and `GET /web/admin?view=curate` with a redirect there,
+carrying only the memory's id. A Mermaid diagram is drawn beside its source on every page that shows
+one, the Review card included, in a sandboxed frame `oml-web` serves at `/web/render/` with its
+pinned bundle at `/web/assets/`; route both prefixes to `oml-web`. A form from an old page that posts
+one of these views' acts, or a creation, a supersession or a curation, to the server runs nothing
+and lands on the view. Run
 `oml-web` behind the same proxy as the server before you upgrade: a deployment that sends these
 paths to the server shows not found.
 

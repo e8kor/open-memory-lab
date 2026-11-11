@@ -32,7 +32,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 25] = [
+pub const OPERATIONS: [&str; 29] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workarea resp:GuardrailSet",
@@ -58,6 +58,10 @@ pub const OPERATIONS: [&str; 25] = [
     "issueKey POST /v2/keys body:name,role,connect_code resp:KeyIssued",
     "mintConnectCode POST /v2/keys/{key}/connect-codes resp:ConnectCode",
     "addDenial POST /v2/keys/{key}/denials body:workarea resp:Denial",
+    "getMemory GET /v1/memories/{artifact_id} resp:Memory",
+    "adminReadMemory GET /v2/admin/memories/{artifact_id} resp:AdminRead",
+    "submitMemory POST /v1/memories body:verb,claim_key,body,workarea,derives_from resp:Accepted",
+    "supersedeMemory POST /v1/memories/{artifact_id}/supersede body:body,expected_version,retirement resp:Accepted",
 ];
 
 /// The request id header (ADR-0042 d4).
@@ -410,6 +414,76 @@ pub struct AdminMemory {
     pub valid_until: Option<String>,
     #[serde(default)]
     pub scan_finding: Option<String>,
+}
+
+/// One verdict on a memory, as the admin read lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AdminVerdict {
+    pub verdict: String,
+    pub key: Option<String>,
+    pub principal: Option<String>,
+    pub reason: Option<String>,
+    pub at: String,
+}
+
+/// `GET /v2/admin/memories/{artifact_id}`: one memory with its full
+/// attribution (ADR-0045 d21).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AdminRead {
+    pub artifact_id: String,
+    pub claim_key: String,
+    pub version: u32,
+    pub state: String,
+    pub workarea_path: String,
+    pub text: String,
+    /// The kind the version was written as; absent from an API before
+    /// v0.7.0.
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    pub key: Option<String>,
+    #[serde(default)]
+    pub principal: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    pub created_at: String,
+    #[serde(default)]
+    pub anchor: Option<Anchor>,
+    #[serde(default)]
+    pub valid_from: Option<String>,
+    #[serde(default)]
+    pub valid_until: Option<String>,
+    #[serde(default)]
+    pub derives_from: Vec<String>,
+    #[serde(default)]
+    pub replaces: Option<String>,
+    #[serde(default)]
+    pub plaintext_digest: Option<String>,
+    #[serde(default)]
+    pub verdicts: Vec<AdminVerdict>,
+}
+
+/// `POST /v1/memories` and `POST /v1/memories/{artifact_id}/supersede`:
+/// the version written, held.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Accepted {
+    pub artifact_id: String,
+    pub claim_key: String,
+    pub version: u32,
+    pub state: String,
+}
+
+/// What [`Client::learn`] submits: the text, the workarea, the memories
+/// it derives from and an optional claim key.
+#[derive(Debug, Clone, Copy)]
+pub struct Learn<'a> {
+    pub body: &'a str,
+    pub workarea: &'a str,
+    pub derives_from: &'a [&'a str],
+    pub claim_key: Option<&'a str>,
 }
 
 /// `POST /v2/admin/memories/search`: one page.
@@ -1344,6 +1418,81 @@ impl<T: Transport> Client<T> {
         )
         .await
     }
+
+    /// `GET /v1/memories/{artifact_id}`: one memory with its text, as the
+    /// caller may read it.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn get_memory(&self, call: &Call<'_>, artifact_id: &str) -> Result<Memory, Error> {
+        self.get(Some(call), format!("/v1/memories/{}", encode(artifact_id)))
+            .await
+    }
+
+    /// `GET /v2/admin/memories/{artifact_id}`: one memory of the tenant
+    /// with its attribution, as the admin key reads it; journalled by the
+    /// API as an admin read.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn admin_read(&self, call: &Call<'_>, artifact_id: &str) -> Result<AdminRead, Error> {
+        self.get(
+            Some(call),
+            format!("/v2/admin/memories/{}", encode(artifact_id)),
+        )
+        .await
+    }
+
+    /// `POST /v1/memories` with `verb: learn`: a new claim deriving from
+    /// `derives_from`, in `workarea`, held until reviewed.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn learn(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        submission: &Learn<'_>,
+    ) -> Result<Accepted, Error> {
+        let mut body = serde_json::json!({
+            "verb": "learn",
+            "body": submission.body,
+            "workarea": submission.workarea,
+            "derives_from": submission.derives_from,
+        });
+        if let Some(claim_key) = submission.claim_key {
+            body["claim_key"] = Value::from(claim_key);
+        }
+        self.post(call, "/v1/memories".to_owned(), idempotency_key, &body)
+            .await
+    }
+
+    /// `POST /v1/memories/{artifact_id}/supersede`: a new version of the
+    /// claim, or with `retirement` its retirement, held until reviewed.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn supersede(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        artifact_id: &str,
+        body: &str,
+        expected_version: u32,
+        retirement: bool,
+    ) -> Result<Accepted, Error> {
+        self.post(
+            call,
+            format!("/v1/memories/{}/supersede", encode(artifact_id)),
+            idempotency_key,
+            &serde_json::json!({
+                "body": body,
+                "expected_version": expected_version,
+                "retirement": retirement,
+            }),
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -1531,6 +1680,27 @@ mod tests {
             decodes(
                 &client
                     .add_denial(&CALL, "idem-9", "alice-phone", "universe")
+                    .await,
+            ),
+            decodes(&client.get_memory(&CALL, "m-1").await),
+            decodes(&client.admin_read(&CALL, "m-1").await),
+            decodes(
+                &client
+                    .learn(
+                        &CALL,
+                        "idem-10",
+                        &Learn {
+                            body: "Keys rotate quarterly.",
+                            workarea: "universe",
+                            derives_from: &["m-1"],
+                            claim_key: None,
+                        },
+                    )
+                    .await,
+            ),
+            decodes(
+                &client
+                    .supersede(&CALL, "idem-11", "m-1", "new text", 1, false)
                     .await,
             ),
         ];

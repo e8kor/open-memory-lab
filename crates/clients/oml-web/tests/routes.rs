@@ -1,5 +1,5 @@
 //! Every path router the repository ships sends `oml-web` exactly the paths
-//! of [`oml_web::PAGES`] and every other path to the lead, by path alone
+//! of [`oml_web::PAGES`] and the prefixes of [`oml_web::PREFIXES`] and every other path to the lead, by path alone
 //! (ADR-0070 d4, d7 (b) as amended): the reference Caddyfile, the docker
 //! profile's, `oml quickstart`'s, and the Helm chart's default Ingress paths.
 
@@ -26,6 +26,9 @@ fn paths() -> String {
         if !paths.contains(path) {
             paths.push(path);
         }
+    }
+    for prefix in oml_web::PREFIXES {
+        paths.push(Box::leak(format!("{prefix}*").into_boxed_str()));
     }
     paths.join(" ")
 }
@@ -69,6 +72,13 @@ fn the_charts_default_ingress_paths_are_oml_webs_pages() {
         assert!(
             values.contains(&format!("- path: {path}\n      pathType: Exact")),
             "values.yaml web.ingressPaths routes {path}"
+        );
+    }
+    for prefix in oml_web::PREFIXES {
+        let path = prefix.trim_end_matches('/');
+        assert!(
+            values.contains(&format!("- path: {path}\n      pathType: Prefix")),
+            "values.yaml web.ingressPaths routes {path} as a prefix"
         );
     }
 }

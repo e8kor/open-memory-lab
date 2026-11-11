@@ -3293,6 +3293,7 @@ components:
         state: { type: string, enum: [held, promoted, rejected, superseded, demoted] }
         workarea_path: { type: string }
         text: { type: string }
+        kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail], description: "The kind the version was written as; the admin page refuses to supersede or retire a guardrail by it (ADR-0037 d17; ADR-0070 d5). Since v0.7.0." }
         key: { type: string, description: The authoring key's name. }
         principal: { type: [string, 'null'] }
         user: { type: [string, 'null'] }

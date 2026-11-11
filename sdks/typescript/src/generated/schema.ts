@@ -1427,6 +1427,11 @@ export interface components {
             state: "held" | "promoted" | "rejected" | "superseded" | "demoted";
             workarea_path: string;
             text: string;
+            /**
+             * @description The kind the version was written as; the admin page refuses to supersede or retire a guardrail by it (ADR-0037 d17; ADR-0070 d5). Since v0.7.0.
+             * @enum {string}
+             */
+            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
             /** @description The authoring key's name. */
             key: string;
             principal?: string | null;

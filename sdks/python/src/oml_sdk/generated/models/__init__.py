@@ -1,6 +1,7 @@
 """Contains all the data models used in inputs/outputs"""
 
 from .admin_memory import AdminMemory
+from .admin_memory_kind import AdminMemoryKind
 from .admin_memory_state import AdminMemoryState
 from .admin_page_act_body import AdminPageActBody
 from .admin_page_act_body_action import AdminPageActBodyAction
@@ -365,6 +366,7 @@ from .workarea_view_my_effective_verbs_item import WorkareaViewMyEffectiveVerbsI
 
 __all__ = (
     "AdminMemory",
+    "AdminMemoryKind",
     "AdminMemoryState",
     "AdminPageActBody",
     "AdminPageActBodyAction",

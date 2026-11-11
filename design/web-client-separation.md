@@ -89,8 +89,8 @@ local development (oml quickstart starts all three)
   router routes exactly as production does, so the browser sees one origin and
   there is no `web.page_url` setting (ADR-0070 d4).
 - Kubernetes: two Deployments; the Ingress routes each path in
-  `web.ingressPaths` (the Guardrails, Workareas, Memories and Atlas pages
-  and the Memories JSON today, `oml_web::PAGES`) to `oml-web` and every other
+  `web.ingressPaths` (each page of `oml_web::PAGES`, Exact, and the diagram
+  frame's prefixes of `oml_web::PREFIXES`, Prefix) to `oml-web` and every other
   path to the lead.
 - `deploy/caddy/Caddyfile` is the production route table; a test in `oml-web`
   holds it and both compose files to `oml_web::PAGES`.

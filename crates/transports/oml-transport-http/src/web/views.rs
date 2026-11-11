@@ -11,23 +11,20 @@ use std::fmt::Write as _;
 use serde_json::json;
 use uuid::Uuid;
 
-use oml_app::app::{AdminMemory, Capacity, OwnKey};
+use oml_app::app::{Capacity, OwnKey};
+use oml_app::domain::Role;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::web::{Email, csrf_token};
-use oml_app::domain::{MemoryKind, Role};
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
-use oml_app::types::{
-    AppError, Bearer, MemoryRecord, ServedMemory, SubmitRequest, SubmitVerb, SupersedeRequest,
-    WebEmailRequest, WebSessionRecord,
-};
+use oml_app::types::{AppError, Bearer, WebEmailRequest, WebSessionRecord};
 
-use super::page::{attr, form, hidden, input, select, shell, short, state_tag, text, textarea};
+use super::page::{attr, form, hidden, input, select, shell, short, state_tag};
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::{ApiState, retry_chain};
 use oml_page::web::{
-    ADMIN_ATLAS_PATH, ADMIN_KEYS_PATH, ADMIN_MEMORIES_PATH, ADMIN_REVIEW_PATH, ADMIN_TABS,
-    ADMIN_WORKAREAS_PATH, USER_ATLAS_PATH, USER_KEYS_PATH, USER_MEMORIES_PATH, USER_REVIEW_PATH,
-    USER_WORKAREAS_PATH, user_tabs,
+    ADMIN_ATLAS_PATH, ADMIN_CURATE_PATH, ADMIN_KEYS_PATH, ADMIN_MEMORIES_PATH, ADMIN_MEMORY_PATH,
+    ADMIN_REVIEW_PATH, ADMIN_TABS, ADMIN_WORKAREAS_PATH, USER_ATLAS_PATH, USER_KEYS_PATH,
+    USER_MEMORIES_PATH, USER_MEMORY_PATH, USER_REVIEW_PATH, USER_WORKAREAS_PATH, user_tabs,
 };
 
 /// The public server the plugins and the agent kit connect to unless told
@@ -91,15 +88,6 @@ impl Fields {
         })
     }
 
-    pub(super) fn id(&self, field: &'static str) -> Result<Uuid, ApiError> {
-        let value = self.need(field)?;
-        let value = value.strip_prefix("srv_").unwrap_or(value);
-        Uuid::parse_str(value).map_err(|_| {
-            ApiError::validation(format!("{field} is not an id"))
-                .with_details(json!({ "field": field }))
-        })
-    }
-
     fn yes(&self, field: &str) -> bool {
         matches!(self.get(field), Some("yes" | "true" | "on"))
     }
@@ -131,6 +119,7 @@ pub const MOVED_ADMIN_VIEWS: &[(&str, &str)] = &[
     ("review", ADMIN_REVIEW_PATH),
     ("held", ADMIN_REVIEW_PATH),
     ("queue", ADMIN_REVIEW_PATH),
+    ("curate", ADMIN_CURATE_PATH),
 ];
 
 /// The path of the view a moved act belongs to, on the user page or the
@@ -152,16 +141,20 @@ pub fn moved_action(action: &str, admin: bool) -> Option<&'static str> {
         ("review_next" | "verdict" | "bulk_confirm" | "bulk_verdict", true) => ADMIN_REVIEW_PATH,
         ("issue_key" | "connect_key" | "connect_code" | "cut_off", false) => USER_KEYS_PATH,
         ("cut_off", true) => ADMIN_KEYS_PATH,
+        ("curate", true) => ADMIN_CURATE_PATH,
+        ("supersede", true) => ADMIN_MEMORIES_PATH,
         _ => return None,
     })
 }
 
-/// The fixed path the Memories list or the Atlas lives at, for a query
-/// whose one `view` is `memories` and that opens no memory by its id: the
-/// Atlas where `display` is `atlas`, else the list (ADR-0070 d7 (b)). One
-/// memory opened by its id stays the lead's view.
+/// Where the Memories list, the Atlas or one memory lives, for a query
+/// whose one `view` is `memories` (ADR-0070 d7 (b)): one memory opened by
+/// its id at its own page, carrying the id alone, parsed and written anew,
+/// so nothing else of the request travels; else the Atlas where `display`
+/// is `atlas`, else the list. A `memory` that is not one id answers `None`,
+/// and the lead refuses the view.
 #[must_use]
-pub fn moved_memories(query: &str, admin: bool) -> Option<&'static str> {
+pub fn moved_memories(query: &str, admin: bool) -> Option<String> {
     let pairs = crate::oauth::form_pairs(query.as_bytes()).ok()?;
     let one = |name: &str| {
         let mut values = pairs.iter().filter(|(n, _)| n == name).map(|(_, v)| v);
@@ -170,17 +163,28 @@ pub fn moved_memories(query: &str, admin: bool) -> Option<&'static str> {
             _ => None,
         }
     };
-    if one("view") != Some("memories") || pairs.iter().any(|(n, v)| n == "memory" && !v.is_empty())
-    {
+    if one("view") != Some("memories") {
         return None;
     }
+    if pairs.iter().any(|(n, v)| n == "memory" && !v.is_empty()) {
+        let id = Uuid::parse_str(one("memory")?).ok()?;
+        let page = if admin {
+            ADMIN_MEMORY_PATH
+        } else {
+            USER_MEMORY_PATH
+        };
+        return Some(format!("{page}?id={}", id.hyphenated()));
+    }
     let atlas = pairs.iter().any(|(n, v)| n == "display" && v == "atlas");
-    Some(match (admin, atlas) {
-        (false, false) => USER_MEMORIES_PATH,
-        (false, true) => USER_ATLAS_PATH,
-        (true, false) => ADMIN_MEMORIES_PATH,
-        (true, true) => ADMIN_ATLAS_PATH,
-    })
+    Some(
+        match (admin, atlas) {
+            (false, false) => USER_MEMORIES_PATH,
+            (false, true) => USER_ATLAS_PATH,
+            (true, false) => ADMIN_MEMORIES_PATH,
+            (true, true) => ADMIN_ATLAS_PATH,
+        }
+        .to_owned(),
+    )
 }
 
 /// The fixed path a moved view lives at, for a query whose one `view` names
@@ -239,20 +243,12 @@ where
     /// One view of the user page (ADR-0045 d9), as `<user>-web`.
     pub(crate) async fn user_view(
         &self,
-        token: &str,
         session: &WebSessionRecord,
         query: &Fields,
     ) -> Result<String, ApiError> {
-        let web = self.caller(session, Capacity::Web).await?;
-        let csrf = csrf_token(token);
+        self.caller(session, Capacity::Web).await?;
         let (active, body) = match query.get("view").unwrap_or_default() {
             "setup" => ("/web?view=setup", self.setup_view()),
-            // One memory opened by its id; the list and the Atlas are
-            // oml-web's (ADR-0070 d7 (b)).
-            "memories" => (
-                USER_MEMORIES_PATH,
-                self.memories_view(&web, &csrf, query).await?,
-            ),
             // Every other view, the Keys view among them, is oml-web's or
             // none (ADR-0070 d7 (b)).
             _ => return Err(ApiError::not_found()),
@@ -336,25 +332,6 @@ where
         )
     }
 
-    /// One memory, opened by its id from the list `oml-web` serves.
-    async fn memories_view(
-        &self,
-        web: &oml_app::app::Caller,
-        csrf: &str,
-        query: &Fields,
-    ) -> Result<String, ApiError> {
-        let bearer = Bearer::Session(web);
-        let mut body = format!(
-            r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="{USER_MEMORIES_PATH}">Back to the list</a></p>"#,
-        );
-        let id = Uuid::parse_str(query.need("memory")?).map_err(|_| {
-            ApiError::validation("memory is not an id").with_details(json!({"field": "memory"}))
-        })?;
-        let served = self.app.get_memory(bearer, id).await.map_err(app_error)?;
-        body.push_str(&memory_card(&served, &self.frame_for(csrf, &served.memory)));
-        Ok(body)
-    }
-
     /// One act of the user page (ADR-0045 d9): every act it had is a view's
     /// that `oml-web` serves, so the lead runs none (ADR-0070 d7 (b)).
     pub(crate) fn user_page_act(action: &str) -> Result<Outcome, ApiError> {
@@ -386,19 +363,11 @@ where
         let admin = self.caller(session, Capacity::Admin).await?;
         let csrf = csrf_token(token);
         let (active, body) = match query.get("view").unwrap_or("people") {
-            "memories" => (
-                ADMIN_MEMORIES_PATH,
-                self.admin_memories_view(&admin, query, &csrf).await?,
-            ),
             // A view oml-web serves: the proxy routes it there (ADR-0070
             // d7 (b)).
             view if MOVED_ADMIN_VIEWS.iter().any(|(v, _)| *v == view) => {
                 return Err(ApiError::not_found());
             }
-            "curate" => (
-                "/web/admin?view=curate",
-                self.curate_view(&admin, query, &csrf).await?,
-            ),
             _ => ("/web/admin", self.people_view(&admin, &csrf).await?),
         };
         Ok(shell(
@@ -500,93 +469,6 @@ where
         Ok(body)
     }
 
-    /// One memory's attribution, opened by its id from the list `oml-web`
-    /// serves.
-    async fn admin_memories_view(
-        &self,
-        admin: &oml_app::app::Caller,
-        query: &Fields,
-        csrf: &str,
-    ) -> Result<String, ApiError> {
-        let id = query.need("memory")?;
-        let mut body = format!(
-            r#"<p class="label">Memories</p><h1>One memory</h1><p><a href="{ADMIN_MEMORIES_PATH}">Back to the list</a></p>"#,
-        );
-        let id = Uuid::parse_str(id).map_err(|_| {
-            ApiError::validation("memory is not an id").with_details(json!({"field": "memory"}))
-        })?;
-        let read = retry_chain(|| self.app.admin_read(Bearer::Session(admin), id))
-            .await
-            .map_err(app_error)?;
-        body.push_str(&attribution_card(
-            &read,
-            &self.frame_for(csrf, &read.memory),
-        ));
-        body.push_str("<h2>Replace it</h2>");
-        body.push_str(&form(
-            "/web/admin",
-            "supersede",
-            csrf,
-            &format!(
-                "{}{}{}{}",
-                hidden("memory", &read.memory.memory_id.to_string()),
-                // The version this page rendered: the edit is refused
-                // if the claim moved on since (ADR-0057 d19).
-                hidden("expected_version", &read.memory.version.to_string()),
-                textarea("text", "new text", &read.memory.body),
-                select(
-                    "retirement",
-                    "retire instead",
-                    &[("no", "no"), ("yes", "yes")]
-                )
-            ),
-            "Propose the new version",
-            false,
-        ));
-        let _ = write!(
-            body,
-            r#"<p><a href="/web/admin?view=curate&amp;memory={}">Curate</a></p>"#,
-            read.memory.memory_id
-        );
-        Ok(body)
-    }
-
-    async fn curate_view(
-        &self,
-        admin: &oml_app::app::Caller,
-        query: &Fields,
-        csrf: &str,
-    ) -> Result<String, ApiError> {
-        let mut source = String::new();
-        let mut prefill = String::new();
-        if let Some(id) = query.get("memory")
-            && let Ok(id) = Uuid::parse_str(id)
-        {
-            let read = retry_chain(|| self.app.admin_read(Bearer::Session(admin), id))
-                .await
-                .map_err(app_error)?;
-            source = id.to_string();
-            prefill = read.memory.body;
-        }
-        let mut body = String::from(
-            r#"<h1>Curate</h1><p class="desc">The copy is held until someone outside its lineage reviews it, then served without its author.</p><details class="help"><summary>?</summary>Curate only an approved memory. Reword it: a copy repeating its source's text or name can be linked to it.</details>"#,
-        );
-        body.push_str(&form(
-            "/web/admin",
-            "curate",
-            csrf,
-            &format!(
-                "{}{}{}",
-                input("source", "source memory id", &source, true),
-                input("claim_key", "claim key (optional)", "", false),
-                textarea("text", "text", &prefill)
-            ),
-            "Curate",
-            true,
-        ));
-        Ok(body)
-    }
-
     /// One act of the admin page (ADR-0045 d10–d13): the list and the
     /// capacities as `<user>-admin`, review as `<user>-review`, curation as
     /// `<user>-curate`, supersession as the curator for its own universe
@@ -607,104 +489,6 @@ where
                         .unwrap_or(ADMIN_REVIEW_PATH)
                         .to_owned(),
                 ));
-            }
-            "curate" => {
-                fields.only(&["source", "text", "claim_key"])?;
-                let source = fields.id("source")?;
-                let text_value = fields.need("text")?.to_owned();
-                let curate = self.caller(session, Capacity::Curate).await?;
-                let digest = oml_app::domain::Sha256Hash::digest(
-                    format!("{source}\n{text_value}").as_bytes(),
-                );
-                let req = SubmitRequest {
-                    on_similar: Default::default(),
-                    idempotency_key: format!("web-curate-{}", &digest.to_prefixed()[7..39]),
-                    claim_key: fields.get("claim_key").map(ToOwned::to_owned),
-                    verb: Some(SubmitVerb::Learn),
-                    kind: MemoryKind::Memory,
-                    body: text_value,
-                    workarea: Some(Reference::Name(
-                        Name::parse(oml_app::domain::name::UNIVERSE).expect("a name"),
-                    )),
-                    derives_from: vec![source],
-                    severity: None,
-                    rule: None,
-                    valid_from: None,
-                    valid_until: None,
-                    anchor: None,
-                    format: None,
-                    title: None,
-                    origin: None,
-                };
-                retry_chain(|| self.app.submit_memory(Bearer::Session(&curate), &req))
-                    .await
-                    .map_err(app_error)?;
-                return Ok(Outcome::Redirect(
-                    "/web/admin?view=curate&done=curated:+held+until+someone+outside+its+lineage+approves+it"
-                        .to_owned(),
-                ));
-            }
-            "supersede" => {
-                fields.only(&["memory", "expected_version", "text", "retirement"])?;
-                let target = fields.id("memory")?;
-                let expected_version = fields
-                    .need("expected_version")?
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|v| *v >= 1)
-                    .ok_or_else(|| {
-                        ApiError::validation("expected_version is the version this page rendered")
-                            .with_details(json!({"field": "expected_version"}))
-                    })?;
-                let body = fields.need("text")?.to_owned();
-                let retirement = fields.yes("retirement");
-                let admin = self.caller(session, Capacity::Admin).await?;
-                let read = retry_chain(|| self.app.admin_read(Bearer::Session(&admin), target))
-                    .await
-                    .map_err(app_error)?;
-                // No page supersedes or retires a guardrail: it is written
-                // with its severity and rule on the API or the command line
-                // (ADR-0037 d17).
-                if read.memory.kind == MemoryKind::Guardrail {
-                    return Err(ApiError::validation(
-                        "a guardrail is superseded and retired on the API or the command line, with its severity and rule, never on this page",
-                    )
-                    .with_details(json!({"field": "memory"})));
-                }
-                let curate = self.caller(session, Capacity::Curate).await.ok();
-                let acting = match curate {
-                    Some(c) if read.memory.author_key_id == c.key().key_id => c,
-                    _ => self.caller(session, Capacity::Review).await?,
-                };
-                let digest =
-                    oml_app::domain::Sha256Hash::digest(format!("{target}\n{body}").as_bytes());
-                let req = SupersedeRequest {
-                    on_similar: Default::default(),
-                    idempotency_key: format!("web-supersede-{}", &digest.to_prefixed()[7..39]),
-                    target_id: target,
-                    body,
-                    kind: None,
-                    retirement,
-                    derives_from: Vec::new(),
-                    reason: None,
-                    workarea: None,
-                    refuse_vocabulary_target: false,
-                    severity: None,
-                    rule: None,
-                    valid_from: None,
-                    valid_until: None,
-                    anchor: None,
-                    origin: None,
-                    expected_version,
-                    format: None,
-                    title: None,
-                };
-                retry_chain(|| self.app.supersede(Bearer::Session(&acting), &req))
-                    .await
-                    .map_err(app_error)?;
-                return Ok(Outcome::Redirect(format!(
-                    "/web/admin?view=memories&memory={target}&done=proposed:+held+until+reviewed"
-                )));
             }
             _ => {}
         }
@@ -878,245 +662,4 @@ where
 fn email_field(fields: &Fields) -> Result<Email, ApiError> {
     Email::parse(fields.need("email")?)
         .map_err(|e| ApiError::validation(e.to_string()).with_details(json!({"field": "email"})))
-}
-
-fn memory_state(m: &ServedMemory) -> &'static str {
-    match m.memory.status {
-        oml_app::domain::MemoryStatus::Held => "held",
-        oml_app::domain::MemoryStatus::Promoted if m.memory.is_tip => "promoted",
-        oml_app::domain::MemoryStatus::Promoted => "superseded",
-        oml_app::domain::MemoryStatus::Rejected => "rejected",
-        _ => "demoted",
-    }
-}
-
-/// An anchor as one line (ADR-0057 d2), unescaped.
-fn anchor_text(anchor: Option<&oml_app::domain::anchor::Anchor>) -> Option<String> {
-    use oml_app::domain::anchor::Origin;
-    let a = anchor?;
-    let fragment = a
-        .fragment
-        .as_deref()
-        .map_or_else(String::new, |f| format!("#{f}"));
-    Some(match &a.origin {
-        Origin::Repo { repo, rev, path } => {
-            format!("{repo} @ {} {path}{fragment}", &rev[..rev.len().min(12)])
-        }
-        Origin::Uri { uri, .. } => format!("{uri}{fragment}"),
-    })
-}
-
-/// An anchor as one line for a reviewer (ADR-0057 d2): the repository, the
-/// commit's first 12 digits, the path and the fragment, or the page; a
-/// dash for none.
-fn anchor_line(anchor: Option<&oml_app::domain::anchor::Anchor>) -> String {
-    anchor_text(anchor).map_or_else(|| "—".to_owned(), |line| short(&line))
-}
-
-/// A version's valid time as one line for a reviewer, and on a held
-/// successor the end approving it gives the version it replaces, so a
-/// verdict is given on what it makes true (ADR-0059 d2, d4).
-fn valid_line(m: &ServedMemory) -> String {
-    let valid = &m.memory.valid;
-    let mut line = if valid.is_open() {
-        "none declared".to_owned()
-    } else {
-        format!(
-            "from {}, {}",
-            valid.from.as_ref().map_or("any time", |f| f.as_str()),
-            valid
-                .until
-                .as_ref()
-                .map_or_else(|| "open".to_owned(), |u| format!("until {}", u.as_str()))
-        )
-    };
-    if let (Some(end), Some(replaces)) = (&m.replaces_valid_until, &m.replaces) {
-        line.push_str(&format!(
-            "; approving ends version {} at {}",
-            replaces.version,
-            end.as_str()
-        ));
-    }
-    text(&line)
-}
-
-/// What a card says of a version's format (ADR-0056 d9): for prose without a
-/// title nothing, so a prose card is as it was; otherwise the title, the
-/// media type, and for a derived search text what the claim will be found
-/// by. The source itself is always the card's text, escaped, never rendered.
-fn title_line(m: &MemoryRecord) -> String {
-    m.format.title.as_ref().map_or_else(String::new, |t| {
-        format!(r#"<p class="label">title</p><p>{}</p>"#, text(t))
-    })
-}
-
-/// The class of the paragraph holding the source: monospaced for a format
-/// that is not prose, where indentation carries meaning.
-fn source_class(m: &MemoryRecord) -> &'static str {
-    if matches!(m.format.media_type.as_str(), "text/plain" | "text/markdown") {
-        ""
-    } else {
-        " mono"
-    }
-}
-
-fn format_lines(m: &MemoryRecord) -> String {
-    let f = &m.format;
-    let prose = matches!(f.media_type.as_str(), "text/plain" | "text/markdown");
-    if prose && f.search_text.is_none() {
-        return String::new();
-    }
-    let mut out = String::new();
-    if !prose {
-        out.push_str(&format!(
-            r#"<p class="label">format</p><p class="mono">{}</p>"#,
-            text(&f.media_type)
-        ));
-    }
-    if let Some(found) = &f.search_text {
-        out.push_str(&format!(
-            r#"<p class="label">it will be found by</p><p class="text mono dim">{}</p>"#,
-            text(found)
-        ));
-    }
-    out
-}
-
-impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
-where
-    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
-    S: Signer + 'static,
-    C: Clock + 'static,
-    I: IdGen + 'static,
-    Sc: Scanner + 'static,
-{
-    /// The drawing beside a Mermaid claim's source, in a sandboxed frame
-    /// (ADR-0056 d9); nothing for any other format.
-    fn frame_for(&self, csrf: &str, m: &MemoryRecord) -> String {
-        if m.format.media_type == "text/vnd.oml.mermaid" {
-            self.render_iframe(csrf, &m.memory_id.to_string(), &m.body)
-        } else {
-            String::new()
-        }
-    }
-}
-
-fn memory_card(m: &ServedMemory, frame: &str) -> String {
-    let from = if m.anonymous {
-        "the shared area".to_owned()
-    } else {
-        short(&m.memory.author_principal)
-    };
-    // A held guardrail tells every reader what approving it does (proposed
-    // ADR-0037 d10, d17).
-    let warning = m.load_warning.map_or_else(String::new, |w| {
-        format!(r#"<p class="lede">Guardrail: {}.</p>"#, text(w))
-    });
-    warning
-        + &format!(
-            r#"<div class="card"><p class="label">{} · {} · version {}</p>{}<p class="text{}">{}</p>{}{}<p class="dim mono">{} · from {}</p><p class="dim mono">source: {}</p><p class="dim mono">valid {}</p></div>"#,
-            state_tag(memory_state(m)),
-            short(m.workarea_path.as_deref().unwrap_or("")),
-            m.memory.version,
-            title_line(&m.memory),
-            source_class(&m.memory),
-            text(&m.memory.body),
-            frame,
-            format_lines(&m.memory),
-            short(&m.memory.claim_key),
-            from,
-            anchor_line(m.memory.anchor.as_deref()),
-            valid_line(m)
-        )
-}
-
-fn author_line(m: &AdminMemory) -> String {
-    let key = m.author.as_ref().and_then(|k| k.name.as_ref()).map_or_else(
-        || m.memory.author_key_id.to_string(),
-        |n| n.as_str().to_owned(),
-    );
-    match &m.author_user {
-        Some(user) => format!("{} ({})", short(&key), short(user.as_str())),
-        None => short(&key),
-    }
-}
-
-fn attribution_card(m: &AdminMemory, frame: &str) -> String {
-    let mut out = format!(
-        r#"<div class="card"><p class="label">{} · {} · version {}</p>{}<p class="text{}">{}</p>{}{}</div><h2>Attribution</h2><table><tr><th>Field</th><th>Value</th></tr>"#,
-        state_tag(m.state.as_str()),
-        short(&m.workarea_path),
-        m.memory.version,
-        title_line(&m.memory),
-        source_class(&m.memory),
-        text(&m.memory.body),
-        frame,
-        format_lines(&m.memory)
-    );
-    let ids = |v: &[Uuid]| {
-        if v.is_empty() {
-            "—".to_owned()
-        } else {
-            v.iter()
-                .map(|id| format!(r#"<a href="/web/admin?view=memories&amp;memory={id}">{id}</a>"#))
-                .collect::<Vec<_>>()
-                .join("<br>")
-        }
-    };
-    for (field, value) in [
-        ("artifact id", m.memory.memory_id.to_string()),
-        ("claim key", short(&m.memory.claim_key)),
-        ("written by key", author_line(m)),
-        ("principal", short(&m.memory.author_principal)),
-        ("written at", short(m.memory.created_at.as_str())),
-        ("derives from", ids(&m.memory.derives_from)),
-        (
-            "replaces",
-            m.memory.replaces.map_or("—".to_owned(), |r| ids(&[r])),
-        ),
-        ("text digest", short(&m.memory.body_digest)),
-        ("source", anchor_line(m.memory.anchor.as_deref())),
-        (
-            "valid",
-            if m.memory.valid.is_open() {
-                "none declared".to_owned()
-            } else {
-                text(&format!(
-                    "from {}, {}",
-                    m.memory
-                        .valid
-                        .from
-                        .as_ref()
-                        .map_or("any time", |f| f.as_str()),
-                    m.memory
-                        .valid
-                        .until
-                        .as_ref()
-                        .map_or_else(|| "open".to_owned(), |u| format!("until {}", u.as_str()))
-                ))
-            },
-        ),
-    ] {
-        let _ = write!(
-            out,
-            r#"<tr><td class="label">{field}</td><td class="mono">{value}</td></tr>"#
-        );
-    }
-    out.push_str("</table><h2>Verdicts</h2><table><tr><th>Verdict</th><th>Key</th><th>Principal</th><th>Reason</th><th>At</th></tr>");
-    if m.verdicts.is_empty() {
-        out.push_str(r#"<tr><td colspan="5" class="dim">No verdict yet.</td></tr>"#);
-    }
-    for v in &m.verdicts {
-        let _ = write!(
-            out,
-            r#"<tr><td>{}</td><td class="mono">{}</td><td class="mono">{}</td><td>{}</td><td class="mono">{}</td></tr>"#,
-            state_tag(&v.verdict),
-            short(v.key_name.as_ref().map_or("", Name::as_str)),
-            short(&v.principal),
-            short(v.reason.as_deref().unwrap_or("")),
-            short(v.at.as_str())
-        );
-    }
-    out.push_str("</table>");
-    out
 }

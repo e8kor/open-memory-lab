@@ -12,7 +12,7 @@
 //! lists through `POST /v2/admin/memories/search` as `<user>-admin`, one
 //! `memory.admin_read` per page, which the API journals (d24). The Atlas
 //! reads no memory: `GET /v2/workareas/{w}/tree?counts=true` and the scope's
-//! offers (d30). A memory opened by its id is still the lead's view.
+//! offers (d30). Each row links to the memory's own page, `crate::memory`.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -71,7 +71,15 @@ impl Side {
         }
     }
 
-    /// The lead's page, where one memory opens by its id.
+    /// Where one memory opens by its id, `?id=`.
+    fn memory_page(self) -> &'static str {
+        match self {
+            Self::User => oml_page::web::USER_MEMORY_PATH,
+            Self::Admin => oml_page::web::ADMIN_MEMORY_PATH,
+        }
+    }
+
+    /// The lead's page, the JSON's `base` as it always was.
     fn lead(self) -> &'static str {
         match self {
             Self::User => "/web",
@@ -353,7 +361,7 @@ impl Card {
     /// d32; ADR-0069 d3): the summary holds the state and the text,
     /// clamped, then the author's kind, the version and the way in; the
     /// body, closed by default, holds the provenance timeline and the facts.
-    fn html(&self, lead: &str) -> String {
+    fn html(&self, memory_page: &str) -> String {
         let reviewed = self.state != "held";
         let served = matches!(self.state, "promoted" | "superseded" | "demoted");
         let rejected = self.state == "rejected";
@@ -440,7 +448,7 @@ impl Card {
         }
         let _ = write!(
             out,
-            r#"<dt>Open</dt><dd><a href="{lead}?view=memories&amp;memory={}">this memory</a></dd></dl></details></div></details></li>"#,
+            r#"<dt>Open</dt><dd><a href="{memory_page}?id={}">this memory</a></dd></dl></details></div></details></li>"#,
             self.id
         );
         out
@@ -689,7 +697,7 @@ fn list_view(side: Side, q: &ListQuery, page: Option<&CardPage>, atlas: bool) ->
     }
     out.push_str(r#"<ul class="oml-mlist">"#);
     for card in &page.cards {
-        out.push_str(&card.html(side.lead()));
+        out.push_str(&card.html(side.memory_page()));
     }
     out.push_str(r#"</ul><p class="pager">"#);
     if q.cursor.is_some() {

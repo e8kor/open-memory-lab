@@ -9,15 +9,18 @@
 
 mod acts;
 pub mod atlas;
+mod card;
 pub mod config;
 pub mod doctor;
 pub mod frame;
 pub mod keys;
 pub mod memories;
+pub mod memory;
 pub mod middleware;
 pub mod once;
 pub mod outcome;
 pub mod pages;
+pub mod render;
 pub mod review;
 pub mod session;
 pub mod workareas;
@@ -76,7 +79,25 @@ pub const PAGES: &[(&str, &str)] = &[
     ("POST", USER_KEYS_PATH),
     ("GET", ADMIN_KEYS_PATH),
     ("POST", ADMIN_KEYS_PATH),
+    ("GET", USER_MEMORY_PATH),
+    ("GET", ADMIN_MEMORY_PATH),
+    ("POST", ADMIN_MEMORY_PATH),
+    ("GET", ADMIN_CURATE_PATH),
+    ("POST", ADMIN_CURATE_PATH),
 ];
+
+/// The path prefixes this process serves for `GET` alone, each a fixed
+/// path below which one segment names a token or a file: the Mermaid frame's
+/// document and its pinned bundle (ADR-0056 d9). Every proxy and Ingress
+/// routes each as a prefix, by path alone.
+pub const PREFIXES: &[&str] = &[render::RENDER_PREFIX, render::ASSETS_PREFIX];
+
+/// One memory opened by its id, on the user page and on the admin page, and
+/// the admin page's Curate view (ADR-0045 d10, d12, d21), moved from
+/// `GET /web?view=memories&memory=`, `GET /web/admin?view=memories&memory=`
+/// and `GET /web/admin?view=curate` with the admin page's `supersede` and
+/// `curate` acts.
+pub use oml_page::web::{ADMIN_CURATE_PATH, ADMIN_MEMORY_PATH, USER_MEMORY_PATH};
 
 /// The Memories list and the Atlas of each page (ADR-0045 d22-d32), moved
 /// from `GET /web?view=memories` and `GET /web/admin?view=memories`, the
@@ -123,6 +144,11 @@ pub fn serves(method: &str, path: &str) -> bool {
     // READY_PATH is the probe of oml-web's own listener; the public
     // /readyz is the lead's, so the proxy never sends it here.
     PAGES.iter().any(|(m, p)| *m == method && *p == path)
+        || (method == "GET"
+            && PREFIXES.iter().any(|prefix| {
+                path.strip_prefix(prefix)
+                    .is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
+            }))
 }
 
 /// The capacities a session's credential is derived for (ADR-0070 d2).
@@ -264,6 +290,15 @@ pub fn router(web: Web) -> Router {
         )
         .route(USER_KEYS_PATH, get(keys::user_page).post(keys::user_act))
         .route(ADMIN_KEYS_PATH, get(keys::admin_page).post(keys::admin_act))
+        .route(USER_MEMORY_PATH, get(memory::user_page))
+        .route(
+            ADMIN_MEMORY_PATH,
+            get(memory::admin_page).post(memory::admin_act),
+        )
+        .route(
+            ADMIN_CURATE_PATH,
+            get(memory::curate_page).post(memory::curate_act),
+        )
         .route_layer(axum::middleware::from_fn_with_state(
             web.clone(),
             session::load,
@@ -275,11 +310,18 @@ pub fn router(web: Web) -> Router {
         .route(memories::USER_DATA_PATH, get(memories::user_data))
         .route(memories::ADMIN_DATA_PATH, get(memories::admin_data))
         .with_state(web.clone());
+    // The frame resolves its own session: a frame that does not open is not
+    // found, never a redirect inside the frame (ADR-0056 d9).
+    let frames = Router::new()
+        .route("/web/render/{token}", get(render::frame))
+        .route("/web/assets/{file}", get(render::asset))
+        .with_state(web.clone());
     Router::new()
         .route(HEALTH_PATH, get(health))
         .route(READY_PATH, get(ready).with_state(web.clone()))
         .merge(pages)
         .merge(data)
+        .merge(frames)
         .fallback(not_found)
         .layer(
             ServiceBuilder::new()
@@ -327,6 +369,14 @@ mod tests {
             assert!(serves("GET", path), "{path}");
             assert!(!serves("POST", path), "{path}");
         }
+        for path in ["/web/memory", "/web/admin/memory", "/web/admin/curate"] {
+            assert!(serves("GET", path), "{path}");
+        }
+        assert!(serves("POST", "/web/admin/memory") && serves("POST", "/web/admin/curate"));
+        assert!(!serves("POST", "/web/memory"));
+        assert!(serves("GET", "/web/render/0a1b") && serves("GET", "/web/assets/mermaid-0.js"));
+        assert!(!serves("GET", "/web/render/") && !serves("GET", "/web/render/a/b"));
+        assert!(!serves("POST", "/web/render/0a1b"));
         assert!(serves("GET", "/web/healthz"));
         assert!(!serves("GET", "/web"));
         assert!(!serves("POST", "/web"));
