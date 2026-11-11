@@ -9789,12 +9789,14 @@ async fn migration_0042_applies_beside_an_open_write_and_read_of_idempotency_wit
     .await
     .expect("0042 waits on neither the write nor the read")
     .expect("0042 applies");
-    let applied: i64 =
-        sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
-            .fetch_one(&mut conn)
-            .await
-            .expect("versions");
-    assert_eq!(applied, 42, "0042 applied while both were open");
+    // 0042 and every later migration apply; 0042 is the one asserted.
+    let applied: bool = sqlx::query_scalar(
+        "SELECT coalesce(bool_or(version = 42), false) FROM _sqlx_migrations WHERE success",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .expect("versions");
+    assert!(applied, "0042 applied while both were open");
     write.commit().await.expect("the write commits");
     read.commit().await.expect("the read ends");
     let privileges: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
