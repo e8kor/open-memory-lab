@@ -7,7 +7,7 @@ answers: which server the plugins and harness configurations OML releases connec
 
 # ADR-0043 — What OML releases defaults to the maintainer's public server, so an agent needs only its key; only `oml setup claude-code` among the CLI's verbs takes that default
 
-**Status:** accepted design · 2026-11-04
+**Status:** accepted design · 2026-11-04 · amended by [ADR-0076](ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment.md) (proposed)
 
 **Release:** introduced in v0.4.1 ([releases](../changelog.md))
 
