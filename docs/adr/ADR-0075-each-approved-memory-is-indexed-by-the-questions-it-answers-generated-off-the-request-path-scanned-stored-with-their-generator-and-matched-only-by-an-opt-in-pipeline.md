@@ -2,7 +2,7 @@
 id: adr/ADR-0075-each-approved-memory-is-indexed-by-the-questions-it-answers-generated-off-the-request-path-scanned-stored-with-their-generator-and-matched-only-by-an-opt-in-pipeline
 tier: engineering
 status: proposed
-answers: what hypothetical question indexing is for and what the recall eval says the gap is today; what the literature measured for doc2query, docTTTTTquery, HyDE, field-weighted BM25 and generated-question indexing since 2024; when questions are generated and for which versions never; the backfill policy and how it is stopped, capped and tracked; where questions are stored, with which generator, how every change to them is journalled, and what happens to them on supersession, retirement, erasure and a model change; how they are indexed and scored with the memory text, and why a row without questions is never pushed below its own text's score; the opt-in pipeline and what a hit says; where the model runs and when the server reaches the network; how a generated question is filtered for grounding and genericity and scanned, and what it may never do; the interface ADR-0072's phase 3 reads; the eval gates, their power, the latency and size budgets, the bill per 1,000 approvals and the backfill cost; how the drain behaves when the generator is down; when dense embeddings of questions are revisited; the phases and their tests; what the operator still has to answer
+answers: what hypothetical question indexing is for and what the recall eval says the gap is today; what the literature measured for doc2query, docTTTTTquery, HyDE, field-weighted BM25 and generated-question indexing since 2024; when questions are generated and for which versions never; the backfill policy and how it is stopped, capped and tracked; where questions are stored, with which generator, how every change to them is journalled, and what happens to them on supersession, retirement, erasure and a model change; how they are indexed and scored with the memory text, and why a row without questions is never pushed below its own text's score; the opt-in pipeline and what a hit says; where the model runs and when the server reaches the network; how a generated question is filtered for grounding and genericity and scanned, and what it may never do; the interface ADR-0072's phase 3 reads; the eval gates, their power, the latency and size budgets, the bill per 1,000 approvals and the backfill cost; how the drain behaves when the generator is down; when dense embeddings of questions are revisited; the phases and their tests; what the operator decided on 2026-11-10
 -->
 
 # ADR-0075 — Each approved memory is indexed by the questions it answers, generated off the request path, scanned, stored with their generator, and matched only by an opt-in pipeline
@@ -36,14 +36,14 @@ gain, that decides whether the server work is worth building.
 | d10 | Phase 0 (with 0a, the grown labelled set) decides; phases 1 and 2 ship in one release; phase 3 when #207 is scheduled | 0 to 3 |
 | d11 | Operations: an outage, told from a bad version by a compiled-in canary, pauses the drain and it resumes on its own; parked entries come back with backoff; a backfill is estimated, capped, stoppable and tracked; the bill is metered; doctor names each state | 1 |
 
-**Open questions: recommended answers, pending the operator.** Each is detailed at the end.
+**Open questions: decided by the operator, 2026-11-10.** Each is detailed at the end.
 
-| | Question | Recommended, pending operator |
+| | Question | Decided by the operator, 2026-11-10 |
 |---|---|---|
-| 1 | Which generator ships first? | `local` (an in-process T5), behind the one adapter phase 1 builds; the endpoint only if it then beats `local` by the same paired test. No non-loopback endpoint on memory.doublegate.io. |
-| 2 | Exclude approved memories that carry a hold finding? | Yes, with the count visible in `status` and doctor. |
-| 3 | Run phase 0 now? | Yes, phase 0a first (grow the labelled set to at least 550 queries), then phase 0; phases 1 and 2 stay behind its verdict. |
-| 4 | Correct #201's 0.17? | Yes: done in #201's body on 2026-11-10, with today's baseline and its source. |
+| 1 | Which generator ships first? | A local generator first: `local` (an in-process T5), behind the one adapter phase 1 builds; the endpoint only if it then beats `local` by the same paired test. No non-loopback endpoint on memory.doublegate.io. |
+| 2 | Exclude approved memories that carry a hold finding? | Yes: no questions are generated for them, with the count visible in `status` and doctor. |
+| 3 | Run phase 0 now? | Run phase 0a before building: phase 0a first (grow the labelled set to at least 550 queries), then phase 0; phases 1 and 2 stay behind its verdict. |
+| 4 | Correct #201's 0.17? | Already corrected: done in #201's body on 2026-11-10, with today's baseline and its source. |
 
 **Amends:** ADR-0049 (d4: the pipeline table gains `bm25-questions`; d6: `matched` gains
 `question` and `question_terms`, and `via` gains `questions`), ADR-0052 (d1 and d3: `kind` gains `3`,
@@ -922,9 +922,9 @@ Decided, not built.
 
 ## Open questions for the operator
 
-Each answer below is recommended, pending the operator.
+Each question below was decided by the operator on 2026-11-10, with the recommended answer.
 
-1. **Which generator ships first.** Phase 0 measures `local` and an LLM. Recommended: `local` (an
+1. **Which generator ships first.** Phase 0 measures `local` and an LLM. Decided by the operator, 2026-11-10: a local generator first, `local` (an
    in-process T5, no egress, no per-token cost), behind the one adapter phase 1 builds. The LLM
    arm replaces it only by d8's fixed sequence: `local` passes every gate, and the LLM then beats
    `local` by the same one-sided exact McNemar test with the 1.5-point floor on the grown set and
@@ -932,15 +932,15 @@ Each answer below is recommended, pending the operator.
    (memory.doublegate.io).
 2. **Versions whose hold finding a person approved**, or whose class a tenant ceiling lowered,
    get no questions (d6), so they are found by
-   their text alone, at exactly their `bm25-postings` score (d4's law 1). Recommended: yes, as written; they
+   their text alone, at exactly their `bm25-postings` score (d4's law 1). Decided by the operator, 2026-11-10: yes, as written; they
    are few, the generator is the reader ADR-0074 warns about, and `status` and doctor count them
    (d11).
 3. **Run phase 0 now, ahead of #201's "When to try it"?** #201 waits for a labelled real-usage miss
-   set and for workareas of hundreds to thousands of memories. Recommended: yes, phase 0a first, to
+   set and for workareas of hundreds to thousands of memories. Decided by the operator, 2026-11-10: yes, phase 0a first, to
    grow the labelled set to at least 550 queries, then phase 0, offline, changing no server code,
    at one generation run over about 15,000 memories (200 + 5,183 + 3,633 + 5,882) per adapter, time
    boxed by #235. Phases 1 and 2 stay behind phase 0's verdict and ship together.
-4. **Correct #201's numbers.** Recommended: yes, and done on 2026-11-10: #201's body now gives
+4. **Correct #201's numbers.** Decided by the operator, 2026-11-10: already corrected, on 2026-11-10: #201's body now gives
    `bm25-postings`' 0.934 success@5 and 0.873 nDCG@10 on the synthetic set as the baseline, with
    its source, names 0.17, 0.73 and 0.97 as `keyword-all`, `keyword-any` and an older hybrid run,
    and corrects its latency and size rows against d8.
