@@ -42,7 +42,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install -r eval/bench/requirements.txt
+      - run: python -m pip install --retry 5 --timeout 30 -r eval/bench/requirements.txt
       - uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/bench-data

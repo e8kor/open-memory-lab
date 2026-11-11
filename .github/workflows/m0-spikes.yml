@@ -16,7 +16,8 @@ permissions:
 
 concurrency:
   group: m0-spikes-${{ github.ref }}
-  cancel-in-progress: true
+  # A new push to a pull request replaces its stale run; main, merge groups and tags always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Which categories of path the pull request changed (scripts/ci_paths.py;
@@ -27,6 +28,7 @@ jobs:
   changes:
     name: changed paths
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       rust: ${{ steps.paths.outputs.rust }}
       migrations: ${{ steps.paths.outputs.migrations }}
@@ -59,6 +61,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -71,6 +74,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.spikes == 'true' || needs.changes.outputs.migrations == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         # The deployment pin (docs/operations/deployment.md). POSTGRES_USER is a superuser
@@ -101,6 +105,7 @@ jobs:
     if: always()
     needs: [changes, chain-vectors, rls-spike]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Every job succeeded or was skipped
         env:

@@ -17,7 +17,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A new push to a pull request replaces its stale run; main, merge groups and tags always finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,6 +35,7 @@ jobs:
   changes:
     name: changed paths
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       rust: ${{ steps.paths.outputs.rust }}
       migrations: ${{ steps.paths.outputs.migrations }}
@@ -66,6 +68,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       # Reads rust-toolchain.toml: the one pinned toolchain.
@@ -81,6 +84,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     services:
       postgres:
         # The deployment pin (docs/operations/deployment.md).
@@ -143,6 +147,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs_tests == 'true' && needs.changes.outputs.cargo != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       DATABASE_URL: ""  # none of these targets starts Postgres; a future one that does fails here, not hangs
     steps:
@@ -161,6 +166,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -219,6 +225,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.cargo == 'true' || needs.changes.outputs.release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -328,6 +335,7 @@ jobs:
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -337,7 +345,7 @@ jobs:
       - name: release.yml builds, merges and signs both platforms
         if: matrix.platform == 'linux/amd64'
         run: |
-          pip install pyyaml
+          pip install --retry 5 --timeout 30 pyyaml==6.0.3
           python scripts/check_release.py
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
@@ -375,6 +383,7 @@ jobs:
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
     env:
       TARGET: ${{ matrix.target }}
       # ring's C, for each musl target, with the wrapper Ubuntu's musl-tools
@@ -442,6 +451,7 @@ jobs:
             cosign: true
           - runner: windows-2025
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
     env:
       # The newest published release. The installers' default is the
       # workspace version, which has no release until its tag.
@@ -484,6 +494,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
@@ -495,6 +506,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.plugins == 'true' || needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -505,6 +517,8 @@ jobs:
       # The defects a linter finds without opinion: unused names, placeholder-less
       # f-strings, closures over a loop variable (F, E9, B023).
       - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.6"  # the version m0-spikes.yml pins
       - run: uvx ruff@0.17.4 check --isolated scripts --select F,E9,B023
       # Claude Code's own validator, which errors on a reference to an
       # undeclared option and on an MCP url that is not absolute; 2.1.281 is
@@ -514,7 +528,7 @@ jobs:
           node-version: "24"
       - name: claude plugin validate --strict
         run: |
-          npm install --global @anthropic-ai/claude-code@2.1.312
+          npm install --global --fetch-retries 5 @anthropic-ai/claude-code@2.1.312
           claude plugin validate --strict plugins/oml
           claude plugin validate --strict plugins/oml-admin
 
@@ -527,6 +541,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.cargo == 'true' || needs.changes.outputs.eval == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -578,6 +593,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.eval == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -595,6 +611,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.cargo == 'true' || needs.changes.outputs.release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     env:
       IMAGE: ghcr.io/e8kor/open-memory-lab
     steps:
@@ -607,7 +624,7 @@ jobs:
           version: v3.22.1
       - name: The chart renders the lead ADR-0033 decides
         run: |
-          pip install pyyaml
+          pip install --retry 5 --timeout 30 pyyaml==6.0.3
           python scripts/check_chart.py
       - name: Build the image from the checkout
         run: |
@@ -832,6 +849,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sdk == 'true' || needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -848,6 +866,8 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo build --release --locked --bin oml-server-lead --bin oml
       - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.6"  # the version m0-spikes.yml pins
       - name: Lint the hand-written code
         working-directory: sdks/python
         run: |
@@ -867,6 +887,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sdk == 'true' || needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -905,12 +926,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sdk == 'true' || needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.6"  # the version m0-spikes.yml pins
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -925,6 +949,7 @@ jobs:
     if: always()
     needs: [changes, lint, test, docs-reading-tests, e2e, compose, image, cli-matrix, install-smoke, deny, plugin, recall-eval, recall-eval-data, chart, sdk-python, sdk-typescript, sdk-generated]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Every job succeeded or was skipped
         env:
