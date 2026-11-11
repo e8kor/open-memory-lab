@@ -1,0 +1,2265 @@
+{
+ "replay_check": {
+  "scoped": {
+   "rows": 121,
+   "searched_set_equal": 121,
+   "top10_equal": 121,
+   "bm25_sparse_scope_top10_equal": 121,
+   "bm25_sparse_scope_rows": 121
+  },
+  "cross": {
+   "rows": 121,
+   "searched_set_equal": 121,
+   "top10_equal": 121,
+   "bm25_sparse_scope_top10_equal": 121,
+   "bm25_sparse_scope_rows": 121
+  },
+  "unanswerable": {
+   "rows": 22,
+   "searched_set_equal": 22,
+   "top10_equal": 22,
+   "bm25_sparse_scope_top10_equal": 22,
+   "bm25_sparse_scope_rows": 22
+  },
+  "skew": {
+   "rows": 121,
+   "searched_set_equal": 121,
+   "top10_equal": 121
+  }
+ },
+ "alpha": {
+  "tuned_on": "60 skew queries, seed 20261111",
+  "sweep_selection_recall": {
+   "0.0": 0.9833,
+   "0.1": 0.9833,
+   "0.2": 0.9833,
+   "0.3": 0.9833,
+   "0.4": 0.9833,
+   "0.5": 0.9667,
+   "0.6": 0.9667,
+   "0.7": 0.9667,
+   "0.8": 0.9667,
+   "0.9": 0.9667,
+   "1.0": 0.9667
+  },
+  "chosen": 0.4,
+  "held_out_selection_recall": 0.9836,
+  "held_out_content_selection_recall": 0.9836
+ },
+ "pipelines": {
+  "bm25-postings": {
+   "scoped": {
+    "content": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8755,
+     "selection_precision": 0.0124,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "8/11",
+      "inflection": "11/11",
+      "partial": "10/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "10/11"
+     }
+    },
+    "described": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8755,
+     "selection_precision": 0.0124,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "8/11",
+      "inflection": "11/11",
+      "partial": "10/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "10/11"
+     }
+    },
+    "oracle_slots": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8755,
+     "selection_precision": 0.0124,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "8/11",
+      "inflection": "11/11",
+      "partial": "10/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "10/11"
+     }
+    },
+    "oracle_all": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8755,
+     "selection_precision": 0.0124,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "8/11",
+      "inflection": "11/11",
+      "partial": "10/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "10/11"
+     }
+    },
+    "redde_analogue": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8757,
+     "selection_precision": 0.0124,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "8/11",
+      "inflection": "11/11",
+      "partial": "10/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "10/11"
+     }
+    },
+    "union": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8755,
+     "selection_precision": 0.0099,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "8/11",
+      "inflection": "11/11",
+      "partial": "10/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "10/11"
+     }
+    }
+   },
+   "cross": {
+    "content": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8755,
+     "selection_precision": 0.1364,
+     "selection_recall": 0.9917,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "8/11",
+      "inflection": "11/11",
+      "partial": "10/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "10/11"
+     }
+    },
+    "described": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8755,
+     "selection_precision": 0.1364,
+     "selection_recall": 0.9917,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "8/11",
+      "inflection": "11/11",
+      "partial": "10/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "10/11"
+     }
+    },
+    "oracle_slots": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8755,
+     "selection_precision": 0.1374,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "8/11",
+      "inflection": "11/11",
+      "partial": "10/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "10/11"
+     }
+    },
+    "oracle_all": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8755,
+     "selection_precision": 0.1374,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "8/11",
+      "inflection": "11/11",
+      "partial": "10/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "10/11"
+     }
+    },
+    "redde_analogue": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8757,
+     "selection_precision": 0.1364,
+     "selection_recall": 0.9917,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "8/11",
+      "inflection": "11/11",
+      "partial": "10/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "10/11"
+     }
+    },
+    "union": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8755,
+     "selection_precision": 0.1099,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "8/11",
+      "inflection": "11/11",
+      "partial": "10/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "10/11"
+     }
+    }
+   },
+   "unanswerable": {
+    "content": {
+     "n": 0,
+     "success@5": null,
+     "hits@5": 0,
+     "ndcg@10": null,
+     "selection_precision": null,
+     "selection_recall": null,
+     "unanswerable_false_hits": 1.0,
+     "success@5_by_category": {}
+    },
+    "described": {
+     "n": 0,
+     "success@5": null,
+     "hits@5": 0,
+     "ndcg@10": null,
+     "selection_precision": null,
+     "selection_recall": null,
+     "unanswerable_false_hits": 1.0,
+     "success@5_by_category": {}
+    },
+    "redde_analogue": {
+     "n": 0,
+     "success@5": null,
+     "hits@5": 0,
+     "ndcg@10": null,
+     "selection_precision": null,
+     "selection_recall": null,
+     "unanswerable_false_hits": 1.0,
+     "success@5_by_category": {}
+    },
+    "union": {
+     "n": 0,
+     "success@5": null,
+     "hits@5": 0,
+     "ndcg@10": null,
+     "selection_precision": null,
+     "selection_recall": null,
+     "unanswerable_false_hits": 1.0,
+     "success@5_by_category": {}
+    }
+   },
+   "skew": {
+    "content": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.843,
+     "selection_precision": 0.2686,
+     "selection_recall": 0.9752,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "7/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "9/11",
+      "identifier": "10/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "11/11"
+     }
+    },
+    "described": {
+     "n": 121,
+     "success@5": 0.9339,
+     "hits@5": 113,
+     "ndcg@10": 0.8507,
+     "selection_precision": 0.2707,
+     "selection_recall": 0.9835,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "7/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "11/11"
+     }
+    },
+    "oracle_slots": {
+     "n": 121,
+     "success@5": 0.9339,
+     "hits@5": 113,
+     "ndcg@10": 0.8513,
+     "selection_precision": 0.2748,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "7/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "11/11"
+     }
+    },
+    "oracle_all": {
+     "n": 121,
+     "success@5": 0.9339,
+     "hits@5": 113,
+     "ndcg@10": 0.8513,
+     "selection_precision": 0.2748,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "7/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "11/11"
+     }
+    },
+    "redde_analogue": {
+     "n": 121,
+     "success@5": 0.843,
+     "hits@5": 102,
+     "ndcg@10": 0.7569,
+     "selection_precision": 0.2397,
+     "selection_recall": 0.8802,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "10/11",
+      "paraphrase": "6/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "9/11",
+      "identifier": "9/11",
+      "question": "10/11",
+      "long": "10/11",
+      "negation": "8/11",
+      "temporal": "7/11",
+      "multihop": "11/11"
+     }
+    },
+    "union": {
+     "n": 121,
+     "success@5": 0.9256,
+     "hits@5": 112,
+     "ndcg@10": 0.8515,
+     "selection_precision": 0.1099,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "6/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "9/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "9/11",
+      "multihop": "11/11"
+     }
+    }
+   },
+   "per_query": {
+    "cross": [
+     {
+      "id": "q060",
+      "scope": "incident",
+      "content": [
+       "frontend",
+       "database",
+       "auth",
+       "data",
+       "api",
+       "billing",
+       "deploy",
+       "process"
+      ],
+      "described": [
+       "frontend",
+       "database",
+       "auth",
+       "data",
+       "api",
+       "billing",
+       "process",
+       "observability"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q065",
+      "scope": "ci",
+      "content": [
+       "billing",
+       "incident",
+       "observability",
+       "database",
+       "auth",
+       "api",
+       "data",
+       "deploy"
+      ],
+      "described": [
+       "billing",
+       "incident",
+       "observability",
+       "database",
+       "auth",
+       "api",
+       "frontend",
+       "data"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     }
+    ],
+    "skew": [
+     {
+      "id": "q013",
+      "scope": "frontend",
+      "content": [
+       "deploy",
+       "database",
+       "api",
+       "observability"
+      ],
+      "described": [
+       "deploy",
+       "database",
+       "incident",
+       "api"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q014",
+      "scope": "ci",
+      "content": [
+       "database",
+       "billing",
+       "auth",
+       "data"
+      ],
+      "described": [
+       "database",
+       "billing",
+       "incident",
+       "frontend"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q019",
+      "scope": "process",
+      "content": [
+       "database",
+       "data",
+       "api",
+       "billing"
+      ],
+      "described": [
+       "database",
+       "data",
+       "incident",
+       "api"
+      ],
+      "s5": [
+       0.0,
+       0.0
+      ]
+     },
+     {
+      "id": "q020",
+      "scope": "deploy",
+      "content": [
+       "database",
+       "api",
+       "data",
+       "observability"
+      ],
+      "described": [
+       "database",
+       "api",
+       "incident",
+       "data"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q032",
+      "scope": "frontend",
+      "content": [
+       "database",
+       "deploy",
+       "observability",
+       "incident"
+      ],
+      "described": [
+       "database",
+       "deploy",
+       "auth",
+       "observability"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q035",
+      "scope": "frontend",
+      "content": [
+       "database",
+       "deploy",
+       "auth",
+       "api"
+      ],
+      "described": [
+       "database",
+       "deploy",
+       "process",
+       "auth"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q042",
+      "scope": "billing",
+      "content": [
+       "database",
+       "auth",
+       "api",
+       "observability"
+      ],
+      "described": [
+       "database",
+       "auth",
+       "api",
+       "data"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q061",
+      "scope": "deploy",
+      "content": [
+       "database",
+       "auth",
+       "observability",
+       "billing"
+      ],
+      "described": [
+       "database",
+       "auth",
+       "observability",
+       "frontend"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q063",
+      "scope": "data",
+      "content": [
+       "database",
+       "billing",
+       "api",
+       "process"
+      ],
+      "described": [
+       "database",
+       "billing",
+       "frontend",
+       "ci"
+      ],
+      "s5": [
+       0.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q064",
+      "scope": "api",
+      "content": [
+       "process",
+       "database",
+       "deploy",
+       "observability"
+      ],
+      "described": [
+       "process",
+       "database",
+       "ci",
+       "observability"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q065",
+      "scope": "ci",
+      "content": [
+       "billing",
+       "database",
+       "incident",
+       "observability"
+      ],
+      "described": [
+       "billing",
+       "database",
+       "observability",
+       "frontend"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q068",
+      "scope": "deploy",
+      "content": [
+       "database",
+       "data",
+       "billing",
+       "auth"
+      ],
+      "described": [
+       "database",
+       "data",
+       "process",
+       "billing"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q072",
+      "scope": "auth",
+      "content": [
+       "database",
+       "api",
+       "billing",
+       "incident"
+      ],
+      "described": [
+       "database",
+       "api",
+       "incident",
+       "deploy"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q074",
+      "scope": "api",
+      "content": [
+       "database",
+       "process",
+       "auth",
+       "billing"
+      ],
+      "described": [
+       "database",
+       "process",
+       "ci",
+       "auth"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q075",
+      "scope": "auth",
+      "content": [
+       "database",
+       "api",
+       "observability",
+       "deploy"
+      ],
+      "described": [
+       "database",
+       "api",
+       "frontend",
+       "observability"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q076",
+      "scope": "process",
+      "content": [
+       "database",
+       "deploy",
+       "observability",
+       "incident"
+      ],
+      "described": [
+       "database",
+       "deploy",
+       "observability",
+       "auth"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q078",
+      "scope": "deploy",
+      "content": [
+       "database",
+       "data",
+       "process",
+       "api"
+      ],
+      "described": [
+       "database",
+       "data",
+       "ci",
+       "process"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q080",
+      "scope": "auth",
+      "content": [
+       "database",
+       "api",
+       "billing",
+       "incident"
+      ],
+      "described": [
+       "database",
+       "api",
+       "observability",
+       "billing"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q081",
+      "scope": "frontend",
+      "content": [
+       "database",
+       "incident",
+       "deploy",
+       "api"
+      ],
+      "described": [
+       "database",
+       "incident",
+       "auth",
+       "deploy"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q086",
+      "scope": "billing",
+      "content": [
+       "database",
+       "auth",
+       "incident",
+       "ci"
+      ],
+      "described": [
+       "database",
+       "auth",
+       "api",
+       "incident"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q087",
+      "scope": "data",
+      "content": [
+       "database",
+       "ci",
+       "billing",
+       "process"
+      ],
+      "described": [
+       "database",
+       "ci",
+       "billing",
+       "api"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q091",
+      "scope": "frontend",
+      "content": [
+       "database",
+       "deploy",
+       "ci",
+       "auth"
+      ],
+      "described": [
+       "database",
+       "deploy",
+       "process",
+       "ci"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q094",
+      "scope": "deploy",
+      "content": [
+       "database",
+       "auth",
+       "api",
+       "ci"
+      ],
+      "described": [
+       "database",
+       "auth",
+       "process",
+       "api"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q098",
+      "scope": "api",
+      "content": [
+       "database",
+       "data",
+       "auth",
+       "process"
+      ],
+      "described": [
+       "database",
+       "data",
+       "process",
+       "deploy"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q104",
+      "scope": "deploy",
+      "content": [
+       "database",
+       "data",
+       "billing",
+       "process"
+      ],
+      "described": [
+       "database",
+       "data",
+       "ci",
+       "billing"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q110",
+      "scope": "billing",
+      "content": [
+       "auth",
+       "database",
+       "process",
+       "data"
+      ],
+      "described": [
+       "auth",
+       "database",
+       "frontend",
+       "process"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     }
+    ]
+   },
+   "gate": {
+    "success@5_described_minus_content_cross_and_skew": {
+     "n": 242,
+     "delta_points": 0.41,
+     "ci95_points": [
+      0.0,
+      1.24
+     ],
+     "gained": 1,
+     "lost": 0
+    },
+    "by_category": {
+     "exact": "+0 -0 of 22",
+     "paraphrase": "+0 -0 of 22",
+     "inflection": "+0 -0 of 22",
+     "partial": "+0 -0 of 22",
+     "typo": "+0 -0 of 22",
+     "identifier": "+1 -0 of 22",
+     "question": "+0 -0 of 22",
+     "long": "+0 -0 of 22",
+     "negation": "+0 -0 of 22",
+     "temporal": "+0 -0 of 22",
+     "multihop": "+0 -0 of 22"
+    },
+    "ceiling_oracle_slots_minus_content": {
+     "n": 242,
+     "delta_points": 0.41,
+     "ci95_points": [
+      0.0,
+      1.24
+     ],
+     "gained": 1,
+     "lost": 0
+    },
+    "ceiling_oracle_every_slot_minus_content": {
+     "n": 242,
+     "delta_points": 0.41,
+     "ci95_points": [
+      0.0,
+      1.24
+     ],
+     "gained": 1,
+     "lost": 0
+    },
+    "selection_recall": {
+     "content": 0.9835,
+     "described": 0.9876
+    },
+    "scoped_success@5_described_minus_content": {
+     "n": 121,
+     "delta_points": 0.0,
+     "ci95_points": [
+      0.0,
+      0.0
+     ],
+     "gained": 0,
+     "lost": 0
+    },
+    "passes": false,
+    "redde_minus_content_skew": {
+     "n": 121,
+     "delta_points": -8.26,
+     "ci95_points": [
+      -13.22,
+      -4.13
+     ],
+     "gained": 0,
+     "lost": 10
+    }
+   }
+  },
+  "bm25-sparse": {
+   "scoped": {
+    "content": {
+     "n": 121,
+     "success@5": 0.9835,
+     "hits@5": 119,
+     "ndcg@10": 0.9103,
+     "selection_precision": 0.0124,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "9/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "described": {
+     "n": 121,
+     "success@5": 0.9835,
+     "hits@5": 119,
+     "ndcg@10": 0.9103,
+     "selection_precision": 0.0124,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "9/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "oracle_slots": {
+     "n": 121,
+     "success@5": 0.9835,
+     "hits@5": 119,
+     "ndcg@10": 0.9103,
+     "selection_precision": 0.0124,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "9/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "oracle_all": {
+     "n": 121,
+     "success@5": 0.9835,
+     "hits@5": 119,
+     "ndcg@10": 0.9103,
+     "selection_precision": 0.0124,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "9/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "redde_analogue": {
+     "n": 121,
+     "success@5": 0.9835,
+     "hits@5": 119,
+     "ndcg@10": 0.9105,
+     "selection_precision": 0.0124,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "9/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "union": {
+     "n": 121,
+     "success@5": 0.9835,
+     "hits@5": 119,
+     "ndcg@10": 0.9103,
+     "selection_precision": 0.0099,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "9/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    }
+   },
+   "cross": {
+    "content": {
+     "n": 121,
+     "success@5": 0.9835,
+     "hits@5": 119,
+     "ndcg@10": 0.9084,
+     "selection_precision": 0.1364,
+     "selection_recall": 0.9917,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "9/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "described": {
+     "n": 121,
+     "success@5": 0.9835,
+     "hits@5": 119,
+     "ndcg@10": 0.9084,
+     "selection_precision": 0.1364,
+     "selection_recall": 0.9917,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "9/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "oracle_slots": {
+     "n": 121,
+     "success@5": 0.9835,
+     "hits@5": 119,
+     "ndcg@10": 0.9105,
+     "selection_precision": 0.1374,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "9/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "oracle_all": {
+     "n": 121,
+     "success@5": 0.9835,
+     "hits@5": 119,
+     "ndcg@10": 0.9105,
+     "selection_precision": 0.1374,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "9/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "redde_analogue": {
+     "n": 121,
+     "success@5": 0.9835,
+     "hits@5": 119,
+     "ndcg@10": 0.9085,
+     "selection_precision": 0.1364,
+     "selection_recall": 0.9917,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "9/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "union": {
+     "n": 121,
+     "success@5": 0.9835,
+     "hits@5": 119,
+     "ndcg@10": 0.9103,
+     "selection_precision": 0.1099,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "9/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "11/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    }
+   },
+   "unanswerable": {
+    "content": {
+     "n": 0,
+     "success@5": null,
+     "hits@5": 0,
+     "ndcg@10": null,
+     "selection_precision": null,
+     "selection_recall": null,
+     "unanswerable_false_hits": 1.0,
+     "success@5_by_category": {}
+    },
+    "described": {
+     "n": 0,
+     "success@5": null,
+     "hits@5": 0,
+     "ndcg@10": null,
+     "selection_precision": null,
+     "selection_recall": null,
+     "unanswerable_false_hits": 1.0,
+     "success@5_by_category": {}
+    },
+    "redde_analogue": {
+     "n": 0,
+     "success@5": null,
+     "hits@5": 0,
+     "ndcg@10": null,
+     "selection_precision": null,
+     "selection_recall": null,
+     "unanswerable_false_hits": 1.0,
+     "success@5_by_category": {}
+    },
+    "union": {
+     "n": 0,
+     "success@5": null,
+     "hits@5": 0,
+     "ndcg@10": null,
+     "selection_precision": null,
+     "selection_recall": null,
+     "unanswerable_false_hits": 1.0,
+     "success@5_by_category": {}
+    }
+   },
+   "skew": {
+    "content": {
+     "n": 121,
+     "success@5": 0.9421,
+     "hits@5": 114,
+     "ndcg@10": 0.8781,
+     "selection_precision": 0.2686,
+     "selection_recall": 0.9752,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "7/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "10/11",
+      "identifier": "10/11",
+      "question": "11/11",
+      "long": "10/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "described": {
+     "n": 121,
+     "success@5": 0.9504,
+     "hits@5": 115,
+     "ndcg@10": 0.8861,
+     "selection_precision": 0.2707,
+     "selection_recall": 0.9835,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "7/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "10/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "10/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "oracle_slots": {
+     "n": 121,
+     "success@5": 0.9587,
+     "hits@5": 116,
+     "ndcg@10": 0.8906,
+     "selection_precision": 0.2748,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "7/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "10/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "oracle_all": {
+     "n": 121,
+     "success@5": 0.9587,
+     "hits@5": 116,
+     "ndcg@10": 0.8906,
+     "selection_precision": 0.2748,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "7/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "10/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    },
+    "redde_analogue": {
+     "n": 121,
+     "success@5": 0.876,
+     "hits@5": 106,
+     "ndcg@10": 0.7983,
+     "selection_precision": 0.2397,
+     "selection_recall": 0.8802,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "10/11",
+      "paraphrase": "7/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "10/11",
+      "identifier": "9/11",
+      "question": "10/11",
+      "long": "10/11",
+      "negation": "8/11",
+      "temporal": "9/11",
+      "multihop": "11/11"
+     }
+    },
+    "union": {
+     "n": 121,
+     "success@5": 0.9587,
+     "hits@5": 116,
+     "ndcg@10": 0.8884,
+     "selection_precision": 0.1099,
+     "selection_recall": 1.0,
+     "unanswerable_false_hits": null,
+     "success@5_by_category": {
+      "exact": "11/11",
+      "paraphrase": "7/11",
+      "inflection": "11/11",
+      "partial": "11/11",
+      "typo": "11/11",
+      "identifier": "11/11",
+      "question": "11/11",
+      "long": "10/11",
+      "negation": "11/11",
+      "temporal": "11/11",
+      "multihop": "11/11"
+     }
+    }
+   },
+   "per_query": {
+    "cross": [
+     {
+      "id": "q060",
+      "scope": "incident",
+      "content": [
+       "frontend",
+       "database",
+       "auth",
+       "data",
+       "api",
+       "billing",
+       "deploy",
+       "process"
+      ],
+      "described": [
+       "frontend",
+       "database",
+       "auth",
+       "data",
+       "api",
+       "billing",
+       "process",
+       "observability"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q065",
+      "scope": "ci",
+      "content": [
+       "billing",
+       "incident",
+       "observability",
+       "database",
+       "auth",
+       "api",
+       "data",
+       "deploy"
+      ],
+      "described": [
+       "billing",
+       "incident",
+       "observability",
+       "database",
+       "auth",
+       "api",
+       "frontend",
+       "data"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     }
+    ],
+    "skew": [
+     {
+      "id": "q013",
+      "scope": "frontend",
+      "content": [
+       "deploy",
+       "database",
+       "api",
+       "observability"
+      ],
+      "described": [
+       "deploy",
+       "database",
+       "incident",
+       "api"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q014",
+      "scope": "ci",
+      "content": [
+       "database",
+       "billing",
+       "auth",
+       "data"
+      ],
+      "described": [
+       "database",
+       "billing",
+       "incident",
+       "frontend"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q019",
+      "scope": "process",
+      "content": [
+       "database",
+       "data",
+       "api",
+       "billing"
+      ],
+      "described": [
+       "database",
+       "data",
+       "incident",
+       "api"
+      ],
+      "s5": [
+       0.0,
+       0.0
+      ]
+     },
+     {
+      "id": "q020",
+      "scope": "deploy",
+      "content": [
+       "database",
+       "api",
+       "data",
+       "observability"
+      ],
+      "described": [
+       "database",
+       "api",
+       "incident",
+       "data"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q032",
+      "scope": "frontend",
+      "content": [
+       "database",
+       "deploy",
+       "observability",
+       "incident"
+      ],
+      "described": [
+       "database",
+       "deploy",
+       "auth",
+       "observability"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q035",
+      "scope": "frontend",
+      "content": [
+       "database",
+       "deploy",
+       "auth",
+       "api"
+      ],
+      "described": [
+       "database",
+       "deploy",
+       "process",
+       "auth"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q042",
+      "scope": "billing",
+      "content": [
+       "database",
+       "auth",
+       "api",
+       "observability"
+      ],
+      "described": [
+       "database",
+       "auth",
+       "api",
+       "data"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q061",
+      "scope": "deploy",
+      "content": [
+       "database",
+       "auth",
+       "observability",
+       "billing"
+      ],
+      "described": [
+       "database",
+       "auth",
+       "observability",
+       "frontend"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q063",
+      "scope": "data",
+      "content": [
+       "database",
+       "billing",
+       "api",
+       "process"
+      ],
+      "described": [
+       "database",
+       "billing",
+       "frontend",
+       "ci"
+      ],
+      "s5": [
+       0.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q064",
+      "scope": "api",
+      "content": [
+       "process",
+       "database",
+       "deploy",
+       "observability"
+      ],
+      "described": [
+       "process",
+       "database",
+       "ci",
+       "observability"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q065",
+      "scope": "ci",
+      "content": [
+       "billing",
+       "database",
+       "incident",
+       "observability"
+      ],
+      "described": [
+       "billing",
+       "database",
+       "observability",
+       "frontend"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q068",
+      "scope": "deploy",
+      "content": [
+       "database",
+       "data",
+       "billing",
+       "auth"
+      ],
+      "described": [
+       "database",
+       "data",
+       "process",
+       "billing"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q072",
+      "scope": "auth",
+      "content": [
+       "database",
+       "api",
+       "billing",
+       "incident"
+      ],
+      "described": [
+       "database",
+       "api",
+       "incident",
+       "deploy"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q074",
+      "scope": "api",
+      "content": [
+       "database",
+       "process",
+       "auth",
+       "billing"
+      ],
+      "described": [
+       "database",
+       "process",
+       "ci",
+       "auth"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q075",
+      "scope": "auth",
+      "content": [
+       "database",
+       "api",
+       "observability",
+       "deploy"
+      ],
+      "described": [
+       "database",
+       "api",
+       "frontend",
+       "observability"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q076",
+      "scope": "process",
+      "content": [
+       "database",
+       "deploy",
+       "observability",
+       "incident"
+      ],
+      "described": [
+       "database",
+       "deploy",
+       "observability",
+       "auth"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q078",
+      "scope": "deploy",
+      "content": [
+       "database",
+       "data",
+       "process",
+       "api"
+      ],
+      "described": [
+       "database",
+       "data",
+       "ci",
+       "process"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q080",
+      "scope": "auth",
+      "content": [
+       "database",
+       "api",
+       "billing",
+       "incident"
+      ],
+      "described": [
+       "database",
+       "api",
+       "observability",
+       "billing"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q081",
+      "scope": "frontend",
+      "content": [
+       "database",
+       "incident",
+       "deploy",
+       "api"
+      ],
+      "described": [
+       "database",
+       "incident",
+       "auth",
+       "deploy"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q086",
+      "scope": "billing",
+      "content": [
+       "database",
+       "auth",
+       "incident",
+       "ci"
+      ],
+      "described": [
+       "database",
+       "auth",
+       "api",
+       "incident"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q087",
+      "scope": "data",
+      "content": [
+       "database",
+       "ci",
+       "billing",
+       "process"
+      ],
+      "described": [
+       "database",
+       "ci",
+       "billing",
+       "api"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q091",
+      "scope": "frontend",
+      "content": [
+       "database",
+       "deploy",
+       "ci",
+       "auth"
+      ],
+      "described": [
+       "database",
+       "deploy",
+       "process",
+       "ci"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q094",
+      "scope": "deploy",
+      "content": [
+       "database",
+       "auth",
+       "api",
+       "ci"
+      ],
+      "described": [
+       "database",
+       "auth",
+       "process",
+       "api"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q098",
+      "scope": "api",
+      "content": [
+       "database",
+       "data",
+       "auth",
+       "process"
+      ],
+      "described": [
+       "database",
+       "data",
+       "process",
+       "deploy"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q104",
+      "scope": "deploy",
+      "content": [
+       "database",
+       "data",
+       "billing",
+       "process"
+      ],
+      "described": [
+       "database",
+       "data",
+       "ci",
+       "billing"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     },
+     {
+      "id": "q110",
+      "scope": "billing",
+      "content": [
+       "auth",
+       "database",
+       "process",
+       "data"
+      ],
+      "described": [
+       "auth",
+       "database",
+       "frontend",
+       "process"
+      ],
+      "s5": [
+       1.0,
+       1.0
+      ]
+     }
+    ]
+   },
+   "gate": {
+    "success@5_described_minus_content_cross_and_skew": {
+     "n": 242,
+     "delta_points": 0.41,
+     "ci95_points": [
+      0.0,
+      1.24
+     ],
+     "gained": 1,
+     "lost": 0
+    },
+    "by_category": {
+     "exact": "+0 -0 of 22",
+     "paraphrase": "+0 -0 of 22",
+     "inflection": "+0 -0 of 22",
+     "partial": "+0 -0 of 22",
+     "typo": "+0 -0 of 22",
+     "identifier": "+1 -0 of 22",
+     "question": "+0 -0 of 22",
+     "long": "+0 -0 of 22",
+     "negation": "+0 -0 of 22",
+     "temporal": "+0 -0 of 22",
+     "multihop": "+0 -0 of 22"
+    },
+    "ceiling_oracle_slots_minus_content": {
+     "n": 242,
+     "delta_points": 0.83,
+     "ci95_points": [
+      0.0,
+      2.07
+     ],
+     "gained": 2,
+     "lost": 0
+    },
+    "ceiling_oracle_every_slot_minus_content": {
+     "n": 242,
+     "delta_points": 0.83,
+     "ci95_points": [
+      0.0,
+      2.07
+     ],
+     "gained": 2,
+     "lost": 0
+    },
+    "selection_recall": {
+     "content": 0.9835,
+     "described": 0.9876
+    },
+    "scoped_success@5_described_minus_content": {
+     "n": 121,
+     "delta_points": 0.0,
+     "ci95_points": [
+      0.0,
+      0.0
+     ],
+     "gained": 0,
+     "lost": 0
+    },
+    "passes": false,
+    "redde_minus_content_skew": {
+     "n": 121,
+     "delta_points": -6.61,
+     "ci95_points": [
+      -11.57,
+      -1.65
+     ],
+     "gained": 1,
+     "lost": 9
+    }
+   }
+  }
+ },
+ "adversarial_descriptor": {
+  "cross": {
+   "worst_topic": "api",
+   "queries_whose_selection_recall_fell": 0,
+   "max_sources_displaced": 1
+  },
+  "skew": {
+   "worst_topic": "observability",
+   "queries_whose_selection_recall_fell": 5,
+   "max_sources_displaced": 2
+  }
+ },
+ "latency_ms_union_p95": {
+  "scoped": 35.65,
+  "cross": 27.04,
+  "unanswerable": 22.54,
+  "skew": 125.57
+ }
+}
