@@ -8,6 +8,31 @@ answers: "what each OML release changed for users and operators, newest first"
 
 Newest first. Each release is a signed tag on the [releases page](https://github.com/e8kor/open-memory-lab/releases).
 
+## 0.7.0
+
+Released 2026-11-11.
+
+**The web console misses its latency budget in this release.** ADR-0070 allows the web console 5 ms p95 over the API it calls. 16 of 21 pages miss it by 6.2 to 42.7 ms p95 (10.1 to 31.2 ms with 48 workareas), because every page opens with two `whoami` calls of 8 to 17 ms each ([Web console overhead](benchmarks/web.md)). v0.7.0 ships with the miss by the operator's decision of 2026-11-11, and v0.7.1 fixes it with fewer calls per page ([#286](https://github.com/e8kor/open-memory-lab/issues/286)).
+
+- Changed the web console to run as its own process, `oml-web`, over the public HTTP API. Every page moved to a path of its own under `/web/` (Guardrails, Workareas, Memories, Atlas, Review, Keys, one memory, Curate, Start, setup, people and users), and the server answers the old `?view=` addresses with a redirect, which v0.7.1 removes. The server keeps only sign-in, the sign-up terms page and sign-out. Each release ships `oml-web-X.Y.Z-<target>.tar.gz`, the image carries `/usr/local/bin/oml-web`, and `docker-compose.yml`, `oml quickstart` and the Helm chart start it behind a Caddy router.
+- Added the API operations the console calls: ten new ones, among them `GET /v2/keys`, `GET /v2/review/queue`, `GET /v2/workareas/{workarea}/offers` and the admin's user acts, and new fields on six more. A person's web session reaches the API only through `oml-web`, which proves itself with the web client secret. A console act claims its `Idempotency-Key` before it acts, so a form sent twice acts once and the resubmission replays the first answer.
+- Added as-of reads: `as_of` on reads by id, listings, recall and `oml_read` returns memory as it was recorded at a past instant, under today's access.
+- Added recall across the workareas a key already reads: `sources: "wide"` or a list of workareas, off until a tenant admin turns federation on (`oml search federation`). A `scope` recall carries `search.widen` when a wider search would find more.
+- Added every scan finding on a held memory to its review card and to `POST /v2/review/next` and `GET /v2/review/held`, where a version stored only the first before. `oml admin rescan --rates` prints finding rates per class and origin, and `crates/oml-scan/tests/corpus/` holds an 802-sample red-team baseline.
+- Changed a recall under a tenant default pipeline the server no longer serves to run the server's default and say so in `search.fallback: "tenant_default_unserved"`; `oml doctor` warns `search_tenant_default`. The retrieval page recommends `bm25-sparse` where its model is loaded (success@5 0.983 against 0.934 on the recall eval), at the cost of a 268 MB model, CPU at write time and a higher p95 past a few thousand memories. `bm25-postings` stays the default.
+- Added `eval/recall/selfhost.sh`, which runs the recall eval on your own machine; CI runs the same script.
+- Changed the landing pages to ship apart, built from `site/` as `oml-site-<version>.tar.gz`, and to say what the scan refuses and what it records as a finding.
+- Fixed a web console disable or deletion close that met a concurrent write, which journalled its events twice.
+- Added design records and measurements, none of them built: releases that name no server (ADR-0076, accepted); questions generated per memory (ADR-0075), whose offline phase 0 did not beat `bm25-sparse`, so the operator parked it; and phase 2 of federated recall, whose reviewed descriptors gained one query on the recall eval's cross and skew splits, below the three-point floor, and are not admitted.
+- Changed internals only: the application core keeps no page use case, the crate walls are a CI check of their own, and one flaky hook test counts requests instead of timing them.
+
+Upgrade notes:
+
+- Migrations 0039 to 0043 run at upgrade. 0041 builds an index outside a transaction, one tenant at a time; reads never wait. Once 0043 has run, an older server refuses to start, and `oml doctor` counts held versions an older server wrote without their findings as `scan_findings_unlisted`.
+- Start `oml-web` beside the server with the same `web.client_secret`, at least 32 characters, from the environment or an owner-only file, and route its pages to it in your proxy ([Run the web console](operations/web-console.md)). On Kubernetes, pass the secret as an environment variable; a volume-mounted Secret is refused.
+- `POST /v2/keys` and `POST /v2/keys/{key}/connect-codes` now hold an `Idempotency-Key` to one request for every key. The same key with another request answers `409 idempotency.digest_mismatch`, and the same request again answers the first `201` without the key's value or the code. Send one key per act.
+- `search.fallback` has a new value, `tenant_default_unserved`, which a client matching the field exhaustively must accept.
+
 ## 0.6.3
 
 Released 2026-11-10.
