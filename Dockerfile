@@ -1,5 +1,10 @@
 # Open Memory Lab — oml-server image, PoC (M1) slice.
 #
+# One image, two processes (ADR-0070 d4): the entrypoint is the lead,
+# oml-server-lead; the web console, oml-web, runs from the same image with
+# its own entrypoint, /usr/local/bin/oml-web (docker-compose.yml, the Helm
+# chart and `oml quickstart` start it beside the lead).
+#
 # Authored with the spec's docker profile (docs/operations/deployment.md);
 # CI builds it and runs scripts/quickstart.sh against it through
 # docker-compose.yml (.github/workflows/ci.yml, job compose).
@@ -25,7 +30,12 @@ ARG SOURCE_DATE_EPOCH
 WORKDIR /build
 COPY . .
 # Cargo.lock is committed (the workspace ships binaries), so build --locked.
-RUN cargo build --release --locked --bin oml-server-lead --bin oml
+# Empty in every release build. CI's signed-in page check alone passes
+# oml-server-lead/e2e-sign-in (crates/bins/oml-server-lead/src/e2e.rs);
+# scripts/check_release.py fails a release workflow that passes it.
+ARG OML_CARGO_FEATURES=""
+RUN cargo build --release --locked --bin oml-server-lead --bin oml --bin oml-web \
+        ${OML_CARGO_FEATURES:+--features "$OML_CARGO_FEATURES"}
 
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -38,6 +48,9 @@ COPY --from=builder /build/target/release/oml-server-lead /usr/local/bin/oml-ser
 # The administration CLI rides along so `docker compose exec oml-server oml …`
 # runs the ceremonies without a local Rust toolchain.
 COPY --from=builder /build/target/release/oml /usr/local/bin/oml
+# The web console, its own process over the lead's HTTP API (ADR-0070 d4):
+# run it with --entrypoint /usr/local/bin/oml-web.
+COPY --from=builder /build/target/release/oml-web /usr/local/bin/oml-web
 # Migrations ship in the image: the lead applies them itself at startup
 # (migrate-on-boot), under postgres.owner_url, closes that connection and
 # serves under postgres.url, a role that owns nothing (ADR-0034 d4). That is a
@@ -50,7 +63,9 @@ COPY --from=builder /build/migrations /usr/local/share/oml/migrations
 COPY --from=builder /build/LICENSES /usr/local/share/oml/licenses
 
 USER oml
+# OML_WEB__LISTEN is oml-web's; the lead reads no web.listen.
 ENV OML_SERVER__LISTEN=0.0.0.0:8080 \
-    OML_KMS__KEYRING_PATH=/var/lib/oml/keyring/signing.key
-EXPOSE 8080
+    OML_KMS__KEYRING_PATH=/var/lib/oml/keyring/signing.key \
+    OML_WEB__LISTEN=0.0.0.0:8091
+EXPOSE 8080 8091
 ENTRYPOINT ["/usr/local/bin/oml-server-lead"]

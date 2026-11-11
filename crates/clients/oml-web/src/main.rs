@@ -2,7 +2,8 @@
 //! 2026-11-10). Reads its configuration from the environment, refuses to
 //! start without `web.api_url` and `web.client_secret`, reads the public
 //! origin from the API unless `web.public_url` names it, and serves the
-//! pages on `web.listen`.
+//! pages on `web.listen`. `oml-web --doctor` prints the doctor lines instead
+//! and exits `1` when any is `fail` (ADR-0070 d4).
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -15,8 +16,81 @@ use oml_web::{Config, Layers, Web, api, router};
 /// apart, before it refuses to start: the API may start after this process.
 const DISCOVERY_ATTEMPTS: u32 = 30;
 
+/// `--doctor`: the configuration's lines, then the API's readiness when the
+/// configuration holds, each `<level> <setting>: <detail>`.
+async fn doctor() -> ExitCode {
+    use oml_web::doctor::{Level, config_lines};
+    let mut lines = config_lines(|name| std::env::var(name).ok());
+    if let Ok(config) = Config::from_env() {
+        let line = match oml_sdk::HttpTransport::new(&config.api_url, API_TIMEOUT)
+            .map_err(|e| e.to_string())
+            .and_then(|t| api(Arc::new(t), config.client_secret.expose()))
+        {
+            Err(e) => (Level::Fail, format!("api: {e}")),
+            Ok(api) => match api.readyz().await {
+                Ok(ready)
+                    if ready.status == "ok" && ready.web_client.as_deref() == Some("none") =>
+                {
+                    (
+                        Level::Fail,
+                        format!(
+                            "api: {} is ready but accepts no web client identity; set web.client_secret on the lead to oml-web's",
+                            config.api_url
+                        ),
+                    )
+                }
+                Ok(ready) if ready.status == "ok" && ready.web_client.is_none() => (
+                    Level::Fail,
+                    format!(
+                        "api: {} is ready but names no web client identity; it is a lead from before ADR-0070, which accepts no capacity credential",
+                        config.api_url
+                    ),
+                ),
+                Ok(ready) if ready.status == "ok" => (
+                    Level::Ok,
+                    format!(
+                        "api: {} is ready (web client identity: {})",
+                        config.api_url,
+                        ready.web_client.as_deref().unwrap_or_default()
+                    ),
+                ),
+                Ok(ready) => (
+                    Level::Fail,
+                    format!("api: {} answered {}", config.api_url, ready.status),
+                ),
+                Err(e) => (
+                    Level::Fail,
+                    format!("api: {} is unreachable or not ready: {e}", config.api_url),
+                ),
+            },
+        };
+        lines.push(line);
+    }
+    let failed = lines.iter().any(|(level, _)| *level == Level::Fail);
+    for (level, text) in lines {
+        println!("{level} {text}");
+    }
+    if failed {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
+    match std::env::args().nth(1).as_deref() {
+        None => {}
+        Some("--doctor") => return doctor().await,
+        Some("--version") => {
+            println!("oml-web {}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        }
+        Some(other) => {
+            eprintln!("oml-web: unknown argument {other}; oml-web takes --doctor or --version");
+            return ExitCode::from(2);
+        }
+    }
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(err) => {

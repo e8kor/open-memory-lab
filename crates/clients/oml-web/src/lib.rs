@@ -8,6 +8,7 @@
 //! lead. [`PAGES`] is that routing table, and [`serves`] its reading.
 
 pub mod config;
+pub mod doctor;
 pub mod frame;
 pub mod middleware;
 pub mod outcome;
@@ -29,35 +30,41 @@ pub use middleware::Layers;
 /// is up, not that the API is.
 pub const HEALTH_PATH: &str = "/web/healthz";
 
+/// The readiness probe: ready when the API answers its own `/readyz` as
+/// ready and names a web client identity, so the probe sees the hop. On
+/// `oml-web`'s own listener; the proxy sends the public `/readyz` to the
+/// lead (ADR-0070 d4).
+pub const READY_PATH: &str = "/readyz";
+
 /// The session cookie the lead's sign-in sets (ADR-0045 d5).
 pub const SESSION_COOKIE: &str = "__Host-oml_session";
 
 /// Where a person with no live session is sent: the lead's sign-in page,
-/// which the lead renders at `GET /web` with no session until phase (d)
-/// moves it to `GET /web/sign-in` (ADR-0070 d4, d10 (e)).
-pub const SIGN_IN_PATH: &str = "/web";
+/// with the page they asked for as `next` (ADR-0070 d4, d6).
+pub use oml_page::SIGN_IN_PATH;
 
-/// The pages this process serves, as `(method, path, view)`: the proxy
-/// sends a request here when its method and path match and its query names
-/// `view` once with that value; every other `/web` request goes to the lead
-/// (ADR-0070 d4, d7 (b)). The Caddyfile in `deploy/` routes the same set.
-pub const PAGES: &[(&str, &str, &str)] = &[("GET", "/web", "guardrails")];
+/// The pages this process serves, as `(method, path)`: each moved page has
+/// its own path under `/web/`, so every proxy and Ingress routes by path
+/// alone, and the lead answers the page's old `?view=` URL with a `303` here
+/// (ADR-0070 d4, d7 (b) as amended). `deploy/caddy/Caddyfile`, both compose
+/// files and the chart's `web.ingressPaths` route the same set
+/// (`tests/routes.rs`).
+pub const PAGES: &[(&str, &str)] = &[("GET", GUARDRAILS_PATH)];
 
-/// Whether a request with `method`, `path` and `query` is one of [`PAGES`],
-/// or the health probe.
+/// The Guardrails view's own path (ADR-0037 d17), moved from
+/// `GET /web?view=guardrails`.
+pub const GUARDRAILS_PATH: &str = "/web/guardrails";
+
+/// Whether a request with `method` and `path` is one of [`PAGES`], or the
+/// health probe. The query plays no part.
 #[must_use]
-pub fn serves(method: &str, path: &str, query: Option<&str>) -> bool {
+pub fn serves(method: &str, path: &str) -> bool {
     if path == HEALTH_PATH {
         return true;
     }
-    let views: Vec<&str> = query
-        .unwrap_or("")
-        .split('&')
-        .filter_map(|pair| pair.strip_prefix("view="))
-        .collect();
-    PAGES
-        .iter()
-        .any(|(m, p, view)| *m == method && *p == path && views == [*view])
+    // READY_PATH is the probe of oml-web's own listener; the public
+    // /readyz is the lead's, so the proxy never sends it here.
+    PAGES.iter().any(|(m, p)| *m == method && *p == path)
 }
 
 /// The capacities a session's credential is derived for (ADR-0070 d2).
@@ -114,6 +121,58 @@ async fn health() -> axum::Json<serde_json::Value> {
     }))
 }
 
+/// [`READY_PATH`]: one unauthenticated call to the API's `/readyz`. `200`
+/// when it is ready and accepts a web client identity; `503` naming the
+/// check that failed otherwise.
+async fn ready(axum::extract::State(web): axum::extract::State<Web>) -> axum::response::Response {
+    use axum::response::IntoResponse as _;
+    let (api, web_client) = match web.api.readyz().await {
+        Ok(ready) if ready.status == "ok" => {
+            // A lead that names no identity proves none: fail closed.
+            let identity = ready
+                .web_client
+                .unwrap_or_else(|| "unknown: the API names no web client identity".to_owned());
+            ("ok".to_owned(), identity)
+        }
+        Ok(ready) => (
+            format!("unavailable: the API answered {}", ready.status),
+            String::new(),
+        ),
+        Err(oml_sdk::Error::Transport(e)) => (format!("unreachable: {e}"), String::new()),
+        Err(oml_sdk::Error::Api(e)) => (
+            format!("unavailable: the API answered {}", e.status),
+            String::new(),
+        ),
+        Err(e) => (format!("unavailable: {e}"), String::new()),
+    };
+    let web_client = if web_client == "none" {
+        "none: the API accepts no capacity credential; set web.client_secret on the lead".to_owned()
+    } else {
+        web_client
+    };
+    let ok = api == "ok" && !web_client.starts_with("none") && !web_client.starts_with("unknown");
+    let status = if ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    let mut checks = serde_json::Map::new();
+    checks.insert("api".to_owned(), json!(api));
+    if !web_client.is_empty() {
+        checks.insert("web_client".to_owned(), json!(web_client));
+    }
+    (
+        status,
+        axum::Json(json!({
+            "status": if ok { "ok" } else { "unavailable" },
+            "service": "oml-web",
+            "version": env!("CARGO_PKG_VERSION"),
+            "checks": checks,
+        })),
+    )
+        .into_response()
+}
+
 /// Every path no page serves; it passes the same layers as a page.
 async fn not_found() -> StatusCode {
     StatusCode::NOT_FOUND
@@ -124,7 +183,7 @@ async fn not_found() -> StatusCode {
 /// page routes the session load.
 pub fn router(web: Web) -> Router {
     let pages = Router::new()
-        .route("/web", get(pages::user_page))
+        .route(GUARDRAILS_PATH, get(pages::guardrails_page))
         .route_layer(axum::middleware::from_fn_with_state(
             web.clone(),
             session::load,
@@ -132,6 +191,7 @@ pub fn router(web: Web) -> Router {
         .with_state(web.clone());
     Router::new()
         .route(HEALTH_PATH, get(health))
+        .route(READY_PATH, get(ready).with_state(web.clone()))
         .merge(pages)
         .fallback(not_found)
         .layer(
@@ -154,18 +214,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_proxy_sends_only_the_moved_views_here() {
-        assert!(serves("GET", "/web", Some("view=guardrails")));
-        assert!(serves("GET", "/web", Some("view=guardrails&workarea=w")));
-        assert!(serves("GET", "/web/healthz", None));
-        assert!(!serves("GET", "/web", None));
-        assert!(!serves("GET", "/web", Some("view=keys")));
-        assert!(!serves("POST", "/web", Some("view=guardrails")));
-        assert!(!serves("GET", "/web/admin", Some("view=guardrails")));
-        assert!(!serves(
-            "GET",
-            "/web",
-            Some("view=guardrails&view=guardrails")
-        ));
+    fn the_proxy_sends_only_the_moved_pages_paths_here() {
+        // Route-by-path (ADR-0070 d7 (b) as amended): the query plays no part.
+        assert!(serves("GET", "/web/guardrails"));
+        assert!(serves("GET", "/web/healthz"));
+        assert!(!serves("GET", "/web"));
+        assert!(!serves("POST", "/web/guardrails"));
+        assert!(!serves("GET", "/web/guardrails/x"));
+        assert!(!serves("GET", "/web/admin"));
+        assert!(PAGES.iter().all(|(_, path)| path.starts_with("/web/")));
     }
 }

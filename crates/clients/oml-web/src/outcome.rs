@@ -7,8 +7,6 @@ use axum::response::{IntoResponse, Response};
 use http::{HeaderValue, StatusCode, header};
 use oml_sdk::{Error, TransportError};
 
-use crate::SIGN_IN_PATH;
-
 /// What a page shows for an API refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageOutcome {
@@ -62,14 +60,14 @@ pub fn of_envelope(body: &[u8]) -> PageOutcome {
         .unwrap_or(PageOutcome::Refused)
 }
 
-/// The `303` to the sign-in page.
+/// The `303` to the lead's sign-in page, carrying `next`, the page the
+/// person asked for (ADR-0070 d4).
 #[must_use]
-pub fn sign_in() -> Response {
-    (
-        StatusCode::SEE_OTHER,
-        [(header::LOCATION, HeaderValue::from_static(SIGN_IN_PATH))],
-    )
-        .into_response()
+pub fn sign_in(next: &str) -> Response {
+    let location = oml_page::sign_in_location(next);
+    let location = HeaderValue::from_str(&location)
+        .unwrap_or_else(|_| HeaderValue::from_static(oml_page::SIGN_IN_PATH));
+    (StatusCode::SEE_OTHER, [(header::LOCATION, location)]).into_response()
 }
 
 /// An HTML answer with `status`.
@@ -86,14 +84,14 @@ pub fn html(status: StatusCode, body: String) -> Response {
 /// The page for a call that has no usable answer, naming the page's
 /// request id: an API refusal as its outcome, a timeout as `504`, and an
 /// unreachable API or an answer not in the operation's shape as `502`
-/// (ADR-0070 d3 layer 7, d8).
+/// (ADR-0070 d3 layer 7, d8). `next` is the page, for the sign-in outcome.
 #[must_use]
-pub fn page(error: &Error, request_id: &str) -> Response {
+pub fn page(error: &Error, request_id: &str, next: &str) -> Response {
     match error {
         Error::Api(e) => {
             let outcome = PageOutcome::of_code(&e.code);
             if outcome == PageOutcome::SignIn {
-                return sign_in();
+                return sign_in(next);
             }
             let status = StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_GATEWAY);
             let mut response = html(
@@ -195,19 +193,23 @@ mod tests {
 
     #[test]
     fn each_failure_answers_its_page_status() {
-        let response = page(&api(404, "access.not_found"), "page-7");
+        let response = page(&api(404, "access.not_found"), "page-7", "/web");
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let response = page(&api(429, "limit.rate"), "page-7");
+        let response = page(&api(429, "limit.rate"), "page-7", "/web");
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(response.headers()[header::RETRY_AFTER], "30");
-        let response = page(&api(401, "auth.invalid"), "page-7");
+        let response = page(&api(401, "auth.invalid"), "page-7", "/web/guardrails");
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        assert_eq!(response.headers()[header::LOCATION], SIGN_IN_PATH);
-        let response = page(&Error::Transport(TransportError::Timeout), "page-7");
+        assert_eq!(
+            response.headers()[header::LOCATION],
+            "/web/sign-in?next=%2Fweb%2Fguardrails"
+        );
+        let response = page(&Error::Transport(TransportError::Timeout), "page-7", "/web");
         assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
         let response = page(
             &Error::Transport(TransportError::Unreachable("refused".to_owned())),
             "page-7",
+            "/web",
         );
         assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     }

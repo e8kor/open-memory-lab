@@ -40,6 +40,11 @@ uuid.workspace = true
 # targets, aarch64 musl among them, never compile candle or gemm.
 default = ["rerank"]
 rerank = ["oml-rerank/model"]
+# CI's signed-in page check (ADR-0070, phase (b) as built): with this feature
+# and OML_E2E_SIGN_IN_EMAIL set, every GitHub sign-in admits that address
+# without calling GitHub. Off in every release build; scripts/check_release.py
+# fails a release workflow or Dockerfile default that turns it on.
+e2e-sign-in = []
 
 [dev-dependencies]
 hex.workspace = true

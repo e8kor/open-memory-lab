@@ -1,6 +1,7 @@
 {{- $fullname := include "oml.fullname" . -}}
 {{- $ns := .Release.Namespace -}}
-Open Memory Lab {{ .Chart.AppVersion }}: one lead, deployment/{{ $fullname }}-server-lead, in namespace {{ $ns }}.
+Open Memory Lab {{ .Chart.AppVersion }}: one lead, deployment/{{ $fullname }}-server-lead, and the
+web console, deployment/{{ $fullname }}-web, in namespace {{ $ns }}.
 {{- if and .Release.IsInstall .Values.ingress.enabled }}
 
 WARNING: this install enabled the Ingress before the first admin key is claimed.
@@ -42,6 +43,21 @@ helm upgrade with --set ingress.enabled=false until you have.
      helm upgrade {{ .Release.Name }} <this chart> --namespace {{ $ns }} --reuse-values \
        --set ingress.enabled=true --set 'ingress.hosts[0].host=<your host>' \
        --set 'ingress.hosts[0].paths[0].path=/' --set 'ingress.hosts[0].paths[0].pathType=Prefix'
+
+The web console reaches the lead at service/{{ $fullname }}-server and proves itself with the
+secret in Secret {{ include "oml.webClientSecret" . }}; it is ready once the lead is ready and
+accepts that secret. Check it with:
+
+     kubectl --namespace {{ $ns }} exec deployment/{{ $fullname }}-web -- /usr/local/bin/oml-web --doctor
+
+The Ingress, once enabled, routes each page the web console serves by its own path
+(web.ingressPaths, /web/guardrails today) and every other path to the lead.
+{{- if not .Values.web.publicUrl }}
+
+web.publicUrl is unset, so the web console accepts a form only from
+{{ include "oml.webPublicUrl" . }}, the first Ingress host. Set web.publicUrl to the origin
+people use.
+{{- end }}
 
 The volume claim {{ include "oml.keyringClaim" . }} holds the deployment signing key. helm uninstall
 leaves it in place, and a reinstall under the same release name takes it back.

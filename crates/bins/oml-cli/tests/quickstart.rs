@@ -166,17 +166,20 @@ async fn quickstart_brings_up_the_compose_profile_claims_the_lead_and_prints_the
         .lines()
         .filter_map(|l| l.split_once('=').map(|(_, v)| v))
         .collect();
-    assert_eq!(passwords.len(), 3, "{env}");
+    // Three role passwords and the web client secret (ADR-0070 d2).
+    assert_eq!(passwords.len(), 4, "{env}");
     assert!(
         passwords
             .iter()
             .all(|p| p.len() == 32 && p.bytes().all(|b| b.is_ascii_hexdigit())),
-        "three generated passwords"
+        "four generated secrets"
     );
-    assert!(
-        passwords[0] != passwords[1]
-            && passwords[1] != passwords[2]
-            && passwords[0] != passwords[2],
+    assert_eq!(
+        passwords
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        4,
         "each role its own password"
     );
 

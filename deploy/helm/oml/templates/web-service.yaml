@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "oml.fullname" . }}-web
+  labels:
+    {{- include "oml.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  # Cluster-internal, as the lead's: the Ingress, when enabled, routes
+  # web.ingressPaths here (ADR-0070 d4).
+  type: ClusterIP
+  selector:
+    {{- include "oml.webSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 8091
+      targetPort: http
+      protocol: TCP

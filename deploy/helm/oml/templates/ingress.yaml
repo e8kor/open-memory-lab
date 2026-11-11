@@ -24,6 +24,16 @@ spec:
     - host: {{ .host | quote }}
       http:
         paths:
+          {{- range $.Values.web.ingressPaths }}
+          # A page oml-web serves (ADR-0070 d4), ahead of the lead's paths.
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ printf "%s-web" (include "oml.fullname" $) }}
+                port:
+                  name: http
+          {{- end }}
           {{- range .paths }}
           - path: {{ .path }}
             pathType: {{ .pathType }}

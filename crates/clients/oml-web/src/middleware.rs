@@ -249,7 +249,8 @@ pub async fn same_origin(State(layers): State<Layers>, req: Request, next: Next)
     }
     let ids = ids_of(&req);
     let Some(token) = cookie(req.headers(), SESSION_COOKIE) else {
-        return outcome::sign_in();
+        // A form's page is its path; the query a GET carried is not resent.
+        return outcome::sign_in(req.uri().path());
     };
     let (parts, body) = req.into_parts();
     let Ok(bytes) = axum::body::to_bytes(body, FORM_MAX_BYTES).await else {

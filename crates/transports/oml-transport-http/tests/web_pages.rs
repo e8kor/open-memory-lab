@@ -345,8 +345,8 @@ async fn the_lead_serves_exactly_web_routes() {
     }
     assert_eq!(
         WEB_ROUTES.len(),
-        15,
-        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven"
+        16,
+        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven, ADR-0070 d4 GET /web/sign-in"
     );
     assert_eq!(
         USER_ACTIONS,
@@ -2044,16 +2044,180 @@ async fn a_key_issued_on_the_user_page_takes_the_default_guardrail_scope_and_the
 }
 
 #[tokio::test]
-async fn the_lead_no_longer_serves_the_guardrails_view() {
-    // oml-web serves it (ADR-0070 d7 (b)); its assertions moved to
-    // crates/clients/oml-web/tests/web_pages.rs unchanged. The lead answers
-    // the URL as no page rather than as another view.
+async fn the_lead_answers_the_old_guardrails_url_with_a_redirect_to_its_own_path() {
+    // oml-web serves the view at /web/guardrails (ADR-0070 d7 (b) as
+    // amended): the lead sends the old ?view= form there, to a fixed target
+    // that carries nothing from the request, signed in or not.
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (status, _, page) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
-    assert!(page.contains("access.not_found"), "{page}");
-    assert!(!page.contains("Rules in force at"), "{page}");
+    for (old, cookie) in [
+        ("/web?view=guardrails", Some(cookie.as_str())),
+        (
+            "/web?view=guardrails&workarea=%2F%2Fevil.example",
+            Some(cookie.as_str()),
+        ),
+        ("/web?view=guardrails", None),
+    ] {
+        let (status, headers, page) = send(&rig.router, get(old, cookie)).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{old}: {page}");
+        assert_eq!(headers[header::LOCATION], "/web/guardrails", "{old}");
+        assert!(!page.contains("Rules in force at"), "{page}");
+    }
+    // The lead serves no page at the moved path.
+    let (status, _, _) = send(&rig.router, get("/web/guardrails", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_sign_in_form_that_repeats_a_field_is_refused() {
+    let rig = rig().await;
+    for fields in [
+        [("provider", "google"), ("provider", "github")],
+        [("next", "/web"), ("next", "/web/admin")],
+    ] {
+        let mut all = fields.to_vec();
+        if all[0].0 == "next" {
+            all.push(("provider", "google"));
+        }
+        let (status, _, page) = send(&rig.router, post("/web/sign-in", &all, None)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{fields:?}: {page}");
+    }
+}
+
+/// The `next` field the sign-in page's provider forms carry.
+fn next_field(page: &str) -> Option<String> {
+    let marker = r#"name="next" value=""#;
+    let start = page.find(marker)? + marker.len();
+    Some(page[start..start + page[start..].find('"')?].replace("&amp;", "&"))
+}
+
+#[tokio::test]
+async fn a_next_outside_web_or_naming_another_origin_returns_to_web() {
+    // ADR-0070 d4: a same-origin relative path under /web, with no `//`,
+    // `\`, `@` or scheme, checked again after one more percent-decoding.
+    let rig = rig().await;
+    for (sent, kept) in [
+        ("/web?view=guardrails", "/web?view=guardrails"),
+        ("/web/admin", "/web/admin"),
+        ("/web", "/web"),
+        ("//evil.example/web", "/web"),
+        ("https://evil.example/web", "/web"),
+        ("/web//evil.example", "/web"),
+        ("/web\\evil.example", "/web"),
+        ("/web@evil.example", "/web"),
+        ("/web/%2F%2Fevil.example", "/web"),
+        ("/web/%5Cevil.example", "/web"),
+        ("/webfoo", "/web"),
+        ("/v2/keys", "/web"),
+        ("/web:evil", "/web"),
+        ("", "/web"),
+    ] {
+        let (status, _, page) = send(
+            &rig.router,
+            get(&format!("/web/sign-in?next={}", pct(sent)), None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{sent}: {page}");
+        assert!(page.contains("Sign in with Google"), "{sent}: {page}");
+        assert_eq!(next_field(&page).as_deref(), Some(kept), "{sent}");
+    }
+    // No next at all is /web.
+    let (_, _, page) = send(&rig.router, get("/web/sign-in", None)).await;
+    assert_eq!(next_field(&page).as_deref(), Some("/web"));
+}
+
+#[tokio::test]
+async fn a_sign_in_returns_to_its_next_on_the_public_origin() {
+    let rig = rig().await;
+    // A person with an agent key, so onboarding does not take the landing.
+    let (cookie, _) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    // Signed in already: /web/sign-in sends the browser straight on.
+    let (status, headers, _) = send(
+        &rig.router,
+        get(
+            &format!("/web/sign-in?next={}", pct("/web?view=guardrails")),
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        headers[header::LOCATION],
+        format!("{ISSUER}/web?view=guardrails").as_str()
+    );
+    // A whole sign-in started with next lands on it, built from the
+    // configured origin and never from a request header.
+    let (status, headers, _) = send(
+        &rig.router,
+        post(
+            "/web/sign-in",
+            &[("provider", "google"), ("next", "/web?view=guardrails")],
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let location = headers[header::LOCATION]
+        .to_str()
+        .expect("ASCII")
+        .to_owned();
+    let (sealed, _) = set_cookie(&headers, SIGN_IN_COOKIE).expect("the sign-in cookie");
+    let state = query_param(&location, "state").expect("a state");
+    let nonce = query_param(&location, "nonce").expect("a nonce");
+    rig.providers.answer(
+        Provider::Google,
+        Ok(ProviderAnswer::GoogleIdToken(google_token(
+            &nonce, "sub-1", EMAIL, true,
+        ))),
+    );
+    let (status, headers, _) = send(
+        &rig.router,
+        Request::get(format!("/web/callback/google?code=c&state={}", pct(&state)))
+            .header(header::COOKIE, format!("{SIGN_IN_COOKIE}={sealed}"))
+            .header(header::HOST, "evil.example")
+            .header("x-forwarded-host", "evil.example")
+            .body(Body::empty())
+            .expect("a request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        headers[header::LOCATION],
+        format!("{ISSUER}/web?view=guardrails").as_str()
+    );
+    // A next that fails the rule is dropped to /web at the callback too.
+    let (status, headers, _) = send(
+        &rig.router,
+        post(
+            "/web/sign-in",
+            &[("provider", "google"), ("next", "//evil.example/web")],
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let location = headers[header::LOCATION]
+        .to_str()
+        .expect("ASCII")
+        .to_owned();
+    let (sealed, _) = set_cookie(&headers, SIGN_IN_COOKIE).expect("the sign-in cookie");
+    let state = query_param(&location, "state").expect("a state");
+    let nonce = query_param(&location, "nonce").expect("a nonce");
+    rig.providers.answer(
+        Provider::Google,
+        Ok(ProviderAnswer::GoogleIdToken(google_token(
+            &nonce, "sub-1", EMAIL, true,
+        ))),
+    );
+    let (_, headers, _) = callback(
+        &rig,
+        Provider::Google,
+        "c2",
+        &state,
+        &format!("{SIGN_IN_COOKIE}={sealed}"),
+    )
+    .await;
+    assert_eq!(headers[header::LOCATION], "/web");
 }
 
 #[tokio::test]

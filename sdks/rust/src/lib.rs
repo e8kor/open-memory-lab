@@ -32,11 +32,12 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 4] = [
+pub const OPERATIONS: [&str; 5] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workarea resp:GuardrailSet",
     "getWorkareaTree GET /v2/workareas/{workarea}/tree query:limit,cursor resp:WorkareaPage",
+    "readyz GET /readyz resp:Ready",
 ];
 
 /// The request id header (ADR-0042 d4).
@@ -116,6 +117,17 @@ pub struct AuthorizationServerMetadata {
 pub struct NamedRef {
     pub id: String,
     pub name: String,
+}
+
+/// `GET /readyz`: whether the API can serve, and the web client identity it
+/// accepts, the fields read here (ADR-0070 d2, d4).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Ready {
+    /// `ok`, or `unavailable` (with a `503`).
+    pub status: String,
+    /// `none` when the API accepts no capacity credential from `oml-web`;
+    /// absent from an API before ADR-0070.
+    pub web_client: Option<String>,
 }
 
 /// `GET /v2/whoami`: the calling key's own record, the fields read here.
@@ -328,6 +340,15 @@ impl<T: Transport> Client<T> {
         Ok(self.authorization_server_metadata().await?.issuer)
     }
 
+    /// `GET /readyz`. No credential: the probe answers anyone.
+    ///
+    /// # Errors
+    /// The API's refusal (a `503` while it cannot serve), or no usable
+    /// answer.
+    pub async fn readyz(&self) -> Result<Ready, Error> {
+        self.get(None, "/readyz".to_owned()).await
+    }
+
     /// `GET /v2/whoami`.
     ///
     /// # Errors
@@ -463,6 +484,7 @@ mod tests {
             decodes(&client.whoami(&CALL).await),
             decodes(&client.guardrails(&CALL, Some("alice.proj")).await),
             decodes(&client.workarea_tree(&CALL, "w/1", 200, Some("c 1")).await),
+            decodes(&client.readyz().await),
         ];
         let seen = seen.lock().unwrap();
         let table = table();
@@ -480,6 +502,7 @@ mod tests {
             );
         }
         assert!(!seen[0].headers().contains_key(AUTHORIZATION));
+        assert!(!seen[4].headers().contains_key(AUTHORIZATION));
         assert_eq!(seen[2].uri(), "/v1/guardrails?workarea=alice.proj");
         assert_eq!(
             seen[3].uri(),

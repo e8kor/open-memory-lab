@@ -59,6 +59,7 @@ use oml_app::ports::HandleSealer as _;
 pub const WEB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/web"),
     ("POST", "/web"),
+    ("GET", "/web/sign-in"),
     ("POST", "/web/sign-in"),
     ("GET", "/web/callback/{provider}"),
     ("GET", "/web/admin"),
@@ -414,6 +415,7 @@ where
         match (method, path) {
             ("GET", "/web") => get(Self::user_page),
             ("POST", "/web") => post(Self::user_act),
+            ("GET", "/web/sign-in") => get(Self::sign_in_get),
             ("POST", "/web/sign-in") => post(Self::sign_in),
             ("GET", "/web/callback/{provider}") => get(Self::callback),
             ("GET", "/web/admin") => get(Self::admin_page),
@@ -473,9 +475,33 @@ where
 
     /// The sign-in page, with a refusal above the buttons when there is one.
     fn sign_in_page(&self, status: StatusCode, refusal: Option<&ApiError>) -> Response {
+        self.sign_in_page_to(status, refusal, "/web")
+    }
+
+    /// The sign-in page whose forms carry `next`, already admitted
+    /// (ADR-0070 d4).
+    fn sign_in_page_to(
+        &self,
+        status: StatusCode,
+        refusal: Option<&ApiError>,
+        next: &str,
+    ) -> Response {
         let providers = self.pages().provider_list();
-        let html = page::sign_in(&providers, refusal.map(|e| (e.code, e.message.as_str())));
+        let html = page::sign_in(
+            &providers,
+            refusal.map(|e| (e.code, e.message.as_str())),
+            next,
+        );
         page::page_response(status, html, &providers, self.frame_src().as_deref())
+    }
+
+    /// `next` on the configured public origin, never on a request header
+    /// (ADR-0070 d4); `/web` stays the relative redirect it always was.
+    fn next_location(&self, next: &str) -> String {
+        match self.app.oauth_issuer() {
+            Some(issuer) if next != "/web" => format!("{}{next}", issuer.as_str()),
+            _ => "/web".to_owned(),
+        }
     }
 
     /// The live session the cookie names, or `None`.
@@ -515,6 +541,15 @@ where
         let mut line = WebLine::default();
         if let Some(refused) = human_only(headers) {
             return self.refused(&refused, line);
+        }
+        // A view oml-web serves at its own path: a 303 to that fixed path,
+        // carrying nothing from the request (ADR-0070 d7 (b) as amended).
+        if let Some(path) = views::moved_view(query) {
+            return Answer {
+                response: self.redirect(path, None),
+                error_code: None,
+                line,
+            };
         }
         match self.session_of(headers).await {
             Err(e) => self.refused(&e, line),
@@ -824,6 +859,53 @@ where
         }
     }
 
+    // -- GET /web/sign-in -------------------------------------------------------
+
+    async fn sign_in_get(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        uri: Uri,
+    ) -> Response {
+        let answer = st
+            .sign_in_get_inner(&headers, uri.query().unwrap_or(""))
+            .await;
+        Self::web_finish(&rid, answer)
+    }
+
+    /// The sign-in page, where `oml-web` sends a person with no session,
+    /// carrying the page as `next` (ADR-0070 d4, d6). A browser already
+    /// signed in goes straight on to `next`; anyone else gets the page,
+    /// whose forms carry `next` as admitted, or `/web`.
+    async fn sign_in_get_inner(&self, headers: &HeaderMap, query: &str) -> Answer {
+        let mut line = WebLine::default();
+        if let Some(refused) = human_only(headers) {
+            return self.refused(&refused, line);
+        }
+        let pairs = form_pairs(query.as_bytes()).unwrap_or_default();
+        let mut sent = pairs.iter().filter(|(n, _)| n == "next");
+        let next = match (sent.next(), sent.next()) {
+            (Some((_, v)), None) => oml_page::admitted_next(v),
+            _ => "/web".to_owned(),
+        };
+        match self.session_of(headers).await {
+            Ok(Some((_, session))) => {
+                line.session(&session);
+                Answer {
+                    response: self.redirect(&self.next_location(&next), None),
+                    error_code: None,
+                    line,
+                }
+            }
+            Ok(None) => Answer {
+                response: self.sign_in_page_to(StatusCode::OK, None, &next),
+                error_code: None,
+                line,
+            },
+            Err(e) => self.refused(&e, line),
+        }
+    }
+
     // -- POST /web/sign-in ------------------------------------------------------
 
     async fn sign_in(
@@ -856,23 +938,32 @@ where
             Ok(fields) => fields,
             Err(e) => return self.refused(&ApiError::validation(e.description), line),
         };
-        let provider = match fields.as_slice() {
-            [(name, value)] if name == "provider" => Provider::parse(value),
-            _ => None,
-        };
+        // `provider`, and `next` when the page carried one (ADR-0070 d4).
+        let mut next = None;
+        let mut provider = None;
+        let mut known = true;
+        for (name, value) in &fields {
+            match name.as_str() {
+                "provider" => provider = Provider::parse(value),
+                "next" => next = Some(oml_page::admitted_next(value)),
+                _ => known = false,
+            }
+        }
+        let provider = provider.filter(|_| known);
         let Some((provider, client_id)) =
             provider.and_then(|p| self.pages().client_id(p).map(|id| (p, id.to_owned())))
         else {
             return self.refused(
                 &ApiError::validation(
-                    "a sign-in sends one field, provider, naming a configured provider",
+                    "a sign-in sends provider, naming a configured provider, and at most next",
                 )
                 .with_details(json!({"field": "provider"})),
                 line,
             );
         };
         line.provider = Some(provider.as_str());
-        let started: SignInState = self.app.web_sign_in_start(provider);
+        let mut started: SignInState = self.app.web_sign_in_start(provider);
+        started.next = next.filter(|n| n != "/web");
         let sealed = self.pages().sealer.seal(&started.encode());
         let redirect_uri = format!("{}/web/callback/{}", issuer.as_str(), provider.as_str());
         let mut params: Vec<(&str, String)> = vec![
@@ -957,6 +1048,12 @@ where
         let opened = cookie(headers, SIGN_IN_COOKIE)
             .and_then(|sealed| self.pages().sealer.open(&sealed))
             .and_then(|bytes| SignInState::decode(&bytes));
+        // The page to return to, admitted again: the sealed cookie carries
+        // what the sign-in page admitted (ADR-0070 d4).
+        let next = opened
+            .as_ref()
+            .and_then(|s| s.next.as_deref())
+            .map_or_else(|| "/web".to_owned(), oml_page::admitted_next);
         let redirect_uri = format!("{}/web/callback/{}", issuer.as_str(), provider.as_str());
         let admitted = self
             .app
@@ -1063,9 +1160,12 @@ where
         sign_in_line(request_id, provider, "signed_in", Some(&opened.record));
         // A person with no agent key yet lands on the onboarding page
         // (ADR-0068 d10).
-        let landing = self.landing(&entry).await;
+        let landing = match self.landing(&entry).await {
+            "/web" => self.next_location(&next),
+            onboarding => onboarding.to_owned(),
+        };
         let mut response = self.redirect(
-            landing,
+            &landing,
             Some(set_cookie(
                 SESSION_COOKIE,
                 &opened.token,
