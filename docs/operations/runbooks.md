@@ -128,6 +128,34 @@ Use this when clients get `limit.rate` (429) repeatedly. This build has two caps
    oml deny set <key> universe
    ```
 
+## A form answers idempotency.in_progress
+
+Use this when a person's resubmitted web console form answers `409 idempotency.in_progress`, or `oml doctor` warns `idempotency_unsettled`. The act claimed its `Idempotency-Key` and no outcome was recorded: the act may have committed, so the server never lets that key act again. Nothing needs repairing. A fresh form acts under a fresh key.
+
+1. Find each claim the lead left, with its act, key and claim id.
+
+   ```bash
+   journalctl -u oml-server -o cat | jq -c 'select(.event=="idempotency_unsettled") | {act, key_id, claim_id, reason}'
+   ```
+
+2. List the claims still held and how old each is, as the database owner (the table's row security binds the tenant, so set it per tenant).
+
+   ```sql
+   SET oml.tenant_id = '<tenant id>';
+   SELECT key, response->>'claim' AS claim_id, response->>'claimed_at' AS claimed_at
+   FROM idempotency WHERE committed_at IS NULL ORDER BY response->>'claimed_at';
+   ```
+
+   The `key` column is `<key id>:<nil workarea>:<act>:<Idempotency-Key>`. A claim older than a minute belongs to an attempt that stopped.
+
+3. To let that form act again, first check the journal for the act's event under the key id, at the claim's time. Delete the row only if the act did not commit, because a deleted claim lets the resubmission act again.
+
+   ```sql
+   DELETE FROM idempotency WHERE committed_at IS NULL AND key = '<key>' AND response->>'claim' = '<claim id>';
+   ```
+
+No sweeper removes held claims yet. Each holds one form's key, so leaving them costs nothing but the row.
+
 ## Rotate a signing key or a keyring
 
 Planned and emergency rotation are deployment steps. OML has no command for either. The server journals `system.signing_key_rotated` when a new signing key starts. See the [event catalog](../data/event-catalog.md).

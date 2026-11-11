@@ -58,8 +58,8 @@ pub(super) struct SourcePlan {
 
 /// A candidate source: a trusted node outside the scope the key reads.
 #[derive(Debug, Clone)]
-struct Candidate {
-    id: Uuid,
+pub(super) struct Candidate {
+    pub(super) id: Uuid,
     name: String,
 }
 
@@ -82,7 +82,10 @@ where
         require_role(&admin, Role::Admin, "federation_settings")?;
         let policy = self.journal.federation_policy(admin.tenant_id).await?;
         Ok((
-            FederationSettings { policy },
+            FederationSettings {
+                policy,
+                widen_signal: self.widen.health_of(admin.tenant_id),
+            },
             self.wide_keys_of(admin.tenant_id),
         ))
     }
@@ -128,7 +131,13 @@ where
             self.commit(event, MetadataFold::FederationPolicySet(policy), None)
                 .await?;
         }
-        Ok((FederationSettings { policy }, self.wide_keys_of(tenant_id)))
+        Ok((
+            FederationSettings {
+                policy,
+                widen_signal: self.widen.health_of(tenant_id),
+            },
+            self.wide_keys_of(tenant_id),
+        ))
     }
 
     /// `POST /v2/workareas/{workarea}/federation` (d5): a dreamer key a
@@ -455,7 +464,7 @@ where
     /// and denials this request read, cached nowhere; ordered by name. With
     /// it, the path of every node of subtree(scope) and of every candidate,
     /// derived from the subtrees read, so no node costs a read of its own.
-    async fn candidates(
+    pub(super) async fn candidates(
         &self,
         caller: &Caller,
         scope: Uuid,
@@ -730,13 +739,13 @@ where
 
 /// The reference counts restricted to the kept words, those the pipeline
 /// does not prune over R (d4.2, d4.4).
-struct Kept {
-    words: Vec<String>,
+pub(super) struct Kept {
+    pub(super) words: Vec<String>,
     nodes: BTreeMap<Uuid, SourceCounts>,
 }
 
 impl Kept {
-    fn of(counts: &crate::federation::ReferenceCounts) -> Self {
+    pub(super) fn of(counts: &crate::federation::ReferenceCounts) -> Self {
         let keep: Vec<usize> = counts
             .words
             .iter()
@@ -765,7 +774,7 @@ impl Kept {
         }
     }
 
-    fn of_node(&self, node: &Uuid) -> SourceCounts {
+    pub(super) fn of_node(&self, node: &Uuid) -> SourceCounts {
         self.nodes
             .get(node)
             .cloned()
@@ -775,7 +784,7 @@ impl Kept {
             })
     }
 
-    fn sum<'a>(&self, nodes: impl Iterator<Item = &'a Uuid>) -> SourceCounts {
+    pub(super) fn sum<'a>(&self, nodes: impl Iterator<Item = &'a Uuid>) -> SourceCounts {
         let of: Vec<SourceCounts> = nodes.map(|n| self.of_node(n)).collect();
         SourceCounts::sum(self.words.len(), &of)
     }

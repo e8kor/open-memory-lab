@@ -91,12 +91,15 @@ def sync_detailed(
      A person's session key cuts a key off on universe alone, workarea universe, the key by name:
     <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another
     capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9,
-    d13). Otherwise requires: admin key role. Distinct from a per-grant deny mask. Journalled as
-    key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and
-    workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to
-    /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field
-    key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md,
-    permission matrix footnote 6; ADR-0026 d15).
+    d13). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded
+    denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is
+    idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
+    s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin
+    key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that
+    event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is
+    refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin
+    key is refused with request.validation, details.field key: denials attenuate grants, and an admin
+    key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -146,12 +149,15 @@ def sync(
      A person's session key cuts a key off on universe alone, workarea universe, the key by name:
     <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another
     capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9,
-    d13). Otherwise requires: admin key role. Distinct from a per-grant deny mask. Journalled as
-    key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and
-    workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to
-    /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field
-    key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md,
-    permission matrix footnote 6; ADR-0026 d15).
+    d13). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded
+    denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is
+    idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
+    s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin
+    key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that
+    event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is
+    refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin
+    key is refused with request.validation, details.field key: denials attenuate grants, and an admin
+    key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -196,12 +202,15 @@ async def asyncio_detailed(
      A person's session key cuts a key off on universe alone, workarea universe, the key by name:
     <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another
     capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9,
-    d13). Otherwise requires: admin key role. Distinct from a per-grant deny mask. Journalled as
-    key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and
-    workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to
-    /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field
-    key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md,
-    permission matrix footnote 6; ADR-0026 d15).
+    d13). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded
+    denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is
+    idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
+    s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin
+    key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that
+    event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is
+    refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin
+    key is refused with request.validation, details.field key: denials attenuate grants, and an admin
+    key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -249,12 +258,15 @@ async def asyncio(
      A person's session key cuts a key off on universe alone, workarea universe, the key by name:
     <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another
     capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9,
-    d13). Otherwise requires: admin key role. Distinct from a per-grant deny mask. Journalled as
-    key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and
-    workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to
-    /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field
-    key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md,
-    permission matrix footnote 6; ADR-0026 d15).
+    d13). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded
+    denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is
+    idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
+    s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin
+    key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that
+    event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is
+    refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin
+    key is refused with request.validation, details.field key: denials attenuate grants, and an admin
+    key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a

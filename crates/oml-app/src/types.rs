@@ -1810,6 +1810,11 @@ pub struct RecallResult {
     /// Set when `match: all` found no row with every term and the any-term
     /// list was served instead (ADR-0049 d5).
     pub fallback: bool,
+    /// The tenant's journalled default, by name, when the recall named no
+    /// pipeline and the deployment does not serve that default, so its own
+    /// default ranked the hits instead; answered as `search.fallback:
+    /// "tenant_default_unserved"` (ADR-0049 d15).
+    pub tenant_default_unserved: Option<String>,
     /// Spellings from readable rows for terms no hit matched, from a
     /// pipeline with a trigram list, when no hit holds every term
     /// (`explain.did_you_mean`; ADR-0049 d6).
@@ -1837,6 +1842,9 @@ pub struct RecallResult {
     pub window: Option<Window>,
     /// `search.sources` under `wide` or a list (ADR-0072 d8).
     pub sources: Option<crate::federation::SourcesReport>,
+    /// `search.widen` on a `scope` answer whose signal finds a candidate
+    /// richer per readable row than the scope (ADR-0072 d8; #244).
+    pub widen: Option<crate::federation::Widen>,
     /// What the recall event records of the sources (ADR-0072 d9); `None`
     /// on a tenant with federation off.
     pub federation: Option<crate::federation::FederationRecord>,
@@ -2832,6 +2840,14 @@ pub enum AppError {
         "idempotency key reused with a different request (http-api.md idempotency.digest_mismatch)"
     )]
     IdempotencyDigestMismatch,
+    /// Another attempt under the same `Idempotency-Key` claimed the act and
+    /// recorded no outcome within the wait: it is still acting, or it died
+    /// between its act and its record. Nothing was acted
+    /// (errors.md `idempotency.in_progress`; ADR-0070 d5; #233).
+    #[error(
+        "another attempt under this idempotency key is acting or stopped before it recorded (idempotency.in_progress)"
+    )]
+    IdempotencyInProgress,
     #[error("stored idempotent response is unreadable: {0}")]
     StoredResponse(String),
     /// A verdict sent without `serve_id` while the reviewer key holds no

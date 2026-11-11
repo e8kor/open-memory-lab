@@ -61,7 +61,9 @@ class RecallRequest:
                 bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-sparse-rrf, the same
                 two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13; bm25-postings-time, bm25-postings fused
                 with the memories whose valid time overlaps a date the query names, ADR-0059 d7). A name the deployment does not
-                serve is request.validation with details.field /search and details.served.
+                serve is request.validation with details.field /search and details.served. Omitted under a tenant default the
+                deployment does not serve, the deployment's default runs and search.fallback is tenant_default_unserved
+                (ADR-0049 d15).
             match (RecallRequestMatch | Unset): all keeps only rows holding every query word; when none does, the any-word
                 hits are served and search.fallback is any_term (ADR-0049 d5). Default: RecallRequestMatch.ANY.
             feedback (Feedback | Unset): Which hits of this key's earlier recall answered its question and which did not

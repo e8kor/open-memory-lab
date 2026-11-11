@@ -39,7 +39,7 @@ export interface paths {
         put?: never;
         /**
          * Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits, unranked.
-         * @description Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea, by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4); recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
+         * @description Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea, by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4); a body naming no search under a tenant default the deployment does not serve is ranked by the deployment's default and answers search.fallback tenant_default_unserved (ADR-0049 d15); recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
          */
         post: operations["recallMemories"];
         delete?: never;
@@ -551,7 +551,7 @@ export interface paths {
         put?: never;
         /**
          * Issue a key under the issuer ceiling; the value appears exactly once, here.
-         * @description A person's web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>), role (reader or writer) and connect_code only; the key names their user and holds writer or reader on their root alone, any other field is request.validation naming it, and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a retried issuance answers name.taken and its code is minted again with oml keys connect-code.
+         * @description A person's web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>), role (reader or writer) and connect_code only; the key names their user and holds writer or reader on their root alone, any other field is request.validation naming it, and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again, without value and without connect_code.code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
          */
         post: operations["issueKey"];
         delete?: never;
@@ -611,7 +611,7 @@ export interface paths {
         put?: never;
         /**
          * Create or extend the key's global deny object — deny-wins across all its grants.
-         * @description A person's session key cuts a key off on universe alone, workarea universe, the key by name: <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). Otherwise requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+         * @description A person's session key cuts a key off on universe alone, workarea universe, the key by name: <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         post: operations["addDenial"];
         delete?: never;
@@ -631,7 +631,7 @@ export interface paths {
         put?: never;
         /**
          * Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
-         * @description A person's web session key mints a code for one of their own connector keys, by name, at the default lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). Otherwise requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
+         * @description A person's web session key mints a code for one of their own connector keys, by name, at the default lifetime; another person's key is access.not_found, and another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). Otherwise requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. The Idempotency-Key is claimed for the calling key before the code is minted: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and mints nothing, without code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0). Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
          */
         post: operations["mintConnectCode"];
         delete?: never;
@@ -893,7 +893,7 @@ export interface paths {
         put?: never;
         /**
          * Give a person's session key a capacity on workareas, review or curation.
-         * @description Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the universe node alone, is created at the first designation, and gains reader on each workarea. Each grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none and journal_seq is null. A user with no session key of that capacity answers access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act's last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+         * @description Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the universe node alone, is created at the first designation, and gains reader on each workarea. Each grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none and journal_seq is null. A user with no session key of that capacity answers access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act's last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
          */
         post: operations["grantWebCapacities"];
         delete?: never;
@@ -913,7 +913,7 @@ export interface paths {
         put?: never;
         /**
          * Set a person's quotas, or return one to the default with null.
-         * @description Requires: admin key role (ADR-0068 d5; ADR-0070 d5). Each quota sent is one web.quota_set; a member sent as null returns that quota to the default, and one not sent is left as it is. A limit is a whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers access.not_found. Answers the person's row as GET /v2/web/users serves it. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act's last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+         * @description Requires: admin key role (ADR-0068 d5; ADR-0070 d5). Each quota sent is one web.quota_set; a member sent as null returns that quota to the default, and one not sent is left as it is. A limit is a whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers access.not_found. Answers the person's row as GET /v2/web/users serves it. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act's last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
          */
         post: operations["setWebUserQuota"];
         delete?: never;
@@ -933,7 +933,7 @@ export interface paths {
         put?: never;
         /**
          * Disable a person, ending their sessions and cutting off their agent keys.
-         * @description Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin's, answers access.not_found and journals nothing. The body is empty: no reason is journalled in this build, so a reason is refused rather than dropped. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act's last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+         * @description Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin's, answers access.not_found and journals nothing. The body is empty: no reason is journalled in this build, so a reason is refused rather than dropped. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act's last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
          */
         post: operations["disableWebUser"];
         delete?: never;
@@ -953,7 +953,7 @@ export interface paths {
         put?: never;
         /**
          * Close a person's pending deletion request, disabling them first.
-         * @description Requires: admin key role (ADR-0068 d6; ADR-0070 d5). The person is disabled as POST /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act's last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+         * @description Requires: admin key role (ADR-0068 d6; ADR-0070 d5). The person is disabled as POST /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act's last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
          */
         post: operations["closeWebDeletion"];
         delete?: never;
@@ -1013,7 +1013,7 @@ export interface paths {
         put?: never;
         /**
          * The person asks for their account's deletion.
-         * @description Requires: the person's web session key (<user>-web, through its capacity credential); any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5). Journalled as web.deletion_requested; it ends nothing and changes no access, and an admin closes it. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act's last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+         * @description Requires: the person's web session key (<user>-web, through its capacity credential); any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5). Journalled as web.deletion_requested; it ends nothing and changes no access, and an admin closes it. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act's last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
          */
         post: operations["requestWebDeletion"];
         delete?: never;
@@ -1653,7 +1653,7 @@ export interface components {
              */
             max_tokens?: number;
             /**
-             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-sparse-rrf, the same two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13; bm25-postings-time, bm25-postings fused with the memories whose valid time overlaps a date the query names, ADR-0059 d7). A name the deployment does not serve is request.validation with details.field /search and details.served.
+             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-sparse-rrf, the same two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13; bm25-postings-time, bm25-postings fused with the memories whose valid time overlaps a date the query names, ADR-0059 d7). A name the deployment does not serve is request.validation with details.field /search and details.served. Omitted under a tenant default the deployment does not serve, the deployment's default runs and search.fallback is tenant_default_unserved (ADR-0049 d15).
              * @enum {string}
              */
             search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-sparse-rrf" | "bm25-postings-time";
@@ -1744,7 +1744,7 @@ export interface components {
             /** @enum {string} */
             match: "any" | "all";
             terms: string[];
-            /** @description any_term when match all found no row with every word and the any-word hits were served; null otherwise. */
+            /** @description any_term when match all found no row with every word and the any-word hits were served (ADR-0049 d5); tenant_default_unserved when the request named no search and the tenant's default is a pipeline this deployment does not serve, so search.pipeline is the deployment's default (ADR-0049 d15), which wins when both apply, each hit's matched.of still showing an any-word match; null otherwise. */
             fallback: string | null;
             /** @description Spellings from rows the key may read, from a pipeline with a trigram list, when no hit holds every word; else empty. */
             did_you_mean: string[];
@@ -1779,6 +1779,15 @@ export interface components {
             /** @description How many of the first k candidates the floor withheld; hits empty with below_floor above 0 means nothing scored above the floor (ADR-0053 d6). */
             below_floor: number;
             sources?: components["schemas"]["RecallSources"];
+            /** @description On a sources scope answer, when a workarea the key reads outside the scope holds the query's words at least twice as often per row as the scope, on at least two of its rows: a retry with sources wide would search it. Read off a signal the server builds in the background, at most 300 seconds old and under the key's grants as they are now; a scope answer without such a signal carries no widen. It names no workarea (ADR-0072 d8). */
+            widen?: {
+                /** @enum {string} */
+                sources: "wide";
+                /** @description The workareas outside the scope that hold a query word. */
+                candidates: number;
+                /** @description A lower bound on their rows holding a query word: the largest count of one word, summed over them. */
+                matches_at_least: number;
+            };
         };
         /** @description Under sources wide or a list: what was searched and why (ADR-0072 d8). Every name and number is of a workarea the key reads (d6). */
         RecallSources: {
@@ -1806,7 +1815,7 @@ export interface components {
                 matches_at_least: number;
             };
         };
-        /** @description The tenant's federation policy (ADR-0072 d5), and for doctor the keys whose recall met more than 1,000 candidate sources since the lead started (d12). */
+        /** @description The tenant's federation policy (ADR-0072 d5), and for doctor the keys whose recall met more than 1,000 candidate sources since the lead started (d12) and how the widen hint's signal fared (d8). */
         FederationSettings: {
             /** @description Whether recall may search beyond its scope when asked; off by default. */
             enabled: boolean;
@@ -1822,6 +1831,19 @@ export interface components {
                 key_id: string;
                 candidates: number;
             }[];
+            /** @description The widen hint's signals on this tenant since the lead started; doctor warns on a failed build, on evictions, and on recalls that found none while none was built. */
+            widen_signal: {
+                /** @description Signals built. */
+                built: number;
+                /** @description Scope recalls answered without the hint because their signal was missing, older than 300 seconds or built under other grants. */
+                unserved: number;
+                /** @description Signals dropped to keep the tenant, or the lead, within its share; each is not rebuilt for 300 seconds. */
+                evicted: number;
+                /** @description Signal builds that failed. */
+                failed: number;
+                /** @description The last failed build's reason. */
+                last_failure: string | null;
+            };
         };
         /**
          * @description What a recall's reranking stage did (ADR-0053 d5).
@@ -1838,10 +1860,12 @@ export interface components {
             enabled: string[];
             /** @description search.default. */
             deployment_default: string;
-            /** @description The tenant's journalled default; a name the deployment no longer serves stays here and is not effective. */
+            /** @description The tenant's journalled default; a name the deployment no longer serves stays here, and tenant_default_served is then false. */
             tenant_default: string | null;
             /** @description The pipeline a recall naming none runs now. */
             effective: string;
+            /** @description false while tenant_default names a pipeline the deployment does not serve, so effective is the deployment's default and each such recall answers search.fallback tenant_default_unserved (ADR-0049 d15); true otherwise. Since v0.7.1; absent from an older server, so a client reads it as optional. */
+            tenant_default_served?: boolean;
             postings?: components["schemas"]["PostingsHealth"];
             /** @description The tenant's served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (ADR-0059 d12). */
             valid_time?: {

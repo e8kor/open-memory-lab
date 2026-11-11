@@ -13,10 +13,12 @@ mod signup;
 mod sparse;
 mod usage;
 mod web;
+mod widen;
 pub use federation::WideKey;
 pub use pages::{
-    AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted, OwnKey, QueueRow,
-    REGION_COUNT_MAX, Region, Regions, VerdictTrail, WebListRequest, WorkareaOffer, WorkareaOffers,
+    ActClaim, ActTicket, AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted,
+    OwnKey, QueueRow, REGION_COUNT_MAX, Region, Regions, VerdictTrail, WebListRequest,
+    WorkareaOffer, WorkareaOffers,
 };
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
@@ -24,6 +26,11 @@ pub use signup::{DRAWS_MAX, Person, SignupState, StartStatus, UserDisabled, User
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
+pub use widen::{
+    WIDEN_SIGNAL_BUILD_SECS, WIDEN_SIGNAL_MAX_AGE_SECS, WIDEN_SIGNAL_PAIRS_HELD,
+    WIDEN_SIGNAL_REFRESH_SECS, WIDEN_SIGNAL_STATEMENT_SECS, WIDEN_SIGNAL_TENANT_PAIRS, WidenBuild,
+    WidenLimits, WidenRefresh, drops_widen_signals,
+};
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -232,6 +239,9 @@ pub struct App<J, S, C, I, Sc> {
     /// sources since the lead started, by tenant, with the most it met: the
     /// doctor line a tenant admin reads (ADR-0072 d12). It decides nothing.
     wide_keys: std::sync::Mutex<BTreeMap<(Uuid, Uuid), usize>>,
+    /// The widen hint's signals, built off the request path, and the ones
+    /// recalls asked for (ADR-0072 d8, as built by #244).
+    widen: widen::WidenSignals,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -1354,6 +1364,7 @@ where
             formats: Arc::new(crate::ports::ProseFormats),
             signup: None,
             wide_keys: std::sync::Mutex::default(),
+            widen: widen::WidenSignals::default(),
         }
     }
 
@@ -2210,8 +2221,7 @@ where
         idempotency: Option<IdempotencyPut>,
     ) -> Result<CommitReceipt, AppError> {
         Ok(self
-            .journal
-            .commit(commit_request(event, fold, idempotency))
+            .commit_requests(vec![commit_request(event, fold, idempotency)])
             .await?)
     }
 
@@ -2222,14 +2232,40 @@ where
         links: Vec<(SignedEnvelope, MetadataFold)>,
     ) -> Result<CommitReceipt, AppError> {
         Ok(self
-            .journal
-            .commit_chain(
+            .commit_requests(
                 links
                     .into_iter()
                     .map(|(event, fold)| commit_request(event, fold, None))
                     .collect(),
             )
             .await?)
+    }
+
+    /// The one path every use case commits through: one request alone, or
+    /// several as one transaction. An erasure, a demotion, or a change to
+    /// what is trusted or federated drops its tenant's widen signals once
+    /// it commits (#244). A commit that fails after the database committed
+    /// drops nothing; the signal's 300 s bound covers it.
+    async fn commit_requests(
+        &self,
+        mut requests: Vec<CommitRequest>,
+    ) -> Result<CommitReceipt, StoreError> {
+        let drops: BTreeSet<Uuid> = requests
+            .iter()
+            .filter(|r| widen::drops_widen_signals(&r.event.envelope.event_type))
+            .map(|r| r.event.envelope.tenant_id)
+            .collect();
+        let receipt = if requests.len() == 1 {
+            self.journal
+                .commit(requests.pop().expect("one request"))
+                .await?
+        } else {
+            self.journal.commit_chain(requests).await?
+        };
+        for tenant_id in drops {
+            self.widen.drop_tenant(tenant_id);
+        }
+        Ok(receipt)
     }
 
     fn mint_key(
@@ -5813,7 +5849,7 @@ where
                     ),
                     commit_request(ratification, fold, None),
                 ];
-                let committed = match self.journal.commit_chain(links).await {
+                let committed = match self.commit_requests(links).await {
                     Err(StoreError::TipMoved { .. }) => {
                         return Err(AppError::TipConflict {
                             current_tip: self
@@ -6113,7 +6149,7 @@ where
         // A recall naming no `sources` reads the tenant's default with its
         // default pipeline, off one row; one naming them reads only the
         // pipeline's default, as before federation (ADR-0072 d12).
-        let (pipeline, policy) = if req.sources.is_none() {
+        let ((pipeline, tenant_default_unserved), policy) = if req.sources.is_none() {
             let (tenant_default, policy) = self.journal.recall_defaults(key.tenant_id).await?;
             (
                 self.pipeline_from(req.search.as_deref(), tenant_default)?,
@@ -6226,8 +6262,13 @@ where
                 .as_ref()
                 .is_none_or(|at| m.created_at.as_str() <= at.as_str())
         };
-        self.observer
-            .search(pipeline.as_str(), fallback, ran.access.as_str());
+        // The request line's `search_fallback` and the recall metric's
+        // `fallback` label count either fallback (ADR-0049 d5, d8, d15).
+        self.observer.search(
+            pipeline.as_str(),
+            fallback || tenant_default_unserved.is_some(),
+            ran.access.as_str(),
+        );
         // R3 defense in depth: the gate changed visibility. Nothing
         // unpromoted or unreadable leaves the application layer except the
         // caller's own held rows when it asked for them; a replaced version
@@ -6375,6 +6416,30 @@ where
             candidates.retain(|c| rows.get(&c.memory_id).is_some_and(admits));
             (candidates, below_floor) = apply_floor(candidates, floor);
         }
+        // The widen hint, on a `scope` answer at the server's now: read off
+        // the key's precomputed signal, never off the candidates or their
+        // counts, and absent where no usable signal is held (ADR-0072 d8,
+        // d12, as built by #244).
+        let widen = if plan.report.is_none()
+            && req.as_of.is_none()
+            && req.now.is_none()
+            && policy.is_none_or(|p| p.enabled)
+        {
+            let prunes = pipeline.retrievers().contains(&RetrieverKind::Bm25Postings)
+                && req.match_mode == MatchMode::Any;
+            self.widen_hint(
+                caller,
+                scope,
+                &hit_nodes,
+                &kinds,
+                req.include_expired,
+                prunes,
+                &query,
+            )
+            .await
+        } else {
+            None
+        };
         // Spellings only for an empty or thin result, fewer hits than
         // `DID_YOU_MEAN_BELOW` (or than `k` when it asks fewer) before the
         // budget cut, for the
@@ -6483,6 +6548,7 @@ where
             pipeline,
             terms,
             fallback,
+            tenant_default_unserved,
             did_you_mean,
             rerank,
             floor,
@@ -6492,6 +6558,7 @@ where
             timings,
             window,
             sources: plan.report,
+            widen,
             federation: plan.record,
         })
     }
@@ -6692,48 +6759,50 @@ where
         Ok(out)
     }
 
-    /// The pipeline a recall runs: the request's `search` when it names a
-    /// served one, else the tenant's journalled default while the
-    /// deployment still serves it, else the deployment's (ADR-0049 d4). A
-    /// name the deployment does not serve, unknown or disabled, is refused
-    /// naming the field, never replaced by another pipeline.
+    /// The pipeline a recall runs, and the tenant's default when the
+    /// deployment's ran in its place (ADR-0049 d4, d15), reading the
+    /// tenant's default itself; see [`Self::pipeline_from`].
     async fn pipeline_for(
         &self,
         tenant_id: Uuid,
         requested: Option<&str>,
-    ) -> Result<Pipeline, AppError> {
-        if let Some(name) = requested {
-            return Pipeline::parse(name)
-                .filter(|p| self.search.serves(*p))
-                .ok_or_else(|| AppError::SearchUnavailable {
-                    name: name.to_owned(),
-                    served: self.served_pipelines(),
-                });
-        }
-        let tenant_default = self.journal.tenant_search_default(tenant_id).await?;
-        self.pipeline_from(None, tenant_default)
+    ) -> Result<(Pipeline, Option<String>), AppError> {
+        let tenant_default = match requested {
+            Some(_) => None,
+            None => self.journal.tenant_search_default(tenant_id).await?,
+        };
+        self.pipeline_from(requested, tenant_default)
     }
 
-    /// The pipeline a recall runs: the one it names, which the deployment
-    /// must serve, else the tenant's default where served, else the
-    /// deployment's (ADR-0049 d4).
+    /// The pipeline a recall runs: the request's `search`, which the
+    /// deployment must serve, else the tenant's default, else the
+    /// deployment's (ADR-0049 d4). A name the request sends that the
+    /// deployment does not serve is refused naming it. A tenant default the
+    /// deployment does not serve is not refused: the deployment's default
+    /// runs, and the tenant's name comes back beside it so the answer says
+    /// so with `search.fallback: "tenant_default_unserved"` (ADR-0049 d15).
     fn pipeline_from(
         &self,
         requested: Option<&str>,
         tenant_default: Option<String>,
-    ) -> Result<Pipeline, AppError> {
+    ) -> Result<(Pipeline, Option<String>), AppError> {
         if let Some(name) = requested {
             return Pipeline::parse(name)
                 .filter(|p| self.search.serves(*p))
+                .map(|p| (p, None))
                 .ok_or_else(|| AppError::SearchUnavailable {
                     name: name.to_owned(),
                     served: self.served_pipelines(),
                 });
         }
-        Ok(tenant_default
-            .and_then(|name| Pipeline::parse(&name))
-            .filter(|p| self.search.serves(*p))
-            .unwrap_or_else(|| self.search.default_pipeline()))
+        let deployment = self.search.default_pipeline();
+        Ok(match tenant_default {
+            None => (deployment, None),
+            Some(name) => match Pipeline::parse(&name).filter(|p| self.search.serves(*p)) {
+                Some(p) => (p, None),
+                None => (deployment, Some(name)),
+            },
+        })
     }
 
     /// The served pipeline names, comma-separated, for a refusal's text.

@@ -5899,7 +5899,10 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 41, "every migration through 0041_as_of_tips");
+    assert_eq!(
+        applied, 42,
+        "every migration through 0042_idempotency_claims"
+    );
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7346,7 +7349,10 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 41, "every migration through 0041_as_of_tips");
+    assert_eq!(
+        applied, 42,
+        "every migration through 0042_idempotency_claims"
+    );
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8222,7 +8228,10 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 41, "every migration through 0041_as_of_tips");
+    assert_eq!(
+        applied, 42,
+        "every migration through 0042_idempotency_claims"
+    );
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -9299,6 +9308,41 @@ async fn federated_recall_passes_the_leakage_suite() {
     drop_dbs(&created).await;
 }
 
+/// The widen hint's laws on its precomputed signal on PostgreSQL, as the
+/// serving role under row security, exactly as the double passes them
+/// (ADR-0072 d8, d12; #244).
+#[tokio::test]
+async fn the_widen_hint_passes_its_laws_on_its_signal() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::federation::run_widen_suite(|| fresh_search_store(&created)).await;
+    drop_dbs(&created).await;
+}
+
+/// The widen signal's counts equal the reference counts under limits so
+/// small that the query's words are pruned: the pruned words are decided
+/// over the same sums (ADR-0052 d6; #244).
+#[tokio::test]
+async fn the_signals_counts_equal_the_reference_counts_under_pruning() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created)
+        .await
+        .with_prune_limits(oml_pg::PruneLimits {
+            frequent_share: 0.2,
+            posting_budget: 4,
+        });
+    assert!(
+        oml_port_contracts::federation::the_signals_counts_equal_the_reference_counts(store).await,
+        "no read pruned a word under limits this small"
+    );
+    drop_dbs(&created).await;
+}
+
 /// Test 6 on `bm25-postings` under limits so small that a selection's
 /// postings cross the posting budget: the pruned words are the reference
 /// set's, so no selection moves a score (ADR-0072 d4.2, d7).
@@ -9327,9 +9371,10 @@ async fn a_selection_crossing_the_posting_budget_moves_no_score() {
 
 /// d12's budget, measured by hand (`--ignored --nocapture`): a key reading
 /// 1,000 committed workareas, one memory each, recalls at one of them on
-/// `bm25-postings` with federation off, under `scope` (the hint reads the
-/// candidates' counts) and under `wide` at `max_sources` 8; p50 and p95 of
-/// 40 runs each are printed (ADR-0072 d12).
+/// `bm25-postings` with federation off, under `scope` and under `wide` at
+/// `max_sources` 8; then, for #244, the widen signal's build and its one
+/// read, and `scope` with the signal held against federation off,
+/// alternated; p50 and p95 of each are printed (ADR-0072 d12).
 #[tokio::test]
 #[ignore = "a measurement: 1,000 workareas, several minutes"]
 async fn federation_overhead_at_1000_candidates() {
@@ -9406,6 +9451,83 @@ async fn federation_overhead_at_1000_candidates() {
         "scope, federation off",
         fleet_sample(&w, &key, None, 40).await,
     );
+    // #244: the widen hint read off its precomputed signal. The build, off
+    // the request path; the signal's one read alone; then `scope` with the
+    // signal held against federation off, alternated so drift on a shared
+    // host lands on both.
+    {
+        use oml_app::ports::JournalStore as _;
+        let fleet: Vec<Uuid> = w
+            .store
+            .workarea_subtree(w.tenant, w.node("fleet"))
+            .await
+            .expect("the fleet")
+            .into_iter()
+            .map(|n| n.workarea_id)
+            .collect();
+        let vocabulary = w
+            .store
+            .vocabulary_counts(
+                w.tenant,
+                &oml_app::federation::CountsScope {
+                    nodes: fleet,
+                    kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
+                    expired_at: Some(i64::MAX / 2),
+                    prunes: true,
+                },
+                usize::MAX,
+            )
+            .await
+            .expect("the vocabulary")
+            .expect("no cap");
+        let mut reads = Vec::new();
+        for i in 0..41 {
+            let started = std::time::Instant::now();
+            w.store
+                .counts_from_vocabulary(
+                    &vocabulary,
+                    ["invoice retry", "fleet note", "policy"][i % 3],
+                    true,
+                )
+                .await
+                .expect("the signal's counts");
+            if i > 0 {
+                reads.push(started.elapsed().as_secs_f64());
+            }
+        }
+        report("the signal's read alone", reads);
+    }
+    let federation = |enabled: bool| FederationPolicyChange {
+        enabled: Some(enabled),
+        ..FederationPolicyChange::default()
+    };
+    let (mut held, mut off) = (Vec::new(), Vec::new());
+    for _ in 0..3 {
+        w.app
+            .set_federation_policy(w.admin.as_str(), federation(true))
+            .await
+            .expect("federation on");
+        let _ = w
+            .recall(&key, "invoice retry", "fleet-0", None, "bm25-postings", 10)
+            .await;
+        let started = std::time::Instant::now();
+        assert_eq!(w.app.refresh_widen_signals().await, 1, "the signal built");
+        println!(
+            "the signal's build: {:.1} ms",
+            started.elapsed().as_secs_f64() * 1e3
+        );
+        held.extend(fleet_sample(&w, &key, None, 40).await);
+        w.app
+            .set_federation_policy(w.admin.as_str(), federation(false))
+            .await
+            .expect("federation off");
+        off.extend(fleet_sample(&w, &key, None, 40).await);
+    }
+    report(
+        "scope, federation on, its widen signal held (120 runs)",
+        held,
+    );
+    report("scope, federation off (120 runs, alternated)", off);
     println!(
         "candidate count: {:?}",
         w.app.federation_candidate_count(w.tenant, key.key_id).await
@@ -9607,6 +9729,94 @@ async fn migration_0041_builds_each_partitions_index_in_its_own_transaction_and_
     .expect("index");
     assert_eq!(attached, partitions, "one attached per partition");
     assert!(valid, "valid once every partition's is attached");
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// Migration 0042 applies beside an open write and an open read of
+/// `idempotency`, waiting on neither, and gives the serving role UPDATE of a
+/// claim's outcome and time and DELETE, and nothing more (ADR-0070 d5;
+/// #233).
+#[tokio::test]
+async fn migration_0042_applies_beside_an_open_write_and_read_of_idempotency_without_waiting() {
+    let sql = MIGRATOR
+        .iter()
+        .find(|m| m.version == 42)
+        .expect("migration 0042")
+        .sql
+        .to_string();
+    assert!(
+        sql.contains("SET LOCAL lock_timeout = '5s'"),
+        "0042 bounds its wait"
+    );
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 41).await;
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(595);
+    rig.seed_chain(&store, 0).await;
+    let mut writer = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("connect");
+    let mut write = writer.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(rig.tenant_id.to_string())
+        .execute(&mut *write)
+        .await
+        .expect("tenant");
+    sqlx::query(
+        "INSERT INTO idempotency (tenant_id, key, request_digest, response, committed_at) \
+         VALUES ($1, 'open-write', 'd', '{}', now())",
+    )
+    .bind(rig.tenant_id)
+    .execute(&mut *write)
+    .await
+    .expect("an open write");
+    let mut reader = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("connect");
+    let mut read = reader.begin().await.expect("begin");
+    sqlx::query("SELECT count(*) FROM idempotency")
+        .execute(&mut *read)
+        .await
+        .expect("an open read");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        store.migrate(&owner_url(&db)),
+    )
+    .await
+    .expect("0042 waits on neither the write nor the read")
+    .expect("0042 applies");
+    let applied: i64 =
+        sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
+            .fetch_one(&mut conn)
+            .await
+            .expect("versions");
+    assert_eq!(applied, 42, "0042 applied while both were open");
+    write.commit().await.expect("the write commits");
+    read.commit().await.expect("the read ends");
+    let privileges: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+        "SELECT has_column_privilege($1, 'idempotency', 'response', 'UPDATE'), \
+                has_column_privilege($1, 'idempotency', 'committed_at', 'UPDATE'), \
+                has_column_privilege($1, 'idempotency', 'request_digest', 'UPDATE'), \
+                has_column_privilege($1, 'idempotency', 'key', 'UPDATE'), \
+                has_table_privilege($1, 'idempotency', 'DELETE'), \
+                has_table_privilege($1, 'idempotency', 'TRUNCATE')",
+    )
+    .bind(format!("{db}_serving"))
+    .fetch_one(&mut conn)
+    .await
+    .expect("privileges");
+    assert_eq!(
+        privileges,
+        (true, true, false, false, true, false),
+        "a claim's outcome and time are written, never its key or digest"
+    );
     drop(conn);
     drop_dbs(&created).await;
 }

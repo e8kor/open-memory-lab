@@ -1047,7 +1047,14 @@ where
                 "pipeline": result.pipeline.as_str(),
                 "match": if match_mode == MatchMode::All { "all" } else { "any" },
                 "terms": result.terms,
-                "fallback": result.fallback.then_some("any_term"),
+                // The tenant's default the deployment does not serve names the
+                // fallback when both apply: each hit's `matched.of` still
+                // shows an any-term match (ADR-0049 d5, d15).
+                "fallback": if result.tenant_default_unserved.is_some() {
+                    Some("tenant_default_unserved")
+                } else {
+                    result.fallback.then_some("any_term")
+                },
                 "did_you_mean": result.did_you_mean,
                 "rerank": result.rerank.as_str(),
                 "rerank_reason": result.rerank.reason(),
@@ -1063,12 +1070,45 @@ where
                 })),
             },
         });
-        // `search.sources` under wide or a list (ADR-0072 d8).
-        if let (Some(report), Some(search)) = (
-            &result.sources,
-            response.get_mut("search").and_then(Value::as_object_mut),
-        ) {
-            search.insert("sources".to_owned(), sources_json(report));
+        // `search.sources` under wide or a list, and `search.widen` on a
+        // scope answer whose precomputed signal finds a richer source
+        // (ADR-0072 d8; #244).
+        if let Some(search) = response.get_mut("search").and_then(Value::as_object_mut) {
+            if let Some(report) = &result.sources {
+                search.insert("sources".to_owned(), sources_json(report));
+            }
+            if let Some(widen) = &result.widen {
+                search.insert(
+                    "widen".to_owned(),
+                    json!({
+                        "sources": "wide",
+                        "candidates": widen.candidates,
+                        "matches_at_least": widen.matches_at_least,
+                    }),
+                );
+            }
+        }
+        // A signal this recall asked for is built off the request, once
+        // its answer is composed (ADR-0072 d12, as built by #244).
+        if st.app.widen_signals_wanted() {
+            let app = Arc::clone(&st.app);
+            tokio::spawn(async move {
+                // One refresh at a time in the process, one build at a time
+                // in the order recalls asked; a build past its timeout is
+                // stopped, counted and marked, and the next goes on.
+                let Some(refresh) = app.begin_widen_refresh() else {
+                    return;
+                };
+                while let Some(build) = app.next_widen_build(&refresh) {
+                    let run = app.run_widen_build(&build);
+                    if tokio::time::timeout(app.widen_build_timeout(), run)
+                        .await
+                        .is_err()
+                    {
+                        app.widen_build_stopped(&build);
+                    }
+                }
+            });
         }
         // The budget object is present if and only if max_tokens was sent
         // (retrieval.md token budgets; ADR-0025 d7).
@@ -1650,7 +1690,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        let acting: Acting<'static> = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         // The body is closed, nested objects included: a field the server
         // does not serve is refused, never dropped (ADR-0025 d16).
@@ -1662,7 +1702,7 @@ where
         // A session key issues only as the person's own issuance, bounded
         // to their root (ADR-0070 d2, d5; ADR-0045 d9, d16).
         if let Some(caller) = session::session_caller() {
-            return Self::issue_key_as_session(st, &caller, &req, &name, &idem, body).await;
+            return Self::issue_key_as_session(st, caller, &req, &name, &idem, body).await;
         }
         // Issued keys do not expire yet: a requested expiry is refused by
         // name, since minting the key without it would leave the key its
@@ -1738,13 +1778,35 @@ where
             guardrail_scope: parse_guardrail_scope(req.guardrail_scope.as_deref())?,
             profile: parse_profile(req.profile.as_deref())?,
         };
-        let issued = retry_chain(|| st.app.issue_key(acting.bearer(), &issue))
+        // A resubmission under the same key and body replays the answer
+        // without the value or the connect code, which are shown once, and
+        // issues nothing again; the key is claimed before the issuance, so
+        // a process stopping between the two never lets the resubmission
+        // issue a second key (ADR-0031 d7; #127, #233).
+        let caller = st.console_caller(headers).await?;
+        let digest = console::act_digest("", body);
+        let claim = match st.claim(&caller, "keys.issue", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
+        let label = req.label.clone();
+        let st = st.clone();
+        claim
+            .run(async move {
+                let issued = retry_chain(|| st.app.issue_key(acting.bearer(), &issue))
+                    .await
+                    .map_err(|e| {
+                        console::ActFailure::first(map_app_error(e, ErrorContext::Write))
+                    })?;
+                let answer = key_issued_json(&issued, label.as_deref());
+                let kept = console::without_secrets(&answer);
+                Ok(console::Acted {
+                    status: StatusCode::CREATED,
+                    answer,
+                    kept,
+                })
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
-            StatusCode::CREATED,
-            &key_issued_json(&issued, req.label.as_deref()),
-        ))
     }
 
     async fn deny_key(
@@ -1780,7 +1842,7 @@ where
         // A session key cuts off one key on universe, as the pages do
         // (ADR-0070 d5; ADR-0045 d9, d13).
         if let Some(caller) = session::session_caller() {
-            return Self::cut_off_as_session(st, &caller, &key, &node, &idem, key_id, body).await;
+            return Self::cut_off_as_session(st, caller, &key, &node, &idem, key_id, body).await;
         }
         let denial = retry_chain(|| st.app.deny_key(acting.bearer(), key.clone(), node.clone()))
             .await
@@ -1806,7 +1868,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        let acting: Acting<'static> = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let req: WorkareaCreateBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("parent_id", "parent")])
@@ -1815,12 +1877,10 @@ where
         // and creates nothing again (ADR-0070 d3 layer 4).
         let caller = st.console_caller(headers).await?;
         let digest = console::act_digest("", body);
-        if let Some(replayed) = st
-            .replayed(&caller, "workarea.create", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(&caller, "workarea.create", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
         if req.prefix.is_some() {
             return Err(ApiError::validation(
                 "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
@@ -1830,28 +1890,26 @@ where
         let name = creation_name("/name", &req.name)?;
         // A crew record's id or name (ADR-0026 d8).
         let crew = optional_reference("/crew", req.crew.as_deref())?;
-        let created = retry_chain(|| {
-            st.app
-                .create_workarea(acting.bearer(), &name, parent.clone(), crew.clone())
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        // The path derived from the parent names and the crew record as
-        // stored, as the workarea read serves them (ADR-0025 d14; ADR-0026
-        // d8).
-        let mut response = workarea_json(&created.workarea, &created.path, created.crew.as_ref());
-        if let Some(obj) = response.as_object_mut() {
-            obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
-        }
-        st.record_outcome(
-            &caller,
-            "workarea.create",
-            &idem,
-            &digest,
-            StatusCode::CREATED,
-            &response,
-        )
-        .await
+        let st = st.clone();
+        claim
+            .run(async move {
+                let created = retry_chain(|| {
+                    st.app
+                        .create_workarea(acting.bearer(), &name, parent.clone(), crew.clone())
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                // The path derived from the parent names and the crew record
+                // as stored, as the workarea read serves them (ADR-0025 d14;
+                // ADR-0026 d8).
+                let mut response =
+                    workarea_json(&created.workarea, &created.path, created.crew.as_ref());
+                if let Some(obj) = response.as_object_mut() {
+                    obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
+                }
+                Ok(console::Acted::new(StatusCode::CREATED, response))
+            })
+            .await
     }
 
     async fn get_workarea(
@@ -1913,7 +1971,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        let acting: Acting<'static> = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let node = reference("workarea", workarea)?;
         let req: TransitionBody = parse_json(headers, body)?;
@@ -1921,12 +1979,13 @@ where
         // and proposes nothing again (ADR-0070 d3 layer 4).
         let caller = st.console_caller(headers).await?;
         let digest = console::act_digest(workarea, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "workarea.transition", &idem, &digest)
+        let claim = match st
+            .claim(&caller, "workarea.transition", &idem, &digest)
             .await?
         {
-            return Ok(replayed);
-        }
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
         let to = match req.to.as_str() {
             "committed" => WorkareaStatus::Committed,
             "validated" => WorkareaStatus::Validated,
@@ -1937,26 +1996,29 @@ where
                 .with_details(json!({ "field": "/to" })));
             }
         };
-        let proposal = retry_chain(|| st.app.propose_transition(acting.bearer(), node.clone(), to))
+        let st = st.clone();
+        claim
+            .run(async move {
+                let proposal =
+                    retry_chain(|| st.app.propose_transition(acting.bearer(), node.clone(), to))
+                        .await
+                        .map_err(|e| {
+                            console::ActFailure::first(map_app_error(e, ErrorContext::Write))
+                        })?;
+                Ok(console::Acted::new(
+                    StatusCode::ACCEPTED,
+                    json!({
+                        "transition_id": proposal.transition_id,
+                        "workarea_id": proposal.workarea_id,
+                        "from": proposal.from.as_str(),
+                        "to": proposal.to.as_str(),
+                        "state": proposal.state.as_str(),
+                        "proposed_by_key_id": proposal.proposer_key_id,
+                        "ratified_by_key_id": Value::Null,
+                    }),
+                ))
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        st.record_outcome(
-            &caller,
-            "workarea.transition",
-            &idem,
-            &digest,
-            StatusCode::ACCEPTED,
-            &json!({
-                "transition_id": proposal.transition_id,
-                "workarea_id": proposal.workarea_id,
-                "from": proposal.from.as_str(),
-                "to": proposal.to.as_str(),
-                "state": proposal.state.as_str(),
-                "proposed_by_key_id": proposal.proposer_key_id,
-                "ratified_by_key_id": Value::Null,
-            }),
-        )
-        .await
     }
 
     async fn ratify_transition(
@@ -1981,7 +2043,7 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        let acting: Acting<'static> = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let node = reference("workarea", workarea)?;
         let transition_id = Uuid::parse_str(transition_id).map_err(|_| {
@@ -1990,39 +2052,37 @@ where
         })?;
         let caller = st.console_caller(headers).await?;
         let digest = console::act_digest(workarea, &Bytes::from(transition_id.to_string()));
-        if let Some(replayed) = st
-            .replayed(&caller, "workarea.ratify", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
-        let ratified = retry_chain(|| {
-            st.app
-                .ratify_transition(acting.bearer(), node.clone(), transition_id)
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Review))?;
-        let from = match ratified.status {
-            WorkareaStatus::Validated => WorkareaStatus::Committed,
-            _ => WorkareaStatus::Development,
+        let claim = match st.claim(&caller, "workarea.ratify", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
         };
-        st.record_outcome(
-            &caller,
-            "workarea.ratify",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &json!({
-                "transition_id": transition_id,
-                "workarea_id": ratified.workarea_id,
-                "from": from.as_str(),
-                "to": ratified.status.as_str(),
-                "state": "ratified",
-                "proposed_by_key_id": Value::Null,
-                "ratified_by_key_id": Value::Null,
-            }),
-        )
-        .await
+        let st = st.clone();
+        claim
+            .run(async move {
+                let ratified = retry_chain(|| {
+                    st.app
+                        .ratify_transition(acting.bearer(), node.clone(), transition_id)
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Review)))?;
+                let from = match ratified.status {
+                    WorkareaStatus::Validated => WorkareaStatus::Committed,
+                    _ => WorkareaStatus::Development,
+                };
+                Ok(console::Acted::new(
+                    StatusCode::OK,
+                    json!({
+                        "transition_id": transition_id,
+                        "workarea_id": ratified.workarea_id,
+                        "from": from.as_str(),
+                        "to": ratified.status.as_str(),
+                        "state": "ratified",
+                        "proposed_by_key_id": Value::Null,
+                        "ratified_by_key_id": Value::Null,
+                    }),
+                ))
+            })
+            .await
     }
 
     async fn list_edges(
@@ -2577,7 +2637,7 @@ where
         if let Some(caller) = session::session_caller() {
             return Self::connect_code_as_session(
                 st,
-                &caller,
+                caller,
                 &key,
                 req.ttl_seconds,
                 &idem,
@@ -2586,16 +2646,37 @@ where
             )
             .await;
         }
-        let code = retry_chain(|| {
-            st.app
-                .mint_connect_code_with_ttl(&token, key.clone(), req.ttl_seconds)
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
-            StatusCode::CREATED,
-            &connect_code_json(&code),
-        ))
+        // A resubmission replays the answer without the code, which is
+        // shown once, and mints none: a second code would void the first
+        // (ADR-0031 d7; #233).
+        let caller = st.console_caller(headers).await?;
+        let digest = console::act_digest(key_id, body);
+        let claim = match st
+            .claim(&caller, "keys.connect_code", &idem, &digest)
+            .await?
+        {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
+        let ttl_seconds = req.ttl_seconds;
+        let st = st.clone();
+        claim
+            .run(async move {
+                let code = retry_chain(|| {
+                    st.app
+                        .mint_connect_code_with_ttl(&token, key.clone(), ttl_seconds)
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                let answer = connect_code_json(&code);
+                let kept = console::without_secrets(&answer);
+                Ok(console::Acted {
+                    status: StatusCode::CREATED,
+                    answer,
+                    kept,
+                })
+            })
+            .await
     }
 
     async fn revoke_connection(
@@ -2846,7 +2927,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        let acting: Acting<'static> = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let workarea = reference("workarea", workarea_id)?;
         let req: WorkareaModeBody = parse_json(headers, body)?;
@@ -2859,32 +2940,32 @@ where
         })?;
         let caller = st.console_caller(headers).await?;
         let digest = console::act_digest(workarea_id, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "workarea.mode", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
-        let updated = retry_chain(|| {
-            st.app
-                .set_workarea_mode(acting.bearer(), workarea.clone(), mode)
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let info = st
-            .app
-            .workarea_info(acting.bearer(), Some(Reference::Id(updated.workarea_id)))
+        let claim = match st.claim(&caller, "workarea.mode", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
+        let st = st.clone();
+        claim
+            .run(async move {
+                let updated = retry_chain(|| {
+                    st.app
+                        .set_workarea_mode(acting.bearer(), workarea.clone(), mode)
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                let info = st
+                    .app
+                    .workarea_info(acting.bearer(), Some(Reference::Id(updated.workarea_id)))
+                    .await
+                    .map_err(|e| {
+                        console::ActFailure::after(map_app_error(e, ErrorContext::Write))
+                    })?;
+                Ok(console::Acted::new(
+                    StatusCode::OK,
+                    workarea_view_json(&info),
+                ))
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        st.record_outcome(
-            &caller,
-            "workarea.mode",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &workarea_view_json(&info),
-        )
-        .await
     }
 
     async fn set_workarea_crew(

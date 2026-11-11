@@ -13,6 +13,7 @@ from ..models.rerank_reason import RerankReason
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.recall_search_widen import RecallSearchWiden
     from ..models.recall_search_window_type_0 import RecallSearchWindowType0
     from ..models.recall_sources import RecallSources
 
@@ -28,8 +29,10 @@ class RecallSearch:
         pipeline (RecallSearchPipeline):
         match (RecallSearchMatch):
         terms (list[str]):
-        fallback (None | str): any_term when match all found no row with every word and the any-word hits were served;
-            null otherwise.
+        fallback (None | str): any_term when match all found no row with every word and the any-word hits were served
+            (ADR-0049 d5); tenant_default_unserved when the request named no search and the tenant's default is a pipeline
+            this deployment does not serve, so search.pipeline is the deployment's default (ADR-0049 d15), which wins when
+            both apply, each hit's matched.of still showing an any-word match; null otherwise.
         did_you_mean (list[str]): Spellings from rows the key may read, from a pipeline with a trigram list, when no hit
             holds every word; else empty.
         access (RecallSearchAccess): postings when every list was read from integer postings by their index; scan when
@@ -50,6 +53,11 @@ class RecallSearch:
             anchored to the recall's now; null when the query names no date (ADR-0059 d6).
         sources (RecallSources | Unset): Under sources wide or a list: what was searched and why (ADR-0072 d8). Every
             name and number is of a workarea the key reads (d6).
+        widen (RecallSearchWiden | Unset): On a sources scope answer, when a workarea the key reads outside the scope
+            holds the query's words at least twice as often per row as the scope, on at least two of its rows: a retry with
+            sources wide would search it. Read off a signal the server builds in the background, at most 300 seconds old and
+            under the key's grants as they are now; a scope answer without such a signal carries no widen. It names no
+            workarea (ADR-0072 d8).
     """
 
     pipeline: RecallSearchPipeline
@@ -65,6 +73,7 @@ class RecallSearch:
     below_floor: int
     window: None | RecallSearchWindowType0 | Unset = UNSET
     sources: RecallSources | Unset = UNSET
+    widen: RecallSearchWiden | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.recall_search_window_type_0 import RecallSearchWindowType0
@@ -113,6 +122,10 @@ class RecallSearch:
         if not isinstance(self.sources, Unset):
             sources = self.sources.to_dict()
 
+        widen: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.widen, Unset):
+            widen = self.widen.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -134,11 +147,14 @@ class RecallSearch:
             field_dict["window"] = window
         if sources is not UNSET:
             field_dict["sources"] = sources
+        if widen is not UNSET:
+            field_dict["widen"] = widen
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.recall_search_widen import RecallSearchWiden
         from ..models.recall_search_window_type_0 import RecallSearchWindowType0
         from ..models.recall_sources import RecallSources
 
@@ -225,6 +241,13 @@ class RecallSearch:
         else:
             sources = RecallSources.from_dict(_sources)
 
+        _widen = d.pop("widen", UNSET)
+        widen: RecallSearchWiden | Unset
+        if isinstance(_widen, Unset):
+            widen = UNSET
+        else:
+            widen = RecallSearchWiden.from_dict(_widen)
+
         recall_search = cls(
             pipeline=pipeline,
             match=match,
@@ -239,6 +262,7 @@ class RecallSearch:
             below_floor=below_floor,
             window=window,
             sources=sources,
+            widen=widen,
         )
 
         return recall_search
