@@ -1,15 +1,15 @@
 <!--
 id: adr/ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-11
 answers: why OML's releases stop naming a default server; where a client gets its server instead (the setup prompt, the pair beside the key, the environment, the issuing server's own pages); what the plugin, the hooks, oml setup claude-code, the agent kit and the web pages do with no server named; how oml sync's consent works without a host to compare against; what a client with no server configured prints; how installs and released plugins that rely on the old default move; which hard-coded occurrences change; which tests must exist; what it amends in ADR-0043, ADR-0040, ADR-0041 and ADR-0057
 -->
 
 # ADR-0076 — OML releases name no server: setup asks for one or takes it beside the key, and a key goes only to a server its holder named
 
-**Status:** proposed · 2026-11-11
+**Status:** accepted design · 2026-11-11, by the operator ("Accept, then build"), with three of the four readings put to them accepted and the fourth reversed in d9 · proposed the same day as #265
 
-**Release:** not assigned; the operator assigns it at acceptance
+**Release:** not assigned; the build lands after v0.7.0 is cut, with the production split (#194)
 
 **Amends:** ADR-0043 (d1, d2, d3, d4, d6, d8 replaced; d7 narrowed; its Consequences' "a move of
 the maintainer's server is a release"), ADR-0039 (d15: the setup exception and the kit clause
@@ -185,16 +185,23 @@ an option with no default and no saved value reaches neither. Decided, not built
       people who need it, and it is not a security control. A server whose admins mean harm can
       answer `false`; the user named that server, and the host check it replaces protected one
       host only.
-    - **A server that does not say counts as shared.** A `whoami` answer without `shared` comes
-      from a server older than this change, and the run asks consent of it, so an old hosted
-      server is never synced to unasked. Upgrading the server ends the question for a self-hoster.
+    - **A server that does not say counts as not shared: the operator's choice of 2026-11-11.** A
+      `whoami` answer without `shared` comes from a server older than this change, and the run asks
+      no consent of it. The record proposed the opposite (ask consent of a server that does not
+      say); the operator did not accept that reading. The consequence, plainly: an older server
+      whose admins are not the caller's, the maintainer's hosted server among them until it
+      upgrades, gets no disclosure from a new CLI until it upgrades and sets `server.shared`. The
+      safeguard is the hosted server's rollout order (Consequences): it sets `server.shared = true`
+      in the same deploy as the upgrade, and that deploy should follow the release that builds
+      this as closely as it can, since a new CLI pointed at it before then syncs without the
+      warning. A self-hoster on an older server is never asked.
     - **Consent is per origin.** `--allow-public-server` keeps its name. The first opt-in records
       the server's origin (scheme, lowercased host, port) as one value of the multi-valued git
       config `oml.allowPublicServer` in the source clone; a later run is allowed when its origin is
       among the values. Consent to one server never covers another. A value of `true`, which
       ADR-0057 d6 wrote and which named no server, is not consent.
     - **Doctor.** ADR-0057 d17's line becomes `warn sync_shared_server: <url> declares itself
-      shared (or is older than this release and does not say), and consent is not recorded for
+      shared, and consent is not recorded for
       this origin in this clone; run oml sync with --allow-public-server to opt in`, and a clone
       holding the old `true` gets `warn sync_consent_unbound: oml.allowPublicServer=true names no
       server and is no longer read; run oml sync --allow-public-server once against the server you
@@ -241,7 +248,7 @@ an option with no default and no saved value reaches neither. Decided, not built
     **`oml sync` (`crates/bins/oml-cli/tests/sync_git.rs`)**
 
     11. `sync_to_a_server_that_declares_itself_shared_is_refused_without_consent`
-    12. `sync_to_a_server_whose_whoami_omits_shared_is_refused_without_consent`
+    12. `sync_to_a_server_whose_whoami_omits_shared_asks_no_consent`
     13. `sync_to_a_server_that_declares_itself_not_shared_asks_nothing`
     14. `consent_recorded_for_one_origin_does_not_cover_another`
     15. `a_recorded_true_is_not_consent_and_doctor_names_it` (the `sync_consent_unbound` line)
@@ -263,8 +270,8 @@ an option with no default and no saved value reaches neither. Decided, not built
 
 ## Consequences
 
-- **ADR-0043 is amended in almost every decision.** Its Status line gains `· amended by ADR-0076
-  (proposed)`, which drops `(proposed)` at acceptance; its text stays as history. ADR-0039,
+- **ADR-0043 is amended in almost every decision.** Its Status line gains `· amended by ADR-0076`; its text
+  stays as history. ADR-0039,
   ADR-0040, ADR-0041 and ADR-0057 gain the same back-pointer. The D14 row of the [D-register](index.md) names this
   record beside ADR-0043.
 - **Who keeps the old name alive.** ADR-0043's Consequences made a move of the maintainer's server
@@ -272,12 +279,14 @@ an option with no default and no saved value reaches neither. Decided, not built
   its URL, and released plugins that default to it, keep sending there, and its operator keeps the
   name answering or redirects it for as long as they are in use. That obligation belongs to the
   hosted service's runbooks, outside this repository.
-- **Rollout order.** A hosted service that is not open for sign-up sets `server.shared = true`
-  before, or in the same deploy as, its upgrade past this change. Until it upgrades it omits
-  `shared` and new CLIs ask consent (d9); the day it upgrades without the setting it answers
-  `shared: false`, and new CLIs sync to it with no disclosure, which ADR-0057 d6 exists to
-  prevent. The release notes of the release that builds this name the setting first, and the
-  hosted service's own runbook carries the step.
+- **Rollout order, the one safeguard for the hosted server.** A hosted service that is not open
+  for sign-up sets `server.shared = true` in the same deploy as its upgrade past this change, and
+  makes that deploy as soon after the release as it can. Before it upgrades it omits `shared`, and
+  by the operator's choice in d9 new CLIs read that as not shared and sync to it with no
+  disclosure; after it upgrades without the setting it answers `shared: false`, with the same
+  result. Either way ADR-0057 d6's warning is missing until the setting is live. The release notes
+  of the release that builds this name the setting first, and the hosted service's own runbook
+  carries the step.
 - **Released plugins and kits, v0.4.1 to v0.6.3 and whatever ships before this is built**, keep the
   default they shipped; no release can change it. Given an explicit `url` they reach any server,
   as they always did. Their hooks run the `oml` on `PATH`, so a user who upgrades the CLI and keeps
@@ -372,4 +381,4 @@ leave the repository with the landing (#194), not with this record.
 | **Keep the consent keyed to a host list shipped in the CLI** | A list of hosts is the default by another name, and it goes stale when a server moves. |
 | **Drop `oml sync`'s consent** | Loses ADR-0057 d6's disclosure to someone syncing a repository into a server whose admins are not theirs. |
 | **Ask consent of every server** | Every self-hoster would confirm their own server once per clone, and a prompt that always appears stops being read. |
-| **Treat a `whoami` without `shared` as not shared** | Before it upgrades, an old hosted server would receive syncs with no disclosure. Asking once costs a self-hoster one flag until they upgrade. |
+| **Treat a `whoami` without `shared` as shared** (the record's proposed reading) | The operator chose against it on 2026-11-11: every self-hoster on an older server would confirm their own server once per clone until they upgrade. The cost of the choice is in d9: an older shared server gets no disclosure until it upgrades and sets `server.shared`. |
