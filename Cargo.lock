@@ -4043,6 +4043,7 @@ dependencies = [
  "oml-test-pg",
  "oml-transport-http",
  "oml-web",
+ "oml-web-credential",
  "opentelemetry",
  "opentelemetry-proto",
  "opentelemetry_sdk",

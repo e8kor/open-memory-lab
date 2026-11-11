@@ -31,9 +31,11 @@ table of Phase (b) as built. Amended by the fifth change of phase (b), the Revie
 their acts through `oml-web` (d3, d5, d7 (b) and d8 revised): see the fifth table of Phase (b) as
 built. Amended by the sixth change of phase (b), one memory opened by its id, the admin's Curate
 view and the Mermaid frame through `oml-web` (d1, d3, d4, d5 and d7 (b) revised): see the sixth
-table of Phase (b) as built. Amended by its second half (6b), Start, setup, the admin overview and
-the users page through `oml-web` (d3, d5, d6 and d7 (b) revised): see the seventh table of Phase (b)
-as built.
+table of Phase (b) as built.
+Amended on 2026-11-11 by the web client secret's storage, rule and rotation (#230, #242; d2 and
+d4 revised): see [The client secret as built](#the-client-secret-as-built-2026-11-11). Amended by the
+second half of the sixth change (6b), Start, setup, the admin overview and the users page through
+`oml-web` (d3, d5, d6 and d7 (b) revised): see the seventh table of Phase (b) as built.
 
 ## Context
 
@@ -628,6 +630,23 @@ phase (b) is complete. Where it reads a decision differently:
 | d3 layer 4 | (the lead disabled a person and closed a deletion request on one post) | removing an address, disabling a person and closing a deletion request each answer a confirmation first, which records nothing; only its form, carrying `confirm=yes` and a fresh nonce, acts, and any other post acts nothing | each cuts off keys or ends sessions, which no resubmission or stray click should do unconfirmed |
 | d2 | each resolved request passes the person's request rate (phase (a) as built) | so the Start page and every other page spend several of the web key's requests per view (the session check, then the page's reads), where the lead's in-process page spent none; a person under a low `requests_per_minute` can reach `limit.rate` from the pages alone, and the PG sign-up suite's quota case now sets 20 a minute | the rate binds every key of a person (ADR-0068 d5); exempting the web key would let a page outrun the limit its agents keep. Whether pages need a share of their own is #170's to measure |
 | d8 | at most two sequential calls | the overview reads the allowlist 200 entries a call and refuses past 50 calls (`limit.list_too_long`) rather than show it cut short | `listWebEmails` pages by digest; a list read partly would hide an admin entry from the page that guards the last one |
+
+## The client secret as built (2026-11-11)
+
+Issues #230 and #242 specified where `web.client_secret` lives, which values either process
+refuses, and how it rotates. The same-origin check #230 also named is one function both processes
+call, built in the first change of phase (b). Where they read d2 and d4:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d2 | the secret is a setting of both processes; quickstart keeps it in its owner-only `.env` | either process also reads it from `web.client_secret_file`, a file its group and others cannot read (a mode with any of `077` stops the start, naming the setting, the path and the mode), one trailing line ending dropped; setting both stops the start | systemd's `LoadCredential=` and a mounted Secret hand a process a file, not a variable; the owner-only rule is the keyring's (ADR-0023 d4), so a secret file is held as the signing key is |
+| d2 | at least 32 characters | at least 32 visible ASCII characters, at least 8 of them distinct, checked by `oml_web_credential::client_secret_refusal`, which the lead and `oml-web` both call; a refusal names the setting, never the value | a header carries visible ASCII whole, so a space or line ending would make the two processes compare different bytes; a repeated placeholder passes a length check; one rule in the leaf both link keeps them from refusing different secrets. Eight is chosen, not measured: 32 random hex digits hold fewer with a probability below one in ten million |
+| d2 | (silent on rotation) | the lead accepts `web.client_secret_previous` (or `_previous_file`) beside the current secret until `web.client_secret_previous_until`, an RFC 3339 instant checked on every request and at most 7 days after the lead's start; a previous secret without the current one, equal to it, or without the instant stops the start, naming the setting; an instant already past loads and proves nothing; each start logs `web_client_previous_accepted` or `web_client_previous_closed` until it is unset. `oml-web` sends one secret. `/readyz` still names `secret` | the order is the lead with both, then `oml-web` onto the new one, then the lead with one, so no page is refused while `oml-web` restarts. An absolute instant bounds an old secret's life without a restart and does not reopen when the lead restarts. Rejected: a list of accepted secrets with no bound, which a forgotten entry keeps open; a window counted from the start, which every restart reopens; `oml-web` sending both, which puts two secrets on every call. The `/readyz` enum is unchanged, so no SDK changes for a state the start's log already names. Seven days is chosen, not measured |
+| d2, Consequences | the doctor reads the lead's `web_client` from `/readyz` | `oml-web --doctor` also sends `GET /v2/whoami` with a capacity credential no session holds: `session_outside_web` is a `fail` naming `web.client_secret`, any other `auth.invalid` is `ok` | `/readyz` is unauthenticated and cannot say whether the two secrets match, which is the failure a rotation done out of order or a closed window causes; the gate's existing refusal reasons tell the cases apart, so no operation is added |
+| d2 | the secret or mutual TLS | unchanged: mutual TLS is not built and `web.client_ca` or `web.client_subject` stops the start; `operations/web-console.md` documents it as the alternative for a hop that leaves the host, and an `https://` hop to a TLS proxy with the secret as what this build offers | the lead still terminates no TLS (phase (a) as built) |
+| d4 Kubernetes | `existingSecret`, or a Secret the chart generates once with `lookup` and keeps | also: the lead alone reads `OML_WEB__CLIENT_SECRET_PREVIOUS` and `OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL` from the same Secret (`web.clientSecret.previousKey`, `previousUntilKey`), each `optional`; an upgrade keeps every key of the generated Secret, not only the current one; `values.yaml` names Secrets and keys and never a value; `check_chart.py` holds all of it, and that `existingSecret` renders no Secret of the chart's own. A rotation edits the Secret and restarts the lead, then `oml-web` | a pod reads a Secret's keys at start, so the order of the two restarts is the rotation; no `checksum/` annotation, since the chart cannot read an `existingSecret`'s value and restarting both at once is the gap the order avoids |
+| (none) | `check_release.py` refuses `e2e-sign-in` in `release.yml` | also refuses `OML_CARGO_FEATURES` there | a workflow variable passed as that build argument would carry the feature past a check of its name (#242) |
+| (none) | the remaining minors of #241's review | not built: a check of the published image for the sign-in double (it needs the pushed image, a release step of its own); the SBOM loop's repeated work (slower, not wrong); the old `?view=` URL's dropped query (deliberate); an upgrade path for a directory an older `oml quickstart` wrote, which has no `oml-web` service and no `OML_WEB_CLIENT_SECRET` | each is a follow-up, not a defect of this change; the quickstart upgrade belongs to `oml quickstart`, not to the secret |
 
 ## Consequences
 

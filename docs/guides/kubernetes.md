@@ -90,6 +90,28 @@ kubectl --namespace oml rollout status deployment/oml-web
 kubectl --namespace oml exec deployment/oml-web -- /usr/local/bin/oml-web --doctor
 ```
 
+To rotate the secret, put the new value in the Secret beside the old one and an instant at most 7 days ahead, restart the server, then `oml-web`, then remove the old value. The server reads the two extra keys, each optional, and accepts the old value until the instant; `oml-web` reads only the current one, so neither restart refuses a page ([Rotating the client secret](../operations/web-console.md#rotating-the-client-secret)). The chart-made Secret keeps the keys you add across upgrades.
+
+```sh
+OLD="$(kubectl --namespace oml get secret oml-web-client -o jsonpath='{.data.OML_WEB__CLIENT_SECRET}')"
+NEW="$(openssl rand -hex 32 | tr -d '\n' | base64 -w0)"
+UNTIL="$(date -u -d '+1 day' +%Y-%m-%dT%H:%M:%SZ | tr -d '\n' | base64 -w0)"
+kubectl --namespace oml patch secret oml-web-client --type merge -p "{\"data\":{
+  \"OML_WEB__CLIENT_SECRET\":\"$NEW\",
+  \"OML_WEB__CLIENT_SECRET_PREVIOUS\":\"$OLD\",
+  \"OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL\":\"$UNTIL\"}}"
+kubectl --namespace oml rollout restart deployment/oml-server-lead
+kubectl --namespace oml rollout status deployment/oml-server-lead
+kubectl --namespace oml rollout restart deployment/oml-web
+kubectl --namespace oml rollout status deployment/oml-web
+kubectl --namespace oml patch secret oml-web-client --type json -p '[
+  {"op": "remove", "path": "/data/OML_WEB__CLIENT_SECRET_PREVIOUS"},
+  {"op": "remove", "path": "/data/OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL"}]'
+kubectl --namespace oml rollout restart deployment/oml-server-lead
+```
+
+The server runs one replica under `Recreate`, so each of its restarts is the API's usual brief restart; the rotation adds no other gap.
+
 ## 4. Claim the first admin key before any Ingress
 
 While no tenant exists, the server prints a single-use enrollment token in its log at every boot, and whoever presents it first gets the first admin key. Cluster log shipping also stores it, so claim through a port-forward:
