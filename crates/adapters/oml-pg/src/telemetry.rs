@@ -96,6 +96,24 @@ impl PgTelemetry {
         (telemetry, tokio::spawn(writer.run(rx)))
     }
 
+    /// One labeller's pass over `pool`, counted into `meter`, awaited to
+    /// its end: the lag it found, `no_use`, the purge and the unrecalled
+    /// count, as the spawned writer runs each minute. A test drives it in
+    /// place of the writer's minute, so no assertion waits on a clock
+    /// (ADR-0054 d13; #278).
+    pub async fn pass_once(pool: PgPool, meter: Arc<dyn TelemetryMeter>) {
+        Writer {
+            pool,
+            meter,
+            last_pass: Arc::new(AtomicI64::new(unix_now())),
+            per_key_today: BTreeMap::new(),
+            last_unrecalled: None,
+            no_use_marks: BTreeMap::new(),
+        }
+        .pass()
+        .await;
+    }
+
     fn depth(&self) -> i64 {
         i64::try_from(QUEUE - self.queue.capacity()).unwrap_or(i64::MAX)
     }

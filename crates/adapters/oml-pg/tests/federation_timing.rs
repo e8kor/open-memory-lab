@@ -1,7 +1,8 @@
 //! Test 7 of federated recall's phase 1 (ADR-0072 d6, d13) on PostgreSQL,
-//! in a binary of its own so no other test shares the host while it times:
-//! an unreadable workarea of many rows matching every query moves neither
-//! p50 nor p95 of a wide recall.
+//! in a binary of its own: an unreadable workarea of many rows matching
+//! every query changes no wide answer (gating), and moves neither p50 nor
+//! p95 of a wide recall (a measurement, `--ignored`: wall-clock quantiles
+//! move with the host's load, #278).
 
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
@@ -34,10 +35,22 @@ async fn fresh_store() -> Option<(String, PgStore)> {
     Some((db, store))
 }
 
-/// Test 7 on PostgreSQL at CI's size: an unreadable workarea of 5,000 rows
-/// matching every query moves neither p50 nor p95 of a wide recall
-/// (ADR-0072 d6, d13).
+/// Test 7 on PostgreSQL at CI's size, its deterministic half: an
+/// unreadable workarea of 5,000 rows matching every query, analyzed,
+/// changes no `wide` answer on `bm25-postings` or `bm25`, byte for byte,
+/// the read's access path included (ADR-0072 d6, d13; #278).
 #[tokio::test]
+async fn federated_recall_answers_do_not_depend_on_an_unreadable_workarea() {
+    unreadable_rows_move_no_answer(5_000).await;
+}
+
+/// Test 7 on PostgreSQL at CI's size, its timing half, a measurement run
+/// by hand or by the weekly bench (`--ignored`): an unreadable workarea of
+/// 5,000 rows matching every query moves neither p50 nor p95 of a wide
+/// recall (ADR-0072 d6, d13). Wall-clock quantiles move with the host's
+/// load, so it gates no change (#278).
+#[tokio::test]
+#[ignore = "a measurement: wall-clock quantiles, run by the weekly bench"]
 async fn federated_recall_timing_does_not_depend_on_an_unreadable_workarea() {
     unreadable_rows_move_no_timing(5_000).await;
 }
@@ -61,10 +74,51 @@ async fn unreadable_rows_move_no_timing(copies: u32) {
     };
     let t = timing_world(store).await;
     let mut without = BTreeMap::new();
-    for search in ["bm25-postings", "bm25"] {
+    for search in SEARCHES {
         without.insert(search, timing_sample(&t, search, 40).await);
     }
-    let mut owner = PgConnection::connect(&owner_url(&db))
+    copy_into_w(&db, &t, copies).await;
+    for search in SEARCHES {
+        let with = timing_sample(&t, search, 40).await;
+        assert_within_noise(without.remove(search).expect("sampled"), with);
+    }
+    drop_db(&db).await;
+}
+
+/// The same copies change no `wide` answer on `bm25-postings` or `bm25`.
+async fn unreadable_rows_move_no_answer(copies: u32) {
+    use oml_port_contracts::federation::{answer_sample, timing_world};
+    let Some((db, store)) = fresh_store().await else {
+        return;
+    };
+    let t = timing_world(store).await;
+    let mut without = BTreeMap::new();
+    for search in SEARCHES {
+        without.insert(search, answer_sample(&t, search).await);
+    }
+    copy_into_w(&db, &t, copies).await;
+    for search in SEARCHES {
+        assert_eq!(
+            answer_sample(&t, search).await,
+            without.remove(search).expect("sampled"),
+            "{search}: the unreadable rows moved a wide answer"
+        );
+    }
+    drop_db(&db).await;
+}
+
+/// The pipelines test 7 reads under.
+const SEARCHES: [&str; 2] = ["bm25-postings", "bm25"];
+
+/// Copies each of `t`'s templates `copies` times into its own unreadable
+/// workarea, by SQL as the owner through the postings and similar-key
+/// triggers, then analyzes the tables a recall reads.
+async fn copy_into_w(
+    db: &str,
+    t: &oml_port_contracts::federation::TimingWorld<PgStore>,
+    copies: u32,
+) {
+    let mut owner = PgConnection::connect(&owner_url(db))
         .await
         .expect("owner connect");
     let columns: Vec<String> = sqlx::query_scalar(
@@ -116,12 +170,6 @@ async fn unreadable_rows_move_no_timing(copies: u32) {
             .await
             .expect("analyze");
     }
-    drop(owner);
-    for search in ["bm25-postings", "bm25"] {
-        let with = timing_sample(&t, search, 40).await;
-        assert_within_noise(without.remove(search).expect("sampled"), with);
-    }
-    drop_db(&db).await;
 }
 
 /// The lead's resident set in bytes, and its peak, from `/proc/self/status`.
