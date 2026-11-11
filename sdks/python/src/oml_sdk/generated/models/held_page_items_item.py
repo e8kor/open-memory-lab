@@ -74,7 +74,8 @@ class HeldPageItemsItem:
             console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since
             v0.7.0.
         scan_finding (None | str | Unset): Admission's scan finding on the version, class: rule at place, never the
-            matched text; null when the scan found nothing (ADR-0065 d8; ADR-0070 d5). Since v0.7.0.
+            matched text; null when the scan found nothing, and null wherever principal is (ADR-0065 d8; ADR-0044 d9;
+            ADR-0070 d5). Since v0.7.0.
         provenance (MemorySummaryProvenance | Unset):
         simulation_id (None | str | Unset):
         self_signed (bool | Unset): Marked rows under the bounded development exception; never promote beyond their

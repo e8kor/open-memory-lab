@@ -78,6 +78,18 @@ pub struct Person {
 /// seventh table of phase (b); chosen, not measured, #170).
 pub const SESSION_REQUESTS_PER_MINUTE_MIN: u64 = 60;
 
+/// The requests a minute a key of `credential` gets under a quota of
+/// `quota`: a person's own console keeps a floor of its own, so a limit set
+/// below it binds their agent keys alone and no quota locks a person out of
+/// the page that shows it (ADR-0070, the seventh table of phase (b)).
+fn request_limit(credential: Credential, quota: u64) -> u64 {
+    if credential == Credential::Session {
+        quota.max(SESSION_REQUESTS_PER_MINUTE_MIN)
+    } else {
+        quota
+    }
+}
+
 /// One person of the sign-up tenant as the admin's users page lists them
 /// (ADR-0068 d5, d6, d8).
 #[derive(Debug, Clone)]
@@ -807,15 +819,7 @@ where
                     .quotas_of(key.tenant_id, root)
                     .await?
                     .requests_per_minute;
-                // A person's own console keeps a floor of its own: a limit
-                // set below it binds their agent keys alone, so no quota
-                // locks a person out of the page that shows it (ADR-0070,
-                // the seventh table of phase (b)).
-                if key.credential == Credential::Session {
-                    limit.max(SESSION_REQUESTS_PER_MINUTE_MIN)
-                } else {
-                    limit
-                }
+                request_limit(key.credential, limit)
             }
         };
         let mut windows = state.windows.lock().expect("rate lock");
@@ -871,5 +875,31 @@ where
             .await?
             .filter(|w| w.user_root)
             .map(|w| w.workarea_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A person's session keys keep the floor whatever their quota; every
+    /// other key takes the quota as set (ADR-0070, the seventh table of
+    /// phase (b); #253).
+    #[test]
+    fn a_session_key_is_held_to_its_quota_or_the_floor_whichever_is_more() {
+        let floor = SESSION_REQUESTS_PER_MINUTE_MIN;
+        for (quota, session) in [(0, floor), (4, floor), (floor, floor), (600, 600)] {
+            assert_eq!(
+                request_limit(Credential::Session, quota),
+                session,
+                "{quota}"
+            );
+            assert_eq!(request_limit(Credential::Bearer, quota), quota, "{quota}");
+            assert_eq!(
+                request_limit(Credential::Connection, quota),
+                quota,
+                "{quota}"
+            );
+        }
     }
 }
