@@ -948,13 +948,13 @@ Decided, not built.
     called the query vague, with the ledger (m037, m038) and payments (m043) also financial
     records, and asked to add m037 and m038 or drop the query. The operator then chose, on
     2026-11-11, to add m037 and m038 and keep m033: version 2 of the set labels all three grade 2.
-    No pass threshold was set before the check; the operator accepted the set with this one
-    correction.
+    The operator reviewed the 67 sampled labels; one (g0113) was corrected at their decision; no
+    pass threshold was set in advance.
   - **Who wrote the corpus is unknown.** d8 asks that the grown set's writer (Phi-3-mini) be of
     another family than the corpus's writer. The operator does not know which model wrote
     `corpus.json` (2026-11-11), so that condition is unverified. If they were one family, queries
     and memories would share phrasing, which flatters lexical matching for every pipeline; it
-    cannot explain a paired loss of 24 to 2, and the reopen clause below, real recall misses, is
+    is unlikely to explain a paired loss of 24 to 2, and the reopen clause below, real recall misses, is
     the remedy.
   - **What phase 0 measured** (PR #252, `eval/bench/results/phase0/report.md`, on version 2;
     offline, over migration 0020's lexemes, with `bm25-postings` matching the served success@5 on
