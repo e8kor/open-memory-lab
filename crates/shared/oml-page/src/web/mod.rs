@@ -139,7 +139,7 @@ pub fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
         ("/web/guardrails", "Guardrails"),
     ];
     if admin {
-        tabs.push(("/web/admin", "Administration"));
+        tabs.push((ADMIN_TABS[0].0, "Administration"));
     }
     tabs
 }
