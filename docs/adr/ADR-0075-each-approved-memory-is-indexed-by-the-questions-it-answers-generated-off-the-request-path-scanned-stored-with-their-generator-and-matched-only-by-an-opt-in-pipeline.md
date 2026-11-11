@@ -2,12 +2,12 @@
 id: adr/ADR-0075-each-approved-memory-is-indexed-by-the-questions-it-answers-generated-off-the-request-path-scanned-stored-with-their-generator-and-matched-only-by-an-opt-in-pipeline
 tier: engineering
 status: proposed
-answers: what hypothetical question indexing is for and what the recall eval says the gap is today; what the literature measured for doc2query, docTTTTTquery, HyDE, field-weighted BM25 and generated-question indexing since 2024; when questions are generated and for which versions never; the backfill policy and how it is stopped, capped and tracked; where questions are stored, with which generator, how every change to them is journalled, and what happens to them on supersession, retirement, erasure and a model change; how they are indexed and scored with the memory text, and why a row without questions is never pushed below its own text's score; the opt-in pipeline and what a hit says; where the model runs and when the server reaches the network; how a generated question is filtered for grounding and genericity and scanned, and what it may never do; the interface ADR-0072's phase 3 reads; the eval gates, their power, the latency and size budgets, the bill per 1,000 approvals and the backfill cost; how the drain behaves when the generator is down; when dense embeddings of questions are revisited; the phases and their tests; what the operator decided on 2026-11-10; the phase 0 gate as the operator redesigned it on 2026-11-11: whether generated questions beat or add to `bm25-sparse` on question-shaped queries, its power and its decision rule
+answers: what hypothetical question indexing is for and what the recall eval says the gap is today; what the literature measured for doc2query, docTTTTTquery, HyDE, field-weighted BM25 and generated-question indexing since 2024; when questions are generated and for which versions never; the backfill policy and how it is stopped, capped and tracked; where questions are stored, with which generator, how every change to them is journalled, and what happens to them on supersession, retirement, erasure and a model change; how they are indexed and scored with the memory text, and why a row without questions is never pushed below its own text's score; the opt-in pipeline and what a hit says; where the model runs and when the server reaches the network; how a generated question is filtered for grounding and genericity and scanned, and what it may never do; the interface ADR-0072's phase 3 reads; the eval gates, their power, the latency and size budgets, the bill per 1,000 approvals and the backfill cost; how the drain behaves when the generator is down; when dense embeddings of questions are revisited; the phases and their tests; what the operator decided on 2026-11-10; the phase 0 gate as the operator redesigned it on 2026-11-11: whether generated questions beat or add to `bm25-sparse` on question-shaped queries, its power and its decision rule; what phase 0 measured and why the operator parked question indexing on 2026-11-11
 -->
 
 # ADR-0075 — Each approved memory is indexed by the questions it answers, generated off the request path, scanned, stored with their generator, and matched only by an opt-in pipeline
 
-**Status:** proposed · 2026-11-10 · revised after review rounds 1, 2 and 3 the same day (see the Review log) · phase 0's gate amended by the operator's decision of 2026-11-11 (d12)
+**Status:** proposed · 2026-11-10 · revised after review rounds 1, 2 and 3 the same day (see the Review log) · phase 0's gate amended by the operator's decision of 2026-11-11 (d12) · phase 0 run, no go, and question indexing parked by the operator on 2026-11-11 (d13)
 
 **In short.** When a memory version is approved, a generator writes up to five questions that the
 memory answers. The server keeps only questions grounded in the memory's own words, scans them,
@@ -18,7 +18,9 @@ expanded. A question changes ranking, never visibility, is never served as memor
 only add to a row's score: a row without questions scores exactly what `bm25-postings` gives it,
 with the same words pruned, whatever other rows' questions say. A word counts once per question
 set, however many questions repeat it. Recall makes no model call. Phase 0 is an offline run, on a labelled set grown large enough to see the
-gain, that decides whether the server work is worth building.
+gain, that decides whether the server work is worth building. **It ran on 2026-11-11 and did not
+go:** generated questions neither beat `bm25-sparse` nor added to it, so question indexing is
+parked and v0.7.1 recommends `bm25-sparse` (d13).
 
 **Decisions at a glance.**
 
@@ -36,6 +38,7 @@ gain, that decides whether the server work is worth building.
 | d10 | Phase 0 (with 0a, the grown labelled set) decides; phases 1 and 2 ship in one release; phase 3 when #207 is scheduled | 0 to 3 |
 | d11 | Operations: an outage, told from a bad version by a compiled-in canary, pauses the drain and it resumes on its own; parked entries come back with backoff; a backfill is estimated, capped, stoppable and tracked; the bill is metered; doctor names each state | 1 |
 | d12 | Amended 2026-11-11: phase 0 asks whether questions beat `bm25-sparse` (primary) or add to it (secondary) on the 687 question-shaped queries, each by an exact paired test at 0.025 sized for 80% power at a 2.5-point gain; non-inferiority on the other 99 with a computed margin; a go ships the pipeline that passed, opt-in, and otherwise v0.7.1 recommends `bm25-sparse` and questions are parked | 0 |
+| d13 | Decided 2026-11-11: phase 0 ran and did not go (questions 0.926 against `bm25-sparse`'s 0.956 success@5 on 687 question-shaped queries, 2 wins and 23 losses; added to it, +0.1 points, 95% interval −0.4 to +0.7); question indexing is parked, phases 1 to 3 are not built, `bm25-sparse` is v0.7.1's recommended pipeline, and ADR-0072's phase 3 drops generated questions as a signal | — |
 
 **Open questions: decided by the operator, 2026-11-10.** Each is detailed at the end.
 
@@ -46,6 +49,7 @@ gain, that decides whether the server work is worth building.
 | 3 | Run phase 0 now? | Run phase 0a before building: phase 0a first (grow the labelled set to at least 550 queries), then phase 0; phases 1 and 2 stay behind its verdict. |
 | 4 | Correct #201's 0.17? | Already corrected: done in #201's body on 2026-11-10, with today's baseline and its source. |
 | 5 | Phase 0's gate, after 0a's joint power came out at −0.08 (decided 2026-11-11) | Redesign it as d12: questions must beat or add to `bm25-sparse` on question-shaped queries, with the power computed on measured discordance; if they do not clearly win, v0.7.1 recommends `bm25-sparse` instead. |
+| 6 | Phase 0's outcome (decided 2026-11-11) | "Park questions, promote sparse": question indexing is parked with phase 0's evidence (d13), and v0.7.1 documents and recommends `bm25-sparse`. |
 
 **Amends:** ADR-0049 (d4: the pipeline table gains `bm25-questions`; d6: `matched` gains
 `question` and `question_terms`, and `via` gains `questions`), ADR-0052 (d1 and d3: `kind` gains `3`,
@@ -928,7 +932,54 @@ Decided, not built.
     evidence, and this record stays proposed until a later run of its own reopens it.
   - **The label check.** A person's check of a seeded 10% of the grown set's labels
     (`person_check` in `eval/recall/queries-grown.json`, PR #245) is still required. Until it
-    passes, every phase 0 figure is provisional and no verdict is final.
+    passes, every phase 0 figure is provisional and no verdict is final. *Done 2026-11-11 (d13):*
+    the operator found one wrong label in 67, and phase 0 was rerun on the corrected set.
+
+- **d13 — Phase 0's outcome, and the operator's decision of 2026-11-11: generated questions
+  neither beat `bm25-sparse` nor add to it, so question indexing is parked and v0.7.1 recommends
+  `bm25-sparse`.** The operator's words: "Park questions, promote sparse."
+  - **The label check.** The operator checked the seeded 10% sample of the grown set (67 queries,
+    seed 20261111) on 2026-11-11: 58 marked correct, 6 unsure, 3 wrong. One label was wrong:
+    g0113, "What database table contains financial records for the team?", labelled only the
+    invoices table (m033), where by accounting practice the record is the ledger. Version 2 of the
+    set labels m038 and m037 grade 2 and keeps m033 grade 1. The other eight marks question the
+    fictional company's stack (its cloud provider, Kotlin, Gradle), not whether the labelled memory
+    answers. One bad label in 67 (1.5%) is the check passing; d12's figures are final once rerun
+    on version 2.
+  - **What phase 0 measured** (PR #252, `eval/bench/results/phase0/report.md`, on version 2;
+    offline, over migration 0020's lexemes, with `bm25-postings` matching the served success@5 on
+    786 of 786 queries and `bm25-sparse` on 784). Success@5:
+
+    | pipeline | all 786 | question-shaped 687 | other 99 |
+    |---|---|---|---|
+    | `bm25-postings` | 0.916 | 0.911 | 0.950 |
+    | `bm25-sparse` | 0.962 | 0.956 | 1.000 |
+    | `bm25-questions` (`local`, a doc2query T5, five questions per memory, d6's filters) | 0.927 | 0.926 | 0.939 |
+    | `bm25-sparse` with the question field | 0.963 | 0.958 | 1.000 |
+
+    Primary, `bm25-questions` against `bm25-sparse` on the 687: 2 wins, 23 losses, −3.1 points
+    (95% paired bootstrap −4.5 to −1.8), p 1.00: it fails. Secondary, the combination against
+    `bm25-sparse`: 3 wins, 2 losses, +0.1 points (−0.4 to +0.7), p 0.50: it fails, and its
+    interval rules out an added gain above 0.7 points. Both non-inferiority arms pass. At the
+    observed discordance (0.036) the set had 80% power for a 2.2-point gain, so the test could see
+    the gain d12 asked for. d8's original arm, questions against `bm25-postings`, gained 1.5 points
+    (13 wins, 3 losses, p 0.011), mostly on paraphrases: questions help the lexical pipeline, and
+    `bm25-sparse` already makes that gain and more. Ten questions per memory, no filters, or d6's
+    shape filter as worded change none of this (2.6 to 3.9 points behind `bm25-sparse`). Before
+    the relabel the figures were 0.916, 0.963, 0.927 and 0.964 over all 786, and the gate's
+    outcome was the same.
+  - **The cost it would have taken.** Generation ran at 0.77 s per memory on 4 CPU threads, and
+    kind 3 would have added 0.575 of kind 1's postings; phases 1 and 2 would add a generator
+    port, a drain, a migration and a pipeline, for a ranking `bm25-sparse` already beats.
+  - **The decision.** By d12's rule, and decided by the operator on 2026-11-11: question indexing
+    is parked. Phases 1 to 3 (#236 to #238) and #201 close as not planned; phase 0 (#235) is done.
+    v0.7.1 documents `bm25-sparse` as the recommended recall pipeline, with these numbers and its
+    cost. ADR-0072's phase 3 (#207) no longer reads generated questions: d7's counts have no
+    writer, and its descriptor score keeps ontology terms alone. d1 to d11 keep their text as the
+    design a reopening would start from; nothing in them is built.
+  - **What would reopen it.** A run of its own: a labelled set of real recall misses that
+    `bm25-sparse` leaves out of the top 5, on which a question arm beats or adds to `bm25-sparse`
+    by d12's tests. The record stays proposed, as d12 says; its status is the operator's to change.
 
 ## Consequences
 
@@ -1164,3 +1215,10 @@ computed from the set (0.073), not capped. The external sets' arms and the displ
 to phase 2; the budgets stay; the 10% label check still holds every figure provisional. If
 questions do not clearly win, v0.7.1 recommends `bm25-sparse` for question-style use. Open
 question 5 records the decision.
+
+**Outcome, 2026-11-11: phase 0 did not go, and the operator parked question indexing.** The
+operator's check of the grown set's 10% sample found one wrong label in 67 (g0113, relabelled in
+version 2, PR #245). Phase 0 on the corrected set (PR #252): `bm25-questions` 0.926 against
+`bm25-sparse`'s 0.956 success@5 on the 687 question-shaped queries (2 wins, 23 losses), and the
+combination 0.958 (3 wins, 2 losses, p 0.50). The operator decided "Park questions, promote
+sparse"; d13 records the evidence and open question 6 the decision.
