@@ -63,7 +63,7 @@ The server decides what you may read before any ranking runs. A pipeline ranks t
 | `bm25-sparse` | `bm25-postings` and `sparse`, combined | no |
 | `bm25-rerank` | `bm25`, with the top hits reordered by a local cross-encoder | no |
 
-The server lists the offered pipelines in `search.enabled` ([configuration](../operations/configuration.md)). A name the server does not offer is refused with `search.unavailable`.
+The server lists the offered pipelines in `search.enabled` ([configuration](../operations/configuration.md)). A name the server does not offer is refused with `request.validation`, naming `/search` and the pipelines it offers.
 
 ### Choosing one
 
@@ -72,6 +72,38 @@ The server lists the offered pipelines in `search.enabled` ([configuration](../o
 3. Otherwise the server's `search.default` applies.
 
 `oml search show` lists what the server offers and which one a recall will run.
+
+The tenant's default can name a pipeline the server no longer offers, for example after an operator removes `bm25-sparse` from `search.enabled`. Then a recall that names no pipeline runs the server's `search.default`, and the answer says so with `search.fallback: "tenant_default_unserved"`. Steering is served as always. A request that names an offered pipeline runs it, unmarked. `oml search show` prints the pipeline that runs and notes that the tenant's default is not served, the server logs `search_tenant_default_unserved` at start naming the tenant, and `oml doctor` warns `search_tenant_default`. To end it, an admin sets an offered default or runs `oml search set-default deployment`, or the operator offers the pipeline again.
+
+### Which one to use
+
+**`bm25-sparse`, where the server loads its model and a recall's scope stays in the low thousands of memories, or a p95 near 85 ms is acceptable.** It finds more than the default, most of all when a question uses other words than the memory:
+
+| Set | `bm25-postings` (default) | `bm25-sparse` | Source |
+|---|---:|---:|---|
+| Recall eval, 121 queries, success@5 | 0.934 | 0.983 | `eval/recall/results/served_*.json` |
+| Recall eval, 121 queries, nDCG@10 | 0.873 | 0.910 | `eval/recall/results/served_*.json` |
+| Grown recall set, 665 questions, success@5 | 0.913 | 0.956 | [benchmarks](../benchmarks/recall-grown.md) |
+| BEIR SciFact, 5,183 memories, nDCG@10 | 0.685 | 0.730 | [benchmarks](../benchmarks/beir-scifact.md) |
+
+What it costs:
+
+- **A model on the server.** `opensearch-neural-sparse-encoding-doc-v3-distill`, 67M parameters, Apache-2.0, pinned by SHA-256. Its `model.safetensors` is 267,954,768 bytes at the pinned revision. Put the files in `search.sparse.model_dir`, or set `search.sparse.fetch = true` to download them at start ([settings](../operations/configuration.md)). A server that lists a sparse pipeline without the files refuses to start, naming the file.
+- **CPU at write time.** The model encodes each written version once, on the server's CPU, after the write commits. It uses `search.sparse.threads` threads, 2 by default. Until the encoder reaches a version, `bm25-sparse`'s postings leg still finds it, ranked without the sparse weight, and `oml doctor` reports the backlog. Encodes per second are not measured yet.
+- **No model at query time.** A query is split by the model's tokenizer and weighted from `idf.json`: no network, no GPU and no model run per recall.
+- **Latency.** The client's p95 per recall:
+
+    | Memories in scope | `bm25-postings` | `bm25-sparse` | Source |
+    |---:|---:|---:|---|
+    | 200 | 48.0 ms | 18.7 ms | [scale](../benchmarks/scale.md) |
+    | 3,633 | 54.8 ms | 65.9 ms | [scale](../benchmarks/scale.md) |
+    | 5,183 | 65.6 ms | 83.7 ms | [scale](../benchmarks/scale.md) |
+
+    Both miss the 50 ms bar above a few thousand memories, and `bm25-sparse` misses it by more. At 100,000 memories, measured at the database, `bm25-sparse` reads two lists 100 deep: 272 ms p95 at universe scope and 114 ms at every scope. `bm25-postings` at `k` 10 took 29.2 and 20.4 ms (`bench/scale/REPORT.md`).
+
+**`bm25-postings`, the default, when you need any of these:** no model file and no download, or a memory ranked fully the moment it is approved. It also gives the same answer for the same query, key, memories and settings, because it reads only those ([#176](https://github.com/e8kor/open-memory-lab/issues/176)). It is the faster of the two at large scope.
+
+To switch, list `bm25-sparse` in `search.enabled` with the model in place. Then set `search.default = "bm25-sparse"` for every tenant, or a tenant's admin runs `oml search set-default bm25-sparse` for theirs. A request can also name it with `--search bm25-sparse`.
 
 ### Any word or every word
 
@@ -128,7 +160,7 @@ The benchmarks run every pipeline through the same served path as an agent. The 
 | `bm25-postings` (default) | 0.685 | 65.6 ms |
 | `bm25-sparse` | 0.730 | 83.7 ms |
 
-`bm25-postings` ranks the same as `bm25` and answers faster because an index serves it under row security. `bm25-sparse` ranks higher but stays opt-in, because its latency at larger scope misses the 50 ms bar. See [benchmarks](../benchmarks/index.md) for the scale runs.
+`bm25-postings` ranks the same as `bm25` and answers faster because an index serves it under row security. `bm25-sparse` ranks higher and is the one to choose where the server loads its model; it is not the default because it needs that model, and at larger scope its p95 is higher than the default's. See [which one to use](#which-one-to-use). See [benchmarks](../benchmarks/index.md) for the scale runs.
 
 ## Searching beyond the scope
 

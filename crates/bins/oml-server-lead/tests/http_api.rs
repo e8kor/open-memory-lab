@@ -9022,6 +9022,7 @@ async fn an_admin_sets_the_tenants_default_pipeline_and_the_next_recall_runs_it(
             "deployment_default": "bm25-postings",
             "tenant_default": null,
             "effective": "bm25-postings",
+            "tenant_default_served": true,
         })
     );
     let (status, _, refused) = send(router, "GET", "/v2/search", Call::auth(&reader)).await;
@@ -9061,6 +9062,208 @@ async fn an_admin_sets_the_tenants_default_pipeline_and_the_next_recall_runs_it(
     let recall = recall_ok(router, &reader, json!({"query": "deployed"})).await;
     assert_eq!(recall["search"]["pipeline"], "bm25-postings", "{recall}");
     assert_eq!(recall["hits"].as_array().map(Vec::len), Some(1), "{recall}");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// A recall naming no pipeline, under a tenant default a lead restarted
+/// with a narrower `search.enabled` does not serve, runs the deployment's
+/// default and says so with `search.fallback: "tenant_default_unserved"`,
+/// over HTTP and over `oml_read` alike; a request naming a served pipeline
+/// runs unmarked; the settings name the pipeline that runs and flag the
+/// tenant's default; and the start names the tenant (ADR-0049 d15).
+#[tokio::test]
+async fn http_and_mcp_run_the_deployments_default_marked_under_an_unserved_tenant_default() {
+    let Some((rig, admin, _crew, agent, dreamer, reader)) = own_held_rig().await else {
+        return;
+    };
+    let memory = promoted_over_http(&rig.router, &agent, &dreamer, "q1", "deploys nightly").await;
+    let (status, _, set) = send(
+        &rig.router,
+        "POST",
+        "/v2/search/default",
+        Call::auth(&admin)
+            .idem("search-postings")
+            .body(json!({"pipeline": "bm25-postings"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{set}");
+    assert_eq!(set["tenant_default_served"], true, "{set}");
+
+    let search = oml_app::search::SearchConfig::new(
+        &[
+            oml_app::search::Pipeline::KeywordAny,
+            oml_app::search::Pipeline::Bm25,
+        ],
+        oml_app::search::Pipeline::Bm25,
+    )
+    .expect("served");
+    let tenants = oml_server_lead::enumerate_tenants(rig.store.pool())
+        .await
+        .expect("tenants");
+    assert_eq!(
+        oml_server_lead::unserved_tenant_defaults(&rig.store, &tenants, &search)
+            .await
+            .unserved,
+        vec![(tenants[0], "bm25-postings".to_owned())],
+        "the start names the tenant whose default it does not serve"
+    );
+    let narrow = oml_server_lead::start_lead_with(
+        &rig.store,
+        rig.signing.clone(),
+        None,
+        oml_fetch::PinnedFetcher,
+        oml_transport_http::traffic::Traffic::default(),
+        None,
+        oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
+        Some(search),
+        None,
+    )
+    .await
+    .expect("a narrower lead starts over the same store")
+    .router;
+
+    let http = recall_ok(&narrow, &reader, json!({"query": "deployed"})).await;
+    assert_eq!(http["search"]["pipeline"], "bm25", "{http}");
+    assert_eq!(
+        http["search"]["fallback"], "tenant_default_unserved",
+        "{http}"
+    );
+    assert_eq!(hit_ids(&http), vec![json!(memory)], "{http}");
+    let mcp = |id: u64, args: Value| {
+        Call::auth(&reader).body(json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": {"name": "oml_read", "arguments": args},
+        }))
+    };
+    let (status, _, rpc) = send(
+        &narrow,
+        "POST",
+        "/mcp",
+        mcp(1, json!({"query": "deployed"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rpc}");
+    assert_eq!(rpc["result"]["isError"], false, "{rpc}");
+    let answered = &rpc["result"]["structuredContent"]["search"];
+    assert_eq!(answered["pipeline"], http["search"]["pipeline"], "{rpc}");
+    assert_eq!(answered["fallback"], http["search"]["fallback"], "{rpc}");
+
+    let named = recall_ok(
+        &narrow,
+        &reader,
+        json!({"query": "deployed", "search": "bm25"}),
+    )
+    .await;
+    assert_eq!(named["search"]["pipeline"], "bm25", "{named}");
+    assert_eq!(named["search"]["fallback"], Value::Null, "{named}");
+
+    let (status, _, settings) = send(&narrow, "GET", "/v2/search", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    assert_eq!(settings["tenant_default"], "bm25-postings", "{settings}");
+    assert_eq!(settings["effective"], "bm25", "{settings}");
+    assert_eq!(settings["tenant_default_served"], false, "{settings}");
+
+    drop_db(&rig.db_name).await;
+}
+
+/// Under `match: all` with no row holding every word, and a tenant default
+/// the deployment does not serve, both fallbacks apply: the answer names
+/// `tenant_default_unserved`, and each hit's `matched.of` still shows the
+/// any-word match (ADR-0049 d5, d15).
+#[tokio::test]
+async fn when_match_all_and_an_unserved_tenant_default_both_fall_back_the_answer_names_tenant_default_unserved()
+ {
+    let Some((rig, admin, _crew, agent, dreamer, reader)) = own_held_rig().await else {
+        return;
+    };
+    let memory = promoted_over_http(&rig.router, &agent, &dreamer, "q1", "deploys nightly").await;
+    let (status, _, set) = send(
+        &rig.router,
+        "POST",
+        "/v2/search/default",
+        Call::auth(&admin)
+            .idem("search-postings")
+            .body(json!({"pipeline": "bm25-postings"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{set}");
+    let narrow = oml_server_lead::start_lead_with(
+        &rig.store,
+        rig.signing.clone(),
+        None,
+        oml_fetch::PinnedFetcher,
+        oml_transport_http::traffic::Traffic::default(),
+        None,
+        oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
+        Some(
+            oml_app::search::SearchConfig::new(
+                &[oml_app::search::Pipeline::Bm25],
+                oml_app::search::Pipeline::Bm25,
+            )
+            .expect("served"),
+        ),
+        None,
+    )
+    .await
+    .expect("a narrower lead starts over the same store")
+    .router;
+    let both = recall_ok(
+        &narrow,
+        &reader,
+        json!({"query": "deployed zebra", "match": "all"}),
+    )
+    .await;
+    assert_eq!(both["search"]["pipeline"], "bm25", "{both}");
+    assert_eq!(
+        both["search"]["fallback"], "tenant_default_unserved",
+        "{both}"
+    );
+    assert_eq!(hit_ids(&both), vec![json!(memory)], "{both}");
+    assert_eq!(both["hits"][0]["matched"]["of"], 2, "{both}");
+    assert_eq!(
+        both["hits"][0]["matched"]["terms"].as_array().map(Vec::len),
+        Some(1),
+        "one of two words: the any-word match shows: {both}"
+    );
+
+    drop_db(&rig.db_name).await;
+}
+
+/// The start's read of each tenant's default only warns, so a read that
+/// fails is named and does not stop the start (ADR-0049 d15).
+#[tokio::test]
+async fn the_start_scan_of_tenant_defaults_names_a_read_failure_and_does_not_stop() {
+    let Some((rig, admin, _crew, _agent, _dreamer, _reader)) = own_held_rig().await else {
+        return;
+    };
+    let (status, _, _) = send(
+        &rig.router,
+        "POST",
+        "/v2/search/default",
+        Call::auth(&admin)
+            .idem("search-postings")
+            .body(json!({"pipeline": "bm25-postings"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let tenants = oml_server_lead::enumerate_tenants(rig.store.pool())
+        .await
+        .expect("tenants");
+    let broken = PgStore::connect(&serving_url(&rig.db_name))
+        .await
+        .expect("connect");
+    broken.pool().close().await;
+    let search = oml_app::search::SearchConfig::new(
+        &[oml_app::search::Pipeline::Bm25],
+        oml_app::search::Pipeline::Bm25,
+    )
+    .expect("served");
+    let scan = oml_server_lead::unserved_tenant_defaults(&broken, &tenants, &search).await;
+    assert_eq!(scan.unserved, Vec::new(), "nothing read, nothing claimed");
+    assert_eq!(scan.unread.len(), 1, "{:?}", scan.unread);
+    assert_eq!(scan.unread[0].0, tenants[0]);
+    assert!(!scan.unread[0].1.is_empty(), "the failure is named");
 
     drop_db(&rig.db_name).await;
 }

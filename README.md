@@ -68,6 +68,12 @@ the key without showing it; restart Claude Code. On Windows, or to read the scri
 reviewer key and checks one save end to end. For TLS or Kubernetes: [run your own](docs/start/run-your-own.md),
 [Kubernetes](docs/guides/kubernetes.md), [administering](docs/guides/administering.md).
 
+Recall ranks by `bm25-postings` out of the box: keyword scoring, no model, the same answer for
+the same query. `bm25-sparse` finds more. On our recall eval it puts an answer in the top five
+for 0.983 of queries, against 0.934. It needs a 268 MB model and CPU to encode each write, and
+it is slower than the default above a few thousand memories in scope.
+[Choosing a pipeline](docs/architecture/retrieval.md#which-one-to-use).
+
 ## Docs
 
 [Documentation](https://e8kor.github.io/open-memory-lab/) · [why a write is held](docs/concepts/why-a-write-is-held.md) ·

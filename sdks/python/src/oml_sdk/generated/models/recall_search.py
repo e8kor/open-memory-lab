@@ -28,8 +28,10 @@ class RecallSearch:
         pipeline (RecallSearchPipeline):
         match (RecallSearchMatch):
         terms (list[str]):
-        fallback (None | str): any_term when match all found no row with every word and the any-word hits were served;
-            null otherwise.
+        fallback (None | str): any_term when match all found no row with every word and the any-word hits were served
+            (ADR-0049 d5); tenant_default_unserved when the request named no search and the tenant's default is a pipeline
+            this deployment does not serve, so search.pipeline is the deployment's default (ADR-0049 d15), which wins when
+            both apply, each hit's matched.of still showing an any-word match; null otherwise.
         did_you_mean (list[str]): Spellings from rows the key may read, from a pipeline with a trigram list, when no hit
             holds every word; else empty.
         access (RecallSearchAccess): postings when every list was read from integer postings by their index; scan when

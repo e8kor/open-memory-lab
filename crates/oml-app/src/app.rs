@@ -6113,7 +6113,7 @@ where
         // A recall naming no `sources` reads the tenant's default with its
         // default pipeline, off one row; one naming them reads only the
         // pipeline's default, as before federation (ADR-0072 d12).
-        let (pipeline, policy) = if req.sources.is_none() {
+        let ((pipeline, tenant_default_unserved), policy) = if req.sources.is_none() {
             let (tenant_default, policy) = self.journal.recall_defaults(key.tenant_id).await?;
             (
                 self.pipeline_from(req.search.as_deref(), tenant_default)?,
@@ -6226,8 +6226,13 @@ where
                 .as_ref()
                 .is_none_or(|at| m.created_at.as_str() <= at.as_str())
         };
-        self.observer
-            .search(pipeline.as_str(), fallback, ran.access.as_str());
+        // The request line's `search_fallback` and the recall metric's
+        // `fallback` label count either fallback (ADR-0049 d5, d8, d15).
+        self.observer.search(
+            pipeline.as_str(),
+            fallback || tenant_default_unserved.is_some(),
+            ran.access.as_str(),
+        );
         // R3 defense in depth: the gate changed visibility. Nothing
         // unpromoted or unreadable leaves the application layer except the
         // caller's own held rows when it asked for them; a replaced version
@@ -6483,6 +6488,7 @@ where
             pipeline,
             terms,
             fallback,
+            tenant_default_unserved,
             did_you_mean,
             rerank,
             floor,
@@ -6692,48 +6698,50 @@ where
         Ok(out)
     }
 
-    /// The pipeline a recall runs: the request's `search` when it names a
-    /// served one, else the tenant's journalled default while the
-    /// deployment still serves it, else the deployment's (ADR-0049 d4). A
-    /// name the deployment does not serve, unknown or disabled, is refused
-    /// naming the field, never replaced by another pipeline.
+    /// The pipeline a recall runs, and the tenant's default when the
+    /// deployment's ran in its place (ADR-0049 d4, d15), reading the
+    /// tenant's default itself; see [`Self::pipeline_from`].
     async fn pipeline_for(
         &self,
         tenant_id: Uuid,
         requested: Option<&str>,
-    ) -> Result<Pipeline, AppError> {
-        if let Some(name) = requested {
-            return Pipeline::parse(name)
-                .filter(|p| self.search.serves(*p))
-                .ok_or_else(|| AppError::SearchUnavailable {
-                    name: name.to_owned(),
-                    served: self.served_pipelines(),
-                });
-        }
-        let tenant_default = self.journal.tenant_search_default(tenant_id).await?;
-        self.pipeline_from(None, tenant_default)
+    ) -> Result<(Pipeline, Option<String>), AppError> {
+        let tenant_default = match requested {
+            Some(_) => None,
+            None => self.journal.tenant_search_default(tenant_id).await?,
+        };
+        self.pipeline_from(requested, tenant_default)
     }
 
-    /// The pipeline a recall runs: the one it names, which the deployment
-    /// must serve, else the tenant's default where served, else the
-    /// deployment's (ADR-0049 d4).
+    /// The pipeline a recall runs: the request's `search`, which the
+    /// deployment must serve, else the tenant's default, else the
+    /// deployment's (ADR-0049 d4). A name the request sends that the
+    /// deployment does not serve is refused naming it. A tenant default the
+    /// deployment does not serve is not refused: the deployment's default
+    /// runs, and the tenant's name comes back beside it so the answer says
+    /// so with `search.fallback: "tenant_default_unserved"` (ADR-0049 d15).
     fn pipeline_from(
         &self,
         requested: Option<&str>,
         tenant_default: Option<String>,
-    ) -> Result<Pipeline, AppError> {
+    ) -> Result<(Pipeline, Option<String>), AppError> {
         if let Some(name) = requested {
             return Pipeline::parse(name)
                 .filter(|p| self.search.serves(*p))
+                .map(|p| (p, None))
                 .ok_or_else(|| AppError::SearchUnavailable {
                     name: name.to_owned(),
                     served: self.served_pipelines(),
                 });
         }
-        Ok(tenant_default
-            .and_then(|name| Pipeline::parse(&name))
-            .filter(|p| self.search.serves(*p))
-            .unwrap_or_else(|| self.search.default_pipeline()))
+        let deployment = self.search.default_pipeline();
+        Ok(match tenant_default {
+            None => (deployment, None),
+            Some(name) => match Pipeline::parse(&name).filter(|p| self.search.serves(*p)) {
+                Some(p) => (p, None),
+                None => (deployment, Some(name)),
+            },
+        })
     }
 
     /// The served pipeline names, comma-separated, for a refusal's text.
