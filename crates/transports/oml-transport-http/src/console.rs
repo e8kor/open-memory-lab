@@ -661,7 +661,7 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let person = st
             .app
-            .whoami_person(Bearer::Session(&caller))
+            .whoami_person(Bearer::Session(&caller), false)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         st.record_outcome(

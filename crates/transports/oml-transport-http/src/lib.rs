@@ -2672,32 +2672,10 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let person = st
             .app
-            .whoami_person(acting.bearer())
+            .whoami_person(acting.bearer(), start)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let mut person = person.as_ref().map_or(Value::Null, person_json);
-        // The onboarding status, read only when asked: every page's
-        // session check calls whoami (ADR-0070 d5, d8).
-        if start
-            && let Some(obj) = person.as_object_mut()
-            && let Some(status) = st
-                .app
-                .whoami_start(acting.bearer())
-                .await
-                .map_err(|e| map_app_error(e, ErrorContext::Write))?
-        {
-            obj.insert(
-                "start".to_owned(),
-                json!({
-                    "connected": status.connected,
-                    "first_memory": match status.first_memory {
-                        Some(oml_app::domain::MemoryStatus::Held) => Some("held"),
-                        Some(oml_app::domain::MemoryStatus::Promoted) => Some("promoted"),
-                        _ => None,
-                    },
-                }),
-            );
-        }
+        let person = person.as_ref().map_or(Value::Null, person_json);
         let mut body = whoami_json(&whoami);
         if let Some(obj) = body.as_object_mut() {
             obj.insert("person".to_owned(), person);
@@ -4067,13 +4045,29 @@ fn person_json(person: &oml_app::app::Person) -> Value {
         ),
         None => (Value::Null, Value::Null),
     };
-    json!({
+    let mut out = json!({
         "user": person.user.as_str(),
         "under_quotas": person.limits.is_some(),
         "usage": usage,
         "quotas": quotas,
         "deletion_requested_at": person.deletion_requested_at.as_ref().map(|t| t.as_str()),
-    })
+    });
+    // The onboarding status, only when asked (`start=true`): every page's
+    // session check calls whoami (ADR-0070 d5, d8).
+    if let (Some(status), Some(obj)) = (&person.start, out.as_object_mut()) {
+        obj.insert(
+            "start".to_owned(),
+            json!({
+                "connected": status.connected,
+                "first_memory": match status.first_memory {
+                    Some(oml_app::domain::MemoryStatus::Held) => Some("held"),
+                    Some(oml_app::domain::MemoryStatus::Promoted) => Some("promoted"),
+                    _ => None,
+                },
+            }),
+        );
+    }
+    out
 }
 
 /// openapi.yaml `WhoamiGrant`: a stored grant as `whoami` serves it, its

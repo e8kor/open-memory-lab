@@ -565,28 +565,33 @@ fn json_refused(status: StatusCode, code: &str, calls: &PageCalls) -> Response {
         .into_response()
 }
 
-/// The session a data route acts for, or its `404`.
-async fn data_session(
-    web: &Web,
-    calls: &PageCalls,
-    headers: &HeaderMap,
-) -> Result<Session, acts::Refusal> {
-    let not_found = || {
-        Box::new(json_refused(
-            StatusCode::NOT_FOUND,
-            "access.not_found",
-            calls,
-        ))
-    };
-    let token = cookie(headers, SESSION_COOKIE).ok_or_else(not_found)?;
-    match crate::session::resolve(web, calls, token).await {
-        Ok(session) => Ok(session),
-        Err(Error::Api(e)) if e.code == "auth.invalid" => Err(not_found()),
-        Err(_) => Err(Box::new(json_refused(
-            StatusCode::BAD_GATEWAY,
-            "unavailable",
-            calls,
-        ))),
+/// A data route's answer to a failed call: a credential the API does not
+/// resolve is not found; a refusal keeps the API's status and code, and a
+/// rate refusal its `Retry-After`; no answer is `502` (ADR-0070 d3 layer 7).
+fn json_failed(e: &Error, calls: &PageCalls) -> Response {
+    match e {
+        Error::Api(api) if api.code == "auth.invalid" => {
+            json_refused(StatusCode::NOT_FOUND, "access.not_found", calls)
+        }
+        Error::Api(api) => {
+            let mut response = json_refused(
+                StatusCode::from_u16(api.status).unwrap_or(StatusCode::BAD_GATEWAY),
+                &api.code,
+                calls,
+            );
+            if let Some(after) = api
+                .retry_after
+                .as_deref()
+                .and_then(|v| HeaderValue::from_str(v).ok())
+            {
+                response.headers_mut().insert(header::RETRY_AFTER, after);
+            }
+            response
+        }
+        Error::Transport(oml_sdk::TransportError::Timeout) => {
+            json_refused(StatusCode::GATEWAY_TIMEOUT, "unavailable", calls)
+        }
+        _ => json_refused(StatusCode::BAD_GATEWAY, "unavailable", calls),
     }
 }
 
@@ -594,19 +599,38 @@ fn calls_of(calls: Option<Extension<Arc<PageCalls>>>) -> Arc<PageCalls> {
     calls.map_or_else(|| Arc::new(PageCalls::new("data")), |c| c.0)
 }
 
-/// `GET /web/start/status`: what the page's poll reads.
+/// The web credential the cookie's session derives, or the `404` of no
+/// session. The route's one call is the session check (ADR-0070 d3 layer
+/// 3): no separate lookup is spent on it.
+fn web_credential(headers: &HeaderMap, calls: &PageCalls) -> Result<String, acts::Refusal> {
+    cookie(headers, SESSION_COOKIE)
+        .map(|token| oml_web_credential::capacity_credential(&token, Capacity::Web.as_str()))
+        .ok_or_else(|| {
+            Box::new(json_refused(
+                StatusCode::NOT_FOUND,
+                "access.not_found",
+                calls,
+            ))
+        })
+}
+
+/// `GET /web/start/status`: what the page's poll reads, one API call.
 pub async fn status(
     State(web): State<Web>,
     calls: Option<Extension<Arc<PageCalls>>>,
     headers: HeaderMap,
 ) -> Response {
     let calls = calls_of(calls);
-    let session = match data_session(&web, &calls, &headers).await {
-        Ok(session) => session,
+    let credential = match web_credential(&headers, &calls) {
+        Ok(credential) => credential,
         Err(response) => return *response,
     };
-    match person(&web, &session, &calls).await {
-        Ok(person) => {
+    let ids = calls.next_ids();
+    match web.api.whoami_start(&call(&credential, &ids)).await {
+        Ok(found) => {
+            let Some(person) = found.person else {
+                return json_refused(StatusCode::NOT_FOUND, "access.not_found", &calls);
+            };
             let start = person.start.unwrap_or(oml_sdk::StartStatus {
                 connected: false,
                 first_memory: None,
@@ -617,23 +641,22 @@ pub async fn status(
             }))
             .into_response()
         }
-        Err(_) => json_refused(StatusCode::NOT_FOUND, "access.not_found", &calls),
+        Err(e) => json_failed(&e, &calls),
     }
 }
 
 /// `GET /web/start/export`: everything the person holds, as the API
-/// exports it, as an attachment.
+/// exports it, as an attachment; one API call.
 pub async fn export(
     State(web): State<Web>,
     calls: Option<Extension<Arc<PageCalls>>>,
     headers: HeaderMap,
 ) -> Response {
     let calls = calls_of(calls);
-    let session = match data_session(&web, &calls, &headers).await {
-        Ok(session) => session,
+    let credential = match web_credential(&headers, &calls) {
+        Ok(credential) => credential,
         Err(response) => return *response,
     };
-    let credential = session.credential(Capacity::Web);
     let ids = calls.next_ids();
     match web.api.export_web_person(&call(&credential, &ids)).await {
         Ok(export) => {
@@ -644,12 +667,7 @@ pub async fn export(
             );
             response
         }
-        Err(Error::Api(e)) => json_refused(
-            StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_GATEWAY),
-            &e.code,
-            &calls,
-        ),
-        Err(_) => json_refused(StatusCode::BAD_GATEWAY, "unavailable", &calls),
+        Err(e) => json_failed(&e, &calls),
     }
 }
 
