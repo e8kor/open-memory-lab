@@ -347,8 +347,8 @@ async fn the_lead_serves_exactly_web_routes() {
     }
     assert_eq!(
         WEB_ROUTES.len(),
-        14,
-        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven, ADR-0070 d4 GET /web/sign-in, and ADR-0070 d7 (b) moved the two JSON routes to oml-web"
+        8,
+        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven, ADR-0070 d4 GET /web/sign-in, and ADR-0070 d7 (b) moved the two JSON routes, the onboarding page with its poll and export, and the users page to oml-web"
     );
     assert_eq!(
         USER_ACTIONS,
@@ -520,7 +520,10 @@ async fn a_listed_verified_google_email_signs_in_and_sees_who_it_is() {
     assert_eq!(code, "the-code-4711");
     assert_eq!(verifier.len(), 64);
     assert_eq!(redirect, "https://oml.example.com/web/callback/google");
-    let (status, _, page) = send(
+    // The setup view is oml-web's (ADR-0070 d7 (b), sixth change, 6b):
+    // `oml-web/tests/web_pages.rs` holds that it names who and never the
+    // email; the lead answers its old URL with a redirect.
+    let (status, headers, _) = send(
         &rig.router,
         get(
             "/web?view=setup",
@@ -528,12 +531,8 @@ async fn a_listed_verified_google_email_signs_in_and_sees_who_it_is() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        page.contains("alice · oml"),
-        "who and the organisation: {page}"
-    );
-    assert!(!page.contains(EMAIL), "the page never echoes the email");
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/web/setup");
     // The landing is the Keys view, which oml-web serves (ADR-0070 d7 (b)):
     // `oml-web/tests/web_pages.rs` holds that it lists the session keys.
     let (status, headers, _) = send(
@@ -771,8 +770,10 @@ async fn a_post_without_the_csrf_token_journals_nothing() {
         );
     }
     assert_eq!(rig.head().await, before);
-    let (_, _, page) = send(&rig.router, get("/web?view=setup", Some(&cookie))).await;
-    assert!(page.contains("alice · oml"), "the session stands");
+    // The session stands: a signed-in GET /web goes on to the Keys view.
+    let (status, headers, _) = send(&rig.router, get("/web", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/web/keys", "the session stands");
 }
 
 #[tokio::test]
@@ -831,27 +832,55 @@ async fn sign_out_ends_the_session_and_clears_the_cookie() {
 }
 
 #[tokio::test]
-async fn a_non_admin_session_gets_not_found_on_the_admin_page() {
+async fn the_lead_answers_the_admin_page_with_a_redirect_to_the_overview_before_reading_a_session()
+{
+    // The admin overview is oml-web's at /web/admin/people (ADR-0070 d7
+    // (b)), which answers anyone but an admin not found: the lead sends
+    // every GET /web/admin there, signed in or not, carrying nothing.
     let rig = rig().await;
     let (_, token, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
     let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
-    let (status, _, body) = send(&rig.router, get("/web/admin", Some(&cookie))).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(body.contains("access.not_found"));
-    let (status, _, _) = send(&rig.router, get("/web/admin", None)).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    for (path, who) in [
+        ("/web/admin", Some(cookie.as_str())),
+        ("/web/admin", None),
+        ("/web/admin?view=people&x=1", None),
+    ] {
+        let (status, headers, _) = send(&rig.router, get(path, who)).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{path}");
+        assert_eq!(headers[header::LOCATION], "/web/admin/people", "{path}");
+    }
+    // The old acts of the overview run nothing and land there.
     rig.allow("boss@example.com", "boss", true).await;
-    let (_, admin, _) = sign_in_google(&rig, "sub-boss", "boss@example.com").await;
-    let (status, _, page) = send(
-        &rig.router,
-        get(
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let head = rig.head().await;
+    for action in [
+        "allow_email",
+        "remove_email",
+        "set_admin",
+        "grant_review",
+        "grant_curation",
+    ] {
+        let (status, headers, body) = act(
+            &rig,
+            &admin,
             "/web/admin",
-            Some(&format!("{SESSION_COOKIE}={}", admin.expect("a session"))),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(page.contains("Administration"));
+            &[("action", action), ("email", "carol@example.com")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{action}: {body}");
+        assert_eq!(headers[header::LOCATION], "/web/admin/people");
+    }
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    // The onboarding and users pages are not the lead's at all.
+    for path in [
+        "/web/start",
+        "/web/start/status",
+        "/web/start/export",
+        "/web/admin/users",
+    ] {
+        let (status, _, _) = send(&rig.router, get(path, Some(&admin))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
 }
 
 #[tokio::test]
@@ -1419,54 +1448,6 @@ async fn a_session_key_has_no_value_and_no_connect_code() {
         .await
         .expect_err("a session key holds no connection");
     assert!(format!("{refused:?}").contains("SessionKey"), "{refused:?}");
-}
-
-#[tokio::test]
-async fn the_last_admin_address_is_never_removed_or_unflagged_from_the_page() {
-    let rig = rig().await;
-    rig.allow("boss@example.com", "boss", true).await;
-    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    for fields in [
-        vec![
-            ("action", "set_admin"),
-            ("email", "boss@example.com"),
-            ("admin", "no"),
-        ],
-        vec![
-            ("action", "remove_email"),
-            ("email", "boss@example.com"),
-            ("confirm", "yes"),
-        ],
-    ] {
-        let (status, _, body) = act(&rig, &admin, "/web/admin", &fields).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-        assert!(body.contains("last admin"), "{body}");
-    }
-    let (status, _, _) = act(
-        &rig,
-        &admin,
-        "/web/admin",
-        &[
-            ("action", "allow_email"),
-            ("email", "carol@example.com"),
-            ("user", "carol"),
-            ("admin", "yes"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    let (status, _, _) = act(
-        &rig,
-        &admin,
-        "/web/admin",
-        &[
-            ("action", "set_admin"),
-            ("email", "carol@example.com"),
-            ("admin", "no"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
 }
 
 #[tokio::test]

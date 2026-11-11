@@ -121,6 +121,18 @@ web:
       pathType: Exact
     - path: /web/admin/curate
       pathType: Exact
+    - path: /web/start
+      pathType: Exact
+    - path: /web/start/status
+      pathType: Exact
+    - path: /web/start/export
+      pathType: Exact
+    - path: /web/setup
+      pathType: Exact
+    - path: /web/admin/people
+      pathType: Exact
+    - path: /web/admin/users
+      pathType: Exact
     # The Mermaid frame's document and its pinned bundle, one segment below
     # each (ADR-0056 d9).
     - path: /web/render

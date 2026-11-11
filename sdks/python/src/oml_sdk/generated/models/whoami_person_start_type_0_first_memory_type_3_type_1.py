@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 
-class StartStatusResponse200FirstMemoryType3Type1(StrEnum):
+class WhoamiPersonStartType0FirstMemoryType3Type1(StrEnum):
     HELD = "held"
     PROMOTED = "promoted"
 
