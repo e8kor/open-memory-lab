@@ -9,6 +9,9 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -27,8 +30,13 @@ fn scratch(test: &str) -> PathBuf {
     dir
 }
 
-/// Answers `GET /v2/whoami` with a key of `role` when the bearer is [`KEY`].
-async fn whoami(State(role): State<String>, headers: HeaderMap) -> (StatusCode, Json<Value>) {
+/// Answers `GET /v2/whoami` with a key of `role` when the bearer is [`KEY`],
+/// counting every request it is sent, so a test can say nothing was.
+async fn whoami(
+    State((role, sent)): State<(String, Arc<AtomicUsize>)>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    sent.fetch_add(1, Ordering::SeqCst);
     let bearer = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -95,32 +103,68 @@ fn fake_claude(dir: &Path, version: &str) -> PathBuf {
 /// Runs `oml <args>` with `path` first on `PATH` (none: no `claude` at all)
 /// against a fixture answering whoami with `role`.
 fn run(dir: &Path, role: &str, path: Option<&Path>, args: &[&str]) -> Output {
-    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    run_counted(dir, role, path, args, &[]).0
+}
+
+/// A fixture answering whoami with `role`, its URL, and the count of the
+/// requests it was sent; it serves until `runtime` shuts down.
+fn fixture(runtime: &tokio::runtime::Runtime, role: &str) -> (String, Arc<AtomicUsize>) {
     let listener = runtime
         .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
         .expect("a listener on an ephemeral port");
     let server = format!("http://{}", listener.local_addr().expect("its address"));
+    let sent = Arc::new(AtomicUsize::new(0));
     let router = axum::Router::new()
         .route("/v2/whoami", get(whoami))
-        .with_state(role.to_owned());
+        .with_state((role.to_owned(), Arc::clone(&sent)));
     runtime.spawn(async move {
         axum::serve(listener, router).await.expect("serve");
     });
+    (server, sent)
+}
+
+/// The `oml` command for one case: owner of `dir`'s credentials file, with
+/// `path` first on `PATH`, no start variable inherited, `env` set and every
+/// `{url}` in `args` and `env` replaced by `server`.
+fn command(
+    dir: &Path,
+    server: &str,
+    path: Option<&Path>,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Command {
     let search = match path {
         Some(bin) => format!("{}:/usr/bin:/bin", bin.display()),
         None => "/usr/bin/oml-no-such-dir".to_owned(),
     };
-    let args: Vec<String> = args.iter().map(|a| a.replace("{url}", &server)).collect();
-    let out = Command::new(env!("CARGO_BIN_EXE_oml"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_oml"));
+    command
         .env("OML_CLI_CREDENTIALS", dir.join("credentials.toml"))
         .env("PATH", search)
         .env_remove("OML_URL")
         .env_remove("OML_API_KEY")
-        .args(&args)
+        .args(args.iter().map(|a| a.replace("{url}", server)));
+    for (name, value) in env {
+        command.env(name, value.replace("{url}", server));
+    }
+    command
+}
+
+/// [`run`] with `env` set, and how many requests the fixture was sent.
+fn run_counted(
+    dir: &Path,
+    role: &str,
+    path: Option<&Path>,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> (Output, usize) {
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    let (server, sent) = fixture(&runtime, role);
+    let out = command(dir, &server, path, args, env)
         .output()
         .expect("the oml binary runs");
     runtime.shutdown_background();
-    out
+    (out, sent.load(Ordering::SeqCst))
 }
 
 fn key_file(dir: &Path) -> String {
@@ -281,10 +325,7 @@ fn setup_claude_code_with_print_or_without_claude_runs_nothing_and_prints_a_conf
     }
 }
 
-/// `--key-file` beside `--api-key` is refused before anything is sent. A
-/// key file without `--url` is no longer refused: it goes to the default
-/// server (ADR-0043 d4), which `setup.rs`'s unit tests prove without
-/// reaching it.
+/// `--key-file` beside `--api-key` is refused before anything is sent.
 #[test]
 fn setup_claude_code_refuses_key_file_beside_api_key_before_anything_is_sent() {
     let dir = scratch("key-file-pair");
@@ -311,11 +352,10 @@ fn setup_claude_code_refuses_key_file_beside_api_key_before_anything_is_sent() {
     std::fs::remove_dir_all(&dir).expect("cleaned up");
 }
 
-/// A URL named without a key takes no default and is refused naming
-/// `--api-key`, with nothing sent and no default-server line, since the
-/// default fills only a missing URL (ADR-0043 d4).
+/// A URL named without a key is refused naming `--api-key`, with nothing
+/// sent (ADR-0076 d4).
 #[test]
-fn setup_claude_code_refuses_a_url_named_without_a_key_and_says_nothing_of_the_default() {
+fn setup_claude_code_refuses_a_url_named_without_a_key() {
     let dir = scratch("url-alone");
     let bin = fake_claude(&dir, "2.1.312");
     let out = run(
@@ -327,7 +367,6 @@ fn setup_claude_code_refuses_a_url_named_without_a_key_and_says_nothing_of_the_d
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("--api-key"), "{stderr}");
-    assert!(!stderr.contains("memory.doublegate.io"), "{stderr}");
     assert_eq!(log(&dir), "", "no claude command ran");
     std::fs::remove_dir_all(&dir).expect("cleaned up");
 }
@@ -459,4 +498,230 @@ fn setup_claude_code_refuses_a_marketplace_named_open_memory_lab_from_another_so
     );
     assert_eq!(argv(&dir), ["plugin marketplace list --json"], "{stderr}");
     std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+// ---------------------------------------------------------------------------
+// No server named (ADR-0076 d4, d8)
+// ---------------------------------------------------------------------------
+
+/// The refusal every key-without-URL case ends in off a terminal.
+const NO_SERVER: &str = "refused setup.no_server: a key was given without a server URL";
+
+/// A credentials file holding `api_key` and no `url`.
+fn key_only_credentials(dir: &Path) {
+    std::fs::write(
+        dir.join("credentials.toml"),
+        format!("api_key = \"{KEY}\"\n"),
+    )
+    .expect("the credentials file");
+}
+
+/// Off a terminal, a key named without a URL, by any of its forms, is
+/// refused as `setup.no_server`: exit 2, no request to any server, no
+/// `claude` command (ADR-0076 d4 step 3, d8).
+#[test]
+fn setup_with_a_key_and_no_url_off_a_terminal_is_refused_as_no_server_and_sends_nothing() {
+    let cases: [(&str, &[&str], &[(&str, &str)]); 3] = [
+        ("key-file", &["setup", "claude-code", "--key-file", "{file}"], &[]),
+        ("api-key", &["--api-key", KEY, "setup", "claude-code"], &[]),
+        ("env-key", &["setup", "claude-code"], &[("OML_API_KEY", KEY)]),
+    ];
+    for (case, args, env) in cases {
+        let dir = scratch(&format!("no-server-{case}"));
+        let bin = fake_claude(&dir, "2.1.312");
+        let file = key_file(&dir);
+        let args: Vec<String> = args.iter().map(|a| a.replace("{file}", &file)).collect();
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (out, sent) = run_counted(&dir, "writer", Some(&bin), &args, env);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{case}: {stderr}");
+        assert!(stderr.contains(NO_SERVER), "{case}: {stderr}");
+        assert!(stderr.contains("nothing was sent"), "{case}: {stderr}");
+        assert_eq!(sent, 0, "{case}: no request reached any server");
+        assert_eq!(log(&dir), "", "{case}: no claude command ran");
+        assert!(!stderr.contains(KEY), "{case}: the key is never printed");
+        std::fs::remove_dir_all(&dir).expect("cleaned up");
+    }
+}
+
+/// A key file is never paired with `OML_URL`: with `OML_URL` naming a live
+/// server and no `--url`, nothing reaches that server (ADR-0076 d4).
+#[test]
+fn setup_never_pairs_a_key_file_with_oml_url_from_the_environment() {
+    let dir = scratch("no-pair-oml-url");
+    let bin = fake_claude(&dir, "2.1.312");
+    let file = key_file(&dir);
+    let (out, sent) = run_counted(
+        &dir,
+        "writer",
+        Some(&bin),
+        &["setup", "claude-code", "--key-file", &file],
+        &[("OML_URL", "{url}")],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert_eq!(sent, 0, "OML_URL's server was sent nothing: {stderr}");
+    assert_eq!(log(&dir), "", "no claude command ran");
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+/// With `OML_URL` set beside a key file and no `--url`, the refusal says
+/// why the variable was not used and how to pass it (ADR-0076 d4).
+#[test]
+fn setup_with_oml_url_set_and_a_key_file_names_why_it_is_not_paired() {
+    let dir = scratch("oml-url-hint");
+    let bin = fake_claude(&dir, "2.1.312");
+    let file = key_file(&dir);
+    let (out, _) = run_counted(
+        &dir,
+        "writer",
+        Some(&bin),
+        &["setup", "claude-code", "--key-file", &file],
+        &[("OML_URL", "{url}")],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains(NO_SERVER), "{stderr}");
+    assert!(
+        stderr.contains("OML_URL is set but is never paired with --key-file; pass it as --url"),
+        "{stderr}"
+    );
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+/// The configure line `--print` shows carries the URL the user named, and
+/// the whoami check went to that URL alone (ADR-0076 d4).
+#[test]
+fn the_configure_line_carries_the_url_the_user_named() {
+    let dir = scratch("configure-url");
+    let bin = fake_claude(&dir, "2.1.312");
+    let file = key_file(&dir);
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    let (server, sent) = fixture(&runtime, "writer");
+    let out = command(
+        &dir,
+        &server,
+        Some(&bin),
+        &["--url", "{url}", "setup", "claude-code", "--key-file", &file, "--print"],
+        &[],
+    )
+    .output()
+    .expect("the oml binary runs");
+    runtime.shutdown_background();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains(&format!("--arg u '{server}'")), "{stdout}");
+    assert_eq!(sent.load(Ordering::SeqCst), 1, "one whoami, to that URL");
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+/// A credentials file holding a key and no URL is refused off a terminal
+/// and prompts on one, where the URL typed is the one the key goes to
+/// (ADR-0076 d4 step 2).
+#[test]
+fn a_credentials_file_with_a_key_and_no_url_prompts_on_a_terminal_and_is_refused_off_one() {
+    let dir = scratch("creds-key-alone");
+    let bin = fake_claude(&dir, "2.1.312");
+    key_only_credentials(&dir);
+    let (out, sent) = run_counted(&dir, "writer", Some(&bin), &["setup", "claude-code"], &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains(NO_SERVER), "{stderr}");
+    assert_eq!(sent, 0);
+
+    let (status, transcript, sent, configured) =
+        on_a_terminal(&dir, &bin, &["setup", "claude-code"], &[], Some("{url}"));
+    assert_eq!(status, Some(0), "{transcript}");
+    assert!(transcript.contains("OML server URL (without /mcp):"), "{transcript}");
+    assert_eq!(sent, 1, "the whoami check went to the URL typed");
+    assert!(configured.starts_with("http://127.0.0.1:"), "{configured}");
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+/// On a terminal, a key named without a URL asks for one, and the key goes
+/// to the URL typed alone: one whoami there, and the plugin configured with
+/// it (ADR-0076 d4 step 2; d10 test 5, on a pseudo-terminal).
+#[test]
+fn setup_with_a_key_and_no_url_on_a_terminal_sends_the_key_only_to_the_url_typed() {
+    let dir = scratch("terminal-typed");
+    let bin = fake_claude(&dir, "2.1.312");
+    let file = key_file(&dir);
+    let (status, transcript, sent, configured) = on_a_terminal(
+        &dir,
+        &bin,
+        &["setup", "claude-code", "--key-file", &file],
+        &[],
+        Some("{url}"),
+    );
+    assert_eq!(status, Some(0), "{transcript}");
+    assert!(transcript.contains("OML server URL (without /mcp):"), "{transcript}");
+    assert_eq!(sent, 1, "one whoami, to the URL typed");
+    assert!(configured.starts_with("http://127.0.0.1:"), "{configured}");
+    assert!(!transcript.contains(KEY), "the key is never printed");
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+/// An empty answer at the prompt is refused as `setup.no_server`, and
+/// nothing is sent (ADR-0076 d4 step 3).
+#[test]
+fn setup_with_an_empty_answer_at_the_prompt_is_refused_as_no_server_and_sends_nothing() {
+    let dir = scratch("terminal-empty");
+    let bin = fake_claude(&dir, "2.1.312");
+    let file = key_file(&dir);
+    let (status, transcript, sent, _) = on_a_terminal(
+        &dir,
+        &bin,
+        &["setup", "claude-code", "--key-file", &file],
+        &[],
+        Some(""),
+    );
+    assert_eq!(status, Some(2), "{transcript}");
+    assert!(transcript.contains(NO_SERVER), "{transcript}");
+    assert_eq!(sent, 0);
+    assert_eq!(log(&dir), "", "no claude command ran");
+    std::fs::remove_dir_all(&dir).expect("cleaned up");
+}
+
+/// Runs `oml <args>` on a pseudo-terminal against a fixture, answering the
+/// URL prompt with `answer` (`{url}` for the fixture's): the exit code, the
+/// terminal transcript, the fixture's request count, and the `url` the
+/// plugin was configured with (empty when none was).
+fn on_a_terminal(
+    dir: &Path,
+    bin: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+    answer: Option<&str>,
+) -> (Option<i32>, String, usize, String) {
+    use expectrl::{Eof, Expect as _};
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    let (server, sent) = fixture(&runtime, "writer");
+    let mut session = expectrl::Session::spawn(command(dir, &server, Some(bin), args, env))
+        .expect("oml on a pseudo-terminal");
+    session.set_expect_timeout(Some(std::time::Duration::from_secs(20)));
+    let mut transcript = String::new();
+    if let Some(answer) = answer {
+        let asked = session
+            .expect("OML server URL (without /mcp):")
+            .expect("the prompt");
+        transcript.push_str(&String::from_utf8_lossy(asked.before()));
+        transcript.push_str(&String::from_utf8_lossy(asked.get(0).unwrap_or_default()));
+        session
+            .send_line(answer.replace("{url}", &server))
+            .expect("the answer");
+    }
+    let rest = session.expect(Eof).expect("oml exits");
+    transcript.push_str(&String::from_utf8_lossy(rest.before()));
+    let status = match session.get_process_mut().wait().expect("its status") {
+        expectrl::process::unix::WaitStatus::Exited(_, code) => Some(code),
+        _ => None,
+    };
+    runtime.shutdown_background();
+    let configured = log(dir)
+        .lines()
+        .filter_map(|l| l.strip_prefix("STDIN "))
+        .next_back()
+        .and_then(|v| serde_json::from_str::<Value>(v).ok())
+        .and_then(|v| v["url"].as_str().map(ToOwned::to_owned))
+        .unwrap_or_default();
+    (status, transcript, sent.load(Ordering::SeqCst), configured)
 }

@@ -531,3 +531,44 @@ pub async fn admin_act(
     }
     act(web, session, calls, form, Side::Admin).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A new key is shown beside the API's issuer, else beside `oml-web`'s
+    /// own public origin, and with neither beside the named `no_server`
+    /// line and no URL at all: the page never names another server
+    /// (ADR-0076 d6, d8).
+    #[test]
+    fn a_new_key_is_shown_beside_the_apis_issuer_and_with_none_beside_a_named_no_server_line() {
+        let issuer = "https://oml.example.com";
+        assert_eq!(
+            server_from(Some(issuer.to_owned()), Some("https://web.example.com")),
+            issuer
+        );
+        assert_eq!(server_from(None, Some(issuer)), issuer);
+        assert_eq!(server_from(None, None), "");
+
+        let card = |server: &str| {
+            secret_card(&Secret::Key {
+                name: "alice-laptop".to_owned(),
+                value: "oml_value".to_owned(),
+                server: server.to_owned(),
+            })
+            .1
+        };
+        let shown = card(issuer);
+        assert!(shown.contains(&format!("OML_URL={issuer}")), "{shown}");
+        let unknown = card("");
+        assert!(!unknown.contains("OML_URL="), "{unknown}");
+        assert!(
+            unknown.contains(
+                "This server's address is not configured (no_server: set web.public_url, or \
+                 oauth.issuer on the lead); ask its operator for the URL to give your agents."
+            ),
+            "{unknown}"
+        );
+        assert!(unknown.contains("OML_API_KEY=oml_value"), "{unknown}");
+    }
+}

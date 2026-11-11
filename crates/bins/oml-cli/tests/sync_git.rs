@@ -545,3 +545,170 @@ fn a_rust_source_loads_rs_files_and_manifests_only_when_the_rust_adapter_is_name
     let unnamed = load(&dir, &opts("crates")).unwrap();
     assert_eq!(unnamed.paths(), ["crates/a/README.md"]);
 }
+
+// ---------------------------------------------------------------------------
+// Consent asked of a server that says it is shared (ADR-0076 d9)
+// ---------------------------------------------------------------------------
+
+/// A fixture answering `GET /v2/whoami` with `shared` as given (`None`:
+/// the field absent, as a server older than ADR-0076 answers), every other
+/// path 404; its URL. It serves until `runtime` shuts down.
+fn whoami_fixture(runtime: &tokio::runtime::Runtime, shared: Option<bool>) -> String {
+    use axum::routing::get;
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .expect("a listener on an ephemeral port");
+    let server = format!("http://{}", listener.local_addr().expect("its address"));
+    let mut me = serde_json::json!({
+        "key_id": "key_w", "name": "writer", "role": "writer", "principal": "p",
+        "held_by": "agent", "tenant": {"id": "t1", "name": "oml"},
+        "default_workarea": null, "crew": null, "user": null, "grants": [],
+    });
+    if let Some(shared) = shared {
+        me["shared"] = serde_json::Value::Bool(shared);
+    }
+    let router = axum::Router::new().route(
+        "/v2/whoami",
+        get(move || {
+            let me = me.clone();
+            async move { axum::Json(me) }
+        }),
+    );
+    runtime.spawn(async move {
+        axum::serve(listener, router).await.expect("serve");
+    });
+    server
+}
+
+/// A clone with one committed document under `docs/`.
+fn docs_clone(test: &str) -> PathBuf {
+    let dir = clone_with(test, "git@github.com:e8kor/docs.git");
+    write(&dir, "docs/a.md", "# A\n\n## B\n\nC.\n");
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-q", "-m", "a"]);
+    dir
+}
+
+/// `oml sync docs` against `server`, with `--allow-public-server` when
+/// `allow`.
+fn sync_to(dir: &Path, server: &str, allow: bool) -> (i32, String, String) {
+    let mut args = vec!["--url", server, "--api-key", "k", "sync", "docs", "--workarea", "w"];
+    if allow {
+        args.push("--allow-public-server");
+    }
+    oml(dir, &args)
+}
+
+/// The values of the consent the source clone recorded, one origin each.
+fn recorded(dir: &Path) -> Vec<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["config", "--local", "--get-all", "oml.allowPublicServer"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+const DISCLOSURE: &str = "superseding or retiring a memory does not erase";
+
+#[test]
+fn sync_to_a_server_that_declares_itself_shared_is_refused_without_consent() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("shared-refused");
+    let (code, _, err) = sync_to(&dir, &server, false);
+    runtime.shutdown_background();
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("--allow-public-server") && err.contains(DISCLOSURE),
+        "{err}"
+    );
+    assert!(recorded(&dir).is_empty(), "nothing is recorded on a refusal");
+}
+
+/// The operator's choice of 2026-11-11 (ADR-0076 d9): a server whose
+/// whoami does not say, one older than ADR-0076, counts as not shared.
+#[test]
+fn sync_to_a_server_whose_whoami_omits_shared_asks_no_consent() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, None);
+    let dir = docs_clone("shared-omitted");
+    let (_, _, err) = sync_to(&dir, &server, false);
+    runtime.shutdown_background();
+    assert!(!err.contains("--allow-public-server"), "{err}");
+    assert!(!err.contains(DISCLOSURE), "{err}");
+}
+
+#[test]
+fn sync_to_a_server_that_declares_itself_not_shared_asks_nothing() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(false));
+    let dir = docs_clone("not-shared");
+    let (_, _, err) = sync_to(&dir, &server, false);
+    runtime.shutdown_background();
+    assert!(!err.contains("--allow-public-server"), "{err}");
+    assert!(!err.contains(DISCLOSURE), "{err}");
+    assert!(recorded(&dir).is_empty());
+}
+
+#[test]
+fn consent_recorded_for_one_origin_does_not_cover_another() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let first = whoami_fixture(&runtime, Some(true));
+    let second = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("per-origin");
+    let (_, _, err) = sync_to(&dir, &first, true);
+    assert!(err.contains(DISCLOSURE), "the first opt-in discloses: {err}");
+    assert_eq!(recorded(&dir), [first.clone()], "the origin is recorded");
+    let (_, _, err) = sync_to(&dir, &first, false);
+    assert!(
+        !err.contains("--allow-public-server"),
+        "recorded consent is reused for its origin: {err}"
+    );
+    let (code, _, err) = sync_to(&dir, &second, false);
+    runtime.shutdown_background();
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--allow-public-server"), "{err}");
+    assert_eq!(recorded(&dir), [first], "the other origin is not recorded");
+}
+
+#[test]
+fn a_recorded_true_is_not_consent_and_doctor_names_it() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("legacy-true");
+    git(&dir, &["config", "--local", "oml.allowPublicServer", "true"]);
+    let (code, _, err) = sync_to(&dir, &server, false);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--allow-public-server"), "{err}");
+    let (_, out, _) = oml(&dir, &["--url", &server, "--api-key", "k", "doctor"]);
+    runtime.shutdown_background();
+    assert!(
+        out.contains(
+            "warn sync_consent_unbound: oml.allowPublicServer=true names no server and is no \
+             longer read; run oml sync --allow-public-server once against the server you mean"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn doctor_names_sync_shared_server_when_consent_for_that_origin_is_missing() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("doctor-shared");
+    let (_, out, _) = oml(&dir, &["--url", &server, "--api-key", "k", "doctor"]);
+    runtime.shutdown_background();
+    assert!(
+        out.contains(&format!(
+            "warn sync_shared_server: {server} declares itself shared, and consent is not \
+             recorded for this origin in this clone; run oml sync with --allow-public-server to \
+             opt in"
+        )),
+        "{out}"
+    );
+}

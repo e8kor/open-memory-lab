@@ -1400,12 +1400,12 @@ mod tests {
         assert_eq!(resolved, not_set(OPTION_API_KEY));
     }
 
-    /// The plugin's key option alone is the plugin's default server and that
-    /// key, the pair its tools send, since Claude Code fills `url` with its
-    /// default for the tools and exports only saved values to a hook; the
-    /// environment pair beside it is ignored (ADR-0043 d3).
+    /// The plugin's key option alone is a plugin not configured: no URL is
+    /// taken from anywhere, nothing is sent, and the line names the unset
+    /// option with `no_server` and how to set it; the environment pair
+    /// beside it is ignored (ADR-0076 d3, d8).
     #[test]
-    fn a_plugin_configured_with_its_key_alone_is_the_default_server_and_that_key() {
+    fn a_hook_with_the_key_option_alone_names_the_url_option_and_sends_nothing() {
         for url in [None, Some("")] {
             let mut vars = vec![
                 (OPTION_API_KEY, OPT_KEY),
@@ -1418,15 +1418,18 @@ mod tests {
             let (resolved, _) = resolve(&vars);
             assert_eq!(
                 resolved,
-                pair(crate::setup::DEFAULT_URL, OPT_KEY),
+                Err(format!(
+                    "no_server: {OPTION_URL} is not set, so no context was loaded; set the oml \
+                     plugin's url option to your server (claude plugin configure \
+                     oml@open-memory-lab, or oml setup claude-code --url <server>)"
+                )),
                 "{url:?}"
             );
         }
     }
 
     /// The environment pair takes no default: `OML_API_KEY` without
-    /// `OML_URL` sends nothing and names `OML_URL`, so a caller that is not
-    /// the plugin never reaches the public server unasked (ADR-0043 d3).
+    /// `OML_URL` sends nothing and names `OML_URL` (ADR-0040 d3).
     #[test]
     fn the_environment_key_alone_takes_no_default_server() {
         let (resolved, _) = resolve(&[("OML_API_KEY", ENV_KEY)]);

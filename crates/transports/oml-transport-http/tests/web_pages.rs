@@ -2145,3 +2145,17 @@ async fn the_lead_answers_the_review_and_keys_views_and_their_acts_with_a_redire
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
     }
 }
+
+/// The setup view shows the server's own `oauth.issuer` as the URL to give
+/// agents, and names no other server and no default (ADR-0076 d6).
+#[tokio::test]
+async fn the_setup_view_shows_the_servers_own_issuer_and_names_no_other_server() {
+    let rig = rig().await;
+    let (_, token, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
+    let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
+    let (status, _, page) = send(&rig.router, get("/web?view=setup", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains(&format!("<pre class=\"mono\">{ISSUER}</pre>")), "{page}");
+    assert!(!page.to_lowercase().contains("default"), "{page}");
+    assert!(page.contains("give each agent this URL with its key"), "{page}");
+}

@@ -46,6 +46,7 @@ windows-sys.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
+expectrl.workspace = true
 oml-app.workspace = true
 oml-pg.workspace = true
 oml-server-lead.workspace = true
