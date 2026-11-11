@@ -98,6 +98,29 @@ class Synthetic:
                      success_rel=2)
 
 
+class Grown:
+    """eval/recall's 200 memories and the grown set's queries (ADR-0075 d8, phase 0a).
+
+    The same corpus as `synthetic`, loaded as its own workarea so the two sets'
+    runs never share a load; the queries and labels are `queries-grown.json`'s.
+    """
+
+    name = "grown"
+    groups = [""]
+
+    def load(self, cache, seed, limit):
+        sys.path.insert(0, str(HERE.parent / "recall"))
+        import metrics  # eval/recall/metrics.py
+
+        memories, _ = metrics.load()
+        queries = metrics.load_grown()
+        docs = [Doc(m["id"], m["text"]) for m in memories]
+        qs = [Query(q["id"], q["query"], "", q["category"]) for q in queries]
+        qrels = {q["id"]: dict(q["relevant"]) for q in queries}
+        return Bench(self.name, docs, subsample_queries(qs, qrels, seed, limit), qrels,
+                     success_rel=2)
+
+
 class Beir:
     """A BEIR dataset's test split through ir_datasets; one document is one memory.
 
@@ -335,6 +358,7 @@ class LongMemEvalTemporal:
 
 ADAPTERS = {
     "synthetic": Synthetic,
+    "grown": Grown,
     "scifact": lambda: Beir("scifact", "beir/scifact/test"),
     "nfcorpus": lambda: Beir("nfcorpus", "beir/nfcorpus/test"),
     "arguana": lambda: Beir("arguana", "beir/arguana"),

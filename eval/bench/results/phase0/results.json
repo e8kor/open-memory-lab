@@ -1,0 +1,2174 @@
+{
+ "cost": {
+  "generation_seconds_median": 0.768,
+  "generation_seconds_sum": 229.3,
+  "kind1_postings": 5309,
+  "kind3_over_kind1": 0.575,
+  "kind3_postings": 3052,
+  "memories": 200,
+  "memories_with_a_set": 199,
+  "question_bytes": 17913,
+  "questions_kept": 555,
+  "tokens_in": 6671,
+  "tokens_out_10_drawn": 18428,
+  "wall_seconds": 229.4
+ },
+ "drops": {
+  "arm": {
+   "generic": 30,
+   "grounding": 73,
+   "near_duplicate": 307,
+   "shape": 35
+  },
+  "strict": {
+   "generic": 4,
+   "grounding": 4,
+   "near_duplicate": 4,
+   "shape": 903
+  },
+  "ten": {
+   "generic": 49,
+   "grounding": 139,
+   "near_duplicate": 704,
+   "shape": 98
+  },
+  "unfiltered": {}
+ },
+ "gate": {
+  "alpha": 0.025,
+  "floor": 0.01,
+  "go": false,
+  "margin": 0.0732,
+  "non_inferiority": {
+   "bm25-questions": {
+    "against": "bm25-postings",
+    "boot95": [
+     -0.0303,
+     0.0
+    ],
+    "gain": -0.0101,
+    "losses": 1,
+    "mcnemar_p": 1.0,
+    "n": 99,
+    "ndcg_gain": -0.0047,
+    "passes": true,
+    "pipeline": "bm25-questions",
+    "wins": 0
+   },
+   "bm25-questions vs bm25-sparse (reported)": {
+    "against": "bm25-sparse",
+    "boot95": [
+     -0.1111,
+     -0.0202
+    ],
+    "gain": -0.0606,
+    "losses": 6,
+    "mcnemar_p": 1.0,
+    "n": 99,
+    "ndcg_gain": -0.0414,
+    "pipeline": "bm25-questions",
+    "wins": 0
+   },
+   "bm25-sparse-questions": {
+    "against": "bm25-sparse",
+    "boot95": [
+     0.0,
+     0.0
+    ],
+    "gain": 0.0,
+    "losses": 0,
+    "mcnemar_p": 1.0,
+    "n": 99,
+    "ndcg_gain": -0.0049,
+    "passes": true,
+    "pipeline": "bm25-sparse-questions",
+    "wins": 0
+   }
+  },
+  "primary": {
+   "against": "bm25-sparse",
+   "boot95": [
+    -0.0466,
+    -0.0189
+   ],
+   "gain": -0.032,
+   "losses": 24,
+   "mcnemar_p": 0.9999995976686572,
+   "mde80_at_observed_discordance": 0.022,
+   "n": 687,
+   "ndcg_gain": -0.0441,
+   "observed_discordance": 0.0378,
+   "passes": false,
+   "pipeline": "bm25-questions",
+   "wins": 2
+  },
+  "reported": {
+   "bm25-questions vs bm25-postings, all": {
+    "against": "bm25-postings",
+    "boot95": [
+     0.0013,
+     0.0216
+    ],
+    "gain": 0.0115,
+    "losses": 4,
+    "mcnemar_p": 0.024520874023437583,
+    "n": 786,
+    "ndcg_gain": 0.0054,
+    "pipeline": "bm25-questions",
+    "wins": 13
+   },
+   "bm25-questions vs bm25-postings, question-shaped (d8's original arm)": {
+    "against": "bm25-postings",
+    "boot95": [
+     0.0044,
+     0.0262
+    ],
+    "gain": 0.0146,
+    "losses": 3,
+    "mcnemar_p": 0.010635375976562503,
+    "n": 687,
+    "ndcg_gain": 0.0069,
+    "pipeline": "bm25-questions",
+    "wins": 13
+   },
+   "bm25-questions.strict vs bm25-sparse, question-shaped": {
+    "against": "bm25-sparse",
+    "boot95": [
+     -0.0568,
+     -0.0262
+    ],
+    "gain": -0.0408,
+    "losses": 29,
+    "mcnemar_p": 0.9999999990686863,
+    "n": 687,
+    "ndcg_gain": -0.0446,
+    "pipeline": "bm25-questions.strict",
+    "wins": 1
+   },
+   "bm25-questions.ten vs bm25-sparse, question-shaped": {
+    "against": "bm25-sparse",
+    "boot95": [
+     -0.0422,
+     -0.0146
+    ],
+    "gain": -0.0277,
+    "losses": 22,
+    "mcnemar_p": 0.9999902844429011,
+    "n": 687,
+    "ndcg_gain": -0.0387,
+    "pipeline": "bm25-questions.ten",
+    "wins": 3
+   },
+   "bm25-questions.unfiltered vs bm25-sparse, question-shaped": {
+    "against": "bm25-sparse",
+    "boot95": [
+     -0.0422,
+     -0.0131
+    ],
+    "gain": -0.0277,
+    "losses": 23,
+    "mcnemar_p": 0.999975383281714,
+    "n": 687,
+    "ndcg_gain": -0.037,
+    "pipeline": "bm25-questions.unfiltered",
+    "wins": 4
+   },
+   "bm25-sparse-questions vs bm25-sparse, all": {
+    "against": "bm25-sparse",
+    "boot95": [
+     -0.0038,
+     0.0076
+    ],
+    "gain": 0.0013,
+    "losses": 2,
+    "mcnemar_p": 0.5000000000000004,
+    "n": 786,
+    "ndcg_gain": 0.001,
+    "pipeline": "bm25-sparse-questions",
+    "wins": 3
+   },
+   "bm25-sparse-questions.strict vs bm25-sparse, question-shaped": {
+    "against": "bm25-sparse",
+    "boot95": [
+     -0.0044,
+     0.0044
+    ],
+    "gain": 0.0,
+    "losses": 1,
+    "mcnemar_p": 0.7499999999999998,
+    "n": 687,
+    "ndcg_gain": -0.0001,
+    "pipeline": "bm25-sparse-questions.strict",
+    "wins": 1
+   },
+   "bm25-sparse-questions.ten vs bm25-sparse, question-shaped": {
+    "against": "bm25-sparse",
+    "boot95": [
+     -0.0029,
+     0.0087
+    ],
+    "gain": 0.0029,
+    "losses": 1,
+    "mcnemar_p": 0.3124999999999997,
+    "n": 687,
+    "ndcg_gain": 0.0035,
+    "pipeline": "bm25-sparse-questions.ten",
+    "wins": 3
+   },
+   "bm25-sparse-questions.unfiltered vs bm25-sparse, question-shaped": {
+    "against": "bm25-sparse",
+    "boot95": [
+     -0.0044,
+     0.0073
+    ],
+    "gain": 0.0015,
+    "losses": 2,
+    "mcnemar_p": 0.5000000000000004,
+    "n": 687,
+    "ndcg_gain": 0.0031,
+    "pipeline": "bm25-sparse-questions.unfiltered",
+    "wins": 3
+   }
+  },
+  "secondary": {
+   "against": "bm25-sparse",
+   "boot95": [
+    -0.0044,
+    0.0073
+   ],
+   "gain": 0.0015,
+   "losses": 2,
+   "mcnemar_p": 0.5000000000000004,
+   "mde80_at_observed_discordance": null,
+   "n": 687,
+   "ndcg_gain": 0.0018,
+   "observed_discordance": 0.0073,
+   "passes": false,
+   "pipeline": "bm25-sparse-questions",
+   "wins": 3
+  }
+ },
+ "generator": {
+  "decoding": {
+   "do_sample": true,
+   "input_max_tokens": 512,
+   "max_new_tokens": 64,
+   "num_return_sequences": 10,
+   "top_k": 10
+  },
+  "family": "T5 (Google), fine-tuned by doc2query",
+  "id": "local/doc2query/msmarco-t5-base-v1@e673dca0dff1f19fda73ac62420eedf0219e692b/f0a1ec383a679613/top_k10/max5",
+  "licence": "Apache-2.0 (weights); trained on MS MARCO (terms unchecked, d5's register)",
+  "memories": 200,
+  "model": "doc2query/msmarco-t5-base-v1",
+  "revision": "e673dca0dff1f19fda73ac62420eedf0219e692b",
+  "seed": "first 8 bytes of SHA-256(memory id, newline, generator id)",
+  "threads": 4,
+  "torch": "2.15.0+cu132",
+  "wall_seconds": 229.4,
+  "weights_sha256": "f0a1ec383a679613ac06324afa31e93bbcea18b5175e576ea21174edae448e78"
+ },
+ "parity": {
+  "bm25-postings": {
+   "n": 786,
+   "served_success@5_all": 0.916,
+   "success@5_agree": 786,
+   "success@5_differ": [],
+   "top1_agree": 780
+  },
+  "bm25-sparse": {
+   "n": 786,
+   "served_success@5_all": 0.9606,
+   "success@5_agree": 784,
+   "success@5_differ": [
+    "g0468",
+    "g0590"
+   ],
+   "top1_agree": 775
+  }
+ },
+ "pipelines": {
+  "bm25-postings": {
+   "all": {
+    "ci95": [
+     0.8946,
+     0.9335
+    ],
+    "hits": 720,
+    "n": 786,
+    "ndcg@10": 0.8679,
+    "success@5": 0.916
+   },
+   "category:exact": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9651,
+    "success@5": 1.0
+   },
+   "category:identifier": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9967,
+    "success@5": 1.0
+   },
+   "category:inflection": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9675,
+    "success@5": 1.0
+   },
+   "category:long": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.957,
+    "success@5": 1.0
+   },
+   "category:multihop": {
+    "ci95": [
+     0.6226,
+     0.9838
+    ],
+    "hits": 10,
+    "n": 11,
+    "ndcg@10": 0.8282,
+    "success@5": 0.9091
+   },
+   "category:negation": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9705,
+    "success@5": 1.0
+   },
+   "category:paraphrase": {
+    "ci95": [
+     0.7789,
+     0.8629
+    ],
+    "hits": 259,
+    "n": 314,
+    "ndcg@10": 0.7629,
+    "success@5": 0.8248
+   },
+   "category:partial": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9068,
+    "success@5": 1.0
+   },
+   "category:question": {
+    "ci95": [
+     0.9654,
+     0.9926
+    ],
+    "hits": 367,
+    "n": 373,
+    "ndcg@10": 0.9457,
+    "success@5": 0.9839
+   },
+   "category:temporal": {
+    "ci95": [
+     0.523,
+     0.9486
+    ],
+    "hits": 9,
+    "n": 11,
+    "ndcg@10": 0.7573,
+    "success@5": 0.8182
+   },
+   "category:typo": {
+    "ci95": [
+     0.523,
+     0.9486
+    ],
+    "hits": 9,
+    "n": 11,
+    "ndcg@10": 0.8182,
+    "success@5": 0.8182
+   },
+   "grown": {
+    "ci95": [
+     0.8889,
+     0.9319
+    ],
+    "hits": 607,
+    "n": 665,
+    "ndcg@10": 0.867,
+    "success@5": 0.9128
+   },
+   "other": {
+    "ci95": [
+     0.8872,
+     0.9782
+    ],
+    "hits": 94,
+    "n": 99,
+    "ndcg@10": 0.9075,
+    "success@5": 0.9495
+   },
+   "question-shaped": {
+    "ci95": [
+     0.8876,
+     0.9303
+    ],
+    "hits": 626,
+    "n": 687,
+    "ndcg@10": 0.8622,
+    "success@5": 0.9112
+   },
+   "synthetic": {
+    "ci95": [
+     0.8749,
+     0.9661
+    ],
+    "hits": 113,
+    "n": 121,
+    "ndcg@10": 0.8727,
+    "success@5": 0.9339
+   }
+  },
+  "bm25-questions": {
+   "all": {
+    "ci95": [
+     0.9072,
+     0.9436
+    ],
+    "hits": 729,
+    "n": 786,
+    "ndcg@10": 0.8733,
+    "success@5": 0.9275
+   },
+   "category:exact": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9651,
+    "success@5": 1.0
+   },
+   "category:identifier": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9967,
+    "success@5": 1.0
+   },
+   "category:inflection": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9726,
+    "success@5": 1.0
+   },
+   "category:long": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9476,
+    "success@5": 1.0
+   },
+   "category:multihop": {
+    "ci95": [
+     0.6226,
+     0.9838
+    ],
+    "hits": 10,
+    "n": 11,
+    "ndcg@10": 0.8197,
+    "success@5": 0.9091
+   },
+   "category:negation": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9883,
+    "success@5": 1.0
+   },
+   "category:paraphrase": {
+    "ci95": [
+     0.8136,
+     0.8911
+    ],
+    "hits": 269,
+    "n": 314,
+    "ndcg@10": 0.7754,
+    "success@5": 0.8567
+   },
+   "category:partial": {
+    "ci95": [
+     0.6226,
+     0.9838
+    ],
+    "hits": 10,
+    "n": 11,
+    "ndcg@10": 0.9114,
+    "success@5": 0.9091
+   },
+   "category:question": {
+    "ci95": [
+     0.9654,
+     0.9926
+    ],
+    "hits": 367,
+    "n": 373,
+    "ndcg@10": 0.9478,
+    "success@5": 0.9839
+   },
+   "category:temporal": {
+    "ci95": [
+     0.523,
+     0.9486
+    ],
+    "hits": 9,
+    "n": 11,
+    "ndcg@10": 0.7275,
+    "success@5": 0.8182
+   },
+   "category:typo": {
+    "ci95": [
+     0.523,
+     0.9486
+    ],
+    "hits": 9,
+    "n": 11,
+    "ndcg@10": 0.7961,
+    "success@5": 0.8182
+   },
+   "grown": {
+    "ci95": [
+     0.9056,
+     0.9451
+    ],
+    "hits": 617,
+    "n": 665,
+    "ndcg@10": 0.8742,
+    "success@5": 0.9278
+   },
+   "other": {
+    "ci95": [
+     0.874,
+     0.9719
+    ],
+    "hits": 93,
+    "n": 99,
+    "ndcg@10": 0.9028,
+    "success@5": 0.9394
+   },
+   "question-shaped": {
+    "ci95": [
+     0.9037,
+     0.9431
+    ],
+    "hits": 636,
+    "n": 687,
+    "ndcg@10": 0.869,
+    "success@5": 0.9258
+   },
+   "synthetic": {
+    "ci95": [
+     0.8647,
+     0.9604
+    ],
+    "hits": 112,
+    "n": 121,
+    "ndcg@10": 0.868,
+    "success@5": 0.9256
+   }
+  },
+  "bm25-questions.strict": {
+   "all": {
+    "ci95": [
+     0.9002,
+     0.938
+    ],
+    "hits": 724,
+    "n": 786,
+    "ndcg@10": 0.8736,
+    "success@5": 0.9211
+   },
+   "category:exact": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9651,
+    "success@5": 1.0
+   },
+   "category:identifier": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9967,
+    "success@5": 1.0
+   },
+   "category:inflection": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9675,
+    "success@5": 1.0
+   },
+   "category:long": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9577,
+    "success@5": 1.0
+   },
+   "category:multihop": {
+    "ci95": [
+     0.6226,
+     0.9838
+    ],
+    "hits": 10,
+    "n": 11,
+    "ndcg@10": 0.8278,
+    "success@5": 0.9091
+   },
+   "category:negation": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9771,
+    "success@5": 1.0
+   },
+   "category:paraphrase": {
+    "ci95": [
+     0.7962,
+     0.8771
+    ],
+    "hits": 264,
+    "n": 314,
+    "ndcg@10": 0.7783,
+    "success@5": 0.8408
+   },
+   "category:partial": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9036,
+    "success@5": 1.0
+   },
+   "category:question": {
+    "ci95": [
+     0.9618,
+     0.9909
+    ],
+    "hits": 366,
+    "n": 373,
+    "ndcg@10": 0.9445,
+    "success@5": 0.9812
+   },
+   "category:temporal": {
+    "ci95": [
+     0.523,
+     0.9486
+    ],
+    "hits": 9,
+    "n": 11,
+    "ndcg@10": 0.7747,
+    "success@5": 0.8182
+   },
+   "category:typo": {
+    "ci95": [
+     0.523,
+     0.9486
+    ],
+    "hits": 9,
+    "n": 11,
+    "ndcg@10": 0.8094,
+    "success@5": 0.8182
+   },
+   "grown": {
+    "ci95": [
+     0.8956,
+     0.9372
+    ],
+    "hits": 611,
+    "n": 665,
+    "ndcg@10": 0.8736,
+    "success@5": 0.9188
+   },
+   "other": {
+    "ci95": [
+     0.8872,
+     0.9782
+    ],
+    "hits": 94,
+    "n": 99,
+    "ndcg@10": 0.9088,
+    "success@5": 0.9495
+   },
+   "question-shaped": {
+    "ci95": [
+     0.894,
+     0.9354
+    ],
+    "hits": 630,
+    "n": 687,
+    "ndcg@10": 0.8685,
+    "success@5": 0.917
+   },
+   "synthetic": {
+    "ci95": [
+     0.8749,
+     0.9661
+    ],
+    "hits": 113,
+    "n": 121,
+    "ndcg@10": 0.8734,
+    "success@5": 0.9339
+   }
+  },
+  "bm25-questions.ten": {
+   "all": {
+    "ci95": [
+     0.9129,
+     0.9481
+    ],
+    "hits": 733,
+    "n": 786,
+    "ndcg@10": 0.8786,
+    "success@5": 0.9326
+   },
+   "category:exact": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9651,
+    "success@5": 1.0
+   },
+   "category:identifier": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9967,
+    "success@5": 1.0
+   },
+   "category:inflection": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9692,
+    "success@5": 1.0
+   },
+   "category:long": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9444,
+    "success@5": 1.0
+   },
+   "category:multihop": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.859,
+    "success@5": 1.0
+   },
+   "category:negation": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.981,
+    "success@5": 1.0
+   },
+   "category:paraphrase": {
+    "ci95": [
+     0.8206,
+     0.8967
+    ],
+    "hits": 271,
+    "n": 314,
+    "ndcg@10": 0.784,
+    "success@5": 0.8631
+   },
+   "category:partial": {
+    "ci95": [
+     0.6226,
+     0.9838
+    ],
+    "hits": 10,
+    "n": 11,
+    "ndcg@10": 0.9081,
+    "success@5": 0.9091
+   },
+   "category:question": {
+    "ci95": [
+     0.969,
+     0.9943
+    ],
+    "hits": 368,
+    "n": 373,
+    "ndcg@10": 0.9505,
+    "success@5": 0.9866
+   },
+   "category:temporal": {
+    "ci95": [
+     0.523,
+     0.9486
+    ],
+    "hits": 9,
+    "n": 11,
+    "ndcg@10": 0.7275,
+    "success@5": 0.8182
+   },
+   "category:typo": {
+    "ci95": [
+     0.523,
+     0.9486
+    ],
+    "hits": 9,
+    "n": 11,
+    "ndcg@10": 0.8145,
+    "success@5": 0.8182
+   },
+   "grown": {
+    "ci95": [
+     0.9107,
+     0.949
+    ],
+    "hits": 620,
+    "n": 665,
+    "ndcg@10": 0.88,
+    "success@5": 0.9323
+   },
+   "other": {
+    "ci95": [
+     0.8872,
+     0.9782
+    ],
+    "hits": 94,
+    "n": 99,
+    "ndcg@10": 0.9073,
+    "success@5": 0.9495
+   },
+   "question-shaped": {
+    "ci95": [
+     0.9086,
+     0.9469
+    ],
+    "hits": 639,
+    "n": 687,
+    "ndcg@10": 0.8744,
+    "success@5": 0.9301
+   },
+   "synthetic": {
+    "ci95": [
+     0.8749,
+     0.9661
+    ],
+    "hits": 113,
+    "n": 121,
+    "ndcg@10": 0.8706,
+    "success@5": 0.9339
+   }
+  },
+  "bm25-questions.unfiltered": {
+   "all": {
+    "ci95": [
+     0.9114,
+     0.947
+    ],
+    "hits": 732,
+    "n": 786,
+    "ndcg@10": 0.8789,
+    "success@5": 0.9313
+   },
+   "category:exact": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9727,
+    "success@5": 1.0
+   },
+   "category:identifier": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9967,
+    "success@5": 1.0
+   },
+   "category:inflection": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9727,
+    "success@5": 1.0
+   },
+   "category:long": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9476,
+    "success@5": 1.0
+   },
+   "category:multihop": {
+    "ci95": [
+     0.6226,
+     0.9838
+    ],
+    "hits": 10,
+    "n": 11,
+    "ndcg@10": 0.8176,
+    "success@5": 0.9091
+   },
+   "category:negation": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9883,
+    "success@5": 1.0
+   },
+   "category:paraphrase": {
+    "ci95": [
+     0.8206,
+     0.8967
+    ],
+    "hits": 271,
+    "n": 314,
+    "ndcg@10": 0.7845,
+    "success@5": 0.8631
+   },
+   "category:partial": {
+    "ci95": [
+     0.6226,
+     0.9838
+    ],
+    "hits": 10,
+    "n": 11,
+    "ndcg@10": 0.9206,
+    "success@5": 0.9091
+   },
+   "category:question": {
+    "ci95": [
+     0.969,
+     0.9943
+    ],
+    "hits": 368,
+    "n": 373,
+    "ndcg@10": 0.9532,
+    "success@5": 0.9866
+   },
+   "category:temporal": {
+    "ci95": [
+     0.523,
+     0.9486
+    ],
+    "hits": 9,
+    "n": 11,
+    "ndcg@10": 0.7266,
+    "success@5": 0.8182
+   },
+   "category:typo": {
+    "ci95": [
+     0.523,
+     0.9486
+    ],
+    "hits": 9,
+    "n": 11,
+    "ndcg@10": 0.7444,
+    "success@5": 0.8182
+   },
+   "grown": {
+    "ci95": [
+     0.9107,
+     0.949
+    ],
+    "hits": 620,
+    "n": 665,
+    "ndcg@10": 0.8816,
+    "success@5": 0.9323
+   },
+   "other": {
+    "ci95": [
+     0.874,
+     0.9719
+    ],
+    "hits": 93,
+    "n": 99,
+    "ndcg@10": 0.8986,
+    "success@5": 0.9394
+   },
+   "question-shaped": {
+    "ci95": [
+     0.9086,
+     0.9469
+    ],
+    "hits": 639,
+    "n": 687,
+    "ndcg@10": 0.8761,
+    "success@5": 0.9301
+   },
+   "synthetic": {
+    "ci95": [
+     0.8647,
+     0.9604
+    ],
+    "hits": 112,
+    "n": 121,
+    "ndcg@10": 0.8642,
+    "success@5": 0.9256
+   }
+  },
+  "bm25-sparse": {
+   "all": {
+    "ci95": [
+     0.9475,
+     0.9742
+    ],
+    "hits": 757,
+    "n": 786,
+    "ndcg@10": 0.917,
+    "success@5": 0.9631
+   },
+   "category:exact": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9651,
+    "success@5": 1.0
+   },
+   "category:identifier": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 1.0,
+    "success@5": 1.0
+   },
+   "category:inflection": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9524,
+    "success@5": 1.0
+   },
+   "category:long": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9285,
+    "success@5": 1.0
+   },
+   "category:multihop": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9143,
+    "success@5": 1.0
+   },
+   "category:negation": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9956,
+    "success@5": 1.0
+   },
+   "category:paraphrase": {
+    "ci95": [
+     0.8814,
+     0.9429
+    ],
+    "hits": 288,
+    "n": 314,
+    "ndcg@10": 0.8472,
+    "success@5": 0.9172
+   },
+   "category:partial": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9623,
+    "success@5": 1.0
+   },
+   "category:question": {
+    "ci95": [
+     0.9766,
+     0.9973
+    ],
+    "hits": 370,
+    "n": 373,
+    "ndcg@10": 0.9686,
+    "success@5": 0.992
+   },
+   "category:temporal": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.8247,
+    "success@5": 1.0
+   },
+   "category:typo": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.955,
+    "success@5": 1.0
+   },
+   "grown": {
+    "ci95": [
+     0.9416,
+     0.9719
+    ],
+    "hits": 638,
+    "n": 665,
+    "ndcg@10": 0.918,
+    "success@5": 0.9594
+   },
+   "other": {
+    "ci95": [
+     0.9626,
+     1.0
+    ],
+    "hits": 99,
+    "n": 99,
+    "ndcg@10": 0.9442,
+    "success@5": 1.0
+   },
+   "question-shaped": {
+    "ci95": [
+     0.94,
+     0.9705
+    ],
+    "hits": 658,
+    "n": 687,
+    "ndcg@10": 0.9131,
+    "success@5": 0.9578
+   },
+   "synthetic": {
+    "ci95": [
+     0.9417,
+     0.9955
+    ],
+    "hits": 119,
+    "n": 121,
+    "ndcg@10": 0.9116,
+    "success@5": 0.9835
+   }
+  },
+  "bm25-sparse-questions": {
+   "all": {
+    "ci95": [
+     0.949,
+     0.9752
+    ],
+    "hits": 758,
+    "n": 786,
+    "ndcg@10": 0.918,
+    "success@5": 0.9644
+   },
+   "category:exact": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9651,
+    "success@5": 1.0
+   },
+   "category:identifier": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 1.0,
+    "success@5": 1.0
+   },
+   "category:inflection": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9477,
+    "success@5": 1.0
+   },
+   "category:long": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9358,
+    "success@5": 1.0
+   },
+   "category:multihop": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.917,
+    "success@5": 1.0
+   },
+   "category:negation": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 1.0,
+    "success@5": 1.0
+   },
+   "category:paraphrase": {
+    "ci95": [
+     0.8851,
+     0.9455
+    ],
+    "hits": 289,
+    "n": 314,
+    "ndcg@10": 0.8484,
+    "success@5": 0.9204
+   },
+   "category:partial": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9246,
+    "success@5": 1.0
+   },
+   "category:question": {
+    "ci95": [
+     0.9766,
+     0.9973
+    ],
+    "hits": 370,
+    "n": 373,
+    "ndcg@10": 0.971,
+    "success@5": 0.992
+   },
+   "category:temporal": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.8084,
+    "success@5": 1.0
+   },
+   "category:typo": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.955,
+    "success@5": 1.0
+   },
+   "grown": {
+    "ci95": [
+     0.9433,
+     0.9732
+    ],
+    "hits": 639,
+    "n": 665,
+    "ndcg@10": 0.9201,
+    "success@5": 0.9609
+   },
+   "other": {
+    "ci95": [
+     0.9626,
+     1.0
+    ],
+    "hits": 99,
+    "n": 99,
+    "ndcg@10": 0.9393,
+    "success@5": 1.0
+   },
+   "question-shaped": {
+    "ci95": [
+     0.9417,
+     0.9717
+    ],
+    "hits": 659,
+    "n": 687,
+    "ndcg@10": 0.915,
+    "success@5": 0.9592
+   },
+   "synthetic": {
+    "ci95": [
+     0.9417,
+     0.9955
+    ],
+    "hits": 119,
+    "n": 121,
+    "ndcg@10": 0.9064,
+    "success@5": 0.9835
+   }
+  },
+  "bm25-sparse-questions.strict": {
+   "all": {
+    "ci95": [
+     0.9475,
+     0.9742
+    ],
+    "hits": 757,
+    "n": 786,
+    "ndcg@10": 0.9165,
+    "success@5": 0.9631
+   },
+   "category:exact": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9651,
+    "success@5": 1.0
+   },
+   "category:identifier": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 1.0,
+    "success@5": 1.0
+   },
+   "category:inflection": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9506,
+    "success@5": 1.0
+   },
+   "category:long": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9285,
+    "success@5": 1.0
+   },
+   "category:multihop": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9168,
+    "success@5": 1.0
+   },
+   "category:negation": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9956,
+    "success@5": 1.0
+   },
+   "category:paraphrase": {
+    "ci95": [
+     0.8814,
+     0.9429
+    ],
+    "hits": 288,
+    "n": 314,
+    "ndcg@10": 0.847,
+    "success@5": 0.9172
+   },
+   "category:partial": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9287,
+    "success@5": 1.0
+   },
+   "category:question": {
+    "ci95": [
+     0.9766,
+     0.9973
+    ],
+    "hits": 370,
+    "n": 373,
+    "ndcg@10": 0.9686,
+    "success@5": 0.992
+   },
+   "category:temporal": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.8244,
+    "success@5": 1.0
+   },
+   "category:typo": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.955,
+    "success@5": 1.0
+   },
+   "grown": {
+    "ci95": [
+     0.9416,
+     0.9719
+    ],
+    "hits": 638,
+    "n": 665,
+    "ndcg@10": 0.9179,
+    "success@5": 0.9594
+   },
+   "other": {
+    "ci95": [
+     0.9626,
+     1.0
+    ],
+    "hits": 99,
+    "n": 99,
+    "ndcg@10": 0.9405,
+    "success@5": 1.0
+   },
+   "question-shaped": {
+    "ci95": [
+     0.94,
+     0.9705
+    ],
+    "hits": 658,
+    "n": 687,
+    "ndcg@10": 0.913,
+    "success@5": 0.9578
+   },
+   "synthetic": {
+    "ci95": [
+     0.9417,
+     0.9955
+    ],
+    "hits": 119,
+    "n": 121,
+    "ndcg@10": 0.9086,
+    "success@5": 0.9835
+   }
+  },
+  "bm25-sparse-questions.ten": {
+   "all": {
+    "ci95": [
+     0.9505,
+     0.9763
+    ],
+    "hits": 759,
+    "n": 786,
+    "ndcg@10": 0.9194,
+    "success@5": 0.9656
+   },
+   "category:exact": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9651,
+    "success@5": 1.0
+   },
+   "category:identifier": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 1.0,
+    "success@5": 1.0
+   },
+   "category:inflection": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9474,
+    "success@5": 1.0
+   },
+   "category:long": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9285,
+    "success@5": 1.0
+   },
+   "category:multihop": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9218,
+    "success@5": 1.0
+   },
+   "category:negation": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 1.0,
+    "success@5": 1.0
+   },
+   "category:paraphrase": {
+    "ci95": [
+     0.8888,
+     0.9481
+    ],
+    "hits": 290,
+    "n": 314,
+    "ndcg@10": 0.8544,
+    "success@5": 0.9236
+   },
+   "category:partial": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9235,
+    "success@5": 1.0
+   },
+   "category:question": {
+    "ci95": [
+     0.9766,
+     0.9973
+    ],
+    "hits": 370,
+    "n": 373,
+    "ndcg@10": 0.969,
+    "success@5": 0.992
+   },
+   "category:temporal": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.8073,
+    "success@5": 1.0
+   },
+   "category:typo": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.955,
+    "success@5": 1.0
+   },
+   "grown": {
+    "ci95": [
+     0.9451,
+     0.9744
+    ],
+    "hits": 640,
+    "n": 665,
+    "ndcg@10": 0.9217,
+    "success@5": 0.9624
+   },
+   "other": {
+    "ci95": [
+     0.9626,
+     1.0
+    ],
+    "hits": 99,
+    "n": 99,
+    "ndcg@10": 0.9387,
+    "success@5": 1.0
+   },
+   "question-shaped": {
+    "ci95": [
+     0.9434,
+     0.9729
+    ],
+    "hits": 660,
+    "n": 687,
+    "ndcg@10": 0.9167,
+    "success@5": 0.9607
+   },
+   "synthetic": {
+    "ci95": [
+     0.9417,
+     0.9955
+    ],
+    "hits": 119,
+    "n": 121,
+    "ndcg@10": 0.9069,
+    "success@5": 0.9835
+   }
+  },
+  "bm25-sparse-questions.unfiltered": {
+   "all": {
+    "ci95": [
+     0.949,
+     0.9752
+    ],
+    "hits": 758,
+    "n": 786,
+    "ndcg@10": 0.9192,
+    "success@5": 0.9644
+   },
+   "category:exact": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9684,
+    "success@5": 1.0
+   },
+   "category:identifier": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 1.0,
+    "success@5": 1.0
+   },
+   "category:inflection": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9477,
+    "success@5": 1.0
+   },
+   "category:long": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9358,
+    "success@5": 1.0
+   },
+   "category:multihop": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9221,
+    "success@5": 1.0
+   },
+   "category:negation": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 1.0,
+    "success@5": 1.0
+   },
+   "category:paraphrase": {
+    "ci95": [
+     0.8851,
+     0.9455
+    ],
+    "hits": 289,
+    "n": 314,
+    "ndcg@10": 0.8546,
+    "success@5": 0.9204
+   },
+   "category:partial": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9235,
+    "success@5": 1.0
+   },
+   "category:question": {
+    "ci95": [
+     0.9766,
+     0.9973
+    ],
+    "hits": 370,
+    "n": 373,
+    "ndcg@10": 0.9681,
+    "success@5": 0.992
+   },
+   "category:temporal": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.8084,
+    "success@5": 1.0
+   },
+   "category:typo": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.955,
+    "success@5": 1.0
+   },
+   "grown": {
+    "ci95": [
+     0.9433,
+     0.9732
+    ],
+    "hits": 639,
+    "n": 665,
+    "ndcg@10": 0.9218,
+    "success@5": 0.9609
+   },
+   "other": {
+    "ci95": [
+     0.9626,
+     1.0
+    ],
+    "hits": 99,
+    "n": 99,
+    "ndcg@10": 0.9401,
+    "success@5": 1.0
+   },
+   "question-shaped": {
+    "ci95": [
+     0.9417,
+     0.9717
+    ],
+    "hits": 659,
+    "n": 687,
+    "ndcg@10": 0.9162,
+    "success@5": 0.9592
+   },
+   "synthetic": {
+    "ci95": [
+     0.9417,
+     0.9955
+    ],
+    "hits": 119,
+    "n": 121,
+    "ndcg@10": 0.9048,
+    "success@5": 0.9835
+   }
+  },
+  "sparse": {
+   "all": {
+    "ci95": [
+     0.9416,
+     0.97
+    ],
+    "hits": 753,
+    "n": 786,
+    "ndcg@10": 0.9065,
+    "success@5": 0.958
+   },
+   "category:exact": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9636,
+    "success@5": 1.0
+   },
+   "category:identifier": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 1.0,
+    "success@5": 1.0
+   },
+   "category:inflection": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9289,
+    "success@5": 1.0
+   },
+   "category:long": {
+    "ci95": [
+     0.6226,
+     0.9838
+    ],
+    "hits": 10,
+    "n": 11,
+    "ndcg@10": 0.8742,
+    "success@5": 0.9091
+   },
+   "category:multihop": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.8907,
+    "success@5": 1.0
+   },
+   "category:negation": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9956,
+    "success@5": 1.0
+   },
+   "category:paraphrase": {
+    "ci95": [
+     0.8741,
+     0.9376
+    ],
+    "hits": 286,
+    "n": 314,
+    "ndcg@10": 0.8438,
+    "success@5": 0.9108
+   },
+   "category:partial": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.9261,
+    "success@5": 1.0
+   },
+   "category:question": {
+    "ci95": [
+     0.9728,
+     0.9958
+    ],
+    "hits": 369,
+    "n": 373,
+    "ndcg@10": 0.9544,
+    "success@5": 0.9893
+   },
+   "category:temporal": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.7924,
+    "success@5": 1.0
+   },
+   "category:typo": {
+    "ci95": [
+     0.7412,
+     1.0
+    ],
+    "hits": 11,
+    "n": 11,
+    "ndcg@10": 0.955,
+    "success@5": 1.0
+   },
+   "grown": {
+    "ci95": [
+     0.9363,
+     0.9682
+    ],
+    "hits": 635,
+    "n": 665,
+    "ndcg@10": 0.909,
+    "success@5": 0.9549
+   },
+   "other": {
+    "ci95": [
+     0.945,
+     0.9982
+    ],
+    "hits": 98,
+    "n": 99,
+    "ndcg@10": 0.9252,
+    "success@5": 0.9899
+   },
+   "question-shaped": {
+    "ci95": [
+     0.935,
+     0.9668
+    ],
+    "hits": 655,
+    "n": 687,
+    "ndcg@10": 0.9038,
+    "success@5": 0.9534
+   },
+   "synthetic": {
+    "ci95": [
+     0.9296,
+     0.9915
+    ],
+    "hits": 118,
+    "n": 121,
+    "ndcg@10": 0.8928,
+    "success@5": 0.9752
+   }
+  }
+ },
+ "variants": {
+  "arm": {
+   "limit": 5,
+   "strict": false
+  },
+  "strict": {
+   "limit": 5,
+   "strict": true
+  },
+  "ten": {
+   "limit": 10,
+   "strict": false
+  },
+  "unfiltered": {
+   "limit": 5,
+   "strict": null
+  }
+ },
+ "w_q": {
+  "bm25-questions": {
+   "per_fold": {
+    "0": 0.6,
+    "1": 0.9,
+    "2": 0.2,
+    "3": 0.5,
+    "4": 0.9
+   },
+   "synthetic": 0.6
+  },
+  "bm25-questions.strict": {
+   "per_fold": {
+    "0": 0.4,
+    "1": 0.3,
+    "2": 0.4,
+    "3": 0.4,
+    "4": 0.4
+   },
+   "synthetic": 0.4
+  },
+  "bm25-questions.ten": {
+   "per_fold": {
+    "0": 0.7,
+    "1": 0.7,
+    "2": 0.4,
+    "3": 0.7,
+    "4": 0.7
+   },
+   "synthetic": 0.7
+  },
+  "bm25-questions.unfiltered": {
+   "per_fold": {
+    "0": 0.7,
+    "1": 0.8,
+    "2": 0.5,
+    "3": 0.7,
+    "4": 0.8
+   },
+   "synthetic": 0.8
+  },
+  "bm25-sparse-questions": {
+   "per_fold": {
+    "0": 0.4,
+    "1": 0.9,
+    "2": 0.4,
+    "3": 0.4,
+    "4": 0.4
+   },
+   "synthetic": 0.4
+  },
+  "bm25-sparse-questions.strict": {
+   "per_fold": {
+    "0": 0.2,
+    "1": 0.2,
+    "2": 0.1,
+    "3": 0.2,
+    "4": 0.1
+   },
+   "synthetic": 0.2
+  },
+  "bm25-sparse-questions.ten": {
+   "per_fold": {
+    "0": 0.3,
+    "1": 0.3,
+    "2": 0.4,
+    "3": 0.3,
+    "4": 0.3
+   },
+   "synthetic": 0.3
+  },
+  "bm25-sparse-questions.unfiltered": {
+   "per_fold": {
+    "0": 0.7,
+    "1": 0.6,
+    "2": 0.6,
+    "3": 0.6,
+    "4": 0.4
+   },
+   "synthetic": 0.6
+  }
+ }
+}

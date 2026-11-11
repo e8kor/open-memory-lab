@@ -1,0 +1,956 @@
+{
+"m001": [
+"how long does it take to roll out api services",
+"canary outage"
+],
+"m002": [
+"what region is kubernetes in?",
+"what cluster is production on kubernetes",
+"what region is euw1 on"
+],
+"m003": [
+"what time is stage euw1 rebuilt",
+"when is staging cluster",
+"what day does tl stage euw1 go live"
+],
+"m004": [
+"which api field is immutable?",
+"helm upgrades fail with field is immutable",
+"does kubernetes have immutable selectors"
+],
+"m005": [
+"what do helm release names mean in software",
+"define helm release"
+],
+"m006": [
+"what is rollbacks in helm",
+"how to rollback image tag"
+],
+"m007": [
+"when is deploy window"
+],
+"m008": [
+"what time can i deploy a production"
+],
+"m009": [
+"what is a termination percentage on invoices",
+"how many termination seconds are needed in a workflow",
+"how many terminations are there on an invoice pdf"
+],
+"m010": [
+"what is the ingress controller nginx used for",
+"what is the controller for tls",
+"what is ninx ingress controller"
+],
+"m011": [
+"when did cem renewal fail",
+"what year did acert manageer fail",
+"when did crt-manager renewal fail"
+],
+"m012": [
+"how are containers tagged",
+"is there an api to git commit",
+"what is container images",
+"where are git containers stored"
+],
+"m013": [
+"how many replicas to deploy",
+"what api does api deploy"
+],
+"m014": [
+"what is kubectl network policy",
+"kubectl port forward to production database",
+"what does port forward port-forward mean"
+],
+"m015": [
+"when is flux cd coming out",
+"what is the difference between flux and argo"
+],
+"m016": [
+"what is the euw1 configuration for argo",
+"argo cd sync",
+"what is the infra cluster argo?",
+"what is the tl-prod euw1 cluster"
+],
+"m017": [
+"is argo api outof sync",
+"what hpa changes spec.replicas",
+"what does argo mark"
+],
+"m018": [
+"what machine is pdf rendered on in production",
+"what is node pool used for",
+"what does pdf render use"
+],
+"m019": [
+"how long does it take to render a pdf invoice",
+"how many s per pdf rendering",
+"how fast is c2 standard 16 to pdf",
+"how long to p95 invoices"
+],
+"m020": [
+"what is google secret manager",
+"where do gmail secrets reach pods",
+"how do google secret pods work"
+],
+"m021": [
+"can internalsecret refresh pod",
+"do externalsecret refresh kubectl",
+"which refresh does not restart kubectl rollout",
+"does kubectl rollout start before an external secret?",
+"is external secret refresh a refresh"
+],
+"m022": [
+"when do i change the dns record",
+"what is ttl for cloud dns",
+"what is a green nsd switch",
+"what dns switch is blue green?"
+],
+"m023": [
+"what is a database migration",
+"what is data migration",
+"migrate to kubernetes"
+],
+"m024": [
+"how long does it take pod to start"
+],
+"m025": [
+"what is the primary database in cloud sql",
+"what server is my primary database"
+],
+"m026": [
+"when was a postgres sql upgrade done",
+"when did postgresql 16 update",
+"which database is best to upgrade to postgresql 16"
+],
+"m027": [
+"what is nightly ledger",
+"how much faster is nightly ledger aggregation query?",
+"what's the speed of postgresql nightly ledger query"
+],
+"m028": [
+"can you calculate planner statistics in postgres sql 16",
+"pg_upgrade pg_upgrade",
+"can pg upgrade carry planner statistics"
+],
+"m029": [
+"what type is timestamptz",
+"what are timestamptz columns",
+"is timestamptz updated java",
+"how does timestamptz work?"
+],
+"m030": [
+"uuud v7 primary keys",
+"why use primary keys instead of bigserial"
+],
+"m031": [
+"how long before the table locks",
+"can a column in tableau lock",
+"is a volatile column a volatile column",
+"what is volatile default in excel"
+],
+"m032": [
+"how to create indexes in sql",
+"which command to use to create an index on large tables",
+"what is index in table"
+],
+"m033": [
+"how many rows in invoices table"
+],
+"m034": [
+"how long do invoices have to stay in cold storage"
+],
+"m035": [
+"what is a pg bouncer",
+"what is connection pooler"
+],
+"m036": [
+"can the pg bouncer leak messages?",
+"ppg bouncer what mode",
+"what mode is pgbouncer used in"
+],
+"m037": [
+"why does ledger_entries bloat",
+"what was ledger_entries table in microsoft excel"
+],
+"m038": [
+"what is correction in ledger",
+"what is an append correction",
+"what is an append entry in excel"
+],
+"m039": [
+"how long is point in time recovery for tl pg",
+"how long does an tl pg prod last",
+"how long are the wal records for tl pg"
+],
+"m040": [
+"how long does it take to read from a primary report",
+"what is the read replica",
+"what is the read replication for a report?",
+"how many seconds are there in a dayly batch to read"
+],
+"m041": [
+"what is a migration file in sql"
+],
+"m042": [
+"what is the latest invoice date for tax rates",
+"how to find tax rates",
+"what is a country code and a country code"
+],
+"m043": [
+"what is missing on invoice",
+"how long does an invoice take to scan",
+"how fast can invoice data be scanned"
+],
+"m044": [
+"what is jsonb compared to",
+"is key order irrelevant",
+"how to find column order in jsonb",
+"jsonb columns compared together in query",
+"jsonb columns compared with text cast"
+],
+"m045": [
+"row level security"
+],
+"m046": [
+"app tenant id",
+"what happens if an undefined tenant is not set?",
+"what causes a missing tenant context?",
+"is an empty tenant an error"
+],
+"m047": [
+"what is triggered in business logic",
+"is update_at required for business logic"
+],
+"m048": [
+"what time do database backups take",
+"what time of day is backup taken"
+],
+"m049": [
+"how long for tlpg to restore from scratch",
+"how long is a restore drill",
+"how long does it take to restore tl-pg",
+"how long is a scratch drill in a tl pg program"
+],
+"m050": [
+"what is current api api",
+"what api is deprecated?",
+"which api is public",
+"api what is latest version"
+],
+"m051": [
+"what is an error response",
+"is an api error a json object"
+],
+"m052": [
+"how to insert page numbers into in excel",
+"why do we use pagination",
+"what are page numbers in pagination"
+],
+"m053": [
+"what is the default page size",
+"what is max page size in pagesize",
+"what is the maximum page size per page"
+],
+"m054": [
+"why is it necessary to include idempotency key header",
+"what header should i use for impotency in invoices",
+"what is the header needed to retry an idempotency key?",
+"is an endorsement key required on post",
+"what header is required on post"
+],
+"m055": [
+"what do impotency keys do",
+"how long does idempotency keys last"
+],
+"m056": [
+"what is a handler function"
+],
+"m057": [
+"what is redis rate limit",
+"how many requests per minute",
+"what is the limit per minute for redis"
+],
+"m058": [
+"what is a webhook invoice",
+"what is get v2 invoice"
+],
+"m059": [
+"what is webhook hmac",
+"what is signature webhooks"
+],
+"m060": [
+"webhook signature checks"
+],
+"m061": [
+"how long does webhook backoff last",
+"how long for a webhook service to be disabled"
+],
+"m062": [
+"what file is openapi document"
+],
+"m063": [
+"what is api money",
+"how to use money"
+],
+"m064": [
+"how many decimal places in dollar currency",
+"is bhd currency",
+"what is the name of the currency code to break the code?"
+],
+"m065": [
+"api timetamps",
+"what time does api use",
+"what timezone is api",
+"is iso 8601 utc"
+],
+"m066": [
+"what language is api",
+"what is api services"
+],
+"m067": [
+"json library latency",
+"kotlinx latency",
+"when do i need json kotlinx"
+],
+"m068": [
+"where are default fields in kotlinx",
+"how to drop defaults",
+"kotlinx.serialization drops default field value",
+"where does kotlinx.serialization go"
+],
+"m069": [
+"how long should ktor wait for request timeout",
+"timeouts on ktor server",
+"what is the max timeout for kentor to answer the request?"
+],
+"m070": [
+"what is a tenant id used for",
+"what is the provider of tallyline",
+"who is login on tallyline"
+],
+"m071": [
+"what are API key codes",
+"api is stored as hashes",
+"which api key is visible at creation and is visible at creation",
+"what type of key is tl live api?"
+],
+"m072": [
+"how long does it take for access tokens to expire"
+],
+"m073": [
+"what is required_permissions()",
+"where is the permission check in sql controller",
+"where do permission check occur"
+],
+"m074": [
+"what role can a company have",
+"is administrator a role",
+"what role is admin",
+"what roles in a business do you have"
+],
+"m075": [
+"what happens when i store session tokens ntsf",
+"when was the csrf discovered",
+"which cookie does samesite=strict use",
+"what is samesite =strict? csff",
+"why i refuse storing session tokens in cookies"
+],
+"m076": [
+"csrf hole",
+"what does csrf mean in post"
+],
+"m077": [
+"what is the api rate",
+"how much requests do you make api?",
+"what is the limit on access api",
+"how many api requests per second"
+],
+"m078": [
+"two factor authentication is mandatory for what roles",
+"what is 2 factor authentication"
+],
+"m079": [
+"what is an api key",
+"are passwords logged in api"
+],
+"m080": [
+"what is the mtls used for",
+"how do service to service calls work"
+],
+"m081": [
+"is linkerd mtls",
+"which server does linkerd use to skip tls",
+"what port does linkerd use"
+],
+"m082": [
+"is there an api for signing keys",
+"when are jwt signed",
+"when is the jwks key issued",
+"how long are jwts signed"
+],
+"m083": [
+"webhook triggered jobs failed",
+"what happened when job authorization was expired",
+"can jwks fail authorization",
+"jwks cache expired"
+],
+"m084": [
+"what is the cloud kms key",
+"what level of encryption is data stored",
+"how to protect personal data",
+"what is encrypted at the field level"
+],
+"m085": [
+"what happens when a tenant deletes their kms key",
+"when do tenant keys expire"
+],
+"m086": [
+"how long does a label security fix take",
+"how much time will it take to fix a security issue",
+"what is safety labeling"
+],
+"m087": [
+"does sso support saML?",
+"is an enterprise sso enabled?"
+],
+"m088": [
+"what is customer console",
+"what is the console in react?"
+],
+"m089": [
+"is invoice table a ps4 file?",
+"what are react components used for",
+"what does react use to make invoices"
+],
+"m090": [
+"why is state managed",
+"what is server state"
+],
+"m091": [
+"what is tan stack query refetches on window focus?",
+"what are the default refetches on window focus"
+],
+"m092": [
+"which console system design system is based on a console design system?",
+"what package design system is npm",
+"what is console design code"
+],
+"m093": [
+"where does the console bundle come from",
+"how big is console?",
+"linux console bundle size"
+],
+"m094": [
+"jpy decimals",
+"what currency round jpy zero",
+"if currency is round what decimals",
+"jpy currency format"
+],
+"m095": [
+"what is t a user facing string ?",
+"what are the json strings",
+"what is the t function for i18n?"
+],
+"m096": [
+"what time zone are accounting dates in"
+],
+"m097": [
+"what is end to end test",
+"is playwright a playwright test",
+"what environment can playwright run",
+"what is playwright console"
+],
+"m098": [
+"when to click invoice row before virtualized table is ready",
+"playwright flake quizlet",
+"playwright plays flake when clicking invoice row"
+],
+"m099": [
+"what cause console errors",
+"when did sentry get console errors"
+],
+"m100": [
+"where do feature flags come from in console",
+"where does flag come from in windows 10",
+"what is the launch darkly flag"
+],
+"m101": [
+"what is validation zod",
+"what does form validation use",
+"what is zod schema"
+],
+"m102": [
+"which npm client must be regenerated?",
+"api client"
+],
+"m103": [
+"github how to use ci in merge",
+"what are the ci workflows",
+"github workflows"
+],
+"m104": [
+"what is the api service?",
+"what gradle compiler is used to build api service"
+],
+"m105": [
+"what is gradle build cache",
+"how long does gradle build take"
+],
+"m106": [
+"how many reviews should we approve",
+"how to approve api changes",
+"api review how many apis do i need"
+],
+"m107": [
+"why is a commit message important"
+],
+"m108": [
+"what are container images",
+"docker images"
+],
+"m109": [
+"what is integration test",
+"what type of testing is used in macos integration tests ?",
+"how to use testcontainers in windows"
+],
+"m110": [
+"how many runs does invoicing test fail?",
+"flaky numbering tests",
+"how did invoicing fail"
+],
+"m111": [
+"how long can a test flakes",
+"does it take flakes to be quarantined"
+],
+"m112": [
+"when does dependencybot open pull requests"
+],
+"m113": [
+"ktor k2 definition",
+"ktor how to change",
+"is ktor k2 or k3 used"
+],
+"m114": [
+"what processor will replace the ketlin processor",
+"what processors are used to make kotlin",
+"when will kotlin be replaced",
+"when does kotlin 1.9 come out",
+"when do ksp processors go out"
+],
+"m115": [
+"is kotlin static analysis"
+],
+"m116": [
+"release tags definition"
+],
+"m117": [
+"what is sbom for images",
+"what is sbom in syft"
+],
+"m118": [
+"how big is actions cache",
+"how much do you get from GitHub actions",
+"what is the limit to github actions"
+],
+"m119": [
+"is there a shared store in ci",
+"how long do ci steps take?",
+"how long does a pnpm install take",
+"what is the ci time for npm install",
+"how long to install npm and sharestore"
+],
+"m120": [
+"what is the console in node",
+"what is pnpm lts?",
+"is the console pinned?",
+"what is the console used with",
+"what type of nvmrc is used"
+],
+"m121": [
+"how many merges to main",
+"what are squash merge requests"
+],
+"m122": [
+"why were self hosted runners removed"
+],
+"m123": [
+"which datastream exports invoices",
+"tl_analytics",
+"how is analytics pipeline implemented",
+"what datastream does postgresql use to query"
+],
+"m124": [
+"where does analysis live",
+"where is dbt analytics stored",
+"where to run an analytics dbt report",
+"dbt model",
+"which utc do analytics models run"
+],
+"m125": [
+"are revenue metrics computed in dbt?",
+"how to measure revenue",
+"what is the difference between revenue and revenue metrics"
+],
+"m126": [
+"what type of column is datastream",
+"datastream converts numbers into dbt",
+"can you convert numeric columns in big query"
+],
+"m127": [
+"what is dbt model names",
+"what is the name of the layer"
+],
+"m128": [
+"is fct a monthly revenue model",
+"what is monthly recurring revenue"
+],
+"m129": [
+"what is plan change in fct_pmr_daily",
+"how many upgrades are in fct mrr monthly",
+"when did the plan change event occur?",
+"when were fct changes emitted",
+"how did fct-mrr-daily double count upgrades?"
+],
+"m130": [
+"how big query charges by byte",
+"how much data does big query scan",
+"what size is big query",
+"how large does bigger query scan",
+"what is the number of GB of data that big query charges by"
+],
+"m131": [
+"how long to churn a account"
+],
+"m132": [
+"what is big query product events",
+"why are product events sent to segment",
+"where do product events land",
+"is big query a operational database"
+],
+"m133": [
+"how long does it take for a segment to identify the user",
+"what is segment ids",
+"which segment identifies calls from consoles sent as a user id"
+],
+"m134": [
+"what is the main dag in cloud composer",
+"what is a airflow cloud composer"
+],
+"m135": [
+"what is the current sla for finance",
+"how soon will nightly finance sla be changed",
+"what does adg miss",
+"how many times does the daga miss a sla?"
+],
+"m136": [
+"when should a schema change be made in database",
+"when do schema changes happen",
+"a schema change to a table needs to be scheduled",
+"when can you backfill datastream"
+],
+"m137": [
+"how long is data retention big query",
+"how long do event marts have to be stored"
+],
+"m138": [
+"what are incremental models on dbt",
+"do incremental models have unique key?",
+"do incremental models do a full merge scan"
+],
+"m139": [
+"is personal data stg",
+"is personal information pseudonymized"
+],
+"m140": [],
+"m141": [
+"what does inv number mean",
+"invoice number spacing",
+"ivn number"
+],
+"m142": [
+"how to cancel a voided invoice",
+"what happens when you get a voided invoice",
+"how to keep an invoice in the system"
+],
+"m143": [
+"what are credit notes"
+],
+"m144": [
+"how is VAT calculated",
+"what is german tax rate",
+"is VAT taxed per line"
+],
+"m145": [
+"how many cents is a rounding in an invoice",
+"how much is a rounding invoice",
+"do you pay vat on rounding the invoice"
+],
+"m146": [
+"where does reverse charge on a bill apply",
+"can a reverse charge be used for b2b invoices",
+"______________ charge is an invoice where no tax is applied to"
+],
+"m147": [
+"what is vinity vat id",
+"does vues have an id validation",
+"vies vat validation"
+],
+"m148": [
+"how long is sepa payment taken",
+"how long does sepa take to settle",
+"how many day to process sepa payments"
+],
+"m149": [
+"when to charge sepa direct debit",
+"how long do direct debits take",
+"how long does sepa debit last"
+],
+"m150": [
+"when is dunning required to send reminders"
+],
+"m151": [
+"how many days to pay for iep",
+"how to reduce a reminder fee",
+"how long is the first reminder if you pay irs"
+],
+"m152": [
+"tmocs subscriptions",
+"how many months free is a subscription",
+"how long are subscription plans valid",
+"does a subscription plan have a free trial",
+"what are subscription plans for aps"
+],
+"m153": [
+"what is a plan upgrade based on stripe?",
+"what is stripe proration",
+"what's the upcoming invoice endpoint in stripe"
+],
+"m154": [
+"what does stripe object mean",
+"what are stripes in java"
+],
+"m155": [
+"where do stripe webhooks go"
+],
+"m156": [
+"what does stripe deliver",
+"how do you charge invoices on stripe",
+"can stripe deliver event orders before checkout",
+"what is stripe event delivery"
+],
+"m157": [
+"what is italian customer invoicing?",
+"what format do invoices come in",
+"what is italian e invoice format",
+"what sdi exchange is used by italian customers"
+],
+"m158": [
+"when is zechnung scheduled",
+"what kind of support do german public sector customers get",
+"when does xrechnung support begin"
+],
+"m159": [
+"what is grafana metrics",
+"where are metrics scraped",
+"where do metrics live",
+"where is analytics scraped"
+],
+"m160": [
+"what are cloud logs"
+],
+"m161": [
+"log lines carries request id",
+"what are the three fields that the tenant has if you log",
+"logging lint CI"
+],
+"m162": [
+"what is cloud trail used for",
+"how to use otlp data",
+"how do clouds trace works?",
+"what type of tracking is cloud trace"
+],
+"m163": [
+"what is alert fatigue",
+"does cpu affect payments",
+"what is a alert in cpc",
+"what is error notification",
+"what are alerts on cpu"
+],
+"m164": [
+"what is slo api"
+],
+"m165": [
+"what is a error rate alert?",
+"what error rate should be hid in a dashboard"
+],
+"m166": [
+"what is the time of on call pager duty",
+"what time is pagerduty on call",
+"when is on call for pda"
+],
+"m167": [
+"what do alerts have to include",
+"how to  merge an alert with a runbook",
+"what happens when alerts link to runbooks",
+"what is runningbooks on alerts"
+],
+"m168": [
+"when was disk pressure alerts released",
+"what happens when you hit disk pressure",
+"gb pdf file pressure alert",
+"what does disk pressure mean when pdf is printed"
+],
+"m169": [
+"can pc reset prometheus counters?",
+"how do pods reset counters"
+],
+"m170": [
+"how does tallyline check uptime",
+"the uptime checks probe in healthz"
+],
+"m171": [
+"what is tenant_id",
+"what do tenant names come in",
+"what data does prometheus use for tenant number"
+],
+"m172": [
+"how many metric bills are there?",
+"when did the metric label begin",
+"when did we add metric label to invoice?"
+],
+"m173": [
+"what was the cause of the outage",
+"when did the api image rollout fail"
+],
+"m174": [
+"webhook triggered jobs",
+"how long after a sign key rotation does a webhook fail?",
+"when did webhook fail"
+],
+"m175": [
+"what is the lifetime of a jwks key?",
+"how long does jwks cache last?"
+],
+"m176": [
+"how long are email invoices delayed",
+"why are sendgrid invoices delayed",
+"which sendgrid app is used for sending invoices"
+],
+"m177": [
+"when does customer impact report go to blameless",
+"how long does it take for customers to get a blameless postmortem"
+],
+"m178": [
+"what was the slowdown for microsoft",
+"where did the slowdown come from",
+"is the access encrypted lock an error?"
+],
+"m179": [
+"how long after an incident can i update the status page"
+],
+"m180": [
+"what is the severity level",
+"severity status"
+],
+"m181": [
+"how many sepa mandates are in charge"
+],
+"m182": [
+"can idempotency pass",
+"what is idempotency key",
+"is idempotency key required for batch payments"
+],
+"m183": [
+"if you double charged someone, Stripe would refund it?",
+"how much do you need to charge for stripe?",
+"does stripe automatically approve double charged customers",
+"what is the amount that should be sent as a refund to a double charged customer"
+],
+"m184": [
+"is internet marketing a domain",
+"why did my dns go down"
+],
+"m185": [
+"do tl-pg-prod run delete or delete",
+"what does delete command do against agent session",
+"can you use deleted sql on an agent",
+"can a db run delete"
+],
+"m186": [
+"when is the best time to deploy to production",
+"is there a weekend for deployment of production",
+"what time of day is a week to deploy"
+],
+"m187": [
+"how to define runtime dependency",
+"what to do with runtime api"
+],
+"m188": [
+"do openapi client regenerate",
+"what are openapi files",
+"how to use openapi"
+],
+"m189": [
+"how long do invoices expire",
+"tl invoice pdf expires",
+"can you store pdf invoices in a public bucket"
+],
+"m190": [
+"architect decision adr definition",
+"what is an architecture decision called",
+"architectural decisions are recorded as adrs adr"
+],
+"m191": [
+"how many change lines can be in one pull request",
+"how long do pull requests last",
+"how much change on pull request"
+],
+"m192": [
+"what time is sprints",
+"when is sprints planning?"
+],
+"m193": [
+"what issue number does dunning sepa retry start with",
+"which branch issue number starts with the issue number?",
+"branch name for dunning sepa retry"
+],
+"m194": [
+"who are the owners of billing codes",
+"what is the api repository?",
+"where is kotlin billing"
+],
+"m195": [
+"what is a floating point in java?",
+"float point currency definition",
+"does money have floating point value?"
+],
+"m196": [
+"when does rust end",
+"what was the first invoice service",
+"what year was the original invoice service rs developed in rust",
+"when did the invoice service prototype go bad"
+],
+"m197": [
+"what is the function to calculate VAT",
+"kt vat definition",
+"what is single place vat",
+"what is vat in billing"
+],
+"m198": [
+"what font is used in invoice rendering"
+],
+"m199": [
+"what is the default line spacing for open pdf",
+"can openpdf be used for long invoices",
+"what is openpdf format",
+"when updating to open pdf",
+"is there an upgrade to openpdf?"
+],
+"m200": [
+"what is tl_pdf_concrency",
+"what is pdf_conversion?",
+"what environment variable handles invoice pdfs for a worker",
+"how many invoice pdfs can a worker render"
+]
+}
