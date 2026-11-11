@@ -1,1 +1,0 @@
-- Cargo.lock records oml-page and oml-web at 0.6.3, so --locked builds on main pass again after v0.6.3 and #204 landed together.

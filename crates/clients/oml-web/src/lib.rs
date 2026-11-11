@@ -57,8 +57,7 @@ pub use oml_page::SIGN_IN_PATH;
 
 /// The pages this process serves, as `(method, path)`: each moved page has
 /// its own path under `/web/`, so every proxy and Ingress routes by path
-/// alone, and the lead answers the page's old `?view=` URL with a `303` here
-/// (ADR-0070 d4, d7 (b) as amended). `deploy/caddy/Caddyfile`, both compose
+/// alone (ADR-0070 d4, d7 (b) as amended). `deploy/caddy/Caddyfile`, both compose
 /// files and the chart's `web.ingressPaths` route the same set
 /// (`tests/routes.rs`).
 pub const PAGES: &[(&str, &str)] = &[

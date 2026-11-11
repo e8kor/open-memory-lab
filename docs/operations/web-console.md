@@ -25,26 +25,24 @@ the admin page the queue of held memories per workarea and bulk review; the revi
 author, and a verdict the API refuses is shown with its code. On the Keys view a key's value or a
 connect code is shown once, on the page the act lands on: it travels there sealed in a cookie that
 page clears, never in an address or a log line, and `oml-web` keeps no copy. The admin's Keys view
-lists one person's keys, named by `user`, with a cut-off beside each. The server answers the old
-addresses, `GET /web` (signed in), `GET /web?view=guardrails`, `?view=workarea`,
-`?view=memories` (with `display=atlas`, the Atlas), `?view=review`, `?view=keys`, and
-`GET /web/admin?view=workarea`, `?view=memories`, `?view=review`, `?view=held` and `?view=queue`,
-with a redirect to the new paths, so bookmarks keep working. One memory opened by its id is at
+lists one person's keys, named by `user`, with a cut-off beside each. A signed-in `GET /web` goes
+on to the Keys view. One memory opened by its id is at
 `/web/memory?id=<id>`, and on the admin page, with its attribution and the form that proposes its
 next version, at `/web/admin/memory?id=<id>`; the admin page's Curate view is at
-`/web/admin/curate`. The server answers `GET /web?view=memories&memory=<id>`,
-`GET /web/admin?view=memories&memory=<id>` and `GET /web/admin?view=curate` with a redirect there,
-carrying only the memory's id. The onboarding page is at `/web/start`, with its status poll at `/web/start/status` and the
+`/web/admin/curate`. The onboarding page is at `/web/start`, with its status poll at `/web/start/status` and the
 export at `/web/start/export`; the setup view at `/web/setup`; the admin overview (the allowlist and
 the review and curation grants) at `/web/admin/people`; and the users and quotas page at
-`/web/admin/users`. The server answers `GET /web?view=setup` and every `GET /web/admin` with a
-redirect there; removing an address, disabling a person and closing a deletion request each show a
+`/web/admin/users`. Removing an address, disabling a person and closing a deletion request each show a
 confirmation first. The server's only web pages are now sign-in, the sign-up terms page and
 sign-out. A Mermaid diagram is drawn beside its source on every page that shows
 one, the Review card included, in a sandboxed frame `oml-web` serves at `/web/render/` with its
-pinned bundle at `/web/assets/`; route both prefixes to `oml-web`. A form from an old page that posts
-one of these views' acts, or a creation, a supersession or a curation, to the server runs nothing
-and lands on the view. Run
+pinned bundle at `/web/assets/`; route both prefixes to `oml-web`.
+
+Since v0.7.1 the server no longer redirects the addresses of v0.6 (ADR-0070, "The old URLs
+deleted"). A bookmark of `GET /web?view=...` answers not found once signed in, `GET /web/admin` and
+anything below it that `oml-web` does not serve answer not found, and a form from an old page that
+posts an act other than sign-out to `POST /web` or `POST /web/admin` is refused and runs nothing.
+Use the paths above. Run
 `oml-web` behind the same proxy as the server before you upgrade: a deployment that sends these
 paths to the server shows not found.
 

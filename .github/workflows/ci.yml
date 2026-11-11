@@ -776,7 +776,7 @@ jobs:
       # Through the chart's Ingress (ADR-0070 d4): oml-web is ready over the
       # hop and its doctor agrees; the moved page sends a signed-out browser
       # to the lead's sign-in; a signed-in person gets the pages from oml-web
-      # and runs one act through it; the old ?view= URLs redirect to them.
+      # and runs one act through it; the old ?view= URLs are not found.
       - name: The chart's Ingress routes oml-web's pages to it, signed out and signed in
         run: |
           kubectl --namespace oml port-forward service/traefik 8088:80 >"$RUNNER_TEMP/port-forward-ingress.log" 2>&1 &

@@ -236,14 +236,14 @@ async fn the_first_admin_email_is_added_under_an_admin_key_and_signs_in_through_
     let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
     let (status, _, page) = send(
         &router,
-        Request::get("/web/admin")
+        Request::get("/web")
             .header(header::COOKIE, &cookie)
             .body(Body::empty())
             .expect("a request"),
     )
     .await;
-    // The admin page is oml-web's (ADR-0070 d7 (b)): the lead sends it to
-    // the overview's own path, where oml-web opens it for an admin entry.
+    // The session stands: a signed-in GET /web goes on to the Keys view,
+    // which oml-web serves (ADR-0070 d7 (b)).
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
 
     // The first sign-in issued alice's session keys under the serving role:
