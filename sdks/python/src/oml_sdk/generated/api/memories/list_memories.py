@@ -27,6 +27,7 @@ def _get_kwargs(
     origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    as_of: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
@@ -97,6 +98,11 @@ def _get_kwargs(
         json_until = until.isoformat()
     params["until"] = json_until
 
+    json_as_of: str | Unset = UNSET
+    if not isinstance(as_of, Unset):
+        json_as_of = as_of.isoformat()
+    params["as_of"] = json_as_of
+
     params["limit"] = limit
 
     params["cursor"] = cursor
@@ -157,6 +163,7 @@ def sync_detailed(
     origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    as_of: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
@@ -199,6 +206,7 @@ def sync_detailed(
             with every other filter by AND; rows without a kind are left out (ADR-0063 d3).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        as_of (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         x_request_id (str | Unset):
@@ -226,6 +234,7 @@ def sync_detailed(
         origin_kinds=origin_kinds,
         since=since,
         until=until,
+        as_of=as_of,
         limit=limit,
         cursor=cursor,
         x_request_id=x_request_id,
@@ -255,6 +264,7 @@ def sync(
     origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    as_of: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
@@ -297,6 +307,7 @@ def sync(
             with every other filter by AND; rows without a kind are left out (ADR-0063 d3).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        as_of (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         x_request_id (str | Unset):
@@ -325,6 +336,7 @@ def sync(
         origin_kinds=origin_kinds,
         since=since,
         until=until,
+        as_of=as_of,
         limit=limit,
         cursor=cursor,
         x_request_id=x_request_id,
@@ -348,6 +360,7 @@ async def asyncio_detailed(
     origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    as_of: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
@@ -390,6 +403,7 @@ async def asyncio_detailed(
             with every other filter by AND; rows without a kind are left out (ADR-0063 d3).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        as_of (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         x_request_id (str | Unset):
@@ -417,6 +431,7 @@ async def asyncio_detailed(
         origin_kinds=origin_kinds,
         since=since,
         until=until,
+        as_of=as_of,
         limit=limit,
         cursor=cursor,
         x_request_id=x_request_id,
@@ -444,6 +459,7 @@ async def asyncio(
     origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    as_of: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
@@ -486,6 +502,7 @@ async def asyncio(
             with every other filter by AND; rows without a kind are left out (ADR-0063 d3).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        as_of (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         x_request_id (str | Unset):
@@ -515,6 +532,7 @@ async def asyncio(
             origin_kinds=origin_kinds,
             since=since,
             until=until,
+            as_of=as_of,
             limit=limit,
             cursor=cursor,
             x_request_id=x_request_id,

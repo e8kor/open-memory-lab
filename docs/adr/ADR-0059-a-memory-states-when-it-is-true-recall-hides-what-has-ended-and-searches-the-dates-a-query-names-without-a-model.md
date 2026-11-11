@@ -378,7 +378,8 @@ the reading is recorded here before the code.
       built) is served at no instant, and no earlier version stands in for it (ADR-0036 d3, R4).
       An erased version never reappears.
     - A claim retired after the instant serves the tip it had then, a version today's get serves
-      the reader as history (ADR-0025 d8); retired by the instant, it serves nothing.
+      the reader as history (ADR-0025 d8); retired by the instant, recall serves nothing of it
+      and the listing its retirement version, flagged, as the listing does today.
     - A held row is served at an instant only when it was recorded by then and today's rules
       serve it: the caller's own with `include_unreviewed`, or inside an in-progress scope
       (ADR-0030 d3). A version held at the instant and promoted since was not the tip then and is
@@ -428,14 +429,20 @@ the reading is recorded here before the code.
   is sent without `own`. Get at an instant answers `access.not_found` for a version recorded
   after it, and otherwise exactly as get answers today.
 
-- **d20 — One index serves the tip probe: migration 0041.** The probe "a later version of this
-  claim promoted at or before the instant" reads `memories_tip_moves` on (`tenant_id`,
-  `workarea_id`, `claim_key`, `version`) `INCLUDE` (`promoted_at`) where `promoted_at` is set, as
-  an index condition under row security: equality on `uuid` and `text`, `int4gt` and
-  `timestamptz_le` are leakproof (`pg_proc.proleakproof`, PostgreSQL 18, checked 2026-11-11).
-  It holds only the promoted versions, every state of them, so an erased successor still ends its
-  predecessor's tip. Created `ON ONLY` the parent and per partition, then attached, under a 5 s
-  lock wait, as 0026 (d11).
+- **d20 — One index serves the tip probe: migration 0041.** A version promoted by the instant
+  is the tip then when it is today's tip, since a tip moves only forward (d16); otherwise the
+  probe "the greatest version of this claim promoted at or before the instant", correlated so it
+  runs once per replaced candidate, reads `memories_tip_moves` on (`tenant_id`, `workarea_id`,
+  `claim_key`, `version`) `INCLUDE` (`promoted_at`) where `promoted_at` is set, backwards by an
+  index-only scan whose index condition is the claim, under row security: equality on `uuid`
+  and `text`, `int4gt` and `timestamptz_le` are leakproof (`pg_proc.proleakproof`, PostgreSQL 18,
+  checked 2026-11-11). It holds only the promoted versions, every state of them, so an erased
+  successor still ends its predecessor's tip. Created `ON ONLY` the parent and per partition,
+  then attached, under a 5 s lock wait, as 0026 (d11). The instant is inlined in the search
+  statements as a literal of the validated fixed-width form, since binding it would renumber
+  every statement's parameters, and such a statement is not cached. Cost, measured on this
+  branch (Measurements of the amendment): a recall at an instant reads the replaced versions of
+  its scope beside the tips, and reads a postings pipeline by the scan.
 
 - **d21 — Laws, each a test named after its sentence, red before the code**, run over both
   stores by `oml-port-contracts`: `an_as_of_read_serves_the_tip_the_claim_had_then`,

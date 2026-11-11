@@ -11,7 +11,7 @@ T = TypeVar("T", bound="SearchSettingsValidTime")
 @_attrs_define
 class SearchSettingsValidTime:
     """The tenant's served memories that declare valid_from, and those whose valid_until has passed, which recall hides by
-    default (proposed ADR-0059 d12).
+    default (ADR-0059 d12).
 
         Attributes:
             declared (int):

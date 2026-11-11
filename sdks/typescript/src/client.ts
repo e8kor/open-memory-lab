@@ -95,6 +95,8 @@ export function fenceFor(format?: string | null): string {
 /** `read`'s fetch: one version with its text. */
 export interface GetInput {
   artifact_id: string;
+  /** The version as it was at this past instant: not found when recorded after it (ADR-0059 d19). */
+  as_of?: string;
 }
 /** `read`'s recall: ranked hits over promoted rows, and the caller's held rows with `include_unreviewed`. */
 export type RecallInput = RecallRequest;
@@ -141,8 +143,9 @@ const UNRESOLVED_RULE =
 
 // The fields of read's modes: oml_read's (ADR-0039 d4), and include_text,
 // which the HTTP recall serves beside them.
-const READ_GET: readonly string[] = ["artifact_id"];
+const READ_GET: readonly string[] = ["artifact_id", "as_of"];
 const READ_RECALL: readonly string[] = [
+  "as_of",
   "query",
   "workarea",
   "k",
@@ -158,6 +161,7 @@ const READ_RECALL: readonly string[] = [
   "sources",
 ];
 const READ_LISTING: readonly string[] = [
+  "as_of",
   "own",
   "workarea",
   "claim_key",
@@ -351,7 +355,8 @@ export class OmlClient {
    * Read in oml_read's three modes (ADR-0039 d4): `artifact_id` fetches one version with its text;
    * `query` recalls over promoted rows in `workarea`, else the key's default workarea, and the
    * caller's own held rows with `include_unreviewed`; neither lists one page, newest first, of the
-   * key's own rows, or with `own: false` the promoted tips of `workarea`'s subtree. A field outside
+   * key's own rows, or with `own: false` the promoted tips of `workarea`'s subtree. `as_of`, in every
+   * mode, reads memory as it was at that past instant under today's access (ADR-0059 d14). A field outside
    * the mode, and `query` beside `artifact_id`, reject with `request.validation` naming it before
    * anything is sent; only the fields given are sent.
    */
@@ -384,7 +389,10 @@ export class OmlClient {
     if (mode === "get") {
       const answer = await this.#send((signal) =>
         this.#api.GET("/v1/memories/{artifact_id}", {
-          params: { path: { artifact_id: String(given.artifact_id) } },
+          params: {
+            path: { artifact_id: String(given.artifact_id) },
+            ...(given.as_of !== undefined ? { query: { as_of: String(given.as_of) } } : {}),
+          },
           signal,
         }),
       );
@@ -399,10 +407,14 @@ export class OmlClient {
     return this.#listing(given as ListingInput);
   }
 
-  /** One page of `GET /v1/memories`, `own` defaulting to true as oml_read's listing does (ADR-0039 d4). */
+  /**
+   * One page of `GET /v1/memories`, `own` defaulting to true as oml_read's listing does, or to false
+   * with `as_of`, which reads the scoped listing (ADR-0039 d4; ADR-0059 d19).
+   */
   async #listing(query: ListingInput): Promise<MemoryPage> {
+    const own = query.as_of === undefined;
     const answer = await this.#send((signal) =>
-      this.#api.GET("/v1/memories", { params: { query: { own: true, ...query } }, signal }),
+      this.#api.GET("/v1/memories", { params: { query: { own, ...query } }, signal }),
     );
     return answer.data as MemoryPage;
   }

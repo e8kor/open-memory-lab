@@ -151,6 +151,7 @@ paths:
         - { name: origin_kinds, in: query, style: form, explode: false, schema: { $ref: '#/components/schemas/OriginKinds' }, description: "Comma-separated: rows whose origin kind is one of these; rows without a kind are left out (ADR-0063 d3). Malformed is request.validation naming origin_kinds." }
         - { name: since, in: query, schema: { type: string, format: date-time } }
         - { name: until, in: query, schema: { type: string, format: date-time } }
+        - { $ref: '#/components/parameters/AsOf', description: "The scoped listing at a past instant: each claim's tip then, and inside an in-progress scope the held rows recorded by then, under today's grants (ADR-0059 d19). With own, with_own, author or tip it is request.validation naming as_of. since and until still filter by recorded time." }
         - { $ref: '#/components/parameters/Limit' }
         - { $ref: '#/components/parameters/Cursor' }
       responses:
@@ -273,8 +274,8 @@ paths:
       tags: [memories]
       operationId: getMemory
       summary: One memory with its text (decrypted on the serving path) and attachment descriptors.
-      description: 'The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row''s workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row''s own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author''s key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on.'
-      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/ArtifactId' }]
+      description: 'The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row''s workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row''s own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author''s key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on. With as_of, a version recorded after the instant is access.not_found and any other answers as get does today (ADR-0059 d19); as_of is the only query parameter get takes.'
+      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/ArtifactId' }, { $ref: '#/components/parameters/AsOf' }]
       responses:
         '200':
           description: The memory.
@@ -3185,6 +3186,18 @@ components:
         rows written between pages can appear in later pages. A cursor is scoped to the key
         that obtained it and expires (the TTL is a named deployment setting); a stale or
         foreign cursor answers 400 request.validation.
+    AsOf:
+      name: as_of
+      in: query
+      schema: { type: string, format: date-time }
+      description: >-
+        Read memory as it was at this past instant, under today's grants (ADR-0059 d14, d15):
+        a version recorded after it does not exist, and a claim's tip is the version promoted
+        latest at or before it; state, access, retirement and expiry are read today, so a
+        version erased or demoted today is never served and no earlier one stands in. An RFC
+        3339 date-time with an offset and at most six fractional digits; a date, or an instant
+        after the server's clock, is request.validation with details.field as_of. The answer
+        never echoes it.
     ArtifactId:
       name: artifact_id
       in: path
@@ -3542,8 +3555,8 @@ components:
         verb: { type: string, enum: [remember, learn], description: "Omitted, learn when derives_from is non-empty and remember otherwise (ADR-0039 d3); a sent verb is honoured. learn requires non-empty derives_from — refused with submission.lineage_required otherwise; a derived conclusion without nameable lineage is remember with kind derived_fact." }
         claim_key: { type: string, description: "Groups versions of one claim; one live claim per (tenant, workarea): a new claim collides with a held, promoted or demoted version (submission.claim_key_conflict), and a claim whose every version is rejected or erased releases the key (docs/architecture/audit-and-lineage.md). Omitted, the server derives auto- plus the first 16 lowercase hex digits of SHA-256(the key's id, a zero byte, the NFC body), so a conflict only ever names the writer's own rows; a sent claim_key starting auto- is refused with request.validation, details.field /claim_key (ADR-0039 d6)." }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail], default: memory, description: "guardrail requires severity and admits rule (ADR-0037 d10; since v0.5.1)." }
-        valid_from: { $ref: '#/components/schemas/ValidEnd', description: "When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the submission; only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0059 d2)." }
-        valid_until: { $ref: '#/components/schemas/ValidEnd', description: "When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3)." }
+        valid_from: { $ref: '#/components/schemas/ValidEnd', description: "When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the submission; only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (ADR-0059 d2)." }
+        valid_until: { $ref: '#/components/schemas/ValidEnd', description: "When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (ADR-0059 d2, d3)." }
         severity: { $ref: '#/components/schemas/Severity' }
         rule: { $ref: '#/components/schemas/GuardrailRule' }
         body: { type: string, description: 'Text body — claim text, at most submission.max_body_size (shipped 1 MiB) UTF-8 bytes of the NFC-normalized body; larger is 413 request.payload_too_large (http-api.md Limits). Binary content goes through the designed attachments (openapi-designed.yaml).' }
@@ -3680,16 +3693,16 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/SourceChecked' }
             - { type: 'null' }
-        valid_from: { type: [string, 'null'], description: "When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM, YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2)." }
-        valid_until: { type: [string, 'null'], description: "When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (proposed ADR-0059 d2, d4)." }
+        valid_from: { type: [string, 'null'], description: "When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM, YYYY-MM-DD) or an instant; null when it declares none (ADR-0059 d2)." }
+        valid_until: { type: [string, 'null'], description: "When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (ADR-0059 d2, d4)." }
         format: { type: string, description: "The media type signed with the version; text/plain for every version written before formats (ADR-0056 d1, d12)." }
         title: { type: [string, 'null'], description: "The title signed with the version, or null (ADR-0056 d10)." }
-        replaces_valid_until: { type: string, description: "On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (proposed ADR-0059 d4)." }
+        replaces_valid_until: { type: string, description: "On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (ADR-0059 d4)." }
 
     ValidEnd:
       type: string
       pattern: '^[0-9]{4}(-[0-9]{2}(-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?([Zz]|[+-][0-9]{2}:[0-9]{2}))?)?)?$'
-      description: 'YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).'
+      description: 'YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (ADR-0059 d2).'
 
     Memory:
       allOf:
@@ -3761,8 +3774,9 @@ components:
             served and search.fallback is any_term (ADR-0049 d5).
         feedback: { $ref: '#/components/schemas/Feedback' }
         timings: { type: boolean, description: "Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d14). Since v0.5.9." }
-        include_expired: { type: boolean, default: false, description: 'true also serves memories whose valid_until has passed, which recall hides by default; get and the listings always serve them (proposed ADR-0059 d3).' }
-        now: { $ref: '#/components/schemas/ValidEnd', description: "The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired and anchors the query's relative dates (last week, three days ago) (proposed ADR-0059 d5)." }
+        include_expired: { type: boolean, default: false, description: 'true also serves memories whose valid_until has passed, which recall hides by default; get and the listings always serve them (ADR-0059 d3).' }
+        now: { $ref: '#/components/schemas/ValidEnd', description: "The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired and anchors the query's relative dates (last week, three days ago) (ADR-0059 d5)." }
+        as_of: { type: string, format: date-time, description: "Recall memory as it was at this past instant, under today's grants: each claim's tip then, the caller's held rows recorded by then, and the steering in force then; scores are today's. A pipeline that reads postings is answered by bm25's scan over the scope at the instant, keyword-all by keyword-any with every word, and search.pipeline names the one asked. Only sources scope combines with it. An RFC 3339 date-time; a date or an instant after the server's clock is request.validation naming /as_of. Digested with the request when sent (ADR-0059 d14, d15, d17, d18)." }
         sources:
           description: >-
             Where to search (ADR-0072 d5). scope, the default, is the workarea's subtree as
@@ -3835,7 +3849,7 @@ components:
       properties:
         terms: { type: array, items: { type: string }, description: 'The query words the row holds, as the pipeline reads words.' }
         of: { type: integer, minimum: 0, description: How many words the query had. }
-        via: { type: array, items: { type: string, enum: [keyword_all, keyword_any, bm25, trigram, bm25_postings, sparse, time] }, description: 'The retrievers whose lists held the row; time when its valid time overlaps the window the query named (proposed ADR-0059 d7).' }
+        via: { type: array, items: { type: string, enum: [keyword_all, keyword_any, bm25, trigram, bm25_postings, sparse, time] }, description: 'The retrievers whose lists held the row; time when its valid time overlaps the window the query named (ADR-0059 d7).' }
         rerank: { type: [number, 'null'], minimum: 0, maximum: 1, description: 'The reranker''s relevance of the row to the query, when a reranking pipeline scored it; the hit''s score is then this relevance (ADR-0053 d7).' }
         rank_before: { type: [integer, 'null'], minimum: 1, description: 'The row''s rank in the first stage''s list, from 1, when the reranker scored it (ADR-0053 d7).' }
         tokens:
@@ -3867,7 +3881,7 @@ components:
         window:
           type: [object, 'null']
           additionalProperties: false
-          description: 'The date window read from the query by rule oml-when/1, anchored to the recall''s now; null when the query names no date (proposed ADR-0059 d6).'
+          description: 'The date window read from the query by rule oml-when/1, anchored to the recall''s now; null when the query names no date (ADR-0059 d6).'
           required: [from, until, phrase]
           properties:
             from: { type: [string, 'null'], format: date-time, description: The window's first instant; null when open. }
@@ -3965,7 +3979,7 @@ components:
         valid_time:
           type: object
           additionalProperties: false
-          description: 'The tenant''s served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (proposed ADR-0059 d12).'
+          description: 'The tenant''s served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (ADR-0059 d12).'
           required: [declared, expired]
           properties:
             declared: { type: integer, minimum: 0 }
@@ -4109,8 +4123,8 @@ components:
         severity: { $ref: '#/components/schemas/Severity' }
         rule: { $ref: '#/components/schemas/GuardrailRule' }
         on_similar: { type: string, enum: [hold, refuse], description: "Omitted, hold. What the write does when the similar check names a row the key may read with the same text or a near copy (ADR-0050 d1, d17): hold captures it held and lists the rows in similar; refuse answers 409 submission.similar_exists with details.similar, journals nothing and claims no idempotency record. A retirement is never checked, and the claim superseded is never named. Not part of the request digest. Since v0.5.9." }
-        valid_from: { $ref: '#/components/schemas/ValidEnd', description: "When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the successor, which inherits no valid time from its target; once ratified, a declared valid_from also ends the replaced version there (proposed ADR-0059 d4); only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0059 d2)." }
-        valid_until: { $ref: '#/components/schemas/ValidEnd', description: "When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3)." }
+        valid_from: { $ref: '#/components/schemas/ValidEnd', description: "When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the successor, which inherits no valid time from its target; once ratified, a declared valid_from also ends the replaced version there (ADR-0059 d4); only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (ADR-0059 d2)." }
+        valid_until: { $ref: '#/components/schemas/ValidEnd', description: "When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (ADR-0059 d2, d3)." }
         format: { type: string, description: "The media type of body, signed with the successor and fixed for it; nothing is inherited from the target, so a format changes by supersession alone: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. An unknown value is request.validation with details.field format and details.allowed; a source its format refuses is 422 submission.format_invalid; kinds other than memory and derived_fact take text/plain or text/markdown only (ADR-0056 d1, d13)." }
         title: { type: string, maxLength: 100, description: "One line stating the one fact the body shows, NFC, at most 100 characters, signed with the version. Required with a format other than text/plain and text/markdown: request.validation with details.field title otherwise (ADR-0056 d10)." }
 
