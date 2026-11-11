@@ -33,17 +33,18 @@ pub const WIDEN_SIGNAL_REFRESH_SECS: i64 = 60;
 pub const WIDEN_SIGNAL_MAX_AGE_SECS: i64 = 300;
 
 /// The most (form, node) counts the lead holds across every signal, about
-/// 64 MB at 16 bytes a pair; the oldest built are dropped past it.
-pub const WIDEN_SIGNAL_PAIRS_HELD: usize = 4_000_000;
+/// 128 MB at 16 bytes a pair; the oldest built are dropped past it.
+pub const WIDEN_SIGNAL_PAIRS_HELD: usize = 8_000_000;
 
-/// The most (form, node) counts one tenant's signals hold, about 16 MB: a
+/// The most (form, node) counts one tenant's signals hold, about 32 MB: a
 /// tenant past it drops its own oldest first, so no tenant evicts another
-/// below its share, and a signal larger on its own is never read whole.
-pub const WIDEN_SIGNAL_TENANT_PAIRS: usize = 1_000_000;
+/// below its share, and a signal larger on its own is never read whole. A
+/// tenant of 100,000 rows over 50 workareas measured 1,333,609.
+pub const WIDEN_SIGNAL_TENANT_PAIRS: usize = 2_000_000;
 
 /// A refresh taking longer is stopped by the transport, and the build it
 /// was running is counted as failed and marked.
-pub const WIDEN_SIGNAL_BUILD_SECS: u64 = 10;
+pub const WIDEN_SIGNAL_BUILD_SECS: u64 = 30;
 
 /// The widen signal's bounds, the constants above unless a test sets them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

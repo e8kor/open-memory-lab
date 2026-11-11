@@ -64,7 +64,10 @@ is for one client unless a row says otherwise.
 | Write cost in the store, 165,000 memories | insert held 2.40 / 8.08 ms, promote 4.54 / 8.94 ms, supersede 6.35 / 12.6 ms (p50 / p95) | `bench/scale/REPORT.md`, write cost |
 | Postings fill (migration 0021) | 70.4 s at 165,000 memories, about 0.4 s per 1,000 | `bench/scale/REPORT.md` |
 | Learned sparse recall, 100,000 memories | universe p95 164 ms, over the 50 ms bar, so it is off by default | `bench/scale/REPORT.md`, learned sparse lane |
+| The widen hint's signal, 100,000 synthetic rows over 50 workareas | built in 5.0 s off the request path; 1,333,609 counts, about 21 MB; peak resident set 94 MB during the build; a `scope` recall with it held p95 13.6 ms | `oml-pg`'s `federation_timing`, `the_widen_signal_on_a_tenant_of_100k_rows` |
 | Review queue under load | six reviewer keys approved about 77 rows a second with 5,000 held, 2 to 14 a second with 45,000 held, before the review index | `eval/bench/REPORT.md` |
+
+The widen hint's signals take at most about 128 MB of the lead's memory, 32 MB per tenant ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md#the-widen-hint-as-built-2026-11-11)). Size the lead's memory limit with that headroom.
 
 The limits bind in this order as a server grows: concurrent reranked recalls, the data volume, and a key
 holding thousands of unreviewed rows. More than four reranked recalls at once start to time out and fall back
