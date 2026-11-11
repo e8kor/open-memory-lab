@@ -29,7 +29,7 @@ class AdminMemory:
         state (AdminMemoryState):
         workarea_path (str):
         text (str):
-        key (str): The authoring key's name.
+        key (None | str): The authoring key's name; null for a key that has no name, which key_id names (ADR-0070 d5).
         created_at (datetime.datetime):
         kind (AdminMemoryKind | Unset): The kind the version was written as; the admin page refuses to supersede or
             retire a guardrail by it (ADR-0037 d17; ADR-0070 d5). Since v0.7.0.
@@ -56,7 +56,7 @@ class AdminMemory:
     state: AdminMemoryState
     workarea_path: str
     text: str
-    key: str
+    key: None | str
     created_at: datetime.datetime
     kind: AdminMemoryKind | Unset = UNSET
     key_id: str | Unset = UNSET
@@ -87,6 +87,7 @@ class AdminMemory:
 
         text = self.text
 
+        key: None | str
         key = self.key
 
         created_at = self.created_at.isoformat()
@@ -215,7 +216,12 @@ class AdminMemory:
 
         text = d.pop("text")
 
-        key = d.pop("key")
+        def _parse_key(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        key = _parse_key(d.pop("key"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 

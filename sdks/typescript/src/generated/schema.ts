@@ -1344,8 +1344,8 @@ export interface components {
              * @enum {string}
              */
             kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
-            /** @description The authoring key's name. */
-            key: string;
+            /** @description The authoring key's name; null for a key that has no name, which key_id names (ADR-0070 d5). */
+            key: string | null;
             /** @description The authoring key's id, which names a key that has no name (ADR-0070 d5). Since v0.7.0. */
             key_id?: string;
             principal?: string | null;

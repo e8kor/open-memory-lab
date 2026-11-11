@@ -962,7 +962,6 @@ async fn at_the_memories_quota_a_replay_returns_its_receipt_and_a_new_version_is
     drop_db(&rig.db).await;
 }
 
-/// The drawn user of GitHub account `id`, read off the journal.
 /// A console act resolves its caller once and acts as it, so a create by
 /// an agent key costs one request of the key's rate, not two (#253): at
 /// one request a minute, the first request of the key creates.
@@ -987,6 +986,7 @@ async fn a_workarea_create_by_an_agent_key_costs_one_request_of_its_rate() {
     drop_db(&rig.db).await;
 }
 
+/// The drawn user of GitHub account `id`, read off the journal.
 async fn rig_user(rig: &Rig, _id: u64) -> String {
     events(rig)
         .await
