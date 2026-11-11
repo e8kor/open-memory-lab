@@ -972,6 +972,15 @@ pub async fn a_hits_score_never_depends_on_which_sources_were_selected<S: Journa
     store: S,
     search: &str,
 ) {
+    a_hits_score_never_depends_on_selection_at(store, search, 100).await;
+}
+
+/// Test 6 at `k`: a small `k` makes a pruning read's rescore depth bind.
+pub async fn a_hits_score_never_depends_on_selection_at<S: JournalStore + Clone>(
+    store: S,
+    search: &str,
+    k: usize,
+) {
     let w = FedWorld::seeded(store).await;
     for i in 0..6 {
         w.promote("legal", &format!("invoice retry policy note {i}"))
@@ -982,6 +991,8 @@ pub async fn a_hits_score_never_depends_on_which_sources_were_selected<S: Journa
         .await;
     for query in QUERIES {
         w.max_sources(8).await;
+        // The union's ranking, read deep, so restricting it and then cutting
+        // at k is the law's right side (d7.2).
         let union = w
             .recall(&key, query, "home", Some(Sources::Wide), search, 100)
             .await
@@ -991,7 +1002,7 @@ pub async fn a_hits_score_never_depends_on_which_sources_were_selected<S: Journa
         for max in [0, 1, 2] {
             w.max_sources(max).await;
             let capped = w
-                .recall(&key, query, "home", Some(Sources::Wide), search, 100)
+                .recall(&key, query, "home", Some(Sources::Wide), search, k)
                 .await
                 .expect("a capped wide");
             let report = capped.sources.clone().expect("a wide report");
@@ -1001,6 +1012,7 @@ pub async fn a_hits_score_never_depends_on_which_sources_were_selected<S: Journa
                 .iter()
                 .filter(|h| searched.contains(&h.served.memory.workarea_id))
                 .map(|h| (h.served.memory.memory_id, h.score.to_bits()))
+                .take(k)
                 .collect();
             let got: Vec<(Uuid, u32)> = capped
                 .hits

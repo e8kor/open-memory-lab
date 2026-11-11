@@ -9305,17 +9305,20 @@ async fn a_selection_crossing_the_posting_budget_moves_no_score() {
         return;
     }
     let created = Mutex::new(Vec::new());
-    let store = fresh_search_store(&created)
-        .await
-        .with_prune_limits(oml_pg::PruneLimits {
-            frequent_share: 0.2,
-            posting_budget: 4,
-        });
-    oml_port_contracts::federation::a_hits_score_never_depends_on_which_sources_were_selected(
-        store,
-        "bm25-postings",
-    )
-    .await;
+    for k in [1, 3, 10, 100] {
+        let store = fresh_search_store(&created)
+            .await
+            .with_prune_limits(oml_pg::PruneLimits {
+                frequent_share: 0.2,
+                posting_budget: 4,
+            });
+        oml_port_contracts::federation::a_hits_score_never_depends_on_selection_at(
+            store,
+            "bm25-postings",
+            k,
+        )
+        .await;
+    }
     drop_dbs(&created).await;
 }
 
