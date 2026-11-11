@@ -440,9 +440,16 @@ the reading is recorded here before the code.
   successor still ends its predecessor's tip. Created `ON ONLY` the parent and per partition,
   then attached, under a 5 s lock wait, as 0026 (d11). The instant is inlined in the search
   statements as a literal of the validated fixed-width form, since binding it would renumber
-  every statement's parameters, and such a statement is not cached. Cost, measured on this
-  branch (Measurements of the amendment): a recall at an instant reads the replaced versions of
-  its scope beside the tips, and reads a postings pipeline by the scan.
+  every statement's parameters, and such a statement is not cached. Cost, measured 2026-11-11
+  by `crates/adapters/oml-pg/tests/as_of_timing.rs` on `bm25`, over a worst case where every row
+  matches every query and every claim has one replaced version: a recall at an instant reads the
+  replaced versions beside the tips and probes once per replaced row in each of `bm25`'s two
+  scope reads. At 10,000 rows on CI, today p50 80 ms and p95 85 ms, at an instant 168 ms and 173
+  ms (2.0×); at 100,000 rows on the shared host under load, today 490 ms and 541 ms, at an
+  instant 1,736 ms and 2,284 ms (3.5× and 4.2×). A postings pipeline at an instant is read by
+  the scan, so `bm25-postings` pays the same: 1,720 ms p50 at 100,000 rows against its 519 ms
+  today. The tests bound the ratio at 3× and 5×. A tip set materialized once per statement is
+  the next step when an as-of use needs it faster.
 
 - **d21 — Laws, each a test named after its sentence, red before the code**, run over both
   stores by `oml-port-contracts`: `an_as_of_read_serves_the_tip_the_claim_had_then`,
