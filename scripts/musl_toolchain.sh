@@ -9,8 +9,9 @@
 # cargo build stay as they are.
 set -euo pipefail
 
-if timeout 240 sudo apt-get -o Acquire::Retries=2 update \
-  && timeout 240 sudo apt-get -o Acquire::Retries=2 install -y musl-tools; then
+apt=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+if timeout 240 sudo apt-get "${apt[@]}" update \
+  && timeout 240 sudo apt-get "${apt[@]}" install -y musl-tools; then
   exit 0
 fi
 echo "::warning::musl-tools unavailable from Ubuntu's mirrors; using Zig's musl C compiler"
@@ -29,7 +30,7 @@ dir="${RUNNER_TEMP:-$PWD/.tmp}/musl-zig"
 mkdir -p "$dir"
 curl -fsSL --retry 3 -o "$dir/zig.whl" "$url"
 echo "$sha  $dir/zig.whl" | sha256sum -c -
-python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$dir/zig.whl" "$dir"
+python3 -I -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$dir/zig.whl" "$dir"
 chmod +x "$dir/ziglang/zig"
 # cc counts zig cc as clang and passes --target=<Rust triple>, which zig
 # does not parse; the wrapper drops it and names the runner's own musl.
