@@ -21,6 +21,7 @@ recall finds what an agent asks for, and where it fails. The findings are in
 | `served.sh` | boots a lead against a throwaway database, loads the set and runs `run.py` once per served search pipeline, then `gate.py` (job `recall-eval`) |
 | `gate.py` | each pipeline's gate (ADR-0049 d9; `bm25-rerank`'s from ADR-0053 d9); fails when the default misses its gate or a category falls by more than one query, or when `keyword-all` does not reproduce v0.5.0 |
 | `federated.sh`, `federated.py` | the federated recall eval (ADR-0072 d11): one committed workarea per topic, `sources` scope, wide and the union on a scoped and a cross split, the widen hint, and a skew split padded with SciFact abstracts |
+| `fed2.py`, `descriptors.json` | the phase 2 gate (ADR-0072 d4.5, d11; #206), run as `EVAL_PHASE2=1 federated.sh`: the union's ranking per query from the served lead, then `content`, `described`, oracle and ReDDE selection replayed offline on `bm25-postings` and `bm25-sparse`; `descriptors.json` holds one author-written descriptor per topic |
 | `results/` | one JSON per method (summary per category, and per query the ranked ids and latency), and `tables.md` |
 
 ### `corpus.json`
@@ -88,7 +89,8 @@ memory's text. At most four drafts are kept per memory. `provenance` records the
 weights' and tokenizer's SHA-256, the prompt's version and digest, the decoding parameters and
 seeds, and how many drafts each check dropped.
 
-Each query labels one memory, grade 2, the one it was drafted from. Its `fold` is that memory's,
+Each query labels one memory, grade 2, the one it was drafted from (except g0113, relabelled by
+the operator's check, below). Its `fold` is that memory's,
 so five-fold cross-validation, how phase 0 tunes `w_q`, never tunes on one query of a memory and
 scores on its sibling, and the near-duplicate check keeps the synthetic set's 121 queries out.
 `person_check.sample` is a seeded tenth of the ids (67, seed 20261111); a person checks those
@@ -102,8 +104,9 @@ mark is g0113, "What database table contains financial records for the team?", l
 (the invoices table). The operator's note: the query is vague, ledger_entries (m037, m038) and
 payments (m043) are financial records too, so add m037 and m038 as relevant or drop the query. The
 operator chose to add them and keep m033, so version 2 labels m033, m037 and m038 grade 2: one
-label of 67 corrected. Notes on answer spans do not change memory-level scoring. No pass threshold
-was set before the check; the operator accepted the set with this one correction. `grow.py build`
+label of 67 corrected. Notes on answer spans do not change memory-level scoring. The operator
+reviewed the 67 sampled labels; one (g0113) was corrected at their decision; no pass threshold was
+set in advance. `grow.py build`
 applies the correction by query id; the query keeps fold 3, the fold of m033, which it was drafted
 from, so m038 (fold 0) is the one memory a query of another fold also labels. The served
 baselines on the benchmark pages were measured on version 1; rescored from their stored top 10 on
@@ -202,6 +205,46 @@ overall.
    200 tokens), for the default and for `keyword-all`. `EVAL_PIPELINES` and `EVAL_DEFAULT`
    narrow the run. Copy the JSON into `results/` when a change is meant to move the numbers;
    the gate compares each category with the committed file.
+
+6. The phase 2 gate, with the SciFact archive and the sparse encoder's files:
+
+   ```sh
+   scripts/fetch_sparse_model.sh .tmp/oml-models/doc-v3-distill
+   EVAL_PHASE2=1 OML_SEARCH__SPARSE__MODEL_DIR=.tmp/oml-models/doc-v3-distill \
+       PGHOST=127.0.0.1 PGPORT=... PGUSER=oml PGPASSWORD=... \
+       eval/recall/federated.sh .tmp/fed2 path/to/scifact/source.zip
+   python3 eval/recall/fed2.py analyze --out .tmp/fed2   # replays from fed2_raw.json alone
+   ```
+
+   It writes `fed2_raw.json` (each query's union ranking at depth 100 on `bm25-postings` and
+   `sparse`, E(s) per candidate, the served `wide` answer, and the descriptor scores) and
+   `fed2.json`, the gate. The readings it takes are ADR-0072's "Phase 2 gate as measured":
+
+   - **The split** is d11's as phase 1 built it: the floor pools cross and skew (242 queries),
+     and "scope-only queries" is the scoped split. Pooled, the 3-point floor is about 7 queries,
+     not d11's "four of the 121".
+   - **d13's ReDDE clause** is read on success@5, and selection recall is reported beside it.
+   - **The descriptors** were written once, from `corpus.json`, by the lane that ran the gate. The
+     lane attests that it had not read `queries.json`, but one commit holds both files, so the
+     order cannot be checked. Each descriptor is a summary of at most 600 characters and eight
+     questions. `about` is empty, since no ontology terms are on main. A future run should commit
+     its descriptors before it reads the queries.
+   - **The descriptor score** is BM25 over the candidates' descriptors alone. It comes from a
+     served `bm25` recall whose `sources` lists one workarea per candidate descriptor, because
+     memory-kind-3 postings are not built.
+   - **The replay.** A searched set's answer is the union's ranking restricted to it (d7.2).
+     `analyze` checks this against the served `wide` answer, which is served for `content` alone.
+     `bm25-sparse` is refused under `wide`, so its legs are fused over R and restricted after
+     fusion. Its check against the served `scope` answer covers the fusion arithmetic, not the
+     restriction.
+   - **α** is the largest value in 0.0 to 1.0, in steps of 0.1, with the best selection recall
+     on a seeded random half of the skew split, and it is reported on the other half.
+     `descriptor_slots` is its default of 2. The pooled floor includes the tuning half: the one
+     query gained, q063, is in it, and on the held-out half `described` gains nothing.
+   - **The interval** is a paired percentile bootstrap, 10,000 resamples, seed 20261111. The
+     oracle ceiling ignores d4.5's E > 0 rule, so it bounds any selector, not only d4.5's.
+   - **The adversarial descriptor** holds every word of every query, unbounded by the schema. It
+     replaces each topic's descriptor in turn, and the worst topic is reported.
 
 ## Changing the set
 
