@@ -18,6 +18,8 @@ uuid.workspace = true
 
 [dev-dependencies]
 oml-port-contracts.workspace = true
+# Throwaway databases for the timing binary.
+oml-test-pg.workspace = true
 
 [lints]
 workspace = true
