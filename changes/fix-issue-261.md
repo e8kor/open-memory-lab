@@ -1,0 +1,1 @@
+- Changed internals only: the per-turn recall test proves that a session stops recalling after three misses by counting the requests its stub receives, not by timing the fourth prompt (issue #261).
