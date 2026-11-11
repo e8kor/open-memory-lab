@@ -137,8 +137,8 @@ private network.
   of its own, today `/web/guardrails`, `/web/workareas`, `/web/admin/workareas`, `/web/memories`,
   `/web/atlas`, `/web/admin/memories`, `/web/admin/atlas`, `/web/data/memories`,
   `/web/admin/data/memories`, `/web/review`, `/web/admin/review`, `/web/keys` and
-  `/web/admin/keys`, each for `GET` and, for the Workareas, Review and Keys views, `POST`; the
-  server redirects the old `?view=` addresses there.
+  `/web/admin/keys`, each for `GET` and, for the Workareas, Review and Keys views, `POST`. Since
+  v0.7.1 the old `?view=` addresses and `/web/admin` answer not found.
   `deploy/caddy/Caddyfile` is a Caddy configuration that routes them; a page that moves in a
   later release adds a route there.
 - Keep the server's and `oml-web`'s own security headers. The proxy adds none.
