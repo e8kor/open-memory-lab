@@ -244,6 +244,17 @@ mod tests {
         assert!(serves("POST", "/web/workareas"));
         assert!(serves("GET", "/web/admin/workareas"));
         assert!(serves("POST", "/web/admin/workareas"));
+        for path in [
+            "/web/memories",
+            "/web/atlas",
+            "/web/admin/memories",
+            "/web/admin/atlas",
+            "/web/data/memories",
+            "/web/admin/data/memories",
+        ] {
+            assert!(serves("GET", path), "{path}");
+            assert!(!serves("POST", path), "{path}");
+        }
         assert!(serves("GET", "/web/healthz"));
         assert!(!serves("GET", "/web"));
         assert!(!serves("POST", "/web"));
