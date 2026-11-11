@@ -109,9 +109,7 @@ fn doctor_with_an_admin_key_warns_server_origin_when_oauth_issuer_is_unset() {
         .route("/healthz", get(|| async { Json(json!({"status": "ok"})) }))
         .route(
             "/readyz",
-            get(|| async {
-                Json(json!({"status": "ok", "checks": {}, "oauth_issuer": null}))
-            }),
+            get(|| async { Json(json!({"status": "ok", "checks": {}, "oauth_issuer": null})) }),
         )
         .route(
             "/v2/whoami",
@@ -134,11 +132,7 @@ fn doctor_with_an_admin_key_warns_server_origin_when_oauth_issuer_is_unset() {
     runtime.spawn(async move {
         axum::serve(listener, router).await.expect("serve");
     });
-    let out = oml(
-        &dir,
-        &["--url", &server, "--api-key", KEY, "doctor"],
-        &[],
-    );
+    let out = oml(&dir, &["--url", &server, "--api-key", KEY, "doctor"], &[]);
     runtime.shutdown_background();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(

@@ -197,6 +197,10 @@ pub struct App<J, S, C, I, Sc> {
     /// `oauth.issuer`, the public origin; `None` where the deployment sets
     /// none, and then no connect code is minted (ADR-0031 d1).
     oauth_issuer: Option<Issuer>,
+    /// `server.shared`: the operator says the server's admins are not its
+    /// callers', which whoami reports so `oml sync` asks consent
+    /// (ADR-0076 d9).
+    shared: bool,
     /// Wrong connect-code entries since the process started, deployment
     /// wide and never per tenant, for doctor (ADR-0031 d8, d14).
     connect_code_failures: AtomicU64,
@@ -1343,6 +1347,7 @@ where
             ids,
             scanner,
             oauth_issuer: None,
+            shared: false,
             connect_code_failures: AtomicU64::new(0),
             observer: Arc::new(NoObserver),
             brief_max_tokens: oml_domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
@@ -1463,6 +1468,23 @@ where
             oauth_issuer: Some(issuer),
             ..self
         }
+    }
+
+    /// The app for a deployment that sets `server.shared` (ADR-0076 d9).
+    #[must_use]
+    pub fn with_shared(self, shared: bool) -> Self {
+        Self { shared, ..self }
+    }
+
+    /// Whether the server's admins are not its callers': `server.shared`, or
+    /// open sign-up, which admits people who are not the operator's
+    /// (ADR-0076 d9; ADR-0068 d1). Whoami reports it as `shared`.
+    #[must_use]
+    pub fn shared(&self) -> bool {
+        self.shared
+            || self
+                .signup_policy()
+                .is_some_and(|p| p.mode == oml_domain::signup::SignupMode::Open)
     }
 
     /// The deployment's `oauth.issuer`, `None` where it is unset: the one

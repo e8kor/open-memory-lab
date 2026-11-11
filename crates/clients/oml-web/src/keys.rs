@@ -33,11 +33,6 @@ use crate::pages::{Fields, refused};
 use crate::session::{PageCalls, Session, call, cookie};
 use crate::{Capacity, Web, acts, outcome};
 
-/// The public server the plugins and the agent kit connect to unless told
-/// otherwise (ADR-0043), shown beside a key's value where the API names no
-/// issuer.
-pub const DEFAULT_SERVER: &str = "https://memory.doublegate.io";
-
 /// The user page's acts, each the act of one documented operation.
 pub const USER_ACTIONS: &[&str] = &["issue_key", "connect_key", "connect_code", "cut_off"];
 
@@ -181,16 +176,21 @@ fn secret_card(secret: &Secret) -> (&'static str, String) {
             name,
             value,
             server,
-        } => (
-            "Key issued",
-            format!(
-                r#"<h1>{}</h1><p class="desc">Shown once: copy it now. Then <a href="/web?view=setup">set up</a> your agent.</p><div class="card secret"><p class="label">For your agent</p><pre>OML_URL={}
-OML_API_KEY={}</pre></div><p><a href="{USER_KEYS_PATH}">Back to your keys</a></p>"#,
-                short(name),
-                attr(server),
-                attr(value)
-            ),
-        ),
+        } => {
+            let (url, note) = if server.is_empty() {
+                (String::new(), format!(r#"<p class="desc">{NO_SERVER}</p>"#))
+            } else {
+                (format!("OML_URL={}\n", attr(server)), String::new())
+            };
+            (
+                "Key issued",
+                format!(
+                    r#"<h1>{}</h1><p class="desc">Shown once: copy it now. Then <a href="/web?view=setup">set up</a> your agent.</p>{note}<div class="card secret"><p class="label">For your agent</p><pre>{url}OML_API_KEY={}</pre></div><p><a href="{USER_KEYS_PATH}">Back to your keys</a></p>"#,
+                    short(name),
+                    attr(value)
+                ),
+            )
+        }
         Secret::Code {
             name,
             code,
@@ -395,15 +395,25 @@ fn defined(side: Side, action: &str, name: &str) -> bool {
 
 /// The server URL an agent sets beside its key: the API's issuer.
 async fn server(web: &Web) -> String {
-    match web.api.issuer().await {
-        Ok(issuer) => issuer,
-        Err(_) => web
-            .layers
-            .public_origin
-            .clone()
-            .unwrap_or_else(|| DEFAULT_SERVER.to_owned()),
-    }
+    server_from(
+        web.api.issuer().await.ok(),
+        web.layers.public_origin.as_deref(),
+    )
 }
+
+/// The API's issuer, else `oml-web`'s own public origin, else empty: the
+/// page then names `no_server` and shows no URL, never another server's
+/// (ADR-0076 d6, d8).
+fn server_from(issuer: Option<String>, public_origin: Option<&str>) -> String {
+    issuer
+        .or_else(|| public_origin.map(ToOwned::to_owned))
+        .unwrap_or_default()
+}
+
+/// The card's line for a key when no server address is known (ADR-0076 d8).
+const NO_SERVER: &str = "This server's address is not configured (no_server: set web.public_url, \
+                         or oauth.issuer on the lead); ask its operator for the URL to give your \
+                         agents.";
 
 /// One act: the form checked as every act's is ([`acts::read`]), then its
 /// operation under the session's capacity credential and the form's

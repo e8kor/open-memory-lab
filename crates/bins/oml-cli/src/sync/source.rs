@@ -172,6 +172,25 @@ impl Git {
             .map(|s| s.trim().to_owned())
     }
 
+    /// Every value of a multi-valued local git config entry of this clone;
+    /// empty when it is unset.
+    #[must_use]
+    pub fn config_all(&self, name: &str) -> Vec<String> {
+        self.run(&["config", "--local", "--get-all", name])
+            .map(|s| s.lines().map(|l| l.trim().to_owned()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Adds one value to a multi-valued local git config entry of this
+    /// clone, keeping the values it holds.
+    ///
+    /// # Errors
+    /// git fails.
+    pub fn add_config(&self, name: &str, value: &str) -> Result<(), String> {
+        self.run(&["config", "--local", "--add", name, value])
+            .map(|_| ())
+    }
+
     /// Sets a local git config value of this clone.
     ///
     /// # Errors
@@ -355,89 +374,103 @@ pub fn glob_match(pattern: &str, path: &str) -> bool {
     segments(&p, &s)
 }
 
-/// The maintainer's public server, which a run refuses unless
-/// `--allow-public-server` (ADR-0057 d6, ADR-0043).
-pub const PUBLIC_SERVER: &str = "https://memory.doublegate.io";
-
-/// Whether `url` names the public server's host, whatever its scheme,
-/// port, path, trailing slash or case.
+/// A server's origin as consent records it: the scheme and host
+/// lowercased, the host's trailing dot cut, and the port when it is not the
+/// scheme's default; no user, path, query or fragment (ADR-0076 d9).
 #[must_use]
-pub fn is_public_server(url: &str) -> bool {
-    let host_of = |u: &str| -> String {
-        let rest = u.trim().split_once("://").map_or(u.trim(), |(_, r)| r);
-        let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-        let host = authority.rsplit('@').next().unwrap_or(authority);
-        host.split(':')
-            .next()
-            .unwrap_or(host)
-            .trim_end_matches('.')
-            .to_lowercase()
+pub fn origin_of(url: &str) -> String {
+    let url = url.trim();
+    let (scheme, rest) = url.split_once("://").unwrap_or(("https", url));
+    let scheme = scheme.to_lowercase();
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) if !host.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => {
+            (host, Some(port))
+        }
+        _ => (authority, None),
     };
-    host_of(url) == host_of(PUBLIC_SERVER)
+    let host = host.trim_end_matches('.').to_lowercase();
+    let default = match scheme.as_str() {
+        "https" => "443",
+        "http" => "80",
+        _ => "",
+    };
+    match port {
+        Some(port) if port != default => format!("{scheme}://{host}:{port}"),
+        _ => format!("{scheme}://{host}"),
+    }
 }
 
-/// The git config entry recording that this clone's operator allowed the
-/// public server (ADR-0057 d17).
+/// The git config entry holding, one value per server, the origins this
+/// clone's operator consented to sync to (ADR-0076 d9, amending ADR-0057
+/// d6). A value of `true`, which ADR-0057 d6 wrote and which names no
+/// server, is not consent.
 pub const ALLOW_PUBLIC_CONFIG: &str = "oml.allowPublicServer";
 
-/// How a sync is allowed to use the maintainer's public server.
+/// How a sync is allowed to use a server that says it is shared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PublicServerConsent {
-    /// The URL is not the maintainer's public server.
+pub enum SharedServerConsent {
+    /// The server does not say it is shared: its whoami answers `shared:
+    /// false`, or, by the operator's choice of 2026-11-11, omits `shared`
+    /// as a server older than ADR-0076 does.
     NotRequired,
-    /// The source's clone recorded an earlier opt-in.
+    /// The source's clone recorded an earlier opt-in for this origin.
     Recorded,
-    /// This invocation supplied the first explicit opt-in for the source's clone.
+    /// This invocation supplied the first explicit opt-in for this origin in
+    /// the source's clone.
     FirstOptIn,
     /// The source is outside a clone, so this explicit opt-in cannot be reused.
     OneTime,
 }
 
-/// Authorize a public-server sync from the source clone's recorded consent or
-/// this invocation's explicit flag. The caller must print the disclosure before
-/// passing a `FirstOptIn` result to [`record_public_server_consent`].
+/// Authorize a sync to `url`, whose whoami said `shared`, from the source
+/// clone's recorded consent for that origin or this invocation's explicit
+/// flag. The caller must print the disclosure before passing a `FirstOptIn`
+/// result to [`record_shared_server_consent`] (ADR-0076 d9).
 ///
 /// # Errors
-/// The public server is not allowed without recorded or explicit consent.
-pub fn authorize_public_server(
+/// A shared server is not allowed without recorded or explicit consent.
+pub fn authorize_shared_server(
     url: &str,
+    shared: bool,
     source: &Path,
     explicit: bool,
-) -> Result<PublicServerConsent, String> {
-    if !is_public_server(url) {
-        return Ok(PublicServerConsent::NotRequired);
+) -> Result<SharedServerConsent, String> {
+    if !shared {
+        return Ok(SharedServerConsent::NotRequired);
     }
     let git = Git::at(source).ok();
+    let origin = origin_of(url);
     if git
         .as_ref()
-        .and_then(|git| git.config(ALLOW_PUBLIC_CONFIG))
-        .as_deref()
-        == Some("true")
+        .is_some_and(|git| git.config_all(ALLOW_PUBLIC_CONFIG).contains(&origin))
     {
-        return Ok(PublicServerConsent::Recorded);
+        return Ok(SharedServerConsent::Recorded);
     }
     if !explicit {
         return Err(format!(
-            "{url} is the maintainer's public server: its admins can read submitted memories, \
-             and superseding or retiring a memory does not erase submitted text or anchors; \
-             pass --allow-public-server to opt in; consent is reused when the source is inside \
-             a git clone"
+            "{url} declares itself shared: its admins can read submitted memories, and \
+             superseding or retiring a memory does not erase submitted text or anchors; pass \
+             --allow-public-server to opt in; consent is reused for this server when the source \
+             is inside a git clone"
         ));
     }
     Ok(if git.is_some() {
-        PublicServerConsent::FirstOptIn
+        SharedServerConsent::FirstOptIn
     } else {
-        PublicServerConsent::OneTime
+        SharedServerConsent::OneTime
     })
 }
 
-/// Record the disclosed first opt-in in the clone containing the sync source.
+/// Record the disclosed first opt-in for `url`'s origin in the clone
+/// containing the sync source, beside any other origin it holds.
 ///
 /// # Errors
 /// The source is outside a clone or its local git config cannot be written.
-pub fn record_public_server_consent(source: &Path) -> Result<(), String> {
+pub fn record_shared_server_consent(source: &Path, url: &str) -> Result<(), String> {
     let git = Git::at(source)
-        .map_err(|e| format!("cannot record public-server consent for this clone: {e}"))?;
-    git.set_config(ALLOW_PUBLIC_CONFIG, "true")
+        .map_err(|e| format!("cannot record shared-server consent for this clone: {e}"))?;
+    git.add_config(ALLOW_PUBLIC_CONFIG, &origin_of(url))
         .map_err(|e| format!("could not record {ALLOW_PUBLIC_CONFIG} for this clone: {e}"))
 }

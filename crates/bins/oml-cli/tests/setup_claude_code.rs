@@ -504,6 +504,9 @@ fn setup_claude_code_refuses_a_marketplace_named_open_memory_lab_from_another_so
 // No server named (ADR-0076 d4, d8)
 // ---------------------------------------------------------------------------
 
+/// One key-without-URL case: its name, its arguments and its environment.
+type Case<'a> = (&'a str, &'a [&'a str], &'a [(&'a str, &'a str)]);
+
 /// The refusal every key-without-URL case ends in off a terminal.
 const NO_SERVER: &str = "refused setup.no_server: a key was given without a server URL";
 
@@ -521,10 +524,18 @@ fn key_only_credentials(dir: &Path) {
 /// `claude` command (ADR-0076 d4 step 3, d8).
 #[test]
 fn setup_with_a_key_and_no_url_off_a_terminal_is_refused_as_no_server_and_sends_nothing() {
-    let cases: [(&str, &[&str], &[(&str, &str)]); 3] = [
-        ("key-file", &["setup", "claude-code", "--key-file", "{file}"], &[]),
+    let cases: [Case; 3] = [
+        (
+            "key-file",
+            &["setup", "claude-code", "--key-file", "{file}"],
+            &[],
+        ),
         ("api-key", &["--api-key", KEY, "setup", "claude-code"], &[]),
-        ("env-key", &["setup", "claude-code"], &[("OML_API_KEY", KEY)]),
+        (
+            "env-key",
+            &["setup", "claude-code"],
+            &[("OML_API_KEY", KEY)],
+        ),
     ];
     for (case, args, env) in cases {
         let dir = scratch(&format!("no-server-{case}"));
@@ -601,7 +612,15 @@ fn the_configure_line_carries_the_url_the_user_named() {
         &dir,
         &server,
         Some(&bin),
-        &["--url", "{url}", "setup", "claude-code", "--key-file", &file, "--print"],
+        &[
+            "--url",
+            "{url}",
+            "setup",
+            "claude-code",
+            "--key-file",
+            &file,
+            "--print",
+        ],
         &[],
     )
     .output()
@@ -631,7 +650,10 @@ fn a_credentials_file_with_a_key_and_no_url_prompts_on_a_terminal_and_is_refused
     let (status, transcript, sent, configured) =
         on_a_terminal(&dir, &bin, &["setup", "claude-code"], &[], Some("{url}"));
     assert_eq!(status, Some(0), "{transcript}");
-    assert!(transcript.contains("OML server URL (without /mcp):"), "{transcript}");
+    assert!(
+        transcript.contains("OML server URL (without /mcp):"),
+        "{transcript}"
+    );
     assert_eq!(sent, 1, "the whoami check went to the URL typed");
     assert!(configured.starts_with("http://127.0.0.1:"), "{configured}");
     std::fs::remove_dir_all(&dir).expect("cleaned up");
@@ -653,7 +675,10 @@ fn setup_with_a_key_and_no_url_on_a_terminal_sends_the_key_only_to_the_url_typed
         Some("{url}"),
     );
     assert_eq!(status, Some(0), "{transcript}");
-    assert!(transcript.contains("OML server URL (without /mcp):"), "{transcript}");
+    assert!(
+        transcript.contains("OML server URL (without /mcp):"),
+        "{transcript}"
+    );
     assert_eq!(sent, 1, "one whoami, to the URL typed");
     assert!(configured.starts_with("http://127.0.0.1:"), "{configured}");
     assert!(!transcript.contains(KEY), "the key is never printed");
@@ -709,8 +734,11 @@ fn on_a_terminal(
             .send_line(answer.replace("{url}", &server))
             .expect("the answer");
     }
+    // At the end of output the remaining bytes are Eof's match, not what
+    // comes before it.
     let rest = session.expect(Eof).expect("oml exits");
     transcript.push_str(&String::from_utf8_lossy(rest.before()));
+    transcript.push_str(&String::from_utf8_lossy(rest.get(0).unwrap_or_default()));
     let status = match session.get_process_mut().wait().expect("its status") {
         expectrl::process::unix::WaitStatus::Exited(_, code) => Some(code),
         _ => None,

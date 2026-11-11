@@ -313,8 +313,8 @@ def report(errors: list[str]) -> int:
     if not errors:
         print(
             "agent kit check: the plugin archive installs offline, the pinned marketplace names the tag,"
-            " and every kit configuration reaches the default server's /mcp with OML_API_KEY from the"
-            " environment"
+            " and every kit configuration names no server: OML_URL or the .invalid placeholder, with"
+            " OML_API_KEY from the environment"
         )
     return 1 if errors else 0
 

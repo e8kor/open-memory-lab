@@ -835,7 +835,7 @@ oml sync [OPTIONS] --workarea <WORKAREA> <SOURCE>
 | `--retire-all` | Propose retiring every claim this key wrote under the source, as when a draft pull request closes |
 | `--edges` | Propose source-stated edges between promoted tips (dreamer key) |
 | `--ratify` | With --edges, ratify matching pending edges proposed by another key |
-| `--allow-public-server` | Allow the maintainer's public server and record consent for this clone. Its admins can read submissions; supersession or retirement does not erase submitted text or anchors |
+| `--allow-public-server` | Allow a server that declares itself shared and record consent for its origin in this clone. Its admins can read submissions; supersession or retirement does not erase submitted text or anchors |
 | `--allow-rollback` | Treat a source matching an older promoted version as a deliberate revert |
 | `--change-adapter` | Allow changing the adapter used for this source; retires claims written by the old adapter |
 | `--pr <PR>` | Draft pull request <n>: sync records changed between --base and --rev into `<workarea>-pr-<n>` |
@@ -993,7 +993,7 @@ Install and configure an agent tool's OML plugin
 
 ### `oml setup claude-code`
 
-Install the matching oml plugin through the claude CLI, passing the URL and key on stdin. Admin and operator keys are refused. Print commands with --print or when claude is unavailable. Without --url, use <https://memory.doublegate.io>
+Install the matching oml plugin through the claude CLI, passing the URL and key on stdin. Admin and operator keys are refused. Print commands with --print or when claude is unavailable. A key without --url asks for the server on a terminal and is refused elsewhere
 
 ```
 oml setup claude-code [OPTIONS]
@@ -1001,7 +1001,7 @@ oml setup claude-code [OPTIONS]
 
 | Option | Meaning |
 |---|---|
-| `--key-file <KEY_FILE>` | Key file from `oml keys issue-agent --out`, used instead of --api-key and paired with --url or the default server |
+| `--key-file <KEY_FILE>` | Key file from `oml keys issue-agent --out`, used instead of --api-key and paired with --url alone, never with OML_URL |
 | `--print` | Print claude commands without running them; configure reads the key file or OML_API_KEY |
 
 

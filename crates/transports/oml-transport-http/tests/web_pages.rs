@@ -2155,7 +2155,13 @@ async fn the_setup_view_shows_the_servers_own_issuer_and_names_no_other_server()
     let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
     let (status, _, page) = send(&rig.router, get("/web?view=setup", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(page.contains(&format!("<pre class=\"mono\">{ISSUER}</pre>")), "{page}");
+    assert!(
+        page.contains(&format!("<pre class=\"mono\">{ISSUER}</pre>")),
+        "{page}"
+    );
     assert!(!page.to_lowercase().contains("default"), "{page}");
-    assert!(page.contains("give each agent this URL with its key"), "{page}");
+    assert!(
+        page.contains("give each agent this URL with its key"),
+        "{page}"
+    );
 }

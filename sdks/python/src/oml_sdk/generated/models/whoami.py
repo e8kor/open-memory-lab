@@ -41,6 +41,9 @@ class Whoami:
             user (None | WhoamiRef): The key's user root, from which a client learns its root; null for a tenant key
                 (ADR-0044 d11).
             grants (list[WhoamiGrant]): The key's stored grants, each with its epoch and without its deny masks.
+            shared (bool): Whether the server's admins are not the caller's: true when the operator sets server.shared or
+                opens sign-up. oml sync asks consent of a shared server; a client treats an answer without it, from an older
+                server, as false (ADR-0076 d9).
             guardrail_scope (GuardrailScope | Unset): Which applicable guardrails the key loads: workarea, the scope node's
                 alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted,
                 journalled in key.issued; no request changes it, and any other value is request.validation, details.field
@@ -60,6 +63,7 @@ class Whoami:
     crew: None | WhoamiRef
     user: None | WhoamiRef
     grants: list[WhoamiGrant]
+    shared: bool
     guardrail_scope: GuardrailScope | Unset = UNSET
     profile: (
         None
@@ -115,6 +119,8 @@ class Whoami:
             grants_item = grants_item_data.to_dict()
             grants.append(grants_item)
 
+        shared = self.shared
+
         guardrail_scope: str | Unset = UNSET
         if not isinstance(self.guardrail_scope, Unset):
             guardrail_scope = self.guardrail_scope.value
@@ -153,6 +159,7 @@ class Whoami:
                 "crew": crew,
                 "user": user,
                 "grants": grants,
+                "shared": shared,
             }
         )
         if guardrail_scope is not UNSET:
@@ -254,6 +261,8 @@ class Whoami:
 
             grants.append(grants_item)
 
+        shared = d.pop("shared")
+
         _guardrail_scope = d.pop("guardrail_scope", UNSET)
         guardrail_scope: GuardrailScope | Unset
         if isinstance(_guardrail_scope, Unset):
@@ -337,6 +346,7 @@ class Whoami:
             crew=crew,
             user=user,
             grants=grants,
+            shared=shared,
             guardrail_scope=guardrail_scope,
             profile=profile,
             person=person,

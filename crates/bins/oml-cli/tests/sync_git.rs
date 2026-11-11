@@ -11,8 +11,8 @@ fn extracted(loaded: &Loaded) -> Extracted {
     extract(loaded, Kind::default_for(&loaded.paths()))
 }
 use oml_cli::sync::source::{
-    ALLOW_PUBLIC_CONFIG, PublicServerConsent, authorize_public_server, is_secret_shaped,
-    record_public_server_consent, repo_of_remote,
+    ALLOW_PUBLIC_CONFIG, SharedServerConsent, authorize_shared_server, is_secret_shaped, origin_of,
+    record_shared_server_consent, repo_of_remote,
 };
 
 fn scratch(test: &str) -> PathBuf {
@@ -276,103 +276,75 @@ fn oml(cwd: &Path, args: &[&str]) -> (i32, String, String) {
     )
 }
 
+/// A server's origin is its scheme and host, lowercased, and a port only
+/// when it is not the scheme's default; the path and user are not part of
+/// it (ADR-0076 d9).
 #[test]
-fn sync_refuses_the_public_server_without_allow_public_server() {
-    use oml_cli::sync::source::is_public_server;
+fn a_servers_origin_ignores_case_path_user_and_the_default_port() {
     for url in [
-        "https://memory.doublegate.io",
-        "https://MEMORY.doublegate.io/",
-        "https://memory.doublegate.io:443",
-        "http://memory.doublegate.io",
-        "https://memory.doublegate.io/mcp",
-        "memory.doublegate.io",
+        "https://oml.example.com",
+        "https://OML.example.com/",
+        "https://oml.example.com:443",
+        "https://oml.example.com/mcp",
+        "https://user@oml.example.com.",
     ] {
-        assert!(is_public_server(url), "{url}");
+        assert_eq!(origin_of(url), "https://oml.example.com", "{url}");
     }
-    assert!(!is_public_server(
-        "https://memory.doublegate.io.example.com"
-    ));
-    assert!(!is_public_server("https://oml.example.com"));
-    let dir = clone_with("public", "git@github.com:e8kor/docs.git");
-    write(&dir, "docs/a.md", "# A\n\n## B\n\nC.\n");
-    git(&dir, &["add", "."]);
-    git(&dir, &["commit", "-q", "-m", "a"]);
-    let (code, _, err) = oml(
-        &dir,
-        &[
-            "--url",
-            "https://Memory.Doublegate.io:443/",
-            "--api-key",
-            "k",
-            "sync",
-            "docs",
-            "--workarea",
-            "w",
-        ],
-    );
-    assert_eq!(code, 2, "{err}");
-    assert!(
-        err.contains("--allow-public-server")
-            && err.contains("superseding or retiring a memory does not erase"),
-        "{err}"
-    );
-    assert!(
-        Command::new("git")
-            .args(["-C"])
-            .arg(&dir)
-            .args(["config", "--local", "--get", "oml.allowPublicServer"])
-            .output()
-            .unwrap()
-            .stdout
-            .is_empty(),
-        "nothing is recorded on a refusal"
+    assert_eq!(origin_of("http://127.0.0.1:8080/"), "http://127.0.0.1:8080");
+    assert_ne!(
+        origin_of("https://oml.example.com.evil.example"),
+        "https://oml.example.com"
     );
 }
 
 #[test]
-fn public_server_consent_is_recorded_once_and_reused() {
-    let dir = clone_with("public-consent", "git@github.com:e8kor/docs.git");
-    let url = "https://memory.doublegate.io";
-    let err = authorize_public_server(url, &dir, false).unwrap_err();
+fn shared_server_consent_is_recorded_once_per_origin_and_reused() {
+    let dir = clone_with("shared-consent", "git@github.com:e8kor/docs.git");
+    let url = "https://oml.example.com";
+    assert_eq!(
+        authorize_shared_server(url, false, &dir, false).unwrap(),
+        SharedServerConsent::NotRequired,
+        "a server that is not shared asks nothing"
+    );
+    let err = authorize_shared_server(url, true, &dir, false).unwrap_err();
     assert!(err.contains("--allow-public-server"), "{err}");
     assert!(
         !err.contains("ADR-"),
         "CLI errors stay self-contained: {err}"
     );
     assert_eq!(
-        authorize_public_server(url, &dir, true).unwrap(),
-        PublicServerConsent::FirstOptIn
+        authorize_shared_server(url, true, &dir, true).unwrap(),
+        SharedServerConsent::FirstOptIn
     );
     assert!(
         !git(&dir, &["config", "--local", "--list"]).contains(ALLOW_PUBLIC_CONFIG),
         "authorization alone does not persist consent before the disclosure"
     );
-    record_public_server_consent(&dir).unwrap();
+    record_shared_server_consent(&dir, url).unwrap();
     assert_eq!(
-        git(&dir, &["config", "--local", "--get", ALLOW_PUBLIC_CONFIG]),
-        "true"
+        git(
+            &dir,
+            &["config", "--local", "--get-all", ALLOW_PUBLIC_CONFIG]
+        ),
+        "https://oml.example.com"
     );
     assert_eq!(
-        authorize_public_server(url, &dir, false).unwrap(),
-        PublicServerConsent::Recorded,
+        authorize_shared_server(url, true, &dir, false).unwrap(),
+        SharedServerConsent::Recorded,
         "recorded consent needs neither another flag nor another disclosure"
     );
-    assert_eq!(
-        authorize_public_server("https://oml.example.com", &dir, false).unwrap(),
-        PublicServerConsent::NotRequired
-    );
 
-    let outside = scratch("public-consent-outside-a-clone");
+    let outside = scratch("shared-consent-outside-a-clone");
     assert_eq!(
-        authorize_public_server(url, &outside, true).unwrap(),
-        PublicServerConsent::OneTime,
+        authorize_shared_server(url, true, &outside, true).unwrap(),
+        SharedServerConsent::OneTime,
         "an explicit opt-in outside a clone is honestly one-time"
     );
-    assert!(authorize_public_server(url, &outside, false).is_err());
+    assert!(authorize_shared_server(url, true, &outside, false).is_err());
 }
 
 #[test]
-fn public_server_consent_follows_the_source_clone_not_the_invocation_clone() {
+fn shared_server_consent_follows_the_source_clone_not_the_invocation_clone() {
     let invocation = clone_with("consent-invocation", "git@github.com:e8kor/invocation.git");
     let source = clone_with("consent-source", "git@github.com:e8kor/source.git");
     write(&source, "docs/a.md", "# A\n\n## B\n\nC.\n");
@@ -383,18 +355,18 @@ fn public_server_consent_follows_the_source_clone_not_the_invocation_clone() {
     let root = loaded.root.as_deref().expect("the source clone's root");
     assert_eq!(root, source.canonicalize().unwrap());
 
-    let url = "https://memory.doublegate.io";
+    let url = "https://oml.example.com";
     assert_eq!(
-        authorize_public_server(url, root, true).unwrap(),
-        PublicServerConsent::FirstOptIn
+        authorize_shared_server(url, true, root, true).unwrap(),
+        SharedServerConsent::FirstOptIn
     );
-    record_public_server_consent(root).unwrap();
+    record_shared_server_consent(root, url).unwrap();
     assert_eq!(
         git(
             &source,
-            &["config", "--local", "--get", ALLOW_PUBLIC_CONFIG]
+            &["config", "--local", "--get-all", ALLOW_PUBLIC_CONFIG]
         ),
-        "true"
+        "https://oml.example.com"
     );
     assert!(
         !git(&invocation, &["config", "--local", "--list"]).contains(ALLOW_PUBLIC_CONFIG),
@@ -592,7 +564,16 @@ fn docs_clone(test: &str) -> PathBuf {
 /// `oml sync docs` against `server`, with `--allow-public-server` when
 /// `allow`.
 fn sync_to(dir: &Path, server: &str, allow: bool) -> (i32, String, String) {
-    let mut args = vec!["--url", server, "--api-key", "k", "sync", "docs", "--workarea", "w"];
+    let mut args = vec![
+        "--url",
+        server,
+        "--api-key",
+        "k",
+        "sync",
+        "docs",
+        "--workarea",
+        "w",
+    ];
     if allow {
         args.push("--allow-public-server");
     }
@@ -627,7 +608,10 @@ fn sync_to_a_server_that_declares_itself_shared_is_refused_without_consent() {
         err.contains("--allow-public-server") && err.contains(DISCLOSURE),
         "{err}"
     );
-    assert!(recorded(&dir).is_empty(), "nothing is recorded on a refusal");
+    assert!(
+        recorded(&dir).is_empty(),
+        "nothing is recorded on a refusal"
+    );
 }
 
 /// The operator's choice of 2026-11-11 (ADR-0076 d9): a server whose
@@ -662,8 +646,15 @@ fn consent_recorded_for_one_origin_does_not_cover_another() {
     let second = whoami_fixture(&runtime, Some(true));
     let dir = docs_clone("per-origin");
     let (_, _, err) = sync_to(&dir, &first, true);
-    assert!(err.contains(DISCLOSURE), "the first opt-in discloses: {err}");
-    assert_eq!(recorded(&dir), [first.clone()], "the origin is recorded");
+    assert!(
+        err.contains(DISCLOSURE),
+        "the first opt-in discloses: {err}"
+    );
+    assert_eq!(
+        recorded(&dir),
+        std::slice::from_ref(&first),
+        "the origin is recorded"
+    );
     let (_, _, err) = sync_to(&dir, &first, false);
     assert!(
         !err.contains("--allow-public-server"),
@@ -681,7 +672,10 @@ fn a_recorded_true_is_not_consent_and_doctor_names_it() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = whoami_fixture(&runtime, Some(true));
     let dir = docs_clone("legacy-true");
-    git(&dir, &["config", "--local", "oml.allowPublicServer", "true"]);
+    git(
+        &dir,
+        &["config", "--local", "oml.allowPublicServer", "true"],
+    );
     let (code, _, err) = sync_to(&dir, &server, false);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("--allow-public-server"), "{err}");

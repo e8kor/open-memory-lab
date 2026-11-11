@@ -27,10 +27,6 @@ use oml_page::web::{
     USER_MEMORIES_PATH, USER_MEMORY_PATH, USER_REVIEW_PATH, USER_WORKAREAS_PATH, user_tabs,
 };
 
-/// The public server the plugins and the agent kit connect to unless told
-/// otherwise (ADR-0043).
-pub const DEFAULT_SERVER: &str = "https://memory.doublegate.io";
-
 const GUIDES: &str = "https://e8kor.github.io/open-memory-lab/guides";
 
 /// What an act answers.
@@ -314,17 +310,20 @@ where
     }
 
     fn setup_view(&self) -> String {
-        let issuer = self
-            .app
-            .oauth_issuer()
-            .map_or(DEFAULT_SERVER, |i| i.as_str())
-            .to_owned();
-        let url_line = if issuer == DEFAULT_SERVER {
-            "The plugins' default server: an agent needs only its key.".to_owned()
-        } else {
-            format!(
-                "Not the plugins' default (<code>{DEFAULT_SERVER}</code>): give each agent this URL with its key."
-            )
+        // The server's own oauth.issuer is the URL an agent sets beside its
+        // key; no other server is named, and there is no default
+        // (ADR-0076 d6, d8). The pages need oauth.issuer to be on at all.
+        let (issuer, url_line) = match self.app.oauth_issuer() {
+            Some(issuer) => (
+                issuer.as_str().to_owned(),
+                "This server's address: give each agent this URL with its key.".to_owned(),
+            ),
+            None => (
+                String::new(),
+                "This server's address is not configured (no_server: set oauth.issuer); ask its \
+                 operator for the URL to give your agents."
+                    .to_owned(),
+            ),
         };
         format!(
             r#"<h1>Set up</h1><div class="card"><p class="label">Server</p><pre class="mono">{}</pre></div><p class="desc">{url_line}</p><h2>Claude Code</h2><p>Agent key · <a href="{GUIDES}/claude-code/">guide</a></p><h2>Claude on the web and on a phone</h2><p>Connector key · <a href="{GUIDES}/claude-ai-and-mobile/">guide</a></p><h2>Other agent tools</h2><p>Codex CLI, Cursor, Gemini CLI, VS Code, Claude Desktop · <a href="{GUIDES}/other-harnesses/">guide</a></p>"#,
