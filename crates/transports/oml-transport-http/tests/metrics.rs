@@ -158,3 +158,48 @@ async fn the_metrics_listener_serves_the_four_families_with_closed_labels_and_no
     let (status, _) = get(&scrape, "/other").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// A web console act that committed and whose outcome was not recorded is
+/// answered and counted in `oml_idempotency_unsettled_total`, the count
+/// doctor's `handlers` line warns on (#233).
+#[tokio::test]
+async fn an_act_whose_outcome_is_not_recorded_is_counted_unsettled() {
+    let store = MemStore::new();
+    let app = app(&store);
+    let boot = app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: Name::parse("acme").expect("a name"),
+            admin_key_name: Name::parse("root-admin").expect("a name"),
+            admin_principal: "alice-admin".to_owned(),
+        })
+        .await
+        .expect("bootstrap");
+    let traffic = Traffic::new(TrustedProxies::default());
+    let scrape = metrics::router(Arc::clone(traffic.metrics()));
+    let router = state(&store, app).with_traffic(traffic).into_router();
+    store.fail_next_idempotency_settle();
+    let response = router
+        .clone()
+        .oneshot(
+            Request::post("/v2/workareas")
+                .header(
+                    header::AUTHORIZATION,
+                    format!("Bearer {}", boot.admin_key.value),
+                )
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("idempotency-key", "c-1")
+                .body(Body::from(
+                    json!({"name": "lost", "parent": "universe"}).to_string(),
+                ))
+                .expect("a request"),
+        )
+        .await
+        .expect("the router answers");
+    assert_eq!(
+        response.status(),
+        StatusCode::CREATED,
+        "the act is answered"
+    );
+    let (_, text) = get(&scrape, "/metrics").await;
+    assert!(text.contains("oml_idempotency_unsettled_total 1"), "{text}");
+}
