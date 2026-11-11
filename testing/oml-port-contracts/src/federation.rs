@@ -384,6 +384,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
                     now: None,
                     anchor: AnchorFilter::default(),
                     sources,
+                    as_of: None,
                 },
             )
             .await

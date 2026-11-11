@@ -973,6 +973,7 @@ where
             },
             author,
             tip,
+            as_of: None,
         };
         let own = self
             .list_memories(Bearer::Session(web), &listing(true, req.workarea.clone()))

@@ -87,9 +87,9 @@ class HeldPageItemsItem:
         origin (None | Origin | Unset): What kind of source the version's text came from, as signed; null on versions
             written before ADR-0063 (d1-d3).
         valid_from (None | str | Unset): When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM,
-            YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2).
+            YYYY-MM-DD) or an instant; null when it declares none (ADR-0059 d2).
         valid_until (None | str | Unset): When it stops holding, as signed, or the instant a ratified supersession ended
-            it at; null when open (proposed ADR-0059 d2, d4).
+            it at; null when open (ADR-0059 d2, d4).
         format_ (str | Unset): The media type signed with the version; text/plain for every version written before
             formats (ADR-0056 d1, d12).
         title (None | str | Unset): The title signed with the version, or null (ADR-0056 d10).
@@ -98,7 +98,7 @@ class HeldPageItemsItem:
             Since v0.6.4.
         replaces_valid_until (str | Unset): On a held successor alone: the instant approving it ends the version it
             replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when
-            approving ends nothing (proposed ADR-0059 d4).
+            approving ends nothing (ADR-0059 d4).
         text (str | Unset): The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7).
             Absent from a recall item sent with include_text false, and from a listing item unless include_text is true
             (ADR-0070 d5).

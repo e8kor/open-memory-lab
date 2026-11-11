@@ -28,7 +28,7 @@ class SearchSettings:
             on GET /v2/search where the deployment serves bm25-postings or a sparse pipeline; absent from the answer to POST
             /v2/search/default.
         valid_time (SearchSettingsValidTime | Unset): The tenant's served memories that declare valid_from, and those
-            whose valid_until has passed, which recall hides by default (proposed ADR-0059 d12).
+            whose valid_until has passed, which recall hides by default (ADR-0059 d12).
     """
 
     enabled: list[str]

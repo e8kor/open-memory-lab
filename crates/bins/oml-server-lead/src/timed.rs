@@ -357,6 +357,30 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn steering_as_of(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        as_of: &EventTime,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send {
+        timed(
+            "steering_as_of",
+            self.inner.steering_as_of(tenant_id, nodes, as_of),
+        )
+    }
+
+    fn tips_as_of(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+        as_of: &EventTime,
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send {
+        timed(
+            "tips_as_of",
+            self.inner.tips_as_of(tenant_id, memory_ids, as_of),
+        )
+    }
+
     fn list_memories(
         &self,
         tenant_id: Uuid,

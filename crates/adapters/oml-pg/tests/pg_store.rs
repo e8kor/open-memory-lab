@@ -383,6 +383,7 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                             current_scanner: None,
                         }),
                         expired_at: None,
+                        as_of: None,
                     },
                     RetrievalQuery {
                         query,
@@ -5898,7 +5899,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 40, "every migration through 0040_federated_recall");
+    assert_eq!(applied, 41, "every migration through 0041_as_of_tips");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7255,6 +7256,7 @@ async fn bm25_list(
                 kinds: oml_app::types::HIT_KINDS.to_vec(),
                 own_held: None,
                 expired_at: None,
+                as_of: None,
             },
             RetrievalQuery {
                 query,
@@ -7344,7 +7346,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 40, "every migration through 0040_federated_recall");
+    assert_eq!(applied, 41, "every migration through 0041_as_of_tips");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8220,7 +8222,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 40, "every migration through 0040_federated_recall");
+    assert_eq!(applied, 41, "every migration through 0041_as_of_tips");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8257,6 +8259,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                             current_scanner: None,
                         }),
                         expired_at: None,
+                        as_of: None,
                     },
                     RetrievalQuery {
                         query,
@@ -9408,4 +9411,360 @@ async fn federation_overhead_at_1000_candidates() {
         w.app.federation_candidate_count(w.tenant, key.key_id).await
     );
     drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// As-of reads (ADR-0059 d14 to d21)
+// ---------------------------------------------------------------------------
+
+/// The pipelines the as-of laws run on PostgreSQL: every list that reads
+/// the candidate scope or is read by the scan at an instant.
+const AS_OF_SEARCHES: &[&str] = &[
+    "bm25-postings",
+    "keyword-all",
+    "keyword-any",
+    "bm25",
+    "bm25-trigram",
+    "bm25-postings-time",
+];
+
+/// As-of reads' laws on PostgreSQL, as the serving role under row
+/// security, exactly as the double passes them (ADR-0059 d21).
+#[tokio::test]
+async fn as_of_reads_pass_the_suite() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::as_of::run_as_of_suite(|| fresh_search_store(&created), AS_OF_SEARCHES)
+        .await;
+    drop_dbs(&created).await;
+}
+
+/// An erased version is served at no instant, and no earlier version stands
+/// in for it: the tip probe reads promoted versions in every state
+/// (ADR-0059 d15, d20, d21). The erasure fold is not built, so the owner
+/// marks the row as it will.
+#[tokio::test]
+async fn an_as_of_read_never_serves_a_version_erased_today_and_no_earlier_version_stands_in() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let db = created
+        .lock()
+        .expect("names lock")
+        .last()
+        .cloned()
+        .expect("the store's database");
+    oml_port_contracts::as_of::an_as_of_read_never_serves_a_version_erased_today(
+        store,
+        AS_OF_SEARCHES,
+        |tenant, id| {
+            let url = owner_url(&db);
+            async move {
+                let mut owner = PgConnection::connect(&url).await.expect("owner connect");
+                let mut tx = owner.begin().await.expect("begin");
+                sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+                    .bind(tenant.to_string())
+                    .execute(&mut *tx)
+                    .await
+                    .expect("tenant");
+                sqlx::query("UPDATE memories SET status = 'erased', is_tip = false WHERE tenant_id = $1 AND id = $2")
+                    .bind(tenant)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await
+                    .expect("erase");
+                tx.commit().await.expect("commit");
+            }
+        },
+    )
+    .await;
+    drop_dbs(&created).await;
+}
+
+/// The tip probe compares only leakproof operators with the row, so under
+/// row security the serving role reads `memories_tip_moves` by an index
+/// condition (ADR-0059 d20).
+#[tokio::test]
+async fn the_tip_probe_is_an_index_condition_for_the_serving_role_under_row_security() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let mut rig = ChainRig::new(593);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0xE3);
+    lexeme_rows(&mut rig, &store, wa).await;
+    let mut tx = store.pool().begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(rig.tenant_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *tx)
+        .await
+        .expect("seqscan off");
+    let plan: Vec<String> = sqlx::query_scalar(&format!(
+        "EXPLAIN SELECT m.id FROM memories m WHERE m.tenant_id = $1 AND m.workarea_id = ANY($2::uuid[]) AND {}",
+        oml_pg::tip_at_sql("($3)::timestamptz")
+    ))
+    .bind(rig.tenant_id)
+    .bind(vec![wa])
+    .bind("2026-10-29T12:00:00.000000Z")
+    .fetch_all(&mut *tx)
+    .await
+    .expect("plan");
+    tx.commit().await.expect("commit");
+    let plan = plan.join("\n");
+    eprintln!("tip probe plan as the serving role:\n{plan}");
+    // Only memories_tip_moves carries promoted_at, so an index-only probe
+    // keyed by the row's claim is that index (a partition created after
+    // 0041 names its own copy).
+    let probe = plan
+        .lines()
+        .skip_while(|l| !l.contains("Index Only Scan Backward"))
+        .take(2)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        probe.contains("claim_key = m.claim_key") && probe.contains("Index Cond"),
+        "the probe is an index condition on memories_tip_moves: {plan}"
+    );
+    drop_dbs(&created).await;
+}
+
+/// Migration 0041 runs outside a migration transaction and commits after
+/// each partition's build, so no lock outlives its own partition's build;
+/// run again after it has applied, as a retry would, it changes
+/// nothing and leaves the probe's index attached on every partition and
+/// valid (ADR-0059 d20).
+#[tokio::test]
+async fn migration_0041_builds_each_partitions_index_in_its_own_transaction_and_a_second_run_changes_nothing()
+ {
+    let sql = MIGRATOR
+        .iter()
+        .find(|m| m.version == 41)
+        .expect("migration 0041")
+        .sql
+        .to_string();
+    assert!(
+        sql.starts_with("-- no-transaction"),
+        "0041 runs outside a transaction"
+    );
+    for shape in [
+        "SET LOCAL lock_timeout = '5s'",
+        "CREATE INDEX IF NOT EXISTS memories_tip_moves",
+        "ON ONLY memories (tenant_id, workarea_id, claim_key, version)",
+        "INCLUDE (promoted_at)",
+        "ATTACH PARTITION",
+        "CONTINUE WHEN EXISTS",
+        "COMMIT;",
+    ] {
+        assert!(sql.contains(shape), "0041 lacks {shape:?}");
+    }
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 40).await;
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(594);
+    rig.seed_chain(&store, 0).await;
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0041 applies over a database with a tenant partition");
+    // A retry runs the file again over what it already built.
+    let mut owner = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("owner connect");
+    owner
+        .execute(sql.as_str())
+        .await
+        .expect("a second run of 0041 changes nothing and fails nothing");
+    drop(owner);
+    let partitions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_inherits WHERE inhparent = 'memories'::regclass",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .expect("partitions");
+    assert!(partitions >= 1, "the seeded tenant has a partition");
+    let (attached, valid): (i64, bool) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM pg_inherits WHERE inhparent = 'memories_tip_moves'::regclass), \
+                (SELECT indisvalid FROM pg_index WHERE indexrelid = 'memories_tip_moves'::regclass)",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .expect("index");
+    assert_eq!(attached, partitions, "one attached per partition");
+    assert!(valid, "valid once every partition's is attached");
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// A promoted version with no `promoted_at`, as a row folded before 0005
+/// can be, is counted for doctor and served at no instant (ADR-0059 d16).
+#[tokio::test]
+async fn a_promoted_version_without_promoted_at_is_counted_for_doctor_and_served_at_no_instant() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let db = created
+        .lock()
+        .expect("names lock")
+        .last()
+        .cloned()
+        .expect("the store's database");
+    let w = oml_port_contracts::as_of::AsOfWorld::new(store.clone(), &["bm25"]).await;
+    let v1 = w.promote(w.home, "legacy", "a legacy pager note").await;
+    let mut owner = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("owner connect");
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(w.tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query("UPDATE memories SET promoted_at = NULL WHERE tenant_id = $1 AND id = $2")
+        .bind(w.tenant)
+        .bind(v1)
+        .execute(&mut *tx)
+        .await
+        .expect("legacy row");
+    tx.commit().await.expect("commit");
+    let counts = store
+        .valid_time_counts(w.tenant, i64::MAX)
+        .await
+        .expect("counts")
+        .expect("served");
+    assert_eq!(counts.untimed, 1, "doctor counts it");
+    let at = w.instant();
+    assert!(
+        w.hits(
+            &w.reader,
+            "legacy pager",
+            oml_app::search::Pipeline::Bm25,
+            Some(&at),
+            false
+        )
+        .await
+        .is_empty(),
+        "an as-of read never serves it"
+    );
+    drop_dbs(&created).await;
+}
+
+/// 0041 builds the partitions in name order, committing each: when the
+/// second tenant's partition is locked past the 5 s wait, the run fails
+/// with the first partition's index attached and valid and no other copy
+/// left behind, and a run once the lock is gone completes the parent's
+/// index (ADR-0059 d20).
+#[tokio::test]
+async fn migration_0041_fails_on_a_locked_partition_keeping_the_ones_it_committed_and_a_rerun_completes()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 40).await;
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    for seed in [595, 596] {
+        ChainRig::new(seed).seed_chain(&store, 0).await;
+    }
+    let parts: Vec<String> = sqlx::query_scalar(
+        "SELECT inhrelid::regclass::text FROM pg_inherits \
+         WHERE inhparent = 'memories'::regclass ORDER BY inhrelid::regclass::text",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .expect("partitions");
+    assert_eq!(parts.len(), 2, "two tenants, two partitions: {parts:?}");
+    // Another session holds a lock CREATE INDEX's SHARE lock waits behind,
+    // on the partition the loop reaches second.
+    let mut holder = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("holder connect");
+    let mut held = holder.begin().await.expect("begin");
+    sqlx::query(&format!("LOCK TABLE {} IN ROW EXCLUSIVE MODE", parts[1]))
+        .execute(&mut *held)
+        .await
+        .expect("hold the second partition");
+    assert!(
+        store.migrate(&owner_url(&db)).await.is_err(),
+        "0041 fails once the second partition's lock wait passes 5 s"
+    );
+    let (attached, copies, parent_valid) = tip_moves_state(&mut conn).await;
+    assert_eq!(
+        attached,
+        vec![(parts[0].clone(), true)],
+        "the first partition's index committed, attached and valid"
+    );
+    assert_eq!(
+        copies, 1,
+        "the locked partition's build left no index behind"
+    );
+    assert!(
+        !parent_valid,
+        "the parent's index waits for every partition"
+    );
+    held.rollback().await.expect("release");
+    drop(holder);
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("the rerun completes");
+    let (attached, copies, parent_valid) = tip_moves_state(&mut conn).await;
+    assert_eq!(
+        attached,
+        parts.iter().map(|p| (p.clone(), true)).collect::<Vec<_>>(),
+        "every partition's index attached and valid"
+    );
+    assert_eq!(copies, 2);
+    assert!(parent_valid, "the parent's index is valid once complete");
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// 0041's index state: each attached partition copy with its validity, the
+/// copies on the partitions, attached or not, and whether the parent's is
+/// valid.
+async fn tip_moves_state(conn: &mut PgConnection) -> (Vec<(String, bool)>, i64, bool) {
+    let attached: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT x.indrelid::regclass::text, x.indisvalid FROM pg_inherits i \
+         JOIN pg_index x ON x.indexrelid = i.inhrelid \
+         WHERE i.inhparent = 'memories_tip_moves'::regclass ORDER BY 1",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .expect("attached");
+    let copies: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_index x JOIN pg_class c ON c.oid = x.indexrelid \
+         JOIN pg_inherits p ON p.inhrelid = x.indrelid AND p.inhparent = 'memories'::regclass \
+         WHERE c.relname LIKE '%tip_moves%'",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .expect("copies");
+    let parent_valid: bool = sqlx::query_scalar(
+        "SELECT indisvalid FROM pg_index WHERE indexrelid = 'memories_tip_moves'::regclass",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .expect("parent");
+    (attached, copies, parent_valid)
 }
