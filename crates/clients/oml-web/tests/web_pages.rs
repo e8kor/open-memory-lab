@@ -2573,6 +2573,75 @@ async fn resubmitting_an_issue_that_landed_on_the_next_free_name_issues_nothing_
     assert_eq!(rig.head().await, head, "no key issued, nothing journalled");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_issue_whose_name_a_stopped_attempt_holds_issues_no_next_name() {
+    // F2 of #255's review, closed by the key operation's claim-first record
+    // (#233, #259): an attempt that committed `-2` and stopped before its
+    // outcome was recorded still holds its claim, so the resubmission meets
+    // `idempotency.in_progress` on `-2` and never issues `-3`.
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let csrf = csrf_for_page(&rig, &cookie).await;
+    let first = [
+        ("action", "issue_claude_code"),
+        ("csrf_token", csrf.as_str()),
+        ("nonce", "33333333333333333333333333333333"),
+    ];
+    let (status, _, _) = send(&rig.router, post("/web/start", &first, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    // The stopped attempt: the claim on `-2`'s key, under this form's
+    // nonce, with the request it made.
+    let nonce = "44444444444444444444444444444444";
+    let token = cookie.split_once('=').map_or("", |(_, v)| v);
+    let form_key = oml_web_credential::act_idempotency_key(token, nonce);
+    let attempt: String =
+        ring::digest::digest(&ring::digest::SHA256, format!("{form_key}\n2").as_bytes())
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+    let body = json!({"name": "alice-claude-code-2", "role": "writer", "connect_code": false});
+    let mut bytes = b"\n".to_vec();
+    bytes.extend_from_slice(body.to_string().as_bytes());
+    let web_key = key_named(&rig, "alice-web").await;
+    let scope = oml_app::ports::IdempotencyScope {
+        tenant_id: rig.boot.tenant_id,
+        key_id: web_key.key_id,
+        workarea_id: uuid::Uuid::nil(),
+        idem_key: format!("keys.issue:{attempt}"),
+    };
+    rig.store
+        .idempotency_claim(
+            &scope,
+            &oml_app::domain::Sha256Hash::digest(&bytes).to_prefixed(),
+            uuid::Uuid::from_u128(0xF2),
+        )
+        .await
+        .expect("a claim");
+    let again = [
+        ("action", "issue_claude_code"),
+        ("csrf_token", csrf.as_str()),
+        ("nonce", nonce),
+    ];
+    let (status, _, page) = send(&rig.router, post("/web/start", &again, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{page}");
+    assert!(page.contains("idempotency.in_progress"), "{page}");
+    for name in ["alice-claude-code-2", "alice-claude-code-3"] {
+        assert!(
+            rig.store
+                .resolve_name(
+                    rig.boot.tenant_id,
+                    oml_app::domain::name::NamedKind::Key,
+                    &Name::parse(name).unwrap()
+                )
+                .await
+                .unwrap()
+                .is_none(),
+            "{name} was not issued"
+        );
+    }
+}
+
 async fn csrf_for_page(rig: &Rig, cookie: &str) -> String {
     let (_, _, page) = send(
         &rig.router,
