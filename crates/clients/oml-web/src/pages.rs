@@ -23,13 +23,19 @@ use crate::{Capacity, Web, frame, outcome};
 /// The tree's page size the selector reads, the API's maximum.
 const TREE_PAGE: u32 = 200;
 
-/// A query's fields, each at most once, as the lead reads a page's query.
-struct Fields(Vec<(String, String)>);
+/// A query's or a form's fields, each at most once, as the lead reads a
+/// page's query and form.
+pub(crate) struct Fields(Vec<(String, String)>);
 
 impl Fields {
-    fn of(uri: &Uri) -> Result<Self, String> {
+    pub(crate) fn of(uri: &Uri) -> Result<Self, String> {
         let Query(pairs) = Query::<Vec<(String, String)>>::try_from_uri(uri)
             .map_err(|e| format!("the query is not a page's: {e}"))?;
+        Self::of_pairs(pairs)
+    }
+
+    /// The fields of `pairs`, refusing a name sent more than once.
+    pub(crate) fn of_pairs(pairs: Vec<(String, String)>) -> Result<Self, String> {
         let mut seen = std::collections::HashSet::new();
         for (name, _) in &pairs {
             if !seen.insert(name.as_str()) {
@@ -39,15 +45,29 @@ impl Fields {
         Ok(Self(pairs))
     }
 
-    fn get(&self, name: &str) -> Option<&str> {
+    pub(crate) fn get(&self, name: &str) -> Option<&str> {
         self.0
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, v)| v.as_str())
     }
+
+    /// The first field not in `allowed`, which an act refuses (ADR-0045
+    /// d6).
+    pub(crate) fn outside(&self, allowed: &[&str]) -> Option<&str> {
+        self.0
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .find(|n| !allowed.contains(n))
+    }
 }
 
-fn refused(status: StatusCode, code: &str, message: &str, calls: &PageCalls) -> Response {
+pub(crate) fn refused(
+    status: StatusCode,
+    code: &str,
+    message: &str,
+    calls: &PageCalls,
+) -> Response {
     outcome::html(
         status,
         oml_page::web::refusal_page(code, message, Some(calls.page_id())),
@@ -82,15 +102,16 @@ pub async fn guardrails_page(
 /// workareas. A constant of the build, unmeasured (#170).
 pub const TREE_PAGES_MAX: usize = 50;
 
-/// Every workarea under the person's root, a page of the tree at a time,
-/// or the request id of the call that ended the listing: a failed call, a
-/// cursor the API repeats, or a listing past [`TREE_PAGES_MAX`] pages.
-async fn workareas(
+/// Every workarea under `root`, a page of the tree at a time, or the
+/// request id of the call that ended the listing, with the API's error
+/// where a call failed: a failed call, a cursor the API repeats, or a
+/// listing past [`TREE_PAGES_MAX`] pages.
+pub(crate) async fn workareas(
     web: &Web,
     credential: &str,
     calls: &PageCalls,
     root: &str,
-) -> Result<Vec<WorkareaNode>, String> {
+) -> Result<Vec<WorkareaNode>, (String, Option<oml_sdk::Error>)> {
     let mut nodes = Vec::new();
     let mut cursor: Option<String> = None;
     let mut seen = std::collections::HashSet::new();
@@ -101,15 +122,15 @@ async fn workareas(
             .api
             .workarea_tree(&call(credential, &ids), root, TREE_PAGE, cursor.as_deref())
             .await
-            .map_err(|_| request_id.clone())?;
+            .map_err(|e| (request_id.clone(), Some(e)))?;
         nodes.extend(page.items);
         match page.next_cursor {
             None => return Ok(nodes),
-            Some(next) if !seen.insert(next.clone()) => return Err(request_id),
+            Some(next) if !seen.insert(next.clone()) => return Err((request_id, None)),
             Some(next) => cursor = Some(next),
         }
     }
-    Err(calls.made().last().cloned().unwrap_or_default())
+    Err((calls.made().last().cloned().unwrap_or_default(), None))
 }
 
 /// The guardrails in force at the selected workarea, read-only: the scope,
@@ -172,7 +193,7 @@ async fn guardrails(
             }
             body.push_str("</select></label><button type=\"submit\">Show</button></form>");
         }
-        Err(request_id) => {
+        Err((request_id, _)) => {
             let _ = write!(
                 body,
                 r#"<p class="error" role="status">The workarea list is unavailable (request <code>{}</code>).</p>"#,

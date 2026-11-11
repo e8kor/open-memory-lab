@@ -18,12 +18,16 @@ fn read(relative: &str) -> String {
         .replace("\r\n", "\n")
 }
 
+/// Each path of [`oml_web::PAGES`] once, in the table's order: a path
+/// serves every method its rows name.
 fn paths() -> String {
-    oml_web::PAGES
-        .iter()
-        .map(|(_, path)| *path)
-        .collect::<Vec<_>>()
-        .join(" ")
+    let mut paths: Vec<&str> = Vec::new();
+    for (_, path) in oml_web::PAGES {
+        if !paths.contains(path) {
+            paths.push(path);
+        }
+    }
+    paths.join(" ")
 }
 
 #[test]

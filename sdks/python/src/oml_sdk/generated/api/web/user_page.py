@@ -78,9 +78,8 @@ def sync_detailed(
 
      Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with
     access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys,
-    setup, memories, workarea, review), q, memory, workarea. Served with the connect page's headers
-    (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set.
-    Since v0.5.0.
+    setup, memories, review), q, memory, workarea. Served with the connect page's headers (ADR-0045 d8).
+    Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
 
     Args:
         view (UserPageView | Unset):
@@ -119,9 +118,8 @@ def sync(
 
      Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with
     access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys,
-    setup, memories, workarea, review), q, memory, workarea. Served with the connect page's headers
-    (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set.
-    Since v0.5.0.
+    setup, memories, review), q, memory, workarea. Served with the connect page's headers (ADR-0045 d8).
+    Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
 
     Args:
         view (UserPageView | Unset):
@@ -155,9 +153,8 @@ async def asyncio_detailed(
 
      Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with
     access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys,
-    setup, memories, workarea, review), q, memory, workarea. Served with the connect page's headers
-    (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set.
-    Since v0.5.0.
+    setup, memories, review), q, memory, workarea. Served with the connect page's headers (ADR-0045 d8).
+    Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
 
     Args:
         view (UserPageView | Unset):
@@ -194,9 +191,8 @@ async def asyncio(
 
      Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with
     access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys,
-    setup, memories, workarea, review), q, memory, workarea. Served with the connect page's headers
-    (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set.
-    Since v0.5.0.
+    setup, memories, review), q, memory, workarea. Served with the connect page's headers (ADR-0045 d8).
+    Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
 
     Args:
         view (UserPageView | Unset):

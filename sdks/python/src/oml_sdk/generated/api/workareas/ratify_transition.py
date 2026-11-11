@@ -71,7 +71,9 @@ def sync_detailed(
 
      Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2
     extends to transitions). A held_by: service key is refused with access.verb_ceiling before any
-    lookup (ADR-0025 d1).
+    lookup (ADR-0025 d1). A resubmission under the same Idempotency-Key answers the recorded
+    ratification with Idempotency-Replay: true and ratifies nothing again; the same key on another
+    request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -115,7 +117,9 @@ def sync(
 
      Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2
     extends to transitions). A held_by: service key is refused with access.verb_ceiling before any
-    lookup (ADR-0025 d1).
+    lookup (ADR-0025 d1). A resubmission under the same Idempotency-Key answers the recorded
+    ratification with Idempotency-Replay: true and ratifies nothing again; the same key on another
+    request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -154,7 +158,9 @@ async def asyncio_detailed(
 
      Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2
     extends to transitions). A held_by: service key is refused with access.verb_ceiling before any
-    lookup (ADR-0025 d1).
+    lookup (ADR-0025 d1). A resubmission under the same Idempotency-Key answers the recorded
+    ratification with Idempotency-Replay: true and ratifies nothing again; the same key on another
+    request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -196,7 +202,9 @@ async def asyncio(
 
      Requires: a second, non-proposing dreamer or admin (review.ratifier_is_proposer otherwise — R2
     extends to transitions). A held_by: service key is refused with access.verb_ceiling before any
-    lookup (ADR-0025 d1).
+    lookup (ADR-0025 d1). A resubmission under the same Idempotency-Key answers the recorded
+    ratification with Idempotency-Replay: true and ratifies nothing again; the same key on another
+    request is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.6.4).
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved

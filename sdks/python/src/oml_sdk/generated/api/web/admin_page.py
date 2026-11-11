@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -41,10 +41,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> str | None:
+) -> Any | str | None:
     if response.status_code == 200:
         response_200 = response.text
         return response_200
+
+    if response.status_code == 303:
+        response_303 = cast(Any, None)
+        return response_303
 
     if response.status_code == 404:
         response_404 = response.text
@@ -58,7 +62,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[str]:
+) -> Response[Any | str]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -73,13 +77,15 @@ def sync_detailed(
     view: AdminPageView | Unset = UNSET,
     q: str | Unset = UNSET,
     memory: str | Unset = UNSET,
-) -> Response[str]:
+) -> Response[Any | str]:
     """The admin page, for a session whose allowlist entry is an admin's.
 
      Any other session answers access.not_found. Views by query: view (people, queue, review, curate,
-    memories), q, memory. The memories view and one memory's attribution are the admin read (POST
-    /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's
-    text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
+    memories), q, memory; view=workarea answers 303 /web/admin/workareas, which oml-web serves, carrying
+    nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4). The memories view and
+    one memory's attribution are the admin read (POST /v2/admin/memories/search, GET
+    /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read
+    journalled (ADR-0045 d10, d21). Since v0.5.0.
 
     Args:
         view (AdminPageView | Unset):
@@ -91,7 +97,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[str]
+        Response[Any | str]
     """
 
     kwargs = _get_kwargs(
@@ -113,13 +119,15 @@ def sync(
     view: AdminPageView | Unset = UNSET,
     q: str | Unset = UNSET,
     memory: str | Unset = UNSET,
-) -> str | None:
+) -> Any | str | None:
     """The admin page, for a session whose allowlist entry is an admin's.
 
      Any other session answers access.not_found. Views by query: view (people, queue, review, curate,
-    memories), q, memory. The memories view and one memory's attribution are the admin read (POST
-    /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's
-    text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
+    memories), q, memory; view=workarea answers 303 /web/admin/workareas, which oml-web serves, carrying
+    nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4). The memories view and
+    one memory's attribution are the admin read (POST /v2/admin/memories/search, GET
+    /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read
+    journalled (ADR-0045 d10, d21). Since v0.5.0.
 
     Args:
         view (AdminPageView | Unset):
@@ -131,7 +139,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        str
+        Any | str
     """
 
     return sync_detailed(
@@ -148,13 +156,15 @@ async def asyncio_detailed(
     view: AdminPageView | Unset = UNSET,
     q: str | Unset = UNSET,
     memory: str | Unset = UNSET,
-) -> Response[str]:
+) -> Response[Any | str]:
     """The admin page, for a session whose allowlist entry is an admin's.
 
      Any other session answers access.not_found. Views by query: view (people, queue, review, curate,
-    memories), q, memory. The memories view and one memory's attribution are the admin read (POST
-    /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's
-    text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
+    memories), q, memory; view=workarea answers 303 /web/admin/workareas, which oml-web serves, carrying
+    nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4). The memories view and
+    one memory's attribution are the admin read (POST /v2/admin/memories/search, GET
+    /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read
+    journalled (ADR-0045 d10, d21). Since v0.5.0.
 
     Args:
         view (AdminPageView | Unset):
@@ -166,7 +176,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[str]
+        Response[Any | str]
     """
 
     kwargs = _get_kwargs(
@@ -186,13 +196,15 @@ async def asyncio(
     view: AdminPageView | Unset = UNSET,
     q: str | Unset = UNSET,
     memory: str | Unset = UNSET,
-) -> str | None:
+) -> Any | str | None:
     """The admin page, for a session whose allowlist entry is an admin's.
 
      Any other session answers access.not_found. Views by query: view (people, queue, review, curate,
-    memories), q, memory. The memories view and one memory's attribution are the admin read (POST
-    /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's
-    text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
+    memories), q, memory; view=workarea answers 303 /web/admin/workareas, which oml-web serves, carrying
+    nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4). The memories view and
+    one memory's attribution are the admin read (POST /v2/admin/memories/search, GET
+    /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read
+    journalled (ADR-0045 d10, d21). Since v0.5.0.
 
     Args:
         view (AdminPageView | Unset):
@@ -204,7 +216,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        str
+        Any | str
     """
 
     return (

@@ -16,7 +16,7 @@
 
 pub mod transport;
 
-use http::header::{ACCEPT, AUTHORIZATION, RETRY_AFTER};
+use http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, RETRY_AFTER};
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Request};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -32,18 +32,25 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 5] = [
+pub const OPERATIONS: [&str; 10] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workarea resp:GuardrailSet",
     "getWorkareaTree GET /v2/workareas/{workarea}/tree query:limit,cursor resp:WorkareaPage",
     "readyz GET /readyz resp:Ready",
+    "getWorkarea GET /v2/workareas/{workarea} resp:WorkareaView",
+    "getWorkareaOffers GET /v2/workareas/{workarea}/offers resp:WorkareaOffers",
+    "proposeTransition POST /v2/workareas/{workarea}/transitions body:to resp:Transition",
+    "ratifyTransition POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify resp:Transition",
+    "setWorkareaMode POST /v2/workareas/{workarea}/mode body:mode resp:WorkareaView",
 ];
 
 /// The request id header (ADR-0042 d4).
 pub const REQUEST_ID: &str = "x-request-id";
 /// The correlation id header (ADR-0042 d4).
 pub const CORRELATION_ID: &str = "x-correlation-id";
+/// The idempotency key every state-creating `POST` carries.
+pub const IDEMPOTENCY_KEY: &str = "idempotency-key";
 
 /// One call's credential and ids: the bearer value it presents, and the
 /// request and correlation ids the API's line will carry.
@@ -200,6 +207,78 @@ pub struct WorkareaPage {
     pub next_cursor: Option<String>,
 }
 
+/// One status transition (openapi.yaml `Transition`), the fields read here.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Transition {
+    pub transition_id: String,
+    pub from: String,
+    pub to: String,
+    pub state: String,
+}
+
+/// `GET /v2/workareas/{workarea}` (openapi.yaml `WorkareaView`), the fields
+/// read here: the node and its live proposals.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WorkareaView {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub status: String,
+    #[serde(default)]
+    pub pending_transitions: Vec<Transition>,
+}
+
+/// A transition a workarea's offers name: `propose` the next rung, or
+/// `ratify` a live proposal another key made.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct OfferedTransition {
+    pub op: String,
+    pub to: String,
+    /// The live proposal a `ratify` names.
+    #[serde(default)]
+    pub transition_id: Option<String>,
+    #[serde(default)]
+    pub from: Option<String>,
+}
+
+/// Putting the workarea in progress, where offered.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ModeChange {
+    pub to: String,
+}
+
+/// Committing an in-progress root: offered now, or withheld by `held` rows.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CommitOffer {
+    pub offered: bool,
+    pub held: Option<u64>,
+}
+
+/// An act the offers do not name, with the refusal its verb would answer.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RefusedAct {
+    /// `propose` or `mode`.
+    pub op: String,
+    /// The rung, or the mode (`in_progress`, `standard`).
+    pub to: String,
+    pub code: String,
+    pub message: String,
+}
+
+/// `GET /v2/workareas/{workarea}/offers` (openapi.yaml `WorkareaOffers`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WorkareaOffers {
+    pub workarea_id: String,
+    pub status: String,
+    pub mode: String,
+    pub transitions: Vec<OfferedTransition>,
+    pub mode_change: Option<ModeChange>,
+    pub commit: CommitOffer,
+    /// Absent from an API before v0.6.4.
+    #[serde(default)]
+    pub refused: Vec<RefusedAct>,
+}
+
 /// The typed client over a [`Transport`], with the headers every call
 /// carries (for `oml-web`, its client identity).
 pub struct Client<T> {
@@ -275,10 +354,42 @@ impl<T: Transport> Client<T> {
         call: Option<&Call<'_>>,
         path: String,
     ) -> Result<R, Error> {
+        self.send(Method::GET, call, path, None, None).await
+    }
+
+    /// A `POST` of `body` as JSON under `idempotency_key`, so a
+    /// resubmission under the same key is answered as recorded and acts
+    /// nothing again (docs/api/http-api.md, idempotency).
+    async fn post<R: DeserializeOwned>(
+        &self,
+        call: &Call<'_>,
+        path: String,
+        idempotency_key: &str,
+        body: &Value,
+    ) -> Result<R, Error> {
+        self.send(
+            Method::POST,
+            Some(call),
+            path,
+            Some(idempotency_key),
+            Some(body),
+        )
+        .await
+    }
+
+    async fn send<R: DeserializeOwned>(
+        &self,
+        method: Method,
+        call: Option<&Call<'_>>,
+        path: String,
+        idempotency_key: Option<&str>,
+        body: Option<&Value>,
+    ) -> Result<R, Error> {
+        let bytes = body.map_or_else(Vec::new, |body| body.to_string().into_bytes());
         let mut request = Request::builder()
-            .method(Method::GET)
+            .method(method)
             .uri(path)
-            .body(Vec::new())
+            .body(bytes)
             .map_err(|e| Error::Decode {
                 status: 0,
                 why: format!("the request could not be built: {e}"),
@@ -286,6 +397,16 @@ impl<T: Transport> Client<T> {
         let headers = request.headers_mut();
         headers.extend(self.fixed.clone());
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+        if body.is_some() {
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        }
+        if let Some(key) = idempotency_key {
+            let key = HeaderValue::from_str(key).map_err(|_| Error::Decode {
+                status: 0,
+                why: "the idempotency key is not a header value".to_owned(),
+            })?;
+            headers.insert(IDEMPOTENCY_KEY, key);
+        }
         if let Some(call) = call {
             let mut bearer =
                 HeaderValue::from_str(&format!("Bearer {}", call.bearer)).map_err(|_| {
@@ -393,6 +514,98 @@ impl<T: Transport> Client<T> {
         }
         self.get(Some(call), path).await
     }
+
+    /// `GET /v2/workareas/{workarea}`: the node and its live proposals.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn workarea(&self, call: &Call<'_>, workarea: &str) -> Result<WorkareaView, Error> {
+        self.get(Some(call), format!("/v2/workareas/{}", encode(workarea)))
+            .await
+    }
+
+    /// `GET /v2/workareas/{workarea}/offers`: the acts the caller's verbs
+    /// admit there now, and each refused act's refusal.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn workarea_offers(
+        &self,
+        call: &Call<'_>,
+        workarea: &str,
+    ) -> Result<WorkareaOffers, Error> {
+        self.get(
+            Some(call),
+            format!("/v2/workareas/{}/offers", encode(workarea)),
+        )
+        .await
+    }
+
+    /// `POST /v2/workareas/{workarea}/transitions`: proposes `to`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn propose_transition(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        workarea: &str,
+        to: &str,
+    ) -> Result<Transition, Error> {
+        self.post(
+            call,
+            format!("/v2/workareas/{}/transitions", encode(workarea)),
+            idempotency_key,
+            &serde_json::json!({ "to": to }),
+        )
+        .await
+    }
+
+    /// `POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn ratify_transition(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        workarea: &str,
+        transition_id: &str,
+    ) -> Result<Transition, Error> {
+        self.send(
+            Method::POST,
+            Some(call),
+            format!(
+                "/v2/workareas/{}/transitions/{}/ratify",
+                encode(workarea),
+                encode(transition_id)
+            ),
+            Some(idempotency_key),
+            None,
+        )
+        .await
+    }
+
+    /// `POST /v2/workareas/{workarea}/mode`: `in_progress`, or `standard`,
+    /// which on an in-progress root is its commit.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn set_workarea_mode(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        workarea: &str,
+        mode: &str,
+    ) -> Result<WorkareaView, Error> {
+        self.post(
+            call,
+            format!("/v2/workareas/{}/mode", encode(workarea)),
+            idempotency_key,
+            &serde_json::json!({ "mode": mode }),
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -485,6 +698,23 @@ mod tests {
             decodes(&client.guardrails(&CALL, Some("alice.proj")).await),
             decodes(&client.workarea_tree(&CALL, "w/1", 200, Some("c 1")).await),
             decodes(&client.readyz().await),
+            decodes(&client.workarea(&CALL, "alice.proj").await),
+            decodes(&client.workarea_offers(&CALL, "alice.proj").await),
+            decodes(
+                &client
+                    .propose_transition(&CALL, "idem-1", "alice.proj", "committed")
+                    .await,
+            ),
+            decodes(
+                &client
+                    .ratify_transition(&CALL, "idem-2", "alice.proj", "t-1")
+                    .await,
+            ),
+            decodes(
+                &client
+                    .set_workarea_mode(&CALL, "idem-3", "alice.proj", "in_progress")
+                    .await,
+            ),
         ];
         let seen = seen.lock().unwrap();
         let table = table();
@@ -507,7 +737,22 @@ mod tests {
         assert_eq!(
             seen[3].uri(),
             "/v2/workareas/w%2F1/tree?limit=200&cursor=c%201"
-        );
+        ); // Each POST carries its idempotency key; one with a body sends it
+        // as JSON, and the ratify sends none.
+        for (i, key, body) in [
+            (7, "idem-1", Some(r#"{"to":"committed"}"#)),
+            (8, "idem-2", None),
+            (9, "idem-3", Some(r#"{"mode":"in_progress"}"#)),
+        ] {
+            let h = seen[i].headers();
+            assert_eq!(h[IDEMPOTENCY_KEY], key);
+            assert_eq!(h.get(CONTENT_TYPE).is_some(), body.is_some());
+            assert_eq!(
+                std::str::from_utf8(seen[i].body()).unwrap(),
+                body.unwrap_or("")
+            );
+        }
+        assert!(!seen[6].headers().contains_key(IDEMPOTENCY_KEY));
     }
 
     #[tokio::test]

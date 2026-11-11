@@ -13,7 +13,7 @@ OML serves one JSON API on one keyed listener. `/v1` is the provider ring that a
 ## Conventions
 
 - **Authentication.** Send `Authorization: Bearer <key>`. The key carries one role (`reader`, `writer`, `dreamer`, `admin`, `operator`); the server derives the tenant from it, never from the request.
-- **Idempotency.** Every `POST` that creates state needs an `Idempotency-Key` header. A replay returns the stored answer and sets `Idempotency-Replay: true`.
+- **Idempotency.** Every `POST` that creates state needs an `Idempotency-Key` header. A replay returns the stored answer and sets `Idempotency-Replay: true`. A refused request records nothing, so a retry under the same key runs again and may answer differently.
 - **Request ids.** Every response carries `X-Request-Id` and `X-Correlation-Id`. You may send your own `X-Request-Id`, `X-Correlation-Id` and `traceparent`.
 - **Errors.** Every failure has one JSON shape with a `code` from the [error codes](errors.md). Any operation can answer `429 limit.rate` or `limit.quota`.
 - **Absence.** A read the key may not make answers `404 access.not_found`, the same answer as a missing id.
@@ -1110,7 +1110,7 @@ The sign-in page without a session; the user page with one.
 | `q` | query | string | no |  |
 | `memory` | query | string | no |  |
 
-**Responses.** `200` The page.; `303` A view oml-web now serves at its own path, view=guardrails: to the fixed /web/guardrails, carrying nothing from the request, signed in or not ((b)).
+**Responses.** `200` The page.; `303` A view oml-web now serves at its own path, view=guardrails or view=workarea: to the fixed /web/guardrails or /web/workareas, carrying nothing from the request, signed in or not ((b)).
 
 
 ### `POST /web`
@@ -1124,7 +1124,7 @@ One act of the user page, named by action.
 | `action` | `issue_key` \| `connect_key` \| `connect_code` \| `cut_off` \| `create_workarea` \| `workarea_mode` \| `workarea_transition` \| `workarea_ratify` \| `review_next` \| `verdict` \| `sign_out` | yes |  |
 | `csrf_token` | string | yes |  |
 
-**Responses.** `200` The page after the act.; `303` After sign_out, to /web.
+**Responses.** `200` The page after the act.; `303` After sign_out, to /web; after create_workarea, to /web/workareas?done=created; for workarea_mode, workarea_transition and workarea_ratify, to /web/workareas, having run nothing.
 
 
 ### `GET /web/sign-in`
@@ -1189,7 +1189,7 @@ The admin page, for a session whose allowlist entry is an admin's.
 | `q` | query | string | no |  |
 | `memory` | query | string | no |  |
 
-**Responses.** `200` The page.; `404` access.not_found, on a page.
+**Responses.** `200` The page.; `303` view=workarea, which oml-web serves at its own path: to the fixed /web/admin/workareas, carrying nothing from the request, signed in or not ((b)).; `404` access.not_found, on a page.
 
 
 ### `POST /web/admin`
@@ -1203,7 +1203,7 @@ One act of the admin page, named by action, run as the capacity it needs.
 | `action` | `allow_email` \| `remove_email` \| `set_admin` \| `grant_review` \| `grant_curation` \| `review_next` \| `verdict` \| `bulk_confirm` \| `bulk_verdict` \| `curate` \| `supersede` \| `cut_off` \| `workarea_mode` \| `workarea_transition` \| `workarea_ratify` | yes |  |
 | `csrf_token` | string | yes |  |
 
-**Responses.** `200` The page after the act.
+**Responses.** `200` The page after the act.; `303` For workarea_mode, workarea_transition and workarea_ratify, to /web/admin/workareas, having run nothing ((b)).
 
 
 ### `POST /web/sign-up`

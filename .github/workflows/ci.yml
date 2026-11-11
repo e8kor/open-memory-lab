@@ -700,7 +700,7 @@ jobs:
           kubectl --namespace oml create secret generic oml-web-client \
             --from-literal=OML_WEB__CLIENT_SECRET="$(openssl rand -hex 32)"
       # An Ingress controller, so the chart's own Ingress routes by path:
-      # /web/guardrails to oml-web, everything else to the lead (ADR-0070
+      # oml-web's pages to it, everything else to the lead (ADR-0070
       # d4). In the release's namespace, which the NetworkPolicy admits.
       - name: Traefik as the Ingress controller
         run: |
@@ -724,6 +724,10 @@ jobs:
             OML_OAUTH__ISSUER=https://oml.test:8088 OML_WEB__GITHUB__CLIENT_ID=e2e \
             OML_WEB__GITHUB__CLIENT_SECRET=e2e-double-not-a-secret OML_E2E_SIGN_IN_EMAIL=e2e@example.com
           kubectl --namespace oml rollout status deployment/oml-server-lead --timeout=300s
+          # oml-web's public origin is the issuer, so its forms pass the
+          # same-origin check the lead's pass (ADR-0045 d8).
+          kubectl --namespace oml set env deployment/oml-web OML_WEB__PUBLIC_URL=https://oml.test:8088
+          kubectl --namespace oml rollout status deployment/oml-web --timeout=300s
       - name: Claim the enrollment token through port-forward, then the quickstart
         run: |
           docker create --name oml-cli "$IMAGE:$VERSION" >/dev/null
@@ -744,9 +748,9 @@ jobs:
           kill "$forward"
       # Through the chart's Ingress (ADR-0070 d4): oml-web is ready over the
       # hop and its doctor agrees; the moved page sends a signed-out browser
-      # to the lead's sign-in; a signed-in person gets the page from oml-web;
-      # the old ?view= URL redirects to it.
-      - name: The chart's Ingress routes /web/guardrails to oml-web, signed out and signed in
+      # to the lead's sign-in; a signed-in person gets the pages from oml-web
+      # and runs one act through it; the old ?view= URLs redirect to them.
+      - name: The chart's Ingress routes oml-web's pages to it, signed out and signed in
         run: |
           kubectl --namespace oml port-forward service/traefik 8088:80 >"$RUNNER_TEMP/port-forward-ingress.log" 2>&1 &
           forward=$!

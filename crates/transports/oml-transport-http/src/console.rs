@@ -72,7 +72,7 @@ fn session_capacity(caller: &Caller, verb: &'static str) -> ApiError {
 /// The digest an act's `Idempotency-Key` is held to: the path's user and
 /// the body's bytes, so the same key on another request is
 /// `idempotency.digest_mismatch`.
-fn act_digest(user: &str, body: &Bytes) -> String {
+pub(crate) fn act_digest(user: &str, body: &Bytes) -> String {
     let mut bytes = user.as_bytes().to_vec();
     bytes.push(b'\n');
     bytes.extend_from_slice(body);
@@ -161,7 +161,7 @@ where
     Sc: Scanner + 'static,
 {
     /// The caller of this request's credential, whichever presented it.
-    async fn console_caller(&self, headers: &HeaderMap) -> Result<Caller, ApiError> {
+    pub(crate) async fn console_caller(&self, headers: &HeaderMap) -> Result<Caller, ApiError> {
         let acting = acting(headers, None)?;
         self.app
             .caller(acting.bearer())
@@ -173,7 +173,7 @@ where
     /// `Idempotency-Key`, answered as it was with `Idempotency-Replay:
     /// true`, or `None` to act (http-api.md idempotency; ADR-0070 d3 layer
     /// 4).
-    async fn replayed(
+    pub(crate) async fn replayed(
         &self,
         caller: &Caller,
         act: &str,
@@ -201,7 +201,7 @@ where
     }
 
     /// Records the act's answer under its `Idempotency-Key` and answers it.
-    async fn record_outcome(
+    pub(crate) async fn record_outcome(
         &self,
         caller: &Caller,
         act: &str,
@@ -483,8 +483,9 @@ where
     /// `GET /v2/workareas/{workarea}/offers`: the transitions, the mode
     /// change and the commit the caller's verbs admit on the workarea now,
     /// each judged by the verb's own check, and a commit withheld with the
-    /// held rows that stop it (ADR-0045 d28). A workarea the caller cannot
-    /// read is `access.not_found`.
+    /// held rows that stop it, and each act not offered with the refusal its
+    /// verb would answer (ADR-0045 d28). A workarea the caller cannot read
+    /// is `access.not_found`.
     async fn workarea_offers_inner(
         st: &Self,
         workarea: &str,
@@ -498,11 +499,26 @@ where
             .workarea_info(acting.bearer(), Some(node.clone()))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let offers = st
+        let (offers, refusals) = st
             .app
-            .workarea_offers_for(acting.bearer(), node)
+            .workarea_offers_explained_for(acting.bearer(), node)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        // Each act not offered, with the refusal its verb would answer, so
+        // a confirmation names it (ADR-0045 d28).
+        let refused: Vec<Value> = refusals
+            .into_iter()
+            .map(|(act, e)| {
+                let (op, to) = match act {
+                    WorkareaOffer::Propose(to) => ("propose", to.as_str()),
+                    WorkareaOffer::InProgress => ("mode", "in_progress"),
+                    WorkareaOffer::Commit => ("mode", "standard"),
+                    WorkareaOffer::Ratify { to, .. } => ("ratify", to.as_str()),
+                };
+                let e = map_app_error(e, ErrorContext::Write);
+                json!({ "op": op, "to": to, "code": e.code, "message": e.message })
+            })
+            .collect();
         let mut transitions = Vec::new();
         let mut mode_change = Value::Null;
         let mut commit_offered = false;
@@ -537,6 +553,7 @@ where
                     "offered": commit_offered,
                     "held": offers.commit_withheld,
                 },
+                "refused": refused,
             }),
         ))
     }

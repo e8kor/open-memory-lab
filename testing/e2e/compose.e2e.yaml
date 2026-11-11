@@ -22,3 +22,7 @@ services:
     build:
       args:
         OML_CARGO_FEATURES: oml-server-lead/e2e-sign-in
+    environment:
+      # One origin with the lead's issuer, so a form oml-web serves passes
+      # the same-origin check the lead's forms pass (ADR-0045 d8).
+      OML_WEB__PUBLIC_URL: https://localhost:8080

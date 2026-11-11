@@ -94,8 +94,10 @@ def sync_detailed(
     development) or nested (an ancestor or descendant is in progress). standard on an in-progress root
     is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held,
     dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
-    otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool
-    reaches it.
+    otherwise journals workarea.mode_set. The answer is the node as the key reads it. A resubmission
+    under the same Idempotency-Key and body answers the recorded node with Idempotency-Replay: true and
+    sets nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4; since v0.6.4). No MCP tool reaches it.
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -152,8 +154,10 @@ def sync(
     development) or nested (an ancestor or descendant is in progress). standard on an in-progress root
     is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held,
     dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
-    otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool
-    reaches it.
+    otherwise journals workarea.mode_set. The answer is the node as the key reads it. A resubmission
+    under the same Idempotency-Key and body answers the recorded node with Idempotency-Replay: true and
+    sets nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4; since v0.6.4). No MCP tool reaches it.
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -205,8 +209,10 @@ async def asyncio_detailed(
     development) or nested (an ancestor or descendant is in progress). standard on an in-progress root
     is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held,
     dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
-    otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool
-    reaches it.
+    otherwise journals workarea.mode_set. The answer is the node as the key reads it. A resubmission
+    under the same Idempotency-Key and body answers the recorded node with Idempotency-Replay: true and
+    sets nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4; since v0.6.4). No MCP tool reaches it.
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved
@@ -261,8 +267,10 @@ async def asyncio(
     development) or nested (an ancestor or descendant is in progress). standard on an in-progress root
     is its commit, refused with 409 workarea.held_remaining while any version in its subtree is held,
     dead-lettered ones included (ADR-0030 d6). Setting the mode the node holds journals nothing;
-    otherwise journals workarea.mode_set. The answer is the node as the key reads it. No MCP tool
-    reaches it.
+    otherwise journals workarea.mode_set. The answer is the node as the key reads it. A resubmission
+    under the same Idempotency-Key and body answers the recorded node with Idempotency-Replay: true and
+    sets nothing again; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4; since v0.6.4). No MCP tool reaches it.
 
     Args:
         workarea (str): A workarea, by its node id, its name or its qualified name. Resolved

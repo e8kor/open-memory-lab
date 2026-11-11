@@ -23,7 +23,9 @@ Amended again on 2026-11-10 by phase (a) as built (d2, d3, d5 and d7 revised): s
 (d1, d3, d4, d8 and d9 revised): see [Phase (b) as built](#phase-b-as-built-2026-11-10).
 Amended on 2026-11-11 by the operator's decision to route by path (d4 and d7 (b) revised):
 each moved page gets its own path under `/web/`, and the lead answers the old `?view=` form with
-a `303` to it; see the second table of Phase (b) as built.
+a `303` to it; see the second table of Phase (b) as built. Amended by the third change of phase
+(b), the Workareas view and the first acts through `oml-web` (d3, d5 and d8 revised): see the
+third table of Phase (b) as built.
 
 ## Context
 
@@ -541,6 +543,20 @@ reads a decision differently:
 | d7 (b), d4 | pages move behind the same URLs; the proxy matches `GET /web?view=guardrails` by its query | each moved page has its own path under `/web/` (the Guardrails view at `GET /web/guardrails`), and the lead answers the old `GET /web?view=guardrails` with a `303` to the fixed `/web/guardrails`, carrying nothing from the request; Caddy, both compose routers and the chart's `web.ingressPaths` route by path alone | an Ingress, a Gateway `HTTPRoute` and most proxies match paths, not queries; a query route left the chart's Ingress unable to reach the moved page at all, so a release would have served a Guardrails tab that answers not found; a `303`, not a `301` or `308`, because browsers cache those and pages are still moving |
 | d4 Kubernetes | (silent) | the in-cluster hop is plain http under `web.allowPlainHttpApi`, on by default; the web client secret comes from `web.clientSecret.existingSecret`, the recommended path, or a Secret the chart generates once with `lookup` and keeps on uninstall | a render without a cluster (GitOps, `helm template`) cannot read a generated value back and would rotate it; a Secret the operator owns never does |
 | (none) | (none) | CI signs a person in through the real routes with a build of the lead carrying the `e2e-sign-in` feature, which answers every GitHub exchange with one address (`OML_E2E_SIGN_IN_EMAIL`), and loads `/web/guardrails` through the router in the docker profile, `oml quickstart` and the chart's Ingress | the provider endpoints are constants (ADR-0045 d17) no runner can answer; the feature is off in every release build, and `check_release.py` fails a release workflow or Dockerfile default that turns it on |
+
+The third change of phase (b) moves the Workareas view of the user page and of the admin page,
+and with it the first acts `oml-web` runs: the confirmed dropdown's status transitions,
+ratifications and mode changes (ADR-0045 d28). Where it reads a decision differently:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d7 (b), d4 | (silent on acts) | the view lives at `/web/workareas` and `/web/admin/workareas`, `GET` and `POST` each; the lead answers `GET /web?view=workarea` and `GET /web/admin?view=workarea` with a `303` there, carrying nothing from the request, and answers the old `workarea_mode`, `workarea_transition` and `workarea_ratify` acts of `POST /web` and `POST /web/admin` with a `303` to the view, running nothing; the Atlas panel's dropdown asks the new path directly | a cached page's form must not act twice in two processes; a `303` that runs nothing loses one click and never an act a person did not confirm |
+| d5 #4 | the offers name the acts admitted now | they also name, under `refused`, each of proposing either rung, putting the workarea in progress and committing it that is not admitted, with the code and message its verb would answer | the lead's confirmation names a refused act's refusal by code (ADR-0045 d28), and `oml-web` cannot run the verb's check; a field on the existing operation, not a dry-run operation (rejected alternatives: a GraphQL or backend-for-frontend aggregate) |
+| d3 layer 4, d5 | `Idempotency-Key` taken by the transition, ratify and mode operations | each replays a recorded outcome under the same key and body, with `Idempotency-Replay: true`, and acts nothing again | the confirmation's nonce makes the key, so a resubmitted form replays; without the replay a second proposal or ratification would be refused or repeated |
+| d3 layer 4 | every form carries a nonce | the confirmation's form does; a post without one acts once under a fresh key, and one whose nonce is not 32 lower-case hex characters is `request.validation`; a second send of the same form while the first is in flight waits for it in the process and replays | the old forms and the parity suite's acts carry none; a fresh key keeps such a post from replaying another form's act; a mangled nonce must not lose the replay silently; the API checks for a recorded outcome before it acts and records after, so two sends racing in two processes can both act, which is [#233](https://github.com/e8kor/open-memory-lab/issues/233)'s to close at the API |
+| d3 layer 1 | `web_action` joins with the first act | the page line names `web_action`, the form's action | as decided |
+| d3 layer 6, d8 | the per-session cap on calls in flight; two sequential calls | not built; the view bounds its own fan-out to eight calls in flight (`oml_web::workareas::FAN_OUT`, unmeasured, #170) after the tree, each row's offers and live proposals a secondary read that marks only its row unavailable when it fails | a page of N workareas makes N to 3N calls, where the lead made the same reads in process, and each offers call now runs up to four more verb checks for `refused`; both belong in #170's measurement; the cap across a session's pages lands with the memories view, which fans out further |
+| (none) | (none) | creating a workarea stays the lead's act of the user page: the view's form posts it to `POST /web`, which answers `303 /web/workareas?done=created` | `POST /v2/workareas` serves it, but the act is not one of the dropdown's; it moves with the keys view, whose other acts it shares |
 
 ## Consequences
 
