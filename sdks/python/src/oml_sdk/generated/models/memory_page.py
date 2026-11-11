@@ -7,7 +7,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 if TYPE_CHECKING:
-    from ..models.memory_summary import MemorySummary
+    from ..models.memory import Memory
 
 
 T = TypeVar("T", bound="MemoryPage")
@@ -17,11 +17,11 @@ T = TypeVar("T", bound="MemoryPage")
 class MemoryPage:
     """
     Attributes:
-        items (list[MemorySummary]):
+        items (list[Memory]):
         next_cursor (None | str):
     """
 
-    items: list[MemorySummary]
+    items: list[Memory]
     next_cursor: None | str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -47,13 +47,13 @@ class MemoryPage:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.memory_summary import MemorySummary
+        from ..models.memory import Memory
 
         d = dict(src_dict)
         items = []
         _items = d.pop("items")
         for items_item_data in _items:
-            items_item = MemorySummary.from_dict(items_item_data)
+            items_item = Memory.from_dict(items_item_data)
 
             items.append(items_item)
 

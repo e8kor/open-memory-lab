@@ -72,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 current_scanner: None,
             }),
             expired_at: None,
+            as_of: None,
         };
         // A sparse workload carries each query's tokens, encoded by
         // oml-rerank's sparse_encode example (ADR-0052 d14).

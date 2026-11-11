@@ -14,19 +14,23 @@ use tower::ServiceExt as _;
 
 use oml_app::domain::name::Name;
 use oml_app::domain::oauth::Issuer;
-use oml_app::domain::web::{GitHubEmail, Provider};
+use oml_app::domain::web::{GitHubEmail, Provider, capacity_credential};
 use oml_app::doubles::MemSignIn;
 use oml_app::ed25519_dalek::SigningKey;
 use oml_app::ports::{IdGen as _, JournalStore as _};
 use oml_app::types::{BootstrapRequest, BootstrapResult, ProviderAnswer};
 use oml_fetch::PinnedFetcher;
 use oml_pg::PgStore;
-use oml_server_lead::{OsIds, lead_app, start_lead_with, sweep_connections};
+use oml_server_lead::{OsIds, lead_app, start_lead_with_models, sweep_connections};
 use oml_test_pg::{DB_N, drop_db, mint_database, owner_url, run_tag, serving_url};
+use oml_transport_http::session::WebClient;
 use oml_transport_http::traffic::Traffic;
 use oml_transport_http::web::{SESSION_COOKIE, SIGN_IN_COOKIE, WebPages};
 
 const ISSUER: &str = "https://oml.example.com";
+/// The web client secret the lead is configured with, which `oml-web`
+/// presents beside a session's capacity credential (ADR-0070 d2).
+const WEB_CLIENT_SECRET: &str = "pg-web-client-secret-0123456789";
 
 fn fresh_name() -> String {
     format!(
@@ -122,7 +126,7 @@ async fn lead_traced(
     providers: &MemSignIn,
     traffic: Traffic,
 ) -> Router {
-    start_lead_with(
+    start_lead_with_models(
         store,
         key.clone(),
         Some(Issuer::parse(ISSUER).expect("a public origin")),
@@ -135,6 +139,8 @@ async fn lead_traced(
         oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
         None,
         None,
+        None,
+        WebClient::new(Some(WEB_CLIENT_SECRET.to_owned()), None),
     )
     .await
     .expect("the lead starts")
@@ -269,12 +275,12 @@ async fn the_first_admin_email_is_added_under_an_admin_key_and_signs_in_through_
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    // The queue the admin's Review page reads, which oml-web serves, runs
+    // under the serving role as the person's admin capacity (ADR-0070 d7
+    // (b)).
     let (status, _, page) = send(
         &router,
-        Request::get("/web/admin?view=queue")
-            .header(header::COOKIE, &cookie)
-            .body(Body::empty())
-            .expect("a request"),
+        as_web(&cookie, "admin", "GET", "/v2/review/queue", None),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
@@ -410,36 +416,42 @@ async fn a_user_named_like_a_shared_workarea_is_name_taken() {
     drop_db(&db).await;
 }
 
-/// The value of the first `<input … name="{name}" value="…">` on `page`.
-fn input_value(page: &str, name: &str) -> String {
-    let at = page
-        .find(&format!(r#"name="{name}" value=""#))
-        .unwrap_or_else(|| panic!("no input {name}: {page}"));
-    let rest = &page[at + name.len() + 15..];
-    rest[..rest.find('"').expect("a closing quote")].to_owned()
+/// A call as `oml-web` makes it for the session `cookie` names: the
+/// capacity's credential, the web client's identity and, on a `POST`, the
+/// idempotency key `idem` (ADR-0070 d2, d3 layer 4).
+fn as_web(
+    cookie: &str,
+    capacity: &str,
+    method: &str,
+    path: &str,
+    body: Option<(&str, Value)>,
+) -> Request<Body> {
+    let token = cookie.split_once('=').expect("a cookie").1;
+    let builder = Request::builder()
+        .method(method)
+        .uri(path)
+        .header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", capacity_credential(token, capacity)),
+        )
+        .header("oml-web-client", WEB_CLIENT_SECRET);
+    match body {
+        Some((idem, body)) => builder
+            .header("idempotency-key", idem)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string())),
+        None => builder.body(Body::empty()),
+    }
+    .expect("a request")
 }
 
-fn form_post(path: &str, cookie: &str, fields: &[(&str, &str)]) -> Request<Body> {
-    let body: Vec<String> = fields
-        .iter()
-        .map(|(k, v)| format!("{k}={}", v.replace(' ', "+")))
-        .collect();
-    Request::post(path)
-        .header(header::COOKIE, cookie)
-        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .header("sec-fetch-site", "same-origin")
-        .body(Body::from(body.join("&")))
-        .expect("a request")
-}
-
-/// The admin page's bulk review (ADR-0055 d10): the listing shows each
-/// held item's text under the person's reviewer key, "select all" checks
-/// every box, `bulk_confirm` shows what was picked and records nothing,
-/// `bulk_verdict` records one verdict per item and shows each outcome, a
-/// resubmitted confirmation replays, and a form without the CSRF token is
-/// refused.
+/// Bulk review under Postgres as the Review page, which `oml-web` serves,
+/// makes it (ADR-0055 d10; ADR-0070 d7 (b)): the listing serves each held
+/// item's text to the person's reviewer key, the confirmation's read by id
+/// records nothing, the bulk verdict records one verdict per item, and a
+/// resubmission replays.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_admin_page_lists_confirms_and_shows_each_outcome() {
+async fn bulk_review_lists_confirms_by_id_and_records_each_outcome_once() {
     let db = fresh_name();
     if !mint_database(&db).await {
         return;
@@ -498,72 +510,48 @@ async fn the_admin_page_lists_confirms_and_shows_each_outcome() {
         let v: Value = serde_json::from_str(&body).expect("JSON");
         ids.push(v["artifact_id"].as_str().expect("an id").to_owned());
     }
-    let get = |path: &str| {
-        Request::get(path)
-            .header(header::COOKIE, &cookie)
-            .body(Body::empty())
-            .expect("a request")
+    // The Review page oml-web serves reads and acts through these
+    // operations as the person's reviewer key; its page assertions are in
+    // oml-web's suite (ADR-0070 d7 (b)).
+    let held = |query: &str| {
+        as_web(
+            &cookie,
+            "review",
+            "GET",
+            &format!("/v2/review/held{query}"),
+            None,
+        )
     };
-    let (status, _, page) = send(&router, get("/web/admin?view=held")).await;
+    let (status, _, page) = send(&router, held("")).await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    for (i, id) in ids.iter().enumerate() {
-        assert!(
-            page.contains(&format!(r#"name="pick_{i:03}" value="{id}">"#)),
-            "{page}"
-        );
-    }
+    let listing: Value = serde_json::from_str(&page).expect("JSON");
+    let listed: Vec<&str> = listing["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|i| i["artifact_id"].as_str().expect("an id"))
+        .collect();
+    assert_eq!(listed, ids.iter().map(String::as_str).collect::<Vec<_>>());
     assert!(
         page.contains("Decision adr-0001-d2."),
-        "the text is shown: {page}"
+        "the text is served: {page}"
     );
-    assert!(page.contains("(you)"), "same user is shown: {page}");
-    let (_, _, all) = send(
-        &router,
-        get("/web/admin?view=held&claim_key_prefix=adr-0001-d&select=all"),
-    )
-    .await;
-    assert_eq!(all.matches(" checked>").count(), 2, "{all}");
-    let csrf = input_value(&page, "csrf_token");
+    assert!(
+        listing["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["same_user"] == true),
+        "same user is named: {page}"
+    );
+    let (_, _, narrowed) = send(&router, held("?claim_key_prefix=adr-0001-d")).await;
+    let narrowed: Value = serde_json::from_str(&narrowed).expect("JSON");
+    assert_eq!(narrowed["items"].as_array().unwrap().len(), 2);
 
-    // Without the token nothing happens.
-    let (status, _, _) = send(
-        &router,
-        form_post(
-            "/web/admin",
-            &cookie,
-            &[
-                ("action", "bulk_confirm"),
-                ("verdict", "approve"),
-                ("pick_000", &ids[0]),
-            ],
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-
-    // The confirmation records nothing.
-    let (status, _, confirm) = send(
-        &router,
-        form_post(
-            "/web/admin",
-            &cookie,
-            &[
-                ("action", "bulk_confirm"),
-                ("csrf_token", &csrf),
-                ("verdict", "approve"),
-                ("reason", ""),
-                ("pick_000", &ids[0]),
-                ("pick_001", &ids[1]),
-            ],
-        ),
-    )
-    .await;
+    // The confirmation reads the picks by id and records nothing.
+    let (status, _, confirm) = send(&router, held(&format!("?ids={},{}", ids[0], ids[1]))).await;
     assert_eq!(status, StatusCode::OK, "{confirm}");
-    assert!(confirm.contains("Approve 2 memories?"), "{confirm}");
-    // Each picked item is shown by its claim key and first line, so the
-    // person sees what they confirm, not bare ids (ADR-0055 d10).
     for claim_key in ["adr-0001-d1", "adr-0001-d2"] {
-        assert!(confirm.contains(&format!(">{claim_key}<")), "{confirm}");
         assert!(
             confirm.contains(&format!("Decision {claim_key}.")),
             "{confirm}"
@@ -573,38 +561,46 @@ async fn the_admin_page_lists_confirms_and_shows_each_outcome() {
         !confirm.contains("adr-0001-rejected"),
         "only the picks: {confirm}"
     );
-    let (_, _, still) = send(&router, get("/web/admin?view=held")).await;
+    let (_, _, still) = send(&router, held("")).await;
     assert!(
         ids.iter().all(|id| still.contains(id.as_str())),
         "nothing judged yet: {still}"
     );
 
-    let joined = input_value(&confirm, "artifact_ids");
-    assert_eq!(joined, format!("{} {}", ids[0], ids[1]));
-    let idem = input_value(&confirm, "idempotency_key");
-    let verdict_form = [
-        ("action", "bulk_verdict"),
-        ("csrf_token", csrf.as_str()),
-        ("verdict", "approve"),
-        ("reason", ""),
-        ("artifact_ids", joined.as_str()),
-        ("idempotency_key", idem.as_str()),
-    ];
-    let (status, _, outcome) = send(&router, form_post("/web/admin", &cookie, &verdict_form)).await;
+    let verdict = || {
+        as_web(
+            &cookie,
+            "review",
+            "POST",
+            "/v2/review/verdicts/bulk",
+            Some((
+                "web-act-bulk-1",
+                json!({"verdict": "approve", "artifact_ids": [ids[0], ids[1]]}),
+            )),
+        )
+    };
+    let (status, _, outcome) = send(&router, verdict()).await;
     assert_eq!(status, StatusCode::OK, "{outcome}");
-    assert!(
-        outcome.contains("2 approved, 0 rejected, 0 skipped."),
-        "{outcome}"
+    let outcome: Value = serde_json::from_str(&outcome).expect("JSON");
+    assert_eq!(
+        outcome["summary"],
+        json!({"approved": 2, "rejected": 0, "skipped": 0})
     );
-    assert!(outcome.contains("same user"), "{outcome}");
-    let (_, _, again) = send(&router, form_post("/web/admin", &cookie, &verdict_form)).await;
     assert!(
-        again.contains("replayed"),
+        outcome["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| i["same_user"] == true)
+    );
+    let (_, _, again) = send(&router, verdict()).await;
+    assert!(
+        again.contains(r#""replayed":true"#),
         "a resubmitted form replays: {again}"
     );
-    let (_, _, left) = send(&router, get("/web/admin?view=held")).await;
+    let (_, _, left) = send(&router, held("")).await;
     assert!(left.contains(&ids[2]) && !left.contains(&ids[0]), "{left}");
-    // An empty reason is journalled as none, as on the API.
+    // No reason is journalled as none.
     let events = store
         .events_range(boot.tenant_id, 1, 1_000)
         .await
@@ -628,31 +624,32 @@ async fn the_admin_page_lists_confirms_and_shows_each_outcome() {
     // the same person as the bulk ones are (ADR-0055 d7).
     let (status, _, served) = send(
         &router,
-        form_post(
-            "/web/admin",
+        as_web(
             &cookie,
-            &[("action", "review_next"), ("csrf_token", &csrf)],
+            "review",
+            "POST",
+            "/v2/review/next",
+            Some(("web-act-next-1", json!({}))),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{served}");
-    let serve_id = input_value(&served, "serve_id");
-    let (status, _, _) = send(
+    let served: Value = serde_json::from_str(&served).expect("JSON");
+    let (status, _, body) = send(
         &router,
-        form_post(
-            "/web/admin",
+        as_web(
             &cookie,
-            &[
-                ("action", "verdict"),
-                ("csrf_token", &csrf),
-                ("serve_id", &serve_id),
-                ("verdict", "approve"),
-                ("reason", ""),
-            ],
+            "review",
+            "POST",
+            "/v2/review/verdicts",
+            Some((
+                "web-act-verdict-1",
+                json!({"serve_id": served["serve_id"], "verdict": "approve"}),
+            )),
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "{body}");
     let events = store
         .events_range(boot.tenant_id, 1, 1_000)
         .await

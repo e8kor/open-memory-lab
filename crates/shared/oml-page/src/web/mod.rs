@@ -63,8 +63,20 @@ pub fn content_security_policy(form_origins: &[&str], frame_src: Option<&str>) -
     )
 }
 
+/// The user page's Memories list, which `oml-web` serves (ADR-0070 d7 (b)).
+pub const USER_MEMORIES_PATH: &str = "/web/memories";
+
+/// The user page's Atlas, which `oml-web` serves (ADR-0070 d7 (b)).
+pub const USER_ATLAS_PATH: &str = "/web/atlas";
+
+/// The admin page's Memories list, which `oml-web` serves.
+pub const ADMIN_MEMORIES_PATH: &str = "/web/admin/memories";
+
+/// The admin page's Atlas, which `oml-web` serves.
+pub const ADMIN_ATLAS_PATH: &str = "/web/admin/atlas";
+
 /// The Atlas tab's link, which is also its active marker.
-pub const ATLAS_TAB: &str = "/web?view=memories&amp;display=atlas";
+pub const ATLAS_TAB: &str = USER_ATLAS_PATH;
 
 /// The user page's Workareas view, which `oml-web` serves (ADR-0070 d7 (b)).
 pub const USER_WORKAREAS_PATH: &str = "/web/workareas";
@@ -72,17 +84,42 @@ pub const USER_WORKAREAS_PATH: &str = "/web/workareas";
 /// The admin page's Workareas view, which `oml-web` serves (ADR-0070 d7 (b)).
 pub const ADMIN_WORKAREAS_PATH: &str = "/web/admin/workareas";
 
+/// The user page's Review view: the queue, review next and bulk review,
+/// which `oml-web` serves (ADR-0070 d7 (b)).
+pub const USER_REVIEW_PATH: &str = "/web/review";
+
+/// The admin page's Review view, with the tenant's queue above it, which
+/// `oml-web` serves (ADR-0070 d7 (b)).
+pub const ADMIN_REVIEW_PATH: &str = "/web/admin/review";
+
+/// The user page's Keys view, which `oml-web` serves (ADR-0070 d7 (b)).
+pub const USER_KEYS_PATH: &str = "/web/keys";
+
+/// The admin page's Keys view, one person's keys with a cut-off beside
+/// each, which `oml-web` serves (ADR-0070 d7 (b)).
+pub const ADMIN_KEYS_PATH: &str = "/web/admin/keys";
+
+/// One memory opened by its id, `?id=`, on the user page, which `oml-web`
+/// serves (ADR-0070 d7 (b)).
+pub const USER_MEMORY_PATH: &str = "/web/memory";
+
+/// One memory with its attribution and the supersede form, `?id=`, on the
+/// admin page, which `oml-web` serves.
+pub const ADMIN_MEMORY_PATH: &str = "/web/admin/memory";
+
+/// The admin page's Curate view, which `oml-web` serves.
+pub const ADMIN_CURATE_PATH: &str = "/web/admin/curate";
+
 /// The admin page's tabs, `(href, text)`; the lead's admin views and
 /// `oml-web`'s draw the same nav.
-pub const ADMIN_TABS: [(&str, &str); 9] = [
+pub const ADMIN_TABS: [(&str, &str); 8] = [
     ("/web/admin", "People"),
     ("/web/admin/users", "Quotas"),
-    ("/web/admin?view=queue", "Queue"),
-    ("/web/admin?view=memories", "Memories"),
+    (ADMIN_MEMORIES_PATH, "Memories"),
     (ADMIN_WORKAREAS_PATH, "Workareas"),
-    ("/web/admin?view=review", "Review"),
-    ("/web/admin?view=held", "Bulk review"),
-    ("/web/admin?view=curate", "Curate"),
+    (ADMIN_REVIEW_PATH, "Review"),
+    (ADMIN_KEYS_PATH, "Keys"),
+    (ADMIN_CURATE_PATH, "Curate"),
     ("/web", "Your page"),
 ];
 
@@ -94,10 +131,10 @@ pub fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
     // Review, Atlas, Keys; then this page's Workareas and Guardrails.
     let mut tabs = vec![
         ("/web/start", "Start"),
-        ("/web?view=memories", "Memories"),
-        ("/web?view=review", "Review"),
+        (USER_MEMORIES_PATH, "Memories"),
+        (USER_REVIEW_PATH, "Review"),
         (ATLAS_TAB, "Atlas"),
-        ("/web", "Keys"),
+        (USER_KEYS_PATH, "Keys"),
         (USER_WORKAREAS_PATH, "Workareas"),
         ("/web/guardrails", "Guardrails"),
     ];

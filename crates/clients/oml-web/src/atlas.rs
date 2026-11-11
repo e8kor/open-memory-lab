@@ -1,27 +1,18 @@
-//! The Atlas view (ADR-0045 d25, d30, d32): the workareas the page's key
-//! may read under the scope, as one squarified treemap whose areas are
-//! their readable counts, drawn on the server as SVG with no script; its
-//! table twin; and the scope's panel with its counts, its links and its
-//! dropdown of acts. Every region is a plain link that zooms the Atlas to
-//! it. Nothing the key cannot read is drawn or counted: the regions and
-//! their counts are the app's, read through the same listings as the list.
+//! The Atlas's drawing (ADR-0045 d25, d30, d32), moved from the lead
+//! (ADR-0070 d7 (b)): the workareas the page's key may read under the
+//! scope, as one squarified treemap whose areas are their readable counts,
+//! drawn as SVG with no script, and the counts' bar and legend. The counts
+//! are the API's, `GET /v2/workareas/{workarea}/tree?counts=true`, so
+//! nothing the key cannot read is drawn or counted.
 
-use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use uuid::Uuid;
-
-use oml_app::app::{Caller, Region, Regions, WorkareaOffers};
-use oml_app::domain::name::Reference;
-use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
-
-use super::page::{attr, glyph_svg, text};
-use crate::ApiState;
-use crate::error::{ApiError, ErrorContext, map_app_error};
+use oml_page::web::{attr, glyph_svg, text};
+use oml_sdk::NodeCounts;
 
 /// Counts by state, in the design system's bar order.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct Counts {
+pub struct Counts {
     pub approved: u64,
     pub held: u64,
     pub in_progress: u64,
@@ -29,16 +20,18 @@ pub(crate) struct Counts {
 }
 
 impl Counts {
-    fn of(r: &Region) -> Self {
+    /// A node's own counts, as the API serves them.
+    #[must_use]
+    pub fn of(c: &NodeCounts) -> Self {
         Self {
-            approved: r.approved,
-            held: r.held,
-            in_progress: r.in_progress,
-            other: r.other,
+            approved: c.promoted,
+            held: c.held,
+            in_progress: c.in_progress,
+            other: c.other,
         }
     }
 
-    fn add(&mut self, o: Self) {
+    pub(crate) fn add(&mut self, o: Self) {
         self.approved += o.approved;
         self.held += o.held;
         self.in_progress += o.in_progress;
@@ -79,12 +72,12 @@ impl Counts {
 /// One tile of the map: a child of the scope with its subtree's counts,
 /// or the scope's own rows.
 #[derive(Clone)]
-struct Tile {
-    name: String,
-    href: String,
-    counts: Counts,
-    status: String,
-    in_progress: bool,
+pub(crate) struct Tile {
+    pub(crate) name: String,
+    pub(crate) href: String,
+    pub(crate) counts: Counts,
+    pub(crate) status: String,
+    pub(crate) in_progress: bool,
 }
 
 /// The squarified layout (Bruls, Huizing and van Wijk) of `sizes`, largest
@@ -163,7 +156,7 @@ fn cut(name: &str, chars: usize) -> String {
 /// shrinks: name and count, then the state bar, then the in-progress mark;
 /// a tile too small for its name keeps a cut name or its count, and every
 /// tile keeps its full name and counts in its `title` and `aria-label`.
-fn svg(tiles: &[Tile], w: f64, h: f64, font: f64, class: &str) -> String {
+pub(crate) fn svg(tiles: &[Tile], w: f64, h: f64, font: f64, class: &str) -> String {
     let sizes: Vec<f64> = tiles.iter().map(|t| t.counts.total() as f64).collect();
     let rects = squarify(&sizes, w, h);
     let mut out = format!(
@@ -261,7 +254,7 @@ fn svg(tiles: &[Tile], w: f64, h: f64, font: f64, class: &str) -> String {
 /// The design system's `LifecycleBar`: one `i` a non-zero state, its
 /// share a `f-<n>` class of twenty steps (the policy allows no inline
 /// style), the counts as its label.
-pub(crate) fn lifebar(c: Counts) -> String {
+pub fn lifebar(c: Counts) -> String {
     let total = c.total().max(1) as f64;
     let mut out = format!(
         r#"<div class="oml-lifebar" role="img" aria-label="{}">"#,
@@ -275,7 +268,7 @@ pub(crate) fn lifebar(c: Counts) -> String {
     out
 }
 
-fn legend(c: Counts) -> String {
+pub(crate) fn legend(c: Counts) -> String {
     let mut out = String::from(r#"<ul class="oml-legend" aria-hidden="true">"#);
     for (class, n, word) in c.parts() {
         let state = class_state(class);
@@ -293,166 +286,6 @@ fn class_state(class: &str) -> &str {
     match class {
         "unreviewed" => "in-progress",
         other => other,
-    }
-}
-
-impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
-where
-    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
-    S: Signer + 'static,
-    C: Clock + 'static,
-    I: IdGen + 'static,
-    Sc: Scanner + 'static,
-{
-    /// The Atlas of `scope` (the person's root, or `universe` on the admin
-    /// page, when none): the regions as the page's key may read them, the
-    /// map, the table twin and the scope's panel. `transitions` and `mode`
-    /// act for the panel's dropdown as on the Workareas view (d28).
-    pub(crate) async fn atlas_view(
-        &self,
-        base: &str,
-        reader: &Caller,
-        transitions: &Caller,
-        mode: &Caller,
-        scope: Option<Reference>,
-        admin: bool,
-    ) -> Result<String, ApiError> {
-        let mapped = |e| map_app_error(e, ErrorContext::Write);
-        let found: Regions = if admin {
-            self.app.admin_regions(reader, scope).await
-        } else {
-            self.app.web_regions(reader, scope).await
-        }
-        .map_err(mapped)?;
-        let Some(top) = found.regions.first() else {
-            return Err(ApiError::not_found());
-        };
-        let top_id = top.workarea.workarea_id;
-        // Each node's subtree counts, children folded into parents; the
-        // tree read lists a parent before its children.
-        let mut subtree: HashMap<Uuid, Counts> = found
-            .regions
-            .iter()
-            .map(|r| (r.workarea.workarea_id, Counts::of(r)))
-            .collect();
-        for r in found.regions.iter().rev() {
-            if let Some(parent) = r.workarea.parent_id
-                && parent != r.workarea.workarea_id
-                && subtree.contains_key(&parent)
-                && r.workarea.workarea_id != top_id
-            {
-                let own = subtree[&r.workarea.workarea_id];
-                subtree.get_mut(&parent).expect("present").add(own);
-            }
-        }
-        let zoom = |id: Uuid| format!("{base}?view=memories&display=atlas&workarea={id}");
-        let mut tiles: Vec<Tile> = found
-            .regions
-            .iter()
-            .filter(|r| r.workarea.parent_id == Some(top_id))
-            .map(|r| Tile {
-                name: r.workarea.name.as_str().to_owned(),
-                href: zoom(r.workarea.workarea_id),
-                counts: subtree[&r.workarea.workarea_id],
-                status: r.workarea.status.as_str().to_owned(),
-                in_progress: r.workarea.in_progress,
-            })
-            .collect();
-        let own = Counts::of(top);
-        if own.total() > 0 || tiles.is_empty() {
-            tiles.push(Tile {
-                name: format!("{} · own rows", top.workarea.name.as_str()),
-                href: format!("{base}?view=memories&workarea={top_id}"),
-                counts: own,
-                status: top.workarea.status.as_str().to_owned(),
-                in_progress: top.workarea.in_progress,
-            });
-        }
-        tiles.sort_by(|a, b| {
-            b.counts
-                .total()
-                .cmp(&a.counts.total())
-                .then(a.name.cmp(&b.name))
-        });
-        let drawn_owned: Vec<Tile> = tiles
-            .iter()
-            .filter(|t| t.counts.total() > 0)
-            .cloned()
-            .collect();
-        let total = subtree[&top_id];
-
-        let mut out = String::from(r#"<nav class="crumbs" aria-label="Breadcrumb">"#);
-        for (id, name) in &found.ancestors {
-            let _ = write!(
-                out,
-                r#"<a href="{}">{}</a> / "#,
-                attr(&zoom(*id)),
-                text(name.as_str())
-            );
-        }
-        let _ = write!(
-            out,
-            r#"<span aria-current="page">{}</span></nav>"#,
-            text(top.workarea.name.as_str())
-        );
-        let _ = write!(
-            out,
-            r#"<div class="oml-main"><div class="col"><p class="desc">{} readable · area = count{}</p>"#,
-            total.total(),
-            if found.partial {
-                " · counted from the first 2,000 rows"
-            } else {
-                ""
-            }
-        );
-        if drawn_owned.is_empty() {
-            out.push_str(r#"<p class="desc">Nothing readable here yet.</p>"#);
-        } else {
-            out.push_str(r#"<figure class="tm-fig">"#);
-            out.push_str(&svg(&drawn_owned, 960.0, 540.0, 20.0, "wide"));
-            out.push_str(&svg(&drawn_owned, 360.0, 270.0, 14.0, "narrow"));
-            out.push_str("</figure>");
-        }
-        // The table twin: the same rows, the numbers right-aligned.
-        out.push_str(r#"<table class="twin" id="atlas-table"><thead><tr><th scope="col">Workarea</th><th scope="col">Status</th><th scope="col" class="num">Readable</th><th scope="col">By state</th></tr></thead><tbody>"#);
-        for t in &tiles {
-            let _ = write!(
-                out,
-                r#"<tr><td class="mono"><a href="{}">{}</a></td><td>{}{}</td><td class="num">{}</td><td>{}<span class="cap">{}</span></td></tr>"#,
-                attr(&t.href),
-                text(&t.name),
-                text(&t.status),
-                if t.in_progress { " · in progress" } else { "" },
-                t.counts.total(),
-                lifebar(t.counts),
-                text(&t.counts.words())
-            );
-        }
-        out.push_str("</tbody></table></div>");
-
-        // The scope's panel: what it holds, where to read it, what to do.
-        let offers: WorkareaOffers = self
-            .app
-            .workarea_offers(transitions, mode, top_id)
-            .await
-            .map_err(mapped)?;
-        let _ = write!(
-            out,
-            r#"<aside class="oml-rail-side" aria-labelledby="sel-h"><section class="oml-panel"><h2 id="sel-h" class="mono">{}</h2><p class="desc">{}{} · <b>{}</b> readable</p>{}{}<p><a href="{base}?view=memories&amp;workarea={top_id}">Open memories</a></p>"#,
-            text(&top.path),
-            text(top.workarea.status.as_str()),
-            if top.workarea.in_progress {
-                " · in progress"
-            } else {
-                ""
-            },
-            total.total(),
-            lifebar(total),
-            legend(total)
-        );
-        out.push_str(&super::workareas::dropdown(base, top_id, &offers));
-        out.push_str("</section></aside></div>");
-        Ok(out)
     }
 }
 

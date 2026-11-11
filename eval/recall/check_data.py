@@ -16,8 +16,11 @@ Run by .github/workflows/ci.yml (job recall-eval-data). Fails when:
   550 queries, a category other than question or paraphrase, an id the
   synthetic set uses, a label whose answer span is not in that memory's text,
   a query that repeats a synthetic query or another grown one, a fold outside
-  0 to 4 or one memory's queries in two folds, a query without its origin, or
-  a person-check sample that is not a tenth of the set.
+  0 to 4 or one memory's queries in two folds (a query a person relabelled is
+  held to the fold of the memory it was drafted from), a query without its
+  origin, a person-check sample that is not a tenth of the set, or a person
+  check that is done but names no checker, date or bad-label count, or
+  corrects a query outside its sample.
 """
 
 import json
@@ -54,6 +57,8 @@ def check_grown(memories, synthetic, errors):
     taken = {q["id"] for q in synthetic}
     seen = {norm(q["query"]): q["id"] for q in synthetic}
     fold_of = {}
+    check = data.get("person_check") or {}
+    corrected = check.get("corrections") or {}
     ids = Counter(q.get("id") for q in grown)
     errors += [f"grown {i}: id repeats" for i, n in ids.items() if n > 1]
     for q in grown:
@@ -82,6 +87,8 @@ def check_grown(memories, synthetic, errors):
                 span = norm(spans.get(mid, ""))
                 if len(span) < 3 or span not in norm(text[mid]):
                     errors.append(f"grown {qid}: the answer span for {mid} is not in its text")
+            drafted_from = corrected[qid]["was"] if qid in corrected else rel
+            if drafted_from.get(mid) == 2:
                 f = q.get("fold")
                 if f not in range(5):
                     errors.append(f"grown {qid}: fold {f} is not 0 to 4")
@@ -101,6 +108,11 @@ def check_grown(memories, synthetic, errors):
     if len(sample) != -(-len(grown) // 10) or not set(sample) <= set(ids):
         errors.append(f"grown set: the person-check sample holds {len(sample)} known ids, "
                       f"not a tenth of {len(grown)}")
+    if check.get("status") == "done":
+        if not (check.get("checked_by") and check.get("date") and "bad_labels" in check):
+            errors.append("grown set: the person check is done but names no checker, date or bad-label count")
+        errors += [f"grown set: the person check corrects {k}, which is not in its sample"
+                   for k in corrected if k not in sample]
     return grown
 
 

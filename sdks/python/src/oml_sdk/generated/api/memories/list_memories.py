@@ -22,11 +22,13 @@ def _get_kwargs(
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     author: str | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    as_of: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
@@ -72,6 +74,8 @@ def _get_kwargs(
 
     params["author"] = author
 
+    params["include_text"] = include_text
+
     params["anchor_repo"] = anchor_repo
 
     params["anchor_path_prefix"] = anchor_path_prefix
@@ -96,6 +100,11 @@ def _get_kwargs(
     if not isinstance(until, Unset):
         json_until = until.isoformat()
     params["until"] = json_until
+
+    json_as_of: str | Unset = UNSET
+    if not isinstance(as_of, Unset):
+        json_as_of = as_of.isoformat()
+    params["as_of"] = json_as_of
 
     params["limit"] = limit
 
@@ -152,11 +161,13 @@ def sync_detailed(
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     author: str | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    as_of: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
@@ -190,6 +201,7 @@ def sync_detailed(
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
         author (str | Unset):
+        include_text (bool | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
             (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
             whose anchor names it; unanchored rows are left out (d4).
@@ -199,6 +211,7 @@ def sync_detailed(
             with every other filter by AND; rows without a kind are left out (ADR-0063 d3).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        as_of (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         x_request_id (str | Unset):
@@ -221,11 +234,13 @@ def sync_detailed(
         own=own,
         with_own=with_own,
         author=author,
+        include_text=include_text,
         anchor_repo=anchor_repo,
         anchor_path_prefix=anchor_path_prefix,
         origin_kinds=origin_kinds,
         since=since,
         until=until,
+        as_of=as_of,
         limit=limit,
         cursor=cursor,
         x_request_id=x_request_id,
@@ -250,11 +265,13 @@ def sync(
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     author: str | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    as_of: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
@@ -288,6 +305,7 @@ def sync(
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
         author (str | Unset):
+        include_text (bool | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
             (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
             whose anchor names it; unanchored rows are left out (d4).
@@ -297,6 +315,7 @@ def sync(
             with every other filter by AND; rows without a kind are left out (ADR-0063 d3).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        as_of (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         x_request_id (str | Unset):
@@ -320,11 +339,13 @@ def sync(
         own=own,
         with_own=with_own,
         author=author,
+        include_text=include_text,
         anchor_repo=anchor_repo,
         anchor_path_prefix=anchor_path_prefix,
         origin_kinds=origin_kinds,
         since=since,
         until=until,
+        as_of=as_of,
         limit=limit,
         cursor=cursor,
         x_request_id=x_request_id,
@@ -343,11 +364,13 @@ async def asyncio_detailed(
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     author: str | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    as_of: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
@@ -381,6 +404,7 @@ async def asyncio_detailed(
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
         author (str | Unset):
+        include_text (bool | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
             (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
             whose anchor names it; unanchored rows are left out (d4).
@@ -390,6 +414,7 @@ async def asyncio_detailed(
             with every other filter by AND; rows without a kind are left out (ADR-0063 d3).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        as_of (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         x_request_id (str | Unset):
@@ -412,11 +437,13 @@ async def asyncio_detailed(
         own=own,
         with_own=with_own,
         author=author,
+        include_text=include_text,
         anchor_repo=anchor_repo,
         anchor_path_prefix=anchor_path_prefix,
         origin_kinds=origin_kinds,
         since=since,
         until=until,
+        as_of=as_of,
         limit=limit,
         cursor=cursor,
         x_request_id=x_request_id,
@@ -439,11 +466,13 @@ async def asyncio(
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     author: str | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    as_of: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
@@ -477,6 +506,7 @@ async def asyncio(
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
         author (str | Unset):
+        include_text (bool | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
             (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
             whose anchor names it; unanchored rows are left out (d4).
@@ -486,6 +516,7 @@ async def asyncio(
             with every other filter by AND; rows without a kind are left out (ADR-0063 d3).
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        as_of (datetime.datetime | Unset):
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         x_request_id (str | Unset):
@@ -510,11 +541,13 @@ async def asyncio(
             own=own,
             with_own=with_own,
             author=author,
+            include_text=include_text,
             anchor_repo=anchor_repo,
             anchor_path_prefix=anchor_path_prefix,
             origin_kinds=origin_kinds,
             since=since,
             until=until,
+            as_of=as_of,
             limit=limit,
             cursor=cursor,
             x_request_id=x_request_id,

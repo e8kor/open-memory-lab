@@ -10,6 +10,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod as_of;
 pub mod federation;
 
 use core::future::{Future, poll_fn};
@@ -947,6 +948,7 @@ pub trait KeywordAllReads: Retriever {
             kinds: kinds.to_vec(),
             own_held: None,
             expired_at: None,
+            as_of: None,
         };
         let query = query.to_owned();
         async move {
@@ -989,6 +991,7 @@ pub trait KeywordAllReads: Retriever {
                 current_scanner: None,
             }),
             expired_at: None,
+            as_of: None,
         };
         let query = query.to_owned();
         async move {
@@ -1598,6 +1601,7 @@ pub async fn held_rows_of_every_author_are_read_on_the_named_nodes_alone<S: Jour
             any_author: true,
             current_scanner: None,
         }),
+        as_of: None,
     };
     for kind in store.retrievers() {
         // The time leg reads only a query's date window; its own laws hold it.
@@ -4348,6 +4352,7 @@ fn listing(scope: ListingScope) -> ListingFilter {
         until: None,
         author: None,
         tip: None,
+        as_of: None,
     }
 }
 
@@ -9884,6 +9889,7 @@ fn scope_of(wa: Uuid, own: Option<Uuid>) -> CandidateScope {
             current_scanner: None,
         }),
         expired_at: None,
+        as_of: None,
     }
 }
 
@@ -9992,6 +9998,7 @@ pub async fn a_retriever_never_returns_a_row_outside_the_scope<S: JournalStore>(
                     kinds: HIT_KINDS.to_vec(),
                     own_held: None,
                     expired_at: None,
+                    as_of: None,
                 };
                 assert!(
                     run(store, rig.tenant_id, kind, &empty, query, mode)
@@ -11463,6 +11470,7 @@ pub async fn the_time_leg_never_returns_a_row_outside_the_scope<S: JournalStore>
         own_held: None,
         expired_at: None,
         anchor: oml_app::types::AnchorFilter::default(),
+        as_of: None,
     };
     assert!(leg(empty).await.is_empty(), "an empty scope ranks nothing");
 }
@@ -11737,6 +11745,7 @@ pub async fn similar_candidates_are_the_scopes_served_tips_and_own_held_rows_hol
         }),
         expired_at: None,
         anchor: Default::default(),
+        as_of: None,
     };
     let candidates = |scope: CandidateScope, keys: Vec<i64>, limit: usize| async move {
         store

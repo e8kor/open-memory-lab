@@ -1,0 +1,16 @@
+{
+ "checked_by": "the operator",
+ "date": "2026-11-11",
+ "checked": 67,
+ "marks": {"correct": 58, "unsure": 6, "wrong": 3},
+ "bad_labels": 1,
+ "finding": "One label is wrong: g0113. The other eight marks that are not 'correct' (g0354, g0413, g0422, g0456, g0642, g0650, g0651, g0654) question the fictional Tallyline stack the corpus describes (its cloud provider, Kotlin, Gradle), not whether the labelled memory answers the query. Notes on answer spans do not change memory-level scoring.",
+ "corrections": {
+  "g0113": {
+   "was": {"m033": 2},
+   "relevant": {"m038": 2, "m037": 2, "m033": 1},
+   "answer_span": {"m038": "Ledger entries", "m037": "The ledger_entries table", "m033": "The invoices table"},
+   "reason": "By accounting practice the team's financial record is the ledger (ledger_entries, append-only, m038 and m037); invoices (m033) are documents posted to it."
+  }
+ }
+}

@@ -212,6 +212,24 @@ fn api(method: &str, path: &str, key: &str, body: Option<Value>) -> Request<Body
     .expect("a request")
 }
 
+/// A call as `oml-web` makes it for the session `cookie` names: the
+/// capacity's credential and the web client's identity (ADR-0070 d2).
+fn as_web(
+    cookie: &str,
+    capacity: &str,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+) -> Request<Body> {
+    let credential = capacity_credential(cookie.split_once('=').expect("a cookie").1, capacity);
+    let mut request = api(method, path, &credential, body);
+    request.headers_mut().insert(
+        "oml-web-client",
+        WEB_CLIENT_SECRET.parse().expect("a header value"),
+    );
+    request
+}
+
 /// GitHub's callback for account `id` with the primary verified `email`:
 /// its status, headers and body.
 async fn callback(rig: &Rig, id: u64, email: &str) -> (StatusCode, HeaderMap, String) {
@@ -347,37 +365,30 @@ async fn post_sign_up(rig: &Rig, pending: &str) -> (StatusCode, HeaderMap, Strin
     .await
 }
 
-/// The person approves the item their reviewer key is served on `/web`.
+/// The person approves the item their reviewer key is served, as the
+/// Review page, which `oml-web` serves, does through the API (ADR-0070 d7
+/// (b)).
 async fn approve_next(rig: &Rig, cookie: &str) {
-    let (status, _, html) = send(
-        &rig.router,
-        form(
-            "/web",
-            Some(cookie),
-            &format!("action=review_next&csrf_token={}", csrf(cookie)),
+    let (status, _, served) = json(
+        rig,
+        as_web(cookie, "review", "POST", "/v2/review/next", Some(json!({}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{served}");
+    let serve_id = served["serve_id"].as_str().expect("an item is served");
+    let (status, _, recorded) = json(
+        rig,
+        as_web(
+            cookie,
+            "review",
+            "POST",
+            "/v2/review/verdicts",
+            Some(json!({"serve_id": serve_id, "verdict": "approve", "reason": "mine"})),
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{html}");
-    let at = html
-        .find(r#"name="serve_id" value=""#)
-        .expect("an item is served")
-        + r#"name="serve_id" value=""#.len();
-    let serve_id = &html[at..at + html[at..].find('"').expect("closed")];
-    let (status, _, html) = send(
-        &rig.router,
-        form(
-            "/web",
-            Some(cookie),
-            &format!(
-                "action=verdict&csrf_token={}&serve_id={serve_id}&verdict=approve&reason=mine",
-                csrf(cookie)
-            ),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{html}");
-    assert!(html.contains("is now promoted"), "{html}");
+    assert_eq!(status, StatusCode::OK, "{recorded}");
+    assert_eq!(recorded["state"], "promoted", "{recorded}");
 }
 
 async fn events(rig: &Rig) -> Vec<(String, Value)> {
@@ -554,21 +565,22 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
     assert_eq!(status, StatusCode::ACCEPTED, "{held}");
     let ada_user = rig_user(&rig, 21).await;
     let scratch = format!("{ada_user}.scratch");
-    let (status, _, html) = send(
-        &rig.router,
-        form(
-            "/web",
-            Some(&ada),
-            &format!(
-                "action=create_workarea&name=scratch&csrf_token={}",
-                csrf(&ada)
-            ),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "{html}");
-    // The mode is the Workareas view's act, which oml-web runs as the
-    // person's reviewer key through the API (ADR-0070 d7 (b)).
+    // Creating the workarea and its mode are the Workareas view's acts,
+    // which oml-web runs as the person's web and reviewer keys through the
+    // API (ADR-0070 d7 (b)).
+    let web = capacity_credential(ada.split_once('=').expect("a cookie").1, "web");
+    let mut request = api(
+        "POST",
+        "/v2/workareas",
+        &web,
+        Some(json!({"name": "scratch"})),
+    );
+    request.headers_mut().insert(
+        "oml-web-client",
+        WEB_CLIENT_SECRET.parse().expect("a header value"),
+    );
+    let (status, _, html) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::CREATED, "{html}");
     let review = capacity_credential(ada.split_once('=').expect("a cookie").1, "review");
     let mut request = api(
         "POST",
@@ -601,17 +613,13 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
     assert_eq!(status, StatusCode::ACCEPTED, "{in_progress}");
     // Positive controls: Ada's reviewer key is served a held memory, and
     // her agent recalls the in-progress one inside its workarea.
-    let (status, _, html) = send(
-        &rig.router,
-        form(
-            "/web",
-            Some(&ada),
-            &format!("action=review_next&csrf_token={}", csrf(&ada)),
-        ),
+    let (status, _, served) = json(
+        &rig,
+        as_web(&ada, "review", "POST", "/v2/review/next", Some(json!({}))),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(html.contains(r#"name="serve_id""#), "{html}");
+    assert_eq!(status, StatusCode::OK, "{served}");
+    assert!(served["serve_id"].is_string(), "{served}");
     let (status, _, hits) = json(
         &rig,
         api(
@@ -680,31 +688,36 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
     assert_eq!(status, StatusCode::OK, "{rpc}");
     assert!(!rpc.to_string().contains("vendor audit"), "{rpc}");
     // Web: Bob's pages, status, counts and export hold nothing of Ada's.
-    for path in ["/web?view=memories", "/web/start", "/web?view=review"] {
+    // The Memories list is oml-web's (ADR-0070 d7 (b)): the lead answers
+    // its old URL with a redirect that holds no page, and oml-web's own
+    // isolation case is `a_person_reaches_nothing_of_another_persons_root_on_oml_webs_pages`.
+    let (status, headers, _) = send(&rig.router, page("/web?view=memories", Some(&bob))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/web/memories");
+    for path in ["/web/start"] {
         let (_, _, html) = send(&rig.router, page(path, Some(&bob))).await;
         assert!(!html.contains("Zanzibar"), "{path}: {html}");
         assert!(!html.contains(&ada_user), "{path}: {html}");
     }
     // The held rows of Ada's root and of her in-progress workarea are in no
     // queue, listing, event tail or recall of Bob's (ADR-0068 d3).
-    let (status, _, html) = send(
-        &rig.router,
-        form(
-            "/web",
-            Some(&bob),
-            &format!("action=review_next&csrf_token={}", csrf(&bob)),
-        ),
+    let (status, _, served) = json(
+        &rig,
+        as_web(&bob, "review", "POST", "/v2/review/next", Some(json!({}))),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{html}");
-    assert!(
-        !html.contains(r#"name="serve_id""#),
-        "nothing to serve: {html}"
-    );
+    assert_eq!(status, StatusCode::NO_CONTENT, "nothing to serve: {served}");
+    let (_, _, bob_held) = json(&rig, as_web(&bob, "review", "GET", "/v2/review/held", None)).await;
     for secret in ["Kilimanjaro", "Tanganyika"] {
-        assert!(!html.contains(secret), "{html}");
-        for path in ["/web?view=review", "/web?view=curate", "/web?view=memories"] {
-            let (_, _, html) = send(&rig.router, page(path, Some(&bob))).await;
+        assert!(!bob_held.to_string().contains(secret), "{bob_held}");
+        // Neither old URL is a page on the lead any more: curate was never
+        // a user view, and the list is oml-web's.
+        for (path, want) in [
+            ("/web?view=curate", StatusCode::NOT_FOUND),
+            ("/web?view=memories", StatusCode::SEE_OTHER),
+        ] {
+            let (status, _, html) = send(&rig.router, page(path, Some(&bob))).await;
+            assert_eq!(status, want, "{path}");
             assert!(!html.contains(secret), "{path}: {html}");
         }
         for path in ["/v2/review/held", "/v2/events", "/v1/memories"] {
@@ -1226,7 +1239,7 @@ async fn the_start_pages_answer_nothing_without_a_session() {
         "{csp}"
     );
     assert!(html.contains("<script>"));
-    let (_, headers, _) = send(&rig.router, page("/web", Some(&ada))).await;
+    let (_, headers, _) = send(&rig.router, page("/web?view=setup", Some(&ada))).await;
     assert!(
         !headers[header::CONTENT_SECURITY_POLICY]
             .to_str()

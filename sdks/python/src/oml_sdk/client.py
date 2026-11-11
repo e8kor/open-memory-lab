@@ -84,6 +84,7 @@ UNRESOLVED_RULE = (
 # The arguments of `read`'s recall and listing modes: oml_read's (ADR-0039
 # d4), and include_text, which the HTTP recall serves beside them.
 READ_RECALL = (
+    "as_of",
     "workarea",
     "k",
     "kinds",
@@ -98,6 +99,7 @@ READ_RECALL = (
     "sources",
 )
 READ_LISTING = (
+    "as_of",
     "own",
     "workarea",
     "claim_key",
@@ -410,6 +412,7 @@ class OmlClient:
         anchor_path_prefix: str | None = None,
         origin_kinds: Sequence[str] | None = None,
         sources: str | Sequence[str] | None = None,
+        as_of: datetime.datetime | None = None,
     ) -> Memory | RecallResponse | MemoryPage:
         """Read in `oml_read`'s three modes (ADR-0039 d4). `artifact_id`
         fetches one version with its text, a `Memory`. `query` recalls over
@@ -419,6 +422,9 @@ class OmlClient:
         `own=False` the promoted tips of `workarea`'s subtree, a `MemoryPage`.
         A recall's `sources` is `"scope"`, `"wide"` or a list of workarea names
         searched alone, where the tenant enabled federation (ADR-0072 d5).
+        `as_of`, in every mode, reads memory as it was at that past instant
+        under today's access; the listing then defaults to `own=False`
+        (ADR-0059 d14, d19).
         An argument outside the mode, and `query` beside `artifact_id`, raise
         `request.validation` naming it before anything is sent; only the
         fields given are sent."""
@@ -457,7 +463,7 @@ class OmlClient:
                 )
             _outside_mode(recall | listing | origin, (), "get")
             return self._send(
-                lambda: get_memory.sync_detailed(artifact_id, client=self._api)
+                lambda: get_memory.sync_detailed(artifact_id, client=self._api, as_of=_opt(as_of))
             ).parsed
         if query is not None:
             _outside_mode(listing, READ_RECALL, "recall")
@@ -483,12 +489,13 @@ class OmlClient:
                 else RecallRequestSourcesType0(sources)
                 if isinstance(sources, str)
                 else list(sources),
+                as_of=_opt(as_of),
             )
             return self._send(
                 lambda: recall_memories.sync_detailed(client=self._api, body=request)
             ).parsed
         _outside_mode(recall, READ_LISTING, "listing")
-        return self._listing(workarea=workarea, **listing, **origin)
+        return self._listing(workarea=workarea, as_of=as_of, **listing, **origin)
 
     def _listing(
         self,
@@ -505,13 +512,16 @@ class OmlClient:
         anchor_repo: str | None = None,
         anchor_path_prefix: str | None = None,
         origin_kinds: Sequence[str] | None = None,
+        as_of: datetime.datetime | None = None,
     ) -> MemoryPage:
         """One page of `GET /v1/memories`, `own` defaulting to true as
-        `oml_read`'s listing does (ADR-0039 d4)."""
+        `oml_read`'s listing does, or to false with `as_of`, which reads the
+        scoped listing (ADR-0039 d4; ADR-0059 d19)."""
         return self._send(
             lambda: list_memories.sync_detailed(
                 client=self._api,
-                own=True if own is None else own,
+                own=(as_of is None) if own is None else own,
+                as_of=_opt(as_of),
                 claim_key=_opt(claim_key),
                 state=ListMemoriesState(state) if state is not None else UNSET,
                 kind=ListMemoriesKind(kind) if kind is not None else UNSET,

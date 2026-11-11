@@ -681,6 +681,10 @@ pub struct CandidateScope {
     /// searched rows, so no row's score depends on which sources were
     /// searched. `None` keeps the scope's own statistics.
     pub reference: Option<Vec<Uuid>>,
+    /// An as-of read's instant: the promoted part is the claims' tips at
+    /// it and the held part the rows recorded by it, instead of today's
+    /// tips (ADR-0059 d15, d18). `None` reads today.
+    pub as_of: Option<oml_domain::EventTime>,
 }
 
 /// The own held part of a candidate scope (ADR-0025 d4, d5).
@@ -737,6 +741,10 @@ pub struct PostingsHealth {
 pub struct ValidTimeCounts {
     pub declared: u64,
     pub expired: u64,
+    /// Promoted versions with no `promoted_at`, which a row folded before
+    /// 0005 can be: an as-of read never serves one and serves the version
+    /// before it in its place (ADR-0059 d16).
+    pub untimed: u64,
 }
 
 /// One retrieval: the query, whether every term must match, and how many

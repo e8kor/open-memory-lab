@@ -419,7 +419,7 @@ list.
 
 **The pinned bundle and the Chromium check (d9, d14).** Mermaid 12.3.0 (`mermaid.min.js`, MIT,
 5,537,838 bytes, SHA-256 `336df803…74b9a3`, from the npm registry on 2026-11-06), vendored under
-`crates/transports/oml-transport-http/assets/` with its digest in the file name, compiled in with
+`crates/clients/oml-web/assets/` (moved from the lead with the frame by ADR-0070's sixth phase (b) change) with its digest in the file name, compiled in with
 `include_bytes!`, and held to that digest by a test. In Chrome for Testing 153.0.8010.12 (the Playwright cache's headless
 shell) the bundle drew a flowchart, a sequence, a class, a state and an entity-relationship diagram
 under the frame's own policy, whose `script-src` names the bundle and one hashed initialiser and has

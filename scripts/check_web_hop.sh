@@ -2,7 +2,8 @@
 # The web hop of a running stack (ADR-0070 d4), through its one origin:
 #   - the public /readyz is the lead's, and the lead accepts oml-web's
 #     client identity (web_client is not none);
-#   - the moved pages, GET /web/guardrails and GET /web/workareas, reach
+#   - the moved pages, GET /web/guardrails, /web/workareas, /web/memories,
+#     /web/atlas, /web/review, /web/keys and /web/memory, reach
 #     oml-web, which sends a browser with no session to the lead's
 #     /web/sign-in carrying the page as next;
 #   - the rest of the command line, oml-web --doctor run where oml-web runs,
@@ -43,6 +44,16 @@ done
 got="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$origin/web/workareas")"
 want="303 $origin/web/sign-in?next=%2Fweb%2Fworkareas"
 [ "$got" = "$want" ] || fail "GET /web/workareas answered '$got', not '$want'"
+for page in memories atlas review keys memory; do
+    got="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$origin/web/$page")"
+    want="303 $origin/web/sign-in?next=%2Fweb%2F$page"
+    [ "$got" = "$want" ] || fail "GET /web/$page answered '$got', not '$want'"
+done
+# The diagram frame's pinned bundle is oml-web's, routed by its prefix
+# (ADR-0056 d9; ADR-0070 d4): the lead no longer serves it.
+bundle="$(cd "$(dirname "$0")/.." && ls crates/clients/oml-web/assets/mermaid-*.js)"
+got="$(curl -s -o /dev/null -w '%{http_code}' "$origin/web/assets/$(basename "$bundle")")"
+[ "$got" = "200" ] || fail "GET /web/assets/$(basename "$bundle") answered '$got', not 200"
 
 "$@" || fail "oml-web --doctor failed"
 echo "web hop: $origin routes the moved pages to oml-web, and oml-web reaches the lead"

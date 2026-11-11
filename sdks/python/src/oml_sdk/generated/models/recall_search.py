@@ -47,7 +47,7 @@ class RecallSearch:
         below_floor (int): How many of the first k candidates the floor withheld; hits empty with below_floor above 0
             means nothing scored above the floor (ADR-0053 d6).
         window (None | RecallSearchWindowType0 | Unset): The date window read from the query by rule oml-when/1,
-            anchored to the recall's now; null when the query names no date (proposed ADR-0059 d6).
+            anchored to the recall's now; null when the query names no date (ADR-0059 d6).
         sources (RecallSources | Unset): Under sources wide or a list: what was searched and why (ADR-0072 d8). Every
             name and number is of a workarea the key reads (d6).
     """

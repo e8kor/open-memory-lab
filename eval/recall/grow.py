@@ -29,7 +29,9 @@ its own memory grade 2 with the answer span. Its fold (0 to 4) is its
 memory's: the 200 memories are ordered by SHA-256 of their id and dealt in
 turn, so every query of one memory sits in one fold and five-fold
 cross-validation never tunes on a memory's query and scores on its sibling.
-A seeded 10% sample is listed for a person's label check. Standard library only.
+A seeded 10% sample is listed for a person's label check; `grow/person_check.json`
+records that check and the labels it corrected, which `build` applies by query id
+(the query keeps the fold of the memory it was drafted from). Standard library only.
 """
 
 import argparse
@@ -47,6 +49,7 @@ from run import STOP  # noqa: E402
 
 GROW = HERE / "grow"
 PROMPT = GROW / "prompt.txt"
+PERSON_CHECK = GROW / "person_check.json"
 WRITER = {
     "model": "microsoft/Phi-3-mini-4k-instruct",
     "family": "Phi (Microsoft)",
@@ -188,12 +191,20 @@ def build(files):
         })
     sample = sorted(random.Random(SAMPLE_SEED).sample([q["id"] for q in queries],
                                                        -(-len(queries) // 10)))
+    check = json.loads(PERSON_CHECK.read_text()) if PERSON_CHECK.exists() else None
+    by_id = {q["id"]: q for q in queries}
+    for qid, c in ((check or {}).get("corrections") or {}).items():
+        q = by_id[qid]
+        if q["relevant"] != c["was"]:
+            raise SystemExit(f"{PERSON_CHECK}: {qid} no longer labels {c['was']}")
+        q["relevant"], q["answer_span"] = c["relevant"], c["answer_span"]
+        q["origin"]["corrected_by"] = "person_check"
     dropped = {}
     for v in verdicts:
         if v["dropped"]:
             dropped[v["dropped"]] = dropped.get(v["dropped"], 0) + 1
     return {
-        "version": 1,
+        "version": 2 if check else 1,
         "corpus_version": json.loads((HERE / "corpus.json").read_text())["version"],
         "adr": "ADR-0075 d8, phase 0a (#235)",
         "provenance": {
@@ -206,11 +217,18 @@ def build(files):
             "drafts": len(verdicts),
             "dropped": dict(sorted(dropped.items())),
             "labels": "each query labels the memory it was drafted from, grade 2, and the answer "
-                      "span the model copied from it, checked to be in that memory's text",
+                      "span the model copied from it, checked to be in that memory's text; "
+                      "person_check.corrections lists the labels a person replaced",
             "folds": "by memory: corpus ids ordered by SHA-256, dealt into 5 folds in turn",
         },
-        "person_check": {"sample": sample, "seed": SAMPLE_SEED, "checked_by": None,
-                         "status": "pending"},
+        "person_check": ({"sample": sample, "seed": SAMPLE_SEED, "checked_by": check["checked_by"],
+                          "date": check["date"], "status": "done", "checked": check["checked"],
+                          "marks": check["marks"], "bad_labels": check["bad_labels"],
+                          "finding": check["finding"],
+                          "corrections": {k: {"was": v["was"], "reason": v["reason"]}
+                                          for k, v in check["corrections"].items()}}
+                         if check else {"sample": sample, "seed": SAMPLE_SEED, "checked_by": None,
+                                        "status": "pending"}),
         "queries": queries,
     }
 

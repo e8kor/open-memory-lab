@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "corpus_version": 1,
  "adr": "ADR-0075 d8, phase 0a (#235)",
  "provenance": {
@@ -39,7 +39,7 @@
    "not_question": 1,
    "span_missing": 49
   },
-  "labels": "each query labels the memory it was drafted from, grade 2, and the answer span the model copied from it, checked to be in that memory's text",
+  "labels": "each query labels the memory it was drafted from, grade 2, and the answer span the model copied from it, checked to be in that memory's text; person_check.corrections lists the labels a person replaced",
   "folds": "by memory: corpus ids ordered by SHA-256, dealt into 5 folds in turn"
  },
  "person_check": {
@@ -113,8 +113,25 @@
    "g0665"
   ],
   "seed": 20261111,
-  "checked_by": null,
-  "status": "pending"
+  "checked_by": "the operator",
+  "date": "2026-11-11",
+  "status": "done",
+  "checked": 67,
+  "marks": {
+   "correct": 58,
+   "unsure": 6,
+   "wrong": 3
+  },
+  "bad_labels": 1,
+  "finding": "One label is wrong: g0113. The other eight marks that are not 'correct' (g0354, g0413, g0422, g0456, g0642, g0650, g0651, g0654) question the fictional Tallyline stack the corpus describes (its cloud provider, Kotlin, Gradle), not whether the labelled memory answers the query. Notes on answer spans do not change memory-level scoring.",
+  "corrections": {
+   "g0113": {
+    "was": {
+     "m033": 2
+    },
+    "reason": "By accounting practice the team's financial record is the ledger (ledger_entries, append-only, m038 and m037); invoices (m033) are documents posted to it."
+   }
+  }
  },
  "queries": [
   {
@@ -2026,16 +2043,21 @@
    "category": "question",
    "query": "What database table contains financial records for the team?",
    "relevant": {
-    "m033": 2
+    "m038": 2,
+    "m037": 2,
+    "m033": 1
    },
    "answer_span": {
+    "m038": "Ledger entries",
+    "m037": "The ledger_entries table",
     "m033": "The invoices table"
    },
    "fold": 3,
    "origin": {
     "writer": "model",
     "pass": "pass1",
-    "slot": "Q1"
+    "slot": "Q1",
+    "corrected_by": "person_check"
    }
   },
   {

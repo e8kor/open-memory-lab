@@ -29,8 +29,9 @@ pub const HUMAN_ONLY: &str = "web_is_human_only";
 
 /// The pages' policy (ADR-0070 d3 layer 5): nothing loads but the one
 /// stylesheet, named by its compile-time digest, forms post only to the
-/// page's origin, and no frame holds a page. No page here runs a script or
-/// frames one, so the policy names neither.
+/// page's origin, and no frame holds a page. No page runs a script; a page
+/// that draws a Mermaid claim adds its one frame source
+/// ([`crate::render::framing_policy`]).
 #[must_use]
 pub fn content_security_policy() -> String {
     oml_page::web::content_security_policy(&[], None)
@@ -291,11 +292,37 @@ fn security_headers(h: &mut HeaderMap) {
     }
 }
 
+/// The mark of an answer whose own policy, cache rule and referrer policy
+/// layer 5 keeps: set only by [`crate::render`], on the frame, its bundle
+/// and a page that holds a drawing (ADR-0056 d9). Every other answer gets
+/// the pages' headers whatever its handler set, so no handler weakens them
+/// by setting a header.
+#[derive(Debug, Clone, Copy)]
+pub struct OwnHeaders;
+
 /// Layer 5: the headers on every answer that reaches it, a page or the
-/// health probe.
+/// health probe; on an answer marked [`OwnHeaders`], the policy, cache
+/// rule and referrer policy its handler set stand.
 pub async fn headers(req: Request, next: Next) -> Response {
     let mut response = next.run(req).await;
-    security_headers(response.headers_mut());
+    let own = response.extensions().get::<OwnHeaders>().is_some();
+    let h = response.headers_mut();
+    let kept: Vec<_> = if own {
+        [
+            header::CONTENT_SECURITY_POLICY,
+            header::CACHE_CONTROL,
+            header::REFERRER_POLICY,
+        ]
+        .into_iter()
+        .filter_map(|name| h.get(&name).cloned().map(|value| (name, value)))
+        .collect()
+    } else {
+        Vec::new()
+    };
+    security_headers(h);
+    for (name, value) in kept {
+        h.insert(name, value);
+    }
     response
 }
 
