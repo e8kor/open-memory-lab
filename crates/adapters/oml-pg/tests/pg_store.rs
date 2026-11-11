@@ -9664,3 +9664,106 @@ async fn a_promoted_version_without_promoted_at_is_counted_for_doctor_and_served
     );
     drop_dbs(&created).await;
 }
+
+/// 0041 builds the partitions in name order, committing each: when the
+/// second tenant's partition is locked past the 5 s wait, the run fails
+/// with the first partition's index attached and valid and no other copy
+/// left behind, and a run once the lock is gone completes the parent's
+/// index (ADR-0059 d20).
+#[tokio::test]
+async fn migration_0041_fails_on_a_locked_partition_keeping_the_ones_it_committed_and_a_rerun_completes()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 40).await;
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    for seed in [595, 596] {
+        ChainRig::new(seed).seed_chain(&store, 0).await;
+    }
+    let parts: Vec<String> = sqlx::query_scalar(
+        "SELECT inhrelid::regclass::text FROM pg_inherits \
+         WHERE inhparent = 'memories'::regclass ORDER BY inhrelid::regclass::text",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .expect("partitions");
+    assert_eq!(parts.len(), 2, "two tenants, two partitions: {parts:?}");
+    // Another session holds a lock CREATE INDEX's SHARE lock waits behind,
+    // on the partition the loop reaches second.
+    let mut holder = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("holder connect");
+    let mut held = holder.begin().await.expect("begin");
+    sqlx::query(&format!("LOCK TABLE {} IN ROW EXCLUSIVE MODE", parts[1]))
+        .execute(&mut *held)
+        .await
+        .expect("hold the second partition");
+    assert!(
+        store.migrate(&owner_url(&db)).await.is_err(),
+        "0041 fails once the second partition's lock wait passes 5 s"
+    );
+    let (attached, copies, parent_valid) = tip_moves_state(&mut conn).await;
+    assert_eq!(
+        attached,
+        vec![(parts[0].clone(), true)],
+        "the first partition's index committed, attached and valid"
+    );
+    assert_eq!(
+        copies, 1,
+        "the locked partition's build left no index behind"
+    );
+    assert!(
+        !parent_valid,
+        "the parent's index waits for every partition"
+    );
+    held.rollback().await.expect("release");
+    drop(holder);
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("the rerun completes");
+    let (attached, copies, parent_valid) = tip_moves_state(&mut conn).await;
+    assert_eq!(
+        attached,
+        parts.iter().map(|p| (p.clone(), true)).collect::<Vec<_>>(),
+        "every partition's index attached and valid"
+    );
+    assert_eq!(copies, 2);
+    assert!(parent_valid, "the parent's index is valid once complete");
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// 0041's index state: each attached partition copy with its validity, the
+/// copies on the partitions, attached or not, and whether the parent's is
+/// valid.
+async fn tip_moves_state(conn: &mut PgConnection) -> (Vec<(String, bool)>, i64, bool) {
+    let attached: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT x.indrelid::regclass::text, x.indisvalid FROM pg_inherits i \
+         JOIN pg_index x ON x.indexrelid = i.inhrelid \
+         WHERE i.inhparent = 'memories_tip_moves'::regclass ORDER BY 1",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .expect("attached");
+    let copies: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pg_index x JOIN pg_class c ON c.oid = x.indexrelid \
+         JOIN pg_inherits p ON p.inhrelid = x.indrelid AND p.inhparent = 'memories'::regclass \
+         WHERE c.relname LIKE '%tip_moves%'",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .expect("copies");
+    let parent_valid: bool = sqlx::query_scalar(
+        "SELECT indisvalid FROM pg_index WHERE indexrelid = 'memories_tip_moves'::regclass",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .expect("parent");
+    (attached, copies, parent_valid)
+}
