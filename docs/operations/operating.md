@@ -67,7 +67,7 @@ is for one client unless a row says otherwise.
 | The widen hint's signal, 100,000 synthetic rows over 50 workareas | built in 5.0 s off the request path; 1,333,609 counts, about 21 MB; peak resident set 94 MB during the build; a `scope` recall with it held p95 13.6 ms | `oml-pg`'s `federation_timing`, `the_widen_signal_on_a_tenant_of_100k_rows` |
 | Review queue under load | six reviewer keys approved about 77 rows a second with 5,000 held, 2 to 14 a second with 45,000 held, before the review index | `eval/bench/REPORT.md` |
 
-The widen hint's signals take at most about 128 MB of the lead's memory, 32 MB per tenant ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md#the-widen-hint-as-built-2026-11-11)). Size the lead's memory limit with that headroom.
+The widen hint's signals take at most about 128 MB of the lead's memory, 32 MB per tenant, and one build at a time adds up to about 100 MB while it runs ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md#the-widen-hint-as-built-2026-11-11)). Size the lead's memory limit with about 230 MB of headroom for them.
 
 The limits bind in this order as a server grows: concurrent reranked recalls, the data volume, and a key
 holding thousands of unreviewed rows. More than four reranked recalls at once start to time out and fall back
