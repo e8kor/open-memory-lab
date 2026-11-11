@@ -3,7 +3,9 @@
 # against a throwaway database, makes one committed workarea per corpus topic
 # under eval-fed, turns federation on, and runs federated.py: scope, wide and
 # the union on the scoped and cross splits, the widen hint, and, given
-# SciFact's source.zip, the skew split.
+# SciFact's source.zip, the skew split. EVAL_PHASE2=1 runs fed2.py's collect
+# instead (the phase 2 gate, #206): it needs the SciFact zip and
+# OML_SEARCH__SPARSE__MODEL_DIR, since it reads `sparse` and `bm25-sparse` too.
 #
 #   PGHOST=127.0.0.1 PGPORT=5432 PGUSER=oml PGPASSWORD=... \
 #       eval/recall/federated.sh <out-dir> [path/to/scifact/source.zip]
@@ -60,6 +62,13 @@ trap cleanup EXIT
 [ -x "$BIN/oml-server-lead" ] && [ -x "$BIN/oml" ] || fail "binaries missing in $BIN"
 command -v jq >/dev/null || fail "jq is required"
 
+ENABLED=bm25,bm25-postings
+if [ "${EVAL_PHASE2:-}" = 1 ]; then
+    [ -n "$SCIFACT" ] || fail "EVAL_PHASE2 needs the SciFact zip"
+    [ -n "${OML_SEARCH__SPARSE__MODEL_DIR:-}" ] || fail "EVAL_PHASE2 needs OML_SEARCH__SPARSE__MODEL_DIR"
+    ENABLED=bm25,bm25-postings,sparse,bm25-sparse
+fi
+
 admin -c "CREATE ROLE ${DB}_owner LOGIN PASSWORD '$PAIR_PASSWORD'" \
     -c "CREATE ROLE ${DB}_serving LOGIN PASSWORD '$PAIR_PASSWORD'" || fail "role pair"
 MINTED=1
@@ -70,7 +79,7 @@ OML_POSTGRES__OWNER_URL="postgres://${DB}_owner:$PAIR_PASSWORD@$PGHOST:$PGPORT/$
 OML_SERVER__LISTEN="127.0.0.1:$PORT" \
 OML_SERVER__METRICS_LISTEN="127.0.0.1:$METRICS_PORT" \
 OML_KMS__KEYRING_PATH="$STATE/keyring" \
-OML_SEARCH__ENABLED=bm25,bm25-postings \
+OML_SEARCH__ENABLED="$ENABLED" \
 OML_SEARCH__DEFAULT=bm25-postings \
     "$BIN/oml-server-lead" >"$STATE/server.stdout" 2>"$STATE/server.stderr" &
 SERVER_PID=$!
@@ -115,5 +124,11 @@ for topic in $TOPICS; do
 done
 "$OML" --json search federation --enabled on >/dev/null || fail "federation on"
 
+if [ "${EVAL_PHASE2:-}" = 1 ]; then
+    OML="$OML" python3 eval/recall/fed2.py collect --url "$URL" --state "$STATE" --out "$OUT" \
+        --scifact-zip "$SCIFACT" --metrics-url "http://127.0.0.1:$METRICS_PORT" || fail "fed2.py"
+    python3 eval/recall/fed2.py analyze --out "$OUT" || fail "fed2.py analyze"
+    exit 0
+fi
 OML="$OML" python3 eval/recall/federated.py --url "$URL" --state "$STATE" --out "$OUT" \
     ${SCIFACT:+--scifact-zip "$SCIFACT"} || fail "federated.py"
