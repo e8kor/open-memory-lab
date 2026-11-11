@@ -3733,3 +3733,88 @@ async fn an_omls_credential_on_mcp_is_refused() {
     assert_eq!(response.status(), StatusCode::OK, "the credential is live");
     drop_db(&db_name).await;
 }
+
+/// `oml_read` takes `as_of` in its three modes (ADR-0059 d14, d19): recall
+/// and the listing serve the tip at the instant, the listing reading the
+/// scoped listing when `own` is not sent, get answers not found for a
+/// version recorded after it, and a date is refused naming `/as_of`.
+#[tokio::test]
+async fn oml_read_takes_as_of_in_every_mode() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, dreamer, reader, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &dreamer).await;
+    let got = call_tool(&router, &reader, 1, "oml_read", json!({"artifact_id": v1})).await;
+    let at = got["structuredContent"]["items"][0]["promoted_at"]
+        .as_str()
+        .expect("promoted_at")
+        .to_owned();
+    let proposed = call_tool(
+        &router,
+        &writer,
+        2,
+        "oml_write",
+        json!({
+            "expected_version": 1,
+            "replaces": v1,
+            "text": REVISED,
+            "idempotency_key": "crew-procure/asof/1",
+        }),
+    )
+    .await;
+    assert_eq!(proposed["isError"], false, "{proposed}");
+    let v2 = proposed["structuredContent"]["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned();
+    approve_as(&router, &dreamer, "v2").await;
+
+    let then = call_tool(
+        &router,
+        &reader,
+        3,
+        "oml_read",
+        json!({"query": "aluminium price", "as_of": at}),
+    )
+    .await;
+    assert_eq!(hit_ids(&then), [v1.as_str()], "{then}");
+    let today = call_tool(&router, &reader, 4, "oml_read", json!({"query": "aluminium price"})).await;
+    assert_eq!(hit_ids(&today), [v2.as_str()], "{today}");
+    let listed = call_tool(
+        &router,
+        &reader,
+        5,
+        "oml_read",
+        json!({"claim_key": CLAIM, "as_of": at}),
+    )
+    .await;
+    let items = listed["structuredContent"]["items"]
+        .as_array()
+        .expect("items");
+    assert_eq!(items.len(), 1, "{listed}");
+    assert_eq!(items[0]["artifact_id"], json!(v1), "{listed}");
+    let absent = call_tool(
+        &router,
+        &reader,
+        6,
+        "oml_read",
+        json!({"artifact_id": v2, "as_of": at}),
+    )
+    .await;
+    assert_eq!(absent["isError"], true, "{absent}");
+    assert_eq!(
+        absent["structuredContent"]["error"]["code"], "access.not_found",
+        "{absent}"
+    );
+    let dated = call_tool(
+        &router,
+        &reader,
+        7,
+        "oml_read",
+        json!({"query": "aluminium", "as_of": "2026-10-10"}),
+    )
+    .await;
+    refused_naming(&dated, "/as_of");
+    drop_db(&db).await;
+}

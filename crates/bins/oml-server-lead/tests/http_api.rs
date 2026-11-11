@@ -10430,3 +10430,133 @@ async fn keep_an_admin_holds_under_two_concurrent_unflags() {
     assert_eq!(admins, 1, "{list}");
     drop_db(&rig.db_name).await;
 }
+
+/// `as_of` over HTTP (ADR-0059 d14, d17, d19): recall, the scoped listing
+/// and get read the claim's tip and existence at the instant, and a date, a
+/// future instant and an unknown get parameter are refused naming the field.
+#[tokio::test]
+async fn as_of_reads_the_tip_at_an_instant_over_http() {
+    let Some((rig, admin, crew, _quotes, writer, dreamer)) = steering_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let reader = issue_key(router, &admin, "reader", "crew/agent-asof", crew).await;
+    let v1 = promote_over_http(
+        router,
+        &writer,
+        &dreamer,
+        crew,
+        ("asof-rb", "memory", "The deploy runbook names alpha."),
+    )
+    .await;
+    let v1 = v1.as_str().expect("an id").to_owned();
+    let (status, _, got) = send(router, "GET", &format!("/v1/memories/{v1}"), Call::auth(&reader)).await;
+    assert_eq!(status, StatusCode::OK, "{got}");
+    let promoted_at = got["promoted_at"].as_str().expect("promoted_at").to_owned();
+    let (status, _, accepted) = send(
+        router,
+        "POST",
+        &format!("/v1/memories/{v1}/supersede"),
+        Call::auth(&writer)
+            .idem("asof-sup")
+            .body(json!({ "expected_version": 1, "body": "The deploy runbook names beta." })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    let v2 = accepted["artifact_id"].as_str().expect("an id").to_owned();
+    let (status, _, serve) = send(
+        router,
+        "POST",
+        "/v2/review/next",
+        Call::auth(&dreamer).idem("asof-r").body(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{serve}");
+    let (status, _, verdict) = send(
+        router,
+        "POST",
+        "/v2/review/verdicts",
+        Call::auth(&dreamer)
+            .idem("asof-v")
+            .body(json!({"serve_id": serve["serve_id"], "verdict": "approve"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verdict}");
+
+    let (status, then) = recall_over_http(
+        router,
+        &reader,
+        None,
+        json!({"query": "deploy runbook", "as_of": promoted_at}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{then}");
+    assert_eq!(hit_ids(&then), vec![json!(v1)], "{then}");
+    assert!(then.get("as_of").is_none(), "no echo of the instant: {then}");
+    let (_, today) =
+        recall_over_http(router, &reader, None, json!({"query": "deploy runbook"})).await;
+    assert_eq!(hit_ids(&today), vec![json!(v2)], "{today}");
+
+    let at = query_encoded(&promoted_at);
+    let (status, _, page) = send(
+        router,
+        "GET",
+        &format!("/v1/memories?claim_key=asof-rb&as_of={at}"),
+        Call::auth(&reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let listed: Vec<&Value> = page["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|m| &m["artifact_id"])
+        .collect();
+    assert_eq!(listed, vec![&json!(v1)], "{page}");
+    let (status, _, body) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{v2}?as_of={at}"),
+        Call::auth(&reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_envelope(&body, "access.not_found");
+    let (status, _, body) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{v1}?as_of={at}"),
+        Call::auth(&reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    for (path, field) in [
+        (format!("/v1/memories/{v1}?as_of=2026-10-10"), "as_of"),
+        (format!("/v1/memories?as_of=2099-01-01T00%3A00%3A00Z"), "as_of"),
+        (format!("/v1/memories?own=true&as_of={at}"), "as_of"),
+    ] {
+        let (status, _, body) = send(router, "GET", &path, Call::auth(&reader)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {body}");
+        assert_envelope(&body, "request.validation");
+        assert_eq!(body["error"]["details"]["field"], field, "{path}: {body}");
+    }
+    let (status, _, body) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{v1}?since={at}"),
+        Call::auth(&reader),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "an unknown get parameter: {body}");
+    let (status, body) = recall_over_http(
+        router,
+        &reader,
+        None,
+        json!({"query": "deploy", "as_of": "2099-01-01T00:00:00Z"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["details"]["field"], "/as_of", "{body}");
+    drop_db(&rig.db_name).await;
+}
