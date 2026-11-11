@@ -176,7 +176,7 @@ an option with no default and no saved value reaches neither. Decided, not built
   (amends ADR-0057 d6 and d17).** ADR-0057 d6's disclosure stays: on a server whose admins are not
   the caller's, they can read submitted memories, and supersession or retirement does not erase
   submitted text or anchors. What triggers it changes:
-    - **The server says so.** `GET /v2/whoami` gains a required boolean `shared`: `true` when the
+    - **The server says so.** `GET /v2/whoami` always answers a boolean `shared`: `true` when the
       new setting `server.shared` is `true` or `signup.mode` is `open`
       ([ADR-0068](ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md)),
       else `false`. `server.shared` defaults to `false`; a hosted service sets it in its own
@@ -185,6 +185,10 @@ an option with no default and no saved value reaches neither. Decided, not built
       people who need it, and it is not a security control. A server whose admins mean harm can
       answer `false`; the user named that server, and the host check it replaces protected one
       host only.
+    - **Optional in the schema: the operator's clarification of 2026-11-11.** A server from this
+      release always sends `shared`, but `docs/api/openapi.yaml` marks it optional, so the
+      generated SDKs read an answer without it, from an older server, as not shared, as the CLI
+      does.
     - **A server that does not say counts as not shared: the operator's choice of 2026-11-11.** A
       `whoami` answer without `shared` comes from a server older than this change, and the run asks
       no consent of it. The record proposed the opposite (ask consent of a server that does not
@@ -258,7 +262,7 @@ an option with no default and no saved value reaches neither. Decided, not built
 
     16. `whoami_says_shared_when_server_shared_is_set_or_sign_up_is_open` (`oml-transport-http`,
         over the in-memory app; `server.shared`'s parsing in `oml-server-lead`'s unit tests), and
-        `docs/api/openapi.yaml` holds `shared` required on `Whoami`
+        `docs/api/openapi.yaml` declares `shared` on `Whoami`, optional; the Python and TypeScript SDK models parse a whoami without it
     17. `the_setup_view_shows_the_servers_own_issuer_and_names_no_other_server`
         (`oml-transport-http`)
     18. `a_new_key_is_shown_beside_the_apis_issuer_and_with_none_beside_a_named_no_server_line`
@@ -300,8 +304,8 @@ an option with no default and no saved value reaches neither. Decided, not built
   key alone is now refused off a terminal; it passes `--url` beside `--key-file`, or exports
   `OML_URL` with `OML_API_KEY`. A kit user replaces the URL in the copied file. A sync user
   repeats `--allow-public-server` once per server they consented to before. The credentials file
-  is unchanged. The Python and TypeScript SDKs are regenerated for `Whoami.shared`; a caller that
-  builds `Whoami` by hand adds the field. A hosted operator sets `server.shared` first (Rollout
+  is unchanged. The Python and TypeScript SDKs are regenerated for `Whoami.shared`, which is
+  optional, so they still read an older server's whoami. A hosted operator sets `server.shared` first (Rollout
   order). The release notes of the release that builds this carry these lines; the hosted service
   tells its own users.
 - **Pages that change with the build** (the D-register's owners): the repository README's quick
