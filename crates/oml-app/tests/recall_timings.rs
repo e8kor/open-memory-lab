@@ -107,6 +107,7 @@ async fn reader_with_a_hit(timings: bool) -> (TestApp, String) {
 
 fn recall(timings: bool) -> RecallRequest {
     RecallRequest {
+        sources: None,
         include_expired: false,
         now: None,
         timings,

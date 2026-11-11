@@ -84,6 +84,10 @@ struct Observed {
     /// (ADR-0030 d5).
     unreviewed_hits: u64,
     mode_set: Option<&'static str>,
+    /// A federated tenant's recall mode and its federated hits (ADR-0072
+    /// Consequences).
+    recall_sources: Option<&'static str>,
+    federated_hits: u64,
     curation: Option<&'static str>,
     /// A write's similar check: the best relation named, `on_similar`, and
     /// its seconds (ADR-0050 d1; ADR-0054 d1).
@@ -263,6 +267,14 @@ impl RequestObserver for ScopeObserver {
 
     fn mode_set(&self, mode: &'static str) {
         in_scope(|scope| scope.update(|o, _| o.mode_set = Some(mode)));
+    }
+
+    fn recall_sources(&self, mode: &'static str) {
+        in_scope(|scope| scope.update(|o, _| o.recall_sources = Some(mode)));
+    }
+
+    fn federated_hits(&self, n: u64) {
+        in_scope(|scope| scope.update(|o, _| o.federated_hits += n));
     }
 
     fn curation(&self, act: &'static str) {
@@ -664,6 +676,12 @@ pub(crate) async fn layer(
     }
     if let Some(mode) = observed.mode_set {
         traffic.metrics.mode_set(mode);
+    }
+    if let Some(mode) = observed.recall_sources {
+        traffic.metrics.recall_sources(mode);
+    }
+    if observed.federated_hits > 0 {
+        traffic.metrics.federated_hits(observed.federated_hits);
     }
     if let Some(act) = observed.curation {
         traffic.metrics.curation(act);

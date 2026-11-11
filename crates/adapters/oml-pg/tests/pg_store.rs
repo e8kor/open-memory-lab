@@ -372,6 +372,7 @@ async fn keyword_all_returns_exactly_the_v0_5_0_rows_and_order() {
                     rig.tenant_id,
                     RetrieverKind::KeywordAll,
                     &CandidateScope {
+                        reference: None,
                         anchor: oml_app::types::AnchorFilter::default(),
                         promoted_nodes: vec![wa],
                         kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
@@ -2547,10 +2548,12 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
         let row = match (renamed, table) {
             // 0020 adds search_default and 0023 telemetry_query_text_since,
             // null for every tenant they find
-            // (ADR-0049 d4).
+            // (ADR-0049 d4); 0040 the federation policy, off with its
+            // defaults (ADR-0072 d5).
             (true, "tenants") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'search_default' \
-                  - 'telemetry_query_text_since') \
+                  - 'telemetry_query_text_since' - 'federation_enabled' \
+                  - 'federation_default_sources' - 'federation_max_sources') \
                  || jsonb_build_object('name', t.prior_name)"
             }
             // Before 0017 a workarea's status is the one every build served,
@@ -2563,10 +2566,13 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             }
             // 0014 adds user_root and namespace_root_id, folded as false and
             // null for every workarea it finds (ADR-0044 d12); 0028 adds
-            // mode, standard for every workarea it finds (ADR-0030 d14).
+            // mode, standard for every workarea it finds (ADR-0030 d14);
+            // 0040 accept_federated, true for every workarea it finds
+            // (ADR-0072 d5).
             (true, "workareas") => {
                 "(to_jsonb(t) - 'name' - 'prior_name' - 'crew_id' - 'path' - 'user_root' \
-                 - 'namespace_root_id' - 'mode') || jsonb_build_object('name', t.prior_name)"
+                 - 'namespace_root_id' - 'mode' - 'accept_federated') \
+                 || jsonb_build_object('name', t.prior_name)"
             }
             // 0012 adds credential, folded as bearer for every key it finds
             // (ADR-0031 d7); 0014 adds user_root_id, null for every key it
@@ -5892,10 +5898,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 39,
-        "every migration through 0039_web_session_credentials"
-    );
+    assert_eq!(applied, 40, "every migration through 0040_federated_recall");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7246,6 +7249,7 @@ async fn bm25_list(
             tenant,
             RetrieverKind::Bm25,
             &CandidateScope {
+                reference: None,
                 anchor: oml_app::types::AnchorFilter::default(),
                 promoted_nodes: vec![wa],
                 kinds: oml_app::types::HIT_KINDS.to_vec(),
@@ -7340,10 +7344,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 39,
-        "every migration through 0039_web_session_credentials"
-    );
+    assert_eq!(applied, 40, "every migration through 0040_federated_recall");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8219,10 +8220,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 39,
-        "every migration through 0039_web_session_credentials"
-    );
+    assert_eq!(applied, 40, "every migration through 0040_federated_recall");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8248,6 +8246,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
                     tenant,
                     RetrieverKind::Bm25Postings,
                     &CandidateScope {
+                        reference: None,
                         anchor: oml_app::types::AnchorFilter::default(),
                         promoted_nodes: vec![wa, Uuid::from_u128(0xE3)],
                         kinds: oml_app::types::HIT_KINDS.to_vec(),
@@ -9272,6 +9271,141 @@ async fn the_expiry_cut_is_an_index_condition_for_the_serving_role_under_row_sec
         plan.lines()
             .any(|l| l.contains("Index Cond") && l.contains("valid_until_us <=")),
         "the expiry cut is an index condition under the policy: {plan}"
+    );
+    drop_dbs(&created).await;
+}
+
+// ---------------------------------------------------------------------------
+// Federated recall (ADR-0072 phase 1)
+// ---------------------------------------------------------------------------
+
+/// Federated recall's phase 1 leakage and invariance laws on PostgreSQL, as
+/// the serving role under row security, exactly as the double passes them
+/// (ADR-0072 d13): `bm25` and `bm25-postings` at the served limits.
+#[tokio::test]
+async fn federated_recall_passes_the_leakage_suite() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::federation::run_federation_suite(
+        || fresh_search_store(&created),
+        &["bm25", "bm25-postings", "bm25-postings-time"],
+    )
+    .await;
+    drop_dbs(&created).await;
+}
+
+/// Test 6 on `bm25-postings` under limits so small that a selection's
+/// postings cross the posting budget: the pruned words are the reference
+/// set's, so no selection moves a score (ADR-0072 d4.2, d7).
+#[tokio::test]
+async fn a_selection_crossing_the_posting_budget_moves_no_score() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    for k in [1, 3, 10, 100] {
+        let store = fresh_search_store(&created)
+            .await
+            .with_prune_limits(oml_pg::PruneLimits {
+                frequent_share: 0.2,
+                posting_budget: 4,
+            });
+        oml_port_contracts::federation::a_hits_score_never_depends_on_selection_at(
+            store,
+            "bm25-postings",
+            k,
+        )
+        .await;
+    }
+    drop_dbs(&created).await;
+}
+
+/// d12's budget, measured by hand (`--ignored --nocapture`): a key reading
+/// 1,000 committed workareas, one memory each, recalls at one of them on
+/// `bm25-postings` with federation off, under `scope` (the hint reads the
+/// candidates' counts) and under `wide` at `max_sources` 8; p50 and p95 of
+/// 40 runs each are printed (ADR-0072 d12).
+#[tokio::test]
+#[ignore = "a measurement: 1,000 workareas, several minutes"]
+async fn federation_overhead_at_1000_candidates() {
+    use oml_app::federation::{FederationPolicyChange, Sources};
+    use oml_port_contracts::federation::{fleet_sample, fleet_world, quantile_of};
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let started = std::time::Instant::now();
+    let (w, key) = fleet_world(fresh_search_store(&created).await, 1_000).await;
+    println!("built 1,000 workareas in {:?}", started.elapsed());
+    let report = |label: &str, v: Vec<f64>| {
+        println!(
+            "{label}: p50 {:.1} ms, p95 {:.1} ms",
+            quantile_of(v.clone(), 0.5) * 1e3,
+            quantile_of(v, 0.95) * 1e3
+        );
+    };
+    // d12's budget is the statistics reads': the counts over the 1,000
+    // nodes and the expired subtraction, timed alone.
+    {
+        use oml_app::ports::JournalStore as _;
+        let nodes: Vec<Uuid> = w
+            .store
+            .workarea_subtree(w.tenant, w.node("fleet"))
+            .await
+            .expect("the fleet")
+            .into_iter()
+            .map(|n| n.workarea_id)
+            .collect();
+        let scope = oml_app::federation::CountsScope {
+            nodes,
+            kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
+            expired_at: Some(i64::MAX / 2),
+            prunes: true,
+        };
+        let mut reads = Vec::new();
+        for i in 0..41 {
+            let started = std::time::Instant::now();
+            w.store
+                .reference_counts(
+                    w.tenant,
+                    &scope,
+                    ["invoice retry", "fleet note", "policy"][i % 3],
+                )
+                .await
+                .expect("the counts");
+            if i > 0 {
+                reads.push(started.elapsed().as_secs_f64());
+            }
+        }
+        report("the statistics reads alone", reads);
+    }
+    report(
+        "scope, federation on",
+        fleet_sample(&w, &key, Some(Sources::Scope), 40).await,
+    );
+    report(
+        "wide, max_sources 8",
+        fleet_sample(&w, &key, Some(Sources::Wide), 40).await,
+    );
+    w.app
+        .set_federation_policy(
+            w.admin.as_str(),
+            FederationPolicyChange {
+                enabled: Some(false),
+                ..FederationPolicyChange::default()
+            },
+        )
+        .await
+        .expect("federation off");
+    report(
+        "scope, federation off",
+        fleet_sample(&w, &key, None, 40).await,
+    );
+    println!(
+        "candidate count: {:?}",
+        w.app.federation_candidate_count(w.tenant, key.key_id).await
     );
     drop_dbs(&created).await;
 }

@@ -591,6 +591,50 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "role": role.as_str(),
             "held_by": held_by.as_str(),
         })),
+        // Only a person's dreamer key or a tenant admin sets a workarea's
+        // federation field (ADR-0072 d5).
+        AppError::FederationHumanOnly { role, held_by } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "R1: a policy that changes what other keys' recalls search is a person's or an admin's act, never an agent's.",
+            format!(
+                "setting a workarea's federation field needs a dreamer key held by a human or an admin key, and this is a {} key held by {}",
+                role.as_str(),
+                held_by.as_str()
+            ),
+        )
+        .with_details(json!({
+            "reason": "federation_is_human_only",
+            "role": role.as_str(),
+            "held_by": held_by.as_str(),
+        })),
+        // The shape of `sources`, federation off, or a policy value out of
+        // range (ADR-0072 d5).
+        AppError::SourcesInvalid { field, message } => {
+            ApiError::validation(message).with_details(json!({ "field": field }))
+        }
+        AppError::SourcesUnderCc { pipeline } => ApiError::validation(format!(
+            "{pipeline} normalises each list by its own bounds, so sources wide and a list are refused on it; use another pipeline"
+        ))
+        .with_details(json!({ "field": "/search" })),
+        // An unreadable and an absent listed name are the same bytes, with
+        // the position the caller sent (ADR-0072 d5, d6).
+        AppError::SourceNotFound { index } => {
+            ApiError::not_found().with_details(json!({ "field": format!("/sources/{index}") }))
+        }
+        AppError::SourceRefused { index, reason } => ApiError::validation(format!(
+            "sources/{index} is not a usable source: {}",
+            match reason {
+                oml_app::federation::SourceRefusal::Untrusted =>
+                    "it is not committed or validated, or lies inside an in-progress subtree",
+                oml_app::federation::SourceRefusal::DeclinesFederation =>
+                    "it declines federated reads from recalls scoped elsewhere",
+            }
+        ))
+        .with_details(json!({
+            "field": format!("/sources/{index}"),
+            "reason": reason.as_str(),
+        })),
         // A curator narrows inside an in-progress scope only (ADR-0030 d9).
         AppError::Curator { verb, refusal } => ApiError::new(
             StatusCode::FORBIDDEN,

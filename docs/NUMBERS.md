@@ -272,3 +272,4 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0037 | `feat/open-signup` |  | open signup | reserved |
 | migration | 0038 | `fix/scan-bypasses` |  | scanned under | reserved |
 | migration | 0039 | `feat/web-api-phase-a` | #188 | web session credentials | reserved |
+| migration | 0040 | `feat/federated-recall-p1` | #205 | federated recall | reserved |

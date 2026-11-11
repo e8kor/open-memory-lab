@@ -674,6 +674,13 @@ pub struct CandidateScope {
     /// ranking or cut, so a filtered recall never under-returns (ADR-0057
     /// d4). Empty, they narrow nothing.
     pub anchor: AnchorFilter,
+    /// The reference set of a federated recall (ADR-0072 d4.2, d7): when
+    /// set, every BM25 statistic — the row count, the mean length, each
+    /// form's document frequency and the pruned words — is taken over the
+    /// served, unexpired versions on these nodes alone, never over the
+    /// searched rows, so no row's score depends on which sources were
+    /// searched. `None` keeps the scope's own statistics.
+    pub reference: Option<Vec<Uuid>>,
 }
 
 /// The own held part of a candidate scope (ADR-0025 d4, d5).

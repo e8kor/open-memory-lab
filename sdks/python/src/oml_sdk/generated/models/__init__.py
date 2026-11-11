@@ -100,6 +100,9 @@ from .export_web_person_response_200_keys_item import ExportWebPersonResponse200
 from .export_web_person_response_200_memories_item import (
     ExportWebPersonResponse200MemoriesItem,
 )
+from .federation_settings import FederationSettings
+from .federation_settings_default_sources import FederationSettingsDefaultSources
+from .federation_settings_wide_keys_item import FederationSettingsWideKeysItem
 from .feedback import Feedback
 from .grant import Grant
 from .grant_covers import GrantCovers
@@ -195,13 +198,21 @@ from .recall_request import RecallRequest
 from .recall_request_kinds_item import RecallRequestKindsItem
 from .recall_request_match import RecallRequestMatch
 from .recall_request_search import RecallRequestSearch
+from .recall_request_sources_type_0 import RecallRequestSourcesType0
 from .recall_response import RecallResponse
 from .recall_response_hits_item import RecallResponseHitsItem
+from .recall_response_hits_item_via import RecallResponseHitsItemVia
 from .recall_search import RecallSearch
 from .recall_search_access import RecallSearchAccess
 from .recall_search_match import RecallSearchMatch
 from .recall_search_pipeline import RecallSearchPipeline
 from .recall_search_window_type_0 import RecallSearchWindowType0
+from .recall_sources import RecallSources
+from .recall_sources_cut import RecallSourcesCut
+from .recall_sources_mode import RecallSourcesMode
+from .recall_sources_searched_item import RecallSourcesSearchedItem
+from .recall_sources_searched_item_matched import RecallSourcesSearchedItemMatched
+from .recall_sources_searched_item_via import RecallSourcesSearchedItemVia
 from .recall_timings import RecallTimings
 from .recall_timings_stages_ms import RecallTimingsStagesMs
 from .remove_web_email_body import RemoveWebEmailBody
@@ -229,9 +240,15 @@ from .served_digests import ServedDigests
 from .served_guardrail import ServedGuardrail
 from .served_guardrail_verdicts_item import ServedGuardrailVerdictsItem
 from .served_guardrail_verdicts_item_held_by import ServedGuardrailVerdictsItemHeldBy
+from .set_federation_policy_body import SetFederationPolicyBody
+from .set_federation_policy_body_default_sources import (
+    SetFederationPolicyBodyDefaultSources,
+)
 from .set_search_default_body import SetSearchDefaultBody
 from .set_usage_settings_body import SetUsageSettingsBody
 from .set_web_user_quota_body import SetWebUserQuotaBody
+from .set_workarea_federation_body import SetWorkareaFederationBody
+from .set_workarea_federation_response_200 import SetWorkareaFederationResponse200
 from .severity import Severity
 from .similar_item import SimilarItem
 from .similar_item_kind import SimilarItemKind
@@ -345,6 +362,7 @@ from .workarea_view_children_item_status import WorkareaViewChildrenItemStatus
 from .workarea_view_edges_item import WorkareaViewEdgesItem
 from .workarea_view_edges_item_label import WorkareaViewEdgesItemLabel
 from .workarea_view_edges_item_state import WorkareaViewEdgesItemState
+from .workarea_view_federation import WorkareaViewFederation
 from .workarea_view_my_effective_verbs_item import WorkareaViewMyEffectiveVerbsItem
 
 __all__ = (
@@ -426,6 +444,9 @@ __all__ = (
     "ExportWebPersonResponse200",
     "ExportWebPersonResponse200KeysItem",
     "ExportWebPersonResponse200MemoriesItem",
+    "FederationSettings",
+    "FederationSettingsDefaultSources",
+    "FederationSettingsWideKeysItem",
     "Feedback",
     "Grant",
     "GrantCovers",
@@ -515,13 +536,21 @@ __all__ = (
     "RecallRequestKindsItem",
     "RecallRequestMatch",
     "RecallRequestSearch",
+    "RecallRequestSourcesType0",
     "RecallResponse",
     "RecallResponseHitsItem",
+    "RecallResponseHitsItemVia",
     "RecallSearch",
     "RecallSearchAccess",
     "RecallSearchMatch",
     "RecallSearchPipeline",
     "RecallSearchWindowType0",
+    "RecallSources",
+    "RecallSourcesCut",
+    "RecallSourcesMode",
+    "RecallSourcesSearchedItem",
+    "RecallSourcesSearchedItemMatched",
+    "RecallSourcesSearchedItemVia",
     "RecallTimings",
     "RecallTimingsStagesMs",
     "RemoveWebEmailBody",
@@ -549,9 +578,13 @@ __all__ = (
     "ServedGuardrail",
     "ServedGuardrailVerdictsItem",
     "ServedGuardrailVerdictsItemHeldBy",
+    "SetFederationPolicyBody",
+    "SetFederationPolicyBodyDefaultSources",
     "SetSearchDefaultBody",
     "SetUsageSettingsBody",
     "SetWebUserQuotaBody",
+    "SetWorkareaFederationBody",
+    "SetWorkareaFederationResponse200",
     "Severity",
     "SimilarItem",
     "SimilarItemKind",
@@ -659,5 +692,6 @@ __all__ = (
     "WorkareaViewEdgesItem",
     "WorkareaViewEdgesItemLabel",
     "WorkareaViewEdgesItemState",
+    "WorkareaViewFederation",
     "WorkareaViewMyEffectiveVerbsItem",
 )

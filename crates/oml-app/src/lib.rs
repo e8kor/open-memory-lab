@@ -11,6 +11,7 @@
 pub mod app;
 pub mod cursor;
 pub mod doubles;
+pub mod federation;
 pub mod oauth_fetch;
 pub mod ports;
 pub mod search;

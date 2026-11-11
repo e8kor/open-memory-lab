@@ -14,6 +14,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.recall_search_window_type_0 import RecallSearchWindowType0
+    from ..models.recall_sources import RecallSources
 
 
 T = TypeVar("T", bound="RecallSearch")
@@ -47,6 +48,8 @@ class RecallSearch:
             means nothing scored above the floor (ADR-0053 d6).
         window (None | RecallSearchWindowType0 | Unset): The date window read from the query by rule oml-when/1,
             anchored to the recall's now; null when the query names no date (proposed ADR-0059 d6).
+        sources (RecallSources | Unset): Under sources wide or a list: what was searched and why (ADR-0072 d8). Every
+            name and number is of a workarea the key reads (d6).
     """
 
     pipeline: RecallSearchPipeline
@@ -61,6 +64,7 @@ class RecallSearch:
     floor: float | None
     below_floor: int
     window: None | RecallSearchWindowType0 | Unset = UNSET
+    sources: RecallSources | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.recall_search_window_type_0 import RecallSearchWindowType0
@@ -105,6 +109,10 @@ class RecallSearch:
         else:
             window = self.window
 
+        sources: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.sources, Unset):
+            sources = self.sources.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -124,12 +132,15 @@ class RecallSearch:
         )
         if window is not UNSET:
             field_dict["window"] = window
+        if sources is not UNSET:
+            field_dict["sources"] = sources
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.recall_search_window_type_0 import RecallSearchWindowType0
+        from ..models.recall_sources import RecallSources
 
         d = dict(src_dict)
         pipeline = RecallSearchPipeline(d.pop("pipeline"))
@@ -207,6 +218,13 @@ class RecallSearch:
 
         window = _parse_window(d.pop("window", UNSET))
 
+        _sources = d.pop("sources", UNSET)
+        sources: RecallSources | Unset
+        if isinstance(_sources, Unset):
+            sources = UNSET
+        else:
+            sources = RecallSources.from_dict(_sources)
+
         recall_search = cls(
             pipeline=pipeline,
             match=match,
@@ -220,6 +238,7 @@ class RecallSearch:
             floor=floor,
             below_floor=below_floor,
             window=window,
+            sources=sources,
         )
 
         return recall_search

@@ -1747,6 +1747,7 @@ async fn anchor_filter_latency_at_100k() {
     drop(admin);
     let store = &w.rig.store;
     let scope = |filter: AnchorFilter| CandidateScope {
+        reference: None,
         promoted_nodes: vec![w.node],
         kinds: vec![oml_app::domain::MemoryKind::Memory],
         own_held: None,

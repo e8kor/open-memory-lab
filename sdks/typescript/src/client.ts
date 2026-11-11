@@ -155,6 +155,7 @@ const READ_RECALL: readonly string[] = [
   "anchor_repo",
   "anchor_path_prefix",
   "origin_kinds",
+  "sources",
 ];
 const READ_LISTING: readonly string[] = [
   "own",

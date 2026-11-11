@@ -497,6 +497,7 @@ where
             .recall(
                 Bearer::Session(web),
                 &RecallRequest {
+                    sources: None,
                     timings: false,
                     query: text_query.clone(),
                     k: q.limit.min(RECALL_MAX),

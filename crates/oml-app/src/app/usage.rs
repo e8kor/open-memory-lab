@@ -317,6 +317,7 @@ where
                     continue;
                 };
                 let req = RecallRequest {
+                    sources: None,
                     timings: false,
                     query: q.query_text.clone(),
                     k: REPLAY_K,

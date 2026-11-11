@@ -155,3 +155,26 @@ A frozen workarea keeps serving reads. Freezing is not archiving. A held memory 
 ## In-progress workareas
 
 A person can put a development workarea in progress with `oml workareas mode <workarea> in_progress`, using their own reviewer key (role `dreamer`). Inside an in-progress workarea, readers recall unreviewed memories, labeled as such. Nothing leaves the workarea until its mode returns to standard. The `standard` mode that returns it is refused while any memory is held. See [Organize memory in workareas](../use/workareas.md) for the commands.
+
+## Federated recall
+
+A recall searches its workarea's subtree. An admin can turn federation on for the tenant. Then a recall with `sources: "wide"` also searches the `committed` and `validated` workareas the key reads elsewhere. A list such as `["acme.legal", "acme.product"]` searches exactly those ([retrieval](retrieval.md#searching-beyond-the-scope); [ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md)). Nothing becomes readable that was not: a source is a workarea the key reads, and a key never learns of one it cannot read.
+
+| Setting | Who sets it | Default | Command |
+|---|---|---|---|
+| Federation on the tenant: `enabled`, `default_sources`, `max_sources` | an admin key | off, `scope`, 8 | `oml search federation --enabled on` |
+| Whether recalls scoped elsewhere may search a workarea: `accept_federated` | a person's reviewer key on the workarea, or an admin key | on | `oml workareas federation <workarea> off` |
+
+`accept_federated` grants nothing. Turned off, a key that reads the workarea still recalls there by naming it as the scope. A `development` workarea, and every workarea inside an in-progress subtree, is never searched by another scope's recall, whatever its setting. Each change is journalled, `federation.policy_set` and `workarea.federation_set`, and an agent's key is refused both.
+
+### A directory workarea
+
+Federated recall searches only what a key reads, so it never tells a crew that a workarea it cannot read exists. A team that wants others to find its work writes a description as an ordinary claim. It goes in a workarea the audience reads, such as a node `directory` under `universe`:
+
+```sh
+oml workareas create universe directory
+oml write --workarea directory --claim-key legal-crew "acme.legal holds the contract templates and the review checklist; ask the legal crew's admin for reader."
+```
+
+The claim is reviewed like any other. Reader on `directory` is the discover grant. Reading an entry grants nothing on the workarea it describes; access is still a grant an admin issues. An entry is a copy that can go stale, and federated recall never routes to the workarea it names.
+

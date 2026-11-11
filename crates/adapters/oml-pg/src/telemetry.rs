@@ -723,8 +723,9 @@ async fn insert_event(
     sqlx::query(
         "INSERT INTO recall_events (tenant_id, recall_id, created_at, key_id, principal, \
              scope_workarea_id, source_workarea_id, pipeline, access, query_digest, \
-             query_text, hit_ids, hit_scores) \
-         VALUES ($1, $2, $3::timestamptz, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+             query_text, hit_ids, hit_scores, sources, federated_workarea_ids, \
+             reference_workarea_ids) \
+         VALUES ($1, $2, $3::timestamptz, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
     )
     .bind(e.tenant_id)
     .bind(e.recall_id)
@@ -739,6 +740,9 @@ async fn insert_event(
     .bind(&e.query_text)
     .bind(ids)
     .bind(scores)
+    .bind(e.federation.as_ref().map(|f| f.sources.clone()))
+    .bind(e.federation.as_ref().map(|f| f.federated_workarea_ids.clone()))
+    .bind(e.federation.as_ref().map(|f| f.reference_workarea_ids.clone()))
     .execute(&mut **tx)
     .await?;
     Ok(())

@@ -169,6 +169,7 @@ fn submit(idem: &str, body: &str, from: Option<&str>, until: Option<&str>) -> Su
 
 fn recall(query: &str, pipeline: Pipeline) -> RecallRequest {
     RecallRequest {
+        sources: None,
         timings: false,
         query: query.to_owned(),
         k: 10,
@@ -241,6 +242,7 @@ async fn an_expired_memory_is_hidden_from_recall_unless_asked() {
         assert_eq!(ids(&hidden), vec![current], "{pipeline}");
         let asked = w
             .recall(&RecallRequest {
+                sources: None,
                 include_expired: true,
                 ..recall("deploy canary", pipeline)
             })
@@ -270,6 +272,7 @@ async fn an_expired_memory_spends_no_place_in_k() {
     for pipeline in PIPELINES {
         let r = w
             .recall(&RecallRequest {
+                sources: None,
                 k: 1,
                 ..recall("deploy canary rollback window", pipeline)
             })
@@ -285,6 +288,7 @@ async fn the_recalls_now_decides_what_has_expired() {
         .promoted("a", "the freeze holds", None, Some("2026-11-15"))
         .await;
     let at = |now: &str| RecallRequest {
+        sources: None,
         now: Some(now.to_owned()),
         ..recall("freeze", Pipeline::Bm25Postings)
     };
@@ -353,6 +357,7 @@ async fn the_time_leg_lifts_the_memory_whose_valid_time_overlaps_the_querys_wind
     // Both dated rows ended long before the clock's now; history is asked
     // for with include_expired.
     let history = |pipeline| RecallRequest {
+        sources: None,
         include_expired: true,
         ..recall("when we moved the deploy in 2015", pipeline)
     };

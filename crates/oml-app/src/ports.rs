@@ -497,6 +497,15 @@ pub enum MetadataFold {
     TelemetrySettingsSet {
         query_text_since: Option<EventTime>,
     },
+    /// `federation.policy_set`: the tenant's federation policy, whole
+    /// (ADR-0072 d5).
+    FederationPolicySet(crate::federation::FederationPolicy),
+    /// `workarea.federation_set`: the node's `accept_federated`; the store
+    /// refuses a node it does not hold (ADR-0072 d5).
+    WorkareaFederationSet {
+        workarea_id: Uuid,
+        accept_federated: bool,
+    },
 }
 
 /// The outbox row written in the same transaction as the event; the lake
@@ -803,6 +812,52 @@ pub trait JournalStore: Retriever + Send + Sync {
         &self,
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Option<EventTime>, StoreError>> + Send;
+
+    /// What a recall naming neither a pipeline nor `sources` reads, in one
+    /// read: the tenant's default pipeline and its federation policy
+    /// (ADR-0049 d4; ADR-0072 d5, d12). A store may answer it with the two
+    /// reads below; the PostgreSQL store reads one row.
+    fn recall_defaults(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<
+        Output = Result<(Option<String>, crate::federation::FederationPolicy), StoreError>,
+    > + Send {
+        async move {
+            let pipeline = self.tenant_search_default(tenant_id).await?;
+            let policy = self.federation_policy(tenant_id).await?;
+            Ok((pipeline, policy))
+        }
+    }
+
+    /// The tenant's federation policy, folded from `federation.policy_set`;
+    /// the default, federation off, when none was set (ADR-0072 d5).
+    fn federation_policy(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<Output = Result<crate::federation::FederationPolicy, StoreError>> + Send;
+
+    /// Of `nodes`, those whose `accept_federated` is off, folded from
+    /// `workarea.federation_set`; every node accepts by default
+    /// (ADR-0072 d5).
+    fn federation_declining(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send;
+
+    /// The reference set's exact counts (ADR-0072 d4.2, d12): per node of
+    /// `scope.nodes`, its served versions of `scope.kinds` and how many hold
+    /// each of the query's kept words, less every version whose valid time
+    /// ended at or before `scope.expired_at`. Read from the per-workarea
+    /// counts the postings keep, never from an unreadable node, since the
+    /// core names the nodes.
+    fn reference_counts(
+        &self,
+        tenant_id: Uuid,
+        scope: &crate::federation::CountsScope,
+        query: &str,
+    ) -> impl Future<Output = Result<crate::federation::ReferenceCounts, StoreError>> + Send;
 
     /// The one-transaction commit point. The store refuses a commit whose
     /// `seq`/`prev_hash` do not extend the current head — chain assignment
@@ -1912,6 +1967,18 @@ pub trait RequestObserver: Send + Sync {
     /// A person's key set a workarea's mode (ADR-0030 d5).
     fn mode_set(&self, mode: &'static str) {
         let _ = mode;
+    }
+
+    /// A recall that searched beyond its scope, under `sources` mode `wide`
+    /// or `list` (ADR-0072 Consequences).
+    fn recall_sources(&self, mode: &'static str) {
+        let _ = mode;
+    }
+
+    /// A recall served `n` hits from federated sources (ADR-0072
+    /// Consequences).
+    fn federated_hits(&self, n: u64) {
+        let _ = n;
     }
 
     /// A curator key committed an act: `reject`, `retire`, `flag` or

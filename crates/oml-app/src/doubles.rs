@@ -125,6 +125,104 @@ fn keyword_ranked<'a>(
     }
 }
 
+/// Whether `m` counts in a reference set (ADR-0072 d4.2): a served tip of
+/// the kinds, never a retirement, unexpired at `expired_at`.
+fn reference_row(m: &MemoryRecord, kinds: &[MemoryKind], expired_at: Option<i64>) -> bool {
+    served_tip(m)
+        && HIT_KINDS.contains(&m.kind)
+        && kinds.contains(&m.kind)
+        && !expired_at.is_some_and(|now| m.valid.expired_at(now))
+}
+
+/// This store's words of `text` with repeats, in order: a row's length and
+/// its term frequencies.
+fn tokens(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// BM25, k1 1.2 and b 0.75 as the PostgreSQL statements write it, over
+/// `rows` with the row count, mean length and document frequencies of
+/// `reference` (ADR-0072 d7): a row's score is a function of the row, the
+/// query and the reference set alone. Under `match: all` only rows holding
+/// every word.
+fn bm25_over_reference<'a>(
+    rows: impl Iterator<Item = &'a MemoryRecord>,
+    reference: &[&MemoryRecord],
+    query: RetrievalQuery<'_>,
+) -> Retrieved {
+    let terms: Vec<String> = words(query.query).into_iter().collect();
+    let n = reference.len() as u64;
+    #[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
+    let avgdl = if reference.is_empty() {
+        1.0
+    } else {
+        (reference
+            .iter()
+            .map(|m| tokens(&m.body).len())
+            .sum::<usize>() as f64
+            / reference.len() as f64)
+            .max(1.0)
+    };
+    let df: Vec<u64> = terms
+        .iter()
+        .map(|t| {
+            reference
+                .iter()
+                .filter(|m| words(&m.body).contains(t))
+                .count() as u64
+        })
+        .collect();
+    let mut candidates: Vec<Candidate> = rows
+        .filter_map(|m| {
+            let body = tokens(&m.body);
+            #[allow(clippy::cast_precision_loss, reason = "a row has few words")]
+            let dl = body.len() as f64;
+            let mut matched = Vec::new();
+            let mut score = 0.0_f64;
+            for (t, d) in terms.iter().zip(&df) {
+                let tf = body.iter().filter(|w| *w == t).count();
+                // A word no reference row holds scores nothing, as on
+                // PostgreSQL's postings and scan alike.
+                if tf == 0 || *d == 0 {
+                    continue;
+                }
+                matched.push(t.clone());
+                #[allow(clippy::cast_precision_loss, reason = "a row has few words")]
+                let tf = tf as f64;
+                score += oml_domain::federation::idf(n, *d) * tf * 2.2
+                    / (tf + 1.2 * (0.25 + 0.75 * dl / avgdl));
+            }
+            let keep = if query.match_mode == MatchMode::All {
+                !terms.is_empty() && matched.len() == terms.len()
+            } else {
+                !matched.is_empty()
+            };
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "a score as the statements serve it"
+            )]
+            let score = score as f32;
+            keep.then_some(Candidate {
+                memory_id: m.memory_id,
+                body_bytes: m.body_bytes,
+                score,
+                matched,
+                tokens: Vec::new(),
+            })
+        })
+        .collect();
+    hit_order(&mut candidates, |c| (c.score, c.memory_id));
+    candidates.truncate(query.k);
+    Retrieved {
+        terms,
+        candidates,
+        ..Retrieved::default()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Journal store
 // ---------------------------------------------------------------------------
@@ -151,6 +249,10 @@ struct UnnamedWorkarea {
 struct TenantState {
     events: Vec<crate::domain::SignedEnvelope>,
     memories: BTreeMap<Uuid, MemoryRecord>,
+    /// Each workarea's memory ids, so a read names the rows of its nodes
+    /// alone and its work never depends on another node's rows (ADR-0072
+    /// d6's timing row).
+    by_workarea: BTreeMap<Uuid, BTreeSet<Uuid>>,
     workareas: BTreeMap<Uuid, WorkareaRecord>,
     unnamed_workareas: BTreeMap<Uuid, UnnamedWorkarea>,
     crews: BTreeMap<Uuid, CrewRecord>,
@@ -193,6 +295,10 @@ struct TenantState {
     brief_edges: BTreeMap<Uuid, BriefEdgeRecord>,
     /// The tenant's journalled default search pipeline (ADR-0049 d4).
     search_default: Option<String>,
+    /// The tenant's federation policy and the nodes declining federated
+    /// reads (ADR-0072 d5).
+    federation: crate::federation::FederationPolicy,
+    declining: BTreeSet<Uuid>,
     query_text_since: Option<EventTime>,
     /// One person's quota overrides by root (`user_quotas`; ADR-0068 d5).
     user_quotas: BTreeMap<Uuid, BTreeMap<oml_domain::signup::Quota, u64>>,
@@ -242,6 +348,10 @@ pub struct MemStore {
     /// tested over this store; never a law of `bm25`, which the in-memory
     /// store does not serve (ADR-0049 d7).
     bm25_as_any_word: bool,
+    /// How many federation reads the store answered — the tenant's policy,
+    /// the declining nodes and the reference counts — shared by every
+    /// handle, so a law can hold that a recall made none (ADR-0072 d12).
+    federation_reads: Arc<AtomicU64>,
 }
 
 /// Work a test lands between a use case's reads and its commit: run once,
@@ -271,6 +381,37 @@ impl MemStore {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// `n` copies of the tenant's memory `memory_id` on its workarea, each a
+    /// served tip of its own claim, inserted with no event: a large
+    /// workarea for a timing law, built in one step (ADR-0072 d13 test 7).
+    pub fn seed_copies(&self, tenant_id: Uuid, memory_id: Uuid, n: u32) {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return;
+        };
+        let mut state = tenant.lock().expect("tenant lock");
+        let Some(template) = state.memories.get(&memory_id).cloned() else {
+            return;
+        };
+        for i in 0..n {
+            let mut copy = template.clone();
+            copy.memory_id =
+                Uuid::from_u128(0x5eed_0000_0000_0000_0000_0000_0000_0000 | u128::from(i));
+            copy.claim_key = format!("{}-copy-{i}", template.claim_key);
+            state
+                .by_workarea
+                .entry(copy.workarea_id)
+                .or_default()
+                .insert(copy.memory_id);
+            state.memories.insert(copy.memory_id, copy);
+        }
+    }
+
+    /// How many federation reads every handle of this store answered.
+    #[must_use]
+    pub fn federation_reads(&self) -> u64 {
+        self.federation_reads.load(Ordering::SeqCst)
     }
 
     /// The store that answers the `bm25` retriever with its any-word list:
@@ -1029,6 +1170,22 @@ fn apply_fold(
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::AdminRead => {}
         MetadataFold::SearchDefaultSet { pipeline } => state.search_default = pipeline,
+        MetadataFold::FederationPolicySet(policy) => state.federation = policy,
+        MetadataFold::WorkareaFederationSet {
+            workarea_id,
+            accept_federated,
+        } => {
+            if !state.workareas.contains_key(&workarea_id) {
+                return Err(StoreError::Backend(format!(
+                    "workarea {workarea_id} is not held by this tenant"
+                )));
+            }
+            if accept_federated {
+                state.declining.remove(&workarea_id);
+            } else {
+                state.declining.insert(workarea_id);
+            }
+        }
         MetadataFold::TelemetrySettingsSet { query_text_since } => {
             state.query_text_since = query_text_since;
         }
@@ -1443,6 +1600,11 @@ fn apply_fold(
                     claimed_by: None,
                 });
             }
+            state
+                .by_workarea
+                .entry(memory.workarea_id)
+                .or_default()
+                .insert(memory.memory_id);
             state.memories.insert(memory.memory_id, memory);
         }
         MetadataFold::MemoryPromoted { memory_id } => {
@@ -1947,6 +2109,21 @@ impl Retriever for MemStore {
             });
         };
         let state = tenant.lock().expect("tenant lock");
+        // The rows of the scope's nodes alone, read by workarea, so the work
+        // never depends on a row elsewhere (ADR-0072 d6).
+        let mut nodes: BTreeSet<Uuid> = scope.promoted_nodes.iter().copied().collect();
+        if let Some(own) = &scope.own_held {
+            nodes.extend(own.nodes.iter().copied());
+        }
+        let rows_of = |nodes: &BTreeSet<Uuid>| -> Vec<&MemoryRecord> {
+            nodes
+                .iter()
+                .filter_map(|n| state.by_workarea.get(n))
+                .flatten()
+                .filter_map(|id| state.memories.get(id))
+                .collect()
+        };
+        let scoped = rows_of(&nodes);
         // The scope is the core's: promoted served tips on its nodes, and
         // the own held rows of its keys on theirs; the state and author
         // predicates are this read's own, never the caller's to forget
@@ -1985,9 +2162,9 @@ impl Retriever for MemStore {
             // Inside the window scores 1; an earlier start scores by its
             // distance to the window's start (proposed ADR-0059 d7).
             let start = window.from_us;
-            let mut candidates: Vec<Candidate> = state
-                .memories
-                .values()
+            let mut candidates: Vec<Candidate> = scoped
+                .iter()
+                .copied()
                 .filter(admitted)
                 .filter(|m| query.within.contains(&m.memory_id))
                 .filter(|m| m.valid.overlaps(window))
@@ -2013,13 +2190,28 @@ impl Retriever for MemStore {
                 ..Retrieved::default()
             });
         }
+        // A federated recall's BM25 takes its statistics over the reference
+        // set's served rows alone (ADR-0072 d7).
+        if let Some(reference) = &scope.reference
+            && matches!(kind, RetrieverKind::Bm25 | RetrieverKind::Bm25Postings)
+        {
+            let r: Vec<&MemoryRecord> = rows_of(&reference.iter().copied().collect())
+                .into_iter()
+                .filter(|m| reference_row(m, &scope.kinds, scope.expired_at))
+                .collect();
+            return Ok(bm25_over_reference(
+                scoped.iter().copied().filter(admitted),
+                &r,
+                query,
+            ));
+        }
         let kind = if matches!(kind, RetrieverKind::Bm25 | RetrieverKind::Bm25Postings) {
             RetrieverKind::KeywordAny
         } else {
             kind
         };
         Ok(keyword_ranked(
-            state.memories.values().filter(admitted),
+            scoped.iter().copied().filter(admitted),
             kind,
             query,
         ))
@@ -2386,6 +2578,108 @@ impl JournalStore for MemStore {
             .and_then(|t| t.lock().expect("tenant lock").query_text_since.clone()))
     }
 
+    /// One read of the tenant's row: the default pipeline and the policy,
+    /// which counts as no federation read, as the PostgreSQL store reads
+    /// both off the row it reads for the pipeline.
+    async fn recall_defaults(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<(Option<String>, crate::federation::FederationPolicy), StoreError> {
+        Ok(self
+            .tenant_existing(tenant_id)
+            .map(|t| {
+                let state = t.lock().expect("tenant lock");
+                (state.search_default.clone(), state.federation)
+            })
+            .unwrap_or_default())
+    }
+
+    async fn federation_policy(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<crate::federation::FederationPolicy, StoreError> {
+        self.federation_reads.fetch_add(1, Ordering::SeqCst);
+        Ok(self
+            .tenant_existing(tenant_id)
+            .map(|t| t.lock().expect("tenant lock").federation)
+            .unwrap_or_default())
+    }
+
+    async fn federation_declining(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+    ) -> Result<Vec<Uuid>, StoreError> {
+        self.federation_reads.fetch_add(1, Ordering::SeqCst);
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut declining: Vec<Uuid> = nodes
+            .iter()
+            .filter(|n| state.declining.contains(n))
+            .copied()
+            .collect();
+        declining.sort_unstable();
+        declining.dedup();
+        Ok(declining)
+    }
+
+    /// The reference set's counts over this store's words (ADR-0072 d4.2):
+    /// per node, its served unexpired versions of the kinds and how many
+    /// hold each query word. This store prunes nothing.
+    async fn reference_counts(
+        &self,
+        tenant_id: Uuid,
+        scope: &crate::federation::CountsScope,
+        query: &str,
+    ) -> Result<crate::federation::ReferenceCounts, StoreError> {
+        self.federation_reads.fetch_add(1, Ordering::SeqCst);
+        let words: Vec<String> = words(query).into_iter().collect();
+        let mut nodes: BTreeMap<Uuid, oml_domain::federation::SourceCounts> = scope
+            .nodes
+            .iter()
+            .map(|n| {
+                (
+                    *n,
+                    oml_domain::federation::SourceCounts {
+                        rows: 0,
+                        df: vec![0; words.len()],
+                    },
+                )
+            })
+            .collect();
+        if let Some(tenant) = self.tenant_existing(tenant_id) {
+            let state = tenant.lock().expect("tenant lock");
+            let rows = scope
+                .nodes
+                .iter()
+                .filter_map(|n| state.by_workarea.get(n))
+                .flatten()
+                .filter_map(|id| state.memories.get(id));
+            for m in rows {
+                if !reference_row(m, &scope.kinds, scope.expired_at) {
+                    continue;
+                }
+                let Some(counts) = nodes.get_mut(&m.workarea_id) else {
+                    continue;
+                };
+                counts.rows += 1;
+                let body = self::words(&m.body);
+                for (i, w) in words.iter().enumerate() {
+                    if body.contains(w) {
+                        counts.df[i] += 1;
+                    }
+                }
+            }
+        }
+        Ok(crate::federation::ReferenceCounts {
+            words,
+            pruned: Vec::new(),
+            nodes,
+        })
+    }
+
     async fn steering_in_force(
         &self,
         tenant_id: Uuid,
@@ -2397,9 +2691,12 @@ impl JournalStore for MemStore {
         let state = tenant.lock().expect("tenant lock");
         // A promoted version always carries the `promoted_at` its fold
         // stamped, so no row in force is passed over here.
-        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = state
-            .memories
-            .values()
+        // The named nodes' rows alone, read by workarea.
+        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = nodes
+            .iter()
+            .filter_map(|n| state.by_workarea.get(n))
+            .flatten()
+            .filter_map(|id| state.memories.get(id))
             .filter(|m| served_tip(m) && m.kind == MemoryKind::Steering)
             .filter_map(|m| {
                 let depth = nodes.iter().position(|n| *n == m.workarea_id)?;

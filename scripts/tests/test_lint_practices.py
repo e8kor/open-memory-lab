@@ -35,6 +35,14 @@ class Migrations(unittest.TestCase):
         later = {"migrations/0003_v.sql": "SET LOCAL lock_timeout='5s';\nALTER TABLE t VALIDATE CONSTRAINT c;"}
         self.assertEqual([], [p for p in self.run_lint(sql, **later) if "0002" in p])
 
+    def test_a_check_inline_on_an_added_column_is_flagged_unless_escaped(self):
+        sql = "SET LOCAL lock_timeout='5s';\nALTER TABLE t ADD COLUMN a int NOT NULL DEFAULT 1\n    CHECK (a > 0);"
+        self.assertTrue(any("inline CHECK" in p for p in self.run_lint(sql)))
+        plain = "SET LOCAL lock_timeout='5s';\nALTER TABLE t ADD COLUMN a int NOT NULL DEFAULT 1;"
+        self.assertEqual([], [p for p in self.run_lint(plain) if "0002" in p])
+        esc = "-- lint:allow column-check a three-row table\n" + sql
+        self.assertEqual([], [p for p in self.run_lint(esc) if "0002" in p])
+
     def test_validate_constraint_in_a_transaction_migration_is_flagged(self):
         head = "SET LOCAL lock_timeout='5s';\n"
         add = "ALTER TABLE t ADD CONSTRAINT c CHECK (a > 0) NOT VALID;\n"

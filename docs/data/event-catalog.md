@@ -82,6 +82,7 @@ Writes enter held. Nothing in this family changes what anyone can read.
 |---|---|---|
 | `workarea.create` | `workarea_id`, `parent_id`, `name`, `status`, `crew_id`, `prefix`, `user_root` | A new node under a parent. A tenant's root has the name `universe` and a null `parent_id`. A non-null `prefix` registers a vocabulary. The prefix is permanent. |
 | `workarea.mode_set` | `workarea_id`, `mode`, `from` | A person's reviewer key puts a workarea in progress or commits it back to `standard`. |
+| `workarea.federation_set` | `workarea_id`, `field`, `value`, `from` | A person's reviewer key or an admin sets whether recalls scoped elsewhere may search the workarea (`accept_federated`). It grants nothing. |
 | `workarea.status_proposed` | `workarea_id`, `from`, `to`, `transition_id`, `proposed_by_key_id` | A forward step of the status ladder is proposed. It stays pending until a different principal ratifies it. |
 | `workarea.status_transition` | `workarea_id`, `from`, `to`, `transition_id`, `proposed_by_key_id`, `ratified_by_key_id`, `policy_snapshot`, `same_user` | The ratification of a pending proposal. A step to `validated` also records `children_all_validated`. |
 | `workarea.crew_updated` | `workarea_id`, `crew_id` | The workarea now names this crew record. Allowed on validated workareas. |
@@ -121,6 +122,7 @@ Issuing an access token and refreshing are not events. They change no authority.
 | `web.deletion_closed` | `user`, `by_key_id` | An admin closed the request after disabling the person. The memories stay until they are erased (d6). |
 | `memory.admin_read` | `artifact_ids`, `query_digest` | An admin key read memory text and attribution. The payload holds ids and a query digest, never text. |
 | `search.default_set` | `pipeline`, `by_key_id` | An admin set the tenant's default search pipeline. A null `pipeline` follows the deployment's default. |
+| `federation.policy_set` | `policy`, `from`, `by_key_id` | An admin set the tenant's federation policy: `enabled`, `default_sources` and `max_sources`, with the previous policy ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) d5). |
 | `telemetry.settings_set` | `query_text`, `by_key_id` | An admin turned recall query text on or off. Off also clears stored query text in the same commit. |
 | `telemetry.events_read` | `events`, `with_text`, `newest`, `oldest` | An admin read the tenant's recall events. Counts and bounds only. |
 | `telemetry.replayed` | `pipelines`, `labeled`, `ran`, `capped` | An admin replayed labeled recalls through named pipelines. Counts only. |

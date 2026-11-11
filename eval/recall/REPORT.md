@@ -320,6 +320,37 @@ The failure hook's own shape, the query minus stop words with `k` 3 under 200 to
 (`results/hook_*.json`): success@3 0.24 and 75% empty under `keyword-all`, 0.88 and none empty
 under `bm25-trigram`.
 
+## Federated recall (ADR-0072), 2026-11-11
+
+`federated.sh` loads the corpus as one `committed` workarea per topic, eleven, and recalls with a
+key that reads them all, on `bm25-postings`, `k` 10 (`results/federated.json`). The **scoped**
+split scopes each answerable query at its first answering memory's topic; the **cross** split at
+the next topic holding none of its answers. `wide@8` is the default `max_sources` over ten
+candidates, so the estimate chooses; the union searches all of them. The **skew** split pads
+`database` with 2,400 SciFact abstracts, 100 times the largest other topic, and caps
+`max_sources` at 4.
+
+| split / mode | success@5 | nDCG@10 | selection precision | selection recall | p95 ms |
+|---|---:|---:|---:|---:|---:|
+| scoped / scope | 0.950 | 0.839 | n/a | n/a | 31.3 |
+| scoped / wide@8 | 0.934 | 0.876 | 0.122 | 1.000 | 36.9 |
+| scoped / union | 0.934 | 0.876 | 0.100 | 1.000 | 30.7 |
+| cross / scope | 0.000 | 0.000 | n/a | n/a | 21.3 |
+| cross / wide@8 | 0.934 | 0.876 | 0.121 | 0.992 | 24.9 |
+| cross / union | 0.934 | 0.876 | 0.100 | 1.000 | 43.0 |
+| skew / scope | 0.000 | 0.000 | n/a | n/a | 34.3 |
+| skew / wide@4 | 0.926 | 0.844 | 0.215 | 0.975 | 41.3 |
+| skew / union | 0.926 | 0.853 | 0.100 | 1.000 | 46.3 |
+
+- **`wide` passes ADR-0049 d9's rule against `scope`.** On the cross split it finds an answer in the top 5 for 0.934 of the queries, where the scope holds none by construction; on the scoped split success@5 falls from 0.950 to 0.934, one query in `paraphrase` (9/11 to 8/11) and one in `temporal` (10/11 to 9/11), no category by more than one (`success@5_by_category` in `results/federated.json`), while nDCG@10 rises from 0.839 to 0.876. The default stays `scope` until a tenant admin sets `wide`.
+- **Selection costs nothing here.** `wide@8` scores the union's success@5 on both splits and its selection recall is 0.992 on the cross split. On the skew split, at 4 of 10 candidates, it keeps the union's success@5 (0.926) with selection recall 0.975, above phase 2's 0.90 trigger, and the estimate's four agree with the exact ReDDE analogue's (the union's top 100, counted per workarea) on 0.882 of them: phase 2's first trigger (#206) is not met.
+- **Unanswerable queries find more.** Answered with at least one hit: 0.682 under `scope`, 1.000 under `wide`: eleven workareas hold some word of every query. A relevance floor (ADR-0053) is the answer, not selection.
+- **The widen hint.** Rule 1, a candidate at twice the scope's rate per memory with a word on two of its memories, is silent on 0.917 of the scoped queries and, on the cross split, fires on 108 of 121 with precision 0.935 (a wide retry raised success@5). Both pass d11's gate. On the scoped split its 10 firings never helped, since the scope already held the answer; d11 gates only its silence there. Rule 2, a thin answer, fired on 101 of 102 hints when both ran, silent on 0.157 of the scoped queries: a topic of 12 to 25 memories rarely holds 10 matches. It is dropped by amendment (ADR-0072, Phase 1 as built). Rule 1 is measured here but not served: computing it costs every `scope` recall a candidate and statistics read, and the default path pays nothing for federation (ADR-0072 d12 as amended); the hint is deferred and returns on a precomputed signal (#244).
+- **Latency.** p95 stays within 47 ms in every mode on this host, which other builds shared; the reference set's statistics read is one more statement per recall.
+- **At 1,000 candidates** (`pg_store`'s `federation_overhead_at_1000_candidates`, release build, the same shared host): the statistics reads alone take 6.2 ms at p50 and 10.9 ms at p95, against d12's 10 ms. A whole `scope` recall with federation on takes 27.8 ms at p50 and 55.3 ms at p95, against 12.6 ms and 38.0 ms with it off; `wide` at `max_sources` 8 takes 47.0 ms and 113.1 ms. Working out the candidates, one ancestry and one subtree read per reader grant, costs more than the counts.
+- **The cross split** re-scopes the existing labelled queries to a topic holding none of their answers, so it measures what reach buys over the union, not cross-team phrasing; new cross-team queries remain to be written (#205).
+- **The candidate count** over the public server's live keys is read by `cargo run --release -p oml-pg --example federation_candidates -- <owner url>`; that run is the operator's, since this report's host does not reach the public server's database.
+
 ## Limits of this eval
 
 - **One model wrote the corpus, the queries and the labels.** Their wording

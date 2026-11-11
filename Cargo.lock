@@ -3966,6 +3966,7 @@ dependencies = [
  "hex",
  "oml-app",
  "oml-port-contracts",
+ "oml-test-pg",
  "serde_json",
  "sqlx",
  "thiserror 2.0.21",

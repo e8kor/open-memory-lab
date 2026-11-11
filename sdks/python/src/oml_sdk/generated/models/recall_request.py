@@ -9,6 +9,7 @@ from ..models.origin_kind import OriginKind
 from ..models.recall_request_kinds_item import RecallRequestKindsItem
 from ..models.recall_request_match import RecallRequestMatch
 from ..models.recall_request_search import RecallRequestSearch
+from ..models.recall_request_sources_type_0 import RecallRequestSourcesType0
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -74,6 +75,19 @@ class RecallRequest:
                 default; get and the listings always serve them (proposed ADR-0059 d3). Default: False.
             now (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional
                 digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
+            sources (list[str] | RecallRequestSourcesType0 | Unset): Where to search (ADR-0072 d5). scope, the default, is
+                the workarea's subtree as always. wide adds the committed and validated workareas the key already reads outside
+                it that accept federated reads: all of them up to the tenant's max_sources, above it those holding the largest
+                share of the query's matching rows. A list of 1 to max_sources distinct workarea names or ids searches exactly
+                those, answered whole or refused. Every hit of wide or a list is scored with one set of statistics fixed before
+                any selection, so no hit's score depends on which sources were selected (d7). Absent, the tenant's
+                federation.default_sources. Refusals, in this order: an empty list, a name twice, more than max_sources names,
+                or a non-string element is request.validation at /sources; wide or a list with federation off is
+                request.validation at /sources; wide or a list on bm25-sparse is request.validation at /search; then each name
+                in order: one the key cannot read and one that does not exist are the same access.not_found with details.field
+                /sources/<i>, and a readable name that is not committed or validated, or lies outside the scope on a workarea
+                declining federated reads, is request.validation at /sources/<i> with details.reason source_untrusted or
+                source_declines_federation. Since v0.7.0.
     """
 
     query: str
@@ -92,6 +106,7 @@ class RecallRequest:
     timings: bool | Unset = UNSET
     include_expired: bool | Unset = False
     now: str | Unset = UNSET
+    sources: list[str] | RecallRequestSourcesType0 | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         query = self.query
@@ -148,6 +163,14 @@ class RecallRequest:
 
         now = self.now
 
+        sources: list[str] | str | Unset
+        if isinstance(self.sources, Unset):
+            sources = UNSET
+        elif isinstance(self.sources, RecallRequestSourcesType0):
+            sources = self.sources.value
+        else:
+            sources = self.sources
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -185,6 +208,8 @@ class RecallRequest:
             field_dict["include_expired"] = include_expired
         if now is not UNSET:
             field_dict["now"] = now
+        if sources is not UNSET:
+            field_dict["sources"] = sources
 
         return field_dict
 
@@ -261,6 +286,27 @@ class RecallRequest:
 
         now = d.pop("now", UNSET)
 
+        def _parse_sources(
+            data: object,
+        ) -> list[str] | RecallRequestSourcesType0 | Unset:
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                sources_type_0 = RecallRequestSourcesType0(data)
+
+                return sources_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            if not isinstance(data, list):
+                raise TypeError()
+            sources_type_1 = cast(list[str], data)
+
+            return sources_type_1
+
+        sources = _parse_sources(d.pop("sources", UNSET))
+
         recall_request = cls(
             query=query,
             workarea=workarea,
@@ -278,6 +324,7 @@ class RecallRequest:
             timings=timings,
             include_expired=include_expired,
             now=now,
+            sources=sources,
         )
 
         return recall_request
