@@ -2126,3 +2126,170 @@ async fn the_lead_answers_the_review_and_keys_views_and_their_acts_with_a_redire
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// #266: a chain conflict after a disable's first commit never journals it twice
+// ---------------------------------------------------------------------------
+
+/// A call to the API with the tenant's admin key, as `oml admin` makes it.
+async fn as_admin(rig: &Rig, path: &str, idem: &str, body: Value) -> (StatusCode, Value) {
+    let request = Request::post(path)
+        .header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", rig.boot.admin_key.value),
+        )
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("idempotency-key", idem)
+        .body(Body::from(body.to_string()))
+        .expect("a request");
+    let (status, _, answer) = send(&rig.router, request).await;
+    (status, serde_json::from_str(&answer).unwrap_or(Value::Null))
+}
+
+/// The tenant's events of `event_type`, oldest first.
+async fn journalled(rig: &Rig, event_type: &str) -> Vec<u64> {
+    rig.store
+        .events_range(rig.boot.tenant_id, 1, 1000)
+        .await
+        .expect("the chain")
+        .iter()
+        .filter(|e| e.envelope.event_type == event_type)
+        .map(|e| e.envelope.seq)
+        .collect()
+}
+
+/// A chain-head conflict as a concurrent writer causes it.
+fn lost_race() -> oml_app::ports::StoreError {
+    oml_app::ports::StoreError::SeqConflict {
+        expected_seq: 0,
+        found_seq: 0,
+    }
+}
+
+/// alice signed in, with two writer keys of her own to cut off.
+async fn alice_with_two_keys(rig: &Rig) -> String {
+    let cookie = signed_in(rig, "sub-1", EMAIL).await;
+    let _ = issued(rig, &cookie, "laptop").await;
+    let _ = issued(rig, &cookie, "phone").await;
+    cookie
+}
+
+#[tokio::test]
+async fn a_disable_whose_key_denial_loses_the_chain_race_journals_web_user_disabled_once() {
+    let rig = rig().await;
+    let _ = alice_with_two_keys(&rig).await;
+    rig.store
+        .refuse_next_commit_of(oml_app::domain::event_types::KEY_DENIED, lost_race());
+    let (status, done) =
+        as_admin(&rig, "/v2/web/users/alice/disable", "disable-1", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    let disabled = journalled(&rig, oml_app::domain::event_types::WEB_USER_DISABLED).await;
+    assert_eq!(disabled.len(), 1, "journalled once: {disabled:?}");
+    assert_eq!(done["journal_seq"], disabled[0], "{done}");
+    assert_eq!(done["keys_cut_off"], 2, "{done}");
+    assert_eq!(
+        journalled(&rig, oml_app::domain::event_types::KEY_DENIED)
+            .await
+            .len(),
+        2,
+        "each key denied once"
+    );
+}
+
+#[tokio::test]
+async fn a_close_whose_closing_commit_loses_the_chain_race_journals_each_event_once() {
+    let rig = rig().await;
+    let cookie = alice_with_two_keys(&rig).await;
+    let (status, asked) =
+        as_web(&rig, &cookie, "web", "/v2/web/deletion-requests", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{asked}");
+    rig.store.refuse_next_commit_of(
+        oml_app::domain::event_types::WEB_DELETION_CLOSED,
+        lost_race(),
+    );
+    let (status, done) = as_admin(
+        &rig,
+        "/v2/web/users/alice/deletion/close",
+        "close-1",
+        json!({ "outcome": "deleted" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    use oml_app::domain::event_types::{KEY_DENIED, WEB_DELETION_CLOSED, WEB_USER_DISABLED};
+    assert_eq!(
+        journalled(&rig, WEB_USER_DISABLED).await.len(),
+        1,
+        "disabled once"
+    );
+    assert_eq!(
+        journalled(&rig, KEY_DENIED).await.len(),
+        2,
+        "each key denied once"
+    );
+    let closed = journalled(&rig, WEB_DELETION_CLOSED).await;
+    assert_eq!(closed.len(), 1, "closed once");
+    assert_eq!(done["journal_seq"], closed[0], "{done}");
+}
+
+/// A key under the person's root that no denial can cut off, as an admin
+/// key there is (`DenialOnAdminKey`), is skipped: the disable denies every
+/// other key, journals `web.user_disabled` once, answers 200, and a
+/// resubmission under the same key replays it, so no refusal ever follows
+/// the disable's first commit (ADR-0068 d8, #266).
+#[tokio::test]
+async fn a_disable_skips_a_key_it_cannot_deny_denies_the_rest_and_a_resubmission_replays() {
+    use oml_app::domain::event_types::{KEY_DENIED, WEB_USER_DISABLED};
+    let rig = rig().await;
+    let _ = alice_with_two_keys(&rig).await;
+    let stray = rig
+        .app
+        .issue_key(
+            &rig.boot.admin_key.value,
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Admin,
+                name: Name::parse("stray-admin").expect("a name"),
+                principal: "operator-2".to_owned(),
+                held_by: Some(HeldBy::Human),
+                default_workarea: None,
+                crew: None,
+                grants: Vec::new(),
+                connect_code: false,
+                user: None,
+                guardrail_scope: None,
+            },
+        )
+        .await
+        .expect("an admin key");
+    let root = key_named(&rig, "alice-web")
+        .await
+        .user
+        .expect("alice's root");
+    rig.store
+        .set_key_user(rig.boot.tenant_id, stray.key_id, Some(root));
+    let request = || {
+        Request::post("/v2/web/users/alice/disable")
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", rig.boot.admin_key.value),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", "disable-stray")
+            .body(Body::from("{}"))
+            .expect("a request")
+    };
+    let (status, _, body) = send(&rig.router, request()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let done: Value = serde_json::from_str(&body).expect("JSON");
+    assert_eq!(done["keys_cut_off"], 2, "{done}");
+    assert_eq!(journalled(&rig, WEB_USER_DISABLED).await.len(), 1);
+    assert_eq!(journalled(&rig, KEY_DENIED).await.len(), 2);
+    let (status, headers, again) = send(&rig.router, request()).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(headers["idempotency-replay"], "true", "{again}");
+    assert_eq!(
+        journalled(&rig, WEB_USER_DISABLED).await.len(),
+        1,
+        "the resubmission replays"
+    );
+}
