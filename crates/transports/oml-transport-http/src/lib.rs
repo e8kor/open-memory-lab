@@ -1650,7 +1650,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        let acting: Acting<'static> = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         // The body is closed, nested objects included: a field the server
         // does not serve is refused, never dropped (ADR-0025 d16).
@@ -1738,13 +1738,35 @@ where
             guardrail_scope: parse_guardrail_scope(req.guardrail_scope.as_deref())?,
             profile: parse_profile(req.profile.as_deref())?,
         };
-        let issued = retry_chain(|| st.app.issue_key(acting.bearer(), &issue))
+        // A resubmission under the same key and body replays the answer
+        // without the value or the connect code, which are shown once, and
+        // issues nothing again; the key is claimed before the issuance, so
+        // a process stopping between the two never lets the resubmission
+        // issue a second key (ADR-0031 d7; #127, #233).
+        let caller = st.console_caller(headers).await?;
+        let digest = console::act_digest("", body);
+        let claim = match st.claim(&caller, "keys.issue", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
+        let label = req.label.clone();
+        let st = st.clone();
+        claim
+            .run(async move {
+                let issued = retry_chain(|| st.app.issue_key(acting.bearer(), &issue))
+                    .await
+                    .map_err(|e| {
+                        console::ActFailure::first(map_app_error(e, ErrorContext::Write))
+                    })?;
+                let answer = key_issued_json(&issued, label.as_deref());
+                let kept = console::without_secrets(&answer);
+                Ok(console::Acted {
+                    status: StatusCode::CREATED,
+                    answer,
+                    kept,
+                })
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
-            StatusCode::CREATED,
-            &key_issued_json(&issued, req.label.as_deref()),
-        ))
     }
 
     async fn deny_key(
@@ -2584,16 +2606,37 @@ where
             )
             .await;
         }
-        let code = retry_chain(|| {
-            st.app
-                .mint_connect_code_with_ttl(&token, key.clone(), req.ttl_seconds)
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
-            StatusCode::CREATED,
-            &connect_code_json(&code),
-        ))
+        // A resubmission replays the answer without the code, which is
+        // shown once, and mints none: a second code would void the first
+        // (ADR-0031 d7; #233).
+        let caller = st.console_caller(headers).await?;
+        let digest = console::act_digest(key_id, body);
+        let claim = match st
+            .claim(&caller, "keys.connect_code", &idem, &digest)
+            .await?
+        {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
+        let ttl_seconds = req.ttl_seconds;
+        let st = st.clone();
+        claim
+            .run(async move {
+                let code = retry_chain(|| {
+                    st.app
+                        .mint_connect_code_with_ttl(&token, key.clone(), ttl_seconds)
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                let answer = connect_code_json(&code);
+                let kept = console::without_secrets(&answer);
+                Ok(console::Acted {
+                    status: StatusCode::CREATED,
+                    answer,
+                    kept,
+                })
+            })
+            .await
     }
 
     async fn revoke_connection(
