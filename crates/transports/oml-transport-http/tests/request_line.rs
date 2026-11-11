@@ -592,3 +592,65 @@ async fn every_route_attaches_what_it_resolved_to_its_response() {
         );
     }
 }
+
+/// `oml-web --doctor`'s probe, proven by the web client secret, is answered
+/// `auth.invalid` as any credential no session holds, but writes no line
+/// and no histogram entry, so a doctor run neither counts nor alerts as an
+/// unknown credential; unproven, it is logged as any refusal is (ADR-0070
+/// d2, #262).
+#[tokio::test]
+async fn the_doctors_proven_probe_writes_no_line_and_no_histogram_entry() {
+    const SECRET: &str = "lead-web-client-secret-0123456789";
+    let store = MemStore::new();
+    let traffic = Traffic::new(TrustedProxies::default());
+    let scrape = oml_transport_http::traffic::metrics::router(Arc::clone(traffic.metrics()));
+    let router = state(&store, observed(&store))
+        .with_traffic(traffic)
+        .with_web_client(oml_transport_http::session::WebClient::new(
+            Some(SECRET.to_owned()),
+            None,
+        ))
+        .into_router();
+    let probe = |secret: &str| {
+        Request::get("/v2/whoami")
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", oml_app::domain::web::DOCTOR_PROBE_CREDENTIAL),
+            )
+            .header("oml-web-client", secret)
+            .body(Body::empty())
+            .expect("a request")
+    };
+    let (guard, captured) = Captured::start();
+    let (status, _, answer) = send(&router, probe(SECRET)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(json_of(&answer)["error"]["code"], "auth.invalid");
+    assert_ne!(
+        json_of(&answer)["error"]["details"]["reason"],
+        "session_outside_web",
+        "proven"
+    );
+    let (status, _, answer) = send(&router, probe("another-secret-0123456789abcdefgh")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        json_of(&answer)["error"]["details"]["reason"],
+        "session_outside_web"
+    );
+    drop(guard);
+    let lines = captured.events("http_request");
+    assert_eq!(lines.len(), 1, "the unproven probe alone: {lines:?}");
+    let (_, _, text) = send(
+        &scrape,
+        Request::get("/metrics")
+            .body(Body::empty())
+            .expect("a request"),
+    )
+    .await;
+    let text = String::from_utf8(text).expect("UTF-8");
+    let counted: Vec<&str> = text
+        .lines()
+        .filter(|l| l.starts_with("oml_http_request_duration_seconds_count"))
+        .collect();
+    assert_eq!(counted.len(), 1, "{counted:?}");
+    assert!(counted[0].ends_with(" 1"), "{counted:?}");
+}

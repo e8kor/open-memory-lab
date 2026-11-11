@@ -4120,6 +4120,7 @@ name = "oml-web-credential"
 version = "0.6.3"
 dependencies = [
  "hex",
+ "rustix",
  "sha2 0.10.9",
 ]
 

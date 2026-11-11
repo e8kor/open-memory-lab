@@ -13,5 +13,8 @@ description = "What a web session's token derives, on both sides of the hop: the
 hex = { workspace = true }
 sha2 = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true }
+
 [lints]
 workspace = true
