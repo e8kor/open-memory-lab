@@ -2,12 +2,12 @@
 id: adr/ADR-0075-each-approved-memory-is-indexed-by-the-questions-it-answers-generated-off-the-request-path-scanned-stored-with-their-generator-and-matched-only-by-an-opt-in-pipeline
 tier: engineering
 status: proposed
-answers: what hypothetical question indexing is for and what the recall eval says the gap is today; what the literature measured for doc2query, docTTTTTquery, HyDE, field-weighted BM25 and generated-question indexing since 2024; when questions are generated and for which versions never; the backfill policy and how it is stopped, capped and tracked; where questions are stored, with which generator, how every change to them is journalled, and what happens to them on supersession, retirement, erasure and a model change; how they are indexed and scored with the memory text, and why a row without questions is never pushed below its own text's score; the opt-in pipeline and what a hit says; where the model runs and when the server reaches the network; how a generated question is filtered for grounding and genericity and scanned, and what it may never do; the interface ADR-0072's phase 3 reads; the eval gates, their power, the latency and size budgets, the bill per 1,000 approvals and the backfill cost; how the drain behaves when the generator is down; when dense embeddings of questions are revisited; the phases and their tests; what the operator decided on 2026-11-10
+answers: what hypothetical question indexing is for and what the recall eval says the gap is today; what the literature measured for doc2query, docTTTTTquery, HyDE, field-weighted BM25 and generated-question indexing since 2024; when questions are generated and for which versions never; the backfill policy and how it is stopped, capped and tracked; where questions are stored, with which generator, how every change to them is journalled, and what happens to them on supersession, retirement, erasure and a model change; how they are indexed and scored with the memory text, and why a row without questions is never pushed below its own text's score; the opt-in pipeline and what a hit says; where the model runs and when the server reaches the network; how a generated question is filtered for grounding and genericity and scanned, and what it may never do; the interface ADR-0072's phase 3 reads; the eval gates, their power, the latency and size budgets, the bill per 1,000 approvals and the backfill cost; how the drain behaves when the generator is down; when dense embeddings of questions are revisited; the phases and their tests; what the operator decided on 2026-11-10; the phase 0 gate as the operator redesigned it on 2026-11-11: whether generated questions beat or add to `bm25-sparse` on question-shaped queries, its power and its decision rule
 -->
 
 # ADR-0075 — Each approved memory is indexed by the questions it answers, generated off the request path, scanned, stored with their generator, and matched only by an opt-in pipeline
 
-**Status:** proposed · 2026-11-10 · revised after review rounds 1, 2 and 3 the same day (see the Review log)
+**Status:** proposed · 2026-11-10 · revised after review rounds 1, 2 and 3 the same day (see the Review log) · phase 0's gate amended by the operator's decision of 2026-11-11 (d12)
 
 **In short.** When a memory version is approved, a generator writes up to five questions that the
 memory answers. The server keeps only questions grounded in the memory's own words, scans them,
@@ -35,6 +35,7 @@ gain, that decides whether the server work is worth building.
 | d9 | Dense embeddings of questions are deferred until a named trigger fires | — |
 | d10 | Phase 0 (with 0a, the grown labelled set) decides; phases 1 and 2 ship in one release; phase 3 when #207 is scheduled | 0 to 3 |
 | d11 | Operations: an outage, told from a bad version by a compiled-in canary, pauses the drain and it resumes on its own; parked entries come back with backoff; a backfill is estimated, capped, stoppable and tracked; the bill is metered; doctor names each state | 1 |
+| d12 | Amended 2026-11-11: phase 0 asks whether questions beat `bm25-sparse` (primary) or add to it (secondary) on the 687 question-shaped queries, each by an exact paired test at 0.025 sized for 80% power at a 2.5-point gain; non-inferiority on the other 99 with a computed margin; a go ships the pipeline that passed, opt-in, and otherwise v0.7.1 recommends `bm25-sparse` and questions are parked | 0 |
 
 **Open questions: decided by the operator, 2026-11-10.** Each is detailed at the end.
 
@@ -44,6 +45,7 @@ gain, that decides whether the server work is worth building.
 | 2 | Exclude approved memories that carry a hold finding? | Yes: no questions are generated for them, with the count visible in `status` and doctor. |
 | 3 | Run phase 0 now? | Run phase 0a before building: phase 0a first (grow the labelled set to at least 550 queries), then phase 0; phases 1 and 2 stay behind its verdict. |
 | 4 | Correct #201's 0.17? | Already corrected: done in #201's body on 2026-11-10, with today's baseline and its source. |
+| 5 | Phase 0's gate, after 0a's joint power came out at −0.08 (decided 2026-11-11) | Redesign it as d12: questions must beat or add to `bm25-sparse` on question-shaped queries, with the power computed on measured discordance; if they do not clearly win, v0.7.1 recommends `bm25-sparse` instead. |
 
 **Amends:** ADR-0049 (d4: the pipeline table gains `bm25-questions`; d6: `matched` gains
 `question` and `question_terms`, and `via` gains `questions`), ADR-0052 (d1 and d3: `kind` gains `3`,
@@ -655,6 +657,9 @@ Decided, not built.
     rests on the test, with δ the effect its power targets, and keeps a floor of 1.5 points so that
     a significant but trivial gain does not pass; at n 550 the floor changes the power by less than
     0.001 (0.902 either way).
+  - *Amended 2026-11-11 (d12):* for phase 0, d12's comparison against `bm25-sparse` replaces the
+    superiority gate, the three non-inferiority arms and the joint power below; the arms d12 moves
+    to phase 2 and the adversarial suite, latency, write-latency, size and bill stay as written.
   - **Quality, measured offline in phase 0 and served in phase 2.** One superiority gate, three
     non-inferiority arms and one displacement bound:
 
@@ -839,6 +844,91 @@ Decided, not built.
     `search_questions_unused` (generation on and no request or default used `bm25-questions` in 7
     days, so the tenant pays for no reader), and `search_questions_unserved` (a tenant whose
     default is `bm25-questions` with generation off or no sets, so it behaves as `bm25-postings`).
+
+- **d12 — Phase 0's gate, as the operator redesigned it on 2026-11-11: generated questions must
+  beat `bm25-sparse` or add to it on question-shaped queries, by a paired test the set can see,
+  or v0.7.1 recommends `bm25-sparse` and the question work is parked.** It amends d8 for phase 0.
+  - **Why d8's gate could not decide.** 0a's rerun on the grown set
+    (`eval/bench/results/phase0a/power.md` on PR #245) capped all three non-inferiority margins at
+    0.02, and the union bound over d8's arms came to 1 − (0.053 + 0.571 + 0.083 + 0.336 + 0.033)
+    = −0.08, which says nothing. It also measured the competitor d8 only reported: `bm25-sparse`
+    reached success@5 0.956 (95% interval 0.938 to 0.969) on the 665 grown queries, against
+    `bm25-postings`' 0.913, with 31 wins and 2 losses. A question field that beats
+    `bm25-postings` and not `bm25-sparse` would cost a generator, a queue, a migration and kind 3
+    postings for less than a pipeline OML already serves. So the question phase 0 answers is
+    whether questions beat or add to `bm25-sparse`.
+  - **The set.** The grown set's 665 queries and the synthetic set's 121 answerable ones, 786 in
+    all. The question-shaped categories, `question` and `paraphrase`, hold 687 (665 + 22); the
+    other nine categories hold 99. Success@5 is the measure, per query, as d8's.
+  - **Primary: beat.** `bm25-questions` (d4, five questions, every d6 filter on, w_q by d8's
+    five-fold cross-validation) against `bm25-sparse` (ADR-0052 d13's convex combination, 0.3
+    `bm25-postings` and 0.7 `sparse`) on the 687: a one-sided exact conditional McNemar test on
+    the discordant pairs, p < 0.025, and an observed gain of at least 1 point.
+  - **Secondary: add.** `bm25-sparse` with `bm25-questions` in place of its `bm25-postings` leg
+    (the same 0.3 / 0.7 weights, w_q by the same cross-validation) against `bm25-sparse` on the
+    687, by the same test.
+  - **One alpha for two tests.** A go needs either, so the two share the go's false-positive rate
+    by Bonferroni: 0.025 each, at most 0.05 together.
+  - **The power computation.** With π_d the share of queries on which the two pipelines disagree
+    and δ the gain, wins are p10 = (π_d + δ)/2 and losses p01 = (π_d − δ)/2. Exact enumeration of
+    the test above (every count of wins and losses weighted by its multinomial probability, d8's
+    method, `eval/bench/power.py`'s `mcnemar_power` at alpha 0.025 and the 1-point floor) gives the
+    least gain detected with 80% power at n 687; Connor's formula, n = (z_α √π_d + z_β √(π_d −
+    δ²))² / δ², agrees within 0.1 point. The planning π_d are the discordances the served
+    pipelines measured on these 687 queries:
+
+    | planning discordance | π_d | least gain, 80% power (exact) | 90% (exact) | Connor, 80% |
+    |---|---|---|---|---|
+    | `bm25-sparse` vs `bm25-postings`, 34 of 687 | 0.0495 | 2.5 points | 2.8 points | 2.4 points |
+    | `bm25-sparse` vs `bm25-rerank`, 19 of 687 | 0.0277 | 1.9 points | 2.1 points | 1.8 points |
+    | `bm25-sparse` vs `bm25-sparse-rrf`, 10 of 687 | 0.0146 | 1.4 points | not reachable | 1.3 points |
+
+    The gate plans on the first row, the largest discordance a lexical change has shown against
+    `bm25-sparse`: **a gain of 2.5 points of success@5 is the threshold the set detects with
+    80% power** (0.813 by enumeration). A pair that disagrees less is seen at a smaller gain, so
+    the plan is the conservative one. The ceiling is `bm25-sparse`'s own misses: 31 of the 687
+    (4.5%) leave the top 5, so a 2.5-point gain needs questions to rescue about 17 more of those than
+    they lose elsewhere. As d8 found in round 1, requiring the observed gain to reach the planned
+    effect would pass a true 2.5-point gain about half the time, so the gate rests on the test,
+    and the 1-point floor keeps a significant but trivial gain out; at the planned effect the
+    floor costs under 0.001 of power. Phase 0 reports the observed π_d and the least gain
+    detectable at it.
+  - **Non-inferiority on the other categories.** Each candidate is compared with the pipeline it
+    extends, on the 99 other queries: `bm25-questions` with `bm25-postings`, the combination with
+    `bm25-sparse`. A question that harms an exact, identifier or typo query harms it against the
+    text it was added to; comparing `bm25-questions` with `bm25-sparse` there would gate on the
+    sparse leg's own lead (5 wins in 99), not on what questions did, so that comparison is
+    reported. The arm passes when the lower end of the 95% paired bootstrap interval (10,000
+    resamples) of the success@5 difference is above −m. m is computed, not capped: at a true
+    difference of 0 the paired difference's SD is √π_d, so m = (z_0.975 + z_0.90) √π_d / √n, with
+    π_d 5 of 99 (`bm25-sparse` against `bm25-postings` there), gives **m = 0.073** for 90% power
+    (0.063 for 80%, 0.081 for 95%). The 99 queries rule out a loss of about 7 points and no less;
+    that is what they can support, and phase 2's served eval is where a finer bound is measured.
+  - **The joint power.** A go through the primary needs it and its non-inferiority arm, so its
+    power is at least 1 − (0.187 + 0.10) ≈ **0.71** at the planned effect, by the union bound;
+    either path to a go only adds to it. That is below d8's 0.80, and it is stated rather than
+    raised: the operator asked for 80% on the primary comparison and a margin the set supports,
+    and a 95% non-inferiority arm would widen m to 8.1 points to gain 0.05.
+  - **What leaves phase 0.** SciFact, NFCorpus and LoCoMo's non-inferiority arms and the
+    displacement arm move to phase 2's served eval, run before the release with margins computed
+    as above and never capped; they no longer gate phase 0. On a go, phase 0 then runs d8's
+    adversarial suite and its latency proxy before #236 starts. **The budgets stay** as d8 states
+    them: generation cost, index size (kind 3 at no more than kind 1 in total), recall latency
+    (p95 ≤ 50 ms at 100,000 memories, at most 15 ms above `bm25-postings`) and write latency.
+  - **The generator.** The arm is `local`, a doc2query T5 (d5): not a Phi model, since a Phi
+    model drafted the grown set's queries (d8). A doc2query T5 writes MS MARCO-style queries,
+    mostly without a closing `?`, which d6's shape filter would drop. The adapter therefore
+    closes an unpunctuated generation with `?` before d6 runs, a reading fixed here before any
+    retrieval was scored; d6 as worded is reported beside the arm and never chosen.
+  - **The decision rule.** A go is the primary and its non-inferiority arm passing, or the
+    secondary and its non-inferiority arm passing. A go ships the pipeline that passed, opt-in:
+    `bm25-questions` on the primary; on the secondary alone, the question field as
+    `bm25-sparse`'s lexical leg, named in phase 2. Otherwise **v0.7.1 recommends `bm25-sparse` as
+    the documented pipeline for question-style use**, #236 to #238 are parked with phase 0's
+    evidence, and this record stays proposed until a later run of its own reopens it.
+  - **The label check.** A person's check of a seeded 10% of the grown set's labels
+    (`person_check` in `eval/recall/queries-grown.json`, PR #245) is still required. Until it
+    passes, every phase 0 figure is provisional and no verdict is final.
 
 ## Consequences
 
@@ -1063,3 +1153,14 @@ What changed:
   path (m2), `match: "all"` (m3) and word forms (m4) are stated; under federation the counts are
   R's, and ADR-0072 d9 names the set-level events (m5); the joint power says what it covers (m6);
   the status line (m7).
+
+**Amendment, 2026-11-11: the operator's decision on phase 0's gate.** 0a's rerun on PR #245 put
+d8's joint power at −0.08, every non-inferiority margin at its 0.02 cap, and `bm25-sparse` at
+0.956 success@5 on the grown set. The operator decided to redesign the gate around the competitor
+OML already serves: d12 asks whether questions beat `bm25-sparse` or add to it on the 687
+question-shaped queries, by two exact paired tests at 0.025 each, sized from measured
+discordance (2.5 points at 80% power), with non-inferiority on the other 99 queries at a margin
+computed from the set (0.073), not capped. The external sets' arms and the displacement arm move
+to phase 2; the budgets stay; the 10% label check still holds every figure provisional. If
+questions do not clearly win, v0.7.1 recommends `bm25-sparse` for question-style use. Open
+question 5 records the decision.
