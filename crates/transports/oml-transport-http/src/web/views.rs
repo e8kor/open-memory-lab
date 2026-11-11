@@ -132,25 +132,11 @@ pub const MOVED_ADMIN_VIEWS: &[(&str, &str)] = &[
     ("queue", ADMIN_REVIEW_PATH),
 ];
 
-/// The acts of a view `oml-web` serves: the lead runs none of them and
-/// answers each with a `303` to the view's own path, on the user page and
-/// on the admin page alike (ADR-0070 d7 (b)).
-pub const MOVED_ACTIONS: &[&str] = &[
-    "workarea_mode",
-    "workarea_transition",
-    "workarea_ratify",
-    "review_next",
-    "verdict",
-    "bulk_confirm",
-    "bulk_verdict",
-    "issue_key",
-    "connect_key",
-    "connect_code",
-    "cut_off",
-];
-
 /// The path of the view a moved act belongs to, on the user page or the
-/// admin page; `None` for an act the lead still runs.
+/// admin page; `None` for an act the lead still runs. The lead runs none of
+/// the moved acts and answers each with a `303` there (ADR-0070 d7 (b)).
+/// Bulk review is the admin page's only (ADR-0055 d1), so on the user page
+/// its acts are no act of the page.
 #[must_use]
 pub fn moved_action(action: &str, admin: bool) -> Option<&'static str> {
     Some(match (action, admin) {

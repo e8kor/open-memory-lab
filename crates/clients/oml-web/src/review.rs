@@ -11,10 +11,13 @@
 //! - on the admin page, the tenant's queue: held rows per workarea, read
 //!   as the admin key (`reviewQueue`);
 //! - review next: `POST` claims the next item (`reviewNext`) and redirects
-//!   to the view with its serve id, which draws the item's card from the
-//!   held listing by id (`reviewHeld?ids=`, which claims nothing) with the
-//!   verdict form; the verdict (`postVerdict`) redirects to the next item;
-//! - bulk review: the held listing with its filters and a box per row;
+//!   to the view with its serve id and the served memory's id; the view
+//!   draws the item's card from the held listing by that memory id
+//!   (`reviewHeld?ids=`, which claims nothing) with the verdict form, and
+//!   never reads the serve id, which the contract leaves opaque; the
+//!   verdict (`postVerdict`) redirects to the next item;
+//! - on the admin page only, bulk review (ADR-0055 d1): the held listing
+//!   with its filters and a box per row;
 //!   picking posts `bulk_confirm`, which records nothing and shows each
 //!   picked row by its claim key and first line with the one form that
 //!   records a verdict on each (`postBulkVerdict`) and redirects to the
@@ -46,8 +49,11 @@ pub const HELD_PAGE: u32 = 50;
 /// The most memories one bulk verdict names (ADR-0055 d3).
 pub const BULK_MAX: usize = 200;
 
-/// The view's acts, on both pages.
-pub const ACTIONS: &[&str] = &["review_next", "verdict", "bulk_confirm", "bulk_verdict"];
+/// The user page's acts: review next and the verdict.
+pub const USER_ACTIONS: &[&str] = &["review_next", "verdict"];
+
+/// The admin page's acts: the user page's and bulk review (ADR-0055 d1).
+pub const ADMIN_ACTIONS: &[&str] = &["review_next", "verdict", "bulk_confirm", "bulk_verdict"];
 
 /// Which page the view is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,22 +69,6 @@ impl Side {
             Self::Admin => ADMIN_REVIEW_PATH,
         }
     }
-}
-
-/// A memory id from a serve id (`srv_<32 hex>`), hyphenated as the API
-/// names ids; `None` for anything else.
-fn memory_of_serve(serve_id: &str) -> Option<String> {
-    let hex = serve_id.strip_prefix("srv_")?;
-    (hex.len() == 32 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))).then(|| {
-        format!(
-            "{}-{}-{}-{}-{}",
-            &hex[..8],
-            &hex[8..12],
-            &hex[12..16],
-            &hex[16..20],
-            &hex[20..]
-        )
-    })
 }
 
 /// Whether `value` is an id as the API writes one.
@@ -225,8 +215,10 @@ fn memory_state(m: &Memory) -> &str {
 
 /// The item's card, as the lead drew it. A Mermaid claim's drawing is the
 /// lead's render frame, which only the lead can mint (ADR-0056 d9): the
-/// card shows its whole source and format, and links the memory's own
-/// page, which frames it.
+/// card shows its whole source and format, and says the drawing shows on
+/// the memory's own page once it is promoted. It links nothing: a held
+/// memory's page opens only for its author and the agent's owner, and a
+/// reviewer is usually neither (ADR-0070, Phase (b) as built; #189).
 fn card(m: &Memory) -> String {
     let warning = m.load_warning.as_deref().map_or_else(String::new, |w| {
         format!(r#"<p class="lede">Guardrail: {}.</p>"#, text(w))
@@ -235,10 +227,7 @@ fn card(m: &Memory) -> String {
         format!(r#"<p class="label">title</p><p>{}</p>"#, text(t))
     });
     let drawing = if m.format.as_deref() == Some("text/vnd.oml.mermaid") {
-        format!(
-            r#"<p class="dim"><a href="/web?view=memories&amp;memory={}">The drawing</a> is on the memory's own page; its source is above in full.</p>"#,
-            attr(&encode(&m.artifact_id))
-        )
+        r#"<p class="dim">The drawing shows on the memory's own page once it is promoted; its source is above in full.</p>"#.to_owned()
     } else {
         String::new()
     };
@@ -267,12 +256,17 @@ struct ViewCtx<'a> {
     side: Side,
 }
 
-/// The served item's card and its verdict form, read by id from the held
-/// listing, which claims nothing.
-async fn served(view: &ViewCtx<'_>, serve_id: &str) -> Result<String, Refusal> {
-    let Some(memory_id) = memory_of_serve(serve_id) else {
+/// The served item's card and its verdict form: the card read by the
+/// memory id the redirect named from the held listing, which claims
+/// nothing, and the form carrying the serve id as the API gave it.
+async fn served(
+    view: &ViewCtx<'_>,
+    serve_id: &str,
+    memory: Option<&str>,
+) -> Result<String, Refusal> {
+    let Some(memory_id) = memory.filter(|m| is_id(m)) else {
         return Err(Box::new(acts::invalid(
-            "serve is not a serve id",
+            "memory is the served memory's id",
             view.calls,
         )));
     };
@@ -281,7 +275,7 @@ async fn served(view: &ViewCtx<'_>, serve_id: &str) -> Result<String, Refusal> {
     let named = view
         .web
         .api
-        .review_named(&call(&credential, &ids), &[memory_id.as_str()])
+        .review_named(&call(&credential, &ids), &[memory_id])
         .await
         .map_err(|e| Box::new(outcome::page(&e, view.calls.page_id(), view.side.path())))?;
     let Some(item) = named.items.into_iter().find_map(|n| n.item) else {
@@ -475,7 +469,7 @@ async fn view(
         }
     }
     if let Some(serve_id) = fields.given("serve") {
-        match served(&ctx, serve_id).await {
+        match served(&ctx, serve_id, fields.given("memory")).await {
             Ok(card) => body.push_str(&card),
             Err(response) => return *response,
         }
@@ -488,9 +482,11 @@ async fn view(
         "Review next",
         true,
     ));
-    match held(&ctx, &fields).await {
-        Ok(listing) => body.push_str(&listing),
-        Err(response) => return *response,
+    if side == Side::Admin {
+        match held(&ctx, &fields).await {
+            Ok(listing) => body.push_str(&listing),
+            Err(response) => return *response,
+        }
     }
     outcome::html(
         StatusCode::OK,
@@ -571,24 +567,14 @@ fn verdict_of(fields: &Fields, calls: &PageCalls) -> Result<&'static str, Refusa
     }
 }
 
-/// `{page}?serve=…` for the next item, or `{page}?done=empty`, after
-/// claiming it as the reviewer key.
-async fn next_location(
-    web: &Web,
-    session: &Session,
-    calls: &PageCalls,
-    page: &str,
-    done: &str,
-) -> Result<String, Refusal> {
-    let credential = session.credential(Capacity::Review);
-    let ids = calls.next_ids();
-    let key = session.act_key(&crate::workareas::nonce());
-    match web.api.review_next(&call(&credential, &ids), &key).await {
-        Ok(Some(serve)) => Ok(format!("{page}?serve={}{done}", encode(&serve.serve_id))),
-        Ok(None) if done.is_empty() => Ok(format!("{page}?done=empty")),
-        Ok(None) => Ok(format!("{page}?{}", &done[1..])),
-        Err(e) => Err(Box::new(outcome::page(&e, calls.page_id(), page))),
-    }
+/// `{page}?serve=…&memory=…` for a served item: the serve id as the API
+/// gave it, and the served memory's id, which the view reads the card by.
+fn served_location(page: &str, serve: &oml_sdk::Serve) -> String {
+    format!(
+        "{page}?serve={}&memory={}",
+        encode(&serve.serve_id),
+        encode(&serve.item.artifact_id)
+    )
 }
 
 /// One act of the view, as the person's reviewer key.
@@ -600,7 +586,11 @@ async fn act(
     side: Side,
 ) -> Response {
     let page = side.path();
-    let (fields, action) = match acts::read(form, ACTIONS, defined, &calls) {
+    let actions = match side {
+        Side::User => USER_ACTIONS,
+        Side::Admin => ADMIN_ACTIONS,
+    };
+    let (fields, action) = match acts::read(form, actions, defined, &calls) {
         Ok(read) => read,
         Err(refusal) => return *refusal,
     };
@@ -614,9 +604,7 @@ async fn act(
             let _in_flight = acts::hold(&key).await;
             let ids = calls.next_ids();
             match web.api.review_next(&call(&credential, &ids), &key).await {
-                Ok(Some(serve)) => {
-                    acts::see_other(&format!("{page}?serve={}", encode(&serve.serve_id)), &[])
-                }
+                Ok(Some(serve)) => acts::see_other(&served_location(page, &serve), &[]),
                 Ok(None) => acts::see_other(&format!("{page}?done=empty"), &[]),
                 Err(e) => outcome::page(&e, calls.page_id(), page),
             }
@@ -653,11 +641,17 @@ async fn act(
                 s @ ("promoted" | "held" | "rejected") => s,
                 _ => "held",
             };
-            let done = format!("&done=verdict&version={}&state={state}", recorded.version);
-            match next_location(&web, &session, &calls, page, &done).await {
-                Ok(location) => acts::see_other(&location, &[]),
-                Err(response) => *response,
-            }
+            let done = format!("done=verdict&version={}&state={state}", recorded.version);
+            // The next claim runs under a key derived from the verdict's, so
+            // a resubmitted verdict replays its claim too; a claim that
+            // fails leaves the recorded verdict's notice on the view.
+            let next = session.act_key(&format!("{key}/next"));
+            let ids = calls.next_ids();
+            let location = match web.api.review_next(&call(&credential, &ids), &next).await {
+                Ok(Some(serve)) => format!("{}&{done}", served_location(page, &serve)),
+                Ok(None) | Err(_) => format!("{page}?{done}"),
+            };
+            acts::see_other(&location, &[])
         }
         "bulk_confirm" => bulk_confirm(&web, &session, &calls, &fields, side).await,
         _ => {
@@ -861,16 +855,6 @@ pub async fn admin_act(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_serve_id_names_its_memory_and_nothing_else_does() {
-        assert_eq!(
-            memory_of_serve("srv_0123456789abcdef0123456789abcdef").as_deref(),
-            Some("01234567-89ab-cdef-0123-456789abcdef")
-        );
-        assert_eq!(memory_of_serve("srv_0123"), None);
-        assert_eq!(memory_of_serve("0123456789abcdef0123456789abcdef"), None);
-    }
 
     #[test]
     fn a_crafted_notice_shows_only_numbers_and_the_views_own_words() {

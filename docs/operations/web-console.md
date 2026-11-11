@@ -17,8 +17,8 @@ Workareas view at `/web/workareas` on the user page and `/web/admin/workareas` o
 the Review view at `/web/review` and `/web/admin/review`; and the Keys view at `/web/keys` and
 `/web/admin/keys`. Every act on them runs through the API as the person's session keys, and a
 form sent twice runs once. Putting a workarea in progress, committing it, proposing or ratifying
-a status change, and a bulk verdict are confirmed first. The Review view holds review next and
-bulk review, and on the admin page the queue of held memories per workarea; the reviewer is never
+a status change, and a bulk verdict are confirmed first. The Review view holds review next, and
+on the admin page the queue of held memories per workarea and bulk review; the reviewer is never
 the author, and a verdict the API refuses is shown with its code. On the Keys view a key's value
 or a connect code is shown once, on the page the act lands on: it travels there sealed in a
 cookie that page clears, never in an address or a log line, and `oml-web` keeps no copy. The

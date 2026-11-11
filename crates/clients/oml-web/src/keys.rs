@@ -26,7 +26,7 @@ use oml_page::web::{
     ADMIN_KEYS_PATH, ADMIN_TABS, USER_KEYS_PATH, attr, form, hidden, input, select, shell, short,
     state_tag, user_tabs,
 };
-use oml_sdk::ListedKey;
+use oml_sdk::{ListedKey, encode};
 
 use crate::once::{self, ONCE_COOKIE, Secret};
 use crate::pages::{Fields, refused};
@@ -109,8 +109,9 @@ async fn keys(
 
 /// One key's row, with the acts the page allows on it: a live key that is
 /// not a session key can be cut off, and on the user page a live connector
-/// key gets a new connect code.
-fn row(key: &ListedKey, side: Side, csrf: &str) -> String {
+/// key gets a new connect code. On the admin page the cut-off carries the
+/// listed `user`, so the act lands back on the same list.
+fn row(key: &ListedKey, side: Side, csrf: &str, user: &str) -> String {
     let name = key.name.as_deref().unwrap_or("");
     let access: Vec<String> = key
         .grants
@@ -136,11 +137,16 @@ fn row(key: &ListedKey, side: Side, csrf: &str) -> String {
                 false,
             ));
         }
+        let listed = if side == Side::Admin {
+            hidden("user", user)
+        } else {
+            String::new()
+        };
         acts.push_str(&form(
             side.path(),
             "cut_off",
             csrf,
-            &format!("{}{}", hidden("key", name), acts::nonce_field()),
+            &format!("{}{listed}{}", hidden("key", name), acts::nonce_field()),
             "Cut off",
             false,
         ));
@@ -157,12 +163,12 @@ fn row(key: &ListedKey, side: Side, csrf: &str) -> String {
     )
 }
 
-fn table(keys: &[ListedKey], side: Side, csrf: &str) -> String {
+fn table(keys: &[ListedKey], side: Side, csrf: &str, user: &str) -> String {
     let mut out = String::from(
         "<table><tr><th>Key</th><th>Role</th><th>Access</th><th>State</th><th></th></tr>",
     );
     for key in keys {
-        out.push_str(&row(key, side, csrf));
+        out.push_str(&row(key, side, csrf, user));
     }
     out.push_str("</table>");
     out
@@ -286,7 +292,7 @@ async fn user_view(
     let mut body = format!(
         r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}"#,
         short(&user),
-        table(&listed, Side::User, &csrf)
+        table(&listed, Side::User, &csrf, "")
     );
     let prefix = format!("{user}-");
     let issue = |action: &str, button: &str, primary: bool| {
@@ -362,7 +368,7 @@ pub async fn admin_page(
             Ok(listed) => listed,
             Err(e) => return outcome::page(&e, calls.page_id(), next),
         };
-        body.push_str(&table(&listed, Side::Admin, &session.csrf()));
+        body.push_str(&table(&listed, Side::Admin, &session.csrf(), user));
     }
     outcome::html(
         StatusCode::OK,
@@ -377,12 +383,13 @@ pub async fn admin_page(
     )
 }
 
-/// The fields each action defines, beside `action`, `csrf_token` and
-/// `nonce`.
-fn defined(action: &str, name: &str) -> bool {
+/// The fields each action defines on `side`, beside `action`,
+/// `csrf_token` and `nonce`: the admin's cut-off also names the listed
+/// `user`.
+fn defined(side: Side, action: &str, name: &str) -> bool {
     match action {
         "issue_key" | "connect_key" => matches!(name, "name" | "role"),
-        _ => name == "key",
+        _ => name == "key" || (side == Side::Admin && name == "user"),
     }
 }
 
@@ -414,7 +421,7 @@ async fn act(
         Side::User => USER_ACTIONS,
         Side::Admin => ADMIN_ACTIONS,
     };
-    let (fields, action) = match acts::read(form, actions, defined, &calls) {
+    let (fields, action) = match acts::read(form, actions, |a, n| defined(side, a, n), &calls) {
         Ok(read) => read,
         Err(refusal) => return *refusal,
     };
@@ -443,46 +450,57 @@ async fn act(
             let name = format!("{user}-{}", fields.given("name").unwrap_or_default());
             let connector = action == "connect_key";
             match web.api.issue_key(&call, &key, &name, role, connector).await {
-                Ok(issued) => match (issued.value, issued.connect_code) {
-                    (Some(value), _) => Secret::Key {
-                        name: issued.name,
-                        value,
-                        server: server(&web).await,
-                    },
-                    (None, Some(code)) => Secret::Code {
-                        name: issued.name,
-                        code: code.code.unwrap_or_default(),
-                        expires_at: code.expires_at,
-                        connector_url: code.connector_url,
-                    },
-                    (None, None) => {
-                        return refused(
-                            StatusCode::BAD_GATEWAY,
-                            "unavailable",
-                            "the API issued the key but showed neither its value nor its code",
-                            &calls,
-                        );
+                Ok(issued) => {
+                    let code = issued
+                        .connect_code
+                        .and_then(|c| Some((c.code?, c.expires_at, c.connector_url)));
+                    match (issued.value, code) {
+                        (Some(value), _) => Secret::Key {
+                            name: issued.name,
+                            value,
+                            server: server(&web).await,
+                        },
+                        (None, Some((code, expires_at, connector_url))) => Secret::Code {
+                            name: issued.name,
+                            code,
+                            expires_at,
+                            connector_url,
+                        },
+                        // A replay, which shows neither: the first answer's
+                        // cookie holds the secret, and this one sets none
+                        // over it.
+                        (None, None) => return acts::see_other(USER_KEYS_PATH, &[]),
                     }
-                },
+                }
                 Err(e) => return outcome::page(&e, calls.page_id(), page),
             }
         }
         "connect_code" => {
             let name = fields.given("key").unwrap_or_default();
             match web.api.mint_connect_code(&call, &key, name).await {
-                Ok(code) => Secret::Code {
+                Ok(oml_sdk::ConnectCode {
+                    code: Some(code),
+                    expires_at,
+                    connector_url,
+                    ..
+                }) => Secret::Code {
                     name: name.to_owned(),
-                    code: code.code.unwrap_or_default(),
-                    expires_at: code.expires_at,
-                    connector_url: code.connector_url,
+                    code,
+                    expires_at,
+                    connector_url,
                 },
+                // A replay, which shows no code: as for an issue.
+                Ok(_) => return acts::see_other(USER_KEYS_PATH, &[]),
                 Err(e) => return outcome::page(&e, calls.page_id(), page),
             }
         }
         _ => {
             let name = fields.given("key").unwrap_or_default();
+            let listed = fields
+                .given("user")
+                .map_or_else(String::new, |u| format!("user={}&", encode(u)));
             return match web.api.add_denial(&call, &key, name, "universe").await {
-                Ok(_) => acts::see_other(&format!("{page}?done=cut+off"), &[]),
+                Ok(_) => acts::see_other(&format!("{page}?{listed}done=cut+off"), &[]),
                 Err(e) => outcome::page(&e, calls.page_id(), page),
             };
         }
