@@ -384,27 +384,28 @@ where
         let span = tracing::Span::current();
         let scope = crate::traffic::current_scope();
         let session = crate::session::current_session();
-        let act = crate::traffic::within_scope(scope, crate::session::within_session(session, act));
-        let task = tokio::spawn(tracing::Instrument::instrument(
-            async move {
-                self.committing = true;
-                match act.await {
-                    Ok(acted) => Ok(self.settle(&acted).await),
-                    Err(ActFailure::Refused(e)) => {
-                        self.release().await;
-                        Err(e)
-                    }
-                    Err(ActFailure::MayHaveCommitted(e)) => {
-                        self.leave(&format!(
-                            "the act failed after it may have committed: {}",
-                            e.message
-                        ));
-                        Err(e)
-                    }
+        let work = async move {
+            self.committing = true;
+            match act.await {
+                Ok(acted) => Ok(self.settle(&acted).await),
+                Err(ActFailure::Refused(e)) => {
+                    self.release().await;
+                    Err(e)
                 }
-            },
-            span,
-        ));
+                Err(ActFailure::MayHaveCommitted(e)) => {
+                    self.leave(&format!(
+                        "the act failed after it may have committed: {}",
+                        e.message
+                    ));
+                    Err(e)
+                }
+            }
+        };
+        // The record and a release run inside the request's scope too, so
+        // the request line counts every store call the act made.
+        let work =
+            crate::traffic::within_scope(scope, crate::session::within_session(session, work));
+        let task = tokio::spawn(tracing::Instrument::instrument(work, span));
         match task.await {
             Ok(answered) => answered,
             Err(stopped) if stopped.is_panic() => std::panic::resume_unwind(stopped.into_panic()),

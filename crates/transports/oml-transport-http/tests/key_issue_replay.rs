@@ -169,3 +169,111 @@ async fn a_connect_code_resubmitted_replays_without_the_code_and_mints_none() {
         "no second code was minted"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_used_key_sent_with_another_request_is_digest_mismatch_and_acts_nothing() {
+    let w = world().await;
+    let (status, _, _) = send(
+        &w.router,
+        "/v2/keys",
+        &w.admin,
+        "k-5",
+        &agent("agent-5", true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _, refused) = send(
+        &w.router,
+        "/v2/keys",
+        &w.admin,
+        "k-5",
+        &agent("agent-6", false),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(refused["error"]["code"], "idempotency.digest_mismatch");
+    assert!(
+        w.store
+            .resolve_name(w.tenant, NamedKind::Key, &Name::parse("agent-6").unwrap())
+            .await
+            .unwrap()
+            .is_none(),
+        "nothing was issued"
+    );
+    let path = "/v2/keys/agent-5/connect-codes";
+    let (status, _, first) = send(&w.router, path, &w.admin, "cc-5", &json!({})).await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    let (status, _, refused) = send(
+        &w.router,
+        path,
+        &w.admin,
+        "cc-5",
+        &json!({"ttl_seconds": 600}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(refused["error"]["code"], "idempotency.digest_mismatch");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_admins_under_one_idempotency_key_each_issue_their_own_key() {
+    let w = world().await;
+    let (status, _, second) = send(
+        &w.router,
+        "/v2/keys",
+        &w.admin,
+        "k-admin",
+        &json!({"role": "admin", "name": "second-admin", "principal": "bob"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    let second = second["value"].as_str().expect("the value").to_owned();
+    let (s1, h1, a1) = send(
+        &w.router,
+        "/v2/keys",
+        &w.admin,
+        "same",
+        &agent("agent-7", false),
+    )
+    .await;
+    let (s2, h2, a2) = send(
+        &w.router,
+        "/v2/keys",
+        &second,
+        "same",
+        &agent("agent-8", false),
+    )
+    .await;
+    assert_eq!(
+        (s1, s2),
+        (StatusCode::CREATED, StatusCode::CREATED),
+        "{a1} {a2}"
+    );
+    assert!(
+        !replayed(&h1) && !replayed(&h2),
+        "each key's claim is its own"
+    );
+    assert!(a1["value"].is_string() && a2["value"].is_string());
+    assert_ne!(a1["key_id"], a2["key_id"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connector_key_issue_resubmitted_replays_without_its_connect_code() {
+    let w = world().await;
+    let body = agent("agent-9", true);
+    let (status, _, first) = send(&w.router, "/v2/keys", &w.admin, "k-9", &body).await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    let code = first["connect_code"]["code"]
+        .as_str()
+        .expect("the code, once")
+        .to_owned();
+    let (status, headers, again) = send(&w.router, "/v2/keys", &w.admin, "k-9", &body).await;
+    assert_eq!(status, StatusCode::CREATED, "{again}");
+    assert!(replayed(&headers), "{again}");
+    assert!(again["connect_code"].get("code").is_none(), "{again}");
+    assert!(!again.to_string().contains(&code), "a replay holds no code");
+    assert_eq!(
+        again["connect_code"]["code_id"], first["connect_code"]["code_id"],
+        "the same code, not a second one"
+    );
+}
