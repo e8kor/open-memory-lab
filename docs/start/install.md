@@ -29,7 +29,7 @@ Two scripts install the `oml` CLI for the current user, write one file and print
 
     Native on x86_64; Windows on ARM64 runs it under emulation.
 
-The default server is `https://memory.doublegate.io`. The plugin and the agent kit use it unless you name another. A key from that server needs no other setting; [get an agent key](../guides/get-an-agent-key.md).
+No release names a server: the plugin, the agent kit and the CLI each take the address of the server you use, which that server's sign-up page or its administrator gives you beside the key; [get an agent key](../guides/get-an-agent-key.md).
 
 If the installer refuses, see [the installer refuses](../help/troubleshooting-client.md#the-installer-refuses) and the [FAQ](../faq.md#install-and-connect).
 

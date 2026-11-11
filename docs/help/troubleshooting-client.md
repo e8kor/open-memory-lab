@@ -14,15 +14,23 @@ oml doctor
 
 It prints each check with `ok`, `warn` or `fail`, and where each value came from, never the key. It exits `0` on `ok` or `warn`, `1` on `fail` and `2` when the server cannot be reached. For server-side symptoms, see [troubleshoot the server](troubleshooting-server.md).
 
-## `url` or `api key` reads `unset`
+## `url` reads `fail no_server`, or `api key` reads `unset`
 
-No source sets the value. The pair comes from flags, then `OML_URL` and `OML_API_KEY`, then the credentials file, whole from the first source that sets either.
+No source sets the value. No release names a server, so the address always comes from you or from the server that issued the key. The pair comes from flags, then `OML_URL` and `OML_API_KEY`, then the credentials file, whole from the first source that sets either.
 
 ```bash
 oml login <url>
 ```
 
 If `next` says a source sets one value without the other, set both in that source or unset the one there. See [CLI reference](../cli/reference.md).
+
+The other lines that name a missing or shared server:
+
+- **`plugin : warn plugin_no_server`**: the plugin has a key and no `url`, so its tools reach no server. Set `url` with `oml setup claude-code --url <server>` or `claude plugin configure oml@open-memory-lab`.
+- **`oauth : warn server_origin`** (an admin key): the server sets no `oauth.issuer`, so its pages cannot show agents the URL to set beside their keys. Set `oauth.issuer` ([configuration](../operations/configuration.md)).
+- **`sync : warn sync_shared_server`**: the server says it is shared and this clone holds no consent for it. Run `oml sync` once with `--allow-public-server` ([sync](../use/sync.md)).
+- **`sync : warn sync_consent_unbound`**: the clone holds the old `oml.allowPublicServer=true`, which names no server and is no longer read. Opt in once more against the server you mean.
+- **`error: refused setup.no_server`** from `oml setup claude-code`: a key came without a URL off a terminal. Pass `--url` beside `--key-file`, or export `OML_URL` with `OML_API_KEY`.
 
 ## `oml login` fails
 
@@ -52,7 +60,7 @@ Work down this list. Each step assumes the ones above it hold.
    ```
 
    Exported `OML_URL` and `OML_API_KEY` do not reach the plugin. See [Claude Code](../guides/claude-code.md).
-2. Use your server's address. A `url` left unset is the public server, which refuses a key it did not issue. See [install](../start/install.md).
+2. Use your server's address. `url` has no default: left unset, the plugin reaches no server and the session-start hook prints `no_server: CLAUDE_PLUGIN_OPTION_URL is not set`. A key sent to a server that did not issue it is refused with `401 auth.invalid`. See [install](../start/install.md).
 3. Give the address without `/mcp`. The plugin appends it.
 4. Use an agent key. `oml setup claude-code` refuses an `admin` or `operator` key with `setup.admin_key`.
 
@@ -116,7 +124,7 @@ The hook fails open. Every failure ends with no output and exit `0`. Likely caus
 
 - `oml` is not on the hook's `PATH`.
 - `OML_SESSION_CONTEXT` is set to something other than `on`, `off` or empty.
-- Only one of the plugin's two settings is set.
+- Only one of the plugin's two settings is set. With the key alone, the hook prints `no_server: CLAUDE_PLUGIN_OPTION_URL is not set`.
 - The server took longer than 3 seconds, or its certificate does not chain to a public root.
 - The key is write-only, so recall refuses it.
 

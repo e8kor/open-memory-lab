@@ -13,8 +13,8 @@ repository's contributor docs.
 
 ## Before you start
 
-You need a server address and an agent key (see [Run your own server](../start/run-your-own.md)
-or the public server ([install](../start/install.md))). Neither package is on PyPI or npm.
+You need a server address and an agent key (see [Run your own server](../start/run-your-own.md),
+or ask the server you use ([get an agent key](../guides/get-an-agent-key.md))). Neither package is on PyPI or npm.
 Both install from a checkout of the repository, at version `0.2.0`.
 
 | | Python | TypeScript |

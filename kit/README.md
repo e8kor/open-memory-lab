@@ -34,35 +34,36 @@ verify is not a release.
 
 ## Before you start
 
-Every configuration connects to the maintainer's public server, `https://memory.doublegate.io`,
-unless you change it, and reads the agent's key from `OML_API_KEY`; none holds a key. Since
-v0.4.1, a key from that server is the only setting a tool needs. Ask its administrator for an
-agent key, then export it in the shell that starts the tool:
+No configuration names a server: the server that issued the agent's key gives you its address,
+on its sign-up page, beside the key on its web page, or in the line `oml keys issue-agent`
+prints. Every configuration reads the agent's key from `OML_API_KEY`; none holds a key. Export
+the key, and the server's address without `/mcp`, in the shell that starts the tool:
 
 ```sh
 export OML_API_KEY=oml_...                  # this agent's one key
+export OML_URL=https://oml.example.com      # the server that issued it, without /mcp
 ```
 
-Every configuration names `https://memory.doublegate.io/mcp` as written, because Codex CLI, VS Code
-and Claude Desktop document no variable inside a URL, and Cursor and Gemini CLI would leave an unset
-`OML_URL` as `/mcp`. For your own server, replace `https://memory.doublegate.io` with its address,
-keeping `/mcp`: the same one edit in the OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude
-Desktop configurations. A key sent to the wrong server is refused there with `401 auth.invalid`,
-and the tool gets no OML tools from it; the operator of the server it reached has seen the key, so treat
-it as exposed.
+Cursor and Gemini CLI read `OML_URL` from that shell: Cursor as `${env:OML_URL}/mcp`, Gemini CLI
+as `${OML_URL}/mcp`. With `OML_URL` unset, each URL is `/mcp` or the text as written, depending
+on the tool (unverified which), and neither names a host, so nothing is sent.
+
+OpenAI Codex CLI, VS Code and Claude Desktop document no variable inside a URL, so their
+configurations carry `https://oml-server.invalid/mcp`. Replace `https://oml-server.invalid` with
+your server's address, keeping `/mcp`, before you copy the file: the one edit in each of the
+three. A copy left unedited fails to resolve `.invalid`, a name reserved never to resolve
+(RFC 6761), so its key goes nowhere. A key sent to the wrong server is refused there with
+`401 auth.invalid`, and the tool gets no OML tools from it; the operator of the server it reached
+has seen the key, so treat it as exposed.
 
 Issue a key on your own server with `oml keys issue-agent`, which gives it a writer grant and a
 reader grant on the agent's workarea. Check it first with `oml login <url>`, which stores the pair
-only when the server accepts the key. The `oml` CLI and the session-start hook take no default
-server, so beside the key they need `OML_URL`, the server's address without `/mcp`:
+only when the server accepts the key; the `oml` CLI and the Gemini CLI session-start hook read
+the same `OML_URL`:
 
 ```sh
 oml login https://oml.example.com          # once: paste the key; nothing is stored on a refusal
-export OML_URL=https://oml.example.com     # for the oml CLI and the Gemini CLI hook only
 ```
-
-On the public server, the Gemini CLI hook needs `export OML_URL=https://memory.doublegate.io`
-beside the key; the MCP tools do not.
 
 Give each agent its own key. Attribution, and the rule that a reviewer never reviews their own
 work, both depend on it.
@@ -77,7 +78,7 @@ the date it was read. Where a tool's page does not settle a detail, the entry sa
 `codex/config.toml` holds one `[mcp_servers.oml]` table. Add it to `~/.codex/config.toml`, or to
 `.codex/config.toml` in a project Codex trusts. Codex sends the value of the variable that
 `bearer_token_env_var` names as the bearer token, and documents `url` as the server address
-with no variable expansion, so the URL is the one edit
+with no variable expansion, so the placeholder URL is the one edit
 ([Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), fetched
 2026-11-04; `developers.openai.com/codex/mcp` redirects there).
 
@@ -85,7 +86,7 @@ with no variable expansion, so the URL is the one edit
 
 Copy `cursor/.cursor/mcp.json` to `.cursor/mcp.json` in your project, or merge its `oml` entry
 into `~/.cursor/mcp.json` for every project. Cursor resolves `${env:NAME}` in `command`, `args`,
-`env`, `url` and `headers`, so the entry sends `Bearer ${env:OML_API_KEY}` to the URL it names
+`env`, `url` and `headers`, so the entry sends `Bearer ${env:OML_API_KEY}` to `${env:OML_URL}/mcp`
 ([Cursor MCP documentation](https://cursor.com/docs/context/mcp), fetched 2026-11-04).
 
 Cursor documents a `sessionStart` hook, but its output field is `additional_context` and its input
@@ -114,9 +115,8 @@ failing `oml` still exits 0. Gemini CLI fires `SessionStart` on startup, resume 
 ([hooks](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/index.md) and
 [hooks reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md),
 fetched 2026-11-03). The hook needs the `oml` CLI on `PATH` and reads `OML_URL` and
-`OML_API_KEY`, and takes no default server: without `OML_URL` it loads no context, and with it the
-configuration's `httpUrl` must name the same server, or the tools and the hook reach different
-ones. Gemini CLI warns before it
+`OML_API_KEY`, the same `OML_URL` the configuration's `httpUrl` reads, so the tools and the hook
+reach one server; without `OML_URL` both reach none. Gemini CLI warns before it
 runs a project hook it has not seen. Unverified: which shell Gemini CLI runs the command in, so
 whether the POSIX guard works on Windows; the pages do not say.
 
@@ -126,8 +126,8 @@ Copy `vscode/.vscode/mcp.json` to `.vscode/mcp.json` in your workspace. The VS C
 servers under a top-level `servers` object, and an HTTP server takes `type: "http"`, `url` and
 `headers`
 ([MCP configuration reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration),
-fetched 2026-11-04). The page names no field that takes a variable in `url`, so the URL is the
-one edit. Unverified: that page lists `${env:NAME}` as the VS Code format's variable for the
+fetched 2026-11-04). The page names no field that takes a variable in `url`, so the placeholder
+URL is the one edit. Unverified: that page lists `${env:NAME}` as the VS Code format's variable for the
 environment without naming the fields it applies to, and its own `headers` example uses
 `${input:...}`, so that `${env:OML_API_KEY}` resolves inside a header has not been run. If it does
 not, replace it with an input variable, which VS Code prompts for and stores.
@@ -142,7 +142,7 @@ otherwise added under Connectors in the app
 ([custom connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp),
 fetched 2026-11-03). The kit's entry runs the stdio bridge `mcp-remote` with `npx`, which forwards
 to `/mcp`; its README shows a `${AUTH_TOKEN}` placeholder in a `--header` argument filled from
-the environment, and every server URL it shows is literal, so the URL is the one edit
+the environment, and every server URL it shows is literal, so the placeholder URL is the one edit
 ([mcp-remote README](https://github.com/geelen/mcp-remote), fetched 2026-11-04). Neither page
 documents Claude Desktop expanding a variable in `args`.
 
