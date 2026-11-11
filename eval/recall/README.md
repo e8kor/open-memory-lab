@@ -12,12 +12,14 @@ recall finds what an agent asks for, and where it fails. The findings are in
 | `queries.json` | 121 queries, 11 per UX category, each with graded relevance labels, and since data version 2, 22 `unanswerable` queries no memory answers |
 | `queries-grown.json` | the grown set (ADR-0075 d8, phase 0a): at least 550 question-shaped and paraphrased queries over the same corpus, each labelled with the memory it was drafted from and the words of it that answer, in five folds by memory, with its provenance |
 | `grow.py`, `grow/` | how the grown set was written: `grow/drafter` (a local model through candle), `grow/prompt.txt`, the model's raw output `grow/pass1.jsonl`, and `grow.py`, which checks the drafts and builds the set |
+| `questions/` | ADR-0075 phase 0, offline: `generate.py` (questions from a local doc2query T5, raw in `doc2query-t5-base.jsonl`), `prepare.py` (the served lexemes from a throwaway PostgreSQL and the sparse leg's vectors), `score.py` (d6's filters, BM25F, the 2026-11-11 gate), `report.py` and `power.py`; results in `eval/bench/results/phase0/`, on version 2 of the grown set (after the operator's label check) |
 | `metrics.py` | the metrics and the table printer; standard library |
 | `run.py` | loads the corpus into a live server and runs every query through `oml_read`; standard library |
 | `baselines.py` | the offline and direct-PostgreSQL comparison methods; needs a scratch venv |
 | `tables.py` | prints `results/tables.md` from `results/*.json` |
 | `check_data.py` | CI check: the data parses and every label resolves (job `recall-eval-data`) |
 | `served.sh` | boots a lead against a throwaway database, loads the set and runs `run.py` once per served search pipeline, then `gate.py` (job `recall-eval`) |
+| `selfhost.sh` | the one command: builds the lead and the CLI, fetches the pinned model files the pipelines need, then runs `served.sh` with every pipeline CI measures (job `recall-eval` runs it) |
 | `gate.py` | each pipeline's gate (ADR-0049 d9; `bm25-rerank`'s from ADR-0053 d9); fails when the default misses its gate or a category falls by more than one query, or when `keyword-all` does not reproduce v0.5.0 |
 | `federated.sh`, `federated.py` | the federated recall eval (ADR-0072 d11): one committed workarea per topic, `sources` scope, wide and the union on a scoped and a cross split, the widen hint, and a skew split padded with SciFact abstracts |
 | `fed2.py`, `descriptors.json` | the phase 2 gate (ADR-0072 d4.5, d11; #206), run as `EVAL_PHASE2=1 federated.sh`: the union's ranking per query from the served lead, then `content`, `described`, oracle and ReDDE selection replayed offline on `bm25-postings` and `bm25-sparse`; `descriptors.json` holds one author-written descriptor per topic |
@@ -146,6 +148,29 @@ overall.
 
 ## Running it
 
+### In one command
+
+You need Rust (`rustup`), `psql`, `jq`, `curl`, `sha256sum` and Python 3, and a PostgreSQL
+superuser on a cluster you can throw away. The compose database is one:
+
+```sh
+docker compose up -d postgres
+PGPORT=5432 eval/recall/selfhost.sh             # results in .tmp/recall-eval
+```
+
+It builds `oml-server-lead` and `oml` in release, fetches `ms-marco-MiniLM-L6-v2` (about
+90 MB) and `doc-v3-distill` (about 260 MB) into `.tmp/oml-models` from their pinned revisions,
+checking each file's SHA-256, and runs `served.sh` over the eight pipelines CI measures. It
+exits non-zero when the default pipeline misses its gate, when a category of it falls by more
+than one query against `results/`, or when `keyword-all` stops reproducing v0.5.0. A missing
+tool or an unset `PGPORT` stops it before anything is built, naming what is missing.
+
+`EVAL_PIPELINES="bm25-postings bm25-sparse"` measures two; a list with no `bm25-rerank`,
+`sparse` or `bm25-sparse` fetches no model. `OML_BIN_DIR` points at binaries already built,
+such as a release's. The steps below are what the script does, by hand.
+
+### By hand
+
 1. A throwaway PostgreSQL with a superuser, and a lead built from this tree
    against it, booted and claimed the way `scripts/poc-demo.sh` does: an
    owner/serving role pair, `OML_POSTGRES__URL`, `OML_POSTGRES__OWNER_URL`,
@@ -192,12 +217,17 @@ overall.
    `pg_simple_and` is the served statement and must reproduce `oml`'s scores;
    if it does not, the harness is wrong.
 
-5. Every served search pipeline, gated (ADR-0049), the way CI's `recall-eval` job runs it:
+5. Every served search pipeline, gated (ADR-0049), as `selfhost.sh` runs it:
 
    ```sh
    cargo build --release --bin oml-server-lead --bin oml
    PGHOST=127.0.0.1 PGPORT=5432 PGUSER=oml PGPASSWORD=... eval/recall/served.sh .tmp/recall-eval
    ```
+
+   Without model files, `served.sh` measures the five pipelines that need none. The sparse
+   pipelines need `OML_SEARCH__SPARSE__MODEL_DIR` holding the files
+   `scripts/fetch_sparse_model.sh` fetches, and `bm25-rerank` needs `OML_SEARCH__RERANK__MODEL_DIR`
+   from `scripts/fetch_rerank_model.sh`.
 
    It writes `served_<pipeline>.json` per pipeline (`run.py --search <pipeline>`) and
    `hook_<pipeline>.json`, the failure hook's own shape (the query minus stop words, `k` 3,
