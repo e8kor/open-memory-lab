@@ -10,19 +10,22 @@ T = TypeVar("T", bound="FederationSettingsWidenSignal")
 
 @_attrs_define
 class FederationSettingsWidenSignal:
-    """The widen hint's signals on this tenant since the lead started; doctor warns on a failed build, and on recalls that
-    found none while none was built.
+    """The widen hint's signals on this tenant since the lead started; doctor warns on a failed build, on evictions, and on
+    recalls that found none while none was built.
 
         Attributes:
             built (int): Signals built.
             unserved (int): Scope recalls answered without the hint because their signal was missing, older than 300 seconds
                 or built under other grants.
+            evicted (int): Signals dropped to keep the tenant, or the lead, within its share; each is not rebuilt for 300
+                seconds.
             failed (int): Signal builds that failed.
             last_failure (None | str): The last failed build's reason.
     """
 
     built: int
     unserved: int
+    evicted: int
     failed: int
     last_failure: None | str
 
@@ -30,6 +33,8 @@ class FederationSettingsWidenSignal:
         built = self.built
 
         unserved = self.unserved
+
+        evicted = self.evicted
 
         failed = self.failed
 
@@ -42,6 +47,7 @@ class FederationSettingsWidenSignal:
             {
                 "built": built,
                 "unserved": unserved,
+                "evicted": evicted,
                 "failed": failed,
                 "last_failure": last_failure,
             }
@@ -56,6 +62,8 @@ class FederationSettingsWidenSignal:
 
         unserved = d.pop("unserved")
 
+        evicted = d.pop("evicted")
+
         failed = d.pop("failed")
 
         def _parse_last_failure(data: object) -> None | str:
@@ -68,6 +76,7 @@ class FederationSettingsWidenSignal:
         federation_settings_widen_signal = cls(
             built=built,
             unserved=unserved,
+            evicted=evicted,
             failed=failed,
             last_failure=last_failure,
         )

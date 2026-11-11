@@ -31,7 +31,7 @@ class FederationSettings:
                 default.
             wide_keys (list[FederationSettingsWideKeysItem]):
             widen_signal (FederationSettingsWidenSignal): The widen hint's signals on this tenant since the lead started;
-                doctor warns on a failed build, and on recalls that found none while none was built.
+                doctor warns on a failed build, on evictions, and on recalls that found none while none was built.
     """
 
     enabled: bool

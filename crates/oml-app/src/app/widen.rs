@@ -238,7 +238,9 @@ impl WidenSignals {
         let Ok(mut held) = self.held.lock() else {
             return false;
         };
-        let _ = self.generation(key.tenant_id);
+        if signal.generation != self.generation(key.tenant_id) {
+            return false;
+        }
         held.retain(|_, s| within_bound(s.built_at_us, now_us));
         if let Ok(mut marked) = self.marked.lock() {
             marked.retain(|_, at| within_bound(*at, now_us));
@@ -277,7 +279,10 @@ impl WidenSignals {
             evicted.push(victim);
         }
         drop(held);
-        let _ = evicted;
+        for victim in evicted {
+            self.health(victim.tenant_id, |h| h.evicted += 1);
+            self.mark(&victim, now_us);
+        }
         true
     }
 
@@ -476,10 +481,17 @@ where
 
     /// The transport stopped `build` at its timeout: it is counted as
     /// failed and marked, and the builds behind it go on.
-    pub fn widen_build_stopped(&self, _build: &WidenBuild) {
+    pub fn widen_build_stopped(&self, build: &WidenBuild) {
         if let Ok(mut b) = self.widen.building.lock() {
             *b = None;
         }
+        self.widen_build_failed(
+            &build.0,
+            format!(
+                "a build was stopped after {} s",
+                self.widen.limits.build_timeout.as_secs()
+            ),
+        );
     }
 
     fn widen_build_failed(&self, key: &SignalKey, failure: String) {

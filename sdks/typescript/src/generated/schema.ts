@@ -1919,12 +1919,14 @@ export interface components {
                 key_id: string;
                 candidates: number;
             }[];
-            /** @description The widen hint's signals on this tenant since the lead started; doctor warns on a failed build, and on recalls that found none while none was built. */
+            /** @description The widen hint's signals on this tenant since the lead started; doctor warns on a failed build, on evictions, and on recalls that found none while none was built. */
             widen_signal: {
                 /** @description Signals built. */
                 built: number;
                 /** @description Scope recalls answered without the hint because their signal was missing, older than 300 seconds or built under other grants. */
                 unserved: number;
+                /** @description Signals dropped to keep the tenant, or the lead, within its share; each is not rebuilt for 300 seconds. */
+                evicted: number;
                 /** @description Signal builds that failed. */
                 failed: number;
                 /** @description The last failed build's reason. */

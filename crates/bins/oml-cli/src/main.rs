@@ -5136,6 +5136,12 @@ fn federation_doctor(settings: Option<&Value>) -> Vec<String> {
             widen["last_failure"].as_str().unwrap_or("?")
         ));
     }
+    if widen["evicted"].as_u64().unwrap_or(0) > 0 {
+        lines.push(format!(
+            "warn {} widen signals were dropped to keep this tenant or the lead within its share, each not rebuilt for 300 s: their scopes carry no hint meanwhile",
+            widen["evicted"]
+        ));
+    }
     if settings["enabled"] == true
         && widen["built"].as_u64() == Some(0)
         && widen["unserved"].as_u64().unwrap_or(0) > 0
