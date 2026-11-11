@@ -20,6 +20,7 @@ When the server cannot establish that an act is permitted and durable, the act d
 | Reranker slow or failing | Skips reranking and returns the unreranked order. | `oml_reranks_total{outcome="skipped"}` rises. `oml doctor` warns. | See [troubleshooting the server](../help/troubleshooting-server.md#search-model-files-are-missing). |
 | Lake writer stopped or behind | Nothing client-facing changes. The lake serves no client read. | `oml_lake_lag_seconds` grows. | Follow [the lake falls behind](runbooks.md#the-lake-falls-behind). |
 | No reviewer available | Accepts writes and holds them. It does not refuse them. | Memories stay `held`. `oml doctor` reports review capacity. | Follow [no reviewer can approve](runbooks.md#no-reviewer-can-approve). |
+| A web console act's outcome is not recorded after it commits (Postgres fails between the act and its record, or the lead stops there) | Answers the act's outcome when it can. The act's claim on its `Idempotency-Key` stays, so a resubmission of that form waits 5 s and answers `idempotency.in_progress` instead of acting again. | `409 idempotency.in_progress` on a resubmitted form. `oml_idempotency_unsettled_total` rises when the lead saw the failure, and `oml doctor` warns. | Nothing to repair: a fresh form acts under a fresh key. If Postgres was failing, restore it. |
 | Metrics listener not set | Serves no `/metrics`. | `oml doctor` says where the counts are. | Set `server.metrics_listen`. |
 
 We have not measured how long each refusal window lasts.

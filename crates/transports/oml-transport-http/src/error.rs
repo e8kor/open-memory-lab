@@ -730,6 +730,13 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("the deterministic scan vetoed the submission: {finding}"),
         )
         .with_details(json!({ "finding": finding })),
+        AppError::IdempotencyInProgress => ApiError::new(
+            StatusCode::CONFLICT,
+            "idempotency.in_progress",
+            "An idempotency key acts once: a resubmission while the first attempt holds the key waits for its outcome, and is refused rather than acting a second time (D13).",
+            "another attempt under this Idempotency-Key has not recorded its outcome yet",
+        )
+        .retry_after(1),
         AppError::IdempotencyDigestMismatch => ApiError::new(
             StatusCode::CONFLICT,
             "idempotency.digest_mismatch",

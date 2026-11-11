@@ -182,6 +182,7 @@ pub struct Metrics {
     recall_sources: Family<ModeLabels, Counter>,
     federated_hits: Counter,
     handler_panics: Counter,
+    idempotency_unsettled: Counter,
     mode_changes: Family<ModeLabels, Counter>,
     curation_acts: Family<ActLabels, Counter>,
     source_checks: Family<BulkLabels, Counter>,
@@ -333,6 +334,7 @@ impl Default for Metrics {
         let recall_sources = Family::<ModeLabels, Counter>::default();
         let federated_hits = Counter::default();
         let handler_panics = Counter::default();
+        let idempotency_unsettled = Counter::default();
         let mode_changes = Family::<ModeLabels, Counter>::default();
         let curation_acts = Family::<ActLabels, Counter>::default();
         let source_checks = Family::<BulkLabels, Counter>::default();
@@ -360,6 +362,11 @@ impl Default for Metrics {
             "oml_idempotency_conflicts",
             "requests refused in the idempotency family",
             conflicts.clone(),
+        );
+        registry.register(
+            "oml_idempotency_unsettled",
+            "web console acts whose Idempotency-Key claim was left unsettled: an outcome not recorded after the act committed, or a refused act's claim not released",
+            idempotency_unsettled.clone(),
         );
         registry.register(
             "oml_oauth_token_requests",
@@ -481,6 +488,7 @@ impl Default for Metrics {
             recall_sources,
             federated_hits,
             handler_panics,
+            idempotency_unsettled,
             mode_changes,
             curation_acts,
             source_checks,
@@ -553,6 +561,12 @@ impl Metrics {
     /// One handler panic the panic guard answered.
     pub(crate) fn handler_panicked(&self) {
         self.handler_panics.inc();
+    }
+
+    /// One web console act whose claim on its `Idempotency-Key` was left
+    /// unsettled (#233).
+    pub(crate) fn idempotency_unsettled(&self) {
+        self.idempotency_unsettled.inc();
     }
 
     pub(crate) fn unreviewed_hits(&self, n: u64) {

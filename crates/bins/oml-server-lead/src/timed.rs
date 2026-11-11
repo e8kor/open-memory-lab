@@ -19,8 +19,8 @@ use oml_app::domain::oauth::{RefreshDecision, TokenKind};
 use oml_app::domain::web::Provider;
 use oml_app::domain::{ChainHead, EventTime, Sha256Hash, SignedEnvelope};
 use oml_app::ports::{
-    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyPut, IdempotencyRecord,
-    IdempotencyScope, JournalStore, Retriever, StoreError, TailScan, WebStore,
+    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyClaim, IdempotencyPut,
+    IdempotencyRecord, IdempotencyScope, JournalStore, Retriever, StoreError, TailScan, WebStore,
 };
 use oml_app::search::{CandidateScope, RetrievalQuery, Retrieved, RetrieverKind};
 use oml_app::types::{
@@ -652,11 +652,29 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         timed("idempotency_get", self.inner.idempotency_get(scope))
     }
 
-    fn idempotency_put(
+    fn idempotency_claim(
+        &self,
+        scope: &IdempotencyScope,
+        request_digest: &str,
+    ) -> impl Future<Output = Result<IdempotencyClaim, StoreError>> + Send {
+        timed(
+            "idempotency_claim",
+            self.inner.idempotency_claim(scope, request_digest),
+        )
+    }
+
+    fn idempotency_settle(
         &self,
         put: IdempotencyPut,
     ) -> impl Future<Output = Result<bool, StoreError>> + Send {
-        timed("idempotency_put", self.inner.idempotency_put(put))
+        timed("idempotency_settle", self.inner.idempotency_settle(put))
+    }
+
+    fn idempotency_release(
+        &self,
+        scope: &IdempotencyScope,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed("idempotency_release", self.inner.idempotency_release(scope))
     }
 }
 

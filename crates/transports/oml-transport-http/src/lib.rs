@@ -1815,12 +1815,10 @@ where
         // and creates nothing again (ADR-0070 d3 layer 4).
         let caller = st.console_caller(headers).await?;
         let digest = console::act_digest("", body);
-        if let Some(replayed) = st
-            .replayed(&caller, "workarea.create", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(&caller, "workarea.create", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
         if req.prefix.is_some() {
             return Err(ApiError::validation(
                 "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
@@ -1843,15 +1841,7 @@ where
         if let Some(obj) = response.as_object_mut() {
             obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
         }
-        st.record_outcome(
-            &caller,
-            "workarea.create",
-            &idem,
-            &digest,
-            StatusCode::CREATED,
-            &response,
-        )
-        .await
+        Ok(claim.record_outcome(StatusCode::CREATED, &response).await)
     }
 
     async fn get_workarea(
@@ -1921,12 +1911,13 @@ where
         // and proposes nothing again (ADR-0070 d3 layer 4).
         let caller = st.console_caller(headers).await?;
         let digest = console::act_digest(workarea, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "workarea.transition", &idem, &digest)
+        let claim = match st
+            .claim(&caller, "workarea.transition", &idem, &digest)
             .await?
         {
-            return Ok(replayed);
-        }
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
         let to = match req.to.as_str() {
             "committed" => WorkareaStatus::Committed,
             "validated" => WorkareaStatus::Validated,
@@ -1940,23 +1931,20 @@ where
         let proposal = retry_chain(|| st.app.propose_transition(acting.bearer(), node.clone(), to))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        st.record_outcome(
-            &caller,
-            "workarea.transition",
-            &idem,
-            &digest,
-            StatusCode::ACCEPTED,
-            &json!({
-                "transition_id": proposal.transition_id,
-                "workarea_id": proposal.workarea_id,
-                "from": proposal.from.as_str(),
-                "to": proposal.to.as_str(),
-                "state": proposal.state.as_str(),
-                "proposed_by_key_id": proposal.proposer_key_id,
-                "ratified_by_key_id": Value::Null,
-            }),
-        )
-        .await
+        Ok(claim
+            .record_outcome(
+                StatusCode::ACCEPTED,
+                &json!({
+                    "transition_id": proposal.transition_id,
+                    "workarea_id": proposal.workarea_id,
+                    "from": proposal.from.as_str(),
+                    "to": proposal.to.as_str(),
+                    "state": proposal.state.as_str(),
+                    "proposed_by_key_id": proposal.proposer_key_id,
+                    "ratified_by_key_id": Value::Null,
+                }),
+            )
+            .await)
     }
 
     async fn ratify_transition(
@@ -1990,12 +1978,10 @@ where
         })?;
         let caller = st.console_caller(headers).await?;
         let digest = console::act_digest(workarea, &Bytes::from(transition_id.to_string()));
-        if let Some(replayed) = st
-            .replayed(&caller, "workarea.ratify", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(&caller, "workarea.ratify", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
         let ratified = retry_chain(|| {
             st.app
                 .ratify_transition(acting.bearer(), node.clone(), transition_id)
@@ -2006,23 +1992,20 @@ where
             WorkareaStatus::Validated => WorkareaStatus::Committed,
             _ => WorkareaStatus::Development,
         };
-        st.record_outcome(
-            &caller,
-            "workarea.ratify",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &json!({
-                "transition_id": transition_id,
-                "workarea_id": ratified.workarea_id,
-                "from": from.as_str(),
-                "to": ratified.status.as_str(),
-                "state": "ratified",
-                "proposed_by_key_id": Value::Null,
-                "ratified_by_key_id": Value::Null,
-            }),
-        )
-        .await
+        Ok(claim
+            .record_outcome(
+                StatusCode::OK,
+                &json!({
+                    "transition_id": transition_id,
+                    "workarea_id": ratified.workarea_id,
+                    "from": from.as_str(),
+                    "to": ratified.status.as_str(),
+                    "state": "ratified",
+                    "proposed_by_key_id": Value::Null,
+                    "ratified_by_key_id": Value::Null,
+                }),
+            )
+            .await)
     }
 
     async fn list_edges(
@@ -2848,12 +2831,10 @@ where
         })?;
         let caller = st.console_caller(headers).await?;
         let digest = console::act_digest(workarea_id, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "workarea.mode", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(&caller, "workarea.mode", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
         let updated = retry_chain(|| {
             st.app
                 .set_workarea_mode(acting.bearer(), workarea.clone(), mode)
@@ -2865,15 +2846,9 @@ where
             .workarea_info(acting.bearer(), Some(Reference::Id(updated.workarea_id)))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        st.record_outcome(
-            &caller,
-            "workarea.mode",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &workarea_view_json(&info),
-        )
-        .await
+        Ok(claim
+            .record_outcome(StatusCode::OK, &workarea_view_json(&info))
+            .await)
     }
 
     async fn set_workarea_crew(

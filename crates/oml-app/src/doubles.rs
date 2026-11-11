@@ -31,10 +31,10 @@ use oml_domain::{
 use crate::ports::Retriever;
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
-    DocumentFetchFailure, FetchedDocument, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord,
-    IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold, OutboxRow,
-    ScanOutcome, Scanner, SignInExchange, Signer, StoreError, SubjectRow, TailEvent, TailScan,
-    WebStore, claim_subject,
+    DocumentFetchFailure, FetchedDocument, HandleSealer, IdGen, IdempotencyClaim, IdempotencyPut,
+    IdempotencyRecord, IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold,
+    OutboxRow, ScanOutcome, Scanner, SignInExchange, Signer, StoreError, SubjectRow, TailEvent,
+    TailScan, WebStore, claim_subject,
 };
 use crate::search::{
     Candidate, CandidateScope, MatchMode, RetrievalQuery, Retrieved, RetrieverKind,
@@ -310,6 +310,10 @@ struct TenantState {
     transitions: BTreeMap<Uuid, (u64, TransitionRecord)>,
     outbox: Vec<OutboxRow>,
     idempotency: BTreeMap<(Uuid, Uuid, String), IdempotencyRecord>,
+    /// The scopes an act claimed and has not settled or released, each with
+    /// its request digest: the `idempotency` rows whose `committed_at` is
+    /// null (ADR-0070 d5; #233).
+    idempotency_claims: BTreeMap<(Uuid, Uuid, String), String>,
     /// The web allowlist by the email's digest (postgres-schema.md
     /// `web_emails`; ADR-0045 d2).
     web_entries: BTreeMap<[u8; 32], WebEntry>,
@@ -354,6 +358,10 @@ pub struct MemStore {
     refuse_next: Arc<Mutex<Option<(&'static str, StoreError)>>>,
     /// The next idempotency lookup answers no record, then reads normally.
     miss_next_lookup: Arc<AtomicBool>,
+    /// The next idempotency settle fails as a lost connection would, writing
+    /// nothing, then settles normally: a failure between an act and its
+    /// record (#233).
+    fail_next_settle: Arc<AtomicBool>,
     /// `similar_candidates` ignores its scope (a store that regressed), so
     /// a test proves the core admits by recall's rule on its own.
     widen_similar: Arc<AtomicBool>,
@@ -539,6 +547,14 @@ impl MemStore {
     /// any handle after that commit.
     pub fn miss_next_idempotency_lookup(&self) {
         self.miss_next_lookup.store(true, Ordering::SeqCst);
+    }
+
+    /// Fails the next idempotency settle with a backend error, writing
+    /// nothing, then settles normally again: the act committed and its
+    /// record was lost, as a process that dies between them loses it
+    /// (#233).
+    pub fn fail_next_idempotency_settle(&self) {
+        self.fail_next_settle.store(true, Ordering::SeqCst);
     }
 
     /// Makes `similar_candidates` ignore its scope and name every version of
@@ -2081,7 +2097,7 @@ fn append(state: &mut TenantState, req: CommitRequest) -> Result<CommitReceipt, 
         // One scope holds one record; the caller drops the staged state on
         // a refusal, so the fold above is undone with it.
         let scope = (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key);
-        if state.idempotency.contains_key(&scope) {
+        if state.idempotency.contains_key(&scope) || state.idempotency_claims.contains_key(&scope) {
             return Err(StoreError::IdempotencyRecorded);
         }
         state.idempotency.insert(scope, put.record);
@@ -3546,15 +3562,52 @@ impl JournalStore for MemStore {
             .cloned())
     }
 
-    async fn idempotency_put(&self, put: IdempotencyPut) -> Result<bool, StoreError> {
+    async fn idempotency_claim(
+        &self,
+        scope: &IdempotencyScope,
+        request_digest: &str,
+    ) -> Result<IdempotencyClaim, StoreError> {
+        let state = self.tenant(scope.tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        let key = (scope.key_id, scope.workarea_id, scope.idem_key.clone());
+        if let Some(record) = state.idempotency.get(&key) {
+            return Ok(IdempotencyClaim::Recorded(record.clone()));
+        }
+        if let Some(digest) = state.idempotency_claims.get(&key) {
+            return Ok(IdempotencyClaim::InProgress {
+                request_digest: digest.clone(),
+            });
+        }
+        state
+            .idempotency_claims
+            .insert(key, request_digest.to_owned());
+        Ok(IdempotencyClaim::Claimed)
+    }
+
+    async fn idempotency_settle(&self, put: IdempotencyPut) -> Result<bool, StoreError> {
+        if self.fail_next_settle.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Backend(
+                "the connection was lost before the record was written".to_owned(),
+            ));
+        }
         let state = self.tenant(put.scope.tenant_id);
         let mut state = state.lock().expect("tenant lock");
         let key = (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key);
-        if state.idempotency.contains_key(&key) {
+        if state.idempotency_claims.get(&key) != Some(&put.record.request_digest) {
             return Ok(false);
         }
+        state.idempotency_claims.remove(&key);
         state.idempotency.insert(key, put.record);
         Ok(true)
+    }
+
+    async fn idempotency_release(&self, scope: &IdempotencyScope) -> Result<(), StoreError> {
+        let state = self.tenant(scope.tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        state
+            .idempotency_claims
+            .remove(&(scope.key_id, scope.workarea_id, scope.idem_key.clone()));
+        Ok(())
     }
 
     async fn brief_edge(

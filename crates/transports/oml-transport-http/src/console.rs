@@ -16,7 +16,7 @@ use axum::response::Response;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use oml_app::app::{Caller, Capacity, OwnKey, WorkareaOffer};
+use oml_app::app::{ActClaim, ActTicket, Caller, Capacity, OwnKey, WorkareaOffer};
 use oml_app::domain::Role;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::signup::Quota;
@@ -169,74 +169,204 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))
     }
 
-    /// The outcome recorded for this act under the request's
-    /// `Idempotency-Key`, answered as it was with `Idempotency-Replay:
-    /// true`, or `None` to act (http-api.md idempotency; ADR-0070 d3 layer
-    /// 4).
-    pub(crate) async fn replayed(
+    /// Claims this act's `Idempotency-Key` before it acts (http-api.md
+    /// idempotency; ADR-0070 d3 layer 4, d5; #233): the outcome recorded
+    /// under it, answered as it was with `Idempotency-Replay: true`, or the
+    /// claim to act under. A claim another attempt holds is waited on and
+    /// then replayed, so two sends of one form, from any number of `oml-web`
+    /// processes, act once and answer alike.
+    pub(crate) async fn claim(
         &self,
         caller: &Caller,
-        act: &str,
+        act: &'static str,
         idem: &str,
         digest: &str,
-    ) -> Result<Option<Response>, ApiError> {
-        let Some(recorded) = self
-            .app
-            .recorded_act(caller, act, idem, digest)
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?
-        else {
-            return Ok(None);
-        };
-        let status = recorded["status"]
-            .as_u64()
-            .and_then(|s| u16::try_from(s).ok())
-            .and_then(|s| StatusCode::from_u16(s).ok())
-            .unwrap_or(StatusCode::OK);
-        let mut response = json_response(status, &recorded["body"]);
-        response
-            .headers_mut()
-            .insert("idempotency-replay", HeaderValue::from_static("true"));
-        Ok(Some(response))
+    ) -> Result<Claimed<J, S, C, I, Sc>, ApiError> {
+        let deadline = tokio::time::Instant::now() + ACT_CLAIM_WAIT;
+        loop {
+            match self
+                .app
+                .claim_act(caller, act, idem, digest)
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?
+            {
+                ActClaim::InProgress => {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(map_app_error(
+                            AppError::IdempotencyInProgress,
+                            ErrorContext::Write,
+                        ));
+                    }
+                    tokio::time::sleep(ACT_CLAIM_POLL).await;
+                }
+                ActClaim::Replay(recorded) => {
+                    let status = recorded["status"]
+                        .as_u64()
+                        .and_then(|s| u16::try_from(s).ok())
+                        .and_then(|s| StatusCode::from_u16(s).ok())
+                        .unwrap_or(StatusCode::OK);
+                    let mut response = json_response(status, &recorded["body"]);
+                    response
+                        .headers_mut()
+                        .insert("idempotency-replay", HeaderValue::from_static("true"));
+                    return Ok(Claimed::Replayed(response));
+                }
+                ActClaim::Act(ticket) => {
+                    return Ok(Claimed::Act(ActGuard {
+                        app: self.app.clone(),
+                        metrics: self.traffic.metrics().clone(),
+                        act,
+                        ticket: Some(ticket),
+                    }));
+                }
+            }
+        }
     }
+}
 
+/// How long a web console act waits on a claim another attempt under the
+/// same `Idempotency-Key` holds before it answers `idempotency.in_progress`:
+/// under `oml-web`'s ten-second call timeout, so a second send of one form
+/// is answered the first's outcome rather than a timeout (ADR-0070 d5, d8;
+/// #233).
+pub(crate) const ACT_CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How often that wait claims again.
+const ACT_CLAIM_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// What claiming an act's `Idempotency-Key` answered: the recorded
+/// outcome, or the claim to act under.
+pub(crate) enum Claimed<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
+    Replayed(Response),
+    Act(ActGuard<J, S, C, I, Sc>),
+}
+
+/// The claim an act holds on its `Idempotency-Key` while it acts. Settled
+/// with the act's outcome by [`ActGuard::record_outcome`] or
+/// [`ActGuard::record_kept`]; dropped unsettled, as a refusal's `?` or a
+/// panic drops it, it releases the claim so a resubmission acts again, as a
+/// refused request records nothing (http-api.md idempotency; #233).
+pub(crate) struct ActGuard<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
+    app: std::sync::Arc<oml_app::App<J, S, C, I, Sc>>,
+    metrics: std::sync::Arc<crate::traffic::metrics::Metrics>,
+    act: &'static str,
+    ticket: Option<ActTicket>,
+}
+
+impl<J, S, C, I, Sc> ActGuard<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
     /// Records the act's answer under its `Idempotency-Key` and answers it.
-    pub(crate) async fn record_outcome(
-        &self,
-        caller: &Caller,
-        act: &str,
-        idem: &str,
-        digest: &str,
-        status: StatusCode,
-        body: &Value,
-    ) -> Result<Response, ApiError> {
-        self.record(caller, act, idem, digest, status, body).await?;
-        Ok(json_response(status, body))
+    pub(crate) async fn record_outcome(self, status: StatusCode, body: &Value) -> Response {
+        self.record_kept(status, body, body).await
     }
 
-    /// Records `body` as the act's answer under its `Idempotency-Key`, the
-    /// answer a resubmission replays.
-    async fn record(
-        &self,
-        caller: &Caller,
-        act: &str,
-        idem: &str,
-        digest: &str,
+    /// Records `kept` as the answer a resubmission replays and answers
+    /// `answer`, which may carry what is shown once. The act has committed,
+    /// so a record that cannot be written still answers it: the claim then
+    /// stays unsettled, a resubmission answers `idempotency.in_progress`
+    /// rather than acting again, and the lead logs `idempotency_unsettled`
+    /// and counts it in `oml_idempotency_unsettled_total` (#233).
+    pub(crate) async fn record_kept(
+        mut self,
         status: StatusCode,
-        body: &Value,
-    ) -> Result<(), ApiError> {
-        self.app
-            .record_act(
-                caller,
-                act,
-                idem,
-                digest,
-                json!({ "status": status.as_u16(), "body": body }),
-            )
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))
+        answer: &Value,
+        kept: &Value,
+    ) -> Response {
+        if let Some(ticket) = self.ticket.take() {
+            let recorded = self
+                .app
+                .settle_act(ticket, json!({ "status": status.as_u16(), "body": kept }))
+                .await;
+            if !matches!(recorded, Ok(true)) {
+                let reason = match recorded {
+                    Err(e) => e.to_string(),
+                    _ => "the claim was no longer held".to_owned(),
+                };
+                tracing::warn!(
+                    event = "idempotency_unsettled",
+                    act = self.act,
+                    reason = %reason,
+                    "an act committed and its outcome was not recorded; a resubmission under its Idempotency-Key answers idempotency.in_progress and acts nothing"
+                );
+                self.metrics.idempotency_unsettled();
+            }
+        }
+        json_response(status, answer)
     }
+}
 
+impl<J, S, C, I, Sc> Drop for ActGuard<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
+    fn drop(&mut self) {
+        let Some(ticket) = self.ticket.take() else {
+            return;
+        };
+        let app = self.app.clone();
+        let metrics = self.metrics.clone();
+        let act = self.act;
+        let counted = metrics.clone();
+        let release = async move {
+            if let Err(e) = app.release_act(ticket).await {
+                tracing::warn!(
+                    event = "idempotency_unsettled",
+                    act,
+                    reason = %e,
+                    "a refused act's claim was not released; a resubmission under its Idempotency-Key answers idempotency.in_progress until the claim is removed"
+                );
+                metrics.idempotency_unsettled();
+            }
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(release);
+            }
+            Err(_) => {
+                tracing::warn!(
+                    event = "idempotency_unsettled",
+                    act,
+                    reason = "no runtime to release the claim on",
+                    "a refused act's claim was not released"
+                );
+                counted.idempotency_unsettled();
+            }
+        }
+    }
+}
+
+impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
     // -- #1 GET /v2/keys ------------------------------------------------------
 
     pub(crate) async fn list_keys(
@@ -424,12 +554,10 @@ where
         let caller = st.console_caller(headers).await?;
         let idem = idempotency_key(headers)?;
         let digest = act_digest(user, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "web.capacities", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(&caller, "web.capacities", &idem, &digest).await? {
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         let user = user_param(user)?;
         let req: CapacitiesBody = parse_json(headers, body)?;
         let curate = match req.capacity.as_str() {
@@ -465,19 +593,16 @@ where
             key = Some(granted.key);
         }
         let key = key.ok_or_else(ApiError::not_found)?;
-        st.record_outcome(
-            &caller,
-            "web.capacities",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &json!({
-                "key": { "id": key.key_id, "name": key.name.as_ref().map(Name::as_str) },
-                "grants_added": added.iter().map(grant_json).collect::<Vec<_>>(),
-                "journal_seq": added.iter().map(|g| g.epoch).max(),
-            }),
-        )
-        .await
+        Ok(claim
+            .record_outcome(
+                StatusCode::OK,
+                &json!({
+                    "key": { "id": key.key_id, "name": key.name.as_ref().map(Name::as_str) },
+                    "grants_added": added.iter().map(grant_json).collect::<Vec<_>>(),
+                    "journal_seq": added.iter().map(|g| g.epoch).max(),
+                }),
+            )
+            .await)
     }
 
     // -- #4 GET /v2/workareas/{workarea}/offers -------------------------------
@@ -647,12 +772,13 @@ where
         let caller = st.console_caller(headers).await?;
         let idem = idempotency_key(headers)?;
         let digest = act_digest("", &Bytes::new());
-        if let Some(replayed) = st
-            .replayed(&caller, "web.deletion_requested", &idem, &digest)
+        let claim = match st
+            .claim(&caller, "web.deletion_requested", &idem, &digest)
             .await?
         {
-            return Ok(replayed);
-        }
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         if !is_web_session_key(&caller) {
             return Err(session_key_only(&caller, "request_deletion"));
         }
@@ -664,20 +790,17 @@ where
             .whoami_person(Bearer::Session(&caller))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        st.record_outcome(
-            &caller,
-            "web.deletion_requested",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &json!({
-                "requested_at": person
-                    .and_then(|p| p.deletion_requested_at)
-                    .map(|t| t.as_str().to_owned()),
-                "journal_seq": seq,
-            }),
-        )
-        .await
+        Ok(claim
+            .record_outcome(
+                StatusCode::OK,
+                &json!({
+                    "requested_at": person
+                        .and_then(|p| p.deletion_requested_at)
+                        .map(|t| t.as_str().to_owned()),
+                    "journal_seq": seq,
+                }),
+            )
+            .await)
     }
 
     // -- #8 POST /v2/web/users/{user}/quota -------------------------------------
@@ -709,12 +832,10 @@ where
         let caller = st.console_caller(headers).await?;
         let idem = idempotency_key(headers)?;
         let digest = act_digest(user, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "web.quota_set", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(&caller, "web.quota_set", &idem, &digest).await? {
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         let user = user_param(user)?;
         let req: QuotaBody = parse_json(headers, body)?;
         let sent: Vec<(Quota, Option<u64>)> = [
@@ -748,15 +869,9 @@ where
             .into_iter()
             .find(|u| u.user == user)
             .ok_or_else(ApiError::not_found)?;
-        st.record_outcome(
-            &caller,
-            "web.quota_set",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &crate::web::emails::user_row_json(&row),
-        )
-        .await
+        Ok(claim
+            .record_outcome(StatusCode::OK, &crate::web::emails::user_row_json(&row))
+            .await)
     }
 
     // -- #9 POST /v2/web/users/{user}/disable -----------------------------------
@@ -789,12 +904,13 @@ where
         let caller = st.console_caller(headers).await?;
         let idem = idempotency_key(headers)?;
         let digest = act_digest(user, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "web.user_disabled", &idem, &digest)
+        let claim = match st
+            .claim(&caller, "web.user_disabled", &idem, &digest)
             .await?
         {
-            return Ok(replayed);
-        }
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         let user = user_param(user)?;
         if !body.is_empty() {
             let _: DisableBody = parse_json(headers, body)?;
@@ -802,15 +918,12 @@ where
         let done = retry_chain(|| st.app.web_disable_user(&caller, &user))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        st.record_outcome(
-            &caller,
-            "web.user_disabled",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &json!({ "keys_cut_off": done.keys_cut_off, "journal_seq": done.journal_seq }),
-        )
-        .await
+        Ok(claim
+            .record_outcome(
+                StatusCode::OK,
+                &json!({ "keys_cut_off": done.keys_cut_off, "journal_seq": done.journal_seq }),
+            )
+            .await)
     }
 
     // -- #10 POST /v2/web/users/{user}/deletion/close ----------------------------
@@ -843,12 +956,13 @@ where
         let caller = st.console_caller(headers).await?;
         let idem = idempotency_key(headers)?;
         let digest = act_digest(user, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "web.deletion_closed", &idem, &digest)
+        let claim = match st
+            .claim(&caller, "web.deletion_closed", &idem, &digest)
             .await?
         {
-            return Ok(replayed);
-        }
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         let user = user_param(user)?;
         let req: CloseBody = parse_json(headers, body)?;
         if req.outcome != "deleted" {
@@ -858,15 +972,9 @@ where
         let seq = retry_chain(|| st.app.web_close_deletion(&caller, &user))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        st.record_outcome(
-            &caller,
-            "web.deletion_closed",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &json!({ "journal_seq": seq }),
-        )
-        .await
+        Ok(claim
+            .record_outcome(StatusCode::OK, &json!({ "journal_seq": seq }))
+            .await)
     }
 
     // -- d5's unchanged key operations, as a session key -------------------
@@ -892,9 +1000,10 @@ where
             return Err(session_capacity(caller, "issue_key"));
         }
         let digest = act_digest("", body);
-        if let Some(replayed) = st.replayed(caller, "keys.issue", idem, &digest).await? {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(caller, "keys.issue", idem, &digest).await? {
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         let set: [(&str, bool); 9] = [
             ("/grants", !req.grants.is_empty()),
             ("/label", req.label.is_some()),
@@ -949,16 +1058,7 @@ where
                 code.remove("code");
             }
         }
-        st.record(
-            caller,
-            "keys.issue",
-            idem,
-            &digest,
-            StatusCode::CREATED,
-            &kept,
-        )
-        .await?;
-        Ok(json_response(StatusCode::CREATED, &answer))
+        Ok(claim.record_kept(StatusCode::CREATED, &answer, &kept).await)
     }
 
     /// `POST /v2/keys/{key}/denials` as a session key: `<user>-web` cuts
@@ -982,9 +1082,10 @@ where
             return Err(session_capacity(caller, "deny_key"));
         }
         let digest = act_digest(key_id, body);
-        if let Some(replayed) = st.replayed(caller, "keys.deny", idem, &digest).await? {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(caller, "keys.deny", idem, &digest).await? {
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         if !matches!(node, Reference::Name(n) if n.as_str() == "universe") {
             return Err(
                 ApiError::validation("a session key cuts a key off on universe only")
@@ -1005,15 +1106,9 @@ where
                 }
                 e => map_app_error(e, ErrorContext::Write),
             })?;
-        st.record_outcome(
-            caller,
-            "keys.deny",
-            idem,
-            &digest,
-            StatusCode::CREATED,
-            &denial_json(&denial),
-        )
-        .await
+        Ok(claim
+            .record_outcome(StatusCode::CREATED, &denial_json(&denial))
+            .await)
     }
 
     /// `POST /v2/keys/{key}/connect-codes` as `<user>-web`: a fresh code
@@ -1037,12 +1132,10 @@ where
             return Err(session_capacity(caller, "mint_connect_code"));
         }
         let digest = act_digest(key_id, body);
-        if let Some(replayed) = st
-            .replayed(caller, "keys.connect_code", idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(caller, "keys.connect_code", idem, &digest).await? {
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         if ttl_seconds.is_some() {
             return Err(
                 ApiError::validation("a person's connect code lives the default lifetime")
@@ -1063,15 +1156,6 @@ where
         if let Some(kept) = kept.as_object_mut() {
             kept.remove("code");
         }
-        st.record(
-            caller,
-            "keys.connect_code",
-            idem,
-            &digest,
-            StatusCode::CREATED,
-            &kept,
-        )
-        .await?;
-        Ok(json_response(StatusCode::CREATED, &answer))
+        Ok(claim.record_kept(StatusCode::CREATED, &answer, &kept).await)
     }
 }
