@@ -1982,6 +1982,88 @@ pub async fn a_recording_rescan_adds_only_the_findings_a_held_versions_list_lack
     );
 }
 
+/// A finding with no field, as migration 0043 stores one it cannot place,
+/// stands for one place of its class and rule: a recording rescan that
+/// finds the rule in two fields takes the first as that place and lists
+/// the second, and a second rescan adds nothing (ADR-0074 d23).
+pub async fn a_placeless_finding_stands_for_one_place_of_its_rule<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(216);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0x216A);
+    let id = Uuid::from_u128(0x216B);
+    let key = Uuid::from_u128(0x216C);
+    let placeless = VersionFinding {
+        field: None,
+        line: None,
+        via: None,
+        span: None,
+        ..finding(
+            "injection.override",
+            "ignore-instructions",
+            "/body",
+            1,
+            FoundBy::Admission,
+        )
+    };
+    rig.commit(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": id.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory: MemoryRecord {
+                scan_finding: Some("injection.override: ignore-instructions".to_owned()),
+                ..held_memory(rig.tenant_id, wa, id, "wanda", key, "placeless")
+            },
+            enqueue: true,
+            findings: vec![placeless].into(),
+        },
+        None,
+    )
+    .await
+    .expect("commit");
+    for _ in 0..2 {
+        rig.commit(
+            store,
+            event_types::SCAN_FINDINGS_RECORDED,
+            json!({}),
+            MetadataFold::FindingsRecorded {
+                scanned_under: Some("oml-scan/1.1".to_owned()),
+                versions: vec![RecordedVersion {
+                    memory_id: id,
+                    summary: None,
+                    findings: vec![
+                        finding(
+                            "injection.override",
+                            "ignore-instructions",
+                            "/body",
+                            1,
+                            FoundBy::Rescan,
+                        ),
+                        finding(
+                            "injection.override",
+                            "ignore-instructions",
+                            "/title",
+                            1,
+                            FoundBy::Rescan,
+                        ),
+                    ],
+                }],
+            },
+            None,
+        )
+        .await
+        .expect("the rescan, twice");
+    }
+    let fields: Vec<Option<String>> = store
+        .scan_findings(rig.tenant_id, &[id])
+        .await
+        .expect("scan_findings")
+        .into_iter()
+        .map(|(_, f)| f.field)
+        .collect();
+    assert_eq!(fields, vec![None, Some("/title".to_owned())]);
+}
+
 /// The review queue serves each item to one reviewer, only from the
 /// workarea set it is handed — the reviewer's dreamer effective access
 /// (ADR-0025 d1) — skips rows the reviewer's lineage excludes, and
@@ -7413,6 +7495,10 @@ where
     Box::pin(
         a_recording_rescan_adds_only_the_findings_a_held_versions_list_lacks(&new_store().await),
     )
+    .await;
+    Box::pin(a_placeless_finding_stands_for_one_place_of_its_rule(
+        &new_store().await,
+    ))
     .await;
     Box::pin(journal_key_lookup_by_hash(&new_store().await)).await;
     Box::pin(a_revoked_key_no_longer_resolves_by_its_hash(

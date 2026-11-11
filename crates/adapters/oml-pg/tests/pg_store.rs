@@ -9948,13 +9948,14 @@ async fn the_migration_marks_every_existing_version_scanned_under_oml_scan_1() {
     drop_dbs(&created).await;
 }
 
-/// 0043 lists each `scan_finding` a database at 0041 stored as one finding
-/// recorded by admission, under the rule set the version was scanned under
-/// and the seq of the event that admitted it, its field and line read from
-/// the stored text, which is kept, and adds none for a version with no
-/// finding; doctor's unlisted count is then zero (ADR-0074 d23).
+/// 0043 lists each finding a `scan_finding` stored at 0041 names as one
+/// finding recorded by admission, under the rule set the version was
+/// scanned under and the seq of the event that admitted it, its field and
+/// line read from the stored text, which is kept, and adds none for a
+/// version with no finding; doctor's unlisted count is then zero
+/// (ADR-0074 d23).
 #[tokio::test]
-async fn migration_0043_lists_each_stored_scan_finding_as_one_admission_finding() {
+async fn migration_0043_lists_each_finding_a_stored_scan_finding_names_as_an_admission_finding() {
     if !splits().await {
         return;
     }
@@ -10016,22 +10017,40 @@ async fn migration_0043_lists_each_stored_scan_finding_as_one_admission_finding(
             .scan_findings(rig.tenant_id, &[flagged, clean])
             .await
             .expect("scan_findings"),
-        vec![(
-            flagged,
-            oml_app::types::VersionFinding {
-                class: "injection.override".to_owned(),
-                rule: "ignore-instructions".to_owned(),
-                verdict: oml_app::types::FindingVerdict::Hold,
-                rule_set: Some("oml-scan/1.1".to_owned()),
-                field: Some("/body".to_owned()),
-                line: Some(3),
-                via: None,
-                span: None,
-                found_by: oml_app::types::FoundBy::Admission,
-                event_seq: Some(receipt.seq),
-                migrated_from: Some(stored.to_owned()),
-            },
-        )]
+        vec![
+            (
+                flagged,
+                oml_app::types::VersionFinding {
+                    class: "injection.override".to_owned(),
+                    rule: "ignore-instructions".to_owned(),
+                    verdict: oml_app::types::FindingVerdict::Hold,
+                    rule_set: Some("oml-scan/1.1".to_owned()),
+                    field: Some("/body".to_owned()),
+                    line: Some(3),
+                    via: None,
+                    span: None,
+                    found_by: oml_app::types::FoundBy::Admission,
+                    event_seq: Some(receipt.seq),
+                    migrated_from: Some(stored.to_owned()),
+                },
+            ),
+            (
+                flagged,
+                oml_app::types::VersionFinding {
+                    class: "unicode.bidi".to_owned(),
+                    rule: "bidi-control".to_owned(),
+                    verdict: oml_app::types::FindingVerdict::Hold,
+                    rule_set: Some("oml-scan/1.1".to_owned()),
+                    field: Some("/body".to_owned()),
+                    line: Some(1),
+                    via: None,
+                    span: None,
+                    found_by: oml_app::types::FoundBy::Admission,
+                    event_seq: Some(receipt.seq),
+                    migrated_from: Some(stored.to_owned()),
+                },
+            )
+        ]
     );
     assert_eq!(
         store
@@ -10237,6 +10256,243 @@ async fn a_recording_rescan_after_migration_0043_lists_each_migrated_finding_onc
             ),
         ],
         "one finding per class and rule; the migrated one stays"
+    );
+    drop_dbs(&created).await;
+}
+
+/// 0043 lists every finding a stored text names, not its first alone, and
+/// places each where the text says: a body reason of several findings is
+/// all `/body`; a rescan's text carries a view after each finding it found
+/// in one; admission's derived scan wrote the view after the last finding
+/// only, so one view suffix on the last of several places none of them. A
+/// later recording rescan then lists no finding twice, and a placeless
+/// finding stands for one place only: the rescan's second place of the same
+/// rule is listed (ADR-0074 d23).
+#[tokio::test]
+async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_rescan_lists_none_twice()
+ {
+    use oml_app::ports::RecordedVersion;
+    use oml_app::types::{FindingVerdict, FoundBy, VersionFinding};
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, conn) = schema_through(&created, 41).await;
+    drop(conn);
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(432);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0x432A);
+    let key = Uuid::from_u128(0x432B);
+    let body = Uuid::from_u128(0x432C);
+    let title = Uuid::from_u128(0x432D);
+    let rescanned = Uuid::from_u128(0x432E);
+    let placeless = Uuid::from_u128(0x432F);
+    let stored = [
+        (
+            body,
+            "injection.override: ignore-instructions at /body line 1; \
+             unicode.bidi: bidi-control at /body line 4; and 2 more",
+        ),
+        (
+            title,
+            "injection.override: ignore-instructions at /body line 1; \
+             injection.role: persona-switch at /body line 1 at title",
+        ),
+        (
+            rescanned,
+            "injection.override: ignore-instructions at /body line 2; \
+             injection.role: chat-template at /body line 1 at spec.note; \
+             unicode.bidi: bidi-control at /body line 1 at title",
+        ),
+        (placeless, "marker finding: body matches it"),
+    ];
+    for (id, text) in stored {
+        rig.commit(
+            &store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: MemoryRecord {
+                    claim_key: format!("c-{}", id.simple()),
+                    scan_finding: Some(text.to_owned()),
+                    scanned_under: Some("oml-scan/1.1".to_owned()),
+                    ..held_memory(rig.tenant_id, wa, id, "wanda", key, "stored at 0041")
+                },
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("a version stored at 0041");
+    }
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0043 applies over a database at 0041");
+    type Row = (Uuid, String, Option<String>, Option<u32>, FoundBy);
+    let read = |list: Vec<(Uuid, VersionFinding)>| -> Vec<Row> {
+        list.into_iter()
+            .map(|(id, f)| (id, f.rule, f.field, f.line, f.found_by))
+            .collect()
+    };
+    let s = |v: &str| Some(v.to_owned());
+    let migrated: Vec<Row> = vec![
+        (
+            body,
+            "ignore-instructions".into(),
+            s("/body"),
+            Some(1),
+            FoundBy::Admission,
+        ),
+        (
+            body,
+            "bidi-control".into(),
+            s("/body"),
+            Some(4),
+            FoundBy::Admission,
+        ),
+        (
+            title,
+            "ignore-instructions".into(),
+            None,
+            None,
+            FoundBy::Admission,
+        ),
+        (
+            title,
+            "persona-switch".into(),
+            None,
+            None,
+            FoundBy::Admission,
+        ),
+        (
+            rescanned,
+            "ignore-instructions".into(),
+            s("/body"),
+            Some(2),
+            FoundBy::Admission,
+        ),
+        (
+            rescanned,
+            "chat-template".into(),
+            s("/body/spec/note"),
+            Some(1),
+            FoundBy::Admission,
+        ),
+        (
+            rescanned,
+            "bidi-control".into(),
+            s("/title"),
+            Some(1),
+            FoundBy::Admission,
+        ),
+        (
+            placeless,
+            "body matches it".into(),
+            None,
+            None,
+            FoundBy::Admission,
+        ),
+    ];
+    let ids = [body, title, rescanned, placeless];
+    let mut before = read(
+        store
+            .scan_findings(rig.tenant_id, &ids)
+            .await
+            .expect("read"),
+    );
+    let mut want = migrated.clone();
+    before.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    want.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    assert_eq!(
+        before, want,
+        "every finding of each stored text, placed as its text says"
+    );
+
+    let found = |class: &str, rule: &str, field: &str| VersionFinding {
+        class: class.to_owned(),
+        rule: rule.to_owned(),
+        verdict: FindingVerdict::Hold,
+        rule_set: Some("oml-scan/1.1".to_owned()),
+        field: Some(field.to_owned()),
+        line: Some(1),
+        via: Some("raw".to_owned()),
+        span: Some((0, 4)),
+        found_by: FoundBy::Rescan,
+        event_seq: None,
+        migrated_from: None,
+    };
+    let recorded = |memory_id: Uuid, findings: Vec<VersionFinding>| RecordedVersion {
+        memory_id,
+        summary: None,
+        findings,
+    };
+    rig.commit(
+        &store,
+        event_types::SCAN_FINDINGS_RECORDED,
+        json!({}),
+        MetadataFold::FindingsRecorded {
+            scanned_under: Some("oml-scan/1.1".to_owned()),
+            versions: vec![
+                recorded(
+                    body,
+                    vec![
+                        found("injection.override", "ignore-instructions", "/body"),
+                        found("unicode.bidi", "bidi-control", "/body"),
+                    ],
+                ),
+                recorded(
+                    title,
+                    vec![
+                        found("injection.override", "ignore-instructions", "/title"),
+                        found("injection.role", "persona-switch", "/title"),
+                    ],
+                ),
+                recorded(
+                    rescanned,
+                    vec![
+                        found("injection.override", "ignore-instructions", "/body"),
+                        found("injection.role", "chat-template", "/body/spec/note"),
+                        found("unicode.bidi", "bidi-control", "/title"),
+                    ],
+                ),
+                recorded(
+                    placeless,
+                    vec![
+                        found("marker finding", "body matches it", "/body"),
+                        found("marker finding", "body matches it", "/title"),
+                    ],
+                ),
+            ],
+        },
+        None,
+    )
+    .await
+    .expect("the recording rescan");
+    let mut after = read(
+        store
+            .scan_findings(rig.tenant_id, &ids)
+            .await
+            .expect("read"),
+    );
+    let mut want = migrated;
+    want.push((
+        placeless,
+        "body matches it".into(),
+        s("/title"),
+        Some(1),
+        FoundBy::Rescan,
+    ));
+    after.sort_by(|a, b| (a.0, &a.1, &a.2).cmp(&(b.0, &b.1, &b.2)));
+    want.sort_by(|a, b| (a.0, &a.1, &a.2).cmp(&(b.0, &b.1, &b.2)));
+    assert_eq!(
+        after, want,
+        "no finding twice; the placeless one stands for one place, and the second is listed"
     );
     drop_dbs(&created).await;
 }
