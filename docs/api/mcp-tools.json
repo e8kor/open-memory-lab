@@ -290,10 +290,14 @@
             "type": "string",
             "description": "Recall: the instant the recall is read at, YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset; omitted, the server's clock; relative dates are counted in UTC days. It decides which claims have expired and anchors the query's relative dates such as last week."
           },
+          "as_of": {
+            "type": "string",
+            "description": "Every mode: read memory as it was at this past instant, an RFC 3339 date-time with an offset, under today's access. A version recorded after it does not exist; each claim's tip is the version approved latest by then; a version erased or demoted today is never served. Recall and the listing serve those tips, the listing the workarea's tips unless own is sent; get answers access.not_found for a version recorded later. A date, or an instant after the server's clock, is refused."
+          },
           "own": {
             "type": "boolean",
             "default": true,
-            "description": "Listing, default true: the calling key's own submissions in every state. False: the promoted served tips of the workarea's subtree within the key's read access."
+            "description": "Listing, default true, or false when as_of is sent: the calling key's own submissions in every state. False: the promoted served tips of the workarea's subtree within the key's read access. as_of reads the tips alone, so own true with as_of is refused."
           },
           "claim_key": {
             "type": "string",

@@ -146,3 +146,40 @@ async fn a_scope_recall_makes_no_federation_read() {
         "wide read no federation state"
     );
 }
+
+/// As-of reads' laws over the double (ADR-0059 d21): the tip and existence
+/// at an instant, everything else today's.
+#[tokio::test]
+async fn as_of_reads_double_passes_the_suite() {
+    contracts::as_of::run_as_of_suite(
+        || async { MemStore::new().answering_bm25_with_any_word() },
+        AS_OF_SEARCHES,
+    )
+    .await;
+}
+
+/// An erased version is served at no instant, and no earlier version stands
+/// in for it (ADR-0059 d15, d21).
+#[tokio::test]
+async fn an_as_of_read_never_serves_a_version_erased_today_on_the_double() {
+    let store = MemStore::new().answering_bm25_with_any_word();
+    let erasing = store.clone();
+    contracts::as_of::an_as_of_read_never_serves_a_version_erased_today(
+        store,
+        AS_OF_SEARCHES,
+        move |tenant, id| {
+            erasing.set_status(tenant, id, oml_app::domain::MemoryStatus::Erased);
+            async {}
+        },
+    )
+    .await;
+}
+
+/// The pipelines the as-of laws run on the double.
+const AS_OF_SEARCHES: &[&str] = &[
+    "bm25-postings",
+    "keyword-all",
+    "keyword-any",
+    "bm25",
+    "bm25-postings-time",
+];

@@ -105,6 +105,7 @@ Requires: reader effective access; own=true admits any tenant role except operat
 | `origin_kinds` | query | OriginKinds | no | Comma-separated: rows whose origin kind is one of these; rows without a kind are left out. |
 | `since` | query | string | no |  |
 | `until` | query | string | no |  |
+| `as_of` | query | string | no | Read memory as it was at this past instant, under today's grants: a version recorded after it does not exist, and a claim's tip is the version promoted latest at or before it; state, access, retirement and expiry are read today, so a version erased or demoted today is never served and no earlier one stands in. |
 | `limit` | query | integer | no | Page size, at most 200. |
 | `cursor` | query | string | no | Opaque, from the previous page's next_cursor. |
 
@@ -137,6 +138,7 @@ Requires: reader effective access on the subtree.
 | `timings` | boolean | no | Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings. |
 | `include_expired` | boolean | no | true also serves memories whose valid_until has passed, which recall hides by default; get and the listings always serve them. |
 | `now` | string | no | The instant the recall is read at, a period naming its first instant; omitted, the server's clock. |
+| `as_of` | string | no | Recall memory as it was at this past instant, under today's grants: each claim's tip then, the caller's held rows recorded by then, and the steering in force then; scores are today's. |
 | `sources` | object | no | Where to search. scope, the default, is the workarea's subtree as always. wide adds the committed and validated workareas the key already reads outside it that accept federated reads: all of them up to the tenant's max_sources, above it those holding the largest share of the query's matching rows. |
 
 **Responses.** `200` Steering first and never ranked, then scored hits.; `415` 415 request.unsupported_media — the request body's media type is not the application/json the operation declares; not retryable as sent.; `429` 429 limit.rate or limit.quota — retryable; Retry-After says when.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
@@ -149,6 +151,7 @@ One memory with its text (decrypted on the serving path) and attachment descript
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
 | `artifact_id` | path | string | yes |  |
+| `as_of` | query | string | no | Read memory as it was at this past instant, under today's grants: a version recorded after it does not exist, and a claim's tip is the version promoted latest at or before it; state, access, retirement and expiry are read today, so a version erased or demoted today is never served and no earlier one stands in. |
 
 **Responses.** `200` The memory.; `404` access.not_found — absent or outside read scope, indistinguishable by design.; `410` lifecycle.erased — a journalled crypto-shred, never a silent deletion.; `429` 429 limit.rate or limit.quota — retryable; Retry-After says when.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 

@@ -121,6 +121,7 @@ fn recall(timings: bool) -> RecallRequest {
         search: None,
         match_mode: MatchMode::Any,
         anchor: Default::default(),
+        as_of: None,
     }
 }
 

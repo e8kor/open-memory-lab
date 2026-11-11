@@ -183,6 +183,7 @@ fn recall(query: &str, pipeline: Pipeline) -> RecallRequest {
         include_expired: false,
         now: None,
         anchor: AnchorFilter::default(),
+        as_of: None,
     }
 }
 

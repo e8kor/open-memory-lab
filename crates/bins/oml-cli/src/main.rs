@@ -5528,6 +5528,29 @@ impl Scrape {
 /// is enabled and none declares any, a warning that its `time` list is
 /// always empty.
 fn valid_time_doctor(enabled: &[&str], settings: Option<&Value>) -> Vec<String> {
+    let mut lines = as_of_doctor(settings);
+    lines.extend(valid_time_lines(enabled, settings));
+    lines
+}
+
+/// The as-of read's doctor line (ADR-0059 d16): a warning naming the
+/// promoted versions with no `promoted_at`, which an as-of read never serves,
+/// serving the version before each in its place; nothing when there are none.
+fn as_of_doctor(settings: Option<&Value>) -> Vec<String> {
+    let untimed = settings
+        .map(|s| s["valid_time"]["untimed"].as_u64().unwrap_or(0))
+        .unwrap_or(0);
+    if untimed == 0 {
+        return Vec::new();
+    }
+    vec![format!(
+        "warn as_of: {untimed} promoted versions have no promoted_at, so an as-of read never \
+         serves them and serves the version each replaced in its place; they predate migration \
+         0005's backfill"
+    )]
+}
+
+fn valid_time_lines(enabled: &[&str], settings: Option<&Value>) -> Vec<String> {
     let timed: Vec<&str> = enabled
         .iter()
         .copied()
@@ -6157,6 +6180,14 @@ mod tests {
             vec!["time: 12 memories declare valid time; 3 ended and hidden from recall unless include_expired".to_owned()]
         );
         assert!(valid_time_doctor(&["bm25-postings"], Some(&none)).is_empty());
+        let untimed =
+            serde_json::json!({ "valid_time": { "declared": 0, "expired": 0, "untimed": 2 } });
+        let lines = valid_time_doctor(&["bm25-postings"], Some(&untimed));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("warn as_of: 2 promoted versions"),
+            "{lines:?}"
+        );
         assert_eq!(
             valid_time_doctor(&["bm25-postings"], Some(&some)).len(),
             1,

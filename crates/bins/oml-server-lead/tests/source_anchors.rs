@@ -1753,6 +1753,7 @@ async fn anchor_filter_latency_at_100k() {
         own_held: None,
         anchor: filter,
         expired_at: None,
+        as_of: None,
     };
     let p95 = |mut v: Vec<f64>| {
         v.sort_by(f64::total_cmp);
