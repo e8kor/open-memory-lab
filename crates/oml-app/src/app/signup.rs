@@ -11,8 +11,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_domain::name::{Name, NamedKind, Reference, UNIVERSE};
-use oml_domain::signup::{QUOTA_LIMIT_MAX, Quota, Quotas, SignupMode, check_quota, drawn_user};
-use oml_domain::web::{ProviderIdentity, session_key_names};
+use oml_domain::signup::{QUOTA_LIMIT_MAX, Quota, Quotas, check_quota};
 use oml_domain::{Role, event_types};
 
 use super::{App, Caller, require_role};
@@ -21,7 +20,6 @@ use crate::ports::{
 };
 use crate::types::{
     AdminSearch, AppError, Bearer, Credential, DeletionRequest, KeyRecord, SignupPolicy, UserUsage,
-    WebEntry,
 };
 use oml_domain::MemoryStatus;
 
@@ -150,148 +148,6 @@ where
     I: IdGen,
     Sc: Scanner,
 {
-    /// A person's own sign-up (ADR-0068 d2), after the terms page: in open
-    /// mode, for a provider-verified identity no entry holds, with the
-    /// current terms version accepted; an address an entry holds is refused
-    /// whatever its tenant or flag. A drawn user, the entry under
-    /// `signup.issuer` journalled as `web.signed_up` with the email's
-    /// digest, the provider subject pinned. The caller then issues the
-    /// session keys and opens a session.
-    pub async fn web_sign_up(
-        &self,
-        identity: &ProviderIdentity,
-        accepted_terms: &str,
-    ) -> Result<WebEntry, AppError> {
-        let policy = self
-            .signup_policy()
-            .filter(|p| p.mode == SignupMode::Open)
-            .ok_or(AppError::NotFound)?;
-        if accepted_terms != policy.terms_version {
-            return Err(AppError::WebField {
-                field: "terms_version",
-                message: "the terms changed since this page was shown; read them again",
-            });
-        }
-        let tenant_id = policy.tenant_id;
-        let email_hash = identity.email.digest();
-        if let Some(entry) = self.journal.web_entry_by_email(&email_hash).await? {
-            // Someone holds the address, so this is not a sign-up: a
-            // disabled entry stays refused, and a live one signs in through
-            // the callback, which pins the provider subject (ADR-0045 d4).
-            // Opening a session here would skip that pin for the holder of
-            // a cookie issued before the entry existed (ADR-0068 d2).
-            return Err(AppError::WebSignIn(if entry.disabled_at.is_some() {
-                oml_domain::web::SignInRefusal::Disabled
-            } else {
-                oml_domain::web::SignInRefusal::StateMismatch
-            }));
-        }
-        let issuer = self.signup_issuer(policy).await?;
-        let mut user = None;
-        for _ in 0..DRAWS_MAX {
-            let drawn = drawn_user(&self.ids.new_secret());
-            if self.user_name_free(tenant_id, &drawn).await? {
-                user = Some(drawn);
-                break;
-            }
-        }
-        let user = user.ok_or_else(|| AppError::NameTaken {
-            kind: NamedKind::Workarea,
-            name: drawn_user(&[0; 32]),
-        })?;
-        let entry = WebEntry {
-            tenant_id,
-            email: identity.email.clone(),
-            user,
-            admin: false,
-            google_subject: None,
-            github_subject: None,
-            added_by: issuer.key_id,
-            terms_version: Some(policy.terms_version.clone()),
-            disabled_at: None,
-        };
-        let prev = self.head_event(tenant_id).await?;
-        let event = self.seal(
-            prev.as_ref(),
-            tenant_id,
-            event_types::WEB_SIGNED_UP,
-            &issuer.principal,
-            Some(issuer.key_id),
-            json!({
-                "email_digest": email_hash.to_prefixed(),
-                "user": entry.user.as_str(),
-                "admin": false,
-                "provider": identity.provider.as_str(),
-                "terms_version": policy.terms_version,
-                "self_signup": true,
-                "by_key_id": issuer.key_id.to_string(),
-            }),
-        )?;
-        self.commit(event, MetadataFold::WebEmailAllowed(entry.clone()), None)
-            .await?;
-        self.journal
-            .web_pin(tenant_id, &email_hash, identity.provider, &identity.subject)
-            .await?;
-        Ok(entry)
-    }
-
-    /// The live admin key `signup.issuer` names in the sign-up tenant;
-    /// otherwise the start's check failed or the key was revoked since,
-    /// and the sign-up fails closed (ADR-0068 d1, d11).
-    async fn signup_issuer(&self, policy: &SignupPolicy) -> Result<KeyRecord, AppError> {
-        let id = self
-            .journal
-            .resolve_name(policy.tenant_id, NamedKind::Key, &policy.issuer)
-            .await?
-            .ok_or(AppError::WebKeyMissing {
-                capacity: "signup issuer",
-            })?;
-        self.journal
-            .key(policy.tenant_id, id)
-            .await?
-            .filter(|k| k.role == Role::Admin && k.revoked_at.is_none())
-            .ok_or(AppError::WebKeyMissing {
-                capacity: "signup issuer",
-            })
-    }
-
-    /// Whether the start's settings name a live admin key in an existing
-    /// tenant (ADR-0068 d1): the composition stops when not.
-    pub async fn check_signup_policy(&self) -> Result<(), String> {
-        let Some(policy) = self.signup_policy() else {
-            return Ok(());
-        };
-        self.signup_issuer(policy).await.map(|_| ()).map_err(|_| {
-            format!(
-                "signup.issuer {} is not a live admin key of the tenant signup.tenant names (ADR-0068 d1)",
-                policy.issuer.as_str()
-            )
-        })
-    }
-
-    /// A drawn name no workarea, key or entry of the tenant holds.
-    async fn user_name_free(&self, tenant_id: Uuid, user: &Name) -> Result<bool, AppError> {
-        if self
-            .journal
-            .resolve_name(tenant_id, NamedKind::Workarea, user)
-            .await?
-            .is_some()
-        {
-            return Ok(false);
-        }
-        for key in session_key_names(user) {
-            if self
-                .journal
-                .resolve_name(tenant_id, NamedKind::Key, &key)
-                .await?
-                .is_some()
-            {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
     // -- the admin's users page ---------------------------------------------
 
     /// The sign-up tenant's people, as `<admin>-admin` reads them: each user
@@ -683,20 +539,6 @@ where
         }))
     }
 
-    /// Whether the person holds any bearer or connector key: a sign-in
-    /// whose person holds none lands on the onboarding page (ADR-0068 d10).
-    pub async fn web_has_agent_key(&self, entry: &WebEntry) -> Result<bool, AppError> {
-        let Some(root) = self.signup_root(entry.tenant_id, &entry.user).await? else {
-            return Ok(false);
-        };
-        Ok(self
-            .journal
-            .web_user_keys(entry.tenant_id, root)
-            .await?
-            .iter()
-            .any(|k| k.credential != Credential::Session && k.revoked_at.is_none()))
-    }
-
     /// The person's export (ADR-0068 d6), as `<user>-web`: every memory in
     /// their root and below, every state, their keys and their entry's
     /// terms version. Nothing a second person wrote lies in the root.
@@ -919,7 +761,11 @@ where
     }
 
     /// The root a user's name names, if it is a user root.
-    async fn signup_root(&self, tenant_id: Uuid, user: &Name) -> Result<Option<Uuid>, AppError> {
+    pub(super) async fn signup_root(
+        &self,
+        tenant_id: Uuid,
+        user: &Name,
+    ) -> Result<Option<Uuid>, AppError> {
         let Some(id) = self
             .journal
             .resolve_name(tenant_id, NamedKind::Workarea, user)

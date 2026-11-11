@@ -5,6 +5,8 @@
 //! denials on each request, in the one refusal order of roles-and-keys.md
 //! (ADR-0025 d1).
 
+mod auth;
+mod emails;
 mod federation;
 mod pages;
 mod rescan;
@@ -12,8 +14,8 @@ mod search;
 mod signup;
 mod sparse;
 mod usage;
-mod web;
 mod widen;
+pub use auth::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 pub use federation::WideKey;
 pub use pages::{
     ActClaim, ActTicket, AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted,
@@ -25,7 +27,6 @@ pub use search::SearchSettings;
 pub use signup::{DRAWS_MAX, Person, SignupState, StartStatus, UserDisabled, UserRow};
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
-pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 pub use widen::{
     WIDEN_SIGNAL_BUILD_SECS, WIDEN_SIGNAL_MAX_AGE_SECS, WIDEN_SIGNAL_PAIRS_HELD,
     WIDEN_SIGNAL_REFRESH_SECS, WIDEN_SIGNAL_STATEMENT_SECS, WIDEN_SIGNAL_TENANT_PAIRS, WidenBuild,

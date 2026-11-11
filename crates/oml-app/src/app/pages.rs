@@ -29,7 +29,7 @@ use crate::cursor::ListingCursor;
 use crate::types::{
     AdminSearch, AdminState, AppError, Bearer, ConnectCodeIssued, Credential, DenialRecord,
     GrantRecord, GrantRequest, IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, MemoryRecord,
-    QueueDepth, WebEntry, WebSessionRecord, WorkareaRecord,
+    QueueDepth, WebEntry, WorkareaRecord,
 };
 use crate::types::{AnchorFilter, ListRequest, ListingPosition, MemoryPage, ServedMemory};
 
@@ -290,7 +290,7 @@ fn field(field: &'static str, message: &'static str) -> AppError {
     AppError::WebField { field, message }
 }
 
-fn key_name(user: &Name, suffix: &str) -> Result<Name, AppError> {
+pub(super) fn key_name(user: &Name, suffix: &str) -> Result<Name, AppError> {
     Name::parse(&format!("{}-{suffix}", user.as_str()))
         .map_err(|_| field("name", "the key's name is not a name"))
 }
@@ -303,165 +303,6 @@ where
     I: IdGen,
     Sc: Scanner,
 {
-    // -- session keys -----------------------------------------------------
-
-    /// The first sign-in's keys (ADR-0045 d6, d20 e): `<user>-web`, a user
-    /// key whose issuance creates `universe.<user>`, writer and reader on
-    /// it; `<user>-review`, a tenant dreamer key with dreamer and reader on
-    /// that root; and, for an admin entry, `<user>-admin`. Each is issued
-    /// by the admin key that added the entry, only when missing, so a sign-in
-    /// whose issuance failed part way completes at the next one. Every
-    /// session key's principal is its own name, so R2 lets `<user>-review`
-    /// approve the person's agents' writes.
-    pub async fn web_ensure_keys(&self, entry: &WebEntry) -> Result<(), AppError> {
-        let tenant_id = entry.tenant_id;
-        let held = self
-            .journal
-            .web_session_keys(tenant_id, &entry.user)
-            .await?;
-        let holds = |capacity: Capacity| {
-            held.iter().any(|k| {
-                k.revoked_at.is_none()
-                    && k.name.as_ref().is_some_and(|n| {
-                        n.as_str() == format!("{}-{}", entry.user.as_str(), capacity.suffix())
-                    })
-            })
-        };
-        let needed: Vec<Capacity> = [Capacity::Web, Capacity::Review, Capacity::Admin]
-            .into_iter()
-            .filter(|c| *c != Capacity::Admin || entry.admin)
-            .filter(|c| !holds(*c))
-            .collect();
-        if needed.is_empty() {
-            return Ok(());
-        }
-        let issuer = self
-            .journal
-            .key(tenant_id, entry.added_by)
-            .await?
-            .filter(|k| k.revoked_at.is_none() && k.role == Role::Admin)
-            .ok_or(AppError::WebKeyMissing { capacity: "web" })?;
-        let root = Reference::Name(entry.user.clone());
-        let grant = |role: Role| GrantRequest {
-            node: root.clone(),
-            role,
-            deny: Vec::new(),
-            covers: Covers::Subtree,
-        };
-        for capacity in needed {
-            let name = key_name(&entry.user, capacity.suffix())?;
-            let (role, grants, user) = match capacity {
-                Capacity::Web => (
-                    Role::Writer,
-                    vec![grant(Role::Writer), grant(Role::Reader)],
-                    Some(entry.user.clone()),
-                ),
-                Capacity::Review => (
-                    Role::Dreamer,
-                    vec![grant(Role::Dreamer), grant(Role::Reader)],
-                    None,
-                ),
-                Capacity::Admin | Capacity::Curate => (Role::Admin, Vec::new(), None),
-            };
-            let req = IssueKeyRequest {
-                profile: None,
-                // The issuance default; a page offers no scope (ADR-0037
-                // d17, d18 Q5).
-                guardrail_scope: None,
-                role,
-                principal: name.as_str().to_owned(),
-                name,
-                held_by: Some(HeldBy::Human),
-                default_workarea: None,
-                crew: None,
-                grants,
-                connect_code: false,
-                user,
-            };
-            self.issue_key_by(&issuer, &req, Issuance::Session(&entry.user))
-                .await?;
-        }
-        Ok(())
-    }
-
-    /// The caller of one of the person's session keys, from a live session
-    /// (ADR-0045 d6): the key serving the session's user, live, and for
-    /// the admin capacity only while the entry is an admin's. The web key's
-    /// own set is every key naming its user (d16). The request line names
-    /// the key.
-    pub async fn web_caller(
-        &self,
-        session: &WebSessionRecord,
-        capacity: Capacity,
-    ) -> Result<Caller, AppError> {
-        let missing = AppError::WebKeyMissing {
-            capacity: capacity.suffix(),
-        };
-        if capacity == Capacity::Admin && !session.admin {
-            return Err(AppError::NotFound);
-        }
-        let name = key_name(&session.user, capacity.suffix())?;
-        let key = match self
-            .journal
-            .resolve_name(session.tenant_id, NamedKind::Key, &name)
-            .await?
-        {
-            Some(id) => self.journal.key(session.tenant_id, id).await?,
-            None => None,
-        }
-        .filter(|k| {
-            k.credential == Credential::Session
-                && k.session_user.as_ref() == Some(&session.user)
-                && k.revoked_at.is_none()
-        })
-        .ok_or(missing)?;
-        self.observer.credential(Some(&key), None);
-        let mut caller = self.caller_of(key).await?;
-        if capacity == Capacity::Web
-            && let Some(root) = caller.key.user
-        {
-            caller.own_keys = self
-                .journal
-                .web_user_keys(session.tenant_id, root)
-                .await?
-                .into_iter()
-                .map(|k| k.key_id)
-                .collect();
-            if !caller.own_keys.contains(&caller.key.key_id) {
-                caller.own_keys.push(caller.key.key_id);
-            }
-        }
-        Ok(caller)
-    }
-
-    /// The caller a capacity credential acts as (ADR-0070 d2): the live
-    /// session it derives from, re-checked as [`Self::web_caller`] checks a
-    /// session on every request, under the capacity it names. A credential
-    /// no live session holds, or whose capacity the session no longer
-    /// reaches, is [`AppError::Unauthorized`]; the API answers it
-    /// `auth.invalid`, as it answers an unknown key.
-    pub async fn web_credential_caller(
-        &self,
-        credential: &str,
-    ) -> Result<(Caller, WebSessionRecord), AppError> {
-        let Some((session, capacity)) = self.web_session_of_credential(credential).await? else {
-            self.observer.credential(None, None);
-            return Err(AppError::Unauthorized);
-        };
-        let capacity = Capacity::parse(&capacity).ok_or(AppError::Unauthorized)?;
-        match self.web_caller(&session, capacity).await {
-            // A person of the sign-up tenant's request rate binds their
-            // session keys at the API as it binds their agent keys
-            // (ADR-0068 d5).
-            Ok(caller) => {
-                self.admit_request(&caller.key).await?;
-                Ok((caller, session))
-            }
-            Err(AppError::Store(e)) => Err(AppError::Store(e)),
-            Err(_) => Err(AppError::Unauthorized),
-        }
-    }
-
     // -- the web console's acts, replayed by their Idempotency-Key ----------
 
     /// The scope a web console act records its outcome under: the acting
