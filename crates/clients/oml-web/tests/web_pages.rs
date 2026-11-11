@@ -1098,6 +1098,150 @@ async fn a_resubmitted_confirmation_replays_its_act_and_acts_once() {
     )
     .await;
     assert_ne!(field_of(&again, "nonce"), field_of(&confirm, "nonce"));
+    // The admin's ratification, sent twice, ratifies once and lands on the
+    // view both times: without the replay the second would find the
+    // proposal no longer live.
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let transition = pending[0].transition_id;
+    let (status, _, confirm) = send(
+        &rig.router,
+        get(
+            &format!("/web/admin/workareas?workarea={proj}&op=ratify:{transition}"),
+            Some(&boss),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{confirm}");
+    let fields = [
+        ("action", "workarea_ratify".to_owned()),
+        ("csrf_token", field_of(&confirm, "csrf_token")),
+        ("workarea", proj.to_string()),
+        ("transition", field_of(&confirm, "transition")),
+        ("nonce", field_of(&confirm, "nonce")),
+    ];
+    let fields: Vec<(&str, &str)> = fields.iter().map(|(n, v)| (*n, v.as_str())).collect();
+    for _ in 0..2 {
+        let (status, headers, page) = send(
+            &rig.router,
+            post("/web/admin/workareas", &fields, Some(&boss)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+        assert_eq!(
+            headers[header::LOCATION],
+            "/web/admin/workareas?done=ratified"
+        );
+    }
+    let node = rig
+        .store
+        .workarea(rig.boot.tenant_id, proj)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(node.status.as_str(), "committed");
+}
+
+#[tokio::test]
+async fn a_confirmation_sent_twice_at_once_acts_once() {
+    // A double click sends the same form twice before either answers; the
+    // second waits for the first and replays it (ADR-0070 d3 layer 4). Two
+    // processes of oml-web racing the same key remain #233's case.
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let proj = alice_proj(&rig, &cookie).await;
+    let (_, _, confirm) = send(
+        &rig.router,
+        get(
+            &format!("/web/workareas?workarea={proj}&op=propose:committed"),
+            Some(&cookie),
+        ),
+    )
+    .await;
+    let fields = [
+        ("action", "workarea_transition".to_owned()),
+        ("csrf_token", field_of(&confirm, "csrf_token")),
+        ("workarea", proj.to_string()),
+        ("to", "committed".to_owned()),
+        ("nonce", field_of(&confirm, "nonce")),
+    ];
+    let fields: Vec<(&str, &str)> = fields.iter().map(|(n, v)| (*n, v.as_str())).collect();
+    for _ in 0..5 {
+        let (a, b) = tokio::join!(
+            send(&rig.router, post("/web/workareas", &fields, Some(&cookie))),
+            send(&rig.router, post("/web/workareas", &fields, Some(&cookie))),
+        );
+        for (status, headers, page) in [a, b] {
+            assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+            assert_eq!(headers[header::LOCATION], "/web/workareas?done=proposed");
+        }
+    }
+    let pending = rig
+        .store
+        .pending_transitions(rig.boot.tenant_id, proj)
+        .await
+        .unwrap();
+    assert_eq!(pending.len(), 1, "{pending:?}");
+}
+
+#[tokio::test]
+async fn a_nonce_that_is_not_one_the_page_draws_is_refused_and_nothing_runs() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let proj = alice_proj(&rig, &cookie).await;
+    for nonce in ["", "x", "0123456789ABCDEF0123456789ABCDEF", &"0".repeat(64)] {
+        let (status, _, page) = act(
+            &rig,
+            &cookie,
+            "/web/workareas",
+            &[
+                ("action", "workarea_mode"),
+                ("workarea", &proj.to_string()),
+                ("mode", "in_progress"),
+                ("nonce", nonce),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{nonce:?}: {page}");
+        assert!(page.contains("nonce"), "{page}");
+    }
+    let node = rig
+        .store
+        .workarea(rig.boot.tenant_id, proj)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!node.in_progress, "nothing ran");
+}
+
+#[tokio::test]
+async fn the_workareas_view_shows_only_the_notices_its_acts_name() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    for (done, shown) in [
+        ("proposed", Some("proposed")),
+        ("ratified", Some("ratified")),
+        ("mode+set", Some("mode set")),
+        ("created", Some("created")),
+        ("Your+account+is+suspended", None),
+    ] {
+        let (status, _, page) = send(
+            &rig.router,
+            get(&format!("/web/workareas?done={done}"), Some(&cookie)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        match shown {
+            Some(text) => assert!(
+                page.contains(&format!(r#"<p class="notice" role="status">{text}</p>"#)),
+                "{done}: {page}"
+            ),
+            None => {
+                assert!(!page.contains(r#"class="notice""#), "{done}: {page}");
+                assert!(!page.contains("suspended"), "{page}");
+            }
+        }
+    }
 }
 
 #[tokio::test]

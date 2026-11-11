@@ -2149,6 +2149,36 @@ async fn the_lead_answers_the_workareas_view_and_its_acts_with_a_redirect_to_the
             ],
             "/web/admin/workareas",
         ),
+        (
+            &boss,
+            "/web/admin",
+            [
+                ("action", "workarea_mode"),
+                ("workarea", "alice.proj"),
+                ("mode", "in_progress"),
+            ],
+            "/web/admin/workareas",
+        ),
+        (
+            &cookie,
+            "/web",
+            [
+                ("action", "workarea_ratify"),
+                ("workarea", "alice.proj"),
+                ("transition", "00000000-0000-4000-8000-000000000001"),
+            ],
+            "/web/workareas",
+        ),
+        (
+            &boss,
+            "/web/admin",
+            [
+                ("action", "workarea_ratify"),
+                ("workarea", "alice.proj"),
+                ("transition", "00000000-0000-4000-8000-000000000001"),
+            ],
+            "/web/admin/workareas",
+        ),
     ] {
         let (status, headers, page) = act(&rig, cookie, path, &fields).await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{path}: {page}");
