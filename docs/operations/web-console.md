@@ -200,7 +200,15 @@ of kept-alive connections.
 
 When the call a page needs fails, `oml-web` shows the server's error code and message with the
 page's request id. When a secondary part fails, such as the workarea list on the Guardrails view,
-the page renders without it and names that call's request id.
+the page renders without it and names that call's request id. A list the page reads in pages
+past its bound, such as a person's keys past 10 pages of 200 on the Memories view, is refused
+with `limit.list_too_long` rather than shown cut short; the API and the command line read it
+whole.
+
+A key's value or a connect code reaches the page it is shown on in a sealed `__Host-oml_once`
+cookie that lives one minute. The cookie's path is `/`, so it rides every request to the site
+until that page clears it. Neither process logs `Cookie`; keep the proxy in front from logging
+it too (Caddy blanks it unless `log_credentials` is set).
 
 ## Not built yet
 
