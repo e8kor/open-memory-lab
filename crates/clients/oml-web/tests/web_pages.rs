@@ -4448,3 +4448,44 @@ async fn a_resubmitted_create_form_creates_its_workarea_once() {
     assert_eq!(status, StatusCode::CONFLICT, "{page}");
     assert!(page.contains("name.taken"), "{page}");
 }
+
+/// Rotation without a refused page, over the real gate (ADR-0070 d2,
+/// #230): a lead holding a new secret and the old one until a future
+/// instant takes both from oml-web, and the doctor's probe says so; a
+/// different secret, or the old one once its window has closed, is
+/// refused, and the probe names `web.client_secret`.
+#[tokio::test]
+async fn a_lead_mid_rotation_accepts_the_old_and_new_secret_and_the_doctor_tells_a_refused_one_apart()
+ {
+    use oml_web::doctor::{Level, secret_line};
+    const OLD: &str = "parity-old-web-client-secret-9876543210";
+    let lead = |until_us: i64| {
+        let store = MemStore::new();
+        let ping: DbPing = Arc::new(|| Box::pin(async { true }));
+        ApiState::new(Arc::new(test_app(&store)), store, ping, true, None)
+            .with_web_client(
+                WebClient::new(Some(WEB_CLIENT_SECRET.to_owned()), None)
+                    .with_previous(OLD.to_owned(), until_us),
+            )
+            .into_router()
+    };
+    let probe = |lead: SocketAddr, secret: &'static str| async move {
+        let url = format!("http://{lead}");
+        let transport =
+            oml_sdk::HttpTransport::new(&url, Duration::from_secs(10)).expect("a transport");
+        let api = oml_web::api(Arc::new(transport), secret).expect("an API client");
+        secret_line(&api, &url).await
+    };
+    let open = serve(lead(i64::MAX)).await;
+    for secret in [WEB_CLIENT_SECRET, OLD] {
+        let (level, text) = probe(open, secret).await;
+        assert_eq!(level, Level::Ok, "{text}");
+    }
+    let (level, text) = probe(open, "another-web-client-secret-0123456789").await;
+    assert_eq!(level, Level::Fail, "{text}");
+    assert!(text.contains("web.client_secret"), "{text}");
+    let closed = serve(lead(1)).await;
+    assert_eq!(probe(closed, WEB_CLIENT_SECRET).await.0, Level::Ok);
+    let (level, text) = probe(closed, OLD).await;
+    assert_eq!(level, Level::Fail, "the window closed: {text}");
+}

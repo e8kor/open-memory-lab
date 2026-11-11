@@ -37,7 +37,8 @@ pub fn config_lines(lookup: impl Fn(&str) -> Option<String>) -> Vec<(Level, Stri
     let mut lines = Vec::new();
     // web.api_url alone: every other setting held valid, so its line says
     // what the start would say of it whatever else is wrong.
-    let placeholder = "s".repeat(CLIENT_SECRET_MIN);
+    // A placeholder the secret's rule admits (oml_web_credential).
+    let placeholder = "0123456789abcdef".repeat(CLIENT_SECRET_MIN / 16 + 1);
     let secret_name = env_name(KEY_CLIENT_SECRET);
     let api_only = Config::from_lookup(|name| {
         if name == secret_name {
@@ -77,4 +78,46 @@ pub fn config_lines(lookup: impl Fn(&str) -> Option<String>) -> Vec<(Level, Stri
         Err(err) => lines.push((Level::Fail, err.to_string())),
     }
     lines
+}
+
+/// The capacity credential the doctor's probe presents: well formed, and
+/// derived from no session, so the lead resolves it to nothing.
+const PROBE_CREDENTIAL: &str = "omls_oml-web-doctor-probe-no-session";
+
+/// Whether the lead accepts the secret `api` sends (#230), which its
+/// `/readyz` cannot say: `GET /v2/whoami` with a capacity credential no
+/// session holds. The lead names `session_outside_web` only when the
+/// secret did not prove `oml-web` (a rotation done out of order, a closed
+/// window, two different values), and refuses any other way when it did.
+/// No line carries the secret.
+pub async fn secret_line(api: &crate::Api, api_url: &str) -> (Level, String) {
+    let call = oml_sdk::Call {
+        bearer: PROBE_CREDENTIAL,
+        request_id: None,
+        correlation_id: None,
+    };
+    match api.whoami(&call).await {
+        Err(oml_sdk::Error::Api(e))
+            if e.code == "auth.invalid" && e.details["reason"] == "session_outside_web" =>
+        {
+            (
+                Level::Fail,
+                format!(
+                    "api: {api_url} refuses oml-web's web.client_secret; set the same value on the lead, or keep the old one there as web.client_secret_previous while oml-web restarts"
+                ),
+            )
+        }
+        Err(oml_sdk::Error::Api(e)) if e.code == "auth.invalid" => (
+            Level::Ok,
+            format!("api: {api_url} accepts oml-web's web.client_secret"),
+        ),
+        Ok(_) => (
+            Level::Fail,
+            format!("api: {api_url} resolved a capacity credential no session holds"),
+        ),
+        Err(e) => (
+            Level::Fail,
+            format!("api: {api_url} did not answer the web client secret check: {e}"),
+        ),
+    }
 }
