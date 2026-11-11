@@ -81,6 +81,9 @@ pub const REQUEST_ID: &str = "x-request-id";
 pub const CORRELATION_ID: &str = "x-correlation-id";
 /// The idempotency key every state-creating `POST` carries.
 pub const IDEMPOTENCY_KEY: &str = "idempotency-key";
+/// The header the API sets on an answer it replayed from a recorded
+/// outcome (http-api.md idempotency).
+pub const IDEMPOTENCY_REPLAY: &str = "idempotency-replay";
 
 /// One call's credential and ids: the bearer value it presents, and the
 /// request and correlation ids the API's line will carry.
@@ -456,6 +459,9 @@ pub struct AdminRead {
     #[serde(default)]
     pub title: Option<String>,
     pub key: Option<String>,
+    /// The authoring key's id; absent from an API before v0.7.0.
+    #[serde(default)]
+    pub key_id: Option<String>,
     #[serde(default)]
     pub principal: Option<String>,
     #[serde(default)]
@@ -806,6 +812,19 @@ pub struct ConnectCode {
     pub code: Option<String>,
     pub expires_at: String,
     pub connector_url: String,
+    /// Whether the answer was a recorded outcome replayed, which carries no
+    /// code; read off `Idempotency-Replay`, not the body.
+    #[serde(skip)]
+    replayed: bool,
+}
+
+impl ConnectCode {
+    /// Whether the API answered `Idempotency-Replay: true`: a replay of a
+    /// recorded outcome, which shows no code.
+    #[must_use]
+    pub fn replayed(&self) -> bool {
+        self.replayed
+    }
 }
 
 /// No debug output prints the code.
@@ -830,6 +849,19 @@ pub struct KeyIssued {
     pub value: Option<String>,
     #[serde(default)]
     pub connect_code: Option<ConnectCode>,
+    /// Whether the answer was a recorded outcome replayed, which carries no
+    /// value or code; read off `Idempotency-Replay`, not the body.
+    #[serde(skip)]
+    replayed: bool,
+}
+
+impl KeyIssued {
+    /// Whether the API answered `Idempotency-Replay: true`: a replay of a
+    /// recorded issue, which shows neither the value nor the code.
+    #[must_use]
+    pub fn replayed(&self) -> bool {
+        self.replayed
+    }
 }
 
 /// No debug output prints the value or the code.
@@ -998,6 +1030,21 @@ impl<T: Transport> Client<T> {
         idempotency_key: Option<&str>,
         body: Option<&Value>,
     ) -> Result<R, Error> {
+        self.exchange(method, call, path, idempotency_key, body)
+            .await
+            .map(|(answer, _)| answer)
+    }
+
+    /// [`Self::send`], with whether the API answered a recorded outcome:
+    /// `Idempotency-Replay: true` on the answer (http-api.md idempotency).
+    async fn exchange<R: DeserializeOwned>(
+        &self,
+        method: Method,
+        call: Option<&Call<'_>>,
+        path: String,
+        idempotency_key: Option<&str>,
+        body: Option<&Value>,
+    ) -> Result<(R, bool), Error> {
         let bytes = body.map_or_else(Vec::new, |body| body.to_string().into_bytes());
         let mut request = Request::builder()
             .method(method)
@@ -1050,15 +1097,21 @@ impl<T: Transport> Client<T> {
         }
         // `204 No Content` decodes as JSON `null`, so an `Option` answer
         // reads it as `None` and any other type refuses it.
+        let replayed = response
+            .headers()
+            .get(IDEMPOTENCY_REPLAY)
+            .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"true"));
         let body: &[u8] = if status == 204 {
             b"null"
         } else {
             response.body()
         };
-        serde_json::from_slice(body).map_err(|e| Error::Decode {
-            status,
-            why: e.to_string(),
-        })
+        serde_json::from_slice(body)
+            .map(|answer| (answer, replayed))
+            .map_err(|e| Error::Decode {
+                status,
+                why: e.to_string(),
+            })
     }
 
     /// `GET /.well-known/oauth-authorization-server`. No credential.
@@ -1514,13 +1567,17 @@ impl<T: Transport> Client<T> {
         role: &str,
         connect_code: bool,
     ) -> Result<KeyIssued, Error> {
-        self.post(
-            call,
-            "/v2/keys".to_owned(),
-            idempotency_key,
-            &serde_json::json!({ "name": name, "role": role, "connect_code": connect_code }),
-        )
-        .await
+        let (mut issued, replayed): (KeyIssued, bool) = self
+            .exchange(
+                Method::POST,
+                Some(call),
+                "/v2/keys".to_owned(),
+                Some(idempotency_key),
+                Some(&serde_json::json!({ "name": name, "role": role, "connect_code": connect_code })),
+            )
+            .await?;
+        issued.replayed = replayed;
+        Ok(issued)
     }
 
     /// `POST /v2/keys/{key}/connect-codes`: a new code for a connector key,
@@ -1534,14 +1591,17 @@ impl<T: Transport> Client<T> {
         idempotency_key: &str,
         key: &str,
     ) -> Result<ConnectCode, Error> {
-        self.send(
-            Method::POST,
-            Some(call),
-            format!("/v2/keys/{}/connect-codes", encode(key)),
-            Some(idempotency_key),
-            None,
-        )
-        .await
+        let (mut code, replayed): (ConnectCode, bool) = self
+            .exchange(
+                Method::POST,
+                Some(call),
+                format!("/v2/keys/{}/connect-codes", encode(key)),
+                Some(idempotency_key),
+                None,
+            )
+            .await?;
+        code.replayed = replayed;
+        Ok(code)
     }
 
     /// `POST /v2/keys/{key}/denials` on `workarea`: on `universe`, the key
@@ -1877,6 +1937,43 @@ mod tests {
         correlation_id: Some("page-1"),
     };
 
+    /// Answers every request `201` with `body`, and `Idempotency-Replay:
+    /// true` when `replay` is set.
+    struct Replaying {
+        replay: bool,
+        body: &'static str,
+    }
+
+    impl Transport for Replaying {
+        fn send(&self, _: Request<Vec<u8>>) -> Sending<'_> {
+            let mut response = Response::builder().status(201);
+            if self.replay {
+                response = response.header(IDEMPOTENCY_REPLAY, "true");
+            }
+            let response = response.body(self.body.as_bytes().to_vec()).unwrap();
+            Box::pin(async move { Ok(response) })
+        }
+    }
+
+    #[tokio::test]
+    async fn an_issue_or_a_connect_code_is_a_replay_only_where_the_answer_says_so_in_its_header() {
+        const BODY: &str = r#"{"key_id":"k9","name":"alice-laptop","code_id":"c1","expires_at":"2026-11-11T10:20:00Z","connector_url":"https://m/mcp"}"#;
+        for replay in [true, false] {
+            let client = Client::new(Replaying { replay, body: BODY });
+            let issued = client
+                .issue_key(&CALL, "idem", "alice-laptop", "writer", false)
+                .await
+                .unwrap();
+            assert_eq!(issued.replayed(), replay);
+            assert!(issued.value.is_none());
+            let code = client
+                .mint_connect_code(&CALL, "idem", "alice-phone")
+                .await
+                .unwrap();
+            assert_eq!(code.replayed(), replay);
+        }
+    }
+
     /// The method and path template of each table entry, by operation id.
     /// Each entry's operation id, method, path template and `resp:` type.
     fn table() -> Vec<[&'static str; 4]> {
@@ -2144,7 +2241,9 @@ mod tests {
                 code: Some("ABCD-EFGH-JKMN".to_owned()),
                 expires_at: "2026-11-11T00:00:00Z".to_owned(),
                 connector_url: "https://oml.example.com/mcp".to_owned(),
+                replayed: false,
             }),
+            replayed: false,
         };
         let shown = format!("{issued:?}");
         assert!(!shown.contains("oml_the-secret-value"), "{shown}");

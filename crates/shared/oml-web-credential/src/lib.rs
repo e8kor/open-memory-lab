@@ -6,7 +6,8 @@
 //! cannot derive different values, in a leaf `oml-web` may link without
 //! reaching the application core (ADR-0070 d1). The web client secret's
 //! rule lives here too, for the same reason: the lead and `oml-web` refuse
-//! the same secrets and read a secret file the same way (ADR-0070 d2, #230).
+//! the same secrets and read a secret file the same way (ADR-0070 d2, #230),
+//! and so does the key `oml-web` seals a shown-once secret under (#253).
 
 #![forbid(unsafe_code)]
 
@@ -66,6 +67,17 @@ pub fn capacity_credential(session_token: &str, capacity: &str) -> String {
         format!("oml/web-capacity/v1/{capacity}").as_bytes(),
     );
     format!("{CAPACITY_CREDENTIAL_PREFIX}{}", base62(&mac))
+}
+
+/// The key a shown-once secret is sealed under (ADR-0070 d3 layer 4): HMAC-
+/// SHA256 keyed by the session token over `oml/web-once/v1`, as the
+/// capacity credentials are derived, so any `oml-web` replica opens a seal
+/// for the same session and no other session can. Only `oml-web` uses it;
+/// it lives here beside the session's other derivations so that each
+/// purpose string is chosen in one place.
+#[must_use]
+pub fn once_seal_key(session_token: &str) -> [u8; 32] {
+    hmac_sha256(session_token.as_bytes(), b"oml/web-once/v1")
 }
 
 /// HMAC-SHA256 (RFC 2104) over `message` under `key`.
@@ -258,6 +270,23 @@ mod tests {
     }
 
     const STRONG: &str = "Zq3vN8xK2mP7rT4wY9bC6dF1gH5jL0sA";
+
+    /// The shown-once seal's key is derived beside the session's other
+    /// values (ADR-0070 d3 layer 4, #253): bound to its session, and equal
+    /// to none of the session's credentials, its CSRF token or an act's
+    /// key, so knowing one of them opens no seal.
+    #[test]
+    fn a_once_seal_key_is_bound_to_its_session_and_is_no_other_derivation_of_it() {
+        let key = once_seal_key("session-a");
+        assert_eq!(key, once_seal_key("session-a"));
+        assert_ne!(key, once_seal_key("session-b"));
+        let hex = hex::encode(key);
+        assert_ne!(hex, csrf_token("session-a"));
+        assert_ne!(hex, act_idempotency_key("session-a", "n"));
+        for capacity in ["web", "review", "curate", "admin"] {
+            assert!(!capacity_credential("session-a", capacity).contains(&base62(&key)));
+        }
+    }
 
     /// Both processes refuse the same secrets (ADR-0070 d2, #230): shorter
     /// than 32 characters, fewer than 8 distinct characters, or anything

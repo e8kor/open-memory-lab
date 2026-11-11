@@ -2505,8 +2505,10 @@ pub enum Bearer<'a> {
     /// The caller of a live connection's access token, resolved on this
     /// request.
     Connection(&'a crate::app::Caller),
-    /// A session key's caller, resolved from a live web session on this
-    /// request (ADR-0045 d6).
+    /// A caller already resolved and admitted on this request: a session
+    /// key's, from a live web session (ADR-0045 d6), or the caller a console
+    /// act resolved before claiming its idempotency key. Its grants are read
+    /// again; its request rate is not charged again (#253).
     Session(&'a crate::app::Caller),
 }
 

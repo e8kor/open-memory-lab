@@ -963,6 +963,30 @@ async fn at_the_memories_quota_a_replay_returns_its_receipt_and_a_new_version_is
 }
 
 /// The drawn user of GitHub account `id`, read off the journal.
+/// A console act resolves its caller once and acts as it, so a create by
+/// an agent key costs one request of the key's rate, not two (#253): at
+/// one request a minute, the first request of the key creates.
+#[tokio::test]
+async fn a_workarea_create_by_an_agent_key_costs_one_request_of_its_rate() {
+    let Some(rig) = rig(Some(|mut p| {
+        p.quotas.requests_per_minute = 1;
+        p
+    }))
+    .await
+    else {
+        return;
+    };
+    let ada = sign_up(&rig, 41, "ada@example.com").await;
+    let key = claude_code_key(&rig, &ada).await;
+    let (status, _, body) = json(
+        &rig,
+        api("POST", "/v2/workareas", &key, Some(json!({"name": "proj"}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    drop_db(&rig.db).await;
+}
+
 async fn rig_user(rig: &Rig, _id: u64) -> String {
     events(rig)
         .await

@@ -611,7 +611,7 @@ export interface paths {
         put?: never;
         /**
          * Create or extend the key's global deny object — deny-wins across all its grants.
-         * @description A person's session key cuts a key off on universe alone, workarea universe, the key by name: <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+         * @description A person's session key cuts a key off on universe alone, workarea universe, the key by name: <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role, and the Idempotency-Key is required but no outcome is recorded under it: only a session key claims it, so a resubmission by any other key denies again. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         post: operations["addDenial"];
         delete?: never;
@@ -1346,6 +1346,8 @@ export interface components {
             kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
             /** @description The authoring key's name. */
             key: string;
+            /** @description The authoring key's id, which names a key that has no name (ADR-0070 d5). Since v0.7.0. */
+            key_id?: string;
             principal?: string | null;
             user?: string | null;
             /** Format: date-time */
@@ -1565,7 +1567,7 @@ export interface components {
             principal?: string | null;
             /** @description The authoring key's id; null wherever principal is (ADR-0044 d9). The web console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since v0.7.0. */
             author_key_id?: string | null;
-            /** @description Admission's scan finding on the version, class: rule at place, never the matched text; null when the scan found nothing (ADR-0065 d8; ADR-0070 d5). Since v0.7.0. */
+            /** @description Admission's scan finding on the version, class: rule at place, never the matched text; null when the scan found nothing, and null wherever principal is (ADR-0065 d8; ADR-0044 d9; ADR-0070 d5). Since v0.7.0. */
             scan_finding?: string | null;
             /** @enum {string} */
             provenance?: "agent" | "human" | "connector" | "simulation";

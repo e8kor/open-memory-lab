@@ -69,6 +69,9 @@ pub(crate) fn admin_memory_json(m: &AdminMemory, full: bool) -> Value {
         "format": m.memory.format.media_type,
         "title": m.memory.format.title,
         "key": m.author.as_ref().and_then(|k| k.name.as_ref()).map(|n| n.as_str()),
+        // The authoring key's id, which names a key that has no name
+        // (ADR-0070 d5; #253).
+        "key_id": m.memory.author_key_id.to_string(),
         "principal": m.memory.author_principal,
         "user": m.author_user.as_ref().map(|n| n.as_str()),
         "created_at": m.memory.created_at.as_str(),

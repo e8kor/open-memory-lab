@@ -195,12 +195,15 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting: crate::Acting<'static> = acting(headers, None)?;
+        acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         // The key is claimed before the act, so a resubmission, or a second
         // send racing the first, answers the recorded entry and changes
         // nothing again (ADR-0070 d3 layer 4, d5; #233).
-        let caller = st.console_caller(headers).await?;
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = std::sync::Arc::new(st.console_caller(headers).await?);
+        let acting: crate::Acting<'static> = crate::Acting::Session(caller.clone());
         let digest = crate::console::act_digest("", body);
         let claim = match st
             .claim(&caller, "web.email_allowed", &idem, &digest)
@@ -266,9 +269,12 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting: crate::Acting<'static> = acting(headers, None)?;
+        acting(headers, None)?;
         let idem = idempotency_key(headers)?;
-        let caller = st.console_caller(headers).await?;
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = std::sync::Arc::new(st.console_caller(headers).await?);
+        let acting: crate::Acting<'static> = crate::Acting::Session(caller.clone());
         let digest = crate::console::act_digest("", body);
         let claim = match st
             .claim(&caller, "web.email_removed", &idem, &digest)
