@@ -276,3 +276,4 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0040 | `feat/federated-recall-p1` | #205 | federated recall | reserved |
 | migration | 0041 | `feat/as-of-reads` |  | as of tips | reserved |
 | migration | 0042 | `fix/idempotency-atomic` | #233 | idempotency claims | reserved |
+| migration | 0043 | `feat/scan-phase1` |  | scan findings | reserved |

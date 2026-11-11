@@ -4570,8 +4570,10 @@ async fn the_rescan_names_an_injection_phrase_a_zero_width_space_split() {
 /// rules flag stays its author's, its finding recorded (ADR-0065 d15;
 /// ADR-0074 d28). The two rows are written, then set back to what a server
 /// before the upgrade stored: `scanned_under` `oml-scan/1` and no finding.
+/// ADR-0074 d18 names it for phase 1.
 #[tokio::test]
-async fn a_held_row_scanned_under_an_older_rule_set_stays_its_authors_until_the_recording_rescan() {
+async fn a_held_version_scanned_under_an_older_rule_set_is_author_only_in_progress_until_rescanned()
+{
     let Some(rig) = fresh_rig().await else {
         return;
     };

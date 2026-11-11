@@ -722,6 +722,7 @@ oml admin rescan [OPTIONS]
 | Option | Meaning |
 |---|---|
 | `--record-held` | Also record each held version's findings under current rules, so a held version written before an upgrade is served inside an in-progress workarea again when nothing is found; journals scan.findings_recorded |
+| `--rates` | Print only aggregates for the operator, not for publication: per class, per origin kind and per class within an origin, how many versions the scan would refuse or hold and their share of those scanned, counts under 5 as <5; no artifact id, claim key or text |
 
 
 ## `oml write`

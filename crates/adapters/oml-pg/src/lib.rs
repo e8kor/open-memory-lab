@@ -33,8 +33,8 @@ use oml_app::domain::{
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
     CommitReceipt, CommitRequest, ConnectionStore, IdempotencyClaim, IdempotencyPut,
-    IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, Retriever, StoreError,
-    SubjectRow, TailEvent, TailScan, WebStore, claim_subject,
+    IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, Retriever, ScanBacklog,
+    StoreError, SubjectRow, TailEvent, TailScan, WebStore, claim_subject,
 };
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, MatchedToken, OwnHeldScope, PostingsHealth,
@@ -48,8 +48,8 @@ use oml_app::types::{
     HeldFilter, HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition,
     ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome,
     QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair,
-    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord,
-    WorkareaRecord, WorkareaRef,
+    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, VersionFinding, WebEntry,
+    WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -2592,6 +2592,93 @@ fn signed_envelope_from_row(row: &PgRow) -> Result<SignedEnvelope, StoreError> {
 // The metadata fold inside the commit transaction
 // ---------------------------------------------------------------------------
 
+/// The findings lists of `lists` under the commit's `seq`, each in its
+/// order (ADR-0074 d23). A finding the version's list already holds by
+/// class, rule and field is kept as first recorded (`scan_findings_one`).
+/// A finding migration 0043 could not place, with no field, stands for one
+/// place of its class and rule: the first of `list`'s finds of them, in
+/// order, is taken as that place and not added, and the rest are, so a
+/// finding is never listed twice and a second place is never lost.
+async fn insert_findings(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    seq: i64,
+    lists: &[(Uuid, Vec<VersionFinding>)],
+) -> Result<(), StoreError> {
+    let rows: Vec<(Uuid, i32, &VersionFinding)> = lists
+        .iter()
+        .flat_map(|(id, list)| list.iter().zip(0_i32..).map(move |(f, ord)| (*id, ord, f)))
+        .collect();
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let int = |v: Option<u64>| v.map(i64::try_from).transpose().map_err(backend);
+    let mut ids = Vec::with_capacity(rows.len());
+    let mut ords = Vec::with_capacity(rows.len());
+    let mut classes = Vec::with_capacity(rows.len());
+    let mut rules = Vec::with_capacity(rows.len());
+    let mut verdicts = Vec::with_capacity(rows.len());
+    let mut rule_sets = Vec::with_capacity(rows.len());
+    let mut fields = Vec::with_capacity(rows.len());
+    let mut lines = Vec::with_capacity(rows.len());
+    let mut vias = Vec::with_capacity(rows.len());
+    let mut starts = Vec::with_capacity(rows.len());
+    let mut ends = Vec::with_capacity(rows.len());
+    let mut found_by = Vec::with_capacity(rows.len());
+    let mut migrated = Vec::with_capacity(rows.len());
+    for (id, ord, f) in rows {
+        ids.push(id);
+        ords.push(ord);
+        classes.push(f.class.clone());
+        rules.push(f.rule.clone());
+        verdicts.push(f.verdict.as_str());
+        rule_sets.push(f.rule_set.clone());
+        fields.push(f.field.clone());
+        lines.push(f.line.map(i32::try_from).transpose().map_err(backend)?);
+        vias.push(f.via.clone());
+        starts.push(int(f.span.map(|s| s.0))?);
+        ends.push(int(f.span.map(|s| s.1))?);
+        found_by.push(f.found_by.as_str());
+        migrated.push(f.migrated_from.clone());
+    }
+    sqlx::query(
+        "INSERT INTO scan_findings (tenant_id, memory_id, event_seq, ord, class, rule, verdict, \
+         rule_set, field, line, via, span_start, span_end, found_by, migrated_from) \
+         SELECT $1, u.id, $2, u.ord, u.class, u.rule, u.verdict, u.rule_set, u.field, u.line, \
+                u.via, u.span_start, u.span_end, u.found_by, u.migrated_from \
+         FROM (SELECT u.*, row_number() OVER (PARTITION BY u.id, u.class, u.rule \
+                                              ORDER BY u.ord) AS k \
+               FROM unnest($3::uuid[], $4::int4[], $5::text[], $6::text[], $7::text[], \
+                           $8::text[], $9::text[], $10::int4[], $11::text[], $12::int8[], \
+                           $13::int8[], $14::text[], $15::text[]) \
+                 AS u(id, ord, class, rule, verdict, rule_set, field, line, via, span_start, \
+                      span_end, found_by, migrated_from)) u \
+         WHERE u.k > (SELECT count(*) FROM scan_findings f \
+                       WHERE f.tenant_id = $1 AND f.memory_id = u.id \
+                         AND f.class = u.class AND f.rule = u.rule AND f.field IS NULL) \
+         ON CONFLICT ON CONSTRAINT scan_findings_one DO NOTHING",
+    )
+    .bind(tenant_id)
+    .bind(seq)
+    .bind(ids)
+    .bind(ords)
+    .bind(classes)
+    .bind(rules)
+    .bind(verdicts)
+    .bind(rule_sets)
+    .bind(fields)
+    .bind(lines)
+    .bind(vias)
+    .bind(starts)
+    .bind(ends)
+    .bind(found_by)
+    .bind(migrated)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
 async fn insert_memory(
     tx: &mut Transaction<'_, Postgres>,
     created_event_id: Uuid,
@@ -3668,8 +3755,19 @@ async fn apply_fold(
         } => {
             fold_connection_revoked(tx, tenant_id, seq, connection_id, cause).await?;
         }
-        MetadataFold::MemoryHeld { memory, enqueue } => {
+        MetadataFold::MemoryHeld {
+            memory,
+            enqueue,
+            findings,
+        } => {
             insert_memory(tx, event_id, &memory).await?;
+            insert_findings(
+                tx,
+                tenant_id,
+                seq,
+                &[(memory.memory_id, findings.into_vec())],
+            )
+            .await?;
             if enqueue {
                 enqueue_review(tx, tenant_id, memory.memory_id).await?;
             }
@@ -3708,20 +3806,30 @@ async fn apply_fold(
         } => {
             // Held versions alone; a finding already on the row stays
             // (ADR-0065 d13, d15).
-            let (ids, findings): (Vec<Uuid>, Vec<Option<String>>) = versions.into_iter().unzip();
-            sqlx::query(
+            let ids: Vec<Uuid> = versions.iter().map(|v| v.memory_id).collect();
+            let summaries: Vec<Option<String>> =
+                versions.iter().map(|v| v.summary.clone()).collect();
+            // The versions still held: a list is kept for those alone.
+            let held: Vec<Uuid> = sqlx::query_scalar(
                 "UPDATE memories m SET scanned_under = $2, \
                  scan_finding = COALESCE(m.scan_finding, u.finding) \
                  FROM unnest($3::uuid[], $4::text[]) AS u(id, finding) \
-                 WHERE m.tenant_id = $1 AND m.id = u.id AND m.status = 'held'",
+                 WHERE m.tenant_id = $1 AND m.id = u.id AND m.status = 'held' \
+                 RETURNING m.id",
             )
             .bind(tenant_id)
             .bind(scanned_under)
             .bind(ids)
-            .bind(findings)
-            .execute(&mut **tx)
+            .bind(summaries)
+            .fetch_all(&mut **tx)
             .await
             .map_err(backend)?;
+            let lists: Vec<(Uuid, Vec<VersionFinding>)> = versions
+                .into_iter()
+                .filter(|v| held.contains(&v.memory_id))
+                .map(|v| (v.memory_id, v.findings))
+                .collect();
+            insert_findings(tx, tenant_id, seq, &lists).await?;
         }
         MetadataFold::TipSuperseded {
             successor,
@@ -6644,15 +6752,23 @@ impl JournalStore for PgStore {
         &self,
         tenant_id: Uuid,
         current: Option<&str>,
-    ) -> Result<(u64, u64), StoreError> {
+    ) -> Result<ScanBacklog, StoreError> {
         // One pass over the tenant's partition; doctor reads it once per
-        // run (ADR-0074 d28).
+        // run (ADR-0074 d23, d28). The unlisted count probes the findings
+        // list by its primary key for the held versions that carry a
+        // finding.
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let (held, all): (i64, i64) = sqlx::query_as(
-            "SELECT count(*) FILTER (WHERE status = 'held'), count(*) FROM memories \
-             WHERE tenant_id = $1 AND status <> 'erased' \
-               AND scanned_under IS DISTINCT FROM $2::text",
+        let (held, all, unlisted): (i64, i64, i64) = sqlx::query_as(
+            "SELECT count(*) FILTER (WHERE status = 'held' \
+                                       AND scanned_under IS DISTINCT FROM $2::text), \
+                    count(*) FILTER (WHERE scanned_under IS DISTINCT FROM $2::text), \
+                    count(*) FILTER (WHERE status = 'held' AND scan_finding IS NOT NULL \
+                                       AND NOT EXISTS (SELECT 1 FROM scan_findings f \
+                                                        WHERE f.tenant_id = m.tenant_id \
+                                                          AND f.memory_id = m.id)) \
+             FROM memories m \
+             WHERE tenant_id = $1 AND status <> 'erased'",
         )
         .bind(tenant_id)
         .bind(current)
@@ -6660,10 +6776,75 @@ impl JournalStore for PgStore {
         .await
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        Ok((
-            u64::try_from(held).map_err(backend)?,
-            u64::try_from(all).map_err(backend)?,
-        ))
+        Ok(ScanBacklog {
+            held_unrescanned: u64::try_from(held).map_err(backend)?,
+            rescan_due: u64::try_from(all).map_err(backend)?,
+            findings_unlisted: u64::try_from(unlisted).map_err(backend)?,
+        })
+    }
+
+    async fn scan_findings(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+    ) -> Result<Vec<(Uuid, VersionFinding)>, StoreError> {
+        if memory_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(
+            "SELECT memory_id, event_seq, class, rule, verdict, rule_set, field, line, via, \
+                    span_start, span_end, found_by, migrated_from \
+             FROM scan_findings WHERE tenant_id = $1 AND memory_id = ANY($2::uuid[]) \
+             ORDER BY memory_id, event_seq, ord",
+        )
+        .bind(tenant_id)
+        .bind(memory_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let get_u = |c: &str| -> Result<Option<u64>, StoreError> {
+                    r.try_get::<Option<i64>, _>(c)
+                        .map_err(backend)?
+                        .map(u64::try_from)
+                        .transpose()
+                        .map_err(backend)
+                };
+                let verdict: String = r.try_get("verdict").map_err(backend)?;
+                let found_by: String = r.try_get("found_by").map_err(backend)?;
+                let span = match (get_u("span_start")?, get_u("span_end")?) {
+                    (Some(a), Some(b)) => Some((a, b)),
+                    _ => None,
+                };
+                Ok((
+                    r.try_get("memory_id").map_err(backend)?,
+                    VersionFinding {
+                        class: r.try_get("class").map_err(backend)?,
+                        rule: r.try_get("rule").map_err(backend)?,
+                        verdict: oml_app::types::FindingVerdict::parse(&verdict)
+                            .ok_or_else(|| backend(format!("verdict {verdict:?}")))?,
+                        rule_set: r.try_get("rule_set").map_err(backend)?,
+                        field: r.try_get("field").map_err(backend)?,
+                        line: r
+                            .try_get::<Option<i32>, _>("line")
+                            .map_err(backend)?
+                            .map(u32::try_from)
+                            .transpose()
+                            .map_err(backend)?,
+                        via: r.try_get("via").map_err(backend)?,
+                        span,
+                        found_by: oml_app::types::FoundBy::parse(&found_by)
+                            .ok_or_else(|| backend(format!("found_by {found_by:?}")))?,
+                        event_seq: get_u("event_seq")?,
+                        migrated_from: r.try_get("migrated_from").map_err(backend)?,
+                    },
+                ))
+            })
+            .collect()
     }
 
     async fn held_count(&self, tenant_id: Uuid, nodes: &[Uuid]) -> Result<u64, StoreError> {

@@ -3502,6 +3502,10 @@ components:
         severity: { type: string, enum: [never, must, should], description: "On kind guardrail alone, except a retirement version (ADR-0037 d2)." }
         rule: { description: "On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8)." }
         load_warning: { type: string, description: "On a held guardrail alone: every reader of it is told that every key reading its workarea will load the rule once it binds (ADR-0037 d10)." }
+        scan_findings:
+          type: array
+          description: "Every finding stored on the version, in the order recorded, on the review serve, the held listing and the named read alone; absent elsewhere, so an empty list means the scan found nothing (ADR-0074 d17, d23)."
+          items: { $ref: '#/components/schemas/ScanFinding' }
         principal: { type: [string, 'null'], description: "The authoring principal; null on a version in universe served to a key outside its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its source (ADR-0044 d9)." }
         author_key_id: { type: [string, 'null'], description: "The authoring key's id; null wherever principal is (ADR-0044 d9). The web console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since v0.7.0." }
         scan_finding: { type: [string, 'null'], description: "Admission's scan finding on the version, class: rule at place, never the matched text; null when the scan found nothing, and null wherever principal is (ADR-0065 d8; ADR-0044 d9; ADR-0070 d5). Since v0.7.0." }
@@ -4071,6 +4075,29 @@ components:
       type: string
       enum: [changed, removed]
       description: "The served version's latest source check when it is changed or removed. Computed from the source alone, never from a held successor (ADR-0057 d5)."
+
+    ScanFinding:
+      type: object
+      description: "One finding of a version's findings list (ADR-0074 d23): where the scan fired and why, never the matched text (ADR-0065 d8)."
+      additionalProperties: false
+      required: [class, rule, verdict, rule_set, field, line, via, span, found_by, event_seq, migrated_from]
+      properties:
+        class: { type: string, description: "The threat class, injection.override." }
+        rule: { type: string, description: "The rule id, ignore-instructions." }
+        verdict: { type: string, enum: [refuse, hold, annotate], description: "refuse appears only on a finding a recording rescan made on a version already stored (ADR-0074 d14)." }
+        rule_set: { type: [string, 'null'], description: "The rule set it was found under, oml-scan/1.1." }
+        field: { type: [string, 'null'], description: "/body, /title, or /body/ and a decoded view's path; null on a finding migrated from the single stored finding." }
+        line: { type: [integer, 'null'], minimum: 1, description: "The 1-based line of the field the match starts on." }
+        via: { type: [string, 'null'], description: "The view the rule read: raw, clean, spaced or letters (ADR-0074 d6)." }
+        span:
+          type: [array, 'null']
+          description: "The match's byte range, start and end, in that view."
+          items: { type: integer, minimum: 0 }
+          minItems: 2
+          maxItems: 2
+        found_by: { type: string, enum: [admission, rescan], description: "Who recorded it." }
+        event_seq: { type: [integer, 'null'], minimum: 1, description: "The seq of the journal event that recorded it." }
+        migrated_from: { type: [string, 'null'], description: "On a finding migrated from the version's single scan_finding, the text that held." }
 
     SourceChecked:
       type: object
@@ -5043,6 +5070,12 @@ components:
               rule: { type: string }
               action: { type: string, enum: [veto, hold] }
               at: { type: string, description: 'The field and line, /body line 3.' }
+              field: { type: string, description: 'The field the findings list stores it under: /body, /title, /body/ and a decoded view''s path, or an anchor field (ADR-0074 d23).' }
+              origin: { type: [string, 'null'], description: 'The version''s origin kind, or null for one stored without: the dry run''s rates per origin (ADR-0074 d18).' }
+        scanned_by_origin:
+          type: object
+          description: 'The versions scanned, counted by origin kind, none for a version stored without one: the denominators of the dry run''s rates (ADR-0074 d18).'
+          additionalProperties: { type: integer, minimum: 0 }
         by_rule:
           type: array
           items:
@@ -5058,6 +5091,7 @@ components:
         recorded: { type: integer, minimum: 0, description: 'Held versions whose findings this call recorded under the server''s rule set (ADR-0065 d15; ADR-0074 d28); 0 for the read.' }
         held_unrescanned: { type: integer, minimum: 0, description: 'After this call, the tenant''s held versions last scanned under another rule set than the server''s, which stay their authors'' alone in in-progress workareas: doctor''s scan_held_unrescanned (ADR-0074 d28).' }
         rescan_due: { type: integer, minimum: 0, description: 'After this call, every stored version, erased ones aside, last scanned under another rule set: doctor''s scan_rescan_due (ADR-0074 d28).' }
+        findings_unlisted: { type: integer, minimum: 0, description: 'After this call, held versions whose stored scan finding has no row in the findings list, written by a server older than migration 0043: doctor''s scan_findings_unlisted (ADR-0074 d23).' }
 
     Build:
       type: object

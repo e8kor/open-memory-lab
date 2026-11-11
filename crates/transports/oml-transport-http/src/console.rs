@@ -606,7 +606,7 @@ where
                 ApiError::validation("user is required for the admin key role")
                     .with_details(json!({ "field": "user" }))
             })?;
-            st.app.web_keys_of_user(&caller, &user).await
+            st.app.list_keys_of_user(&caller, &user).await
         } else {
             if !is_web_session_key(&caller) {
                 return Err(session_key_only(&caller, "list_keys"));
@@ -615,7 +615,7 @@ where
                 // Another person's keys are not this key's to know of.
                 return Err(ApiError::not_found());
             }
-            st.app.web_own_keys(&caller).await
+            st.app.list_own_keys(&caller).await
         };
         let mut keys: Vec<OwnKey> = keys.map_err(|e| map_app_error(e, ErrorContext::Write))?;
         keys.sort_by(|a, b| a.key.name.cmp(&b.key.name));
@@ -646,7 +646,7 @@ where
             for g in k.access.iter().flat_map(|a| &a.grants) {
                 let path = st
                     .app
-                    .web_path(&caller, g.grant.node)
+                    .workarea_path(&caller, g.grant.node)
                     .await
                     .map_err(|e| map_app_error(e, ErrorContext::Write))?;
                 grants.push(json!({
@@ -697,7 +697,7 @@ where
         let caller = st.console_caller(headers).await?;
         let rows = st
             .app
-            .web_queue(&caller)
+            .review_queue(&caller)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
@@ -775,11 +775,17 @@ where
                 let mut added = Vec::new();
                 for workarea in workareas {
                     let granted = if curate {
-                        retry_chain(|| st.app.web_grant_curation(&caller, &user, workarea.clone()))
-                            .await
+                        retry_chain(|| {
+                            st.app
+                                .grant_curation_capacity(&caller, &user, workarea.clone())
+                        })
+                        .await
                     } else {
-                        retry_chain(|| st.app.web_grant_review(&caller, &user, workarea.clone()))
-                            .await
+                        retry_chain(|| {
+                            st.app
+                                .grant_review_capacity(&caller, &user, workarea.clone())
+                        })
+                        .await
                     }
                     .map_err(|e| {
                         let e = map_app_error(e, ErrorContext::Write);
@@ -928,24 +934,24 @@ where
 
     // -- #6 GET /v2/web/export -------------------------------------------------
 
-    pub(crate) async fn web_export(
+    pub(crate) async fn export_web_person(
         State(st): State<Self>,
         rid: Rid,
         headers: HeaderMap,
     ) -> Response {
-        finish(&rid, Self::web_export_inner(&st, &headers).await)
+        finish(&rid, Self::export_web_person_inner(&st, &headers).await)
     }
 
     /// `GET /v2/web/export`: everything the person holds, as a JSON
     /// attachment, for their web session key only (ADR-0068 d6).
-    async fn web_export_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
+    async fn export_web_person_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
         let caller = st.console_caller(headers).await?;
         if !is_web_session_key(&caller) {
             return Err(session_key_only(&caller, "export"));
         }
         let export = st
             .app
-            .web_export(&caller)
+            .export_web_person(&caller)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let mut response = json_response(StatusCode::OK, &export);
@@ -987,7 +993,7 @@ where
         let st = st.clone();
         claim
             .run(async move {
-                let seq = retry_chain(|| st.app.web_request_deletion(&caller))
+                let seq = retry_chain(|| st.app.request_web_deletion(&caller))
                     .await
                     .map_err(|e| ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 let person = st
@@ -1061,7 +1067,7 @@ where
         claim
             .run(async move {
                 for (i, (quota, limit)) in sent.into_iter().enumerate() {
-                    retry_chain(|| st.app.web_set_quota(&caller, &user, quota, limit))
+                    retry_chain(|| st.app.set_web_user_quota(&caller, &user, quota, limit))
                         .await
                         .map_err(|e| {
                             let e = match e {
@@ -1082,7 +1088,7 @@ where
                 }
                 let row = st
                     .app
-                    .web_users(&caller)
+                    .list_web_users(&caller)
                     .await
                     .map_err(|e| ActFailure::after(map_app_error(e, ErrorContext::Write)))?
                     .into_iter()
@@ -1140,7 +1146,7 @@ where
         let st = st.clone();
         claim
             .run(async move {
-                let done = retry_chain(|| st.app.web_disable_user(&caller, &user))
+                let done = retry_chain(|| st.app.disable_web_user(&caller, &user))
                     .await
                     .map_err(|e| ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 Ok(Acted::new(
@@ -1197,7 +1203,7 @@ where
         let st = st.clone();
         claim
             .run(async move {
-                let seq = retry_chain(|| st.app.web_close_deletion(&caller, &user))
+                let seq = retry_chain(|| st.app.close_web_deletion(&caller, &user))
                     .await
                     .map_err(|e| ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 Ok(Acted::new(StatusCode::OK, json!({ "journal_seq": seq })))
@@ -1272,7 +1278,7 @@ where
         claim
             .run(async move {
                 let issued =
-                    retry_chain(|| st.app.web_issue_key(&caller, &suffix, role, connect_code))
+                    retry_chain(|| st.app.issue_own_key(&caller, &suffix, role, connect_code))
                         .await
                         .map_err(|e| {
                             ActFailure::first(match e {
@@ -1335,7 +1341,7 @@ where
         let st = st.clone();
         claim
             .run(async move {
-                let denial = retry_chain(|| st.app.web_cut_off(&caller, &key))
+                let denial = retry_chain(|| st.app.cut_off_key(&caller, &key))
                     .await
                     .map_err(|e| {
                         ActFailure::first(match e {
@@ -1393,7 +1399,7 @@ where
         let st = st.clone();
         claim
             .run(async move {
-                let code = retry_chain(|| st.app.web_connect_code(&caller, &key))
+                let code = retry_chain(|| st.app.mint_own_connect_code(&caller, &key))
                     .await
                     .map_err(|e| ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 let answer = connect_code_json(&code);

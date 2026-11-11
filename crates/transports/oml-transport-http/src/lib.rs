@@ -381,7 +381,7 @@ where
             ("POST", "/v2/web/users/{user}/disable") => post(Self::disable_user),
             ("POST", "/v2/web/users/{user}/deletion/close") => post(Self::close_deletion),
             ("POST", "/v2/web/session/end") => post(Self::end_session),
-            ("GET", "/v2/web/export") => get(Self::web_export),
+            ("GET", "/v2/web/export") => get(Self::export_web_person),
             ("POST", "/v2/web/deletion-requests") => post(Self::request_deletion),
             ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
@@ -817,7 +817,7 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let page = st
             .app
-            .web_memories(&caller, &req)
+            .list_memories_with_own(&caller, &req)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
@@ -2404,7 +2404,7 @@ where
         let regions = if caller.key().role == Role::Admin {
             st.app.admin_regions(&caller, Some(node)).await
         } else {
-            st.app.web_regions(&caller, Some(node)).await
+            st.app.user_regions(&caller, Some(node)).await
         }
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let items: Vec<Value> = regions
@@ -4542,6 +4542,24 @@ fn source_check(m: &MemoryRecord) -> Option<&SourceCheck> {
         .flatten()
 }
 
+/// `ScanFinding` (openapi.yaml; ADR-0074 d23): one finding of a version's
+/// list, never the matched text.
+pub fn scan_finding_json(f: &oml_app::types::VersionFinding) -> Value {
+    json!({
+        "class": f.class,
+        "rule": f.rule,
+        "verdict": f.verdict.as_str(),
+        "rule_set": f.rule_set,
+        "field": f.field,
+        "line": f.line,
+        "via": f.via,
+        "span": f.span.map(|(a, b)| [a, b]),
+        "found_by": f.found_by.as_str(),
+        "event_seq": f.event_seq,
+        "migrated_from": f.migrated_from,
+    })
+}
+
 /// `SourceChecked` (openapi.yaml; ADR-0057 d5, d18).
 pub fn source_checked_json(check: &SourceCheck) -> Value {
     json!({
@@ -4647,6 +4665,14 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
     }
     if let (Some(warning), Some(obj)) = (served.load_warning, value.as_object_mut()) {
         obj.insert("load_warning".to_owned(), json!(warning));
+    }
+    // Every finding stored on the version, on the surfaces a reviewer
+    // judges from; absent elsewhere (ADR-0074 d17, d23).
+    if let (Some(list), Some(obj)) = (&served.scan_findings, value.as_object_mut()) {
+        obj.insert(
+            "scan_findings".to_owned(),
+            Value::Array(list.iter().map(scan_finding_json).collect()),
+        );
     }
     // What a derived format's claim will be found by, which a reviewer's
     // card shows before the verdict (ADR-0056 d9; ADR-0070 d5).

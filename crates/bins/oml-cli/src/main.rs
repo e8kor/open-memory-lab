@@ -653,6 +653,12 @@ enum AdminCommand {
         /// scan.findings_recorded.
         #[arg(long)]
         record_held: bool,
+        /// Print only aggregates for the operator, not for publication: per
+        /// class, per origin kind and per class within an origin, how many
+        /// versions the scan would refuse or hold and their share of those
+        /// scanned, counts under 5 as <5; no artifact id, claim key or text.
+        #[arg(long, conflicts_with = "record_held")]
+        rates: bool,
     },
 }
 
@@ -3422,9 +3428,15 @@ fn run_crews(
 /// with `record_held`, each window's held versions' findings recorded under
 /// the server's rule set (d15; ADR-0074 d28). Exits 1 when any stored
 /// version would be refused, so a script notices.
-fn run_rescan(cli: &Cli, client: &Client, record_held: bool) -> Result<ExitCode, CliError> {
+fn run_rescan(
+    cli: &Cli,
+    client: &Client,
+    record_held: bool,
+    rates: bool,
+) -> Result<ExitCode, CliError> {
     let mut after = 0_u64;
     let mut scanned = 0_u64;
+    let mut by_origin: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
     let mut recorded = 0_u64;
     let mut version;
     let mut findings: Vec<Value> = Vec::new();
@@ -3440,6 +3452,9 @@ fn run_rescan(cli: &Cli, client: &Client, record_held: bool) -> Result<ExitCode,
         version = page["scanner_version"].clone();
         scanned += page["scanned"].as_u64().unwrap_or(0);
         recorded += page["recorded"].as_u64().unwrap_or(0);
+        for (origin, n) in page["scanned_by_origin"].as_object().into_iter().flatten() {
+            *by_origin.entry(origin.clone()).or_default() += n.as_u64().unwrap_or(0);
+        }
         findings.extend(page["findings"].as_array().cloned().unwrap_or_default());
         for r in page["by_rule"].as_array().into_iter().flatten() {
             *by_rule
@@ -3456,6 +3471,17 @@ fn run_rescan(cli: &Cli, client: &Client, record_held: bool) -> Result<ExitCode,
         }
     }
     let vetoes = findings.iter().filter(|f| f["action"] == "veto").count();
+    if rates {
+        let report = rescan_rates(version.as_str(), scanned, &by_origin, &findings);
+        if cli.json {
+            print_json(&report);
+        } else {
+            for line in rates_lines(&report) {
+                println!("{line}");
+            }
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     if cli.json {
         print_json(&json!({
             "scanner_version": version,
@@ -3500,6 +3526,145 @@ fn run_rescan(cli: &Cli, client: &Client, record_held: bool) -> Result<ExitCode,
     })
 }
 
+/// The smallest count the rates print: a cell below it prints `<5` and no
+/// rate, so a glance at the table does not show a single version. It is not
+/// disclosure control: an origin's exact `scanned` and the difference
+/// between a total and its other cells can recover a hidden count, so the
+/// output is the operator's (ADR-0074 d18).
+const RATES_FLOOR: usize = 5;
+
+/// A count as the rates print it: the number at or above the floor, `<5`
+/// below it, and its share of `of` only when printed.
+fn floored(n: usize, of: u64) -> (Value, Value) {
+    if n == 0 || n >= RATES_FLOOR {
+        #[allow(clippy::cast_precision_loss)]
+        let rate = if of == 0 { 0.0 } else { n as f64 / of as f64 };
+        (json!(n), json!(rate))
+    } else {
+        (json!(format!("<{RATES_FLOOR}")), Value::Null)
+    }
+}
+
+/// The dry run's aggregates (ADR-0074 d18): for each class, each origin
+/// kind and each class within an origin, the versions with a finding the
+/// scan would refuse or hold, and their share of the versions scanned (of
+/// that origin, for an origin). A version counts once per cell however
+/// many findings it carries. Every count from 1 to 4 prints as `<5` with
+/// no rate. The output is for the operator, not for publication: the floor
+/// can be undone by subtraction and by a small origin's exact `scanned`.
+/// The rescan answer the CLI reads carries artifact ids, as the plain
+/// rescan does for the admin key that asks; no id, claim key or text leaves
+/// this function.
+fn rescan_rates(
+    version: Option<&str>,
+    scanned: u64,
+    by_origin: &std::collections::BTreeMap<String, u64>,
+    findings: &[Value],
+) -> Value {
+    use std::collections::{BTreeMap, BTreeSet};
+    let verdict = |f: &Value| {
+        if f["action"] == "veto" {
+            "refuse"
+        } else {
+            "hold"
+        }
+    };
+    let mut by_class: BTreeMap<(String, &str), BTreeSet<String>> = BTreeMap::new();
+    let mut origin_hits: BTreeMap<(String, &str), BTreeSet<String>> = BTreeMap::new();
+    let mut cells: BTreeMap<(String, String, &str), BTreeSet<String>> = BTreeMap::new();
+    for f in findings {
+        let id = format!("{}#{}", field(f, "artifact_id"), f["version"]);
+        let class = field(f, "class").to_owned();
+        let origin = f["origin"].as_str().unwrap_or("none").to_owned();
+        by_class
+            .entry((class.clone(), verdict(f)))
+            .or_default()
+            .insert(id.clone());
+        origin_hits
+            .entry((origin.clone(), verdict(f)))
+            .or_default()
+            .insert(id.clone());
+        cells
+            .entry((class, origin, verdict(f)))
+            .or_default()
+            .insert(id);
+    }
+    json!({
+        "scanner_version": version,
+        "scanned": scanned,
+        "floor": RATES_FLOOR,
+        "classes": by_class.iter().map(|((class, v), ids)| {
+            let (n, rate) = floored(ids.len(), scanned);
+            json!({ "class": class, "verdict": v, "versions": n, "rate": rate })
+        }).collect::<Vec<_>>(),
+        "origins": by_origin.iter().map(|(origin, n)| {
+            let count = |v: &str| origin_hits.get(&(origin.clone(), v)).map_or(0, BTreeSet::len);
+            let (refuse, refuse_rate) = floored(count("refuse"), *n);
+            let (hold, hold_rate) = floored(count("hold"), *n);
+            json!({
+                "origin": origin, "scanned": n,
+                "refuse": refuse, "refuse_rate": refuse_rate,
+                "hold": hold, "hold_rate": hold_rate,
+            })
+        }).collect::<Vec<_>>(),
+        "cells": cells.iter().map(|((class, origin, v), ids)| {
+            let of = by_origin.get(origin).copied().unwrap_or(0);
+            let (n, rate) = floored(ids.len(), of);
+            json!({ "class": class, "origin": origin, "verdict": v, "versions": n, "rate": rate })
+        }).collect::<Vec<_>>(),
+    })
+}
+
+/// The text form of [`rescan_rates`]: percentages to two places, a dash
+/// for a cell under the floor.
+fn rates_lines(report: &Value) -> Vec<String> {
+    let pct = |v: &Value| {
+        v.as_f64()
+            .map_or_else(|| "-".to_owned(), |r| format!("{:.2}%", 100.0 * r))
+    };
+    let count = |v: &Value| v.as_str().map_or_else(|| v.to_string(), str::to_owned);
+    let mut out = vec![format!(
+        "rates       : {} stored version(s) under {}; aggregates for the operator, not for publication; counts under {} print as <{}",
+        report["scanned"],
+        report["scanner_version"]
+            .as_str()
+            .unwrap_or("no pinned rule set"),
+        RATES_FLOOR,
+        RATES_FLOOR
+    )];
+    for c in report["classes"].as_array().into_iter().flatten() {
+        out.push(format!(
+            "  class  {:<28} {:<6} {:>6} version(s)  {}",
+            field(c, "class"),
+            field(c, "verdict"),
+            count(&c["versions"]),
+            pct(&c["rate"])
+        ));
+    }
+    for o in report["origins"].as_array().into_iter().flatten() {
+        out.push(format!(
+            "  origin {:<8} {:>6} scanned  refuse {} ({})  hold {} ({})",
+            field(o, "origin"),
+            o["scanned"],
+            count(&o["refuse"]),
+            pct(&o["refuse_rate"]),
+            count(&o["hold"]),
+            pct(&o["hold_rate"])
+        ));
+    }
+    for c in report["cells"].as_array().into_iter().flatten() {
+        out.push(format!(
+            "  cell   {:<28} {:<8} {:<6} {:>6} version(s)  {}",
+            field(c, "class"),
+            field(c, "origin"),
+            field(c, "verdict"),
+            count(&c["versions"]),
+            pct(&c["rate"])
+        ));
+    }
+    out
+}
+
 fn run_admin(
     cli: &Cli,
     stored: &Credentials,
@@ -3507,7 +3672,9 @@ fn run_admin(
 ) -> Result<ExitCode, CliError> {
     let client = resolve(cli, stored)?;
     let (memory, query, workarea, state) = match command {
-        AdminCommand::Rescan { record_held } => return run_rescan(cli, &client, *record_held),
+        AdminCommand::Rescan { record_held, rates } => {
+            return run_rescan(cli, &client, *record_held, *rates);
+        }
         AdminCommand::Read {
             memory,
             query,
@@ -5363,7 +5530,8 @@ fn scan_backlog_doctor(report: Option<&Value>) -> Vec<String> {
         .unwrap_or("the server's rule set");
     let held = r["held_unrescanned"].as_u64().unwrap_or(0);
     let due = r["rescan_due"].as_u64().unwrap_or(0);
-    vec![
+    let unlisted = r["findings_unlisted"].as_u64().unwrap_or(0);
+    let mut lines = vec![
         if held > 0 {
             format!(
                 "warn scan_held_unrescanned: {held} held version(s) were scanned under an older rule set than {version}, and stay their authors' alone in in-progress workareas; run oml admin rescan --record-held"
@@ -5378,7 +5546,18 @@ fn scan_backlog_doctor(report: Option<&Value>) -> Vec<String> {
         } else {
             "scan_rescan_due: 0".to_owned()
         },
-    ]
+    ];
+    // A server before the findings list does not report the count.
+    if r.get("findings_unlisted").is_some() {
+        lines.push(if unlisted > 0 {
+            format!(
+                "warn scan_findings_unlisted: {unlisted} held version(s) carry a scan finding the findings list lacks, written by a server older than migration 0043; the review card shows only the stored summary for them; run oml admin rescan --record-held"
+            )
+        } else {
+            "scan_findings_unlisted: 0".to_owned()
+        });
+    }
+    lines
 }
 
 /// The scan doctor lines (ADR-0065 d11): the rule set `/readyz` names, how
@@ -6158,6 +6337,84 @@ mod tests {
         assert_eq!(lines[2], "findings since start: none");
         let old = (200, json!({"status": "ok"}));
         assert!(scan_doctor(Some(&old), None)[0].starts_with("warn scan_ruleset:"));
+    }
+
+    /// ADR-0074 d23: a held version a server older than migration 0043
+    /// wrote has no findings list, and doctor names how many and the fix.
+    #[test]
+    fn the_scan_doctor_warns_of_held_versions_whose_finding_the_findings_list_lacks() {
+        let report = json!({
+            "scanner_version": "oml-scan/1.1", "held_unrescanned": 0, "rescan_due": 0,
+            "findings_unlisted": 2,
+        });
+        assert_eq!(
+            scan_backlog_doctor(Some(&report))[2],
+            "warn scan_findings_unlisted: 2 held version(s) carry a scan finding the findings list lacks, written by a server older than migration 0043; the review card shows only the stored summary for them; run oml admin rescan --record-held"
+        );
+        let clear = json!({
+            "scanner_version": "oml-scan/1.1", "held_unrescanned": 0, "rescan_due": 0,
+            "findings_unlisted": 0,
+        });
+        assert_eq!(
+            scan_backlog_doctor(Some(&clear))[2],
+            "scan_findings_unlisted: 0"
+        );
+    }
+
+    /// ADR-0074 d18: the dry run's rates are aggregates per class, per
+    /// origin and per class within an origin, a version counts once per
+    /// cell, a count under the floor prints as `<5` with no rate, the
+    /// header says the output is the operator's, and no id or text is
+    /// printed.
+    #[test]
+    fn the_rescan_rates_print_counts_under_five_as_under_five_for_the_operator_with_no_id_or_text()
+    {
+        let id = |n: u128| format!("{:032x}", n);
+        let mut findings = Vec::new();
+        // Six chat versions held for one rule, one of them twice.
+        for n in 0..6 {
+            findings.push(json!({"artifact_id": id(n), "version": 1, "class": "injection.override", "rule": "ignore-instructions", "action": "hold", "origin": "chat", "at": "/body line 1"}));
+        }
+        findings.push(json!({"artifact_id": id(0), "version": 1, "class": "injection.override", "rule": "new-instructions", "action": "hold", "origin": "chat", "at": "/body line 2"}));
+        // One web version holding a secret: a cell of one.
+        findings.push(json!({"artifact_id": id(99), "version": 2, "class": "secret.api_token", "rule": "github-token", "action": "veto", "origin": "web", "at": "/body line 1"}));
+        let by_origin =
+            std::collections::BTreeMap::from([("chat".to_owned(), 10_u64), ("web".to_owned(), 1)]);
+        let report = rescan_rates(Some("oml-scan/1.1"), 11, &by_origin, &findings);
+        assert_eq!(
+            report["classes"],
+            json!([
+                {"class": "injection.override", "verdict": "hold", "versions": 6, "rate": 6.0 / 11.0},
+                {"class": "secret.api_token", "verdict": "refuse", "versions": "<5", "rate": null},
+            ])
+        );
+        assert_eq!(
+            report["origins"],
+            json!([
+                {"origin": "chat", "scanned": 10, "refuse": 0, "refuse_rate": 0.0, "hold": 6, "hold_rate": 0.6},
+                {"origin": "web", "scanned": 1, "refuse": "<5", "refuse_rate": null, "hold": 0, "hold_rate": 0.0},
+            ])
+        );
+        assert_eq!(
+            report["cells"][1],
+            json!({"class": "secret.api_token", "origin": "web", "verdict": "refuse", "versions": "<5", "rate": null})
+        );
+        let lines = rates_lines(&report);
+        assert!(lines[0].contains("counts under 5 print as <5"), "{lines:?}");
+        assert!(lines[0].contains("not for publication"), "{lines:?}");
+        let text = format!("{report}\n{}", lines.join("\n"));
+        assert!(
+            !text.contains("refuse 1 ") && !text.contains("\"refuse\":1"),
+            "{text}"
+        );
+        assert!(
+            lines.iter().all(|l| !l.contains(" 1 version(s)")),
+            "a count of one is never printed: {lines:?}"
+        );
+        for n in [0_u128, 5, 99] {
+            assert!(!text.contains(&id(n)), "{text}");
+        }
+        assert!(!text.contains("/body"), "{text}");
     }
 
     #[test]
