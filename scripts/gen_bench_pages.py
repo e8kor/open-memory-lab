@@ -136,7 +136,8 @@ DEFINITIONS = ("## Metric definitions\n\n"
 WHAT_NOT = {
     "recall-synthetic": "One model wrote the corpus, the queries and the labels, and its name was not recorded. "
                         "The scores compare OML pipelines with each other; do not compare them with BEIR or LoCoMo.",
-    "recall-grown": "A model of another family than the corpus's writer drafted the queries, and each labels "
+    "recall-grown": "Phi-3-mini drafted the queries. Which model wrote the corpus is unknown, so whether "
+                    "the two are of different families, as ADR-0075 d8 asks, is unverified. Each query labels "
                     "only the memory it was drafted from, so a second memory that also answers is not credited. "
                     "The set exists to give ADR-0075's phase 0 a baseline with 90% power; compare pipelines "
                     "with each other on it, not with BEIR or LoCoMo.",

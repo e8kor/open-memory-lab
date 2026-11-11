@@ -3,14 +3,21 @@
  "date": "2026-11-11",
  "checked": 67,
  "marks": {"correct": 58, "unsure": 6, "wrong": 3},
- "bad_labels": 1,
- "finding": "One label is wrong: g0113. The other eight marks that are not 'correct' (g0354, g0413, g0422, g0456, g0642, g0650, g0651, g0654) question the fictional Tallyline stack the corpus describes (its cloud provider, Kotlin, Gradle), not whether the labelled memory answers the query. Notes on answer spans do not change memory-level scoring.",
+ "not_correct": {
+  "g0113": "unsure", "g0354": "unsure", "g0413": "wrong", "g0422": "wrong", "g0456": "wrong",
+  "g0642": "unsure", "g0650": "unsure", "g0651": "unsure", "g0654": "unsure"
+ },
+ "corrected_labels": 1,
+ "finding": "The three wrong marks (g0413, g0422, g0456) and five of the six unsure ones (g0354, g0642, g0650, g0651, g0654) object to the fictional Tallyline stack the corpus describes (its cloud provider, Kotlin, Gradle), not to whether the labelled memory answers the query. The sixth unsure mark, g0113, found the query vague and asked to add m037 and m038 as relevant or drop the query; the operator chose on 2026-11-11 to add them and keep m033. Notes on answer spans do not change memory-level scoring. No pass threshold was set before the check; the operator accepted the set with this one correction.",
  "corrections": {
   "g0113": {
    "was": {"m033": 2},
-   "relevant": {"m038": 2, "m037": 2, "m033": 1},
-   "answer_span": {"m038": "Ledger entries", "m037": "The ledger_entries table", "m033": "The invoices table"},
-   "reason": "By accounting practice the team's financial record is the ledger (ledger_entries, append-only, m038 and m037); invoices (m033) are documents posted to it."
+   "relevant": {"m033": 2, "m037": 2, "m038": 2},
+   "answer_span": {"m033": "The invoices table", "m037": "The ledger_entries table", "m038": "Ledger entries"},
+   "mark": "unsure",
+   "note": "Query is vague: ledger_entries (m037, m038) and payments (m043) are financial records too. Either add m037/m038 as relevant or drop the query.",
+   "decision": "Add ledger, keep invoices: m037 and m038 join m033 at grade 2 (the operator, 2026-11-11)."
   }
- }
+ },
+ "corpus_writer": "unknown: the operator does not know which model wrote corpus.json and queries.json (2026-11-11), so d8's condition that the grown set's writer be of another family than the corpus's writer is unverified; ADR-0075 d13's reopen clause, a set of real recall misses, is the remedy"
 }

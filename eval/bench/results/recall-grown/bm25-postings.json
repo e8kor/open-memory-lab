@@ -65,5 +65,5 @@
   "p99": 37.33
  },
  "reference": null,
- "notes": "The synthetic corpus's 200 memories with the grown set's question-shaped and paraphrased queries (ADR-0075 d8, phase 0a), drafted by a model of another family than the corpus's writer and labelled with the memory each was drafted from; success counts grade 2; k 100, no token budget; English only. bm25-postings takes its candidates from the postings of the query forms it reads; when a query's readable postings pass POSTING_BUDGET (10,000) it leaves out the forms held by more than 10% of the readable rows, so a row holding only those is no candidate, and below the budget it reads every form and ranks as bm25 (ADR-0052 d6)."
+ "notes": "The synthetic corpus's 200 memories with the grown set's question-shaped and paraphrased queries (ADR-0075 d8, phase 0a), drafted by Phi-3-mini (the corpus's writer is unknown, so whether it is another family is unverified) and labelled with the memory each was drafted from; success counts grade 2; k 100, no token budget; English only. bm25-postings takes its candidates from the postings of the query forms it reads; when a query's readable postings pass POSTING_BUDGET (10,000) it leaves out the forms held by more than 10% of the readable rows, so a row holding only those is no candidate, and below the budget it reads every form and ranks as bm25 (ADR-0052 d6)."
 }

@@ -4,8 +4,9 @@
     python3 eval/recall/grow.py build eval/recall/grow/pass1.jsonl > eval/recall/queries-grown.json
     python3 eval/recall/grow.py drafts eval/recall/grow/pass1.jsonl
 
-`grow/drafter` asks a local model of another family than the corpus's writer
-(Phi-3-mini-4k-instruct, MIT) for two question-shaped searches (Q1, Q2) and
+`grow/drafter` asks a local model (Phi-3-mini-4k-instruct, MIT; which model
+wrote the corpus is unknown, so whether it is of another family, as ADR-0075
+d8 asks, is unverified) for two question-shaped searches (Q1, Q2) and
 two paraphrases (P1, P2) per memory, each with the words of the memory that
 answer it. Every draft then passes these checks, in this order, or is dropped
 with the first reason it fails; `drafts` prints every draft with its verdict:
@@ -212,8 +213,9 @@ def build(files):
             "prompt": {"file": "eval/recall/grow/prompt.txt", "version": "oml-recall-grow/1",
                        "sha256": hashlib.sha256(PROMPT.read_bytes()).hexdigest()},
             "passes": {p: {"seed": s} for p, s in PASSES.items() if any(v["pass"] == p for v in verdicts)},
-            "corpus_writer": "one model wrote corpus.json and queries.json (REPORT.md, Limits); "
-                             "that it is not of the Phi family is part of the person's check",
+            "corpus_writer": (check or {}).get("corpus_writer") or (
+                "one model wrote corpus.json and queries.json (REPORT.md, Limits); "
+                "that it is not of the Phi family is part of the person's check"),
             "drafts": len(verdicts),
             "dropped": dict(sorted(dropped.items())),
             "labels": "each query labels the memory it was drafted from, grade 2, and the answer "
@@ -223,14 +225,21 @@ def build(files):
         },
         "person_check": ({"sample": sample, "seed": SAMPLE_SEED, "checked_by": check["checked_by"],
                           "date": check["date"], "status": "done", "checked": check["checked"],
-                          "marks": check["marks"], "bad_labels": check["bad_labels"],
+                          "marks": check["marks"], "not_correct": check["not_correct"],
+                          "corrected_labels": check["corrected_labels"],
                           "finding": check["finding"],
-                          "corrections": {k: {"was": v["was"], "reason": v["reason"]}
+                          "corrections": {k: {"was": v["was"], "mark": v["mark"], "note": v["note"],
+                                              "decision": v["decision"]}
                                           for k, v in check["corrections"].items()}}
                          if check else {"sample": sample, "seed": SAMPLE_SEED, "checked_by": None,
                                         "status": "pending"}),
         "queries": queries,
     }
+
+
+def render(files):
+    """queries-grown.json's exact text, as `build` prints it."""
+    return json.dumps(build(files), indent=1, ensure_ascii=False) + "\n"
 
 
 def main():
@@ -239,7 +248,7 @@ def main():
     ap.add_argument("files", nargs="+")
     a = ap.parse_args()
     if a.what == "build":
-        print(json.dumps(build(a.files), indent=1, ensure_ascii=False))
+        sys.stdout.write(render(a.files))
     else:
         for v in judge(a.files)[1]:
             print(json.dumps(v, ensure_ascii=False))

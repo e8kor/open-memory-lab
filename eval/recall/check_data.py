@@ -19,7 +19,7 @@ Run by .github/workflows/ci.yml (job recall-eval-data). Fails when:
   0 to 4 or one memory's queries in two folds (a query a person relabelled is
   held to the fold of the memory it was drafted from), a query without its
   origin, a person-check sample that is not a tenth of the set, or a person
-  check that is done but names no checker, date or bad-label count, or
+  check that is done but names no checker, date or corrected-label count, or
   corrects a query outside its sample.
 """
 
@@ -100,8 +100,9 @@ def check_grown(memories, synthetic, errors):
     if passes:
         import grow  # noqa: PLC0415 - only the grown set's check needs it
 
-        if grow.build([str(p) for p in passes])["queries"] != grown:
-            errors.append("grown set: grow.py does not rebuild these queries from grow/pass*.jsonl")
+        if grow.render([str(p) for p in passes]) != path.read_text():
+            errors.append("grown set: grow.py does not rebuild queries-grown.json byte for byte "
+                          "from grow/pass*.jsonl")
     else:
         errors.append("grown set: no grow/pass*.jsonl to rebuild it from")
     sample = (data.get("person_check") or {}).get("sample", [])
@@ -109,8 +110,9 @@ def check_grown(memories, synthetic, errors):
         errors.append(f"grown set: the person-check sample holds {len(sample)} known ids, "
                       f"not a tenth of {len(grown)}")
     if check.get("status") == "done":
-        if not (check.get("checked_by") and check.get("date") and "bad_labels" in check):
-            errors.append("grown set: the person check is done but names no checker, date or bad-label count")
+        if not (check.get("checked_by") and check.get("date") and "corrected_labels" in check):
+            errors.append("grown set: the person check is done but names no checker, date or "
+                          "corrected-label count")
         errors += [f"grown set: the person check corrects {k}, which is not in its sample"
                    for k in corrected if k not in sample]
     return grown
