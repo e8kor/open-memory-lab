@@ -6383,7 +6383,10 @@ where
         // An answer the floor thinned matched its words; its rows were
         // withheld, so it offers no spellings (ADR-0053 d6).
         lap = timings.lap(Stage::Cut, lap);
+        // None at an instant: the vocabulary is today's, and a word only a
+        // version recorded later holds would name it (ADR-0059 d18).
         let did_you_mean = if pipeline.suggests()
+            && req.as_of.is_none()
             && below_floor == 0
             && candidates.len() < DID_YOU_MEAN_BELOW.min(req.k)
         {

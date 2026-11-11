@@ -77,15 +77,19 @@ fn tip_at(state: &TenantState, m: &MemoryRecord, as_of: &EventTime) -> bool {
             .as_ref()
             .is_some_and(|at| at.as_str() <= as_of.as_str())
     };
+    // Today's tip promoted by the instant was the tip then, while a tip
+    // moves forward alone (ADR-0059 d16), as PostgreSQL's `tip_at_sql`
+    // reads it.
     m.status == MemoryStatus::Promoted
         && promoted_by(m)
-        && !state
-            .by_workarea
-            .get(&m.workarea_id)
-            .into_iter()
-            .flatten()
-            .filter_map(|id| state.memories.get(id))
-            .any(|r| r.claim_key == m.claim_key && r.version > m.version && promoted_by(r))
+        && (m.is_tip
+            || !state
+                .by_workarea
+                .get(&m.workarea_id)
+                .into_iter()
+                .flatten()
+                .filter_map(|id| state.memories.get(id))
+                .any(|r| r.claim_key == m.claim_key && r.version > m.version && promoted_by(r)))
 }
 
 /// Whether `m` existed at `as_of`: its submission was recorded by then.
@@ -2326,6 +2330,11 @@ impl Retriever for MemStore {
         Ok(Some(crate::search::ValidTimeCounts {
             declared: served().filter(|m| m.valid.from.is_some()).count() as u64,
             expired: served().filter(|m| m.valid.expired_at(now_us)).count() as u64,
+            untimed: state
+                .memories
+                .values()
+                .filter(|m| m.status == MemoryStatus::Promoted && m.promoted_at.is_none())
+                .count() as u64,
         }))
     }
 }

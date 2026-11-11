@@ -712,6 +712,13 @@ where
             .iter()
             .any(|(n, v)| (n == "with_own" && v == "true") || n == "author")
         {
+            // as_of reads the scoped listing alone (ADR-0059 d19).
+            if params.iter().any(|(n, _)| n == "as_of") {
+                return Err(ApiError::validation(
+                    "as_of reads the scoped listing: it does not combine with own, with_own, author or tip",
+                )
+                .with_details(json!({ "field": "as_of" })));
+            }
             return Self::list_with_own_inner(st, params, &acting, include_text).await;
         }
         let req = list_request(params)?;

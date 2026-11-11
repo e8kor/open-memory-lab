@@ -864,6 +864,11 @@ const HELD_TODAY: &str = "OR (m.status = 'held' AND m.workarea_id = ANY($5::uuid
 /// the probe the adapter runs.
 #[must_use]
 pub fn tip_at_sql(at: &str) -> String {
+    // `m.is_tip` short-cuts the probe for today's tip: sound only while a
+    // tip moves forward alone. An act that makes a replaced version the tip
+    // again (a demotion returning it) must add ADR-0059 d16's interval fold
+    // and drop this short cut in the same change; the in-memory store's
+    // `tip_at` makes the same reading.
     format!(
         "m.status = 'promoted' AND m.promoted_at <= {at} \
          AND (m.is_tip OR m.version = (SELECT max(s.version) FROM memories s \
@@ -872,9 +877,11 @@ pub fn tip_at_sql(at: &str) -> String {
     )
 }
 
-/// An instant as an SQL literal. An [`EventTime`] is validated to the
-/// fixed-width form of digits, `-`, `:`, `T`, `.` and `Z`, so it is inlined
-/// where binding it would renumber every search statement's parameters.
+/// An instant as an SQL literal. Safe because an [`EventTime`] exists only
+/// through `EventTime::parse`, which admits the fixed 27-byte form of
+/// digits, `-`, `:`, `T`, `.` and `Z` alone, so no quote can reach the
+/// statement; the assertion restates it. It is inlined where binding it
+/// would renumber every search statement's parameters.
 fn instant_literal(at: &EventTime) -> String {
     let t = at.as_str();
     assert!(
@@ -893,9 +900,12 @@ fn scope_at(sql: &str, at: Option<&EventTime>) -> String {
     let Some(at) = at else {
         return sql.to_owned();
     };
+    // Both parts are rewritten or the statement is refused: a held part
+    // left as today's would count held rows recorded after the instant in
+    // bm25's statistics.
     assert!(
-        sql.contains(TIPS_TODAY),
-        "the statement reads the search scope"
+        sql.contains(TIPS_TODAY) && sql.contains(HELD_TODAY),
+        "the statement reads the search scope's promoted and held parts"
     );
     sql.replace(
         TIPS_TODAY,
@@ -5157,11 +5167,13 @@ impl Retriever for PgStore {
     ) -> Result<Option<oml_app::search::ValidTimeCounts>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let (declared, expired): (i64, i64) = sqlx::query_as(
-            "SELECT count(*) FILTER (WHERE m.valid_from_us IS NOT NULL)::int8, \
-                    count(*) FILTER (WHERE m.valid_until_us <= $2)::int8 \
-             FROM memories m WHERE m.tenant_id = $1 AND m.status = 'promoted' AND m.is_tip \
-               AND NOT m.retirement",
+        let (declared, expired, untimed): (i64, i64, i64) = sqlx::query_as(
+            "SELECT count(*) FILTER (WHERE m.is_tip AND NOT m.retirement \
+                                       AND m.valid_from_us IS NOT NULL)::int8, \
+                    count(*) FILTER (WHERE m.is_tip AND NOT m.retirement \
+                                       AND m.valid_until_us <= $2)::int8, \
+                    count(*) FILTER (WHERE m.promoted_at IS NULL)::int8 \
+             FROM memories m WHERE m.tenant_id = $1 AND m.status = 'promoted'",
         )
         .bind(tenant_id)
         .bind(now_us)
@@ -5172,6 +5184,7 @@ impl Retriever for PgStore {
         Ok(Some(oml_app::search::ValidTimeCounts {
             declared: u64::try_from(declared).map_err(backend)?,
             expired: u64::try_from(expired).map_err(backend)?,
+            untimed: u64::try_from(untimed).map_err(backend)?,
         }))
     }
 

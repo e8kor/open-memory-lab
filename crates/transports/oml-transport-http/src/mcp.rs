@@ -741,96 +741,101 @@ where
             )
             .await?;
         }
-        let mut out = if let Some(artifact_id) = args.artifact_id {
-            let as_of = crate::parse_as_of(args.as_of.as_deref(), "/as_of").map_err(refusal)?;
-            let memory = ring_outcome(
-                Self::get_memory_inner(
-                    st,
-                    &artifact_id,
-                    as_of.as_ref(),
-                    &ring_headers(presented),
-                    presented.connection,
+        // The ring names a query parameter `as_of`; a tool argument is a
+        // JSON pointer, `/as_of`, in every mode (ADR-0059 d14).
+        let read = async {
+            Ok::<Value, Value>(if let Some(artifact_id) = args.artifact_id {
+                let as_of = crate::parse_as_of(args.as_of.as_deref(), "/as_of").map_err(refusal)?;
+                let memory = ring_outcome(
+                    Self::get_memory_inner(
+                        st,
+                        &artifact_id,
+                        as_of.as_ref(),
+                        &ring_headers(presented),
+                        presented.connection,
+                    )
+                    .await,
                 )
-                .await,
-            )
-            .await?;
-            json!({ "items": [get_item(&memory)] })
-        } else if let Some(query) = args.query {
-            let mut body = Map::new();
-            body.insert("query".to_owned(), Value::String(query));
-            for (name, value) in [
-                ("workarea", args.workarea.map(Value::from)),
-                ("k", args.k.map(Value::from)),
-                ("kinds", args.kinds.map(Value::from)),
-                (
-                    "include_unreviewed",
-                    args.include_unreviewed.map(Value::from),
-                ),
-                ("max_tokens", args.max_tokens.map(Value::from)),
-                ("search", args.search.map(Value::from)),
-                ("match", args.match_mode.map(Value::from)),
-                ("include_expired", args.include_expired.map(Value::from)),
-                ("now", args.now.map(Value::from)),
-                ("anchor_repo", args.anchor_repo.map(Value::from)),
-                (
-                    "anchor_path_prefix",
-                    args.anchor_path_prefix.map(Value::from),
-                ),
-                ("origin_kinds", args.origin_kinds.clone().map(Value::from)),
-                ("sources", args.sources.clone()),
-                ("as_of", args.as_of.clone().map(Value::from)),
-            ] {
-                if let Some(value) = value {
-                    body.insert(name.to_owned(), value);
+                .await?;
+                json!({ "items": [get_item(&memory)] })
+            } else if let Some(query) = args.query {
+                let mut body = Map::new();
+                body.insert("query".to_owned(), Value::String(query));
+                for (name, value) in [
+                    ("workarea", args.workarea.map(Value::from)),
+                    ("k", args.k.map(Value::from)),
+                    ("kinds", args.kinds.map(Value::from)),
+                    (
+                        "include_unreviewed",
+                        args.include_unreviewed.map(Value::from),
+                    ),
+                    ("max_tokens", args.max_tokens.map(Value::from)),
+                    ("search", args.search.map(Value::from)),
+                    ("match", args.match_mode.map(Value::from)),
+                    ("include_expired", args.include_expired.map(Value::from)),
+                    ("now", args.now.map(Value::from)),
+                    ("anchor_repo", args.anchor_repo.map(Value::from)),
+                    (
+                        "anchor_path_prefix",
+                        args.anchor_path_prefix.map(Value::from),
+                    ),
+                    ("origin_kinds", args.origin_kinds.clone().map(Value::from)),
+                    ("sources", args.sources.clone()),
+                    ("as_of", args.as_of.clone().map(Value::from)),
+                ] {
+                    if let Some(value) = value {
+                        body.insert(name.to_owned(), value);
+                    }
                 }
-            }
-            let result = ring_outcome(
-                Self::recall_inner(
-                    st,
-                    &ring_headers(presented),
-                    &Bytes::from(Value::Object(body).to_string()),
-                    presented.connection,
+                let result = ring_outcome(
+                    Self::recall_inner(
+                        st,
+                        &ring_headers(presented),
+                        &Bytes::from(Value::Object(body).to_string()),
+                        presented.connection,
+                    )
+                    .await,
                 )
-                .await,
-            )
-            .await?;
-            recall_output(&result)
-        } else {
-            // With as_of and no own, the scoped listing at the instant
-            // (ADR-0059 d19).
-            let own = args.own.unwrap_or(args.as_of.is_none());
-            let mut params = vec![("own".to_owned(), own.to_string())];
-            for (name, value) in [
-                ("workarea", args.workarea),
-                ("claim_key", args.claim_key),
-                ("state", args.state),
-                ("kind", args.kind),
-                ("since", args.since),
-                ("until", args.until),
-                ("limit", args.limit.map(|l| l.to_string())),
-                ("cursor", args.cursor),
-                ("anchor_repo", args.anchor_repo),
-                ("anchor_path_prefix", args.anchor_path_prefix),
-                ("origin_kinds", args.origin_kinds.map(|k| k.join(","))),
-                ("as_of", args.as_of),
-            ] {
-                if let Some(value) = value {
-                    params.push((name.to_owned(), value));
+                .await?;
+                recall_output(&result)
+            } else {
+                // With as_of and no own, the scoped listing at the instant
+                // (ADR-0059 d19).
+                let own = args.own.unwrap_or(args.as_of.is_none());
+                let mut params = vec![("own".to_owned(), own.to_string())];
+                for (name, value) in [
+                    ("workarea", args.workarea),
+                    ("claim_key", args.claim_key),
+                    ("state", args.state),
+                    ("kind", args.kind),
+                    ("since", args.since),
+                    ("until", args.until),
+                    ("limit", args.limit.map(|l| l.to_string())),
+                    ("cursor", args.cursor),
+                    ("anchor_repo", args.anchor_repo),
+                    ("anchor_path_prefix", args.anchor_path_prefix),
+                    ("origin_kinds", args.origin_kinds.map(|k| k.join(","))),
+                    ("as_of", args.as_of),
+                ] {
+                    if let Some(value) = value {
+                        params.push((name.to_owned(), value));
+                    }
                 }
-            }
-            let page = ring_outcome(
-                Self::list_memories_inner(
-                    st,
-                    &params,
-                    &ring_headers(presented),
-                    true,
-                    presented.connection,
+                let page = ring_outcome(
+                    Self::list_memories_inner(
+                        st,
+                        &params,
+                        &ring_headers(presented),
+                        true,
+                        presented.connection,
+                    )
+                    .await,
                 )
-                .await,
-            )
-            .await?;
-            listing_output(&page)
+                .await?;
+                listing_output(&page)
+            })
         };
+        let mut out = read.await.map_err(as_of_pointer)?;
         if let Some(obj) = out.as_object_mut() {
             obj.insert("mode".to_owned(), Value::from(mode));
         }
@@ -1136,6 +1141,20 @@ fn tool_result(outcome: Result<Value, Value>, request_id: &str) -> Value {
 /// the request id (errors.md envelope).
 fn refusal(error: ApiError) -> Value {
     json!({ "error": error.error_object() })
+}
+
+/// A refusal whose `details.field` is the ring's query parameter `as_of`,
+/// named as the tool's argument pointer `/as_of`; any other is unchanged.
+fn as_of_pointer(mut refused: Value) -> Value {
+    if let Some(field) = refused
+        .get_mut("error")
+        .and_then(|e| e.get_mut("details"))
+        .and_then(|d| d.get_mut("field"))
+        .filter(|f| *f == "as_of")
+    {
+        *field = Value::from("/as_of");
+    }
+    refused
 }
 
 /// A refusal of one argument: `request.validation` naming it in

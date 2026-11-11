@@ -741,6 +741,10 @@ pub struct PostingsHealth {
 pub struct ValidTimeCounts {
     pub declared: u64,
     pub expired: u64,
+    /// Promoted versions with no `promoted_at`, which a row folded before
+    /// 0005 can be: an as-of read never serves one and serves the version
+    /// before it in its place (ADR-0059 d16).
+    pub untimed: u64,
 }
 
 /// One retrieval: the query, whether every term must match, and how many
