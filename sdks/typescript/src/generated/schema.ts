@@ -1158,14 +1158,14 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The sign-in page without a session; the user page with one.
-         * @description Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys, setup, review, and memories with memory, one memory opened by its id), memory. The Memories list and the Atlas are oml-web's, at /web/memories and /web/atlas. Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
+         * The sign-in page without a session; a signed-in browser goes on to the Keys view.
+         * @description Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Every view of the user page is oml-web's at a path of its own (ADR-0070 d7 (b)); a signed-in request naming a view is access.not_found, the old ?view= URLs' 303s having been deleted in v0.7.1 (ADR-0070, "The old URLs deleted"). Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
          */
         get: operations["userPage"];
         put?: never;
         /**
-         * One act of the user page, named by action.
-         * @description Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off, review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key, which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea, workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.
+         * Sign out, the one act the lead keeps.
+         * @description Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is sign_out, which takes no other field; every other act is oml-web's at its view's own path, and an old form's action is request.validation with details.field action, running nothing (ADR-0070 d6, d7 (b); the moved acts' 303s deleted in v0.7.1). Since v0.5.0.
          */
         post: operations["userPageAct"];
         delete?: never;
@@ -1212,30 +1212,6 @@ export interface paths {
         get: operations["webCallback"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/web/admin": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The admin page, for a session whose allowlist entry is an admin's.
-         * @description Every view is oml-web's: the lead answers 303 to the view's own path, /web/admin/people when none is named, before reading a session and carrying nothing from the request but, for one memory, its id (ADR-0070 d7 (b); the overview since v0.7.0). The admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin serves oml-web's memory views, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
-         */
-        get: operations["adminPage"];
-        put?: never;
-        /**
-         * One act of the admin page, named by action, run as the capacity it needs.
-         * @description Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator's own universe claims as <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web runs at /web/admin/workareas over the API: the lead runs none of them and answers 303 /web/admin/workareas (ADR-0070 d7 (b); since v0.6.4). Since v0.5.0.
-         */
-        post: operations["adminPageAct"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6724,18 +6700,14 @@ export interface operations {
     };
     userPage: {
         parameters: {
-            query?: {
-                view?: "keys" | "setup" | "memories" | "workarea" | "review";
-                q?: string;
-                memory?: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description The page. */
+            /** @description The sign-in page. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6744,12 +6716,21 @@ export interface operations {
                     "text/html": string;
                 };
             };
-            /** @description A view oml-web now serves at its own path, view=guardrails or view=workarea: to the fixed /web/guardrails or /web/workareas; view=memories without memory: to /web/memories, or /web/atlas with display=atlas; each carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4; the memories views since v0.7.0. */
+            /** @description Signed in and naming no view, to the Keys view at /web/keys, carrying nothing from the request. */
             303: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description access.not_found, on a page, for a signed-in request naming a view. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
             };
         };
     };
@@ -6764,27 +6745,27 @@ export interface operations {
             content: {
                 "application/x-www-form-urlencoded": {
                     /** @enum {string} */
-                    action: "issue_key" | "connect_key" | "connect_code" | "cut_off" | "create_workarea" | "workarea_mode" | "workarea_transition" | "workarea_ratify" | "review_next" | "verdict" | "sign_out";
+                    action: "sign_out";
                     csrf_token: string;
                 };
             };
         };
         responses: {
-            /** @description The page after the act. */
-            200: {
+            /** @description To /web, the session ended and its cookie cleared. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description request.validation, on a page. */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "text/html": string;
                 };
-            };
-            /** @description After sign_out, to /web; for create_workarea, workarea_mode, workarea_transition and workarea_ratify, to /web/workareas, having run nothing. */
-            303: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };
@@ -6891,81 +6872,6 @@ export interface operations {
                 content: {
                     "text/html": string;
                 };
-            };
-        };
-    };
-    adminPage: {
-        parameters: {
-            query?: {
-                view?: "people" | "queue" | "review" | "held" | "curate" | "memories" | "workarea";
-                q?: string;
-                memory?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The page. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-            /** @description view=workarea, which oml-web serves at its own path: to the fixed /web/admin/workareas, carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4. */
-            303: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description access.not_found, on a page. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-        };
-    };
-    adminPageAct: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": {
-                    /** @enum {string} */
-                    action: "allow_email" | "remove_email" | "set_admin" | "grant_review" | "grant_curation" | "review_next" | "verdict" | "bulk_confirm" | "bulk_verdict" | "curate" | "supersede" | "cut_off" | "workarea_mode" | "workarea_transition" | "workarea_ratify";
-                    csrf_token: string;
-                };
-            };
-        };
-        responses: {
-            /** @description The page after the act. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-            /** @description For workarea_mode, workarea_transition and workarea_ratify, to /web/admin/workareas, having run nothing (ADR-0070 d7 (b)). Since v0.6.4. */
-            303: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

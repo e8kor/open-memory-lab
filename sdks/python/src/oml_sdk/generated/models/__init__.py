@@ -3,9 +3,6 @@
 from .admin_memory import AdminMemory
 from .admin_memory_kind import AdminMemoryKind
 from .admin_memory_state import AdminMemoryState
-from .admin_page_act_body import AdminPageActBody
-from .admin_page_act_body_action import AdminPageActBodyAction
-from .admin_page_view import AdminPageView
 from .admin_read_memory_response_200 import AdminReadMemoryResponse200
 from .admin_read_memory_response_200_verdicts_item import (
     AdminReadMemoryResponse200VerdictsItem,
@@ -295,7 +292,6 @@ from .usage_events_response_200 import UsageEventsResponse200
 from .usage_settings import UsageSettings
 from .user_page_act_body import UserPageActBody
 from .user_page_act_body_action import UserPageActBodyAction
-from .user_page_view import UserPageView
 from .verdict_request import VerdictRequest
 from .verdict_request_verdict import VerdictRequestVerdict
 from .verdict_result import VerdictResult
@@ -368,9 +364,6 @@ __all__ = (
     "AdminMemory",
     "AdminMemoryKind",
     "AdminMemoryState",
-    "AdminPageActBody",
-    "AdminPageActBodyAction",
-    "AdminPageView",
     "AdminReadMemoryResponse200",
     "AdminReadMemoryResponse200VerdictsItem",
     "AdminSearchMemoriesBody",
@@ -630,7 +623,6 @@ __all__ = (
     "UsageSettings",
     "UserPageActBody",
     "UserPageActBodyAction",
-    "UserPageView",
     "VerdictRequest",
     "VerdictRequestVerdict",
     "VerdictResult",
