@@ -809,6 +809,32 @@ Where it reads a decision differently:
 | d7 (d) | both tests required on `main` | the tests run in one job, `crate walls (oml-web)`, and that job's name is the required check; the route wall lives in `oml-web`'s tests, beside the dependency wall | the lead's router is built by `oml-transport-http`, which `oml-web`'s tests already start for the parity rig, so the route wall reads `oml_web::PAGES` without a new dependency; one job builds both test targets once, without Postgres |
 | d7 (d) | (silent on the old URLs' `303`s) | the test names `GET`/`POST /web/admin` as redirects, and `GET`/`POST /web` keep their `?view=` and moved-act `303`s beside the sign-in page and sign-out, until the operator decides whether v0.7.1 deletes them as Phase (c) as built records | deleting a route there deletes its row in the test, in the same change |
 
+## The measurement of 2026-11-11 (#170)
+
+[#170](https://github.com/e8kor/open-memory-lab/issues/170) measured every page a signed-in admin
+loads with a `GET`, served by `oml-web` over loopback at `f3857167` and in process by the lead at
+`4dedf532`, the last commit before phase (b), on the same seeded data: 6 workareas and 240
+memories (500 iterations), and 48 workareas (200). The harness is `bench/web/run.py`, the numbers
+are in `bench/web/results/`, the per-page tables in [Web console overhead](../benchmarks/web.md),
+and the findings in `bench/web/README.md`. One shared host, PostgreSQL 18.6, so every figure is an
+upper bound. No LAN was measured: the rounds below are the round trips a LAN would add.
+
+**The budget is missed, and v0.7.0 ships with the miss.** 16 of the 21 pages with an in-process
+counterpart miss it at 6 workareas, by +6.2 to +42.7 ms p95, and 15 of 21 at 48 workareas, by
++10.1 to +31.2 ms. The operator decided on 2026-11-11 to release v0.7.0 with the miss stated
+and to fix it in v0.7.1 under [#286](https://github.com/e8kor/open-memory-lab/issues/286), with
+fewer calls per page as d8 requires. The rows on the in-flight cap and the rate share are
+readings of the measurement, offered for the operator's acceptance; neither is a settled decision.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d8 | 5 ms p95 above the in-process page on loopback, unmeasured | missed on 16 of the 21 pages with an in-process counterpart, by +6.2 to +42.7 ms p95 (memories +6.2, admin memory +9.1), and on 15 of 21 at 48 workareas, by +10.1 to +31.2 ms; within it at 6 workareas, the user Workareas view, the Atlas, both Atlas JSON routes and the export. The budget stands; v0.7.0 ships with the miss stated, by the operator's decision of 2026-11-11, and v0.7.1 fixes it (#286) | the miss is the session check: every page opens with a round of two `GET /v2/whoami` calls, 7.8 to 17.4 ms p50 each at the lead with 8 to 19 store calls, where the in-process lead read the session once; Review, Curate and Setup, which call nothing else, add +9.5 to +11.4 ms. The hop is not the cause: a page's time outside the lead's handler is at most 4.3 ms p95 (1.0 to 1.5 ms p50 for one round), against 0.5 to 1.0 ms in process |
+| d8 | over budget, fewer calls per page through a field on an existing operation | the remedies, in the order of what they buy, none built by #170 and all three taken by [#286](https://github.com/e8kor/open-memory-lab/issues/286) for v0.7.1: a `whoami` that resolves its credential once and reads the person block only when asked (the Start page asks), taking every page's first round toward the in-process read; the text search's read of the person's keys moved beside the recall (+32.0 ms p95, a third round); the offers of a subtree as a field of `GET /v2/workareas/{workarea}/tree` | each is a field or a narrower read on an operation the pages already call; a cache of resolved sessions stays refused |
+| d8 | at most two sequential calls | 17 of the 23 pages make two rounds or fewer; the text search, the admin Atlas, its JSON and the admin Review view make three; the user Workareas view 3 + 2N calls and the admin view 3 + 3N over N nodes, at most 8 in flight, 4 and 6 rounds at 6 workareas and 14 and 21 to 22 at 48 | over loopback the bounded fan-out made the Workareas views faster than in process (377 ms p50 against 612 at 48), but a LAN adds a round trip per round, not two; the subtree's offers in one call is the fix |
+| d3 layer 6, d8 | the per-session cap on calls in flight waits for #170 | a reading for the operator's acceptance, not yet a decision: not built, and not needed. No page but the Workareas views has more than four calls in flight (the Atlas JSON's four after the session check), and those are held to `FAN_OUT` (8), which stays | a page's cost is the lead's handler time, which every call's key rate already bounds; a cap across a session's pages would bound a person loading several Workareas views at once, which nothing measured shows; it is the Workareas fan-out that needs removing, not capping |
+| d2 (the 2026-11-11 table) | 60 requests a minute for a session key, chosen, not measured; whether pages need a rate share of their own (#279) | a reading for the operator's acceptance, not yet a decision: no share of their own. Every page but the Workareas views spends at most 4 requests of any one session key per view, most 1 or 2, so the floor allows 15 views a minute; the user Workareas view spends 2N requests of the review key (96 at 48 workareas) and the admin view 2N + 2 of the admin key over N nodes, so one view passes the floor | a rate share would hide a page that does not scale; the subtree's offers in one call bring the Workareas views to a constant cost, and 60 stays |
+| d8 | `POOL_IDLE_MAX` (32) and `API_TIMEOUT` (10 s), constants of the build, unmeasured | kept: one page keeps at most 8 connections busy, and the slowest call measured, the tree with counts at 240 memories, took 355 to 398 ms p50 | neither bound was reached; both stay constants of the build |
+
 ## Consequences
 
 - `oml-web`, `oml-page` and `oml-sdk` join the workspace; `oml-transport-http` loses its page
@@ -830,8 +856,12 @@ Where it reads a decision differently:
 - `docs/api/http-api.md`, `openapi.yaml`, `errors.md` and the SDKs gain the ten operations and
   six changes in phase (a); the CLI may use them (`oml keys list`, `oml review queue`) in a
   change of its own.
-- [#170](https://github.com/e8kor/open-memory-lab/issues/170) tracks it: the web hop's overhead is unmeasured against its 5 ms p95 budget, and the
-  per-session in-flight cap of d3 is a constant chosen without measurement.
+- [#170](https://github.com/e8kor/open-memory-lab/issues/170) measured the web hop on loopback (the table of 2026-11-11): the
+  hop itself fits the 5 ms p95 budget, but the session check's `whoami` round does not, so 16 of
+  21 pages miss it by +6.2 to +42.7 ms p95. v0.7.0 ships with the miss stated, by the operator's
+  decision of 2026-11-11, and v0.7.1 fixes it with fewer calls per page
+  ([#286](https://github.com/e8kor/open-memory-lab/issues/286)). That the per-session in-flight
+  cap of d3 and a page rate share are not needed is a reading awaiting the operator's acceptance.
 - #163, #166 and #167 land first, on the current design; this change then moves what they
   built, so none of them is rebased onto an unbuilt crate.
 
