@@ -2249,3 +2249,66 @@ async fn a_close_whose_closing_commit_loses_the_chain_race_journals_each_event_o
     assert_eq!(closed.len(), 1, "closed once");
     assert_eq!(done["journal_seq"], closed[0], "{done}");
 }
+
+/// A key under the person's root that no denial can cut off, as an admin
+/// key there is (`DenialOnAdminKey`), is skipped: the disable denies every
+/// other key, journals `web.user_disabled` once, answers 200, and a
+/// resubmission under the same key replays it, so no refusal ever follows
+/// the disable's first commit (ADR-0068 d8, #266).
+#[tokio::test]
+async fn a_disable_skips_a_key_it_cannot_deny_denies_the_rest_and_a_resubmission_replays() {
+    use oml_app::domain::event_types::{KEY_DENIED, WEB_USER_DISABLED};
+    let rig = rig().await;
+    let _ = alice_with_two_keys(&rig).await;
+    let stray = rig
+        .app
+        .issue_key(
+            &rig.boot.admin_key.value,
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Admin,
+                name: Name::parse("stray-admin").expect("a name"),
+                principal: "operator-2".to_owned(),
+                held_by: Some(HeldBy::Human),
+                default_workarea: None,
+                crew: None,
+                grants: Vec::new(),
+                connect_code: false,
+                user: None,
+                guardrail_scope: None,
+            },
+        )
+        .await
+        .expect("an admin key");
+    let root = key_named(&rig, "alice-web")
+        .await
+        .user
+        .expect("alice's root");
+    rig.store
+        .set_key_user(rig.boot.tenant_id, stray.key_id, Some(root));
+    let request = || {
+        Request::post("/v2/web/users/alice/disable")
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", rig.boot.admin_key.value),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", "disable-stray")
+            .body(Body::from("{}"))
+            .expect("a request")
+    };
+    let (status, _, body) = send(&rig.router, request()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let done: Value = serde_json::from_str(&body).expect("JSON");
+    assert_eq!(done["keys_cut_off"], 2, "{done}");
+    assert_eq!(journalled(&rig, WEB_USER_DISABLED).await.len(), 1);
+    assert_eq!(journalled(&rig, KEY_DENIED).await.len(), 2);
+    let (status, headers, again) = send(&rig.router, request()).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(headers["idempotency-replay"], "true", "{again}");
+    assert_eq!(
+        journalled(&rig, WEB_USER_DISABLED).await.len(),
+        1,
+        "the resubmission replays"
+    );
+}
