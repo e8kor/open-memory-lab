@@ -104,8 +104,9 @@ def from_bench(r, a):
                  if pub else None)
     if ds == "grown":
         note = ("The synthetic corpus's 200 memories with the grown set's question-shaped and "
-                "paraphrased queries (ADR-0075 d8, phase 0a), drafted by a model of another family "
-                "than the corpus's writer and labelled with the memory each was drafted from; "
+                "paraphrased queries (ADR-0075 d8, phase 0a), drafted by Phi-3-mini (the corpus's "
+                "writer is unknown, so whether it is another family is unverified) and labelled "
+                "with the memory each was drafted from; "
                 "success counts grade 2; k 100, no token budget; English only.")
     elif ds == "scifact-x10":
         note = ("SciFact's abstracts and nine copies with 10% of words replaced, 51,830 memories "

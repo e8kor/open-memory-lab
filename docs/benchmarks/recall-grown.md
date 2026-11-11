@@ -90,11 +90,11 @@ Client wall time per recall, in milliseconds, nearest-rank percentiles.
 
 ## What this result does not show
 
-A model of another family than the corpus's writer drafted the queries, and each labels only the memory it was drafted from, so a second memory that also answers is not credited. The set exists to give ADR-0075's phase 0 a baseline with 90% power; compare pipelines with each other on it, not with BEIR or LoCoMo.
+Phi-3-mini drafted the queries. Which model wrote the corpus is unknown, so whether the two are of different families, as ADR-0075 d8 asks, is unverified. Each query labels only the memory it was drafted from, so a second memory that also answers is not credited. The set exists to give ADR-0075's phase 0 a baseline with 90% power; compare pipelines with each other on it, not with BEIR or LoCoMo.
 
 ## Limits of this run
 
-The synthetic corpus's 200 memories with the grown set's question-shaped and paraphrased queries (phase 0a), drafted by a model of another family than the corpus's writer and labelled with the memory each was drafted from; success counts grade 2; k 100, no token budget;
+The synthetic corpus's 200 memories with the grown set's question-shaped and paraphrased queries (phase 0a), drafted by Phi-3-mini (the corpus's writer is unknown, so whether it is another family is unverified) and labelled with the memory each was drafted from; success counts grade 2; k 100, no token budget;
 
 - English only.
 - English only. bm25-postings takes its candidates from the postings of the query forms it reads; when a query's readable postings pass POSTING_BUDGET (10,000) it leaves out the forms held by more than 10% of the readable rows, so a row holding only those is no candidate, and below the budget it reads every form and ranks as bm25.
