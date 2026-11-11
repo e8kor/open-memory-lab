@@ -10352,7 +10352,9 @@ async fn a_recording_rescan_after_migration_0043_lists_each_migrated_finding_onc
 /// places each where the text says: a body reason of several findings is
 /// all `/body`; a rescan's text carries a view after each finding it found
 /// in one; admission's derived scan wrote the view after the last finding
-/// only, so one view suffix on the last of several places none of them. A
+/// only (the `and N more` tail included), so one view suffix on the last
+/// of several, or on the tail, places none of them; nor does a text a
+/// document key holding `; ` split, whose stray part names nothing. A
 /// later recording rescan then lists no finding twice, and a placeless
 /// finding stands for one place only: the rescan's second place of the same
 /// rule is listed (ADR-0074 d23).
@@ -10379,7 +10381,18 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
     let title = Uuid::from_u128(0x432D);
     let rescanned = Uuid::from_u128(0x432E);
     let placeless = Uuid::from_u128(0x432F);
+    let many = Uuid::from_u128(0x4330);
+    let split_key = Uuid::from_u128(0x4331);
+    let five: Vec<String> = (1..=5)
+        .map(|n| format!("injection.override: rule-{n} at /body line {n}"))
+        .collect();
+    let many_text = format!("{}; and 2 more at title", five.join("; "));
     let stored = [
+        (many, many_text.as_str()),
+        (
+            split_key,
+            "injection.override: ignore-instructions at /body line 1 at a; b",
+        ),
         (
             body,
             "injection.override: ignore-instructions at /body line 1; \
@@ -10486,8 +10499,19 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
             None,
             FoundBy::Admission,
         ),
+        (
+            split_key,
+            "ignore-instructions".into(),
+            None,
+            None,
+            FoundBy::Admission,
+        ),
     ];
-    let ids = [body, title, rescanned, placeless];
+    let mut migrated = migrated;
+    for n in 1..=5 {
+        migrated.push((many, format!("rule-{n}"), None, None, FoundBy::Admission));
+    }
+    let ids = [body, title, rescanned, placeless, many, split_key];
     let mut before = read(
         store
             .scan_findings(rig.tenant_id, &ids)
@@ -10550,6 +10574,20 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
                     ],
                 ),
                 recorded(
+                    many,
+                    (1..=7)
+                        .map(|n| found("injection.override", &format!("rule-{n}"), "/title"))
+                        .collect(),
+                ),
+                recorded(
+                    split_key,
+                    vec![found(
+                        "injection.override",
+                        "ignore-instructions",
+                        "/body/a; b",
+                    )],
+                ),
+                recorded(
                     placeless,
                     vec![
                         found("marker finding", "body matches it", "/body"),
@@ -10576,6 +10614,16 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
         Some(1),
         FoundBy::Rescan,
     ));
+    // The two findings the stored text counted but did not name.
+    for n in 6..=7 {
+        want.push((
+            many,
+            format!("rule-{n}"),
+            s("/title"),
+            Some(1),
+            FoundBy::Rescan,
+        ));
+    }
     after.sort_by(|a, b| (a.0, &a.1, &a.2).cmp(&(b.0, &b.1, &b.2)));
     want.sort_by(|a, b| (a.0, &a.1, &a.2).cmp(&(b.0, &b.1, &b.2)));
     assert_eq!(
