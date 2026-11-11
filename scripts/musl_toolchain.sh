@@ -34,11 +34,13 @@ python3 -I -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.
 chmod +x "$dir/ziglang/zig"
 # cc counts zig cc as clang and passes --target=<Rust triple>, which zig
 # does not parse; the wrapper drops it and names the runner's own musl.
+# zig cc turns on UBSan for unoptimised C, whose runtime Rust's linker
+# never links (aws-lc-sys failed on __ubsan_handle_*), so it is turned off.
 cat > "$dir/musl-gcc" <<WRAPPER
 #!/usr/bin/env bash
 args=()
 for a in "\$@"; do case "\$a" in --target=*) ;; *) args+=("\$a") ;; esac; done
-exec "$dir/ziglang/zig" cc -target "$(uname -m)-linux-musl" "\${args[@]}"
+exec "$dir/ziglang/zig" cc -target "$(uname -m)-linux-musl" -fno-sanitize=undefined "\${args[@]}"
 WRAPPER
 chmod +x "$dir/musl-gcc"
 "$dir/musl-gcc" --version
