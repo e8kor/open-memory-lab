@@ -446,12 +446,23 @@ const KEY_WEB_GOOGLE_CLIENT_SECRET: &str = "web.google.client_secret";
 const KEY_WEB_GITHUB_CLIENT_ID: &str = "web.github.client_id";
 const KEY_WEB_GITHUB_CLIENT_SECRET: &str = "web.github.client_secret";
 const KEY_WEB_CLIENT_SECRET: &str = "web.client_secret";
+const KEY_WEB_CLIENT_SECRET_FILE: &str = "web.client_secret_file";
+const KEY_WEB_CLIENT_SECRET_PREVIOUS: &str = "web.client_secret_previous";
+const KEY_WEB_CLIENT_SECRET_PREVIOUS_FILE: &str = "web.client_secret_previous_file";
+const KEY_WEB_CLIENT_SECRET_PREVIOUS_UNTIL: &str = "web.client_secret_previous_until";
 const KEY_WEB_CLIENT_CA: &str = "web.client_ca";
 const KEY_WEB_CLIENT_SUBJECT: &str = "web.client_subject";
 
 /// The shortest `web.client_secret` the lead accepts: 32 characters, the
-/// length of a 192-bit secret in base64, chosen, not measured.
-pub const WEB_CLIENT_SECRET_MIN: usize = 32;
+/// length of a 192-bit secret in base64, chosen, not measured; `oml-web`'s
+/// rule, from the leaf both link.
+pub const WEB_CLIENT_SECRET_MIN: usize = oml_web_credential::CLIENT_SECRET_MIN;
+
+/// The longest a previous web client secret stays accepted after the
+/// lead's start: seven days, long enough to roll `oml-web` over a weekend
+/// and short enough that a forgotten one closes itself (#230). Chosen, not
+/// measured.
+pub const WEB_CLIENT_ROTATION_MAX_US: i64 = 7 * 86_400 * 1_000_000;
 const KEY_BRIEF_MAX_TOKENS: &str = "brief.max_tokens";
 const KEY_SIGNUP_MODE: &str = "signup.mode";
 const KEY_SIGNUP_TENANT: &str = "signup.tenant";
@@ -481,13 +492,49 @@ const KEY_SPARSE_MODEL_DIR: &str = "search.sparse.model_dir";
 const KEY_SPARSE_FETCH: &str = "search.sparse.fetch";
 const KEY_SPARSE_THREADS: &str = "search.sparse.threads";
 
-/// `oml-web`'s client identity (ADR-0070 d2): `web.client_secret`, at least
-/// [`WEB_CLIENT_SECRET_MIN`] characters. Mutual TLS (`web.client_ca` with
-/// `web.client_subject`) needs the lead to terminate TLS on the listener
-/// `oml-web` reaches, which this build does not, so either stops the start
-/// naming the setting rather than accepting an identity no request can
-/// prove.
-fn web_client(lookup: &impl Fn(&str) -> Option<String>) -> Result<WebClient, ConfigError> {
+/// A secret from `key` or, instead, the owner-only file `file_key` names
+/// (#230): both set stops the start, and the secret passes the rule both
+/// processes apply, `oml_web_credential::client_secret_refusal`. No error
+/// carries the value.
+fn web_secret(
+    lookup: &impl Fn(&str) -> Option<String>,
+    key: &str,
+    file_key: &str,
+) -> Result<Option<String>, ConfigError> {
+    let secret = match (
+        lookup(key).filter(|v| !v.is_empty()),
+        lookup(file_key).filter(|v| !v.trim().is_empty()),
+    ) {
+        (Some(_), Some(_)) => {
+            return Err(ConfigError::Invalid(format!(
+                "{file_key} is set beside {key}; set one (ADR-0070 d2)"
+            )));
+        }
+        (None, None) => return Ok(None),
+        (Some(secret), None) => secret,
+        (None, Some(path)) => oml_web_credential::read_secret_file(Path::new(path.trim()))
+            .map_err(|why| ConfigError::Invalid(format!("{file_key}: {why} (ADR-0070 d2)")))?,
+    };
+    match oml_web_credential::client_secret_refusal(&secret) {
+        None => Ok(Some(secret)),
+        Some(why) => Err(ConfigError::Invalid(format!("{key} {why} (ADR-0070 d2)"))),
+    }
+}
+
+/// `oml-web`'s client identity (ADR-0070 d2): `web.client_secret`, or the
+/// owner-only file `web.client_secret_file` names, passing
+/// `oml_web_credential`'s rule; during a rotation also
+/// `web.client_secret_previous` (or its `_file`) until
+/// `web.client_secret_previous_until`, an instant at most
+/// [`WEB_CLIENT_ROTATION_MAX_US`] after `now_us` (#230). Mutual TLS
+/// (`web.client_ca` with `web.client_subject`) needs the lead to terminate
+/// TLS on the listener `oml-web` reaches, which this build does not, so
+/// either stops the start naming the setting rather than accepting an
+/// identity no request can prove.
+fn web_client(
+    lookup: &impl Fn(&str) -> Option<String>,
+    now_us: i64,
+) -> Result<WebClient, ConfigError> {
     if let Some(key) = [KEY_WEB_CLIENT_CA, KEY_WEB_CLIENT_SUBJECT]
         .into_iter()
         .find(|k| lookup(k).is_some_and(|v| !v.is_empty()))
@@ -496,14 +543,49 @@ fn web_client(lookup: &impl Fn(&str) -> Option<String>) -> Result<WebClient, Con
             "{key} is set: mutual TLS needs the lead to terminate TLS on the listener oml-web reaches, which this build does not; set {KEY_WEB_CLIENT_SECRET} instead (ADR-0070 d2)"
         )));
     }
-    match lookup(KEY_WEB_CLIENT_SECRET) {
-        None => Ok(WebClient::default()),
-        Some(secret) if secret.chars().count() >= WEB_CLIENT_SECRET_MIN => {
-            Ok(WebClient::new(Some(secret), None))
-        }
-        Some(_) => Err(ConfigError::Invalid(format!(
-            "{KEY_WEB_CLIENT_SECRET} is shorter than {WEB_CLIENT_SECRET_MIN} characters; oml quickstart writes one, or use `openssl rand -base64 32` (ADR-0070 d2)"
+    let current = web_secret(lookup, KEY_WEB_CLIENT_SECRET, KEY_WEB_CLIENT_SECRET_FILE)?;
+    let previous = web_secret(
+        lookup,
+        KEY_WEB_CLIENT_SECRET_PREVIOUS,
+        KEY_WEB_CLIENT_SECRET_PREVIOUS_FILE,
+    )?;
+    let until = lookup(KEY_WEB_CLIENT_SECRET_PREVIOUS_UNTIL).filter(|v| !v.trim().is_empty());
+    let Some(current) = current else {
+        return match (previous, until) {
+            (None, None) => Ok(WebClient::default()),
+            (Some(_), _) => Err(ConfigError::Invalid(format!(
+                "{KEY_WEB_CLIENT_SECRET_PREVIOUS} is set and {KEY_WEB_CLIENT_SECRET} is not: a rotation keeps the old secret beside a new one (#230)"
+            ))),
+            (None, Some(_)) => Err(ConfigError::Invalid(format!(
+                "{KEY_WEB_CLIENT_SECRET_PREVIOUS_UNTIL} is set and {KEY_WEB_CLIENT_SECRET_PREVIOUS} is not (#230)"
+            ))),
+        };
+    };
+    let client = WebClient::new(Some(current.clone()), None);
+    match (previous, until) {
+        (None, None) => Ok(client),
+        (None, Some(_)) => Err(ConfigError::Invalid(format!(
+            "{KEY_WEB_CLIENT_SECRET_PREVIOUS_UNTIL} is set and {KEY_WEB_CLIENT_SECRET_PREVIOUS} is not (#230)"
         ))),
+        (Some(_), None) => Err(ConfigError::Invalid(format!(
+            "{KEY_WEB_CLIENT_SECRET_PREVIOUS} is set without {KEY_WEB_CLIENT_SECRET_PREVIOUS_UNTIL}, the instant it stops being accepted, at most 7 days ahead (#230)"
+        ))),
+        (Some(previous), Some(_)) if previous == current => Err(ConfigError::Invalid(format!(
+            "{KEY_WEB_CLIENT_SECRET_PREVIOUS} equals {KEY_WEB_CLIENT_SECRET}; a rotation keeps the old secret beside a new one (#230)"
+        ))),
+        (Some(previous), Some(until)) => {
+            let until_us = oml_app::domain::valid_time::parse_now(until.trim()).ok_or_else(|| {
+                ConfigError::Invalid(format!(
+                    "{KEY_WEB_CLIENT_SECRET_PREVIOUS_UNTIL} {until:?} is not an RFC 3339 instant such as 2026-11-12T09:00:00Z (#230)"
+                ))
+            })?;
+            if until_us > now_us.saturating_add(WEB_CLIENT_ROTATION_MAX_US) {
+                return Err(ConfigError::Invalid(format!(
+                    "{KEY_WEB_CLIENT_SECRET_PREVIOUS_UNTIL} {until} is more than 7 days after this start; a previous secret is accepted for a bounded window (#230)"
+                )));
+            }
+            Ok(client.with_previous(previous, until_us))
+        }
     }
 }
 
@@ -743,7 +825,10 @@ impl Config {
         };
         let web_google = provider(KEY_WEB_GOOGLE_CLIENT_ID, KEY_WEB_GOOGLE_CLIENT_SECRET)?;
         let web_github = provider(KEY_WEB_GITHUB_CLIENT_ID, KEY_WEB_GITHUB_CLIENT_SECRET)?;
-        let web_client = web_client(&lookup)?;
+        let now_us = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_micros()).unwrap_or(i64::MAX));
+        let web_client = web_client(&lookup, now_us)?;
         // A brief that serves nothing is no brief: zero and anything but a
         // positive whole number stop the start (ADR-0046 d8).
         let brief_max_tokens = match lookup(KEY_BRIEF_MAX_TOKENS) {
@@ -2356,6 +2441,197 @@ mod tests {
                 .expect_err("mutual TLS stops the start");
             assert!(err.to_string().contains(named), "{err}");
         }
+    }
+
+    /// A file under the system temporary directory with `mode`, removed on
+    /// drop.
+    struct TempSecret(std::path::PathBuf);
+
+    impl TempSecret {
+        fn new(name: &str, text: &str, mode: u32) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("oml-lead-config-{}-{name}", std::process::id()));
+            std::fs::write(&path, text).expect("write the secret file");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                    .expect("set the mode");
+            }
+            #[cfg(not(unix))]
+            let _ = mode;
+            Self(path)
+        }
+
+        fn path(&self) -> &str {
+            self.0.to_str().expect("a UTF-8 path")
+        }
+    }
+
+    impl Drop for TempSecret {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    const WEB_SECRET: &str = "Zq3vN8xK2mP7rT4wY9bC6dF1gH5jL0sA";
+    const WEB_SECRET_OLD: &str = "pR4tW7yZ0cF3hK6mQ9sV2xB5eG8jN1uD";
+
+    /// `web.client_secret_file` names an owner-only file holding the
+    /// secret; a file others can read, a secret set both ways, or one of
+    /// few distinct characters stops the start, naming the setting and
+    /// never the value (ADR-0070 d2, #230).
+    #[test]
+    fn the_web_client_secret_is_read_from_an_owner_only_file_and_a_weak_one_stops_the_start() {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let file = TempSecret::new("owner", &format!("{WEB_SECRET}\n"), 0o600);
+        let mut env = env_of(&base);
+        env.insert(
+            "OML_WEB__CLIENT_SECRET_FILE".to_owned(),
+            file.path().to_owned(),
+        );
+        let cfg = Config::from_sources(None, &|k| env.get(k).cloned()).expect("a file loads");
+        assert_eq!(cfg.web_client.identity(), "secret");
+        env.insert("OML_WEB__CLIENT_SECRET".to_owned(), WEB_SECRET.to_owned());
+        let err = Config::from_sources(None, &|k| env.get(k).cloned())
+            .expect_err("inline and file together");
+        assert!(err.to_string().contains("web.client_secret_file"), "{err}");
+        #[cfg(unix)]
+        {
+            let open = TempSecret::new("open", WEB_SECRET, 0o640);
+            let mut env = env_of(&base);
+            env.insert(
+                "OML_WEB__CLIENT_SECRET_FILE".to_owned(),
+                open.path().to_owned(),
+            );
+            let err = Config::from_sources(None, &|k| env.get(k).cloned())
+                .expect_err("a file others can read");
+            let shown = err.to_string();
+            assert!(
+                shown.contains("web.client_secret_file") && shown.contains("640"),
+                "{shown}"
+            );
+            assert!(!shown.contains(WEB_SECRET), "{shown}");
+        }
+        let mut env = env_of(&base);
+        env.insert("OML_WEB__CLIENT_SECRET".to_owned(), "x".repeat(48));
+        let err =
+            Config::from_sources(None, &|k| env.get(k).cloned()).expect_err("a repetitive secret");
+        assert!(err.to_string().contains("web.client_secret"), "{err}");
+    }
+
+    /// Rotation without downtime (#230): the lead accepts
+    /// `web.client_secret_previous` beside the current secret only with
+    /// `web.client_secret_previous_until`, an instant at most seven days
+    /// after the start; a previous secret without the current one, equal to
+    /// it, or with no bound or a later one stops the start, naming the
+    /// setting.
+    #[test]
+    fn a_previous_web_client_secret_is_accepted_only_with_a_bound_of_at_most_seven_days() {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_micros();
+        let now = i64::try_from(now).expect("in range");
+        let day = 86_400_000_000_i64;
+        let at = |micros: i64| oml_app::domain::valid_time::fixed_width(micros);
+        let load = |pairs: &[(&str, String)]| {
+            let mut env = env_of(&base);
+            for (k, v) in pairs {
+                env.insert((*k).to_owned(), v.clone());
+            }
+            Config::from_sources(None, &|k| env.get(k).cloned())
+        };
+        let cfg = load(&[
+            ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+            ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD.to_owned()),
+            ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now + day)),
+        ])
+        .expect("a previous secret for a day");
+        assert_eq!(cfg.web_client.identity(), "secret");
+        assert!(cfg.web_client.previous_until().is_some());
+        assert!(
+            !format!("{cfg:?}").contains(WEB_SECRET_OLD),
+            "never in the debug form"
+        );
+        for (pairs, named) in [
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD.to_owned()),
+                ],
+                "web.client_secret_previous_until",
+            ),
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now + 8 * day)),
+                ],
+                "web.client_secret_previous_until",
+            ),
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD.to_owned()),
+                    (
+                        "OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL",
+                        "tomorrow".to_owned(),
+                    ),
+                ],
+                "web.client_secret_previous_until",
+            ),
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now + day)),
+                ],
+                "web.client_secret_previous",
+            ),
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now + day)),
+                ],
+                "web.client_secret_previous",
+            ),
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS", "short".to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now + day)),
+                ],
+                "web.client_secret_previous",
+            ),
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now + day)),
+                ],
+                "web.client_secret_previous_until",
+            ),
+        ] {
+            let err = load(&pairs).expect_err(named);
+            assert!(err.to_string().contains(named), "{named}: {err}");
+            assert!(!err.to_string().contains(WEB_SECRET_OLD), "{err}");
+        }
+        // A window already closed at start loads: the gate never accepts
+        // the previous secret, and the start warns (main) until it is unset.
+        let closed = load(&[
+            ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+            ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD.to_owned()),
+            ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now - day)),
+        ])
+        .expect("a closed window loads");
+        assert_eq!(closed.web_client.previous_until(), Some(now - day));
     }
 
     #[test]

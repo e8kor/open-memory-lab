@@ -198,6 +198,28 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
             "sparse encoder loaded"
         );
     }
+    // A rotation of oml-web's secret (ADR-0070 d2, #230): the previous one
+    // is accepted until its instant and never after; each start says which,
+    // naming the setting and never a value, until it is unset.
+    if let Some(until) = config.web_client.previous_until() {
+        let at = oml_app::domain::valid_time::fixed_width(until);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_micros()).unwrap_or(i64::MAX));
+        if now < until {
+            tracing::warn!(
+                event = "web_client_previous_accepted",
+                until = %at,
+                "web.client_secret_previous is accepted until {at}; unset it once every oml-web sends web.client_secret"
+            );
+        } else {
+            tracing::warn!(
+                event = "web_client_previous_closed",
+                until = %at,
+                "web.client_secret_previous closed at {at} and proves nothing; unset it and web.client_secret_previous_until"
+            );
+        }
+    }
     let metrics = traffic.metrics().clone();
     let start = start_lead_with_models(
         &store,
