@@ -136,6 +136,70 @@ async fn a_signal_past_the_tenants_share_is_marked_and_not_rebuilt() {
     .await;
 }
 
+#[tokio::test]
+async fn a_stopped_build_marks_its_own_signal_and_the_builds_behind_it_go_on() {
+    contracts::federation::a_stopped_build_marks_its_own_signal_and_the_builds_behind_it_go_on(
+        MemStore::new().answering_bm25_with_any_word(),
+    )
+    .await;
+}
+
+/// A build that began before a status transition committed, and read its
+/// counts after the commit's drop, is discarded: the next recall carries no
+/// hint from it, and asks for a signal built after the drop (#244, review
+/// round 2, R1).
+#[tokio::test]
+async fn a_build_overtaken_by_a_drop_is_never_held() {
+    use oml_app::domain::WorkareaStatus;
+    use oml_app::federation::Sources;
+    let store = MemStore::new().answering_bm25_with_any_word();
+    let (w, key) = contracts::federation::kiwi_world(store.clone(), true).await;
+    assert!(
+        contracts::federation::kiwi_hint(&w, &key, 10)
+            .await
+            .is_none()
+    );
+    // The build reads its key, access and candidates, then yields at its
+    // vocabulary read; the transition commits there, then the build reads.
+    store.pause_next_vocabulary_read();
+    let transition = async {
+        let proposal = w
+            .app
+            .propose_transition(
+                w.admin.as_str(),
+                w.node("orchard").into(),
+                WorkareaStatus::Validated,
+            )
+            .await
+            .expect("propose validated");
+        w.app
+            .ratify_transition(
+                w.reviewer.value.as_str(),
+                w.node("orchard").into(),
+                proposal.transition_id,
+            )
+            .await
+            .expect("ratify validated");
+    };
+    let (built, ()) = tokio::join!(w.app.refresh_widen_signals(), transition);
+    assert_eq!(built, 0, "a build overtaken by the drop was held");
+    let answer = w
+        .recall(&key, "kiwi", "home", Some(Sources::Scope), "bm25", 10)
+        .await
+        .expect("scope");
+    assert!(answer.widen.is_none());
+    assert!(
+        w.app.widen_signals_wanted(),
+        "the recall asks for a new signal"
+    );
+    w.app.refresh_widen_signals().await;
+    assert!(
+        contracts::federation::kiwi_hint(&w, &key, 10)
+            .await
+            .is_some()
+    );
+}
+
 /// A `scope` recall does no federation work: no policy, candidate or
 /// statistics read, whether the tenant has federation on or off, and
 /// whether `sources` is sent or absent; `wide` does (ADR-0072 d12, as

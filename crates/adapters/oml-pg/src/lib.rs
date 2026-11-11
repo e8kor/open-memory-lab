@@ -6247,6 +6247,15 @@ impl JournalStore for PgStore {
             .await
             .map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
+        // The database cancels the read itself before the lead's timeout
+        // stops the build, so no aggregate outlives a stopped build.
+        sqlx::query(&format!(
+            "SET LOCAL statement_timeout = '{}s'",
+            oml_app::app::WIDEN_SIGNAL_STATEMENT_SECS
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
         let kinds = hit_kinds(&scope.kinds);
         let memory_kinds: Vec<i16> = kinds
             .iter()
@@ -6317,14 +6326,18 @@ impl JournalStore for PgStore {
             }
         }
         tx.commit().await.map_err(backend)?;
-        let mut triples = Vec::with_capacity(counted.len());
-        for (node, token, n) in counted {
-            let n = u64::try_from(n).map_err(backend)?;
-            let less = expired_pairs.get(&(node, token)).copied().unwrap_or(0);
-            triples.push((node, token, n.saturating_sub(less)));
-        }
+        // Taken out of the rows as read, with no second copy: the read's
+        // 32 bytes a row and the signal's 16 a pair are the build's peak.
         Ok(Some(oml_app::federation::VocabularyCounts::from_counts(
-            rows, triples,
+            rows,
+            counted.into_iter().map(|(node, token, n)| {
+                let less = expired_pairs.get(&(node, token)).copied().unwrap_or(0);
+                (
+                    node,
+                    token,
+                    u64::try_from(n).unwrap_or(0).saturating_sub(less),
+                )
+            }),
         )))
     }
 

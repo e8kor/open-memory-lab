@@ -1289,7 +1289,10 @@ pub async fn a_lists_answer_depends_on_the_listed_workareas_alone<S: JournalStor
 /// `legal` hold "kiwi" at the same rate per row; `product` holds it on one
 /// stray row; `orchard`, under `crew`, holds it on both its rows when
 /// `orchard` is true. The key reads `crew`, `legal` and `product`.
-async fn kiwi_world<S: JournalStore + Clone>(store: S, orchard: bool) -> (FedWorld<S>, IssuedKey) {
+pub async fn kiwi_world<S: JournalStore + Clone>(
+    store: S,
+    orchard: bool,
+) -> (FedWorld<S>, IssuedKey) {
     kiwi_world_within(store, orchard, WidenLimits::default()).await
 }
 
@@ -1329,7 +1332,7 @@ async fn kiwi_world_within<S: JournalStore + Clone>(
 }
 
 /// A `scope` recall of "kiwi" at `home` and its hint.
-async fn kiwi_hint<S: JournalStore + Clone>(
+pub async fn kiwi_hint<S: JournalStore + Clone>(
     w: &FedWorld<S>,
     key: &IssuedKey,
     k: usize,
@@ -1569,6 +1572,62 @@ pub async fn a_signal_past_the_tenants_share_is_marked_and_not_rebuilt<S: Journa
     assert!(
         w.app.widen_signals_wanted(),
         "past the bound it is asked for again"
+    );
+}
+
+/// Builds run one at a time in the order recalls asked for them, and the
+/// transport's timeout stops one build, not the refresh: the stopped
+/// signal alone is counted as failed and marked, and the builds behind it
+/// go on (#244, review round 2, R3).
+pub async fn a_stopped_build_marks_its_own_signal_and_the_builds_behind_it_go_on<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let (w, key) = kiwi_world(store, true).await;
+    for scope in ["home", "legal", "product"] {
+        let answer = w
+            .recall(&key, "kiwi", scope, Some(Sources::Scope), "bm25", 10)
+            .await
+            .expect("scope");
+        assert!(answer.widen.is_none());
+    }
+    let refresh = w.app.begin_widen_refresh().expect("no refresh runs");
+    assert!(
+        w.app.begin_widen_refresh().is_none(),
+        "a second refresh ran beside the first"
+    );
+    let first = w.app.next_widen_build(&refresh).expect("home first");
+    // The transport's timeout stops the first build.
+    w.app.widen_build_stopped(&first);
+    let mut built = 0;
+    while let Some(build) = w.app.next_widen_build(&refresh) {
+        if w.app.run_widen_build(&build).await {
+            built += 1;
+        }
+    }
+    drop(refresh);
+    assert_eq!(built, 2, "the builds behind the stopped one went on");
+    let (settings, _) = w
+        .app
+        .federation_settings(w.admin.as_str())
+        .await
+        .expect("settings");
+    assert_eq!(settings.widen_signal.failed, 1);
+    assert!(
+        settings
+            .widen_signal
+            .last_failure
+            .as_deref()
+            .is_some_and(|f| f.contains("stopped")),
+        "{:?}",
+        settings.widen_signal.last_failure
+    );
+    // home, asked for first, was the one stopped: it is marked.
+    assert_eq!(kiwi_hint(&w, &key, 10).await, None);
+    assert!(
+        !w.app.widen_signals_wanted(),
+        "the stopped signal was asked for again within the bound"
     );
 }
 
@@ -2046,4 +2105,5 @@ where
     a_signal_at_its_age_bound_serves_no_hint(make().await).await;
     a_status_transition_drops_the_tenants_signals_at_once(make().await).await;
     a_signal_past_the_tenants_share_is_marked_and_not_rebuilt(make().await).await;
+    a_stopped_build_marks_its_own_signal_and_the_builds_behind_it_go_on(make().await).await;
 }

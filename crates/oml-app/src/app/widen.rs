@@ -8,7 +8,7 @@
 //! than [`WIDEN_SIGNAL_MAX_AGE_SECS`]. Without such a signal the answer
 //! carries no hint, and the recall asks for one to be built.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -42,9 +42,14 @@ pub const WIDEN_SIGNAL_PAIRS_HELD: usize = 8_000_000;
 /// tenant of 100,000 rows over 50 workareas measured 1,333,609.
 pub const WIDEN_SIGNAL_TENANT_PAIRS: usize = 2_000_000;
 
-/// A refresh taking longer is stopped by the transport, and the build it
-/// was running is counted as failed and marked.
+/// A build taking longer is stopped by the transport, counted as failed
+/// and marked; the builds behind it go on.
 pub const WIDEN_SIGNAL_BUILD_SECS: u64 = 30;
+
+/// The store cancels a signal's read after this long, before the
+/// transport's [`WIDEN_SIGNAL_BUILD_SECS`], so a stopped build leaves no
+/// aggregate running on the database.
+pub const WIDEN_SIGNAL_STATEMENT_SECS: u64 = 25;
 
 /// The widen signal's bounds, the constants above unless a test sets them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,6 +132,18 @@ pub(super) struct WidenSignal {
     /// C when built, ordered by name.
     pub candidates: Vec<Uuid>,
     pub vocabulary: VocabularyCounts,
+    /// The tenant's drop generation when the build began: a drop since
+    /// then makes the signal unusable, so a build that read rows before an
+    /// erasure never serves after it.
+    pub generation: u64,
+}
+
+impl WidenSignal {
+    /// What it costs the lead's bounds: its pairs and its nodes, so a
+    /// signal of no pairs still counts.
+    fn weight(&self) -> usize {
+        self.vocabulary.pairs() + self.vocabulary.rows.len()
+    }
 }
 
 /// The signals the lead holds, those recalls asked for, and each tenant's
@@ -135,21 +152,29 @@ pub(super) struct WidenSignal {
 pub(super) struct WidenSignals {
     pub limits: WidenLimits,
     pub held: Mutex<BTreeMap<SignalKey, Arc<WidenSignal>>>,
-    /// Signals whose build failed or passed the tenant's share, and when:
-    /// no recall asks for them again until the mark is
-    /// [`WIDEN_SIGNAL_MAX_AGE_SECS`] old.
+    /// Signals whose build failed, was stopped, passed the tenant's share
+    /// or was evicted, and when: no recall asks for them again until the
+    /// mark is [`WIDEN_SIGNAL_MAX_AGE_SECS`] old.
     pub marked: Mutex<BTreeMap<SignalKey, i64>>,
     /// Whether a refresh is running: one runs at a time in the process.
     pub refreshing: AtomicBool,
-    pub wanted: Mutex<BTreeSet<SignalKey>>,
-    /// The signals a build is working on: a recall asks for none of them
-    /// again, so a burst of recalls starts one build per signal.
-    pub building: Mutex<BTreeSet<SignalKey>>,
+    /// The signals asked for, in the order they were asked: each refresh
+    /// takes the oldest first, so no tenant waits behind another's.
+    pub wanted: Mutex<VecDeque<SignalKey>>,
+    /// The signal a build is working on; a recall does not ask for it.
+    pub building: Mutex<Option<SignalKey>>,
+    /// Each tenant's drop generation, raised by every drop.
+    pub generations: Mutex<BTreeMap<Uuid, u64>>,
     pub health: Mutex<BTreeMap<Uuid, WidenSignalHealth>>,
     /// Tenants a build found with federation off, and when: their `scope`
     /// recalls ask for no signal until the mark is
     /// [`WIDEN_SIGNAL_MAX_AGE_SECS`] old or their policy changes here.
     pub off: Mutex<BTreeMap<Uuid, i64>>,
+}
+
+/// Whether `at` is less than [`WIDEN_SIGNAL_MAX_AGE_SECS`] before `now_us`.
+fn within_bound(at: i64, now_us: i64) -> bool {
+    now_us - at < WIDEN_SIGNAL_MAX_AGE_SECS * 1_000_000
 }
 
 impl WidenSignals {
@@ -161,73 +186,111 @@ impl WidenSignals {
             .unwrap_or_default()
     }
 
+    fn health(&self, tenant_id: Uuid, f: impl FnOnce(&mut WidenSignalHealth)) {
+        if let Ok(mut h) = self.health.lock() {
+            f(h.entry(tenant_id).or_default());
+        }
+    }
+
+    /// The tenant's drop generation now.
+    pub(super) fn generation(&self, tenant_id: Uuid) -> u64 {
+        self.generations
+            .lock()
+            .map(|g| g.get(&tenant_id).copied().unwrap_or(0))
+            .unwrap_or(u64::MAX)
+    }
+
     /// Whether any recall asked for a signal not yet built.
     pub(super) fn any_wanted(&self) -> bool {
         self.wanted.lock().is_ok_and(|w| !w.is_empty())
     }
 
-    /// Asks for `key`'s signal to be built.
+    /// Asks for `key`'s signal to be built, once, behind those asked for
+    /// before it.
     pub(super) fn want(&self, key: SignalKey) {
-        if self.building.lock().is_ok_and(|b| b.contains(&key)) {
+        if self.building.lock().is_ok_and(|b| b.as_ref() == Some(&key)) {
             return;
         }
-        if let Ok(mut wanted) = self.wanted.lock() {
-            wanted.insert(key);
+        if let Ok(mut wanted) = self.wanted.lock()
+            && !wanted.contains(&key)
+        {
+            wanted.push_back(key);
         }
     }
 
     /// A recall answered without the hint for want of a usable signal:
     /// counted, and the signal asked for.
     pub(super) fn unserved(&self, key: &SignalKey) {
-        if let Ok(mut health) = self.health.lock() {
-            health.entry(key.tenant_id).or_default().unserved += 1;
-        }
+        self.health(key.tenant_id, |h| h.unserved += 1);
         self.want(key.clone());
     }
 
-    /// Holds a built signal. Past the tenant's share its own oldest go
-    /// first; past the lead's whole bound, the oldest of the tenants above
-    /// their share, then the oldest of all. The signal just built stays.
-    pub(super) fn hold(&self, key: SignalKey, signal: WidenSignal) {
+    /// Holds a built signal unless a drop came after its build began; false
+    /// when it was discarded. First every signal and mark past the bound
+    /// goes. Past the tenant's share its own oldest go; past the lead's
+    /// bound, the oldest of a tenant above its share, then the oldest of
+    /// all. The signal just built stays. Each eviction is counted and
+    /// marked, so the evicted signal is not rebuilt within the bound.
+    pub(super) fn hold(&self, key: SignalKey, signal: WidenSignal, now_us: i64) -> bool {
+        // The generation is read under the `held` lock, which every drop
+        // takes too, so a drop is either before this check or after the
+        // insert, where it removes the signal.
         let Ok(mut held) = self.held.lock() else {
-            return;
+            return false;
         };
+        let _ = self.generation(key.tenant_id);
+        held.retain(|_, s| within_bound(s.built_at_us, now_us));
+        if let Ok(mut marked) = self.marked.lock() {
+            marked.retain(|_, at| within_bound(*at, now_us));
+        }
+        if let Ok(mut off) = self.off.lock() {
+            off.retain(|_, at| within_bound(*at, now_us));
+        }
         let tenant = key.tenant_id;
         held.insert(key.clone(), Arc::new(signal));
         let share = self.limits.tenant_pairs;
-        let tenant_total = |held: &BTreeMap<SignalKey, Arc<WidenSignal>>, t: Uuid| -> usize {
-            held.iter()
-                .filter(|(k, _)| k.tenant_id == t)
-                .map(|(_, s)| s.vocabulary.pairs())
-                .sum()
-        };
-        let oldest = |held: &BTreeMap<SignalKey, Arc<WidenSignal>>,
-                      keep: &dyn Fn(&SignalKey) -> bool|
-         -> Option<SignalKey> {
-            held.iter()
-                .filter(|(k, _)| **k != key && keep(k))
-                .min_by_key(|(_, s)| s.built_at_us)
-                .map(|(k, _)| k.clone())
-        };
-        while tenant_total(&held, tenant) > share {
-            let Some(k) = oldest(&held, &|k| k.tenant_id == tenant) else {
+        let mut totals: BTreeMap<Uuid, usize> = BTreeMap::new();
+        for (k, s) in held.iter() {
+            *totals.entry(k.tenant_id).or_default() += s.weight();
+        }
+        let mut total: usize = totals.values().sum();
+        let mut evicted = Vec::new();
+        loop {
+            let over_share = |t: &Uuid| totals.get(t).is_some_and(|n| *n > share);
+            let victim = if over_share(&tenant) {
+                Self::oldest(&held, &key, |k| k.tenant_id == tenant)
+            } else if total > self.limits.held_pairs {
+                Self::oldest(&held, &key, |k| over_share(&k.tenant_id))
+                    .or_else(|| Self::oldest(&held, &key, |_| true))
+            } else {
+                None
+            };
+            let Some(victim) = victim else {
                 break;
             };
-            held.remove(&k);
+            if let Some(s) = held.remove(&victim) {
+                total -= s.weight();
+                if let Some(n) = totals.get_mut(&victim.tenant_id) {
+                    *n -= s.weight();
+                }
+            }
+            evicted.push(victim);
         }
-        while held.values().map(|s| s.vocabulary.pairs()).sum::<usize>() > self.limits.held_pairs {
-            let over: BTreeSet<Uuid> = held
-                .keys()
-                .map(|k| k.tenant_id)
-                .filter(|t| tenant_total(&held, *t) > share)
-                .collect();
-            let Some(k) = oldest(&held, &|k| over.contains(&k.tenant_id))
-                .or_else(|| oldest(&held, &|_| true))
-            else {
-                break;
-            };
-            held.remove(&k);
-        }
+        drop(held);
+        let _ = evicted;
+        true
+    }
+
+    /// The oldest held signal other than `keep` that `pick` admits.
+    fn oldest(
+        held: &BTreeMap<SignalKey, Arc<WidenSignal>>,
+        keep: &SignalKey,
+        pick: impl Fn(&SignalKey) -> bool,
+    ) -> Option<SignalKey> {
+        held.iter()
+            .filter(|(k, _)| *k != keep && pick(k))
+            .min_by_key(|(_, s)| s.built_at_us)
+            .map(|(k, _)| k.clone())
     }
 
     /// Marks `key` so no recall asks for it again within the bound.
@@ -239,10 +302,9 @@ impl WidenSignals {
 
     /// Whether `key` was marked less than [`WIDEN_SIGNAL_MAX_AGE_SECS`] ago.
     fn is_marked(&self, key: &SignalKey, now_us: i64) -> bool {
-        self.marked.lock().is_ok_and(|m| {
-            m.get(key)
-                .is_some_and(|at| now_us - at < WIDEN_SIGNAL_MAX_AGE_SECS * 1_000_000)
-        })
+        self.marked
+            .lock()
+            .is_ok_and(|m| m.get(key).is_some_and(|at| within_bound(*at, now_us)))
     }
 
     /// Drops `key`'s signal.
@@ -252,10 +314,14 @@ impl WidenSignals {
         }
     }
 
-    /// Drops every signal of the tenant, and its marks: an event of
+    /// Drops every signal of the tenant and its marks, and raises its
+    /// generation so a build already reading is discarded: an event of
     /// [`drops_widen_signals`] committed.
     pub(super) fn drop_tenant(&self, tenant_id: Uuid) {
         if let Ok(mut held) = self.held.lock() {
+            if let Ok(mut g) = self.generations.lock() {
+                *g.entry(tenant_id).or_default() += 1;
+            }
             held.retain(|k, _| k.tenant_id != tenant_id);
         }
         if let Ok(mut marked) = self.marked.lock() {
@@ -271,10 +337,31 @@ impl WidenSignals {
     fn known_off(&self, tenant_id: Uuid, now_us: i64) -> bool {
         self.off.lock().is_ok_and(|off| {
             off.get(&tenant_id)
-                .is_some_and(|at| now_us - at < WIDEN_SIGNAL_MAX_AGE_SECS * 1_000_000)
+                .is_some_and(|at| within_bound(*at, now_us))
         })
     }
 }
+
+/// One refresh of the widen signals, the only one running in the process
+/// while it lives: [`App::begin_widen_refresh`]. Dropped, it clears the
+/// flag and forgets the build it was running, which a recall may ask for
+/// again.
+#[must_use]
+pub struct WidenRefresh<'a>(&'a WidenSignals);
+
+impl Drop for WidenRefresh<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut b) = self.0.building.lock() {
+            *b = None;
+        }
+        self.0.refreshing.store(false, Ordering::Release);
+    }
+}
+
+/// One signal to build, taken from the asked-for queue by
+/// [`App::next_widen_build`].
+#[derive(Debug)]
+pub struct WidenBuild(SignalKey);
 
 /// What a build found: a signal, nothing to build, or a vocabulary past the
 /// tenant's share, which it stopped reading.
@@ -314,13 +401,13 @@ where
     Sc: Scanner,
 {
     /// Whether a recall asked for a signal that is not built yet: the
-    /// transport then runs [`Self::refresh_widen_signals`] off the request.
+    /// transport then runs a refresh off the request.
     pub fn widen_signals_wanted(&self) -> bool {
         self.widen.any_wanted()
     }
 
-    /// How long the transport lets one refresh run before it stops it.
-    pub fn widen_refresh_timeout(&self) -> Duration {
+    /// How long the transport lets one build run before it stops it.
+    pub fn widen_build_timeout(&self) -> Duration {
         self.widen.limits.build_timeout
     }
 
@@ -331,97 +418,93 @@ where
         self
     }
 
-    /// Builds every signal a recall asked for, off the request path, one at
-    /// a time and one refresh at a time in the process; how many it built.
-    /// A key gone, a scope it no longer reads or federation off leaves
-    /// none. A build that fails, takes longer than its timeout or passes
-    /// the tenant's share leaves none, is counted with its reason for
-    /// doctor, and is marked so no recall asks for it again within the
-    /// bound.
-    pub async fn refresh_widen_signals(&self) -> usize {
-        if self
-            .widen
+    /// Starts a refresh, unless one is running in the process.
+    pub fn begin_widen_refresh(&self) -> Option<WidenRefresh<'_>> {
+        self.widen
             .refreshing
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+            .is_ok()
+            .then(|| WidenRefresh(&self.widen))
+    }
+
+    /// The signal asked for longest ago, taken off the queue: one build at
+    /// a time, in the order recalls asked, so a tenant behind another waits
+    /// one build each, never for a tenant's whole demand.
+    pub fn next_widen_build(&self, _refresh: &WidenRefresh<'_>) -> Option<WidenBuild> {
+        let key = self.widen.wanted.lock().ok()?.pop_front()?;
+        if let Ok(mut b) = self.widen.building.lock() {
+            *b = Some(key.clone());
+        }
+        Some(WidenBuild(key))
+    }
+
+    /// Runs one build and holds, discards or marks what it found; whether
+    /// it held a signal. A key gone, a scope it no longer reads or
+    /// federation off leaves none. A build that fails or passes the
+    /// tenant's share leaves none, is counted with its reason for doctor,
+    /// and is marked so no recall asks for it again within the bound. A
+    /// signal a drop overtook is discarded and may be asked for again.
+    pub async fn run_widen_build(&self, build: &WidenBuild) -> bool {
+        let key = &build.0;
+        let outcome = self.build_widen_signal(key).await;
+        if let Ok(mut b) = self.widen.building.lock() {
+            *b = None;
+        }
+        let failure = match outcome {
+            Ok(Built::Signal(signal)) => {
+                let held = self
+                    .widen
+                    .hold(key.clone(), signal, self.clock.now().unix_micros());
+                if held {
+                    self.widen.health(key.tenant_id, |h| h.built += 1);
+                }
+                return held;
+            }
+            Ok(Built::Nothing) => {
+                self.widen.drop_key(key);
+                return false;
+            }
+            Ok(Built::PastShare) => format!(
+                "a signal of more than {} counts, the tenant's share",
+                self.widen.limits.tenant_pairs
+            ),
+            Err(e) => e.to_string(),
+        };
+        self.widen_build_failed(key, failure);
+        false
+    }
+
+    /// The transport stopped `build` at its timeout: it is counted as
+    /// failed and marked, and the builds behind it go on.
+    pub fn widen_build_stopped(&self, _build: &WidenBuild) {
+        if let Ok(mut b) = self.widen.building.lock() {
+            *b = None;
+        }
+    }
+
+    fn widen_build_failed(&self, key: &SignalKey, failure: String) {
+        self.widen.health(key.tenant_id, |h| {
+            h.failed += 1;
+            h.last_failure = Some(failure);
+        });
+        self.widen.drop_key(key);
+        self.widen.mark(key, self.clock.now().unix_micros());
+    }
+
+    /// Builds every signal asked for, one at a time and with no timeout,
+    /// unless a refresh is running; how many it held. Tests run it; the
+    /// transport runs the same steps with a timeout on each build.
+    pub async fn refresh_widen_signals(&self) -> usize {
+        let Some(refresh) = self.begin_widen_refresh() else {
             return 0;
-        }
-        /// However the refresh ends: a build it was still running, stopped
-        /// by the transport's timeout, is counted as failed and marked, and
-        /// the flag clears.
-        struct Running<'a>(&'a WidenSignals, i64);
-        impl Drop for Running<'_> {
-            fn drop(&mut self) {
-                let stopped: Vec<SignalKey> = self
-                    .0
-                    .building
-                    .lock()
-                    .map(|mut b| std::mem::take(&mut *b).into_iter().collect())
-                    .unwrap_or_default();
-                for key in stopped {
-                    if let Ok(mut h) = self.0.health.lock() {
-                        let h = h.entry(key.tenant_id).or_default();
-                        h.failed += 1;
-                        h.last_failure = Some(format!(
-                            "a build was stopped after {} s",
-                            self.0.limits.build_timeout.as_secs()
-                        ));
-                    }
-                    self.0.mark(&key, self.1);
-                }
-                self.0.refreshing.store(false, Ordering::Release);
-            }
-        }
-        let _running = Running(&self.widen, self.clock.now().unix_micros());
+        };
         let mut built = 0;
-        loop {
-            let wanted = {
-                let (Ok(mut wanted), Ok(mut building)) =
-                    (self.widen.wanted.lock(), self.widen.building.lock())
-                else {
-                    return built;
-                };
-                let taken = std::mem::take(&mut *wanted);
-                building.extend(taken.iter().cloned());
-                taken
-            };
-            if wanted.is_empty() {
-                return built;
-            }
-            for key in wanted {
-                let outcome = self.build_widen_signal(&key).await;
-                if let Ok(mut building) = self.widen.building.lock() {
-                    building.remove(&key);
-                }
-                let failure = match outcome {
-                    Ok(Built::Signal(signal)) => {
-                        if let Ok(mut h) = self.widen.health.lock() {
-                            h.entry(key.tenant_id).or_default().built += 1;
-                        }
-                        self.widen.hold(key, signal);
-                        built += 1;
-                        continue;
-                    }
-                    Ok(Built::Nothing) => {
-                        self.widen.drop_key(&key);
-                        continue;
-                    }
-                    Ok(Built::PastShare) => format!(
-                        "a signal of more than {} counts, the tenant's share",
-                        self.widen.limits.tenant_pairs
-                    ),
-                    Err(e) => e.to_string(),
-                };
-                if let Ok(mut h) = self.widen.health.lock() {
-                    let h = h.entry(key.tenant_id).or_default();
-                    h.failed += 1;
-                    h.last_failure = Some(failure);
-                }
-                self.widen.drop_key(&key);
-                self.widen.mark(&key, self.clock.now().unix_micros());
+        while let Some(build) = self.next_widen_build(&refresh) {
+            if self.run_widen_build(&build).await {
+                built += 1;
             }
         }
+        built
     }
 
     /// One signal (#244): the key's access read now, R = served(scope) ∪ C
@@ -431,6 +514,7 @@ where
     /// scope it no longer reads, or a tenant with federation off.
     async fn build_widen_signal(&self, key: &SignalKey) -> Result<Built, AppError> {
         let tenant_id = key.tenant_id;
+        let generation = self.widen.generation(tenant_id);
         let Some(record) = self.journal.key(tenant_id, key.key_id).await? else {
             return Ok(Built::Nothing);
         };
@@ -491,6 +575,7 @@ where
             hit_nodes,
             candidates,
             vocabulary,
+            generation,
         }))
     }
 
@@ -528,8 +613,10 @@ where
             .lock()
             .ok()
             .and_then(|h| h.get(&key).cloned());
+        let generation = self.widen.generation(key.tenant_id);
         let usable = held.filter(|s| {
-            s.permission_epoch == caller.permission_epoch
+            s.generation == generation
+                && s.permission_epoch == caller.permission_epoch
                 && s.hit_nodes == hit_nodes
                 && now_us - s.built_at_us < WIDEN_SIGNAL_MAX_AGE_SECS * 1_000_000
         });
@@ -560,6 +647,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     fn signal(built_at_us: i64, pairs: usize) -> WidenSignal {
@@ -571,6 +660,7 @@ mod tests {
             hit_nodes: Vec::new(),
             candidates: Vec::new(),
             vocabulary: VocabularyCounts::from_counts(BTreeMap::new(), forms),
+            generation: 0,
         }
     }
 
@@ -602,6 +692,38 @@ mod tests {
     }
 
     #[test]
+    fn a_signal_whose_build_began_before_a_drop_is_never_held() {
+        let signals = WidenSignals::default();
+        let mut built = signal(1, 2);
+        built.generation = signals.generation(Uuid::from_u128(1));
+        signals.drop_tenant(Uuid::from_u128(1));
+        assert!(
+            !signals.hold(key(1, 1), built, 1),
+            "a signal read before the drop was held"
+        );
+        assert!(signals.held.lock().expect("held").is_empty());
+        let mut after = signal(2, 2);
+        after.generation = signals.generation(Uuid::from_u128(1));
+        assert!(signals.hold(key(1, 1), after, 2));
+    }
+
+    #[test]
+    fn an_evicted_signal_is_counted_and_not_asked_for_again_within_the_bound() {
+        let signals = WidenSignals {
+            limits: WidenLimits {
+                tenant_pairs: 4,
+                ..WidenLimits::default()
+            },
+            ..WidenSignals::default()
+        };
+        assert!(signals.hold(key(1, 1), signal(1, 3), 1));
+        assert!(signals.hold(key(1, 2), signal(2, 3), 2));
+        assert_eq!(signals.health_of(Uuid::from_u128(1)).evicted, 1);
+        assert!(signals.is_marked(&key(1, 1), 3));
+        assert!(!signals.is_marked(&key(1, 1), 3 + WIDEN_SIGNAL_MAX_AGE_SECS * 1_000_000));
+    }
+
+    #[test]
     fn one_tenant_never_evicts_another_below_its_share() {
         let signals = WidenSignals {
             limits: WidenLimits {
@@ -612,12 +734,12 @@ mod tests {
             ..WidenSignals::default()
         };
         for (t, s, at) in [(1, 1, 1), (1, 2, 2), (1, 3, 3)] {
-            signals.hold(key(t, s), signal(at, 2));
+            assert!(signals.hold(key(t, s), signal(at, 2), at));
         }
         // Tenant 2 grows past its share: its own oldest goes, never tenant
         // 1's, though tenant 1's are older.
-        signals.hold(key(2, 1), signal(4, 4));
-        signals.hold(key(2, 2), signal(5, 4));
+        assert!(signals.hold(key(2, 1), signal(4, 4), 4));
+        assert!(signals.hold(key(2, 2), signal(5, 4), 5));
         let held: BTreeSet<SignalKey> =
             signals.held.lock().expect("held").keys().cloned().collect();
         for s in 1..=3 {
@@ -628,7 +750,7 @@ mod tests {
         }
         assert!(!held.contains(&key(2, 1)) && held.contains(&key(2, 2)));
         // Past the lead's bound, a tenant above its share goes first.
-        signals.hold(key(1, 4), signal(6, 2));
+        assert!(signals.hold(key(1, 4), signal(6, 2), 6));
         let held: BTreeSet<SignalKey> =
             signals.held.lock().expect("held").keys().cloned().collect();
         assert!(

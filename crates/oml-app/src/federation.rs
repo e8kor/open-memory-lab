@@ -113,6 +113,9 @@ pub struct WidenSignalHealth {
     /// `scope` recalls answered without the hint because their signal was
     /// missing, older than its bound or built under other grants.
     pub unserved: u64,
+    /// Signals dropped to keep the tenant, or the lead, within its share;
+    /// each is not rebuilt for 300 s.
+    pub evicted: u64,
     /// Builds that failed, and the last one's reason.
     pub failed: u64,
     pub last_failure: Option<String>,

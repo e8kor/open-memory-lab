@@ -397,6 +397,29 @@ pub struct MemStore {
     /// query forms, read on a `scope` recall in place of any count
     /// (ADR-0072 d8, d12, as built by #244).
     widen_signal_reads: Arc<AtomicU64>,
+    /// Whether the next vocabulary read yields once before it reads, so a
+    /// test can commit while a widen signal's build is in flight (#244).
+    pause_vocabulary: Arc<AtomicBool>,
+}
+
+/// A future that is pending once, waking itself, then ready: a point where
+/// a test's other future runs.
+struct YieldOnce(bool);
+
+impl Future for YieldOnce {
+    type Output = ();
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        if self.0 {
+            std::task::Poll::Ready(())
+        } else {
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
 }
 
 /// Work a test lands between a use case's reads and its commit: run once,
@@ -457,6 +480,11 @@ impl MemStore {
     #[must_use]
     pub fn federation_reads(&self) -> u64 {
         self.federation_reads.load(Ordering::SeqCst)
+    }
+
+    /// Makes the next vocabulary read yield once before it reads (#244).
+    pub fn pause_next_vocabulary_read(&self) {
+        self.pause_vocabulary.store(true, Ordering::SeqCst);
     }
 
     /// How many widen-signal reads every handle of this store answered.
@@ -2754,6 +2782,9 @@ impl JournalStore for MemStore {
         max_pairs: usize,
     ) -> Result<Option<crate::federation::VocabularyCounts>, StoreError> {
         self.federation_reads.fetch_add(1, Ordering::SeqCst);
+        if self.pause_vocabulary.swap(false, Ordering::SeqCst) {
+            YieldOnce(false).await;
+        }
         let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
         let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
         if let Some(tenant) = self.tenant_existing(tenant_id) {

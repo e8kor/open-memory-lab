@@ -6234,7 +6234,7 @@ mod tests {
     }
 
     #[test]
-    fn the_federation_doctor_names_a_widen_signal_that_failed_or_was_never_built() {
+    fn the_federation_doctor_names_a_widen_signal_that_failed_was_evicted_or_was_never_built() {
         let settings = |built: u64, unserved: u64, failed: u64| {
             json!({
                 "enabled": true,
@@ -6243,12 +6243,20 @@ mod tests {
                 "widen_signal": {
                     "built": built,
                     "unserved": unserved,
+                    "evicted": if built == 7 { 2 } else { 0 },
                     "failed": failed,
                     "last_failure": if failed > 0 { Value::from("backend: timeout") } else { Value::Null },
                 },
             })
         };
         assert!(federation_doctor(Some(&settings(3, 2, 0))).is_empty());
+        assert_eq!(
+            federation_doctor(Some(&settings(7, 0, 0))),
+            vec![
+                "warn 2 widen signals were dropped to keep this tenant or the lead within its share, each not rebuilt for 300 s: their scopes carry no hint meanwhile"
+                    .to_owned()
+            ]
+        );
         assert!(federation_doctor(Some(&settings(0, 0, 0))).is_empty());
         assert_eq!(
             federation_doctor(Some(&settings(1, 0, 2))),

@@ -3947,11 +3947,12 @@ components:
         widen_signal:
           type: object
           additionalProperties: false
-          description: The widen hint's signals on this tenant since the lead started; doctor warns on a failed build, and on recalls that found none while none was built.
-          required: [built, unserved, failed, last_failure]
+          description: The widen hint's signals on this tenant since the lead started; doctor warns on a failed build, on evictions, and on recalls that found none while none was built.
+          required: [built, unserved, evicted, failed, last_failure]
           properties:
             built: { type: integer, minimum: 0, description: Signals built. }
             unserved: { type: integer, minimum: 0, description: 'Scope recalls answered without the hint because their signal was missing, older than 300 seconds or built under other grants.' }
+            evicted: { type: integer, minimum: 0, description: 'Signals dropped to keep the tenant, or the lead, within its share; each is not rebuilt for 300 seconds.' }
             failed: { type: integer, minimum: 0, description: Signal builds that failed. }
             last_failure: { type: [string, 'null'], description: The last failed build's reason. }
 

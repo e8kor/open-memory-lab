@@ -53,6 +53,7 @@ fn settings_json(settings: &FederationSettings, wide_keys: &[WideKey]) -> Value 
         "widen_signal": {
             "built": settings.widen_signal.built,
             "unserved": settings.widen_signal.unserved,
+            "evicted": settings.widen_signal.evicted,
             "failed": settings.widen_signal.failed,
             "last_failure": settings.widen_signal.last_failure,
         },
