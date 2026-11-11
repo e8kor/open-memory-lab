@@ -1651,7 +1651,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         // The body is closed, nested objects included: a field the server
         // does not serve is refused, never dropped (ADR-0025 d16).
         let req: KeyIssueBody = parse_json_renamed(headers, body, key_issue_renamed)?;
@@ -1662,7 +1662,7 @@ where
         // A session key issues only as the person's own issuance, bounded
         // to their root (ADR-0070 d2, d5; ADR-0045 d9, d16).
         if let Some(caller) = session::session_caller() {
-            return Self::issue_key_as_session(st, &caller, &req, &name).await;
+            return Self::issue_key_as_session(st, &caller, &req, &name, &idem, body).await;
         }
         // Issued keys do not expire yet: a requested expiry is refused by
         // name, since minting the key without it would leave the key its
@@ -1771,30 +1771,21 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
         let req: DenialBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("workarea_node_id", "workarea")])
         })?;
         let node = reference("/workarea", &req.workarea)?;
-        let denial = match session::session_caller() {
-            // A session key cuts off one key on universe, as the pages do
-            // (ADR-0070 d5; ADR-0045 d9, d13).
-            Some(caller) => Self::cut_off_as_session(st, &caller, &key, &node).await?,
-            None => retry_chain(|| st.app.deny_key(acting.bearer(), key.clone(), node.clone()))
-                .await
-                .map_err(|e| map_app_error(e, ErrorContext::Write))?,
-        };
-        Ok(json_response(
-            StatusCode::CREATED,
-            &json!({
-                "denial_id": denial.denial.denial_id,
-                "workarea_node_id": denial.denial.node,
-                "epoch": denial.epoch,
-                // Lifting is not built (ADR-0025 d2).
-                "lifted": false,
-            }),
-        ))
+        // A session key cuts off one key on universe, as the pages do
+        // (ADR-0070 d5; ADR-0045 d9, d13).
+        if let Some(caller) = session::session_caller() {
+            return Self::cut_off_as_session(st, &caller, &key, &node, &idem, key_id, body).await;
+        }
+        let denial = retry_chain(|| st.app.deny_key(acting.bearer(), key.clone(), node.clone()))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::CREATED, &denial_json(&denial)))
     }
 
     async fn create_workarea(
@@ -2574,7 +2565,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let token = bearer(headers)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
         let req: ConnectCodeBody = if body.is_empty() {
             ConnectCodeBody::default()
@@ -2584,7 +2575,16 @@ where
         // A person's web session key mints a code for one of their own
         // connector keys (ADR-0070 d5; ADR-0045 d9).
         if let Some(caller) = session::session_caller() {
-            return Self::connect_code_as_session(st, &caller, &key, req.ttl_seconds).await;
+            return Self::connect_code_as_session(
+                st,
+                &caller,
+                &key,
+                req.ttl_seconds,
+                &idem,
+                key_id,
+                body,
+            )
+            .await;
         }
         let code = retry_chain(|| {
             st.app
@@ -3884,6 +3884,17 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
     body
 }
 
+/// openapi.yaml `Denial`: the denial `POST /v2/keys/{key}/denials` adds.
+fn denial_json(denial: &oml_app::types::DenialRecord) -> Value {
+    json!({
+        "denial_id": denial.denial.denial_id,
+        "workarea_node_id": denial.denial.node,
+        "epoch": denial.epoch,
+        // Lifting is not built (ADR-0025 d2).
+        "lifted": false,
+    })
+}
+
 /// openapi.yaml `ConnectCode`: the code shown once, its expiry and the URL
 /// to enter as the custom connector (ADR-0031 d7, d8).
 fn connect_code_json(code: &ConnectCodeIssued) -> Value {
@@ -4502,6 +4513,11 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
     }
     if let (Some(warning), Some(obj)) = (served.load_warning, value.as_object_mut()) {
         obj.insert("load_warning".to_owned(), json!(warning));
+    }
+    // What a derived format's claim will be found by, which a reviewer's
+    // card shows before the verdict (ADR-0056 d9; ADR-0070 d5).
+    if let (Some(found), Some(obj)) = (&m.format.search_text, value.as_object_mut()) {
+        obj.insert("search_text".to_owned(), json!(found));
     }
     value
 }

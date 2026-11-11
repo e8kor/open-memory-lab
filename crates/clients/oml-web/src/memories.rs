@@ -485,7 +485,7 @@ async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kin
         let ids = calls.next_ids();
         let page = web
             .api
-            .list_keys(&call(credential, &ids), PAGE_MAX, cursor.as_deref())
+            .list_keys(&call(credential, &ids), None, PAGE_MAX, cursor.as_deref())
             .await?;
         kinds.extend(
             page.items

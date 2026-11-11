@@ -93,6 +93,9 @@ class HeldPageItemsItem:
         format_ (str | Unset): The media type signed with the version; text/plain for every version written before
             formats (ADR-0056 d1, d12).
         title (None | str | Unset): The title signed with the version, or null (ADR-0056 d10).
+        search_text (str | Unset): For a format whose text is not prose, what the claim will be found by, derived from
+            its source; absent for prose, so a reviewer sees it on the card before the verdict (ADR-0056 d9; ADR-0070 d5).
+            Since v0.6.4.
         replaces_valid_until (str | Unset): On a held successor alone: the instant approving it ends the version it
             replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when
             approving ends nothing (ADR-0059 d4).
@@ -138,6 +141,7 @@ class HeldPageItemsItem:
     valid_until: None | str | Unset = UNSET
     format_: str | Unset = UNSET
     title: None | str | Unset = UNSET
+    search_text: str | Unset = UNSET
     replaces_valid_until: str | Unset = UNSET
     text: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -293,6 +297,8 @@ class HeldPageItemsItem:
         else:
             title = self.title
 
+        search_text = self.search_text
+
         replaces_valid_until = self.replaces_valid_until
 
         text = self.text
@@ -357,6 +363,8 @@ class HeldPageItemsItem:
             field_dict["format"] = format_
         if title is not UNSET:
             field_dict["title"] = title
+        if search_text is not UNSET:
+            field_dict["search_text"] = search_text
         if replaces_valid_until is not UNSET:
             field_dict["replaces_valid_until"] = replaces_valid_until
         if text is not UNSET:
@@ -616,6 +624,8 @@ class HeldPageItemsItem:
 
         title = _parse_title(d.pop("title", UNSET))
 
+        search_text = d.pop("search_text", UNSET)
+
         replaces_valid_until = d.pop("replaces_valid_until", UNSET)
 
         text = d.pop("text", UNSET)
@@ -658,6 +668,7 @@ class HeldPageItemsItem:
             valid_until=valid_until,
             format_=format_,
             title=title,
+            search_text=search_text,
             replaces_valid_until=replaces_valid_until,
             text=text,
         )
