@@ -168,7 +168,7 @@ an option with no default and no saved value reaches neither. Decided, not built
     | `oml doctor` with an admin key against a lead with no `oauth.issuer` | `warn server_origin: the server names no public origin (oauth.issuer unset), so its pages cannot show the URL agents set beside their keys` | exit 0 |
     | the plugin's MCP tools with no saved `url` | whatever Claude Code shows for an unresolved `${user_config.url}`; **unverified** for Claude Code 2.1.312 and later, no run has recorded it. The hook line above and `oml doctor` name the cause | no tools served |
 
-    Each line is a stable string a test in d10 matches (tests 4, 6, 9, 10 and 17 to 22), and each
+    Each line is a stable string a test in d10 matches (tests 4, 6, 9, 10, 17 to 20 and 24), and each
     is in `oml doctor`'s reference page in the same change. The MCP-tool row is the exception:
     what it shows is Claude Code's, so it is recorded by a run rather than tested.
 
@@ -180,7 +180,8 @@ an option with no default and no saved value reaches neither. Decided, not built
       new setting `server.shared` is `true` or `signup.mode` is `open`
       ([ADR-0068](ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md)),
       else `false`. `server.shared` defaults to `false`; a hosted service sets it in its own
-      configuration, before it upgrades past this change (see Consequences, "Rollout order").
+      configuration, before, or in the same deploy as, its upgrade past this change (see
+      Consequences, "Rollout order").
       `shared` is the server's own statement about itself: it makes the disclosure reach the
       people who need it, and it is not a security control. A server whose admins mean harm can
       answer `false`; the user named that server, and the host check it replaces protected one
@@ -196,7 +197,7 @@ an option with no default and no saved value reaches neither. Decided, not built
       whose admins are not the caller's, the maintainer's hosted server among them until it
       upgrades, gets no disclosure from a new CLI until it upgrades and sets `server.shared`. The
       safeguard is the hosted server's rollout order (Consequences): it sets `server.shared = true`
-      in the same deploy as the upgrade, and that deploy should follow the release that builds
+      before, or in the same deploy as, its upgrade, and that deploy should follow the release that builds
       this as closely as it can, since a new CLI pointed at it before then syncs without the
       warning. A self-hoster on an older server is never asked.
     - **Consent is per origin.** `--allow-public-server` keeps its name. The first opt-in records
@@ -285,7 +286,7 @@ an option with no default and no saved value reaches neither. Decided, not built
   name answering or redirects it for as long as they are in use. That obligation belongs to the
   hosted service's runbooks, outside this repository.
 - **Rollout order, the one safeguard for the hosted server.** A hosted service that is not open
-  for sign-up sets `server.shared = true` in the same deploy as its upgrade past this change, and
+  for sign-up sets `server.shared = true` before, or in the same deploy as, its upgrade past this change, and
   makes that deploy as soon after the release as it can. Before it upgrades it omits `shared`, and
   by the operator's choice in d9 new CLIs read that as not shared and sync to it with no
   disclosure; after it upgrades without the setting it answers `shared: false`, with the same
