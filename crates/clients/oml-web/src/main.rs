@@ -22,10 +22,10 @@ async fn doctor() -> ExitCode {
     use oml_web::doctor::{Level, config_lines};
     let mut lines = config_lines(|name| std::env::var(name).ok());
     if let Ok(config) = Config::from_env() {
-        let line = match oml_sdk::HttpTransport::new(&config.api_url, API_TIMEOUT)
+        let client = oml_sdk::HttpTransport::new(&config.api_url, API_TIMEOUT)
             .map_err(|e| e.to_string())
-            .and_then(|t| api(Arc::new(t), config.client_secret.expose()))
-        {
+            .and_then(|t| api(Arc::new(t), config.client_secret.expose()));
+        let line = match &client {
             Err(e) => (Level::Fail, format!("api: {e}")),
             Ok(api) => match api.readyz().await {
                 Ok(ready)
@@ -64,7 +64,12 @@ async fn doctor() -> ExitCode {
                 ),
             },
         };
+        let ready = line.0 == Level::Ok;
         lines.push(line);
+        // Whether the lead takes this secret, once it is ready (#230).
+        if let (true, Ok(api)) = (ready, &client) {
+            lines.push(oml_web::doctor::secret_line(api, &config.api_url).await);
+        }
     }
     let failed = lines.iter().any(|(level, _)| *level == Level::Fail);
     for (level, text) in lines {

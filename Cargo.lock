@@ -4041,6 +4041,7 @@ dependencies = [
  "oml-scan",
  "oml-test-pg",
  "oml-transport-http",
+ "oml-web-credential",
  "opentelemetry",
  "opentelemetry-proto",
  "opentelemetry_sdk",
