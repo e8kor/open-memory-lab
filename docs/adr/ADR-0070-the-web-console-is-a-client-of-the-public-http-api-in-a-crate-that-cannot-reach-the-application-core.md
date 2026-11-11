@@ -682,7 +682,7 @@ contract's `Idempotency-Key` row says (claims a record before side effects):
 Phase (c) (#190) takes the `web_*` use cases out of `oml-app`'s core. It changes no answer: the
 operations and their refusals, the lead's routes and redirects, the journal, and every metric and
 log name are as phase (b) left them, and the workspace's suites pass before and after with the
-same counts, test binary by test binary (1,959 passed, 15 ignored, against a throwaway PostgreSQL). The exit check,
+same counts, test binary by test binary (1,962 passed and 15 ignored in 150 test binaries, against a throwaway PostgreSQL). The exit check,
 `grep -rn 'pub async fn web_' crates/oml-app --include='*.rs' | grep -v 'crates/oml-app/src/app/auth.rs'`,
 prints nothing.
 
