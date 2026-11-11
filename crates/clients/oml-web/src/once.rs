@@ -6,21 +6,41 @@
 //! never in this process's memory past the request.
 //!
 //! The seal is ChaCha20-Poly1305 under a key derived from the session
-//! token, which only the browser and the lead hold, so any `oml-web`
-//! replica opens it for the same session and no other session can; the
-//! associated data names the page, so a seal opens on that page alone.
+//! token ([`oml_web_credential::once_seal_key`]), which only the browser and
+//! the lead hold, so any `oml-web` replica opens it for the same session and
+//! no other session can; the associated data names the page, so a seal
+//! opens on that page alone.
+//!
+//! What the cookie costs, kept visible (ADR-0070, the table of #253):
+//!
+//! - `__Host-` forces `Path=/`, so the sealed cookie rides every request of
+//!   the site, the API's included, until the target clears it or
+//!   [`ONCE_MAX_AGE`] passes. A redirect is followed at once, so a minute
+//!   bounds the window. Neither `oml-web`'s request line nor the lead's
+//!   reads `Cookie`, and `oml-web` never forwards the cookie to the API; a
+//!   proxy's own access log must not record `Cookie` (Caddy redacts it
+//!   unless `log_credentials` is set).
+//! - Clearing is the browser's: a seal copied out of the browser opens,
+//!   with the session's token, until it expires, the same reach the token
+//!   already gives to that session's keys.
+//! - One cookie name serves every act: two acts that show a secret, sent
+//!   from two tabs of one session before either target loads, leave the
+//!   second seal, and the first target shows it or nothing. The first
+//!   secret is not shown; the key it names is listed, and the person cuts
+//!   it off and issues another, or asks a new connect code.
 
 use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
-use ring::digest::{SHA256, digest};
 use serde::{Deserialize, Serialize};
 
 /// The cookie that carries a sealed secret from an act to its redirect
 /// target: host-only, script-blind, sent only to this site's own
-/// navigations, and gone in five minutes if the target is never loaded.
+/// navigations, and gone in a minute if the target is never loaded.
 pub const ONCE_COOKIE: &str = "__Host-oml_once";
 
-/// How long a sealed secret waits for its page, in seconds.
-pub const ONCE_MAX_AGE: u32 = 300;
+/// How long a sealed secret waits for its page, in seconds: the redirect
+/// is followed at once, so a minute is ample and bounds how long the
+/// cookie rides every request (#253; chosen, not measured).
+pub const ONCE_MAX_AGE: u32 = 60;
 
 const PURPOSE: &[u8] = b"oml-web shown-once v1\n";
 
@@ -54,12 +74,10 @@ impl std::fmt::Debug for Secret {
 }
 
 fn key(session_token: &str) -> LessSafeKey {
-    let mut material = PURPOSE.to_vec();
-    material.extend_from_slice(session_token.as_bytes());
-    let derived = digest(&SHA256, &material);
+    let derived = oml_web_credential::once_seal_key(session_token);
     LessSafeKey::new(
-        UnboundKey::new(&CHACHA20_POLY1305, derived.as_ref())
-            .expect("a SHA-256 digest is ChaCha20-Poly1305's key length"),
+        UnboundKey::new(&CHACHA20_POLY1305, &derived)
+            .expect("an HMAC-SHA256 tag is ChaCha20-Poly1305's key length"),
     )
 }
 

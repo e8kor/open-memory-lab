@@ -80,10 +80,6 @@ pub fn config_lines(lookup: impl Fn(&str) -> Option<String>) -> Vec<(Level, Stri
     lines
 }
 
-/// The capacity credential the doctor's probe presents: well formed, and
-/// derived from no session, so the lead resolves it to nothing.
-const PROBE_CREDENTIAL: &str = "omls_oml-web-doctor-probe-no-session";
-
 /// Whether the lead accepts the secret `api` sends (#230), which its
 /// `/readyz` cannot say: `GET /v2/whoami` with a capacity credential no
 /// session holds. The lead names `session_outside_web` only when the
@@ -92,7 +88,7 @@ const PROBE_CREDENTIAL: &str = "omls_oml-web-doctor-probe-no-session";
 /// No line carries the secret.
 pub async fn secret_line(api: &crate::Api, api_url: &str) -> (Level, String) {
     let call = oml_sdk::Call {
-        bearer: PROBE_CREDENTIAL,
+        bearer: oml_web_credential::DOCTOR_PROBE_CREDENTIAL,
         request_id: None,
         correlation_id: None,
     };
@@ -103,7 +99,7 @@ pub async fn secret_line(api: &crate::Api, api_url: &str) -> (Level, String) {
             (
                 Level::Fail,
                 format!(
-                    "api: {api_url} refuses oml-web's web.client_secret; set the same value on the lead, or keep the old one there as web.client_secret_previous while oml-web restarts"
+                    "api: {api_url} refuses oml-web's web.client_secret: the lead holds a different value, or no web.client_secret, or a proxy between them adds a client-certificate header; set the same value on the lead (keep the old one there as web.client_secret_previous while oml-web restarts) and strip that header at the proxy"
                 ),
             )
         }

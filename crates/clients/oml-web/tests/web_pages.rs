@@ -1331,6 +1331,37 @@ async fn the_admin_workareas_page_is_not_found_for_a_person_who_is_not_an_admin(
 }
 
 #[tokio::test]
+async fn the_admin_workareas_page_refuses_a_create_as_no_action_of_its_own_and_creates_nothing() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, page) = act(
+        &rig,
+        &admin,
+        "/web/admin/workareas",
+        &[("action", "create_workarea"), ("name", "shadow")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{page}");
+    assert!(page.contains("request.validation"), "{page}");
+    assert!(
+        page.contains("action is not one of this page&#39;s actions")
+            || page.contains("action is not one of this page's actions"),
+        "{page}"
+    );
+    let root = key_named(&rig, "boss-web").await.user.expect("a root");
+    let children = rig
+        .store
+        .workarea_children(rig.boot.tenant_id, root)
+        .await
+        .unwrap();
+    assert!(
+        children.iter().all(|w| w.name.as_str() != "shadow"),
+        "nothing was created"
+    );
+}
+
+#[tokio::test]
 async fn the_old_workareas_urls_and_acts_go_through_the_lead_to_the_moved_pages_own_paths() {
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
@@ -1648,6 +1679,9 @@ async fn the_render_frame_answers_under_its_own_policy_with_the_source_escaped()
     assert!(!csp.contains("unsafe-eval"), "{csp}");
     assert!(!csp.contains("allow-same-origin"), "{csp}");
     assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    // The frame sends no referrer, so the token in its URL goes nowhere
+    // (ADR-0070, the sixth change's table, d3 layer 5).
+    assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
     assert!(
         body.contains("<pre class=\"mermaid\">flowchart LR"),
         "{body}"
@@ -2045,10 +2079,13 @@ async fn a_person_reaches_nothing_of_another_persons_root_on_oml_webs_pages() {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
-        assert!(!html.contains("Kilimanjaro") && !html.contains("Tanganyika"));
+        for secret in ["Kilimanjaro", "Tanganyika", "flowchart"] {
+            assert!(!html.contains(secret), "{id}: {html}");
+        }
     }
-    let (_, _, review) =
+    let (status, _, review) =
         act_and_follow(&rig, &bob, "/web/review", &[("action", "review_next")]).await;
+    assert_eq!(status, StatusCode::OK, "{review}");
     for secret in ["Kilimanjaro", "Tanganyika", "flowchart"] {
         assert!(!review.contains(secret), "{review}");
     }
@@ -2877,7 +2914,11 @@ async fn a_user_issues_a_key_only_inside_its_root() {
         &rig,
         &cookie,
         "/web/keys",
-        &[("action", "cut_off"), ("key", "alice-laptop")],
+        &[
+            ("action", "cut_off"),
+            ("key", "alice-laptop"),
+            ("confirm", "yes"),
+        ],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
@@ -2888,7 +2929,11 @@ async fn a_user_issues_a_key_only_inside_its_root() {
         &rig,
         &cookie,
         "/web/keys",
-        &[("action", "cut_off"), ("key", "root-admin")],
+        &[
+            ("action", "cut_off"),
+            ("key", "root-admin"),
+            ("confirm", "yes"),
+        ],
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -2922,6 +2967,8 @@ async fn a_connector_key_shows_its_connect_code_once() {
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(page.contains("Connect code"), "{page}");
+    // Its expiry reads as the minutes left and the clock time in UTC.
+    assert!(page.contains(" UTC)."), "{page}");
 }
 
 #[tokio::test]
@@ -3223,6 +3270,131 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
 }
 
 #[tokio::test]
+async fn an_anonymous_universe_row_shows_no_scan_finding_to_a_reader_outside_its_authors() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, page) = act_and_follow(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[
+            ("action", "issue_key"),
+            ("name", "laptop"),
+            ("role", "writer"),
+        ],
+    )
+    .await;
+    let value = value_of(&page);
+    let source = agent_writes(&rig, &value, "rotate keys every ninety days").await;
+    // Only an approved memory is readable beyond its author: alice approves
+    // her agent's write first.
+    let serve = format!("srv_{}", source.simple());
+    let (status, _, _) = act_and_follow(
+        &rig,
+        &cookie,
+        "/web/review",
+        &[
+            ("action", "verdict"),
+            ("serve_id", &serve),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for (action, workarea) in [("grant_curation", "alice"), ("grant_review", "universe")] {
+        let (status, _, body) = act(
+            &rig,
+            &admin,
+            "/web/admin/people",
+            &[("action", action), ("user", "boss"), ("workarea", workarea)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{action}: {body}");
+    }
+    // A curator designation takes effect at the next sign-in: the session's
+    // capacity credentials are those its entry reached when it opened
+    // (ADR-0070 d2 as built).
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, body) = act(
+        &rig,
+        &admin,
+        "/web/admin/curate",
+        &[
+            ("action", "curate"),
+            ("source", &source.to_string()),
+            ("text", "Keys rotate quarterly. [needs-human]"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let curate = key_named(&rig, "boss-curate").await;
+    let page = rig
+        .app
+        .admin_search(
+            rig.boot.admin_key.value.as_str(),
+            Some("quarterly"),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("the admin reads");
+    let curated = &page.items[0];
+    assert_eq!(curated.state.as_str(), "held", "held until reviewed");
+    assert_eq!(curated.workarea_path, "universe");
+    assert_eq!(curated.memory.author_key_id, curate.key_id);
+    // boss-review is outside the curated claim's lineage, so it is served.
+    let (_, _, page) = act_and_follow(
+        &rig,
+        &admin,
+        "/web/admin/review",
+        &[("action", "review_next")],
+    )
+    .await;
+    assert!(page.contains("Keys rotate quarterly."), "{page}");
+    let serve_id = format!("srv_{}", curated.memory.memory_id.simple());
+    let (status, _, page) = act_and_follow(
+        &rig,
+        &admin,
+        "/web/admin/review",
+        &[
+            ("action", "verdict"),
+            ("serve_id", &serve_id),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    // The admin reads the finding; alice, outside the authoring keys,
+    // reads the row anonymous and without it (ADR-0044 d9; #253).
+    let page = rig
+        .app
+        .admin_search(
+            rig.boot.admin_key.value.as_str(),
+            Some("quarterly"),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("the admin reads");
+    assert!(
+        page.items[0].memory.scan_finding.is_some(),
+        "the curated text was held with a finding"
+    );
+    let (_, _, mine) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
+    assert!(
+        mine.contains("Keys rotate quarterly.") && mine.contains("the shared area"),
+        "{mine}"
+    );
+    assert!(!mine.contains("marker finding"), "{mine}");
+}
+
+#[tokio::test]
 async fn a_key_issued_on_the_user_page_takes_the_default_guardrail_scope_and_the_page_offers_none()
 {
     let rig = rig().await;
@@ -3511,7 +3683,7 @@ async fn a_key_value_is_shown_once_on_the_redirect_target_and_never_in_a_url_or_
         "Secure",
         "HttpOnly",
         "SameSite=Strict",
-        "Max-Age=300",
+        "Max-Age=60",
     ] {
         assert!(whole.contains(attribute), "{whole}");
     }
@@ -3982,6 +4154,7 @@ async fn the_admin_keys_page_lists_a_persons_keys_and_cuts_one_off() {
             ("action", "cut_off"),
             ("key", "alice-laptop"),
             ("user", "alice"),
+            ("confirm", "yes"),
         ],
     )
     .await;
@@ -4010,6 +4183,77 @@ async fn the_admin_keys_page_lists_a_persons_keys_and_cuts_one_off() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{page}");
+}
+
+#[tokio::test]
+async fn a_cut_off_is_confirmed_first_and_nothing_is_cut_off_until_it_is() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    laptop_key(&rig, &cookie).await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for (who, path, listed) in [
+        (&cookie, "/web/keys", None),
+        (&admin, "/web/admin/keys", Some("alice")),
+    ] {
+        let head = rig.head().await;
+        let mut fields = vec![("action", "cut_off"), ("key", "alice-laptop")];
+        if let Some(user) = listed {
+            fields.push(("user", user));
+        }
+        let (status, _, page) = act(&rig, who, path, &fields).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {page}");
+        assert!(page.contains("Cut off alice-laptop?"), "{page}");
+        assert!(page.contains(r#"name="confirm" value="yes""#), "{page}");
+        assert!(page.contains(r#"name="nonce""#), "{page}");
+        if listed.is_some() {
+            assert!(
+                page.contains(r#"<input type="hidden" name="user" value="alice">"#),
+                "the confirmation carries the listed user: {page}"
+            );
+        }
+        assert_eq!(
+            rig.head().await,
+            head,
+            "{path}: the confirmation records nothing"
+        );
+        // Anything but the confirmation's own field acts nothing either.
+        fields.push(("confirm", "no"));
+        let (status, _, _) = act(&rig, who, path, &fields).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(rig.head().await, head, "{path}: confirm=no records nothing");
+    }
+    let (_, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert!(!page.contains("cut off"), "still live: {page}");
+}
+
+#[tokio::test]
+async fn a_cut_off_confirmation_sent_twice_cuts_the_key_off_once() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    laptop_key(&rig, &cookie).await;
+    let head = rig.head().await;
+    let fields = [
+        ("action", "cut_off"),
+        ("key", "alice-laptop"),
+        ("confirm", "yes"),
+        ("nonce", "0f1e2d3c4b5a69788796a5b4c3d2e1f0"),
+    ];
+    for _ in 0..2 {
+        let (status, headers, body) = act(&rig, &cookie, "/web/keys", &fields).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+        assert_eq!(headers[header::LOCATION], "/web/keys?done=cut+off");
+    }
+    let events = rig
+        .store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap();
+    let denied = events
+        .iter()
+        .filter(|e| e.envelope.event_type == "key.denied")
+        .count();
+    assert_eq!(denied, 1, "the second send replayed");
 }
 
 #[tokio::test]

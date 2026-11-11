@@ -41,7 +41,9 @@ pub const PAGE_MAX: u32 = 200;
 /// Recall's own bound on one answer, the user page's text search.
 pub const RECALL_MAX: u32 = 100;
 /// The most pages of the person's keys the list reads to name their kinds:
-/// 10 pages of 200. A constant of the build, unmeasured (#170).
+/// 10 pages of 200. Past them the list is refused with
+/// `limit.list_too_long`, never shown with kinds missing. A constant of the
+/// build, unmeasured (#170).
 pub const KEY_PAGES_MAX: usize = 10;
 
 /// The user page's JSON route (ADR-0045 d25).
@@ -485,10 +487,15 @@ impl From<oml_sdk::Error> for Failed {
 }
 
 /// The person's own keys, each with its kind (ADR-0045 d32), through
-/// `GET /v2/keys` as `<user>-web`, a page at a time.
+/// `GET /v2/keys` as `<user>-web`, a page at a time; past
+/// [`KEY_PAGES_MAX`] pages, or at a cursor the API repeats, the page is
+/// refused by name, since a list cut short would leave rows without their
+/// kind and send an author search to `access.not_found` for a key the
+/// person holds.
 async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kinds, Failed> {
     let mut kinds = Vec::new();
     let mut cursor: Option<String> = None;
+    let mut seen = std::collections::HashSet::new();
     for _ in 0..KEY_PAGES_MAX {
         let ids = calls.next_ids();
         let page = web
@@ -501,11 +508,19 @@ async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kin
                 .map(|k| (k.id, k.name, kind_word(&k.held_by))),
         );
         match page.next_cursor {
-            Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
-            _ => return Ok(kinds),
+            None => return Ok(kinds),
+            Some(next) if !seen.insert(next.clone()) => break,
+            Some(next) => cursor = Some(next),
         }
     }
-    Ok(kinds)
+    Err(Failed::Refused(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "limit.list_too_long",
+        format!(
+            "you hold more keys than this page reads ({} pages of {PAGE_MAX}); use the API or the command line",
+            KEY_PAGES_MAX
+        ),
+    ))
 }
 
 /// The user page's page of the list, as `<user>-web`: the merged listing,
@@ -1106,7 +1121,7 @@ fn json_failed(failed: Failed, calls: &PageCalls) -> Response {
 
 /// The regions as JSON (ADR-0045 d30): each node with its rows by state;
 /// only the scope node, the first, carries the offers, as the Atlas's
-/// panel does.
+/// panel does, or `offers_unavailable` where they failed.
 fn regions_json(nodes: &[CountedNode], partial: bool, offers: Option<&NodeOffers>) -> Value {
     let items: Vec<Value> = nodes
         .iter()
@@ -1218,12 +1233,16 @@ async fn data(
         Ok(counts) => counts,
         Err(e) => return json_failed(Failed::Api(e), &calls),
     };
-    let offers = match offers {
-        Ok(offers) => offers,
-        Err((_, e)) => return json_failed(Failed::Api(e), &calls),
-    };
+    // The offers are the secondary read (d8): their failure marks the scope
+    // node's offers unavailable, as the Atlas's panel does, and the regions
+    // and rows still answer.
     let mut answer = cards.json();
-    answer["workareas"] = regions_json(&counts.items, counts.truncated, Some(&offers));
+    answer["workareas"] = regions_json(&counts.items, counts.truncated, offers.as_ref().ok());
+    if offers.is_err()
+        && let Some(scope) = answer["workareas"]["items"].get_mut(0)
+    {
+        scope["offers_unavailable"] = json!(true);
+    }
     answer["base"] = json!(side.lead());
     axum::Json(answer).into_response()
 }
@@ -1273,6 +1292,58 @@ mod tests {
         );
         let none = ListQuery::parse(&Fields::of_pairs(Vec::new()).unwrap()).unwrap();
         assert_eq!(none.link(USER_MEMORIES_PATH, None), "/web/memories");
+    }
+
+    fn parsed(pairs: &[(&str, &str)]) -> Result<ListQuery, FieldRefusal> {
+        let pairs = pairs
+            .iter()
+            .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
+            .collect();
+        ListQuery::parse(&Fields::of_pairs(pairs).unwrap())
+    }
+
+    #[test]
+    fn an_empty_field_is_no_filter_and_the_default_page_size_holds() {
+        let q = parsed(&[
+            ("q", ""),
+            ("state", ""),
+            ("workarea", ""),
+            ("origin", ""),
+            ("author", ""),
+            ("cursor", ""),
+            ("limit", ""),
+        ])
+        .unwrap();
+        assert!(q.q.is_none() && q.state.is_none() && q.workarea.is_none());
+        assert!(q.origin.is_none() && q.author.is_none() && q.cursor.is_none());
+        assert_eq!(q.limit, PAGE_DEFAULT);
+        assert_eq!(q.link(USER_MEMORIES_PATH, None), "/web/memories");
+    }
+
+    #[test]
+    fn a_malformed_limit_state_or_origin_is_refused_naming_its_field() {
+        for (pairs, field) in [
+            (&[("limit", "0")][..], "limit"),
+            (&[("limit", "201")][..], "limit"),
+            (&[("limit", "ten")][..], "limit"),
+            (&[("limit", "-1")][..], "limit"),
+            (&[("state", "approved")][..], "state"),
+            (&[("state", "HELD")][..], "state"),
+            (&[("origin", "email")][..], "origin"),
+        ] {
+            let refused = parsed(pairs).err().map(|(name, _)| name);
+            assert_eq!(refused, Some(field), "{pairs:?}");
+        }
+        assert_eq!(parsed(&[("limit", "200")]).unwrap().limit, PAGE_MAX);
+    }
+
+    #[test]
+    fn a_field_sent_twice_is_refused_before_it_is_read() {
+        let pairs = vec![
+            ("state".to_owned(), "held".to_owned()),
+            ("state".to_owned(), "promoted".to_owned()),
+        ];
+        assert!(Fields::of_pairs(pairs).is_err());
     }
 
     #[test]

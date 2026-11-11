@@ -694,11 +694,13 @@ where
     /// `GET /v1/memories`: the own-work listing with `own=true`, else the
     /// scoped listing, as memory summaries without text, newest first
     /// (http-api.md search; ADR-0025 d13). The query's `workarea` is the
-    /// subtree either reads (ADR-0039 d4, d7). `include_text` is the
-    /// agent plugin's alone: `oml_read`'s listing mode returns each item
+    /// subtree either reads (ADR-0039 d4, d7). The `include_text` argument
+    /// is the agent plugin's: `oml_read`'s listing mode returns each item
     /// with its text, as every `oml_read` mode does, from the same rows
-    /// and access the listing reads (ADR-0039 d4); the HTTP route serves
-    /// summaries.
+    /// and access the listing reads (ADR-0039 d4). On the HTTP route the
+    /// scoped listing serves summaries; the query's `include_text` is
+    /// taken only beside `with_own` or `author`, the web console's list
+    /// (ADR-0070 d5), and is an unknown parameter without them.
     async fn list_memories_inner(
         st: &Self,
         params: &[(String, String)],
@@ -1690,7 +1692,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting: Acting<'static> = acting(headers, None)?;
+        acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         // The body is closed, nested objects included: a field the server
         // does not serve is refused, never dropped (ADR-0025 d16).
@@ -1783,7 +1785,10 @@ where
         // issues nothing again; the key is claimed before the issuance, so
         // a process stopping between the two never lets the resubmission
         // issue a second key (ADR-0031 d7; #127, #233).
-        let caller = st.console_caller(headers).await?;
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = Arc::new(st.console_caller(headers).await?);
+        let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest("", body);
         let claim = match st.claim(&caller, "keys.issue", &idem, &digest).await? {
             console::Claimed::Replayed(replayed) => return Ok(replayed),
@@ -1868,14 +1873,17 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting: Acting<'static> = acting(headers, None)?;
+        acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let req: WorkareaCreateBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("parent_id", "parent")])
         })?;
         // A resubmission under the same key answers the recorded creation
         // and creates nothing again (ADR-0070 d3 layer 4).
-        let caller = st.console_caller(headers).await?;
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = Arc::new(st.console_caller(headers).await?);
+        let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest("", body);
         let claim = match st.claim(&caller, "workarea.create", &idem, &digest).await? {
             console::Claimed::Replayed(replayed) => return Ok(replayed),
@@ -1971,13 +1979,16 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting: Acting<'static> = acting(headers, None)?;
+        acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let node = reference("workarea", workarea)?;
         let req: TransitionBody = parse_json(headers, body)?;
         // A resubmission under the same key answers the recorded proposal
         // and proposes nothing again (ADR-0070 d3 layer 4).
-        let caller = st.console_caller(headers).await?;
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = Arc::new(st.console_caller(headers).await?);
+        let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest(workarea, body);
         let claim = match st
             .claim(&caller, "workarea.transition", &idem, &digest)
@@ -2043,14 +2054,17 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting: Acting<'static> = acting(headers, None)?;
+        acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let node = reference("workarea", workarea)?;
         let transition_id = Uuid::parse_str(transition_id).map_err(|_| {
             ApiError::validation(format!("transition_id {transition_id:?} is not an id"))
                 .with_details(json!({ "field": "transition_id" }))
         })?;
-        let caller = st.console_caller(headers).await?;
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = Arc::new(st.console_caller(headers).await?);
+        let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest(workarea, &Bytes::from(transition_id.to_string()));
         let claim = match st.claim(&caller, "workarea.ratify", &idem, &digest).await? {
             console::Claimed::Replayed(replayed) => return Ok(replayed),
@@ -2927,7 +2941,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting: Acting<'static> = acting(headers, None)?;
+        acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let workarea = reference("workarea", workarea_id)?;
         let req: WorkareaModeBody = parse_json(headers, body)?;
@@ -2938,7 +2952,10 @@ where
             ))
             .with_details(json!({ "field": "/mode" }))
         })?;
-        let caller = st.console_caller(headers).await?;
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = Arc::new(st.console_caller(headers).await?);
+        let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest(workarea_id, body);
         let claim = match st.claim(&caller, "workarea.mode", &idem, &digest).await? {
             console::Claimed::Replayed(replayed) => return Ok(replayed),
@@ -3746,8 +3763,11 @@ fn bearer_value(headers: &HeaderMap) -> Result<String, ApiError> {
 enum Acting<'a> {
     Value(String),
     Connection(&'a Caller),
-    /// A session key's caller, resolved from a capacity credential by the
-    /// session gate (ADR-0070 d2).
+    /// A caller this request already resolved: a session key's, from a
+    /// capacity credential by the session gate (ADR-0070 d2), or a console
+    /// act's, resolved once before it claims its `Idempotency-Key`, so the
+    /// act reads the key's grants again but is not charged a second time
+    /// against its rate (#253).
     Session(Arc<Caller>),
 }
 
@@ -4582,8 +4602,14 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
             Value::from(m.author_key_id.to_string())
         },
         // Admission's scan finding, `class: rule at place`, never the text
-        // (ADR-0065 d8; ADR-0070 d5).
-        "scan_finding": m.scan_finding,
+        // (ADR-0065 d8; ADR-0070 d5); null wherever principal is, so an
+        // anonymous row carries its text and nothing admission recorded of
+        // its writing (ADR-0044 d9; #253).
+        "scan_finding": if served.anonymous {
+            Value::Null
+        } else {
+            Value::from(m.scan_finding.clone())
+        },
         "provenance": "agent",
         "simulation_id": Value::Null,
         "self_signed": false,

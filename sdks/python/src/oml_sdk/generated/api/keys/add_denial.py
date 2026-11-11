@@ -95,11 +95,13 @@ def sync_detailed(
     denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is
     idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
     s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin
-    key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that
-    event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is
-    refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin
-    key is refused with request.validation, details.field key: denials attenuate grants, and an admin
-    key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+    key role, and the Idempotency-Key is required but no outcome is recorded under it: only a session
+    key claims it, so a resubmission by any other key denies again. Distinct from a per-grant deny mask.
+    Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a
+    name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation,
+    details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with
+    request.validation, details.field key: denials attenuate grants, and an admin key carries none
+    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -153,11 +155,13 @@ def sync(
     denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is
     idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
     s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin
-    key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that
-    event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is
-    refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin
-    key is refused with request.validation, details.field key: denials attenuate grants, and an admin
-    key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+    key role, and the Idempotency-Key is required but no outcome is recorded under it: only a session
+    key claims it, so a resubmission by any other key denies again. Distinct from a per-grant deny mask.
+    Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a
+    name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation,
+    details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with
+    request.validation, details.field key: denials attenuate grants, and an admin key carries none
+    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -206,11 +210,13 @@ async def asyncio_detailed(
     denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is
     idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
     s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin
-    key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that
-    event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is
-    refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin
-    key is refused with request.validation, details.field key: denials attenuate grants, and an admin
-    key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+    key role, and the Idempotency-Key is required but no outcome is recorded under it: only a session
+    key claims it, so a resubmission by any other key denies again. Distinct from a per-grant deny mask.
+    Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a
+    name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation,
+    details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with
+    request.validation, details.field key: denials attenuate grants, and an admin key carries none
+    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -262,11 +268,13 @@ async def asyncio(
     denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is
     idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
     s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin
-    key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that
-    event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is
-    refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin
-    key is refused with request.validation, details.field key: denials attenuate grants, and an admin
-    key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
+    key role, and the Idempotency-Key is required but no outcome is recorded under it: only a session
+    key claims it, so a resubmission by any other key denies again. Distinct from a per-grant deny mask.
+    Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a
+    name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation,
+    details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with
+    request.validation, details.field key: denials attenuate grants, and an admin key carries none
+    (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a

@@ -184,3 +184,27 @@ async fn the_doctor_fails_when_the_lead_refuses_oml_webs_secret_and_passes_when_
         Level::Fail
     );
 }
+
+/// The lead answers `session_outside_web` for three causes, and the
+/// doctor's fail line names each: a different secret on the lead, no
+/// secret there at all, or a proxy that adds a client-certificate header,
+/// which the lead never trusts (ADR-0070 d2, #262).
+#[tokio::test]
+async fn the_doctors_refusal_line_names_a_different_secret_no_secret_and_a_certificate_header() {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let api = oml_web::api(
+        std::sync::Arc::new(Lead(401, refusal("session_outside_web"), seen)),
+        SECRET,
+    )
+    .unwrap();
+    let (level, text) = oml_web::doctor::secret_line(&api, "http://127.0.0.1:8090").await;
+    assert_eq!(level, Level::Fail, "{text}");
+    for cause in [
+        "different",
+        "no web.client_secret",
+        "client-certificate header",
+    ] {
+        assert!(text.contains(cause), "{cause}: {text}");
+    }
+    assert!(!text.contains(SECRET), "{text}");
+}
