@@ -554,21 +554,22 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
     assert_eq!(status, StatusCode::ACCEPTED, "{held}");
     let ada_user = rig_user(&rig, 21).await;
     let scratch = format!("{ada_user}.scratch");
-    let (status, _, html) = send(
-        &rig.router,
-        form(
-            "/web",
-            Some(&ada),
-            &format!(
-                "action=create_workarea&name=scratch&csrf_token={}",
-                csrf(&ada)
-            ),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "{html}");
-    // The mode is the Workareas view's act, which oml-web runs as the
-    // person's reviewer key through the API (ADR-0070 d7 (b)).
+    // Creating the workarea and its mode are the Workareas view's acts,
+    // which oml-web runs as the person's web and reviewer keys through the
+    // API (ADR-0070 d7 (b)).
+    let web = capacity_credential(ada.split_once('=').expect("a cookie").1, "web");
+    let mut request = api(
+        "POST",
+        "/v2/workareas",
+        &web,
+        Some(json!({"name": "scratch"})),
+    );
+    request.headers_mut().insert(
+        "oml-web-client",
+        WEB_CLIENT_SECRET.parse().expect("a header value"),
+    );
+    let (status, _, html) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::CREATED, "{html}");
     let review = capacity_credential(ada.split_once('=').expect("a cookie").1, "review");
     let mut request = api(
         "POST",

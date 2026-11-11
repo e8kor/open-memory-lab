@@ -345,7 +345,7 @@ fn field_error(field: &str, message: &str) -> ApiError {
 fn tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
     let mut tabs = vec![
         ("/web/start", "Start"),
-        ("/web?view=memories", "Memories"),
+        (oml_page::web::USER_MEMORIES_PATH, "Memories"),
         ("/web?view=review", "Review"),
         ("/web", "Keys"),
     ];

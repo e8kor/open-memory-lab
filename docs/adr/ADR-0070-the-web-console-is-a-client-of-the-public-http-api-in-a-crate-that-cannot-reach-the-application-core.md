@@ -25,7 +25,9 @@ Amended on 2026-11-11 by the operator's decision to route by path (d4 and d7 (b)
 each moved page gets its own path under `/web/`, and the lead answers the old `?view=` form with
 a `303` to it; see the second table of Phase (b) as built. Amended by the third change of phase
 (b), the Workareas view and the first acts through `oml-web` (d3, d5 and d8 revised): see the
-third table of Phase (b) as built.
+third table of Phase (b) as built. Amended by the fourth change of phase (b), the Memories list, the
+Atlas and the creation of a workarea through `oml-web` (d3, d5, d7 and d8 revised): see the fourth
+table of Phase (b) as built.
 
 ## Context
 
@@ -557,6 +559,18 @@ ratifications and mode changes (ADR-0045 d28). Where it reads a decision differe
 | d3 layer 1 | `web_action` joins with the first act | the page line names `web_action`, the form's action | as decided |
 | d3 layer 6, d8 | the per-session cap on calls in flight; two sequential calls | not built; the view bounds its own fan-out to eight calls in flight (`oml_web::workareas::FAN_OUT`, unmeasured, #170) after the tree, each row's offers and live proposals a secondary read that marks only its row unavailable when it fails | a page of N workareas makes N to 3N calls, where the lead made the same reads in process, and each offers call now runs up to four more verb checks for `refused`; both belong in #170's measurement; the cap across a session's pages lands with the memories view, which fans out further |
 | (none) | (none) | creating a workarea stays the lead's act of the user page: the view's form posts it to `POST /web`, which answers `303 /web/workareas?done=created` | `POST /v2/workareas` serves it, but the act is not one of the dropdown's; it moves with the keys view, whose other acts it shares |
+
+The fourth change of phase (b) moves the Memories list and the Atlas of both pages, their JSON
+routes, and the creation of a workarea. Where it reads a decision differently:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d7 (b), d4 | (silent on the list and the Atlas) | the list lives at `/web/memories` and `/web/admin/memories`, the Atlas at `/web/atlas` and `/web/admin/atlas`, the JSON at `/web/data/memories` and `/web/admin/data/memories`, each `GET`; the lead answers `GET /web?view=memories` and `GET /web/admin?view=memories` with a `303` to the list, or with `display=atlas` to the Atlas, carrying nothing from the request; one memory opened by its id, `?view=memories&memory=<id>`, stays the lead's view, and each row links there | the one-memory view carries the admin page's supersede form and the Mermaid frame, which move with the review and curate views; a row's link to it is a plain `GET` across the router |
+| d7 (b), (none) | creating a workarea stays the lead's act (third change) | it is the Workareas view's act, `POST /web/workareas` with `action=create_workarea`, through `POST /v2/workareas` as `<user>-web` under the form's nonce; the lead answers the old act with a `303` to the view, running nothing | the view's other acts already run through `oml-web`; leaving one act behind kept a second form path to the same page |
+| d3 layer 4, d5 | `POST /v2/workareas` takes `Idempotency-Key` | it replays a recorded creation under the same key and body with `Idempotency-Replay: true`, and refuses the key on another body with `idempotency.digest_mismatch` | a resubmitted create form would otherwise answer `name.taken` for a creation that succeeded |
+| d5 | the listing with `with_own`, the admin search and the tree with `counts` serve the list and the Atlas | they do, with fields joining: `include_text` on the `with_own` listing; `author_key_id` and `scan_finding` on every served memory, the key id null where the principal is; `held_by`, `promoted_at`, `valid_from`, `valid_until` and `scan_finding` on the admin read's items, whose page now holds up to 200; the person's keys from `GET /v2/keys` name each own row's kind; the breadcrumb is read off the scope's path | each is a field the row showed and no operation served; a field on an existing operation, as the third change did for the offers, not a page-shaped aggregate |
+| d5 | `/web/data/memories` and `/web/admin/data/memories` stay page routes of `oml-web` | they are, and leave `openapi.yaml`, which declares the lead's routes; no session is `access.not_found` as JSON, not a redirect | the document is held equal to the lead's route table; the routes' contract is the page's own |
+| d8 | at most two sequential calls | the list makes them (whoami; the listing and the keys, or the admin search); the Atlas reads the counts and the scope's offers together after whoami, the offers a secondary read whose failure marks the panel unavailable; a text search reads the keys before recall, a third sequential call | the author filter of a text search names a key the recall answer does not; #170 measures it |
 
 ## Consequences
 

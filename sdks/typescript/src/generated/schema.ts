@@ -139,7 +139,7 @@ export interface paths {
         put?: never;
         /**
          * Create a child workarea in development.
-         * @description Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created or deleted.
+         * @description Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key (<user>-web, through its capacity credential) creates under its own root, as the web console's Workareas view does (ADR-0070 d5).
          */
         post: operations["createWorkarea"];
         delete?: never;
@@ -1159,13 +1159,13 @@ export interface paths {
         };
         /**
          * The sign-in page without a session; the user page with one.
-         * @description Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys, setup, memories, review), q, memory, workarea. Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
+         * @description Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys, setup, review, and memories with memory, one memory opened by its id), memory. The Memories list and the Atlas are oml-web's, at /web/memories and /web/atlas. Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
          */
         get: operations["userPage"];
         put?: never;
         /**
          * One act of the user page, named by action.
-         * @description Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off, create_workarea, review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key, which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea answers 303 /web/workareas?done=created. workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.
+         * @description Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off, review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key, which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea, workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.
          */
         post: operations["userPageAct"];
         delete?: never;
@@ -1218,46 +1218,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/web/data/memories": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The user page's page of memories as JSON.
-         * @description The Memories view's query (state, workarea, origin, author, q, limit, cursor) and its scope, as <user>-web: the rows the list shows with the card's fields alone, and the workareas the key may read under the filter with their rows counted by state and their dropdown's acts. The session cookie alone; an Authorization header is access.verb_ceiling web_is_human_only, no session access.not_found; no-store, nosniff, no CORS (ADR-0045 d25, d30).
-         */
-        get: operations["userPageMemoriesData"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/web/admin/data/memories": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The admin page's page of memories as JSON.
-         * @description As /web/data/memories, as <user>-admin through the admin read: the page is one memory.admin_read; the workareas are the tenant's tree, counted as structure (ADR-0045 d24, d25, d30).
-         */
-        get: operations["adminPageMemoriesData"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/web/admin": {
         parameters: {
             query?: never;
@@ -1267,7 +1227,7 @@ export interface paths {
         };
         /**
          * The admin page, for a session whose allowlist entry is an admin's.
-         * @description Any other session answers access.not_found. Views by query: view (people, queue, review, curate, memories), q, memory; view=workarea answers 303 /web/admin/workareas, which oml-web serves, carrying nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4). The memories view and one memory's attribution are the admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
+         * @description Any other session answers access.not_found. Views by query: view (people, queue, review, curate, and memories with memory, one memory's attribution), memory; view=workarea answers 303 /web/admin/workareas, and view=memories without memory 303 /web/admin/memories, or /web/admin/atlas with display=atlas, which oml-web serves, carrying nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4, the memories views since v0.7.0). The memories list oml-web serves and one memory's attribution here are the admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
          */
         get: operations["adminPage"];
         put?: never;
@@ -1473,6 +1433,23 @@ export interface components {
             user?: string | null;
             /** Format: date-time */
             created_at: string;
+            /** @description The media type signed with the version (ADR-0056 d1). */
+            format?: string;
+            /** @description The title signed with the version, or null (ADR-0056 d10). */
+            title?: string | null;
+            /** @description The authoring key's holder, agent, human or service (ADR-0045 d32; ADR-0070 d5). Since v0.7.0. */
+            held_by?: string | null;
+            /**
+             * Format: date-time
+             * @description When the version was promoted, or null. Since v0.7.0.
+             */
+            promoted_at?: string | null;
+            /** @description When the version says it begins to hold, as signed, or null (ADR-0059 d2). Since v0.7.0. */
+            valid_from?: string | null;
+            /** @description When it stops holding, or null when open (ADR-0059 d2). Since v0.7.0. */
+            valid_until?: string | null;
+            /** @description Admission's scan finding, class: rule at place, never the matched text, or null (ADR-0065 d8). Since v0.7.0. */
+            scan_finding?: string | null;
             /** @description The version's anchor, which the reviewer judges beside the text, or null (ADR-0057 d2). */
             anchor?: components["schemas"]["Anchor"] | null;
         };
@@ -1669,6 +1646,10 @@ export interface components {
             load_warning?: string;
             /** @description The authoring principal; null on a version in universe served to a key outside its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its source (ADR-0044 d9). */
             principal?: string | null;
+            /** @description The authoring key's id; null wherever principal is (ADR-0044 d9). The web console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since v0.7.0. */
+            author_key_id?: string | null;
+            /** @description Admission's scan finding on the version, class: rule at place, never the matched text; null when the scan found nothing (ADR-0065 d8; ADR-0070 d5). Since v0.7.0. */
+            scan_finding?: string | null;
             /** @enum {string} */
             provenance?: "agent" | "human" | "connector" | "simulation";
             simulation_id?: string | null;
@@ -1721,11 +1702,11 @@ export interface components {
         /** @description YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (ADR-0059 d2). */
         ValidEnd: string;
         Memory: components["schemas"]["MemorySummary"] & {
-            /** @description The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7). Absent from a recall item sent with include_text false. */
+            /** @description The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7). Absent from a recall item sent with include_text false, and from a listing item unless include_text is true (ADR-0070 d5). */
             text?: string;
         };
         MemoryPage: {
-            items: components["schemas"]["MemorySummary"][];
+            items: components["schemas"]["Memory"][];
             next_cursor: string | null;
         };
         /** @description The scope is workarea's subtree, else the key's default_workarea's (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039 d9); v0.3.0's include_bodies and include_own_held are request.validation naming include_text and include_unreviewed in details.renamed_to (ADR-0039 d7). */
@@ -3170,10 +3151,12 @@ export interface operations {
                 state?: "held" | "promoted" | "demoted" | "rejected" | "erased";
                 kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
                 own?: boolean;
-                /** @description true: the scoped listing (at workarea, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, workarea, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
+                /** @description true: the scoped listing (at workarea, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, include_text, workarea, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
                 with_own?: boolean;
                 /** @description One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. Implies the with_own listing (ADR-0045 d23; ADR-0070 d5). Since v0.6.4. */
                 author?: string;
+                /** @description With with_own or author alone: true serves each item with its text, as the web console's Memories list shows it (ADR-0045 d22; ADR-0070 d5); false or absent, summaries. Since v0.7.0. */
+                include_text?: boolean;
                 /** @description Rows whose anchor names this repository, with own or without it; unanchored rows are left out (ADR-0057 d4). Malformed is request.validation naming anchor_repo. */
                 anchor_repo?: components["schemas"]["AnchorRepo"];
                 /** @description Rows whose anchor path starts with these bytes; unanchored rows are left out (ADR-0057 d4). */
@@ -6762,7 +6745,7 @@ export interface operations {
                     "text/html": string;
                 };
             };
-            /** @description A view oml-web now serves at its own path, view=guardrails or view=workarea: to the fixed /web/guardrails or /web/workareas, carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4. */
+            /** @description A view oml-web now serves at its own path, view=guardrails or view=workarea: to the fixed /web/guardrails or /web/workareas; view=memories without memory: to /web/memories, or /web/atlas with display=atlas; each carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4; the memories views since v0.7.0. */
             303: {
                 headers: {
                     [name: string]: unknown;
@@ -6797,7 +6780,7 @@ export interface operations {
                     "text/html": string;
                 };
             };
-            /** @description After sign_out, to /web; after create_workarea, to /web/workareas?done=created; for workarea_mode, workarea_transition and workarea_ratify, to /web/workareas, having run nothing. */
+            /** @description After sign_out, to /web; for create_workarea, workarea_mode, workarea_transition and workarea_ratify, to /web/workareas, having run nothing. */
             303: {
                 headers: {
                     [name: string]: unknown;
@@ -6908,64 +6891,6 @@ export interface operations {
                 };
                 content: {
                     "text/html": string;
-                };
-            };
-        };
-    };
-    userPageMemoriesData: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description {items, next_cursor, workareas, base}. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description access.not_found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    adminPageMemoriesData: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description {items, next_cursor, workareas, base}. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description access.not_found, for a session that is not an admin's. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -7302,6 +7227,7 @@ export interface operations {
                     origin_kind?: "repo" | "doc" | "code" | "lake" | "chat" | "web" | "manual";
                     /** @description The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4. */
                     author?: string;
+                    /** @description At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0). */
                     limit?: number;
                     cursor?: string;
                 };

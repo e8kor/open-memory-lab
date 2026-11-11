@@ -739,7 +739,7 @@ where
         st: &Self,
         params: &[(String, String)],
         acting: &Acting<'_>,
-        include_text: bool,
+        mut include_text: bool,
     ) -> Result<Response, ApiError> {
         let mut req = oml_app::app::WebListRequest {
             limit: PAGE_LIMIT_DEFAULT,
@@ -755,6 +755,14 @@ where
             match name.as_str() {
                 "with_own" if value == "true" || value == "false" => {}
                 "with_own" => return Err(ApiError::validation("with_own must be true or false")),
+                // Each item with its text, as the console's list shows it
+                // (ADR-0070 d5).
+                "include_text" if value == "true" => include_text = true,
+                "include_text" if value == "false" => {}
+                "include_text" => {
+                    return Err(ApiError::validation("include_text must be true or false")
+                        .with_details(json!({ "field": "include_text" })));
+                }
                 "author" => {
                     req.author = Some(Name::parse(value).map_err(|e| {
                         ApiError::validation(format!("author {value:?} is not a key's name: {e}"))
@@ -1801,10 +1809,20 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         let req: WorkareaCreateBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("parent_id", "parent")])
         })?;
+        // A resubmission under the same key answers the recorded creation
+        // and creates nothing again (ADR-0070 d3 layer 4).
+        let caller = st.console_caller(headers).await?;
+        let digest = console::act_digest("", body);
+        if let Some(replayed) = st
+            .replayed(&caller, "workarea.create", &idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
+        }
         if req.prefix.is_some() {
             return Err(ApiError::validation(
                 "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
@@ -1827,7 +1845,15 @@ where
         if let Some(obj) = response.as_object_mut() {
             obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
         }
-        Ok(json_response(StatusCode::CREATED, &response))
+        st.record_outcome(
+            &caller,
+            "workarea.create",
+            &idem,
+            &digest,
+            StatusCode::CREATED,
+            &response,
+        )
+        .await
     }
 
     async fn get_workarea(
@@ -4403,6 +4429,17 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         } else {
             Value::from(m.author_principal.clone())
         },
+        // The authoring key's id, null wherever principal is (ADR-0044 d9;
+        // ADR-0070 d5): the user page names the kind of its person's own
+        // keys and filters a search by one of them.
+        "author_key_id": if served.anonymous {
+            Value::Null
+        } else {
+            Value::from(m.author_key_id.to_string())
+        },
+        // Admission's scan finding, `class: rule at place`, never the text
+        // (ADR-0065 d8; ADR-0070 d5).
+        "scan_finding": m.scan_finding,
         "provenance": "agent",
         "simulation_id": Value::Null,
         "self_signed": false,

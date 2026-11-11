@@ -22,6 +22,7 @@ def _get_kwargs(
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     author: str | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
@@ -72,6 +73,8 @@ def _get_kwargs(
     params["with_own"] = with_own
 
     params["author"] = author
+
+    params["include_text"] = include_text
 
     params["anchor_repo"] = anchor_repo
 
@@ -158,6 +161,7 @@ def sync_detailed(
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     author: str | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
@@ -197,6 +201,7 @@ def sync_detailed(
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
         author (str | Unset):
+        include_text (bool | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
             (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
             whose anchor names it; unanchored rows are left out (d4).
@@ -229,6 +234,7 @@ def sync_detailed(
         own=own,
         with_own=with_own,
         author=author,
+        include_text=include_text,
         anchor_repo=anchor_repo,
         anchor_path_prefix=anchor_path_prefix,
         origin_kinds=origin_kinds,
@@ -259,6 +265,7 @@ def sync(
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     author: str | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
@@ -298,6 +305,7 @@ def sync(
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
         author (str | Unset):
+        include_text (bool | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
             (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
             whose anchor names it; unanchored rows are left out (d4).
@@ -331,6 +339,7 @@ def sync(
         own=own,
         with_own=with_own,
         author=author,
+        include_text=include_text,
         anchor_repo=anchor_repo,
         anchor_path_prefix=anchor_path_prefix,
         origin_kinds=origin_kinds,
@@ -355,6 +364,7 @@ async def asyncio_detailed(
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     author: str | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
@@ -394,6 +404,7 @@ async def asyncio_detailed(
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
         author (str | Unset):
+        include_text (bool | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
             (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
             whose anchor names it; unanchored rows are left out (d4).
@@ -426,6 +437,7 @@ async def asyncio_detailed(
         own=own,
         with_own=with_own,
         author=author,
+        include_text=include_text,
         anchor_repo=anchor_repo,
         anchor_path_prefix=anchor_path_prefix,
         origin_kinds=origin_kinds,
@@ -454,6 +466,7 @@ async def asyncio(
     own: bool | Unset = False,
     with_own: bool | Unset = UNSET,
     author: str | Unset = UNSET,
+    include_text: bool | Unset = UNSET,
     anchor_repo: str | Unset = UNSET,
     anchor_path_prefix: str | Unset = UNSET,
     origin_kinds: list[OriginKind] | Unset = UNSET,
@@ -493,6 +506,7 @@ async def asyncio(
         own (bool | Unset):  Default: False.
         with_own (bool | Unset):
         author (str | Unset):
+        include_text (bool | Unset):
         anchor_repo (str | Unset): A repository, scheme, credentials and .git dropped
             (github.com/e8kor/open-memory-lab); no segment is . or .. (ADR-0057 d3). As a filter, rows
             whose anchor names it; unanchored rows are left out (d4).
@@ -527,6 +541,7 @@ async def asyncio(
             own=own,
             with_own=with_own,
             author=author,
+            include_text=include_text,
             anchor_repo=anchor_repo,
             anchor_path_prefix=anchor_path_prefix,
             origin_kinds=origin_kinds,
