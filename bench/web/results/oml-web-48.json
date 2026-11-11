@@ -1,0 +1,1649 @@
+{
+ "schema": "oml-web-bench/1",
+ "suite": "web-pages",
+ "shape": "oml-web",
+ "workareas": 48,
+ "date": "2026-11-11",
+ "commit": "f385716753d0",
+ "environment": {
+  "host": "dg",
+  "cpus": 8,
+  "kernel": "7.0.0-38-generic",
+  "python": "3.14.4",
+  "postgres": "postgres (PostgreSQL) 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1)",
+  "loadavg_before": [
+   2.07,
+   3.54,
+   2.89
+  ],
+  "loadavg_after": [
+   2.8,
+   3.11,
+   3.0
+  ],
+  "build": "release, debuginfo off; oml-server-lead --no-default-features --features e2e-sign-in"
+ },
+ "method": {
+  "iterations": 200,
+  "warmup": 20,
+  "seconds": 548.8,
+  "transport": "loopback, HTTP/1.1 keep-alive; client to oml-web, oml-web to lead",
+  "timing": "client wall time per GET over one keep-alive loopback connection to the page's server (oml-web, or the lead in process); healthz_ms is the same exchange for that server's health probe, which calls nothing",
+  "percentiles": "nearest rank"
+ },
+ "seeded": {
+  "workareas": 48,
+  "memories": 240,
+  "approved": 160,
+  "held": 80
+ },
+ "healthz_ms": {
+  "n": 200,
+  "p50": 0.435,
+  "p95": 0.543,
+  "p99": 0.635,
+  "max": 0.689
+ },
+ "pages": {
+  "guardrails": {
+   "page_ms": {
+    "n": 200,
+    "p50": 28.156,
+    "p95": 33.154,
+    "p99": 35.582,
+    "max": 36.556
+   },
+   "api_calls": {
+    "min": 4,
+    "max": 4,
+    "mean": 4.0
+   },
+   "sequential_rounds": {
+    "min": 2,
+    "max": 2,
+    "p50": 2
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 45.856,
+    "p95": 54.193,
+    "p99": 55.952,
+    "max": 60.851
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 26.575,
+    "p95": 31.18,
+    "p99": 33.453,
+    "max": 34.618
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 44.66,
+    "p95": 52.666,
+    "p99": 54.57,
+    "max": 59.178
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 1.666,
+    "p95": 1.972,
+    "p99": 2.091,
+    "max": 2.277
+   },
+   "calls_by_route": {
+    "GET /v1/guardrails": 1.0,
+    "GET /v2/whoami": 2.0,
+    "GET /v2/workareas/{workarea}/tree": 1.0
+   },
+   "lead_ms_by_route": {
+    "GET /v1/guardrails": {
+     "p50": 10.716,
+     "p95": 12.54,
+     "store_calls_p50": 11
+    },
+    "GET /v2/whoami": {
+     "p50": 10.18,
+     "p95": 15.428,
+     "store_calls_p50": 8
+    },
+    "GET /v2/workareas/{workarea}/tree": {
+     "p50": 13.094,
+     "p95": 15.443,
+     "store_calls_p50": 13
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 1.0,
+    "bench-web": 3.0
+   }
+  },
+  "workareas": {
+   "page_ms": {
+    "n": 200,
+    "p50": 376.895,
+    "p95": 497.798,
+    "p99": 546.049,
+    "max": 586.622
+   },
+   "api_calls": {
+    "min": 99,
+    "max": 99,
+    "mean": 99.0
+   },
+   "sequential_rounds": {
+    "min": 14,
+    "max": 14,
+    "p50": 14
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 2781.22,
+    "p95": 3745.383,
+    "p99": 4113.805,
+    "max": 4429.664
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 374.727,
+    "p95": 495.87,
+    "p99": 543.263,
+    "max": 583.834
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 2762.893,
+    "p95": 3718.825,
+    "p99": 4084.856,
+    "max": 4400.093
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 2.215,
+    "p95": 2.629,
+    "p99": 2.943,
+    "max": 3.133
+   },
+   "calls_by_route": {
+    "GET /v2/whoami": 2.0,
+    "GET /v2/workareas/{workarea}": 48.0,
+    "GET /v2/workareas/{workarea}/offers": 48.0,
+    "GET /v2/workareas/{workarea}/tree": 1.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/whoami": {
+     "p50": 10.065,
+     "p95": 15.383,
+     "store_calls_p50": 8
+    },
+    "GET /v2/workareas/{workarea}": {
+     "p50": 10.625,
+     "p95": 19.034,
+     "store_calls_p50": 11
+    },
+    "GET /v2/workareas/{workarea}/offers": {
+     "p50": 47.577,
+     "p95": 65.724,
+     "store_calls_p50": 31
+    },
+    "GET /v2/workareas/{workarea}/tree": {
+     "p50": 12.362,
+     "p95": 14.011,
+     "store_calls_p50": 13
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 1.0,
+    "bench-review": 96.0,
+    "bench-web": 2.0
+   }
+  },
+  "admin/workareas": {
+   "page_ms": {
+    "n": 200,
+    "p50": 349.575,
+    "p95": 433.643,
+    "p99": 495.989,
+    "max": 528.277
+   },
+   "api_calls": {
+    "min": 150,
+    "max": 150,
+    "mean": 150.0
+   },
+   "sequential_rounds": {
+    "min": 21,
+    "max": 22,
+    "p50": 22
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 2677.506,
+    "p95": 3292.607,
+    "p99": 3780.276,
+    "max": 4024.992
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 348.169,
+    "p95": 431.567,
+    "p99": 493.823,
+    "max": 526.271
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 2655.535,
+    "p95": 3265.487,
+    "p99": 3752.96,
+    "max": 3996.651
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 1.407,
+    "p95": 1.83,
+    "p99": 2.239,
+    "max": 2.51
+   },
+   "calls_by_route": {
+    "GET /v2/whoami": 2.0,
+    "GET /v2/workareas/{workarea}": 49.0,
+    "GET /v2/workareas/{workarea}/offers": 98.0,
+    "GET /v2/workareas/{workarea}/tree": 1.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/whoami": {
+     "p50": 5.246,
+     "p95": 8.646,
+     "store_calls_p50": 8
+    },
+    "GET /v2/workareas/{workarea}": {
+     "p50": 8.496,
+     "p95": 10.028,
+     "store_calls_p50": 9
+    },
+    "GET /v2/workareas/{workarea}/offers": {
+     "p50": 23.621,
+     "p95": 32.539,
+     "store_calls_p50": 21
+    },
+    "GET /v2/workareas/{workarea}/tree": {
+     "p50": 3.539,
+     "p95": 5.762,
+     "store_calls_p50": 8
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 100.0,
+    "bench-review": 49.0,
+    "bench-web": 1.0
+   }
+  },
+  "memories": {
+   "page_ms": {
+    "n": 200,
+    "p50": 57.63,
+    "p95": 70.792,
+    "p99": 74.687,
+    "max": 77.404
+   },
+   "api_calls": {
+    "min": 4,
+    "max": 4,
+    "mean": 4.0
+   },
+   "sequential_rounds": {
+    "min": 2,
+    "max": 2,
+    "p50": 2
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 67.813,
+    "p95": 83.0,
+    "p99": 86.981,
+    "max": 89.356
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 55.35,
+    "p95": 68.199,
+    "p99": 71.597,
+    "max": 74.558
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 65.801,
+    "p95": 80.865,
+    "p99": 84.5,
+    "max": 86.98
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 2.2,
+    "p95": 2.846,
+    "p99": 3.09,
+    "max": 3.295
+   },
+   "calls_by_route": {
+    "GET /v1/memories": 1.0,
+    "GET /v2/keys": 1.0,
+    "GET /v2/whoami": 2.0
+   },
+   "lead_ms_by_route": {
+    "GET /v1/memories": {
+     "p50": 49.484,
+     "p95": 61.455,
+     "store_calls_p50": 121
+    },
+    "GET /v2/keys": {
+     "p50": 9.059,
+     "p95": 10.727,
+     "store_calls_p50": 22
+    },
+    "GET /v2/whoami": {
+     "p50": 4.845,
+     "p95": 6.773,
+     "store_calls_p50": 8
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 1.0,
+    "bench-web": 3.0
+   }
+  },
+  "memories?q": {
+   "page_ms": {
+    "n": 200,
+    "p50": 93.962,
+    "p95": 112.452,
+    "p99": 116.185,
+    "max": 123.817
+   },
+   "api_calls": {
+    "min": 4,
+    "max": 4,
+    "mean": 4.0
+   },
+   "sequential_rounds": {
+    "min": 3,
+    "max": 3,
+    "p50": 3
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 97.441,
+    "p95": 116.667,
+    "p99": 120.354,
+    "max": 129.095
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 90.639,
+    "p95": 108.241,
+    "p99": 111.563,
+    "max": 119.337
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 93.626,
+    "p95": 112.416,
+    "p99": 116.046,
+    "max": 124.618
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 3.479,
+    "p95": 4.172,
+    "p99": 4.55,
+    "max": 4.941
+   },
+   "calls_by_route": {
+    "GET /v2/keys": 1.0,
+    "GET /v2/whoami": 2.0,
+    "POST /v1/memories/recall": 1.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/keys": {
+     "p50": 16.596,
+     "p95": 21.675,
+     "store_calls_p50": 22
+    },
+    "GET /v2/whoami": {
+     "p50": 8.137,
+     "p95": 13.757,
+     "store_calls_p50": 8
+    },
+    "POST /v1/memories/recall": {
+     "p50": 63.35,
+     "p95": 73.611,
+     "store_calls_p50": 66
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 1.0,
+    "bench-web": 3.0
+   }
+  },
+  "atlas": {
+   "page_ms": {
+    "n": 200,
+    "p50": 413.573,
+    "p95": 459.87,
+    "p99": 474.332,
+    "max": 481.306
+   },
+   "api_calls": {
+    "min": 4,
+    "max": 4,
+    "mean": 4.0
+   },
+   "sequential_rounds": {
+    "min": 2,
+    "max": 2,
+    "p50": 2
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 447.053,
+    "p95": 500.02,
+    "p99": 514.392,
+    "max": 523.937
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 410.734,
+    "p95": 456.658,
+    "p99": 470.847,
+    "max": 477.794
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 440.557,
+    "p95": 492.519,
+    "p99": 507.118,
+    "max": 516.425
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 3.16,
+    "p95": 3.569,
+    "p99": 4.08,
+    "max": 4.298
+   },
+   "calls_by_route": {
+    "GET /v2/whoami": 2.0,
+    "GET /v2/workareas/{workarea}/offers": 1.0,
+    "GET /v2/workareas/{workarea}/tree": 1.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/whoami": {
+     "p50": 10.6,
+     "p95": 15.67,
+     "store_calls_p50": 8
+    },
+    "GET /v2/workareas/{workarea}/offers": {
+     "p50": 28.432,
+     "p95": 33.105,
+     "store_calls_p50": 31
+    },
+    "GET /v2/workareas/{workarea}/tree": {
+     "p50": 397.853,
+     "p95": 441.234,
+     "store_calls_p50": 482
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 1.0,
+    "bench-review": 1.0,
+    "bench-web": 2.0
+   }
+  },
+  "data/memories": {
+   "page_ms": {
+    "n": 200,
+    "p50": 424.095,
+    "p95": 463.837,
+    "p99": 480.024,
+    "max": 490.711
+   },
+   "api_calls": {
+    "min": 6,
+    "max": 6,
+    "mean": 6.0
+   },
+   "sequential_rounds": {
+    "min": 2,
+    "max": 2,
+    "p50": 2
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 598.727,
+    "p95": 658.447,
+    "p99": 681.62,
+    "max": 692.769
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 420.866,
+    "p95": 460.741,
+    "p99": 476.68,
+    "max": 487.377
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 588.953,
+    "p95": 647.642,
+    "p99": 671.259,
+    "max": 681.25
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 2.887,
+    "p95": 3.333,
+    "p99": 3.486,
+    "max": 4.507
+   },
+   "calls_by_route": {
+    "GET /v1/memories": 1.0,
+    "GET /v2/keys": 1.0,
+    "GET /v2/whoami": 2.0,
+    "GET /v2/workareas/{workarea}/offers": 1.0,
+    "GET /v2/workareas/{workarea}/tree": 1.0
+   },
+   "lead_ms_by_route": {
+    "GET /v1/memories": {
+     "p50": 113.531,
+     "p95": 126.424,
+     "store_calls_p50": 121
+    },
+    "GET /v2/keys": {
+     "p50": 24.871,
+     "p95": 29.145,
+     "store_calls_p50": 22
+    },
+    "GET /v2/whoami": {
+     "p50": 10.252,
+     "p95": 15.568,
+     "store_calls_p50": 8
+    },
+    "GET /v2/workareas/{workarea}/offers": {
+     "p50": 32.408,
+     "p95": 37.238,
+     "store_calls_p50": 31
+    },
+    "GET /v2/workareas/{workarea}/tree": {
+     "p50": 406.455,
+     "p95": 445.869,
+     "store_calls_p50": 482
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 1.0,
+    "bench-review": 1.0,
+    "bench-web": 4.0
+   }
+  },
+  "admin/memories": {
+   "page_ms": {
+    "n": 200,
+    "p50": 146.835,
+    "p95": 161.529,
+    "p99": 171.254,
+    "max": 320.936
+   },
+   "api_calls": {
+    "min": 3,
+    "max": 3,
+    "mean": 3.0
+   },
+   "sequential_rounds": {
+    "min": 2,
+    "max": 2,
+    "p50": 2
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 152.912,
+    "p95": 167.894,
+    "p99": 176.768,
+    "max": 327.363
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 143.877,
+    "p95": 158.674,
+    "p99": 167.596,
+    "max": 318.02
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 150.251,
+    "p95": 165.248,
+    "p99": 173.874,
+    "max": 324.805
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 2.911,
+    "p95": 3.342,
+    "p99": 3.574,
+    "max": 3.841
+   },
+   "calls_by_route": {
+    "GET /v2/whoami": 2.0,
+    "POST /v2/admin/memories/search": 1.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/whoami": {
+     "p50": 10.617,
+     "p95": 15.766,
+     "store_calls_p50": 8
+    },
+    "POST /v2/admin/memories/search": {
+     "p50": 129.812,
+     "p95": 144.81,
+     "store_calls_p50": 159
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 2.0,
+    "bench-web": 1.0
+   }
+  },
+  "admin/atlas": {
+   "page_ms": {
+    "n": 200,
+    "p50": 45.327,
+    "p95": 51.22,
+    "p99": 53.142,
+    "max": 55.103
+   },
+   "api_calls": {
+    "min": 5,
+    "max": 5,
+    "mean": 5.0
+   },
+   "sequential_rounds": {
+    "min": 3,
+    "max": 3,
+    "p50": 3
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 70.614,
+    "p95": 79.869,
+    "p99": 81.523,
+    "max": 85.967
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 43.117,
+    "p95": 48.787,
+    "p99": 50.502,
+    "max": 52.457
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 68.882,
+    "p95": 77.965,
+    "p99": 79.521,
+    "max": 83.511
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 2.287,
+    "p95": 2.646,
+    "p99": 2.752,
+    "max": 2.911
+   },
+   "calls_by_route": {
+    "GET /v2/whoami": 2.0,
+    "GET /v2/workareas/{workarea}/offers": 2.0,
+    "GET /v2/workareas/{workarea}/tree": 1.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/whoami": {
+     "p50": 10.33,
+     "p95": 15.529,
+     "store_calls_p50": 8
+    },
+    "GET /v2/workareas/{workarea}/offers": {
+     "p50": 8.056,
+     "p95": 25.709,
+     "store_calls_p50": 7
+    },
+    "GET /v2/workareas/{workarea}/tree": {
+     "p50": 18.564,
+     "p95": 21.078,
+     "store_calls_p50": 12
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 3.0,
+    "bench-review": 1.0,
+    "bench-web": 1.0
+   }
+  },
+  "admin/data/memories": {
+   "page_ms": {
+    "n": 200,
+    "p50": 146.45,
+    "p95": 163.485,
+    "p99": 172.495,
+    "max": 176.322
+   },
+   "api_calls": {
+    "min": 6,
+    "max": 6,
+    "mean": 6.0
+   },
+   "sequential_rounds": {
+    "min": 3,
+    "max": 3,
+    "p50": 3
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 199.987,
+    "p95": 222.147,
+    "p99": 231.688,
+    "max": 239.954
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 143.348,
+    "p95": 160.389,
+    "p99": 169.188,
+    "max": 173.076
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 195.771,
+    "p95": 217.858,
+    "p99": 227.312,
+    "max": 235.294
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 3.001,
+    "p95": 3.368,
+    "p99": 3.497,
+    "max": 3.728
+   },
+   "calls_by_route": {
+    "GET /v2/whoami": 2.0,
+    "GET /v2/workareas/{workarea}/offers": 2.0,
+    "GET /v2/workareas/{workarea}/tree": 1.0,
+    "POST /v2/admin/memories/search": 1.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/whoami": {
+     "p50": 9.938,
+     "p95": 15.308,
+     "store_calls_p50": 8
+    },
+    "GET /v2/workareas/{workarea}/offers": {
+     "p50": 8.757,
+     "p95": 25.24,
+     "store_calls_p50": 7
+    },
+    "GET /v2/workareas/{workarea}/tree": {
+     "p50": 19.261,
+     "p95": 22.029,
+     "store_calls_p50": 12
+    },
+    "POST /v2/admin/memories/search": {
+     "p50": 130.343,
+     "p95": 144.733,
+     "store_calls_p50": 159
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 4.0,
+    "bench-review": 1.0,
+    "bench-web": 1.0
+   }
+  },
+  "memory": {
+   "page_ms": {
+    "n": 200,
+    "p50": 25.072,
+    "p95": 28.627,
+    "p99": 29.586,
+    "max": 29.863
+   },
+   "api_calls": {
+    "min": 3,
+    "max": 3,
+    "mean": 3.0
+   },
+   "sequential_rounds": {
+    "min": 2,
+    "max": 2,
+    "p50": 2
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 32.139,
+    "p95": 36.398,
+    "p99": 37.847,
+    "max": 38.521
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 23.354,
+    "p95": 26.506,
+    "p99": 27.793,
+    "max": 27.93
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 31.514,
+    "p95": 35.784,
+    "p99": 37.135,
+    "max": 37.792
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 1.689,
+    "p95": 2.014,
+    "p99": 2.193,
+    "max": 2.413
+   },
+   "calls_by_route": {
+    "GET /v1/memories/{artifact_id}": 1.0,
+    "GET /v2/whoami": 2.0
+   },
+   "lead_ms_by_route": {
+    "GET /v1/memories/{artifact_id}": {
+     "p50": 9.396,
+     "p95": 10.926,
+     "store_calls_p50": 11
+    },
+    "GET /v2/whoami": {
+     "p50": 10.466,
+     "p95": 15.385,
+     "store_calls_p50": 8
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 1.0,
+    "bench-web": 2.0
+   }
+  },
+  "admin/memory": {
+   "page_ms": {
+    "n": 200,
+    "p50": 54.889,
+    "p95": 70.718,
+    "p99": 79.214,
+    "max": 82.699
+   },
+   "api_calls": {
+    "min": 3,
+    "max": 3,
+    "mean": 3.0
+   },
+   "sequential_rounds": {
+    "min": 2,
+    "max": 2,
+    "p50": 2
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 61.663,
+    "p95": 77.883,
+    "p99": 87.28,
+    "max": 88.835
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 52.918,
+    "p95": 68.576,
+    "p99": 77.492,
+    "max": 80.811
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 59.687,
+    "p95": 74.754,
+    "p99": 84.652,
+    "max": 86.774
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 1.769,
+    "p95": 2.096,
+    "p99": 2.17,
+    "max": 2.188
+   },
+   "calls_by_route": {
+    "GET /v2/admin/memories/{artifact_id}": 1.0,
+    "GET /v2/whoami": 2.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/admin/memories/{artifact_id}": {
+     "p50": 39.591,
+     "p95": 53.668,
+     "store_calls_p50": 15
+    },
+    "GET /v2/whoami": {
+     "p50": 10.137,
+     "p95": 15.174,
+     "store_calls_p50": 8
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 2.0,
+    "bench-web": 1.0
+   }
+  },
+  "admin/curate": {
+   "page_ms": {
+    "n": 200,
+    "p50": 15.105,
+    "p95": 17.469,
+    "p99": 18.472,
+    "max": 20.073
+   },
+   "api_calls": {
+    "min": 2,
+    "max": 2,
+    "mean": 2.0
+   },
+   "sequential_rounds": {
+    "min": 1,
+    "max": 1,
+    "p50": 1
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 22.807,
+    "p95": 26.293,
+    "p99": 28.17,
+    "max": 29.633
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 13.926,
+    "p95": 16.136,
+    "p99": 17.241,
+    "max": 18.583
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 22.449,
+    "p95": 25.792,
+    "p99": 27.598,
+    "max": 29.195
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 1.202,
+    "p95": 1.424,
+    "p99": 1.514,
+    "max": 1.646
+   },
+   "calls_by_route": {
+    "GET /v2/whoami": 2.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/whoami": {
+     "p50": 10.949,
+     "p95": 15.615,
+     "store_calls_p50": 8
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 1.0,
+    "bench-web": 1.0
+   }
+  },
+  "review": {
+   "page_ms": {
+    "n": 200,
+    "p50": 14.742,
+    "p95": 17.229,
+    "p99": 18.06,
+    "max": 18.349
+   },
+   "api_calls": {
+    "min": 2,
+    "max": 2,
+    "mean": 2.0
+   },
+   "sequential_rounds": {
+    "min": 1,
+    "max": 1,
+    "p50": 1
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 22.348,
+    "p95": 25.799,
+    "p99": 26.89,
+    "max": 28.338
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 13.67,
+    "p95": 15.985,
+    "p99": 16.917,
+    "max": 17.011
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 21.958,
+    "p95": 25.397,
+    "p99": 26.383,
+    "max": 27.874
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 1.09,
+    "p95": 1.301,
+    "p99": 1.415,
+    "max": 1.418
+   },
+   "calls_by_route": {
+    "GET /v2/whoami": 2.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/whoami": {
+     "p50": 10.229,
+     "p95": 15.092,
+     "store_calls_p50": 8
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 1.0,
+    "bench-web": 1.0
+   }
+  },
+  "admin/review": {
+   "page_ms": {
+    "n": 200,
+    "p50": 111.601,
+    "p95": 124.172,
+    "p99": 131.231,
+    "max": 133.887
+   },
+   "api_calls": {
+    "min": 4,
+    "max": 4,
+    "mean": 4.0
+   },
+   "sequential_rounds": {
+    "min": 3,
+    "max": 3,
+    "p50": 3
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 116.799,
+    "p95": 130.049,
+    "p99": 137.194,
+    "max": 140.011
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 108.342,
+    "p95": 120.402,
+    "p99": 127.426,
+    "max": 130.149
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 113.778,
+    "p95": 126.503,
+    "p99": 133.429,
+    "max": 136.509
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 3.211,
+    "p95": 3.637,
+    "p99": 3.77,
+    "max": 4.069
+   },
+   "calls_by_route": {
+    "GET /v2/review/held": 1.0,
+    "GET /v2/review/queue": 1.0,
+    "GET /v2/whoami": 2.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/review/held": {
+     "p50": 51.517,
+     "p95": 57.364,
+     "store_calls_p50": 58
+    },
+    "GET /v2/review/queue": {
+     "p50": 44.016,
+     "p95": 49.512,
+     "store_calls_p50": 54
+    },
+    "GET /v2/whoami": {
+     "p50": 10.207,
+     "p95": 15.004,
+     "store_calls_p50": 8
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 2.0,
+    "bench-review": 1.0,
+    "bench-web": 1.0
+   }
+  },
+  "keys": {
+   "page_ms": {
+    "n": 200,
+    "p50": 35.433,
+    "p95": 39.949,
+    "p99": 42.202,
+    "max": 43.944
+   },
+   "api_calls": {
+    "min": 3,
+    "max": 3,
+    "mean": 3.0
+   },
+   "sequential_rounds": {
+    "min": 2,
+    "max": 2,
+    "p50": 2
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 42.36,
+    "p95": 47.925,
+    "p99": 50.851,
+    "max": 52.298
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 33.645,
+    "p95": 38.193,
+    "p99": 40.166,
+    "max": 42.025
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 41.673,
+    "p95": 47.074,
+    "p99": 49.863,
+    "max": 51.455
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 1.791,
+    "p95": 2.054,
+    "p99": 2.138,
+    "max": 2.262
+   },
+   "calls_by_route": {
+    "GET /v2/keys": 1.0,
+    "GET /v2/whoami": 2.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/keys": {
+     "p50": 19.7,
+     "p95": 22.567,
+     "store_calls_p50": 22
+    },
+    "GET /v2/whoami": {
+     "p50": 10.337,
+     "p95": 15.584,
+     "store_calls_p50": 8
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 1.0,
+    "bench-web": 2.0
+   }
+  },
+  "admin/keys": {
+   "page_ms": {
+    "n": 200,
+    "p50": 24.892,
+    "p95": 28.777,
+    "p99": 30.831,
+    "max": 32.321
+   },
+   "api_calls": {
+    "min": 3,
+    "max": 3,
+    "mean": 3.0
+   },
+   "sequential_rounds": {
+    "min": 2,
+    "max": 2,
+    "p50": 2
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 32.004,
+    "p95": 36.748,
+    "p99": 39.345,
+    "max": 41.256
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 23.393,
+    "p95": 27.01,
+    "p99": 28.905,
+    "max": 30.434
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 31.459,
+    "p95": 36.011,
+    "p99": 38.758,
+    "max": 40.419
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 1.579,
+    "p95": 1.875,
+    "p99": 1.968,
+    "max": 2.008
+   },
+   "calls_by_route": {
+    "GET /v2/keys": 1.0,
+    "GET /v2/whoami": 2.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/keys": {
+     "p50": 9.657,
+     "p95": 11.491,
+     "store_calls_p50": 11
+    },
+    "GET /v2/whoami": {
+     "p50": 10.186,
+     "p95": 15.302,
+     "store_calls_p50": 8
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 2.0,
+    "bench-web": 1.0
+   }
+  },
+  "start": {
+   "page_ms": {
+    "n": 200,
+    "p50": 34.613,
+    "p95": 39.633,
+    "p99": 40.587,
+    "max": 42.345
+   },
+   "api_calls": {
+    "min": 3,
+    "max": 3,
+    "mean": 3.0
+   },
+   "sequential_rounds": {
+    "min": 2,
+    "max": 2,
+    "p50": 2
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 41.31,
+    "p95": 46.954,
+    "p99": 48.47,
+    "max": 51.222
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 32.561,
+    "p95": 37.396,
+    "p99": 38.195,
+    "max": 39.981
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 40.676,
+    "p95": 46.185,
+    "p99": 47.678,
+    "max": 50.475
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 2.068,
+    "p95": 2.377,
+    "p99": 2.563,
+    "max": 2.658
+   },
+   "calls_by_route": {
+    "GET /v2/whoami": 3.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/whoami": {
+     "p50": 13.534,
+     "p95": 20.367,
+     "store_calls_p50": 15
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 1.0,
+    "bench-web": 2.0
+   }
+  },
+  "start/status": {
+   "page_ms": {
+    "n": 200,
+    "p50": 19.818,
+    "p95": 22.656,
+    "p99": 23.781,
+    "max": 24.174
+   },
+   "api_calls": {
+    "min": 1,
+    "max": 1,
+    "mean": 1.0
+   },
+   "sequential_rounds": {
+    "min": 1,
+    "max": 1,
+    "p50": 1
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 18.74,
+    "p95": 21.42,
+    "p99": 22.659,
+    "max": 22.929
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 18.74,
+    "p95": 21.42,
+    "p99": 22.659,
+    "max": 22.929
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 18.509,
+    "p95": 21.13,
+    "p99": 22.349,
+    "max": 22.617
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 1.024,
+    "p95": 1.238,
+    "p99": 1.34,
+    "max": 1.378
+   },
+   "calls_by_route": {
+    "GET /v2/whoami": 1.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/whoami": {
+     "p50": 18.74,
+     "p95": 21.42,
+     "store_calls_p50": 19
+    }
+   },
+   "calls_by_key": {
+    "bench-web": 1.0
+   }
+  },
+  "start/export": {
+   "page_ms": {
+    "n": 200,
+    "p50": 19.278,
+    "p95": 21.999,
+    "p99": 23.188,
+    "max": 24.204
+   },
+   "api_calls": {
+    "min": 1,
+    "max": 1,
+    "mean": 1.0
+   },
+   "sequential_rounds": {
+    "min": 1,
+    "max": 1,
+    "p50": 1
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 16.855,
+    "p95": 19.397,
+    "p99": 20.331,
+    "max": 21.086
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 16.855,
+    "p95": 19.397,
+    "p99": 20.331,
+    "max": 21.086
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 15.063,
+    "p95": 17.503,
+    "p99": 18.368,
+    "max": 18.798
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 2.458,
+    "p95": 2.948,
+    "p99": 3.378,
+    "max": 3.626
+   },
+   "calls_by_route": {
+    "GET /v2/web/export": 1.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/web/export": {
+     "p50": 16.855,
+     "p95": 19.397,
+     "store_calls_p50": 12
+    }
+   },
+   "calls_by_key": {
+    "bench-web": 1.0
+   }
+  },
+  "setup": {
+   "page_ms": {
+    "n": 200,
+    "p50": 15.06,
+    "p95": 17.749,
+    "p99": 18.49,
+    "max": 18.745
+   },
+   "api_calls": {
+    "min": 2,
+    "max": 2,
+    "mean": 2.0
+   },
+   "sequential_rounds": {
+    "min": 1,
+    "max": 1,
+    "p50": 1
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 22.3,
+    "p95": 26.056,
+    "p99": 27.009,
+    "max": 27.818
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 13.583,
+    "p95": 15.86,
+    "p99": 16.435,
+    "max": 16.952
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 21.923,
+    "p95": 25.481,
+    "p99": 26.586,
+    "max": 27.262
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 1.497,
+    "p95": 1.828,
+    "p99": 1.979,
+    "max": 2.055
+   },
+   "calls_by_route": {
+    "GET /v2/whoami": 2.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/whoami": {
+     "p50": 10.197,
+     "p95": 15.585,
+     "store_calls_p50": 8
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 1.0,
+    "bench-web": 1.0
+   }
+  },
+  "admin/people": {
+   "page_ms": {
+    "n": 200,
+    "p50": 20.471,
+    "p95": 23.375,
+    "p99": 24.997,
+    "max": 26.24
+   },
+   "api_calls": {
+    "min": 3,
+    "max": 3,
+    "mean": 3.0
+   },
+   "sequential_rounds": {
+    "min": 2,
+    "max": 2,
+    "p50": 2
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 27.549,
+    "p95": 31.41,
+    "p99": 33.392,
+    "max": 35.939
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 18.988,
+    "p95": 21.664,
+    "p99": 23.185,
+    "max": 24.388
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 27.077,
+    "p95": 30.888,
+    "p99": 32.83,
+    "max": 35.278
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 1.531,
+    "p95": 1.75,
+    "p99": 1.894,
+    "max": 1.946
+   },
+   "calls_by_route": {
+    "GET /v2/web/emails": 1.0,
+    "GET /v2/whoami": 2.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/web/emails": {
+     "p50": 5.439,
+     "p95": 6.508,
+     "store_calls_p50": 6
+    },
+    "GET /v2/whoami": {
+     "p50": 9.916,
+     "p95": 15.235,
+     "store_calls_p50": 8
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 2.0,
+    "bench-web": 1.0
+   }
+  },
+  "admin/users": {
+   "page_ms": {
+    "n": 200,
+    "p50": 24.402,
+    "p95": 28.671,
+    "p99": 30.458,
+    "max": 31.827
+   },
+   "api_calls": {
+    "min": 3,
+    "max": 3,
+    "mean": 3.0
+   },
+   "sequential_rounds": {
+    "min": 2,
+    "max": 2,
+    "p50": 2
+   },
+   "lead_handler_ms_sum": {
+    "n": 200,
+    "p50": 31.494,
+    "p95": 36.875,
+    "p99": 38.721,
+    "max": 40.937
+   },
+   "lead_busy_ms": {
+    "n": 200,
+    "p50": 22.9,
+    "p95": 26.899,
+    "p99": 28.748,
+    "max": 29.826
+   },
+   "store_ms_sum": {
+    "n": 200,
+    "p50": 30.993,
+    "p95": 36.198,
+    "p99": 38.101,
+    "max": 40.141
+   },
+   "outside_lead_ms": {
+    "n": 200,
+    "p50": 1.525,
+    "p95": 1.853,
+    "p99": 1.987,
+    "max": 2.057
+   },
+   "calls_by_route": {
+    "GET /v2/web/users": 1.0,
+    "GET /v2/whoami": 2.0
+   },
+   "lead_ms_by_route": {
+    "GET /v2/web/users": {
+     "p50": 9.277,
+     "p95": 11.346,
+     "store_calls_p50": 11
+    },
+    "GET /v2/whoami": {
+     "p50": 10.222,
+     "p95": 15.266,
+     "store_calls_p50": 8
+    }
+   },
+   "calls_by_key": {
+    "bench-admin": 2.0,
+    "bench-web": 1.0
+   }
+  }
+ }
+}
