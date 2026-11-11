@@ -25,7 +25,10 @@ pub use signup::{DRAWS_MAX, Person, SignupState, StartStatus, UserDisabled, User
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
-pub use widen::{WIDEN_SIGNAL_MAX_AGE_SECS, WIDEN_SIGNAL_PAIRS_HELD, WIDEN_SIGNAL_REFRESH_SECS};
+pub use widen::{
+    WIDEN_SIGNAL_BUILD_SECS, WIDEN_SIGNAL_MAX_AGE_SECS, WIDEN_SIGNAL_PAIRS_HELD,
+    WIDEN_SIGNAL_REFRESH_SECS, WIDEN_SIGNAL_TENANT_PAIRS, WidenLimits, drops_widen_signals,
+};
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -2215,10 +2218,18 @@ where
         fold: MetadataFold,
         idempotency: Option<IdempotencyPut>,
     ) -> Result<CommitReceipt, AppError> {
-        Ok(self
+        let drops = widen::drops_widen_signals(&event.envelope.event_type)
+            .then_some(event.envelope.tenant_id);
+        let receipt = self
             .journal
             .commit(commit_request(event, fold, idempotency))
-            .await?)
+            .await?;
+        // An erasure, a demotion, or a change to what is trusted or
+        // federated drops the tenant's widen signals at once (#244).
+        if let Some(tenant_id) = drops {
+            self.widen.drop_tenant(tenant_id);
+        }
+        Ok(receipt)
     }
 
     /// Commits chain-consecutive events as one transaction: a refusal of
@@ -2227,7 +2238,12 @@ where
         &self,
         links: Vec<(SignedEnvelope, MetadataFold)>,
     ) -> Result<CommitReceipt, AppError> {
-        Ok(self
+        let drops: BTreeSet<Uuid> = links
+            .iter()
+            .filter(|(event, _)| widen::drops_widen_signals(&event.envelope.event_type))
+            .map(|(event, _)| event.envelope.tenant_id)
+            .collect();
+        let receipt = self
             .journal
             .commit_chain(
                 links
@@ -2235,7 +2251,11 @@ where
                     .map(|(event, fold)| commit_request(event, fold, None))
                     .collect(),
             )
-            .await?)
+            .await?;
+        for tenant_id in drops {
+            self.widen.drop_tenant(tenant_id);
+        }
+        Ok(receipt)
     }
 
     fn mint_key(

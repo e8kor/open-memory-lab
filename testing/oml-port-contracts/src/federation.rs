@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use oml_app::App;
-use oml_app::app::{WIDEN_SIGNAL_MAX_AGE_SECS, WIDEN_SIGNAL_REFRESH_SECS};
+use oml_app::app::{WIDEN_SIGNAL_MAX_AGE_SECS, WIDEN_SIGNAL_REFRESH_SECS, WidenLimits};
 use oml_app::domain::access::Covers;
 use oml_app::domain::in_progress::{KeyProfile, WorkareaMode};
 use oml_app::domain::name::{Name, Reference};
@@ -88,6 +88,11 @@ pub struct FedWorld<S: JournalStore> {
 impl<S: JournalStore + Clone> FedWorld<S> {
     /// The tree, the keys, and the rows each test adds to; federation on.
     pub async fn new(store: S) -> Self {
+        Self::with_limits(store, WidenLimits::default()).await
+    }
+
+    /// [`Self::new`] with the widen signal's bounds set (#244).
+    pub async fn with_limits(store: S, limits: WidenLimits) -> Self {
         let clock = FixedClock::new();
         let app = App::new(
             store.clone(),
@@ -108,7 +113,8 @@ impl<S: JournalStore + Clone> FedWorld<S> {
                 Pipeline::Bm25,
             )
             .expect("a search config"),
-        );
+        )
+        .with_widen_limits(limits);
         let boot = app
             .bootstrap_tenant(&BootstrapRequest {
                 tenant_name: fresh("fed"),
@@ -1284,7 +1290,16 @@ pub async fn a_lists_answer_depends_on_the_listed_workareas_alone<S: JournalStor
 /// stray row; `orchard`, under `crew`, holds it on both its rows when
 /// `orchard` is true. The key reads `crew`, `legal` and `product`.
 async fn kiwi_world<S: JournalStore + Clone>(store: S, orchard: bool) -> (FedWorld<S>, IssuedKey) {
-    let mut w = FedWorld::new(store).await;
+    kiwi_world_within(store, orchard, WidenLimits::default()).await
+}
+
+/// [`kiwi_world`] under the widen signal's bounds `limits`.
+async fn kiwi_world_within<S: JournalStore + Clone>(
+    store: S,
+    orchard: bool,
+    limits: WidenLimits,
+) -> (FedWorld<S>, IssuedKey) {
+    let mut w = FedWorld::with_limits(store, limits).await;
     for (node, body) in [
         ("home", "kiwi orchard notes"),
         ("home", "kiwi harvest dates"),
@@ -1471,10 +1486,96 @@ pub async fn a_signal_at_its_age_bound_serves_no_hint<S: JournalStore + Clone>(s
     assert!(kiwi_hint(&w, &key, 10).await.is_some());
 }
 
+/// A status transition drops the tenant's signals at once, as an erasure,
+/// a demotion, a mode change and a policy change do: the next `scope`
+/// recall carries no hint from counts taken before it, and asks for a
+/// signal built after it (#244, review F4, F5).
+pub async fn a_status_transition_drops_the_tenants_signals_at_once<S: JournalStore + Clone>(
+    store: S,
+) {
+    let (w, key) = kiwi_world(store, true).await;
+    w.fresh_signal(&key, "kiwi", "home", Some(Sources::Scope))
+        .await;
+    assert!(kiwi_hint(&w, &key, 10).await.is_some(), "orchard fires it");
+    let proposal = w
+        .app
+        .propose_transition(
+            w.admin.as_str(),
+            w.node("orchard").into(),
+            WorkareaStatus::Validated,
+        )
+        .await
+        .expect("propose validated");
+    w.app
+        .ratify_transition(
+            w.reviewer.value.as_str(),
+            w.node("orchard").into(),
+            proposal.transition_id,
+        )
+        .await
+        .expect("ratify validated");
+    assert_eq!(
+        kiwi_hint(&w, &key, 10).await,
+        None,
+        "a signal from before the transition served the hint"
+    );
+    assert!(w.app.widen_signals_wanted());
+    w.app.refresh_widen_signals().await;
+    assert!(
+        kiwi_hint(&w, &key, 10).await.is_some(),
+        "a validated orchard is still a source"
+    );
+}
+
+/// A signal past the tenant's share is never read whole and never held;
+/// the build counts as failed with its reason, and no recall asks for it
+/// again until the mark is as old as the signal's bound (#244, review F1).
+pub async fn a_signal_past_the_tenants_share_is_marked_and_not_rebuilt<S: JournalStore + Clone>(
+    store: S,
+) {
+    let limits = WidenLimits {
+        tenant_pairs: 3,
+        ..WidenLimits::default()
+    };
+    let (w, key) = kiwi_world_within(store, true, limits).await;
+    assert_eq!(kiwi_hint(&w, &key, 10).await, None);
+    assert_eq!(
+        w.app.refresh_widen_signals().await,
+        0,
+        "nothing past the share is held"
+    );
+    let (settings, _) = w
+        .app
+        .federation_settings(w.admin.as_str())
+        .await
+        .expect("settings");
+    assert_eq!(settings.widen_signal.failed, 1);
+    assert!(
+        settings
+            .widen_signal
+            .last_failure
+            .as_deref()
+            .is_some_and(|f| f.contains("share")),
+        "{:?}",
+        settings.widen_signal.last_failure
+    );
+    assert_eq!(kiwi_hint(&w, &key, 10).await, None);
+    assert!(
+        !w.app.widen_signals_wanted(),
+        "a marked signal was asked for again within the bound"
+    );
+    w.clock.advance(WIDEN_SIGNAL_MAX_AGE_SECS.unsigned_abs());
+    assert_eq!(kiwi_hint(&w, &key, 10).await, None);
+    assert!(
+        w.app.widen_signals_wanted(),
+        "past the bound it is asked for again"
+    );
+}
+
 /// The widen signal's counts and the reference counts agree: for any
 /// query, the counts taken out of a vocabulary read over a set of nodes
 /// equal the reference counts read over the same nodes, kinds and expiry,
-/// pruning or not (#244). Whether any read pruned a word, so a store that
+/// pruning or not, and a vocabulary past its cap is not read (#244). Whether any read pruned a word, so a store that
 /// prunes can hold that the law met its pruning.
 pub async fn the_signals_counts_equal_the_reference_counts<S: JournalStore + Clone>(
     store: S,
@@ -1534,9 +1635,20 @@ pub async fn the_signals_counts_equal_the_reference_counts<S: JournalStore + Clo
                 };
                 let vocabulary = w
                     .store
-                    .vocabulary_counts(w.tenant, &scope)
+                    .vocabulary_counts(w.tenant, &scope, usize::MAX)
                     .await
-                    .expect("the vocabulary");
+                    .expect("the vocabulary")
+                    .expect("no cap");
+                // Past its cap the read stops and holds nothing (review F1).
+                assert!(vocabulary.pairs() > 1);
+                assert_eq!(
+                    w.store
+                        .vocabulary_counts(w.tenant, &scope, 1)
+                        .await
+                        .expect("a capped read"),
+                    None,
+                    "a vocabulary past its cap was read"
+                );
                 for query in [
                     "invoice retry policy",
                     "invoices retried",
@@ -1932,4 +2044,6 @@ where
     a_scope_recall_without_its_signal_carries_no_hint_and_asks_for_one(make().await).await;
     a_signal_built_under_other_grants_serves_no_hint(make().await).await;
     a_signal_at_its_age_bound_serves_no_hint(make().await).await;
+    a_status_transition_drops_the_tenants_signals_at_once(make().await).await;
+    a_signal_past_the_tenants_share_is_marked_and_not_rebuilt(make().await).await;
 }

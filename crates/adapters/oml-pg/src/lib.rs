@@ -1184,21 +1184,24 @@ const REFERENCE_EXPIRED: &str = "SELECT m.id, m.workarea_id FROM memories m \
        AND m.is_tip AND NOT m.retirement AND m.workarea_id = ANY($2::uuid[]) \
        AND m.kind = ANY($3::text[])";
 
-/// Every token's counts per node of `$2`, [`REFERENCE_COUNTS`] without its
-/// token filter: the widen signal's read, made off the request path
-/// (ADR-0072 d8, as built by #244).
-const VOCABULARY_COUNTS: &str = "SELECT c.workarea_id, NULL::int8 AS token_id, \
-            COALESCE(sum(c.rows), 0)::int8 AS n \
+/// Each node of `$2`'s served versions of the memory kinds `$3`: the widen
+/// signal's rows (ADR-0072 d8, as built by #244).
+const VOCABULARY_ROWS: &str = "SELECT c.workarea_id, COALESCE(sum(c.rows), 0)::int8 \
      FROM search_workarea_rows c \
      WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) \
-     GROUP BY c.workarea_id \
-     UNION ALL \
-     SELECT c.workarea_id, c.token_id, sum(c.rows)::int8 \
+     GROUP BY c.workarea_id";
+
+/// Every token's count per node of `$2`, [`REFERENCE_COUNTS`]' second half
+/// without its token filter, cut at `$4` rows so a vocabulary past the
+/// signal's cap is never read whole: the widen signal's read, made off the
+/// request path (ADR-0072 d8, as built by #244).
+const VOCABULARY_TERMS: &str = "SELECT c.workarea_id, c.token_id, sum(c.rows)::int8 \
      FROM search_term_rows c \
      WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
        AND c.memory_kind = ANY($3::int2[]) \
-     GROUP BY c.workarea_id, c.token_id";
+     GROUP BY c.workarea_id, c.token_id \
+     LIMIT $4";
 
 /// Every token each expired version `$2` holds, from its postings by the
 /// `(memory_id)` index.
@@ -6236,7 +6239,8 @@ impl JournalStore for PgStore {
         &self,
         tenant_id: Uuid,
         scope: &oml_app::federation::CountsScope,
-    ) -> Result<oml_app::federation::VocabularyCounts, StoreError> {
+        max_pairs: usize,
+    ) -> Result<Option<oml_app::federation::VocabularyCounts>, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             .execute(&mut *tx)
@@ -6253,22 +6257,30 @@ impl JournalStore for PgStore {
             })
             .collect();
         let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
-        let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
+        let mut counted: Vec<(Uuid, i64, i64)> = Vec::new();
+        // Each expired version's (node, token), subtracted from the counts.
+        let mut expired_pairs: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
         if !scope.nodes.is_empty() {
-            let counted: Vec<(Uuid, Option<i64>, i64)> = sqlx::query_as(VOCABULARY_COUNTS)
+            let per_node: Vec<(Uuid, i64)> = sqlx::query_as(VOCABULARY_ROWS)
                 .bind(tenant_id)
                 .bind(&scope.nodes)
                 .bind(&memory_kinds)
                 .fetch_all(&mut *tx)
                 .await
                 .map_err(backend)?;
-            for (node, token, n) in counted {
-                let n = u64::try_from(n).map_err(backend)?;
-                match token {
-                    None => *rows.entry(node).or_default() += n,
-                    Some(token) => *df.entry((node, token)).or_default() += n,
-                }
+            for (node, n) in per_node {
+                *rows.entry(node).or_default() += u64::try_from(n).map_err(backend)?;
             }
+            // At most one row past the cap is read, so a vocabulary too large
+            // to hold is never read whole.
+            counted = sqlx::query_as(VOCABULARY_TERMS)
+                .bind(tenant_id)
+                .bind(&scope.nodes)
+                .bind(&memory_kinds)
+                .bind(i64::try_from(max_pairs.saturating_add(1)).map_or(i64::MAX, |_| i64::MAX))
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(backend)?;
             if let Some(now) = scope.expired_at {
                 let expired: Vec<(Uuid, Uuid)> = sqlx::query_as(REFERENCE_EXPIRED)
                     .bind(tenant_id)
@@ -6293,23 +6305,23 @@ impl JournalStore for PgStore {
                         .await
                         .map_err(backend)?;
                     for (memory_id, token) in held {
-                        if let Some(node) = home.get(&memory_id)
-                            && let Some(d) = df.get_mut(&(*node, token))
-                        {
-                            *d = d.saturating_sub(1);
+                        if let Some(node) = home.get(&memory_id) {
+                            *expired_pairs.entry((*node, token)).or_default() += 1;
                         }
                     }
                 }
             }
         }
         tx.commit().await.map_err(backend)?;
-        let mut forms: BTreeMap<i64, Vec<(Uuid, u64)>> = BTreeMap::new();
-        for ((node, token), n) in df {
-            if n > 0 {
-                forms.entry(token).or_default().push((node, n));
-            }
+        let mut triples = Vec::with_capacity(counted.len());
+        for (node, token, n) in counted {
+            let n = u64::try_from(n).map_err(backend)?;
+            let less = expired_pairs.get(&(node, token)).copied().unwrap_or(0);
+            triples.push((node, token, n.saturating_sub(less)));
         }
-        Ok(oml_app::federation::VocabularyCounts { rows, forms })
+        Ok(Some(oml_app::federation::VocabularyCounts::from_counts(
+            rows, triples,
+        )))
     }
 
     /// The query's forms, one statement over no table, then their counts out
@@ -6328,8 +6340,11 @@ impl JournalStore for PgStore {
         let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
         for (_, form) in &forms {
             let token = token_id(form);
-            for (node, n) in vocabulary.forms.get(&token).into_iter().flatten() {
-                df.insert((*node, token), *n);
+            for node in vocabulary.rows.keys() {
+                let n = vocabulary.df(node, token);
+                if n > 0 {
+                    df.insert((*node, token), n);
+                }
             }
         }
         Ok(self.counts_of_forms(&forms, &vocabulary.rows, &df, prunes))

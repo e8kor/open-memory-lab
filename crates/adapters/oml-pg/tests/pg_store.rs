@@ -9466,9 +9466,11 @@ async fn federation_overhead_at_1000_candidates() {
                     expired_at: Some(i64::MAX / 2),
                     prunes: true,
                 },
+                usize::MAX,
             )
             .await
-            .expect("the vocabulary");
+            .expect("the vocabulary")
+            .expect("no cap");
         let mut reads = Vec::new();
         for i in 0..41 {
             let started = std::time::Instant::now();

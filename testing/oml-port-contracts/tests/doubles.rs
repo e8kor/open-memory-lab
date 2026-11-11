@@ -120,6 +120,22 @@ async fn a_signal_at_its_age_bound_serves_no_hint() {
     .await;
 }
 
+#[tokio::test]
+async fn a_status_transition_drops_the_tenants_signals_at_once() {
+    contracts::federation::a_status_transition_drops_the_tenants_signals_at_once(
+        MemStore::new().answering_bm25_with_any_word(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_signal_past_the_tenants_share_is_marked_and_not_rebuilt() {
+    contracts::federation::a_signal_past_the_tenants_share_is_marked_and_not_rebuilt(
+        MemStore::new().answering_bm25_with_any_word(),
+    )
+    .await;
+}
+
 /// A `scope` recall does no federation work: no policy, candidate or
 /// statistics read, whether the tenant has federation on or off, and
 /// whether `sources` is sent or absent; `wide` does (ADR-0072 d12, as
@@ -199,6 +215,37 @@ async fn a_scope_recall_makes_no_federation_read() {
             store.widen_signal_reads(),
             signal_reads + 1,
             "a scope recall with its signal held read it other than once ({sources:?})"
+        );
+    }
+    // Federation off again: a scope recall makes no signal read, whatever
+    // was held before (#244, review F7).
+    w.app
+        .set_federation_policy(
+            w.admin.as_str(),
+            FederationPolicyChange {
+                enabled: Some(false),
+                ..FederationPolicyChange::default()
+            },
+        )
+        .await
+        .expect("federation off");
+    for sources in [None, Some(Sources::Scope)] {
+        let signal_reads = store.widen_signal_reads();
+        w.recall(
+            &key,
+            "invoice retry policy",
+            "home",
+            sources.clone(),
+            "bm25",
+            10,
+        )
+        .await
+        .expect("a scope recall");
+        w.app.refresh_widen_signals().await;
+        assert_eq!(
+            store.widen_signal_reads(),
+            signal_reads,
+            "with federation off a scope recall read a widen signal ({sources:?})"
         );
     }
     w.app

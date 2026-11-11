@@ -1086,7 +1086,12 @@ where
         if st.app.widen_signals_wanted() {
             let app = Arc::clone(&st.app);
             tokio::spawn(async move {
-                app.refresh_widen_signals().await;
+                // One refresh runs at a time in the process; one that runs
+                // past its timeout is stopped, and its build is counted as
+                // failed and marked.
+                let _ =
+                    tokio::time::timeout(app.widen_refresh_timeout(), app.refresh_widen_signals())
+                        .await;
             });
         }
         // The budget object is present if and only if max_tokens was sent

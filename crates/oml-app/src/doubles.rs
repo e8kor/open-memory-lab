@@ -2751,10 +2751,11 @@ impl JournalStore for MemStore {
         &self,
         tenant_id: Uuid,
         scope: &crate::federation::CountsScope,
-    ) -> Result<crate::federation::VocabularyCounts, StoreError> {
+        _max_pairs: usize,
+    ) -> Result<Option<crate::federation::VocabularyCounts>, StoreError> {
         self.federation_reads.fetch_add(1, Ordering::SeqCst);
         let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
-        let mut df: BTreeMap<i64, BTreeMap<Uuid, u64>> = BTreeMap::new();
+        let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
         if let Some(tenant) = self.tenant_existing(tenant_id) {
             let state = tenant.lock().expect("tenant lock");
             let held = scope
@@ -2772,20 +2773,14 @@ impl JournalStore for MemStore {
                 };
                 *n += 1;
                 for w in words(&m.body) {
-                    *df.entry(form_key(&w))
-                        .or_default()
-                        .entry(m.workarea_id)
-                        .or_default() += 1;
+                    *df.entry((m.workarea_id, form_key(&w))).or_default() += 1;
                 }
             }
         }
-        Ok(crate::federation::VocabularyCounts {
+        Ok(Some(crate::federation::VocabularyCounts::from_counts(
             rows,
-            forms: df
-                .into_iter()
-                .map(|(form, nodes)| (form, nodes.into_iter().collect()))
-                .collect(),
-        })
+            df.into_iter().map(|((node, form), n)| (node, form, n)),
+        )))
     }
 
     /// The query's words looked up in the vocabulary: one signal read, no
@@ -2798,16 +2793,7 @@ impl JournalStore for MemStore {
     ) -> Result<crate::federation::ReferenceCounts, StoreError> {
         self.widen_signal_reads.fetch_add(1, Ordering::SeqCst);
         let words: Vec<String> = words(query).into_iter().collect();
-        let held: Vec<BTreeMap<Uuid, u64>> = words
-            .iter()
-            .map(|w| {
-                vocabulary
-                    .forms
-                    .get(&form_key(w))
-                    .map(|nodes| nodes.iter().copied().collect())
-                    .unwrap_or_default()
-            })
-            .collect();
+        let keys: Vec<i64> = words.iter().map(|w| form_key(w)).collect();
         let nodes = vocabulary
             .rows
             .iter()
@@ -2816,10 +2802,7 @@ impl JournalStore for MemStore {
                     *node,
                     oml_domain::federation::SourceCounts {
                         rows: *n,
-                        df: held
-                            .iter()
-                            .map(|h| h.get(node).copied().unwrap_or(0))
-                            .collect(),
+                        df: keys.iter().map(|k| vocabulary.df(node, *k)).collect(),
                     },
                 )
             })

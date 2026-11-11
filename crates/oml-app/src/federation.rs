@@ -161,20 +161,62 @@ pub struct ReferenceCounts {
 
 /// Every form's counts over a set of nodes, read once off the request path
 /// and held as the widen hint's signal (ADR-0072 d8, as built by #244):
-/// per node its served versions, and per form, an opaque key the store
-/// gives it, the nodes holding it with their counts. The same subtraction
-/// of expired versions as [`ReferenceCounts`] applies, as of the read.
+/// per node its served versions, and its forms, each an opaque key the
+/// store gives it, with how many of those versions hold it, sorted by form
+/// (16 bytes a pair, no allocation per form). The same subtraction of
+/// expired versions as [`ReferenceCounts`] applies, as of the read.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VocabularyCounts {
     pub rows: BTreeMap<Uuid, u64>,
-    pub forms: BTreeMap<i64, Vec<(Uuid, u64)>>,
+    pub forms: BTreeMap<Uuid, Vec<(i64, u64)>>,
 }
 
 impl VocabularyCounts {
-    /// How many (form, node) counts it holds: its size in memory.
+    /// How many (form, node) counts it holds.
     #[must_use]
     pub fn pairs(&self) -> usize {
-        self.forms.values().map(Vec::len).sum::<usize>() + self.rows.len()
+        self.forms.values().map(Vec::len).sum()
+    }
+
+    /// Its size in memory, estimated: 16 bytes a pair in each node's
+    /// vector and about 100 bytes a node for the two map entries and the
+    /// vector's header.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.pairs() * 16 + self.rows.len() * 100
+    }
+
+    /// How many of `node`'s versions hold `form`.
+    #[must_use]
+    pub fn df(&self, node: &Uuid, form: i64) -> u64 {
+        self.forms
+            .get(node)
+            .and_then(|f| {
+                f.binary_search_by_key(&form, |(k, _)| *k)
+                    .ok()
+                    .map(|i| f[i].1)
+            })
+            .unwrap_or(0)
+    }
+
+    /// Builds it from (node, form, count) triples in any order; a count of
+    /// 0 is left out.
+    #[must_use]
+    pub fn from_counts(
+        rows: BTreeMap<Uuid, u64>,
+        counts: impl IntoIterator<Item = (Uuid, i64, u64)>,
+    ) -> Self {
+        let mut forms: BTreeMap<Uuid, Vec<(i64, u64)>> = BTreeMap::new();
+        for (node, form, n) in counts {
+            if n > 0 {
+                forms.entry(node).or_default().push((form, n));
+            }
+        }
+        for f in forms.values_mut() {
+            f.sort_unstable();
+            f.shrink_to_fit();
+        }
+        VocabularyCounts { rows, forms }
     }
 }
 

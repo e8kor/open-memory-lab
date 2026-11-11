@@ -130,8 +130,6 @@ where
             )?;
             self.commit(event, MetadataFold::FederationPolicySet(policy), None)
                 .await?;
-            // A widen signal holds the old policy's candidates (#244).
-            self.widen.drop_tenant(tenant_id);
         }
         Ok((
             FederationSettings {
@@ -205,8 +203,6 @@ where
             None,
         )
         .await?;
-        // A widen signal holds the node as a candidate or not (#244).
-        self.widen.drop_tenant(tenant_id);
         Ok(WorkareaFederation { accept_federated })
     }
 
