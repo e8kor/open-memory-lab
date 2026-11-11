@@ -2578,6 +2578,22 @@ impl JournalStore for MemStore {
             .and_then(|t| t.lock().expect("tenant lock").query_text_since.clone()))
     }
 
+    /// One read of the tenant's row: the default pipeline and the policy,
+    /// which counts as no federation read, as the PostgreSQL store reads
+    /// both off the row it reads for the pipeline.
+    async fn recall_defaults(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<(Option<String>, crate::federation::FederationPolicy), StoreError> {
+        Ok(self
+            .tenant_existing(tenant_id)
+            .map(|t| {
+                let state = t.lock().expect("tenant lock");
+                (state.search_default.clone(), state.federation)
+            })
+            .unwrap_or_default())
+    }
+
     async fn federation_policy(
         &self,
         tenant_id: Uuid,

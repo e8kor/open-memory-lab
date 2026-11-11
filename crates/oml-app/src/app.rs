@@ -5889,10 +5889,11 @@ where
         // The mode and the federated hits of a federated tenant's recall
         // (ADR-0072 Consequences).
         if let Some(record) = &result.federation {
-            self.observer.recall_sources(match record.sources.as_str() {
-                Some("wide") => "wide",
-                Some(_) => "scope",
-                None => "list",
+            // A `scope` recall records nothing, so the mode is wide or list.
+            self.observer.recall_sources(if record.sources.is_string() {
+                "wide"
+            } else {
+                "list"
             });
             let federated = result
                 .hits
@@ -6016,9 +6017,22 @@ where
             .into_iter()
             .filter(|kind| req.kinds.is_empty() || req.kinds.contains(kind))
             .collect();
-        let pipeline = self
-            .pipeline_for(key.tenant_id, req.search.as_deref())
-            .await?;
+        // A recall naming no `sources` reads the tenant's default with its
+        // default pipeline, off one row; one naming them reads only the
+        // pipeline's default, as before federation (ADR-0072 d12).
+        let (pipeline, policy) = if req.sources.is_none() {
+            let (tenant_default, policy) = self.journal.recall_defaults(key.tenant_id).await?;
+            (
+                self.pipeline_from(req.search.as_deref(), tenant_default)?,
+                Some(policy),
+            )
+        } else {
+            (
+                self.pipeline_for(key.tenant_id, req.search.as_deref())
+                    .await?,
+                None,
+            )
+        };
         // Where the recall searches under `sources`: the scope's served
         // nodes, plus the sources `wide` selects, or a list's nodes alone;
         // and the reference set every BM25 statistic is taken over, fixed
@@ -6026,7 +6040,7 @@ where
         let expired_at = (!req.include_expired).then_some(now_us);
         let plan = self
             .plan_sources(
-                caller, req, scope, &hit_nodes, &kinds, pipeline, &query, expired_at,
+                caller, req, policy, scope, &hit_nodes, &kinds, pipeline, &query, expired_at,
             )
             .await?;
         let promoted: BTreeSet<Uuid> = plan.promoted.iter().copied().collect();
@@ -6240,10 +6254,6 @@ where
             candidates.retain(|c| rows.get(&c.memory_id).is_some_and(admits));
             (candidates, below_floor) = apply_floor(candidates, floor);
         }
-        // The widen hint, on a `scope` answer of a federated tenant: a
-        // candidate richer per readable row than the scope (ADR-0072 d8, as
-        // amended by the phase 1 eval).
-        let widen = plan.hint.as_ref().and_then(|hint| hint.widen());
         // Spellings only for an empty or thin result, fewer hits than
         // `DID_YOU_MEAN_BELOW` (or than `k` when it asks fewer) before the
         // budget cut, for the
@@ -6358,7 +6368,6 @@ where
             timings,
             window,
             sources: plan.report,
-            widen,
             federation: plan.record,
         })
     }
@@ -6577,13 +6586,30 @@ where
                     served: self.served_pipelines(),
                 });
         }
-        let tenant_default = self
-            .journal
-            .tenant_search_default(tenant_id)
-            .await?
+        let tenant_default = self.journal.tenant_search_default(tenant_id).await?;
+        self.pipeline_from(None, tenant_default)
+    }
+
+    /// The pipeline a recall runs: the one it names, which the deployment
+    /// must serve, else the tenant's default where served, else the
+    /// deployment's (ADR-0049 d4).
+    fn pipeline_from(
+        &self,
+        requested: Option<&str>,
+        tenant_default: Option<String>,
+    ) -> Result<Pipeline, AppError> {
+        if let Some(name) = requested {
+            return Pipeline::parse(name)
+                .filter(|p| self.search.serves(*p))
+                .ok_or_else(|| AppError::SearchUnavailable {
+                    name: name.to_owned(),
+                    served: self.served_pipelines(),
+                });
+        }
+        Ok(tenant_default
             .and_then(|name| Pipeline::parse(&name))
-            .filter(|p| self.search.serves(*p));
-        Ok(tenant_default.unwrap_or_else(|| self.search.default_pipeline()))
+            .filter(|p| self.search.serves(*p))
+            .unwrap_or_else(|| self.search.default_pipeline()))
     }
 
     /// The served pipeline names, comma-separated, for a refusal's text.

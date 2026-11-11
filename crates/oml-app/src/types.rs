@@ -1834,9 +1834,6 @@ pub struct RecallResult {
     pub window: Option<Window>,
     /// `search.sources` under `wide` or a list (ADR-0072 d8).
     pub sources: Option<crate::federation::SourcesReport>,
-    /// `search.widen` on a `scope` answer of a federated tenant whose
-    /// candidates hold the query's words at a higher rate (ADR-0072 d8).
-    pub widen: Option<crate::federation::Widen>,
     /// What the recall event records of the sources (ADR-0072 d9); `None`
     /// on a tenant with federation off.
     pub federation: Option<crate::federation::FederationRecord>,

@@ -2,7 +2,7 @@
 //! and a workarea's `accept_federated`, each a person's or an admin's
 //! journalled act; and the plan a recall runs under its `sources` — the
 //! candidates a key reads, the reference set whose statistics every hit is
-//! scored with, the selection above the cap, and the widen hint. Selection
+//! scored with and the selection above the cap. Selection
 //! reads exact counts and names alone: no clock, no randomness and no model
 //! (d9). Every name and count it serves is of a node the key reads (d6).
 
@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use oml_domain::federation::{
     CANDIDATES_DOCTOR, MAX_SOURCES_CEILING, SourceCounts, estimate, is_trusted_source,
-    matches_at_least, order_by_estimate, rate, richer,
+    matches_at_least, order_by_estimate,
 };
 use oml_domain::in_progress::may_set_mode;
 use oml_domain::name::{NamedKind, Reference};
@@ -23,7 +23,7 @@ use super::{App, Caller, derived_path, require_role};
 use crate::federation::{
     CountsScope, CutReport, DefaultSources, FederationPolicy, FederationPolicyChange,
     FederationRecord, FederationSettings, SearchedSource, SourceRefusal, Sources, SourcesReport,
-    Via, Widen, WorkareaFederation,
+    Via, WorkareaFederation,
 };
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer, StoreError};
 use crate::search::{Fusion, MatchMode, Pipeline, RetrieverKind};
@@ -53,40 +53,7 @@ pub(super) struct SourcePlan {
     /// The federated nodes searched: a hit on one is `via: federated`.
     pub federated: BTreeSet<Uuid>,
     pub report: Option<SourcesReport>,
-    pub hint: Option<HintInput>,
     pub record: Option<FederationRecord>,
-}
-
-/// The counts the widen hint is decided from, read before the search and
-/// applied once the answer's size is known (d8).
-#[derive(Debug)]
-pub(super) struct HintInput {
-    words: usize,
-    reference: SourceCounts,
-    scope: SourceCounts,
-    candidates: Vec<SourceCounts>,
-}
-
-impl HintInput {
-    /// `search.widen` (d8, as amended by the phase 1 eval): a candidate at
-    /// least twice as rich per readable row as the scope, with a kept word
-    /// on two of its rows. The thin-answer rule is dropped: on the eval's
-    /// scopes of 12 to 25 memories it fired on 84% of the queries the scope
-    /// answered, past d11's 10% (ADR-0072 Phase 1 as built).
-    pub(super) fn widen(&self) -> Option<Widen> {
-        let scope_rate = rate(&self.scope, &self.reference);
-        self.candidates
-            .iter()
-            .any(|c| richer(c, scope_rate, &self.reference))
-            .then(|| Widen {
-                candidates: self
-                    .candidates
-                    .iter()
-                    .filter(|c| estimate(c, &self.reference) > 0.0)
-                    .count(),
-                matches_at_least: matches_at_least(self.words, &self.candidates),
-            })
-    }
 }
 
 /// A candidate source: a trusted node outside the scope the key reads.
@@ -257,6 +224,7 @@ where
         &self,
         caller: &Caller,
         req: &RecallRequest,
+        policy: Option<FederationPolicy>,
         scope: Uuid,
         hit_nodes: &[Uuid],
         kinds: &[MemoryKind],
@@ -265,13 +233,24 @@ where
         expired_at: Option<i64>,
     ) -> Result<SourcePlan, AppError> {
         let tenant_id = caller.key.tenant_id;
-        let policy = self.journal.federation_policy(tenant_id).await?;
-        let sources = match &req.sources {
-            Some(sources) => sources.clone(),
-            None if policy.enabled && policy.default_sources == DefaultSources::Wide => {
+        let sources = match (&req.sources, &policy) {
+            (Some(sources), _) => sources.clone(),
+            (None, Some(p)) if p.enabled && p.default_sources == DefaultSources::Wide => {
                 Sources::Wide
             }
-            None => Sources::Scope,
+            (None, _) => Sources::Scope,
+        };
+        // `scope` is today's answer, and it reads nothing more: no policy,
+        // no candidate and no count, federation on or off (d12, as amended).
+        if sources == Sources::Scope {
+            return Ok(SourcePlan {
+                promoted: hit_nodes.to_vec(),
+                ..SourcePlan::default()
+            });
+        }
+        let policy = match policy {
+            Some(policy) => policy,
+            None => self.journal.federation_policy(tenant_id).await?,
         };
         // (1) The list's shape.
         if let Sources::List(names) = &sources {
@@ -299,20 +278,14 @@ where
         // (2) Federation on, else today's answer for `scope` and a refusal
         // for anything wider, never a silent `scope` (d5).
         if !policy.enabled {
-            if sources != Sources::Scope {
-                return Err(sources_invalid(
-                    "/sources",
-                    "federation is off on this tenant: sources is scope until a tenant admin enables it",
-                ));
-            }
-            return Ok(SourcePlan {
-                promoted: hit_nodes.to_vec(),
-                ..SourcePlan::default()
-            });
+            return Err(sources_invalid(
+                "/sources",
+                "federation is off on this tenant: sources is scope until a tenant admin enables it",
+            ));
         }
         // (3) A `Cc` pipeline normalises each list by its own bounds, which
         // an added source moves (d7.2).
-        if sources != Sources::Scope && matches!(pipeline.fusion(), Fusion::Cc { .. }) {
+        if matches!(pipeline.fusion(), Fusion::Cc { .. }) {
             return Err(AppError::SourcesUnderCc {
                 pipeline: pipeline.as_str().to_owned(),
             });
@@ -379,11 +352,9 @@ where
                         reference_workarea_ids: listed,
                     }),
                     federated,
-                    hint: None,
                 })
             }
             Sources::Scope | Sources::Wide => {
-                let wide = sources == Sources::Wide;
                 let (candidates, paths) = self.candidates(caller, scope, hit_nodes).await?;
                 if candidates.len() > CANDIDATES_DOCTOR
                     && let Ok(mut seen) = self.wide_keys.lock()
@@ -400,26 +371,8 @@ where
                     .await?;
                 let kept = Kept::of(&counts);
                 let reference = kept.sum(r.iter());
-                let scope_counts = kept.sum(hit_nodes.iter());
                 let candidate_counts: Vec<SourceCounts> =
                     candidates.iter().map(|c| kept.of_node(&c.id)).collect();
-                if !wide {
-                    return Ok(SourcePlan {
-                        promoted: hit_nodes.to_vec(),
-                        hint: Some(HintInput {
-                            words: kept.words.len(),
-                            reference,
-                            scope: scope_counts,
-                            candidates: candidate_counts,
-                        }),
-                        record: Some(FederationRecord {
-                            sources: Value::from("scope"),
-                            federated_workarea_ids: Vec::new(),
-                            reference_workarea_ids: r,
-                        }),
-                        ..SourcePlan::default()
-                    });
-                }
                 // Below the cap the union; above it the estimate's order,
                 // ties by name, the rest the tail (d4.3, d4.4, d4.6).
                 let mut ordered: Vec<(SourceCounts, String, f64)> = candidates
@@ -490,7 +443,6 @@ where
                         reference_workarea_ids: r,
                     }),
                     federated: selected.into_iter().collect(),
-                    hint: None,
                 })
             }
         }

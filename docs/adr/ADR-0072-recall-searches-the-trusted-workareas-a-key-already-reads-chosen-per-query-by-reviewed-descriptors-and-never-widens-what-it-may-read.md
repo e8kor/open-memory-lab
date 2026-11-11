@@ -157,9 +157,7 @@ flowchart TD
   M -->|"wide, or a list of names"| F{"tenant federation enabled"}
   F -->|no| X["refused request.validation<br/>field /sources"]
   F -->|yes| C["C = trusted, accepting nodes outside subtree(scope)<br/>the key reads; per request, cached nowhere"]
-  M -->|"scope (default)"| SC{"tenant federation enabled"}
-  SC -->|no| S["searched = served(scope)<br/>today's answer, byte for byte"]
-  SC -->|yes| C
+  M -->|"scope (default)"| S["searched = served(scope)<br/>today's answer, byte for byte<br/>no federation read (d12 as amended)"]
   S --> A
   C --> R["R = served(scope) ∪ C, or for a list the listed nodes alone<br/>less expired versions; n, avgdl, df and the pruned words<br/>fixed over R before any selection"]
   R --> L{"sources"}
@@ -168,12 +166,10 @@ flowchart TD
   V -->|"readable, not a source"| VR["refused request.validation<br/>field /sources/i and its reason"]
   V -->|yes| SL["searched = R = the listed nodes alone<br/>a listed unit that cannot answer refuses 503"]
   L -->|wide| CAP{"C within max_sources"}
-  L -->|"scope"| WH["today's answer, scored with the scope's statistics<br/>plus the widen hint from R's counts"]
   CAP -->|yes| U["searched = R, the union"]
   CAP -->|no| O["order C by the estimate E(s), then by name<br/>phase 2: up to descriptor_slots by descriptor"]
   O --> T["searched = served(scope) ∪ first max_sources<br/>the rest is the tail, cut"]
   SL --> P["one pipeline run over the searched nodes<br/>every row scored with R's statistics"]
-  WH --> A
   U --> P
   T --> P
   P --> A["answer: hits with via, search.sources,<br/>cut or widen, readable nodes only"]
@@ -365,15 +361,16 @@ sequenceDiagram
      (d8). No hit comes from the cut, and the cut's statistics stay in R, so every searched hit
      scores as if the cut had been searched and returned nothing above it.
   The cost: a key whose grants reach many trusted workareas pays for a statistics read over all
-  of them on every `scope` and `wide` recall of a federated tenant, since the widen hint reads it
-  too (d8, d12); a list pays for the listed workareas alone.
+  of them on every `wide` recall; a list pays for the listed workareas alone, and a `scope`
+  recall pays nothing (d12 as amended).
 
 - **d5 — Controls: one `sources` field on recall, `"scope"`, `"wide"` or a list of workarea
   names, default `"scope"`; one policy per workarea and three per tenant in phase 1, each
   journalled.**
   - **`sources`** on `oml_read` recall and `POST /v1/memories/recall` says where to search. A
     string is a mode and an array is a fixed set:
-    - `"scope"`: today's answer exactly, plus the widen hint of d8 on a federated tenant.
+    - `"scope"`: today's answer exactly, with no federation read (d12 as amended; the widen
+      hint of d8 is not served in phase 1).
     - `"wide"`: the scope plus the candidates d4 selects. The caller states the intent, not the
       algorithm: phase 1 selects by content (d4.4); phase 2 adds the tenant setting
       `federation.selector`, `content` or `described` (d4.5), and a selector other than `content`
@@ -516,7 +513,11 @@ sequenceDiagram
   too. Each federated answer's hits gain `via` and their `workarea_path`, so the agent knows a hit
   came from another team's context. The MCP rendering carries `workarea_path` and `via` per hit
   and the `cut` line; the full block is served over HTTP and under `explain: true`.
-  **The widen hint.** Under `scope`, on a tenant with federation enabled, the core reads R's
+  **The widen hint.** *Not served in phase 1 (d12 as amended, 2026-11-11):* the default path
+  pays nothing for federation, and the hint below costs every `scope` recall a candidate and
+  statistics read, so it returns only when it can be computed without one; rule 1 was measured
+  and passes d11's gate (Phase 1 as built). As designed: under `scope`, on a tenant with
+  federation enabled, the core reads R's
   counts for the query's words (d12) on every recall. Raw counts would carry the size bias that
   E(s) exists to correct (`universe` holds the rarest word more often than any crew), so the hint
   compares **rates**. For a source s with n_s served rows, ρ(s) = Σ over kept words w of
@@ -542,12 +543,9 @@ sequenceDiagram
   and gates the factor. The MCP server instructions gain one line, "a recall answer with
   `search.widen` may be retried with `sources: "wide"`": a hint in the answer, not a tool, as
   ADR-0039 d8 asks.
-  Every name and number in the answer is of a node the key reads (d6). On a tenant with
-  federation off a `scope` answer is unchanged byte for byte, and no statistics read runs; on one
-  with it on, a `scope` answer differs only by `widen`.
-  The cost: on a federated tenant every `scope` recall pays d12's statistics read, not only a thin
-  one (budget in d12). A hint can still fire on a query the scope answered well, a rate-rich
-  candidate costing the agent one retry.
+  Every name and number in the answer is of a node the key reads (d6). A `scope` answer is
+  unchanged byte for byte, federation on or off, and no federation read runs for it (d12 as
+  amended).
 
 - **d9 — Repeatability: the inputs are named, selection uses no clock, no randomness and no
   model, and ties break by name.** For fixed inputs — the key's grants and denials, the query's
@@ -616,15 +614,23 @@ sequenceDiagram
   their primary key `(tenant_id, workarea_id, kind, memory_kind, token_id)` with
   `workarea_id = ANY($r)` and `token_id = ANY($words)`, leakproof equalities that serve the serving
   role (ADR-0052 d1); one read serves R's statistics, the pruned words, the estimate and the
-  hint, and the expired subtraction of d4.2 is the second. On a federated tenant both run on
-  every `scope` and `wide` recall (d8); under a list they run over the listed nodes alone
-  (d4.2); on a tenant with federation off neither runs. Phase 2 indexes
+  hint, and the expired subtraction of d4.2 is the second. Both run on every `wide` recall;
+  under a list they run over the listed nodes alone (d4.2); under `scope`, federation on or off,
+  neither runs, nor does any read of candidates or policy (as amended, 2026-11-11). Phase 2 indexes
   descriptor text as `search_postings` rows of memory kind 3, under the same partition, policy,
   trigger and erase, read with the candidates as the workarea list and excluded from the hit
   retrievers; phase 3's term counts and question postings follow the same shape. Nothing is
   cached beyond these materialised counts, so a revoked grant applies to the next recall. Budget:
   the two reads add at most 10 ms p95 at 1,000 candidate sources, inside the 128 ms
-  first-stage recall SLO ([operating](../operations/operating.md)); unmeasured, #205.
+  first-stage recall SLO ([operating](../operations/operating.md)). **Measured, 2026-11-10 and
+  11** (`pg_store`'s `federation_overhead_at_1000_candidates`, release build, 1,000 committed
+  workareas of one memory each, `bm25-postings`, `k` 10, 40 runs per mode after one warm-up,
+  the p95 of each on a host other builds shared): the two reads, the cap-candidate selection's
+  statistics, take 10.9 ms p95, at the budget within the host's noise; a whole `wide` recall at
+  `max_sources` 8 takes 113 ms p95 at worst against the 128 ms SLO; a `scope` recall takes the
+  same as with federation off (40.2 against 43.0 ms p95; 98.7 against 43.8 ms before this
+  amendment, when `scope` read the candidates for the hint), since it does no federation work,
+  which `a_scope_recall_makes_no_federation_read` holds by counting the store's reads.
   `bm25-postings` measured 25.5 ms p95 at 99,721 readable memories at universe scope
   ([scale](../benchmarks/scale.md)), the shape of the union's search over many nodes, so the union
   below the cap is expected to fit; #205 measures it and sets `max_sources` from it. Above 1,000
@@ -657,7 +663,8 @@ left a reading open, or named a surface main does not have, the build took the r
 | d4.2, d5, d13 test 9a | No source is ever unreachable: `search.sources.missing` and `503 cluster.source_unavailable` are not served, and test 9a proves its first half | both are ADR-0073's, which is proposed; on one database every node of R answers or the recall fails whole, as a scope does today |
 | d5 | The tenant policy is read and set at `GET` and `POST /v2/federation`, admin by key role, and from the CLI with `oml search federation`; `max_sources` is 0 to 64; a list name is a workarea name or id, as a scope is | d5 names the fields and the event, not the route; 64 keeps a list's validation and a wide recall's selection bounded |
 | d8 | The recall body has no `explain` member, so a cut's workarea paths are not served; `search.sources.cut` serves its count and lower bound | ADR-0049 d6's block is served as `search` on every answer; serving the paths waits for a member that asks for them |
-| d8, d11 | The widen hint fires on rule 1 alone, a candidate twice as rich per row with a word on two of its rows; rule 2, the thin answer, is dropped | d11's gate, measured: with both rules the hint was silent on 15.7% of the scope-answerable queries (90% asked) with 93.3% precision on the cross split; rule 1 alone was silent on 91.7% with 93.5% precision. Rule 2 fired on 101 of 102 firings, because a scope of 12 to 25 memories rarely holds `k` 10 matches. d11 changes the hint by amendment when it fails; the factor 2 and the floor stand |
+| d12, d8 | A `scope` recall makes no federation read, federation on or off, sources sent or absent; a recall naming no `sources` reads the tenant's default with its default pipeline off one row; the widen hint is not served | the default path pays nothing for federation: with the hint, a `scope` recall at 1,000 candidates took 98.7 ms p95 against 43.8 ms with federation off |
+| d8, d11 | The widen hint, when it returns, fires on rule 1 alone, a candidate twice as rich per row with a word on two of its rows; rule 2, the thin answer, is dropped | d11's gate, measured: with both rules the hint was silent on 15.7% of the scope-answerable queries (90% asked) with 93.3% precision on the cross split; rule 1 alone was silent on 91.7% with 93.5% precision. Rule 2 fired on 101 of 102 firings, because a scope of 12 to 25 memories rarely holds `k` 10 matches. d11 changes the hint by amendment when it fails; the factor 2 and the floor stand |
 | d9 | `query_digest` gains `sources` only under `wide` or a list, so a `scope` recall digests as it did before | ADR-0059's members joined the digest the same way, only when sent |
 | d12 | The doctor line naming a key above 1,000 candidates reads the keys the lead met since it started, served to a tenant admin by `GET /v2/federation` | no use case lists a tenant's keys with their access, and a doctor line decides nothing |
 | d13 test 7 | On PostgreSQL the 100,000-row comparison runs by hand (`--ignored`); CI runs it at 5,000 rows, in a test binary of its own so no other test shares the host while it times; the double runs it at 100,000. W is timed in two shapes: outside every grant root, and a denied child of a readable root | copying 100,000 rows through the postings and similar-key triggers takes minutes |

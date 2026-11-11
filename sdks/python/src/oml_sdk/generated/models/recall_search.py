@@ -13,7 +13,6 @@ from ..models.rerank_reason import RerankReason
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.recall_search_widen import RecallSearchWiden
     from ..models.recall_search_window_type_0 import RecallSearchWindowType0
     from ..models.recall_sources import RecallSources
 
@@ -51,9 +50,6 @@ class RecallSearch:
             anchored to the recall's now; null when the query names no date (proposed ADR-0059 d6).
         sources (RecallSources | Unset): Under sources wide or a list: what was searched and why (ADR-0072 d8). Every
             name and number is of a workarea the key reads (d6).
-        widen (RecallSearchWiden | Unset): On a sources scope answer of a tenant with federation on, when a workarea the
-            key reads outside the scope holds the query's words at least twice as often per row as the scope, on at least
-            two of its rows: a retry with sources wide would search it. It names no workarea (ADR-0072 d8).
     """
 
     pipeline: RecallSearchPipeline
@@ -69,7 +65,6 @@ class RecallSearch:
     below_floor: int
     window: None | RecallSearchWindowType0 | Unset = UNSET
     sources: RecallSources | Unset = UNSET
-    widen: RecallSearchWiden | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.recall_search_window_type_0 import RecallSearchWindowType0
@@ -118,10 +113,6 @@ class RecallSearch:
         if not isinstance(self.sources, Unset):
             sources = self.sources.to_dict()
 
-        widen: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.widen, Unset):
-            widen = self.widen.to_dict()
-
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -143,14 +134,11 @@ class RecallSearch:
             field_dict["window"] = window
         if sources is not UNSET:
             field_dict["sources"] = sources
-        if widen is not UNSET:
-            field_dict["widen"] = widen
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
-        from ..models.recall_search_widen import RecallSearchWiden
         from ..models.recall_search_window_type_0 import RecallSearchWindowType0
         from ..models.recall_sources import RecallSources
 
@@ -237,13 +225,6 @@ class RecallSearch:
         else:
             sources = RecallSources.from_dict(_sources)
 
-        _widen = d.pop("widen", UNSET)
-        widen: RecallSearchWiden | Unset
-        if isinstance(_widen, Unset):
-            widen = UNSET
-        else:
-            widen = RecallSearchWiden.from_dict(_widen)
-
         recall_search = cls(
             pipeline=pipeline,
             match=match,
@@ -258,7 +239,6 @@ class RecallSearch:
             below_floor=below_floor,
             window=window,
             sources=sources,
-            widen=widen,
         )
 
         return recall_search

@@ -414,7 +414,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
 
 /// Everything an answer serves and records, but its `recall_id` and its
 /// timings: the hits with their scores' bits, terms and `via`, the steering,
-/// `search.sources`, `search.widen`, the spellings, the terms, the pruned
+/// `search.sources`, the spellings, the terms, the pruned
 /// words, the served ids, the digest and the event's federation record.
 #[must_use]
 pub fn fingerprint(r: &RecallResult) -> String {
@@ -435,9 +435,8 @@ pub fn fingerprint(r: &RecallResult) -> String {
         .collect();
     let steering: Vec<Uuid> = r.steering.iter().map(|m| m.memory.memory_id).collect();
     format!(
-        "hits={hits:?} steering={steering:?} sources={:?} widen={:?} did_you_mean={:?} terms={:?} pruned={:?} served={:?} digest={} event={:?} budget={:?} access={:?}",
+        "hits={hits:?} steering={steering:?} sources={:?} did_you_mean={:?} terms={:?} pruned={:?} served={:?} digest={} event={:?} budget={:?} access={:?}",
         r.sources,
-        r.widen,
         r.did_you_mean,
         r.terms,
         r.pruned,
@@ -492,7 +491,7 @@ async fn answers<S: JournalStore + Clone>(w: &FedWorld<S>, key: &IssuedKey) -> V
 
 /// Test 1: an unreadable W — a per-grant deny on a child of a readable
 /// parent — whose rows match every query changes no byte of `sources`,
-/// `considered`, `cut`, `widen`, hits, scores, `did_you_mean`, the counts
+/// `considered`, `cut`, hits, scores, `did_you_mean`, the counts
 /// or the event's record, against W absent: an empty `development` node no
 /// key reads into, which is no source.
 pub async fn an_unreadable_workarea_changes_no_byte_of_any_answer<S: JournalStore + Clone>(
@@ -1143,7 +1142,7 @@ fn quantile(mut v: Vec<f64>, q: f64) -> f64 {
 /// Test 8: with federation off, `scope` is today's answer byte for byte —
 /// absent and explicit alike, no report, no hint, no record — and `wide`
 /// and a list are refused at `/sources`; turned on, a `scope` answer
-/// differs only by `widen` and its record.
+/// is the same answer byte for byte.
 pub async fn with_federation_off_scope_is_todays_answer_and_wider_is_refused<
     S: JournalStore + Clone,
 >(
@@ -1184,13 +1183,11 @@ pub async fn with_federation_off_scope_is_todays_answer_and_wider_is_refused<
             .await
             .expect("scope");
         assert_eq!(fingerprint(&absent), fingerprint(&explicit));
-        assert!(absent.sources.is_none() && absent.widen.is_none() && absent.federation.is_none());
+        assert!(absent.sources.is_none() && absent.federation.is_none());
         assert!(absent.hits.iter().all(|h| h.source.is_none()));
-        // On, the same answer but for the hint and the record.
-        let mut same = on[i].clone();
-        same.widen = None;
-        same.federation = None;
-        assert_eq!(fingerprint(&absent), fingerprint(&same), "{query}");
+        // On, the same answer byte for byte: `scope` does no federation
+        // work (d12, as amended).
+        assert_eq!(fingerprint(&absent), fingerprint(&on[i]), "{query}");
         for sources in [Sources::Wide, Sources::List(vec!["legal".to_owned()])] {
             let refused = w
                 .recall(&key, query, "home", Some(sources), "bm25", 10)
@@ -1251,63 +1248,25 @@ pub async fn a_lists_answer_depends_on_the_listed_workareas_alone<S: JournalStor
     }
 }
 
-/// Test 9b: the widen hint stays silent on a scope whose rate equals the
-/// candidates', ignores a candidate's single stray row, and fires on a
-/// candidate twice as rich per row.
-pub async fn the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row<
-    S: JournalStore + Clone,
->(
-    store: S,
-) {
-    let w = FedWorld::new(store).await;
-    for (node, body) in [
-        ("home", "kiwi orchard notes"),
-        ("home", "kiwi harvest dates"),
-        ("home", "pear orchard notes"),
-        ("home", "plum harvest dates"),
-        ("legal", "kiwi import rules"),
-        ("legal", "kiwi labelling rules"),
-        ("legal", "pear import rules"),
-        ("legal", "plum labelling rules"),
-        ("product", "kiwi"),
-    ] {
-        w.promote(node, body).await;
-    }
-    for node in ["home", "legal", "product"] {
-        w.commit(node).await;
-    }
+/// A `wide` answer marks each hit's source: `scope` for the scope's
+/// workareas, `federated` for every other (d8).
+pub async fn a_wide_answer_marks_each_hits_source<S: JournalStore + Clone>(store: S) {
+    let w = FedWorld::seeded(store).await;
     let key = w
         .key(Role::Reader, &["crew", "legal", "product"], &[])
         .await;
-    // Equal rates and a stray row fire nothing, at k 1 and at k 10, where
-    // the scope's two hits leave the answer short of k: the hint reads
-    // rates alone (d8 as amended by the phase 1 eval).
-    for k in [1, 10] {
-        assert_eq!(
-            kiwi_hint(&w, &key, k).await,
-            None,
-            "equal rates, and one stray row twice as rich, fired the hint at k {k}"
-        );
-    }
-    let mut w = w;
-    w.create("orchard", "crew").await;
-    w.promote("orchard", "kiwi grafting").await;
-    w.promote("orchard", "kiwi pruning").await;
-    w.commit("orchard").await;
-    let fired = kiwi_hint(&w, &key, 1)
-        .await
-        .expect("a source twice as rich fires the hint");
-    assert_eq!(
-        fired.candidates, 3,
-        "legal, product and orchard hold the word"
-    );
-    assert_eq!(fired.matches_at_least, 5);
-    // A wide answer marks each hit's source.
     let wide = w
-        .recall(&key, "kiwi", "home", Some(Sources::Wide), "bm25", 10)
+        .recall(
+            &key,
+            "invoice retry policy",
+            "home",
+            Some(Sources::Wide),
+            "bm25",
+            10,
+        )
         .await
         .expect("wide");
-    assert!(wide.widen.is_none());
+    assert!(wide.hits.iter().any(|h| h.source == Some(Via::Federated)));
     for h in &wide.hits {
         let expected = if h.served.memory.workarea_id == w.node("home") {
             Via::Scope
@@ -1617,17 +1576,6 @@ pub fn quantile_of(v: Vec<f64>, q: f64) -> f64 {
     quantile(v, q)
 }
 
-async fn kiwi_hint<S: JournalStore + Clone>(
-    w: &FedWorld<S>,
-    key: &IssuedKey,
-    k: usize,
-) -> Option<oml_app::federation::Widen> {
-    w.recall(key, "kiwi", "home", Some(Sources::Scope), "bm25", k)
-        .await
-        .expect("scope")
-        .widen
-}
-
 /// Every phase 1 law over fresh stores from `make`, but test 7, which needs
 /// the store's own bulk path.
 pub async fn run_federation_suite<S, F, Fut>(make: F, searches: &[&str])
@@ -1646,7 +1594,7 @@ where
     }
     with_federation_off_scope_is_todays_answer_and_wider_is_refused(make().await).await;
     a_lists_answer_depends_on_the_listed_workareas_alone(make().await).await;
-    the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row(make().await).await;
+    a_wide_answer_marks_each_hits_source(make().await).await;
     a_held_row_is_never_federated(make().await).await;
     a_held_row_scores_alike_on_the_scan_and_the_postings(make().await).await;
     the_policies_are_never_an_agents_act(make().await).await;

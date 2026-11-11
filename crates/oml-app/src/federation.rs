@@ -188,15 +188,6 @@ pub struct SourcesReport {
     pub cut: CutReport,
 }
 
-/// `search.widen` on a `scope` answer of a federated tenant (d8): how many
-/// candidates hold a kept word and a lower bound on their matching rows. It
-/// names no workarea.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Widen {
-    pub candidates: usize,
-    pub matches_at_least: u64,
-}
-
 /// What a federated recall adds to its event (d9): the `sources` given, as
 /// the mode or the list's workarea ids, the federated nodes searched, and
 /// the reference set's nodes, so a replay computes the same R.

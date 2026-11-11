@@ -22,8 +22,6 @@ It reads the keys from DIR (writer.key, reviewer.key, reader.key) and calls
    times the largest other topic, max_sources 4, the cross split again under
    scope, wide and the union; E(s)'s choice compared with the exact ReDDE
    analogue, the union's top 100 counted per source.
-4. the widen hint: how often a scope answer carries search.widen on the scoped
-   and the cross split, and how often a wide retry then raises success@5.
 
 Writes <out>/federated.json and prints the tables.
 """
@@ -118,7 +116,6 @@ def run_split(reader, idmap, topic_of, items, sources):
             "id": q["id"], "category": q["category"], "scope": scope, "ranked": ranked,
             "latency_ms": round(ms, 2), "searched": searched,
             "cut": (resp["search"].get("sources") or {}).get("cut"),
-            "widen": resp["search"].get("widen"),
         })
     return rows
 
@@ -220,26 +217,6 @@ def main():
             raw[f"{split}/{label}"] = rows
             report[split][label] = summarize(rows, queries_by_id, topic_of)
     oml("search", "federation", "--max-sources", "8")
-
-    # The widen hint (d8, d11): its firing rate on scope answers, and its
-    # precision, the share of firings after which wide raised success@5.
-    hint = OrderedDict()
-    for split in ("scoped", "cross"):
-        fired, helped = 0, 0
-        scope_rows = {r["id"]: r for r in raw[f"{split}/scope"]}
-        wide_rows = {r["id"]: r for r in raw[f"{split}/wide@8"]}
-        for qid, r in scope_rows.items():
-            if r["widen"]:
-                fired += 1
-                rel = queries_by_id[qid]["relevant"]
-                if (metrics.success_at(wide_rows[qid]["ranked"], rel, 5)
-                        > metrics.success_at(r["ranked"], rel, 5)):
-                    helped += 1
-        n = len(scope_rows)
-        hint[split] = {"n": n, "fired": fired, "firing_rate": round(fired / n, 3),
-                       "silent_rate": round(1 - fired / n, 3),
-                       "precision": round(helped / fired, 3) if fired else None}
-    report["widen_hint"] = hint
 
     # The skew split (d11): one topic padded to 100 times the largest other.
     if a.scifact_zip:

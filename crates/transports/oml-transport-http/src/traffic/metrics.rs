@@ -394,11 +394,11 @@ impl Default for Metrics {
             "recall hits served labelled unreviewed",
             unreviewed_hits.clone(),
         );
-        // The mode is a closed set: scope, wide or list, counted on a
-        // tenant with federation on (ADR-0072 Consequences).
+        // The mode is a closed set: wide or list; a scope recall does no
+        // federation work and counts nothing (ADR-0072 d12).
         registry.register(
             "oml_recall_sources",
-            "recalls of a tenant with federation on, by sources mode: scope, wide or list",
+            "recalls that searched beyond their scope, by sources mode: wide or list",
             recall_sources.clone(),
         );
         registry.register(

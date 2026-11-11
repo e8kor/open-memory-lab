@@ -1036,23 +1036,12 @@ where
                 })),
             },
         });
-        // `search.sources` under wide or a list, and `search.widen` on a
-        // scope answer of a federated tenant; a tenant with federation off
-        // answers neither (ADR-0072 d8).
-        if let Some(search) = response.get_mut("search").and_then(Value::as_object_mut) {
-            if let Some(report) = &result.sources {
-                search.insert("sources".to_owned(), sources_json(report));
-            }
-            if let Some(widen) = &result.widen {
-                search.insert(
-                    "widen".to_owned(),
-                    json!({
-                        "sources": "wide",
-                        "candidates": widen.candidates,
-                        "matches_at_least": widen.matches_at_least,
-                    }),
-                );
-            }
+        // `search.sources` under wide or a list (ADR-0072 d8).
+        if let (Some(report), Some(search)) = (
+            &result.sources,
+            response.get_mut("search").and_then(Value::as_object_mut),
+        ) {
+            search.insert("sources".to_owned(), sources_json(report));
         }
         // The budget object is present if and only if max_tokens was sent
         // (retrieval.md token budgets; ADR-0025 d7).

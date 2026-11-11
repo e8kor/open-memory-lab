@@ -294,6 +294,15 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn recall_defaults(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<
+        Output = Result<(Option<String>, oml_app::federation::FederationPolicy), StoreError>,
+    > + Send {
+        timed("recall_defaults", self.inner.recall_defaults(tenant_id))
+    }
+
     fn federation_policy(
         &self,
         tenant_id: Uuid,

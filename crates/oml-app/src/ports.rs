@@ -813,6 +813,23 @@ pub trait JournalStore: Retriever + Send + Sync {
         tenant_id: Uuid,
     ) -> impl Future<Output = Result<Option<EventTime>, StoreError>> + Send;
 
+    /// What a recall naming neither a pipeline nor `sources` reads, in one
+    /// read: the tenant's default pipeline and its federation policy
+    /// (ADR-0049 d4; ADR-0072 d5, d12). A store may answer it with the two
+    /// reads below; the PostgreSQL store reads one row.
+    fn recall_defaults(
+        &self,
+        tenant_id: Uuid,
+    ) -> impl Future<
+        Output = Result<(Option<String>, crate::federation::FederationPolicy), StoreError>,
+    > + Send {
+        async move {
+            let pipeline = self.tenant_search_default(tenant_id).await?;
+            let policy = self.federation_policy(tenant_id).await?;
+            Ok((pipeline, policy))
+        }
+    }
+
     /// The tenant's federation policy, folded from `federation.policy_set`;
     /// the default, federation off, when none was set (ADR-0072 d5).
     fn federation_policy(
@@ -1952,8 +1969,8 @@ pub trait RequestObserver: Send + Sync {
         let _ = mode;
     }
 
-    /// A recall answered under `sources` mode `scope`, `wide` or `list`, on
-    /// a tenant with federation on (ADR-0072 Consequences).
+    /// A recall that searched beyond its scope, under `sources` mode `wide`
+    /// or `list` (ADR-0072 Consequences).
     fn recall_sources(&self, mode: &'static str) {
         let _ = mode;
     }

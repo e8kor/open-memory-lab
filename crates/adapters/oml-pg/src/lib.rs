@@ -5843,6 +5843,42 @@ impl JournalStore for PgStore {
             .map_err(backend)
     }
 
+    /// The tenant's default pipeline and federation policy off one row, the
+    /// row `tenant_search_default` reads, so a recall naming neither pays
+    /// no read for federation (ADR-0072 d12).
+    async fn recall_defaults(
+        &self,
+        tenant_id: Uuid,
+    ) -> Result<(Option<String>, oml_app::federation::FederationPolicy), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let row: Option<(Option<String>, bool, String, i32)> = sqlx::query_as(
+            "SELECT search_default, federation_enabled, federation_default_sources, \
+             federation_max_sources FROM tenants WHERE id = $1",
+        )
+        .bind(tenant_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        let Some((pipeline, enabled, default_sources, max_sources)) = row else {
+            return Ok((None, oml_app::federation::FederationPolicy::default()));
+        };
+        Ok((
+            pipeline,
+            oml_app::federation::FederationPolicy {
+                enabled,
+                default_sources: oml_app::federation::DefaultSources::parse(&default_sources)
+                    .ok_or_else(|| {
+                        StoreError::Backend(format!(
+                            "default_sources {default_sources:?} is not a mode"
+                        ))
+                    })?,
+                max_sources: u32::try_from(max_sources).map_err(backend)?,
+            },
+        ))
+    }
+
     async fn federation_policy(
         &self,
         tenant_id: Uuid,
