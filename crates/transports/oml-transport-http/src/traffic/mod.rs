@@ -39,6 +39,11 @@ use crate::PROBES;
 /// line; ADR-0042 d1).
 pub const EVENT_HTTP_REQUEST: &str = "http_request";
 
+/// Marks an answer the traffic layer neither logs nor counts: the web
+/// client doctor's proven probe (ADR-0070 d2, #262).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Unrecorded;
+
 /// The `route` of a request no route matched: a closed value, so a scanner
 /// probing random paths writes no string of its choosing (ADR-0042 d3).
 pub const UNMATCHED: &str = "unmatched";
@@ -607,6 +612,11 @@ pub(crate) async fn layer(
     // A probe answered 200 writes no line, so a kubelet polling every few
     // seconds does not fill the log (ADR-0042 d1).
     if PROBES.contains(&route.as_str()) && status == StatusCode::OK {
+        return response;
+    }
+    // Nor does `oml-web --doctor`'s proven probe, so a doctor run neither
+    // counts nor alerts as an unknown credential (ADR-0070 d2, #262).
+    if response.extensions().get::<Unrecorded>().is_some() {
         return response;
     }
     let resolved = response

@@ -171,7 +171,7 @@ async fn quickstart_brings_up_the_compose_profile_claims_the_lead_and_prints_the
     assert!(
         passwords
             .iter()
-            .all(|p| p.len() == 32 && p.bytes().all(|b| b.is_ascii_hexdigit())),
+            .all(|p| p.len() == 64 && p.bytes().all(|b| b.is_ascii_hexdigit())),
         "four generated secrets"
     );
     assert_eq!(
