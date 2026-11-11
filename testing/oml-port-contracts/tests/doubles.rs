@@ -71,9 +71,9 @@ async fn federated_recall_double_timing_does_not_depend_on_an_unreadable_workare
     use contracts::federation::{assert_within_noise, timing_sample, timing_world};
     let t = timing_world(MemStore::new().answering_bm25_with_any_word()).await;
     let without = timing_sample(&t, "bm25", 60).await;
-    t.world
-        .store
-        .seed_copies(t.world.tenant, t.template, 100_000);
+    for template in t.templates {
+        t.world.store.seed_copies(t.world.tenant, template, 100_000);
+    }
     let with = timing_sample(&t, "bm25", 60).await;
     assert_within_noise(without, with);
 }

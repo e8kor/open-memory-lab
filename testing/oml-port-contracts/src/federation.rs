@@ -539,6 +539,9 @@ pub async fn a_readable_workarea_that_is_no_source_changes_no_byte<S: JournalSto
         "a development node moved an answer"
     );
 
+    // An in-progress node is `development` by construction (ADR-0030 d1),
+    // so this step holds whether or not the trust predicate checks the mark;
+    // the predicate's own unit test holds the mark.
     w.app
         .set_workarea_mode(
             w.reviewer.value.as_str(),
@@ -1040,33 +1043,42 @@ pub async fn a_hits_score_never_depends_on_selection_at<S: JournalStore + Clone>
     w.max_sources(8).await;
 }
 
-/// Test 7's world: a key reading `home` and `legal`, and W, a committed
-/// node it does not read, holding one matching row the caller copies.
+/// Test 7's world: a key reading `crew` and `legal`, and two committed
+/// workareas it does not read, each holding one matching row the caller
+/// copies.
 pub struct TimingWorld<S: JournalStore> {
     pub world: FedWorld<S>,
     pub key: IssuedKey,
-    /// W's template row, to be copied into W by the store's own bulk path.
-    pub template: Uuid,
-    pub w: Uuid,
+    /// The template rows of the two unreadable workareas, each to be copied
+    /// into its own by the store's bulk path: `vault`, outside every grant
+    /// root, and `vault-denied`, a denied child of the readable `crew`,
+    /// which the candidate loop walks past.
+    pub templates: [Uuid; 2],
+    pub w: [Uuid; 2],
 }
 
 /// Test 7, the world.
 pub async fn timing_world<S: JournalStore + Clone>(store: S) -> TimingWorld<S> {
     let mut world = FedWorld::seeded(store).await;
-    world.create("vault", "universe").await;
-    let template = world
-        .promote(
-            "vault",
-            "invoice retry policy archives nightly deploy paging",
-        )
+    let mut templates = [Uuid::nil(); 2];
+    for (i, (node, parent)) in [("vault", "universe"), ("vault-denied", "crew")]
+        .into_iter()
+        .enumerate()
+    {
+        world.create(node, parent).await;
+        templates[i] = world
+            .promote(node, "invoice retry policy archives nightly deploy paging")
+            .await;
+        world.commit(node).await;
+    }
+    let key = world
+        .key(Role::Reader, &["crew", "legal"], &["vault-denied"])
         .await;
-    world.commit("vault").await;
-    let key = world.key(Role::Reader, &["home", "legal"], &[]).await;
-    let w = world.node("vault");
+    let w = [world.node("vault"), world.node("vault-denied")];
     TimingWorld {
         world,
         key,
-        template,
+        templates,
         w,
     }
 }
@@ -1098,7 +1110,7 @@ pub async fn timing_sample<S: JournalStore + Clone>(
             answer
                 .hits
                 .iter()
-                .all(|h| h.served.memory.workarea_id != t.w)
+                .all(|h| !t.w.contains(&h.served.memory.workarea_id))
         );
         if i > 0 {
             out.push(elapsed);
@@ -1517,6 +1529,92 @@ pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store
     );
 }
 
+/// The candidate-count report counts |C| with no scope set aside: the
+/// trusted workareas the key reads that accept federated reads, never a
+/// `development` or a declining one (ADR-0072, "Who gains"; #205).
+pub async fn the_candidate_count_is_the_trusted_sources_a_key_reads<S: JournalStore + Clone>(
+    store: S,
+) {
+    let w = FedWorld::seeded(store).await;
+    let key = w
+        .key(Role::Reader, &["crew", "legal", "product", "drafts"], &[])
+        .await;
+    let count = |key: Uuid| {
+        let w = &w;
+        async move {
+            w.app
+                .federation_candidate_count(w.tenant, key)
+                .await
+                .expect("a count")
+        }
+    };
+    // crew, home, legal and product; drafts is development.
+    assert_eq!(count(key.key_id).await, Some(4));
+    w.app
+        .set_workarea_federation(
+            w.reviewer.value.as_str(),
+            Reference::Id(w.node("product")),
+            false,
+        )
+        .await
+        .expect("decline");
+    assert_eq!(count(key.key_id).await, Some(3));
+    assert_eq!(count(Uuid::nil()).await, None);
+}
+
+/// A world of `n` committed workareas under `fleet`, one memory each, and a
+/// key reading them all: d12's budget at 1,000 candidates is measured over
+/// it (ADR-0072 d12).
+pub async fn fleet_world<S: JournalStore + Clone>(store: S, n: usize) -> (FedWorld<S>, IssuedKey) {
+    let mut w = FedWorld::new(store).await;
+    w.create("fleet", "universe").await;
+    for i in 0..n {
+        let node: &'static str = Box::leak(format!("fleet-{i}").into_boxed_str());
+        w.create(node, "fleet").await;
+        w.promote(
+            node,
+            &format!("fleet note {i} on invoice retry policy {}", i % 17),
+        )
+        .await;
+        w.commit(node).await;
+    }
+    let key = w.key(Role::Reader, &["fleet"], &[]).await;
+    (w, key)
+}
+
+/// One mode's wall times at `fleet-0`, after a warm-up.
+pub async fn fleet_sample<S: JournalStore + Clone>(
+    w: &FedWorld<S>,
+    key: &IssuedKey,
+    sources: Option<Sources>,
+    runs: usize,
+) -> Vec<f64> {
+    let mut out = Vec::with_capacity(runs);
+    for i in 0..=runs {
+        let started = Instant::now();
+        w.recall(
+            key,
+            QUERIES[i % QUERIES.len()],
+            "fleet-0",
+            sources.clone(),
+            "bm25-postings",
+            10,
+        )
+        .await
+        .expect("a recall");
+        if i > 0 {
+            out.push(started.elapsed().as_secs_f64());
+        }
+    }
+    out
+}
+
+/// The p-quantile of `v`, for a measurement's report.
+#[must_use]
+pub fn quantile_of(v: Vec<f64>, q: f64) -> f64 {
+    quantile(v, q)
+}
+
 async fn kiwi_hint<S: JournalStore + Clone>(
     w: &FedWorld<S>,
     key: &IssuedKey,
@@ -1550,4 +1648,5 @@ where
     a_held_row_is_never_federated(make().await).await;
     a_held_row_scores_alike_on_the_scan_and_the_postings(make().await).await;
     the_policies_are_never_an_agents_act(make().await).await;
+    the_candidate_count_is_the_trusted_sources_a_key_reads(make().await).await;
 }

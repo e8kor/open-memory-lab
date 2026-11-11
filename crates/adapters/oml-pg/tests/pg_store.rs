@@ -9387,14 +9387,16 @@ async fn unreadable_rows_move_no_timing(copies: u32) {
         .execute(&mut owner)
         .await
         .expect("tenant");
-    sqlx::query(&sql)
-        .bind(t.world.tenant)
-        .bind(t.template)
-        .bind(i32::try_from(copies).expect("copies fit an int4"))
-        .execute(&mut owner)
-        .await
-        .expect("copy the template into W");
-    println!("copied {copies} rows into W");
+    for template in t.templates {
+        sqlx::query(&sql)
+            .bind(t.world.tenant)
+            .bind(template)
+            .bind(i32::try_from(copies).expect("copies fit an int4"))
+            .execute(&mut owner)
+            .await
+            .expect("copy the template into W");
+    }
+    println!("copied {copies} rows into each unreadable workarea");
     for table in ["memories", "search_postings", "search_term_rows"] {
         sqlx::query(&format!("ANALYZE {table}"))
             .execute(&mut owner)
@@ -9406,5 +9408,58 @@ async fn unreadable_rows_move_no_timing(copies: u32) {
         let with = timing_sample(&t, search, 40).await;
         assert_within_noise(without.remove(search).expect("sampled"), with);
     }
+    drop_dbs(&created).await;
+}
+
+/// d12's budget, measured by hand (`--ignored --nocapture`): a key reading
+/// 1,000 committed workareas, one memory each, recalls at one of them on
+/// `bm25-postings` with federation off, under `scope` (the hint reads the
+/// candidates' counts) and under `wide` at `max_sources` 8; p50 and p95 of
+/// 40 runs each are printed (ADR-0072 d12).
+#[tokio::test]
+#[ignore = "a measurement: 1,000 workareas, several minutes"]
+async fn federation_overhead_at_1000_candidates() {
+    use oml_app::federation::{FederationPolicyChange, Sources};
+    use oml_port_contracts::federation::{fleet_sample, fleet_world, quantile_of};
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let started = std::time::Instant::now();
+    let (w, key) = fleet_world(fresh_search_store(&created).await, 1_000).await;
+    println!("built 1,000 workareas in {:?}", started.elapsed());
+    let report = |label: &str, v: Vec<f64>| {
+        println!(
+            "{label}: p50 {:.1} ms, p95 {:.1} ms",
+            quantile_of(v.clone(), 0.5) * 1e3,
+            quantile_of(v, 0.95) * 1e3
+        );
+    };
+    report(
+        "scope, federation on",
+        fleet_sample(&w, &key, Some(Sources::Scope), 40).await,
+    );
+    report(
+        "wide, max_sources 8",
+        fleet_sample(&w, &key, Some(Sources::Wide), 40).await,
+    );
+    w.app
+        .set_federation_policy(
+            w.admin.as_str(),
+            FederationPolicyChange {
+                enabled: Some(false),
+                ..FederationPolicyChange::default()
+            },
+        )
+        .await
+        .expect("federation off");
+    report(
+        "scope, federation off",
+        fleet_sample(&w, &key, None, 40).await,
+    );
+    println!(
+        "candidate count: {:?}",
+        w.app.federation_candidate_count(w.tenant, key.key_id).await
+    );
     drop_dbs(&created).await;
 }

@@ -27,6 +27,7 @@ use crate::federation::{
 };
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer, StoreError};
 use crate::search::{Fusion, MatchMode, Pipeline, RetrieverKind};
+use crate::types::WorkareaRecord;
 use crate::types::{AppError, Bearer, RecallRequest};
 
 /// A key that met more than [`CANDIDATES_DOCTOR`] candidate sources, as
@@ -330,7 +331,13 @@ where
             Sources::List(names) => {
                 // (4) Each name in index order, the first unusable one
                 // deciding; the list is answered whole or refused.
-                let listed = self.listed_sources(caller, scope, &names).await?;
+                let (listed, paths): (Vec<Uuid>, BTreeMap<Uuid, String>) = {
+                    let named = self.listed_sources(caller, scope, &names).await?;
+                    (
+                        named.iter().map(|(id, _)| *id).collect(),
+                        named.into_iter().collect(),
+                    )
+                };
                 let counts = self
                     .journal
                     .reference_counts(tenant_id, &counts_scope(listed.clone()), query)
@@ -349,7 +356,10 @@ where
                     } else {
                         Via::Scope
                     };
-                    searched.push(self.searched(caller, *node, via, &kept, &reference).await?);
+                    searched.push(
+                        self.searched(caller, *node, paths.get(node), via, &kept, &reference)
+                            .await?,
+                    );
                 }
                 Ok(SourcePlan {
                     promoted: listed.clone(),
@@ -374,7 +384,7 @@ where
             }
             Sources::Scope | Sources::Wide => {
                 let wide = sources == Sources::Wide;
-                let candidates = self.candidates(caller, scope, hit_nodes).await?;
+                let (candidates, paths) = self.candidates(caller, scope, hit_nodes).await?;
                 if candidates.len() > CANDIDATES_DOCTOR
                     && let Ok(mut seen) = self.wide_keys.lock()
                 {
@@ -435,14 +445,28 @@ where
                 let mut searched = Vec::with_capacity(hit_nodes.len() + selected.len());
                 for node in hit_nodes {
                     searched.push(
-                        self.searched(caller, *node, Via::Scope, &kept, &reference)
-                            .await?,
+                        self.searched(
+                            caller,
+                            *node,
+                            paths.get(node),
+                            Via::Scope,
+                            &kept,
+                            &reference,
+                        )
+                        .await?,
                     );
                 }
                 for node in &selected {
                     searched.push(
-                        self.searched(caller, *node, Via::Federated, &kept, &reference)
-                            .await?,
+                        self.searched(
+                            caller,
+                            *node,
+                            paths.get(node),
+                            Via::Federated,
+                            &kept,
+                            &reference,
+                        )
+                        .await?,
                     );
                 }
                 let mut promoted = hit_nodes.to_vec();
@@ -476,22 +500,32 @@ where
     /// served nodes where reader is effective for the key — the union over
     /// its reader grants' subtrees — that is a trusted source (d1) and
     /// accepts federated reads (d5). Computed per request from the grants
-    /// and denials this request read, cached nowhere; ordered by name.
+    /// and denials this request read, cached nowhere; ordered by name. With
+    /// it, the path of every node of subtree(scope) and of every candidate,
+    /// derived from the subtrees read, so no node costs a read of its own.
     async fn candidates(
         &self,
         caller: &Caller,
         scope: Uuid,
         hit_nodes: &[Uuid],
+    ) -> Result<(Vec<Candidate>, BTreeMap<Uuid, String>), AppError> {
+        let (inside, mut paths) = self.subtree_paths(caller.key.tenant_id, scope).await?;
+        let mut outside: BTreeSet<Uuid> = inside.iter().map(|w| w.workarea_id).collect();
+        outside.extend(hit_nodes.iter().copied());
+        let candidates = self.trusted_outside(caller, &outside, &mut paths).await?;
+        Ok((candidates, paths))
+    }
+
+    /// The trusted sources the key reads that `outside` does not hold,
+    /// accepting federated reads, ordered by name; each one's path joins
+    /// `paths`.
+    async fn trusted_outside(
+        &self,
+        caller: &Caller,
+        outside: &BTreeSet<Uuid>,
+        paths: &mut BTreeMap<Uuid, String>,
     ) -> Result<Vec<Candidate>, AppError> {
         let tenant_id = caller.key.tenant_id;
-        let mut outside: BTreeSet<Uuid> = self
-            .journal
-            .workarea_subtree(tenant_id, scope)
-            .await?
-            .into_iter()
-            .map(|w| w.workarea_id)
-            .collect();
-        outside.extend(hit_nodes.iter().copied());
         let roots: BTreeSet<Uuid> = caller
             .grants
             .iter()
@@ -509,7 +543,8 @@ where
                 continue;
             }
             let in_progress = self.subtree_roots(tenant_id, root).await?;
-            for node in self.journal.workarea_subtree(tenant_id, root).await? {
+            let (nodes, root_paths) = self.subtree_paths(tenant_id, root).await?;
+            for node in nodes {
                 let id = node.workarea_id;
                 if outside.contains(&id) || !readable.contains(&id) || found.contains_key(&id) {
                     continue;
@@ -517,6 +552,9 @@ where
                 let inside = in_progress.get(&id).copied().flatten().is_some();
                 if is_trusted_source(node.status, inside) {
                     found.insert(id, node.name.as_str().to_owned());
+                    if let Some(path) = root_paths.get(&id) {
+                        paths.insert(id, path.clone());
+                    }
                 }
             }
         }
@@ -536,6 +574,52 @@ where
         Ok(candidates)
     }
 
+    /// The subtree at `top`, parent before child, and each node's path: the
+    /// top's from its ancestry, every other node's its parent's and its own
+    /// name joined with `.` (ADR-0025 d14).
+    async fn subtree_paths(
+        &self,
+        tenant_id: Uuid,
+        top: Uuid,
+    ) -> Result<(Vec<WorkareaRecord>, BTreeMap<Uuid, String>), AppError> {
+        let mut paths = BTreeMap::new();
+        if let Some(ancestry) = self.journal.workarea_ancestry(tenant_id, top).await? {
+            paths.insert(top, derived_path(&ancestry));
+        }
+        let nodes = self.journal.workarea_subtree(tenant_id, top).await?;
+        for node in &nodes {
+            if node.workarea_id == top {
+                continue;
+            }
+            if let Some(parent) = node.parent_id.and_then(|p| paths.get(&p)).cloned() {
+                paths.insert(node.workarea_id, format!("{parent}.{}", node.name.as_str()));
+            }
+        }
+        Ok((nodes, paths))
+    }
+
+    /// For the candidate-count report (d4.1, #205): how many trusted
+    /// sources accepting federated reads the key reads, |C| before any
+    /// scope is set aside; `None` for a key the tenant does not hold. It
+    /// reads the key's grants and denials now, as a recall would, and is
+    /// served on no route: an operator's one-off read of a tenant's keys.
+    pub async fn federation_candidate_count(
+        &self,
+        tenant_id: Uuid,
+        key_id: Uuid,
+    ) -> Result<Option<usize>, AppError> {
+        let Some(key) = self.journal.key(tenant_id, key_id).await? else {
+            return Ok(None);
+        };
+        let caller = self.caller_of(key).await?;
+        let mut paths = BTreeMap::new();
+        Ok(Some(
+            self.trusted_outside(&caller, &BTreeSet::new(), &mut paths)
+                .await?
+                .len(),
+        ))
+    }
+
     /// A list's nodes, each checked in index order (d5): a name the key
     /// cannot read and one that does not exist are the same
     /// `access.not_found` at `/sources/<i>`; a readable name that is not a
@@ -547,7 +631,7 @@ where
         caller: &Caller,
         scope: Uuid,
         names: &[String],
-    ) -> Result<Vec<Uuid>, AppError> {
+    ) -> Result<Vec<(Uuid, String)>, AppError> {
         let tenant_id = caller.key.tenant_id;
         let inside_scope: BTreeSet<Uuid> = self
             .journal
@@ -579,7 +663,7 @@ where
             if ids.is_empty() || !caller.effective(&ids).contains(&Role::Reader) {
                 return Err(not_found);
             }
-            if listed.contains(&id) {
+            if listed.iter().any(|(listed, _)| *listed == id) {
                 return Err(sources_invalid(
                     "/sources",
                     "sources names a workarea twice",
@@ -605,7 +689,7 @@ where
                     reason: SourceRefusal::DeclinesFederation,
                 });
             }
-            listed.push(id);
+            listed.push((id, derived_path(&ancestry)));
         }
         Ok(listed)
     }
@@ -616,15 +700,25 @@ where
         &self,
         caller: &Caller,
         node: Uuid,
+        path: Option<&String>,
         via: Via,
         kept: &Kept,
         reference: &SourceCounts,
     ) -> Result<SearchedSource, AppError> {
-        let ancestry = self
-            .journal
-            .workarea_ancestry(caller.key.tenant_id, node)
-            .await?
-            .ok_or_else(|| StoreError::Backend(format!("searched node {node} has no ancestry")))?;
+        // The path the subtrees already gave, else the node's ancestry: a
+        // scope's `universe` inside a user root (ADR-0044 d10).
+        let workarea_path = match path {
+            Some(path) => path.clone(),
+            None => derived_path(
+                &self
+                    .journal
+                    .workarea_ancestry(caller.key.tenant_id, node)
+                    .await?
+                    .ok_or_else(|| {
+                        StoreError::Backend(format!("searched node {node} has no ancestry"))
+                    })?,
+            ),
+        };
         let counts = kept.of_node(&node);
         let matched_words = match via {
             Via::Scope => Vec::new(),
@@ -638,7 +732,7 @@ where
         };
         Ok(SearchedSource {
             workarea_id: node,
-            workarea_path: derived_path(&ancestry),
+            workarea_path,
             via,
             estimate: estimate(&counts, reference),
             matched_words,
