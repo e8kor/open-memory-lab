@@ -48,6 +48,11 @@ e2e-sign-in = []
 
 [dev-dependencies]
 hex.workspace = true
+# The page cases reach oml-web's moved pages through a path router in
+# front of both processes, as the parity rig does (ADR-0070 d7).
+oml-sdk.workspace = true
+oml-web.workspace = true
+reqwest.workspace = true
 oml-guardrail.workspace = true
 oml-test-pg.workspace = true
 tower.workspace = true

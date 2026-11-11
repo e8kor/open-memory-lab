@@ -1409,7 +1409,11 @@ paths:
     get:
       tags: [keys]
       operationId: whoami
-      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: start, in: query, required: false, schema: { type: boolean }, description: "true: person carries start, the onboarding status the web console's Start page polls (ADR-0068 d10; ADR-0070 d5). Since v0.7.0." }
       summary: The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its denials or deny masks.
       description: >-
         Requires: any live key; it reads only its own record. Each reference is {id, name} and the
@@ -4848,6 +4852,12 @@ components:
             connections: { type: integer }
             requests_per_minute: { type: integer }
         deletion_requested_at: { type: [string, 'null'], format: date-time, description: "When the person asked for deletion, while the request is pending (ADR-0068 d6)." }
+        start:
+          description: "With start=true, what the onboarding page waits for: whether one of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted, else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0."
+          type: [object, 'null']
+          properties:
+            connected: { type: boolean }
+            first_memory: { type: [string, 'null'], enum: [held, promoted, null] }
 
     ListedKey:
       type: object

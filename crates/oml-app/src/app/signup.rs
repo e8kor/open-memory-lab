@@ -601,6 +601,17 @@ where
         }))
     }
 
+    /// The onboarding status of the person `bearer` names, `None` for a
+    /// tenant key: what `GET /v2/whoami?start=true` serves (ADR-0068 d10;
+    /// ADR-0070 d5).
+    pub async fn whoami_start(&self, bearer: Bearer<'_>) -> Result<Option<StartStatus>, AppError> {
+        let caller = self.authenticate_bearer(bearer).await?;
+        if caller.key.user.is_none() {
+            return Ok(None);
+        }
+        self.web_start_status(&caller).await.map(Some)
+    }
+
     /// Whether the person holds any bearer or connector key: a sign-in
     /// whose person holds none lands on the onboarding page (ADR-0068 d10).
     pub async fn web_has_agent_key(&self, entry: &WebEntry) -> Result<bool, AppError> {

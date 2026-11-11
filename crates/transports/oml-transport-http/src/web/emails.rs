@@ -196,7 +196,17 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
+        // A resubmission under the same key answers the recorded entry and
+        // changes nothing again (ADR-0070 d3 layer 4, d5).
+        let caller = st.console_caller(headers).await?;
+        let digest = crate::console::act_digest("", body);
+        if let Some(replayed) = st
+            .replayed(&caller, "web.email_allowed", &idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
+        }
         let req: AllowBody = parse_json(headers, body)?;
         let email = email_field(req.email.as_deref())?;
         let user = req
@@ -223,7 +233,15 @@ where
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(StatusCode::OK, &entry_json(&entry)))
+        st.record_outcome(
+            &caller,
+            "web.email_allowed",
+            &idem,
+            &digest,
+            StatusCode::OK,
+            &entry_json(&entry),
+        )
+        .await
     }
 
     pub(crate) async fn remove_web_email(
@@ -247,7 +265,15 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
+        let caller = st.console_caller(headers).await?;
+        let digest = crate::console::act_digest("", body);
+        if let Some(replayed) = st
+            .replayed(&caller, "web.email_removed", &idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
+        }
         let req: RemoveBody = parse_json(headers, body)?;
         let email = email_field(req.email.as_deref())?;
         let (_, seq, event_id) = retry_chain(|| {
@@ -259,9 +285,14 @@ where
         })
         .await
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
+        st.record_outcome(
+            &caller,
+            "web.email_removed",
+            &idem,
+            &digest,
             StatusCode::OK,
             &json!({ "journal_seq": seq, "event_id": event_id.to_string(), "dry_run": false }),
-        ))
+        )
+        .await
     }
 }

@@ -715,6 +715,10 @@ The calling key's own record — role, name, tenant, default workarea, crew and 
 
 Requires: any live key; it reads only its own record.
 
+| Parameter | In | Type | Required | Meaning |
+|---|---|---|---|---|
+| `start` | query | boolean | no | true: person carries start, the onboarding status the web console's Start page polls. |
+
 **Responses.** `200` The calling key's own record.; `401` auth.missing or auth.invalid.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
 

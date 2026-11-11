@@ -2643,14 +2643,27 @@ where
         Ok(json_response(StatusCode::OK, &connection_json(&revoked)))
     }
 
-    async fn whoami(State(st): State<Self>, rid: Rid, headers: HeaderMap) -> Response {
-        finish(&rid, Self::whoami_inner(&st, &headers).await)
+    async fn whoami(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        uri: axum::http::Uri,
+    ) -> Response {
+        let start = uri
+            .query()
+            .and_then(|q| crate::oauth::form_pairs(q.as_bytes()).ok())
+            .is_some_and(|pairs| pairs.iter().any(|(n, v)| n == "start" && v == "true"));
+        finish(&rid, Self::whoami_inner(&st, &headers, start).await)
     }
 
     /// `GET /v2/whoami`: the calling key's own record, for any live key;
     /// never its denials, and no read is journalled (http-api.md whoami;
     /// ADR-0039 d15).
-    async fn whoami_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
+    async fn whoami_inner(
+        st: &Self,
+        headers: &HeaderMap,
+        start: bool,
+    ) -> Result<Response, ApiError> {
         let acting = acting(headers, None)?;
         let whoami = st
             .app
@@ -2662,12 +2675,32 @@ where
             .whoami_person(acting.bearer())
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let mut person = person.as_ref().map_or(Value::Null, person_json);
+        // The onboarding status, read only when asked: every page's
+        // session check calls whoami (ADR-0070 d5, d8).
+        if start
+            && let Some(obj) = person.as_object_mut()
+            && let Some(status) = st
+                .app
+                .whoami_start(acting.bearer())
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?
+        {
+            obj.insert(
+                "start".to_owned(),
+                json!({
+                    "connected": status.connected,
+                    "first_memory": match status.first_memory {
+                        Some(oml_app::domain::MemoryStatus::Held) => Some("held"),
+                        Some(oml_app::domain::MemoryStatus::Promoted) => Some("promoted"),
+                        _ => None,
+                    },
+                }),
+            );
+        }
         let mut body = whoami_json(&whoami);
         if let Some(obj) = body.as_object_mut() {
-            obj.insert(
-                "person".to_owned(),
-                person.as_ref().map_or(Value::Null, person_json),
-            );
+            obj.insert("person".to_owned(), person);
         }
         Ok(json_response(StatusCode::OK, &body))
     }

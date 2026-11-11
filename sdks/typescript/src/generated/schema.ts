@@ -2733,6 +2733,12 @@ export interface components {
              * @description When the person asked for deletion, while the request is pending (ADR-0068 d6).
              */
             deletion_requested_at: string | null;
+            /** @description With start=true, what the onboarding page waits for: whether one of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted, else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0. */
+            start?: {
+                connected?: boolean;
+                /** @enum {string|null} */
+                first_memory?: "held" | "promoted" | null;
+            } | null;
         };
         ListedKey: {
             /** Format: uuid */
@@ -5019,7 +5025,10 @@ export interface operations {
     };
     whoami: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: person carries start, the onboarding status the web console's Start page polls (ADR-0068 d10; ADR-0070 d5). Since v0.7.0. */
+                start?: boolean;
+            };
             header?: {
                 /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
                 "X-Request-Id"?: components["parameters"]["XRequestId"];

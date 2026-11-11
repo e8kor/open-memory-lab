@@ -113,7 +113,7 @@ pub const ADMIN_CURATE_PATH: &str = "/web/admin/curate";
 /// The admin page's tabs, `(href, text)`; the lead's admin views and
 /// `oml-web`'s draw the same nav.
 pub const ADMIN_TABS: [(&str, &str); 8] = [
-    ("/web/admin", "People"),
+    ("/web/admin/people", "People"),
     ("/web/admin/users", "Quotas"),
     (ADMIN_MEMORIES_PATH, "Memories"),
     (ADMIN_WORKAREAS_PATH, "Workareas"),

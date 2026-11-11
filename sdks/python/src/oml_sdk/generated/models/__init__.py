@@ -327,6 +327,16 @@ from .whoami_grant_role import WhoamiGrantRole
 from .whoami_held_by import WhoamiHeldBy
 from .whoami_person import WhoamiPerson
 from .whoami_person_quotas_type_0 import WhoamiPersonQuotasType0
+from .whoami_person_start_type_0 import WhoamiPersonStartType0
+from .whoami_person_start_type_0_first_memory_type_1 import (
+    WhoamiPersonStartType0FirstMemoryType1,
+)
+from .whoami_person_start_type_0_first_memory_type_2_type_1 import (
+    WhoamiPersonStartType0FirstMemoryType2Type1,
+)
+from .whoami_person_start_type_0_first_memory_type_3_type_1 import (
+    WhoamiPersonStartType0FirstMemoryType3Type1,
+)
 from .whoami_person_usage_type_0 import WhoamiPersonUsageType0
 from .whoami_profile_type_1 import WhoamiProfileType1
 from .whoami_profile_type_2_type_1 import WhoamiProfileType2Type1
@@ -656,6 +666,10 @@ __all__ = (
     "WhoamiHeldBy",
     "WhoamiPerson",
     "WhoamiPersonQuotasType0",
+    "WhoamiPersonStartType0",
+    "WhoamiPersonStartType0FirstMemoryType1",
+    "WhoamiPersonStartType0FirstMemoryType2Type1",
+    "WhoamiPersonStartType0FirstMemoryType3Type1",
     "WhoamiPersonUsageType0",
     "WhoamiProfileType1",
     "WhoamiProfileType2Type1",
