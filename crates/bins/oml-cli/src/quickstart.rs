@@ -192,7 +192,14 @@ mod tests {
             .map(|l| l.split_once('=').expect("k=v").1)
             .collect();
         assert_eq!(values.len(), 4);
-        assert!(values.iter().all(|v| v.len() == 32));
+        // 64 hex digits: fewer than 8 distinct ones, which the web client
+        // secret's rule refuses, comes below once in 10^18 runs (#262).
+        assert!(
+            values
+                .iter()
+                .all(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit())),
+            "{values:?}"
+        );
         let distinct: std::collections::HashSet<&&str> = values.iter().collect();
         assert_eq!(distinct.len(), 4);
         assert!(text.contains("OML_WEB_CLIENT_SECRET="), "{text}");

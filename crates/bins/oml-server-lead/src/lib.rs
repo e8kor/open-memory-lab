@@ -2686,6 +2686,55 @@ mod tests {
         assert_eq!(closed.web_client.previous_until(), Some(now - day));
     }
 
+    /// `web.client_secret` set and empty stops the start naming it: a blank
+    /// value is a template that lost its secret, not a choice to run
+    /// without `oml-web` (#262).
+    #[test]
+    fn an_empty_web_client_secret_stops_the_start_naming_it() {
+        let mut env = env_of(&[
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ]);
+        env.insert("OML_WEB__CLIENT_SECRET".to_owned(), String::new());
+        let err = Config::from_sources(None, &|k| env.get(k).cloned()).expect_err("empty");
+        let shown = err.to_string();
+        assert!(
+            shown.contains("web.client_secret") && shown.contains("empty"),
+            "{shown}"
+        );
+    }
+
+    /// `web.client_secret_previous_until` is a whole RFC 3339 instant: a
+    /// bare date, month or year names a period, not the instant the old
+    /// secret stops, and stops the start naming the setting (#262).
+    #[test]
+    fn a_previous_until_given_as_a_date_month_or_year_stops_the_start() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_micros();
+        let tomorrow = oml_app::domain::valid_time::fixed_width(
+            i64::try_from(now).expect("in range") + 86_400_000_000,
+        );
+        for period in [&tomorrow[..10], &tomorrow[..7], &tomorrow[..4]] {
+            let mut env = env_of(&[
+                ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+                ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+                ("OML_WEB__CLIENT_SECRET", WEB_SECRET),
+                ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD),
+            ]);
+            env.insert(
+                "OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL".to_owned(),
+                period.to_owned(),
+            );
+            let err = Config::from_sources(None, &|k| env.get(k).cloned()).expect_err(period);
+            assert!(
+                err.to_string().contains("web.client_secret_previous_until"),
+                "{period}: {err}"
+            );
+        }
+    }
+
     #[test]
     fn a_provider_without_its_secret_stops_the_process() {
         let base = [

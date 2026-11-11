@@ -276,6 +276,33 @@ mod tests {
         assert!(read_secret_file(&missing).is_err());
     }
 
+    /// A secret file is owned by the process's user, or by root, which can
+    /// rewrite any file anyway; a file another user owns is refused, naming
+    /// the owner, whatever its mode (#262).
+    #[cfg(unix)]
+    #[test]
+    fn a_secret_file_another_user_owns_is_refused_and_the_process_or_root_may_own_it() {
+        assert_eq!(ownership_refusal(1000, 0o600, 1000), None);
+        assert_eq!(ownership_refusal(1000, 0o400, 1000), None);
+        assert_eq!(
+            ownership_refusal(0, 0o400, 1000),
+            None,
+            "root's, as systemd's"
+        );
+        let other = ownership_refusal(1001, 0o600, 1000).expect("another user's file");
+        assert!(other.contains("1001"), "{other}");
+        let open = ownership_refusal(1000, 0o640, 1000).expect("group-readable");
+        assert!(open.contains("640"), "{open}");
+    }
+
+    /// The doctor's probe credential is a capacity credential no session
+    /// derives, so the lead can tell it from a guess (#262).
+    #[test]
+    fn the_doctor_probe_credential_is_a_capacity_credential() {
+        assert!(DOCTOR_PROBE_CREDENTIAL.starts_with(CAPACITY_CREDENTIAL_PREFIX));
+        assert_ne!(DOCTOR_PROBE_CREDENTIAL, capacity_credential("", "web"));
+    }
+
     #[test]
     fn an_acts_key_is_the_same_for_the_same_form_and_differs_by_nonce_and_session() {
         let key = act_idempotency_key("token-a", "nonce-1");
