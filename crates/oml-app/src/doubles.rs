@@ -421,6 +421,10 @@ pub struct MemStore {
     /// Whether the next vocabulary read yields once before it reads, so a
     /// test can commit while a widen signal's build is in flight (#244).
     pause_vocabulary: Arc<AtomicBool>,
+    /// How many memory rows the recall path's reads visited, across every
+    /// handle: a recall's work, counted, so a law can hold that it does not
+    /// grow with rows the key cannot read (ADR-0072 d13 test 7; #278).
+    rows_read: Arc<AtomicU64>,
 }
 
 /// A future that is pending once, waking itself, then ready: a point where
@@ -495,6 +499,17 @@ impl MemStore {
                 .insert(copy.memory_id);
             state.memories.insert(copy.memory_id, copy);
         }
+    }
+
+    /// How many memory rows the recall path's reads (`retrieve`, the
+    /// reference and vocabulary counts, steering) visited on any handle.
+    #[must_use]
+    pub fn rows_read(&self) -> u64 {
+        self.rows_read.load(Ordering::SeqCst)
+    }
+
+    fn count_row_read(&self) {
+        self.rows_read.fetch_add(1, Ordering::SeqCst);
     }
 
     /// How many federation reads every handle of this store answered.
@@ -2310,6 +2325,7 @@ impl Retriever for MemStore {
                 .filter_map(|n| state.by_workarea.get(n))
                 .flatten()
                 .filter_map(|id| state.memories.get(id))
+                .inspect(|_| self.count_row_read())
                 .collect()
         };
         let scoped = rows_of(&nodes);
@@ -2863,7 +2879,8 @@ impl JournalStore for MemStore {
                 .iter()
                 .filter_map(|n| state.by_workarea.get(n))
                 .flatten()
-                .filter_map(|id| state.memories.get(id));
+                .filter_map(|id| state.memories.get(id))
+                .inspect(|_| self.count_row_read());
             for m in rows {
                 if !reference_row(m, &scope.kinds, scope.expired_at) {
                     continue;
@@ -2908,7 +2925,8 @@ impl JournalStore for MemStore {
                 .iter()
                 .filter_map(|n| state.by_workarea.get(n))
                 .flatten()
-                .filter_map(|id| state.memories.get(id));
+                .filter_map(|id| state.memories.get(id))
+                .inspect(|_| self.count_row_read());
             for m in held {
                 if !reference_row(m, &scope.kinds, scope.expired_at) {
                     continue;
@@ -2979,6 +2997,7 @@ impl JournalStore for MemStore {
             .filter_map(|n| state.by_workarea.get(n))
             .flatten()
             .filter_map(|id| state.memories.get(id))
+            .inspect(|_| self.count_row_read())
             .filter(|m| served_tip(m) && m.kind == MemoryKind::Steering)
             .filter_map(|m| {
                 let depth = nodes.iter().position(|n| *n == m.workarea_id)?;
@@ -3008,6 +3027,7 @@ impl JournalStore for MemStore {
             .filter_map(|n| state.by_workarea.get(n))
             .flatten()
             .filter_map(|id| state.memories.get(id))
+            .inspect(|_| self.count_row_read())
             .filter(|m| m.kind == MemoryKind::Steering && !m.retirement && tip_at(&state, m, as_of))
             .filter_map(|m| {
                 let depth = nodes.iter().position(|n| *n == m.workarea_id)?;

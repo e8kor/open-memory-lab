@@ -38,9 +38,12 @@ async fn fresh_store() -> Option<(String, PgStore)> {
 /// Test 7 on PostgreSQL at CI's size, its deterministic half: an
 /// unreadable workarea of 5,000 rows matching every query, analyzed,
 /// changes no `wide` answer on `bm25-postings` or `bm25`, byte for byte,
-/// the read's access path included (ADR-0072 d6, d13; #278).
+/// the read's access path included, and no recall's work: the tuples its
+/// statements read from the memories and search tables, by the
+/// statistics collector, are the same count with 2,500 copies as with
+/// 5,000 (ADR-0072 d6, d13; #278).
 #[tokio::test]
-async fn federated_recall_answers_do_not_depend_on_an_unreadable_workarea() {
+async fn federated_recall_answers_and_tuples_read_do_not_depend_on_an_unreadable_workarea() {
     unreadable_rows_move_no_answer(5_000).await;
 }
 
@@ -77,7 +80,7 @@ async fn unreadable_rows_move_no_timing(copies: u32) {
     for search in SEARCHES {
         without.insert(search, timing_sample(&t, search, 40).await);
     }
-    copy_into_w(&db, &t, copies).await;
+    copy_into_w(&db, &t, 1..=copies).await;
     for search in SEARCHES {
         let with = timing_sample(&t, search, 40).await;
         assert_within_noise(without.remove(search).expect("sampled"), with);
@@ -85,26 +88,93 @@ async fn unreadable_rows_move_no_timing(copies: u32) {
     drop_db(&db).await;
 }
 
-/// The same copies change no `wide` answer on `bm25-postings` or `bm25`.
+/// The same copies change no `wide` answer on `bm25-postings` or `bm25`,
+/// and a recall's work does not grow with them: the tuples its statements
+/// read are the same with `copies / 2` rows in each unreadable workarea as
+/// with `copies`. Both samples are taken over a large W, each after a
+/// `VACUUM ANALYZE`, so the planner's choice for a table of a few rows
+/// against one of thousands (a seq scan against an index) is not counted
+/// as W's rows read; a statement that read W's rows reads `copies / 2`
+/// more of them in the second sample.
 async fn unreadable_rows_move_no_answer(copies: u32) {
     use oml_port_contracts::federation::{answer_sample, timing_world};
-    let Some((db, store)) = fresh_store().await else {
+    let Some((db, store)) = fresh_store_on_one_connection().await else {
         return;
     };
+    let pool = store.pool().clone();
     let t = timing_world(store).await;
-    let mut without = BTreeMap::new();
+    let mut answers = BTreeMap::new();
     for search in SEARCHES {
-        without.insert(search, answer_sample(&t, search).await);
+        answers.insert(search, answer_sample(&t, search).await);
     }
-    copy_into_w(&db, &t, copies).await;
-    for search in SEARCHES {
-        assert_eq!(
-            answer_sample(&t, search).await,
-            without.remove(search).expect("sampled"),
-            "{search}: the unreadable rows moved a wide answer"
-        );
+    let half = copies / 2;
+    let mut work = BTreeMap::new();
+    for range in [1..=half, half + 1..=copies] {
+        copy_into_w(&db, &t, range).await;
+        for search in SEARCHES {
+            // A warm-up: a first recall's one-off reads are not its work.
+            let _ = answer_sample(&t, search).await;
+            let read = tuples_read(&pool).await;
+            assert_eq!(
+                answer_sample(&t, search).await,
+                answers[search],
+                "{search}: the unreadable rows moved a wide answer"
+            );
+            let spent = tuples_read(&pool).await - read;
+            assert!(spent > 0, "{search}: the recalls read tuples");
+            if let Some(before) = work.insert(search, spent) {
+                assert_eq!(
+                    spent, before,
+                    "{search}: a wide recall's tuples read grew with an unreadable workarea"
+                );
+            }
+        }
     }
+    drop(pool);
     drop_db(&db).await;
+}
+
+/// A migrated store whose pool holds one connection, so every statement a
+/// recall runs is on the backend [`tuples_read`] flushes.
+async fn fresh_store_on_one_connection() -> Option<(String, PgStore)> {
+    let (db, _) = fresh_store().await?;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&serving_url(&db))
+        .await
+        .expect("connect");
+    let store = PgStore::from_pool(pool)
+        .with_owner_url(&owner_url(&db))
+        .with_search_probe()
+        .await
+        .expect("the search probe");
+    Some((db, store))
+}
+
+/// The tuples read so far from the memories and search tables (every
+/// partition), sequential and fetched by index: the backend's pending
+/// counts flushed first, then a fresh snapshot of the statistics
+/// (`pg_stat_force_next_flush`, PostgreSQL 15+). A deterministic count of
+/// a recall's work, which no load moves.
+async fn tuples_read(pool: &sqlx::PgPool) -> i64 {
+    sqlx::query("SELECT pg_stat_force_next_flush()")
+        .execute(pool)
+        .await
+        .expect("flush");
+    // The flush happens at the end of that statement's transaction; the
+    // next statement reads a fresh snapshot.
+    sqlx::query("SELECT pg_stat_clear_snapshot()")
+        .execute(pool)
+        .await
+        .expect("clear");
+    sqlx::query_scalar(
+        "SELECT COALESCE(sum(COALESCE(seq_tup_read, 0) + COALESCE(idx_tup_fetch, 0)), 0)::bigint \
+         FROM pg_stat_user_tables \
+         WHERE relname LIKE 'memories%' OR relname LIKE 'search\\_%'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("the tuple counts")
 }
 
 /// The pipelines test 7 reads under.
@@ -116,7 +186,7 @@ const SEARCHES: [&str; 2] = ["bm25-postings", "bm25"];
 async fn copy_into_w(
     db: &str,
     t: &oml_port_contracts::federation::TimingWorld<PgStore>,
-    copies: u32,
+    copies: std::ops::RangeInclusive<u32>,
 ) {
     let mut owner = PgConnection::connect(&owner_url(db))
         .await
@@ -144,7 +214,7 @@ async fn copy_into_w(
         other => other.to_owned(),
     };
     let sql = format!(
-        "INSERT INTO memories ({}) SELECT {} FROM memories, generate_series(1, $3) g \
+        "INSERT INTO memories ({}) SELECT {} FROM memories, generate_series($3, $4) g \
          WHERE tenant_id = $1 AND id = $2",
         names.join(", "),
         names.iter().map(|c| pick(c)).collect::<Vec<_>>().join(", "),
@@ -158,19 +228,40 @@ async fn copy_into_w(
         sqlx::query(&sql)
             .bind(t.world.tenant)
             .bind(template)
-            .bind(i32::try_from(copies).expect("copies fit an int4"))
+            .bind(i32::try_from(*copies.start()).expect("copies fit an int4"))
+            .bind(i32::try_from(*copies.end()).expect("copies fit an int4"))
             .execute(&mut owner)
             .await
             .expect("copy the template into W");
     }
-    println!("copied {copies} rows into each unreadable workarea");
-    for table in ["memories", "search_postings", "search_term_rows"] {
-        sqlx::query(&format!("ANALYZE {table}"))
+    println!("copied rows {copies:?} into each unreadable workarea");
+    drop(owner);
+    settle(db).await;
+}
+
+/// `VACUUM ANALYZE` of the tables a recall reads, as the owner: fresh
+/// statistics and a visibility map set, so a later autovacuum cannot turn
+/// heap fetches into index-only reads between two samples of a recall's
+/// work.
+async fn settle(db: &str) {
+    let mut owner = PgConnection::connect(&owner_url(db))
+        .await
+        .expect("owner connect");
+    for table in TABLES_READ {
+        sqlx::query(&format!("VACUUM ANALYZE {table}"))
             .execute(&mut owner)
             .await
-            .expect("analyze");
+            .expect("vacuum analyze");
     }
 }
+
+/// The tables a recall's statements read.
+const TABLES_READ: [&str; 4] = [
+    "memories",
+    "search_postings",
+    "search_term_rows",
+    "search_workarea_rows",
+];
 
 /// The lead's resident set in bytes, and its peak, from `/proc/self/status`.
 fn rss() -> (u64, u64) {
