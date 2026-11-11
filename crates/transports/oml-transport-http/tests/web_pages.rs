@@ -1918,20 +1918,29 @@ async fn the_lead_answers_the_workareas_view_and_its_acts_with_a_redirect_to_the
         assert_eq!(headers[header::LOCATION], new, "{old}");
     }
     // Creating a workarea is the view's act too (ADR-0070 d7 (b)); the
-    // tenant's admin key makes the one these acts name.
+    // tenant's admin key makes the one these acts name, through the API.
     let root = key_named(&rig, "alice-web").await.user.expect("a root");
-    let proj = rig
-        .app
-        .create_workarea(
-            &rig.boot.admin_key.value,
-            &Name::parse("proj").expect("a name"),
-            Some(root.into()),
-            None,
-        )
-        .await
-        .expect("the admin key creates it")
-        .workarea
-        .workarea_id;
+    let (status, _, created) = send(
+        &rig.router,
+        Request::post("/v2/workareas")
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", rig.boot.admin_key.value),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", "create-proj")
+            .body(Body::from(
+                json!({"name": "proj", "parent": root.to_string()}).to_string(),
+            ))
+            .expect("a request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let proj: uuid::Uuid = serde_json::from_str::<Value>(&created).expect("JSON")["id"]
+        .as_str()
+        .expect("an id")
+        .parse()
+        .expect("a uuid");
     let (status, headers, page) = act(
         &rig,
         &cookie,

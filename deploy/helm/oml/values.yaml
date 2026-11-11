@@ -83,6 +83,18 @@ web:
       pathType: Exact
     - path: /web/admin/workareas
       pathType: Exact
+    - path: /web/memories
+      pathType: Exact
+    - path: /web/atlas
+      pathType: Exact
+    - path: /web/admin/memories
+      pathType: Exact
+    - path: /web/admin/atlas
+      pathType: Exact
+    - path: /web/data/memories
+      pathType: Exact
+    - path: /web/admin/data/memories
+      pathType: Exact
   # Hints, never claims (docs/operations/capacity.md).
   resources: {}
 

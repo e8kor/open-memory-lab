@@ -134,8 +134,9 @@ private network.
   the server, unchanged: the API, `/mcp`, `/oauth/*`, `/.well-known/*`, `/readyz` and sign-in
   (`/web/sign-in`, `/web/callback/*`, `/web/sign-up`). Do not rewrite paths or cache responses.
   The pages `oml-web` serves are `PAGES` in `crates/clients/oml-web/src/lib.rs`, each at a path
-  of its own, today `/web/guardrails`, `/web/workareas` and `/web/admin/workareas`, each for
-  `GET` and, for the Workareas view, `POST`; the server redirects the old `?view=` addresses there.
+  of its own, today `/web/guardrails`, `/web/workareas`, `/web/admin/workareas`, `/web/memories`,
+  `/web/atlas`, `/web/admin/memories`, `/web/admin/atlas`, `/web/data/memories` and
+  `/web/admin/data/memories`, each for `GET` and, for the Workareas view, `POST`; the server redirects the old `?view=` addresses there.
   `deploy/caddy/Caddyfile` is a Caddy configuration that routes them; a page that moves in a
   later release adds a route there.
 - Keep the server's and `oml-web`'s own security headers. The proxy adds none.
