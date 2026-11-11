@@ -9305,6 +9305,41 @@ async fn federated_recall_passes_the_leakage_suite() {
     drop_dbs(&created).await;
 }
 
+/// The widen hint's laws on its precomputed signal on PostgreSQL, as the
+/// serving role under row security, exactly as the double passes them
+/// (ADR-0072 d8, d12; #244).
+#[tokio::test]
+async fn the_widen_hint_passes_its_laws_on_its_signal() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::federation::run_widen_suite(|| fresh_search_store(&created)).await;
+    drop_dbs(&created).await;
+}
+
+/// The widen signal's counts equal the reference counts under limits so
+/// small that the query's words are pruned: the pruned words are decided
+/// over the same sums (ADR-0052 d6; #244).
+#[tokio::test]
+async fn the_signals_counts_equal_the_reference_counts_under_pruning() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created)
+        .await
+        .with_prune_limits(oml_pg::PruneLimits {
+            frequent_share: 0.2,
+            posting_budget: 4,
+        });
+    assert!(
+        oml_port_contracts::federation::the_signals_counts_equal_the_reference_counts(store).await,
+        "no read pruned a word under limits this small"
+    );
+    drop_dbs(&created).await;
+}
+
 /// Test 6 on `bm25-postings` under limits so small that a selection's
 /// postings cross the posting budget: the pruned words are the reference
 /// set's, so no selection moves a score (ADR-0072 d4.2, d7).
@@ -9333,9 +9368,10 @@ async fn a_selection_crossing_the_posting_budget_moves_no_score() {
 
 /// d12's budget, measured by hand (`--ignored --nocapture`): a key reading
 /// 1,000 committed workareas, one memory each, recalls at one of them on
-/// `bm25-postings` with federation off, under `scope` (the hint reads the
-/// candidates' counts) and under `wide` at `max_sources` 8; p50 and p95 of
-/// 40 runs each are printed (ADR-0072 d12).
+/// `bm25-postings` with federation off, under `scope` and under `wide` at
+/// `max_sources` 8; then, for #244, the widen signal's build and its one
+/// read, and `scope` with the signal held against federation off,
+/// alternated; p50 and p95 of each are printed (ADR-0072 d12).
 #[tokio::test]
 #[ignore = "a measurement: 1,000 workareas, several minutes"]
 async fn federation_overhead_at_1000_candidates() {
@@ -9412,6 +9448,83 @@ async fn federation_overhead_at_1000_candidates() {
         "scope, federation off",
         fleet_sample(&w, &key, None, 40).await,
     );
+    // #244: the widen hint read off its precomputed signal. The build, off
+    // the request path; the signal's one read alone; then `scope` with the
+    // signal held against federation off, alternated so drift on a shared
+    // host lands on both.
+    {
+        use oml_app::ports::JournalStore as _;
+        let fleet: Vec<Uuid> = w
+            .store
+            .workarea_subtree(w.tenant, w.node("fleet"))
+            .await
+            .expect("the fleet")
+            .into_iter()
+            .map(|n| n.workarea_id)
+            .collect();
+        let vocabulary = w
+            .store
+            .vocabulary_counts(
+                w.tenant,
+                &oml_app::federation::CountsScope {
+                    nodes: fleet,
+                    kinds: vec![MemoryKind::Memory, MemoryKind::DerivedFact],
+                    expired_at: Some(i64::MAX / 2),
+                    prunes: true,
+                },
+                usize::MAX,
+            )
+            .await
+            .expect("the vocabulary")
+            .expect("no cap");
+        let mut reads = Vec::new();
+        for i in 0..41 {
+            let started = std::time::Instant::now();
+            w.store
+                .counts_from_vocabulary(
+                    &vocabulary,
+                    ["invoice retry", "fleet note", "policy"][i % 3],
+                    true,
+                )
+                .await
+                .expect("the signal's counts");
+            if i > 0 {
+                reads.push(started.elapsed().as_secs_f64());
+            }
+        }
+        report("the signal's read alone", reads);
+    }
+    let federation = |enabled: bool| FederationPolicyChange {
+        enabled: Some(enabled),
+        ..FederationPolicyChange::default()
+    };
+    let (mut held, mut off) = (Vec::new(), Vec::new());
+    for _ in 0..3 {
+        w.app
+            .set_federation_policy(w.admin.as_str(), federation(true))
+            .await
+            .expect("federation on");
+        let _ = w
+            .recall(&key, "invoice retry", "fleet-0", None, "bm25-postings", 10)
+            .await;
+        let started = std::time::Instant::now();
+        assert_eq!(w.app.refresh_widen_signals().await, 1, "the signal built");
+        println!(
+            "the signal's build: {:.1} ms",
+            started.elapsed().as_secs_f64() * 1e3
+        );
+        held.extend(fleet_sample(&w, &key, None, 40).await);
+        w.app
+            .set_federation_policy(w.admin.as_str(), federation(false))
+            .await
+            .expect("federation off");
+        off.extend(fleet_sample(&w, &key, None, 40).await);
+    }
+    report(
+        "scope, federation on, its widen signal held (120 runs)",
+        held,
+    );
+    report("scope, federation off (120 runs, alternated)", off);
     println!(
         "candidate count: {:?}",
         w.app.federation_candidate_count(w.tenant, key.key_id).await

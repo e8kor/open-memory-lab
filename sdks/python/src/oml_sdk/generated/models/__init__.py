@@ -103,6 +103,7 @@ from .export_web_person_response_200_memories_item import (
 from .federation_settings import FederationSettings
 from .federation_settings_default_sources import FederationSettingsDefaultSources
 from .federation_settings_wide_keys_item import FederationSettingsWideKeysItem
+from .federation_settings_widen_signal import FederationSettingsWidenSignal
 from .feedback import Feedback
 from .grant import Grant
 from .grant_covers import GrantCovers
@@ -206,6 +207,8 @@ from .recall_search import RecallSearch
 from .recall_search_access import RecallSearchAccess
 from .recall_search_match import RecallSearchMatch
 from .recall_search_pipeline import RecallSearchPipeline
+from .recall_search_widen import RecallSearchWiden
+from .recall_search_widen_sources import RecallSearchWidenSources
 from .recall_search_window_type_0 import RecallSearchWindowType0
 from .recall_sources import RecallSources
 from .recall_sources_cut import RecallSourcesCut
@@ -450,6 +453,7 @@ __all__ = (
     "FederationSettings",
     "FederationSettingsDefaultSources",
     "FederationSettingsWideKeysItem",
+    "FederationSettingsWidenSignal",
     "Feedback",
     "Grant",
     "GrantCovers",
@@ -547,6 +551,8 @@ __all__ = (
     "RecallSearchAccess",
     "RecallSearchMatch",
     "RecallSearchPipeline",
+    "RecallSearchWiden",
+    "RecallSearchWidenSources",
     "RecallSearchWindowType0",
     "RecallSources",
     "RecallSourcesCut",

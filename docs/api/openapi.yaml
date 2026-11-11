@@ -3880,6 +3880,21 @@ components:
         floor: { type: [number, 'null'], description: 'The relevance floor applied to this answer (search.rerank.floor), only when the rerank was applied; null when none was.' }
         below_floor: { type: integer, minimum: 0, description: 'How many of the first k candidates the floor withheld; hits empty with below_floor above 0 means nothing scored above the floor (ADR-0053 d6).' }
         sources: { $ref: '#/components/schemas/RecallSources' }
+        widen:
+          type: object
+          additionalProperties: false
+          description: >-
+            On a sources scope answer, when a workarea the key reads outside the scope holds the
+            query's words at least twice as often per row as the scope, on at least two of its
+            rows: a retry with sources wide would search it. Read off a signal the server builds
+            in the background, at most 300 seconds old and under the key's grants as they are
+            now; a scope answer without such a signal carries no widen. It names no workarea
+            (ADR-0072 d8).
+          required: [sources, candidates, matches_at_least]
+          properties:
+            sources: { type: string, enum: [wide] }
+            candidates: { type: integer, minimum: 0, description: The workareas outside the scope that hold a query word. }
+            matches_at_least: { type: integer, minimum: 0, description: 'A lower bound on their rows holding a query word: the largest count of one word, summed over them.' }
     RecallSources:
       type: object
       additionalProperties: false
@@ -3920,8 +3935,8 @@ components:
     FederationSettings:
       type: object
       additionalProperties: false
-      description: The tenant's federation policy (ADR-0072 d5), and for doctor the keys whose recall met more than 1,000 candidate sources since the lead started (d12).
-      required: [enabled, default_sources, max_sources, wide_keys]
+      description: The tenant's federation policy (ADR-0072 d5), and for doctor the keys whose recall met more than 1,000 candidate sources since the lead started (d12) and how the widen hint's signal fared (d8).
+      required: [enabled, default_sources, max_sources, wide_keys, widen_signal]
       properties:
         enabled: { type: boolean, description: 'Whether recall may search beyond its scope when asked; off by default.' }
         default_sources: { type: string, enum: [scope, wide], description: 'What an absent sources reads; never a list.' }
@@ -3935,6 +3950,17 @@ components:
             properties:
               key_id: { type: string, format: uuid }
               candidates: { type: integer, minimum: 0 }
+        widen_signal:
+          type: object
+          additionalProperties: false
+          description: The widen hint's signals on this tenant since the lead started; doctor warns on a failed build, on evictions, and on recalls that found none while none was built.
+          required: [built, unserved, evicted, failed, last_failure]
+          properties:
+            built: { type: integer, minimum: 0, description: Signals built. }
+            unserved: { type: integer, minimum: 0, description: 'Scope recalls answered without the hint because their signal was missing, older than 300 seconds or built under other grants.' }
+            evicted: { type: integer, minimum: 0, description: 'Signals dropped to keep the tenant, or the lead, within its share; each is not rebuilt for 300 seconds.' }
+            failed: { type: integer, minimum: 0, description: Signal builds that failed. }
+            last_failure: { type: [string, 'null'], description: The last failed build's reason. }
 
     RerankOutcome:
       type: string

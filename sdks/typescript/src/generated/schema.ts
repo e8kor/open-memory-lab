@@ -1869,6 +1869,15 @@ export interface components {
             /** @description How many of the first k candidates the floor withheld; hits empty with below_floor above 0 means nothing scored above the floor (ADR-0053 d6). */
             below_floor: number;
             sources?: components["schemas"]["RecallSources"];
+            /** @description On a sources scope answer, when a workarea the key reads outside the scope holds the query's words at least twice as often per row as the scope, on at least two of its rows: a retry with sources wide would search it. Read off a signal the server builds in the background, at most 300 seconds old and under the key's grants as they are now; a scope answer without such a signal carries no widen. It names no workarea (ADR-0072 d8). */
+            widen?: {
+                /** @enum {string} */
+                sources: "wide";
+                /** @description The workareas outside the scope that hold a query word. */
+                candidates: number;
+                /** @description A lower bound on their rows holding a query word: the largest count of one word, summed over them. */
+                matches_at_least: number;
+            };
         };
         /** @description Under sources wide or a list: what was searched and why (ADR-0072 d8). Every name and number is of a workarea the key reads (d6). */
         RecallSources: {
@@ -1896,7 +1905,7 @@ export interface components {
                 matches_at_least: number;
             };
         };
-        /** @description The tenant's federation policy (ADR-0072 d5), and for doctor the keys whose recall met more than 1,000 candidate sources since the lead started (d12). */
+        /** @description The tenant's federation policy (ADR-0072 d5), and for doctor the keys whose recall met more than 1,000 candidate sources since the lead started (d12) and how the widen hint's signal fared (d8). */
         FederationSettings: {
             /** @description Whether recall may search beyond its scope when asked; off by default. */
             enabled: boolean;
@@ -1912,6 +1921,19 @@ export interface components {
                 key_id: string;
                 candidates: number;
             }[];
+            /** @description The widen hint's signals on this tenant since the lead started; doctor warns on a failed build, on evictions, and on recalls that found none while none was built. */
+            widen_signal: {
+                /** @description Signals built. */
+                built: number;
+                /** @description Scope recalls answered without the hint because their signal was missing, older than 300 seconds or built under other grants. */
+                unserved: number;
+                /** @description Signals dropped to keep the tenant, or the lead, within its share; each is not rebuilt for 300 seconds. */
+                evicted: number;
+                /** @description Signal builds that failed. */
+                failed: number;
+                /** @description The last failed build's reason. */
+                last_failure: string | null;
+            };
         };
         /**
          * @description What a recall's reranking stage did (ADR-0053 d5).

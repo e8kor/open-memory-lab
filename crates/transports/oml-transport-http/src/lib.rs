@@ -1070,12 +1070,45 @@ where
                 })),
             },
         });
-        // `search.sources` under wide or a list (ADR-0072 d8).
-        if let (Some(report), Some(search)) = (
-            &result.sources,
-            response.get_mut("search").and_then(Value::as_object_mut),
-        ) {
-            search.insert("sources".to_owned(), sources_json(report));
+        // `search.sources` under wide or a list, and `search.widen` on a
+        // scope answer whose precomputed signal finds a richer source
+        // (ADR-0072 d8; #244).
+        if let Some(search) = response.get_mut("search").and_then(Value::as_object_mut) {
+            if let Some(report) = &result.sources {
+                search.insert("sources".to_owned(), sources_json(report));
+            }
+            if let Some(widen) = &result.widen {
+                search.insert(
+                    "widen".to_owned(),
+                    json!({
+                        "sources": "wide",
+                        "candidates": widen.candidates,
+                        "matches_at_least": widen.matches_at_least,
+                    }),
+                );
+            }
+        }
+        // A signal this recall asked for is built off the request, once
+        // its answer is composed (ADR-0072 d12, as built by #244).
+        if st.app.widen_signals_wanted() {
+            let app = Arc::clone(&st.app);
+            tokio::spawn(async move {
+                // One refresh at a time in the process, one build at a time
+                // in the order recalls asked; a build past its timeout is
+                // stopped, counted and marked, and the next goes on.
+                let Some(refresh) = app.begin_widen_refresh() else {
+                    return;
+                };
+                while let Some(build) = app.next_widen_build(&refresh) {
+                    let run = app.run_widen_build(&build);
+                    if tokio::time::timeout(app.widen_build_timeout(), run)
+                        .await
+                        .is_err()
+                    {
+                        app.widen_build_stopped(&build);
+                    }
+                }
+            });
         }
         // The budget object is present if and only if max_tokens was sent
         // (retrieval.md token budgets; ADR-0025 d7).

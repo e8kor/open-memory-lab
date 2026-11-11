@@ -1,22 +1,24 @@
 <!--
 id: adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read
 tier: engineering
-status: accepted · phase 1 built for v0.7.0 (#205), 2026-11-10
+status: accepted · phase 1 built for v0.7.0 (#205), 2026-11-10 · the widen hint on a precomputed signal proposed (#244), 2026-11-11
 answers: what recall searches today and what federated recall adds; who gains from it and how the gain is measured; which workareas are trusted sources and why no new flag; what a workarea's descriptor holds, who writes and reviews it, how it is scanned and how far it can move a selection; why advertising grants nothing and whether a key can discover a workarea it cannot read; how a recall chooses its sources (candidates, the reference set, the selection estimate, the cap, the descriptor slots, the tail) and why a hit's score never depends on which sources were selected; the `sources` argument, its two modes and its fixed list, answered whole or refused; the hint that tells an agent to widen; the per-workarea and tenant policies; what each answer and each refusal may name; what makes the answer repeatable; the cost, limits and latency budget; the eval; the three phases and their leakage tests; what the operator still has to answer
 -->
 
 # ADR-0072 — Recall searches the trusted workareas a key already reads, chosen per query by reviewed descriptors, and never widens what it may read
 
 **Status:** accepted · 2026-11-10, with the operator's decisions on both open questions;
-phase 1 built for v0.7.0 (#205), see [Phase 1 as built](#phase-1-as-built-2026-11-10) · proposed
+phase 1 built for v0.7.0 (#205), see [Phase 1 as built](#phase-1-as-built-2026-11-10); the widen
+hint served on a precomputed signal, proposed for the operator's acceptance (#244), see
+[The widen hint as built](#the-widen-hint-as-built-2026-11-11) · proposed
 2026-11-08 · revised after review round 1, 2026-11-08, round 2, 2026-11-10 and round 3,
 2026-11-10 (review log at the end)
 
 **In short.** Recall can search the trusted workareas a key already reads: `sources: "wide"`, or a
 fixed list such as `sources: ["acme.legal", "acme.product"]`. It is off until a tenant admin enables
-it. Every hit says where it came from, and a list is answered whole or refused. The hint that a
-`scope` answer would find more by widening is deferred from phase 1 (#244), since computing it
-cost every `scope` recall about 58 ms p95 on federated tenants. Nothing becomes readable that was not, and no hit's score
+it. Every hit says where it came from, and a list is answered whole or refused. A `scope` answer
+says when widening would find more, read off a signal built in the background, so the `scope`
+recall reads no candidate and no count (#244). Nothing becomes readable that was not, and no hit's score
 depends on which sources were chosen. Phase 1 selects by exact word counts; reviewed descriptors
 join only in phase 2, and only if phase 1's measurements ask for them.
 
@@ -31,7 +33,7 @@ join only in phase 2, and only if phase 1's measurements ask for them.
 | d5 | One `sources` field (`scope`, `wide` or a list); one policy per workarea, three per tenant | 1 |
 | d6 | Advertising grants nothing; a key learns of no workarea it cannot read | 1 |
 | d7 | A hit's score never depends on which sources were selected | 1 |
-| d8 | The answer names its sources and why; a normalised-rate hint says when to widen | 1; the hint deferred (#244) |
+| d8 | The answer names its sources and why; a normalised-rate hint says when to widen | 1; the hint on a precomputed signal (#244) |
 | d9 | The same inputs give the same answer; no clock, randomness or model | 1 |
 | d10 | Ontology overlap and generated questions read reviewed content only (generated questions parked by ADR-0075 d13, 2026-11-11: phase 3 is ontology overlap alone) | 3 |
 | d11 | The eval measures every mode against `scope` and the union, with numeric gates | 1, 2 |
@@ -40,7 +42,7 @@ join only in phase 2, and only if phase 1's measurements ask for them.
 
 **Amends:** ADR-0039 (d4: recall mode gains `sources`), ADR-0044 (d10: `universe` becomes one
 trusted source among others when `sources` is not `scope`), ADR-0049 (d6: the answer says which
-sources it searched and why; the hint that a wider search would find more is deferred, #244)
+sources it searched and why, and a `scope` answer when a wider search would find more, #244)
 
 ## Context
 
@@ -371,7 +373,8 @@ sequenceDiagram
   journalled.**
   - **`sources`** on `oml_read` recall and `POST /v1/memories/recall` says where to search. A
     string is a mode and an array is a fixed set:
-    - `"scope"`: today's answer exactly, with no federation read (d12 as amended; the widen hint (d8) is deferred from phase 1 (#244). Computing it on scope recalls cost ~58 ms p95 on federated tenants (98.7 → 40.2 ms without it). It returns when a precomputed signal makes it cheap (e.g. the per-workarea statistics or sketch planned for phase 2/3)).
+    - `"scope"`: today's answer exactly, with no federation read (d12 as amended), and the widen
+      hint (d8) read off a precomputed signal ([as built](#the-widen-hint-as-built-2026-11-11), #244).
     - `"wide"`: the scope plus the candidates d4 selects. The caller states the intent, not the
       algorithm: phase 1 selects by content (d4.4); phase 2 adds the tenant setting
       `federation.selector`, `content` or `described` (d4.5), and a selector other than `content`
@@ -514,10 +517,13 @@ sequenceDiagram
   too. Each federated answer's hits gain `via` and their `workarea_path`, so the agent knows a hit
   came from another team's context. The MCP rendering carries `workarea_path` and `via` per hit
   and the `cut` line; the full block is served over HTTP and under `explain: true`.
-  **The widen hint.** *Deferred, 2026-11-11:* the widen hint (d8) is deferred from phase 1 (#244). Computing it on scope recalls cost ~58 ms p95 on federated tenants (98.7 → 40.2 ms without it). It returns when a precomputed signal makes it cheap (e.g. the per-workarea statistics or sketch planned for phase 2/3). Rule 1 was measured and passes d11's
-  gate (Phase 1 as built). As designed for its return: under `scope`, on a tenant with
-  federation enabled, the core reads R's
-  counts for the query's words (d12) on every recall. Raw counts would carry the size bias that
+  **The widen hint.** *Deferred from phase 1, 2026-11-11, and returned on a precomputed signal
+  (#244, proposed):* computing it on the request path cost every `scope` recall about 58 ms p95 on
+  federated tenants (98.7 → 40.2 ms without it). A `scope` recall now reads R's counts from a
+  signal built off the request path ([as built](#the-widen-hint-as-built-2026-11-11)); rule 1 is
+  unchanged, measured, and passes d11's gate (Phase 1 as built). As designed: under `scope`, on a
+  tenant with federation enabled, the hint is decided from R's
+  counts for the query's words (d12). Raw counts would carry the size bias that
   E(s) exists to correct (`universe` holds the rarest word more often than any crew), so the hint
   compares **rates**. For a source s with n_s served rows, ρ(s) = Σ over kept words w of
   IDF_R(w) · df_s(w) / n_s, the matches per readable row weighted by rarity, the same weights as
@@ -601,7 +607,7 @@ sequenceDiagram
   must not lower selection recall by more than one query; and the **widen hint** (d8) is reported
   by its firing rate and its precision, the share of hints after which `wide` raised success@5,
   on the cross split and on the existing queries run scoped at their relevant topic, and it ships
-  (it is deferred from phase 1 (#244). Computing it on scope recalls cost ~58 ms p95 on federated tenants (98.7 → 40.2 ms without it). It returns when a precomputed signal makes it cheap (e.g. the per-workarea statistics or sketch planned for phase 2/3)) only if it stays silent on at least 90 per cent of those scope-answerable queries and its
+  (on a precomputed signal since #244, rule 1 unchanged) only if it stays silent on at least 90 per cent of those scope-answerable queries and its
   precision on the cross split is at least 50 per cent; otherwise its factor changes by
   amendment. **The phase 2 floor, in numbers.** The baseline is `bm25` on the 121-query synthetic
   set, success@5 0.926 and nDCG@10 0.876 ([recall-synthetic](../benchmarks/recall-synthetic.md)),
@@ -622,7 +628,9 @@ sequenceDiagram
   role (ADR-0052 d1); one read serves R's statistics, the pruned words, the estimate and the
   hint, and the expired subtraction of d4.2 is the second. Both run on every `wide` recall;
   under a list they run over the listed nodes alone (d4.2); under `scope`, federation on or off,
-  neither runs, nor does any read of candidates or policy (as amended, 2026-11-11). Phase 2 indexes
+  neither runs, nor does any read of candidates or policy (as amended, 2026-11-11); with
+  federation on it reads its widen signal once, the query's word forms, which reads no table
+  (#244, [as built](#the-widen-hint-as-built-2026-11-11)). Phase 2 indexes
   descriptor text as `search_postings` rows of memory kind 3, under the same partition, policy,
   trigger and erase, read with the candidates as the workarea list and excluded from the hit
   retrievers; phase 3's term counts and question postings follow the same shape. Nothing is
@@ -637,6 +645,14 @@ sequenceDiagram
   same as with federation off (40.2 against 43.0 ms p95; 98.7 against 43.8 ms before this
   amendment, when `scope` read the candidates for the hint), since it does no federation work,
   which `a_scope_recall_makes_no_federation_read` holds by counting the store's reads.
+  **Measured for the widen hint on its signal, 2026-11-11 (#244)**, the same test on a quiet host
+  (load 1.2 to 2.8), main's build and this one alternated, two rounds each: with federation on
+  and its signal held, a `scope` recall takes 25.2 and 26.6 ms p95 (20.6 and 23.0 ms p50) against
+  22.9 and 23.9 ms p95 (18.3 and 19.8 ms p50) with federation off, 120 runs per mode alternated,
+  about 2.5 ms more; the signal's one read alone takes 2.1 and 2.3 ms p95 (1.2 and 1.3 ms p50); a
+  build takes 43 to 85 ms, off the request path. With federation off a `scope` recall pays
+  nothing for the hint: 23.8 and 25.8 ms p95 on main, 21.6 and 24.0 ms on this build
+  ([as built](#the-widen-hint-as-built-2026-11-11)).
   `bm25-postings` measured 25.5 ms p95 at 99,721 readable memories at universe scope
   ([scale](../benchmarks/scale.md)), the shape of the union's search over many nodes, so the union
   below the cap is expected to fit; #205 measures it and sets `max_sources` from it. Above 1,000
@@ -654,7 +670,7 @@ sequenceDiagram
 
     | Phase | Builds | Issue | Built when | Leakage and invariance tests (each red first by breaking its clause) |
     |---|---|---|---|---|
-    | 1 | `sources` (`"scope"`, `"wide"`, a list), d1's trust set, R with its expired subtraction and pruned words, d4's estimate and cap, d5's policies (`enabled`, `default_sources`, `max_sources`, `accept_federated`), d7, d8 without the widen hint (the widen hint (d8) is deferred from phase 1 (#244). Computing it on scope recalls cost ~58 ms p95 on federated tenants (98.7 → 40.2 ms without it). It returns when a precomputed signal makes it cheap (e.g. the per-workarea statistics or sketch planned for phase 2/3)), d9, the eval's cross and skew splits, the directory recipe | #205 | after the candidate-count distribution is reported | (1) an unreadable W (a per-grant deny on a child of a readable parent) whose rows match every query changes no byte of `sources`, `considered`, `cut`, `widen`, hits, scores, `did_you_mean`, `explain` counts or `recall_events`, against W absent; (2) the same for W readable but `development`, in progress or `accept_federated: false`; (3) a reader of the scope without reader on W reads the scope workarea: W's id and name are absent from the whole body; (4) an unreadable W named in a `sources` list gives `access.not_found` byte-identical to a nonexistent name, and a list with one unusable name is refused whole, never answered from the rest, with the latency of an unreadable name compared to an absent one over many runs, and each list-shape refusal (empty, duplicate, over `max_sources`, `Cc`) in the order of d5; (5) reader on S revoked, then a recall at once: S absent, no candidate cache; (6) a scope hit's score is identical whether source X is selected or not, and the `bm25` answer for any searched set equals the union's restricted to it, on `bm25` and on `bm25-postings` with a selection whose postings would cross `POSTING_BUDGET`; (7) timing over many runs, W with 0 against 100,000 matching rows: p50 and p95 within noise; (8) with federation off `scope` reproduces today byte for byte and `wide` and a list are refused; (9a) a list's scores and answer are byte-identical whatever the unlisted workareas hold, and whether any of them is unreachable; an unreachable listed unit refuses `503 cluster.source_unavailable` and an unreachable candidate under `wide` is in `missing` and absent from `reference_workarea_ids`; (9b), the widen hint's law, is deferred with the hint (#244) |
+    | 1 | `sources` (`"scope"`, `"wide"`, a list), d1's trust set, R with its expired subtraction and pruned words, d4's estimate and cap, d5's policies (`enabled`, `default_sources`, `max_sources`, `accept_federated`), d7, d8 with the widen hint on a precomputed signal (#244), d9, the eval's cross and skew splits, the directory recipe | #205 | after the candidate-count distribution is reported | (1) an unreadable W (a per-grant deny on a child of a readable parent) whose rows match every query changes no byte of `sources`, `considered`, `cut`, `widen`, hits, scores, `did_you_mean`, `explain` counts or `recall_events`, against W absent; (2) the same for W readable but `development`, in progress or `accept_federated: false`; (3) a reader of the scope without reader on W reads the scope workarea: W's id and name are absent from the whole body; (4) an unreadable W named in a `sources` list gives `access.not_found` byte-identical to a nonexistent name, and a list with one unusable name is refused whole, never answered from the rest, with the latency of an unreadable name compared to an absent one over many runs, and each list-shape refusal (empty, duplicate, over `max_sources`, `Cc`) in the order of d5; (5) reader on S revoked, then a recall at once: S absent, no candidate cache; (6) a scope hit's score is identical whether source X is selected or not, and the `bm25` answer for any searched set equals the union's restricted to it, on `bm25` and on `bm25-postings` with a selection whose postings would cross `POSTING_BUDGET`; (7) timing over many runs, W with 0 against 100,000 matching rows: p50 and p95 within noise; (8) with federation off `scope` reproduces today byte for byte and `wide` and a list are refused; (9a) a list's scores and answer are byte-identical whatever the unlisted workareas hold, and whether any of them is unreachable; an unreachable listed unit refuses `503 cluster.source_unavailable` and an unreachable candidate under `wide` is in `missing` and absent from `reference_workarea_ids`; (9b) the widen hint stays silent on a scope whose rate equals the candidates' and on a candidate's single stray row, and fires on a candidate twice as rich per row, rebuilt on the signal with the signal's own laws (#244) |
     | 2 | kind `descriptor`, d3's hold rule, check and yield, memory-kind-3 postings, the `selector` setting and the `described` selector with `descriptor_slots` | #206 | only if, after phase 1, content selection's recall on the skew split is below 0.90 or more than two queries below the exact ReDDE analogue (d11), **and** a tenant's measured candidate count exceeds `max_sources`; its admission gate is d11's numeric floor, and open question 1 is decided (2026-11-10: a person promotes a descriptor) | (9) held, rejected and superseded descriptors select exactly what no descriptor selects, and a held descriptor is not served to a non-author; (10) a descriptor on an unreadable W changes no byte; (11) an adversarial descriptor matching every query lowers selection recall by at most one query and displaces at most `descriptor_slots` sources; (12) a descriptor version with a hold finding, at write or added by a rescan after promotion, selects exactly what no descriptor selects, whether a person approved it or dismissed the finding, and no descriptor text appears in any recall answer; (13) memory-kind-3 postings (descriptor postings, not ADR-0075's posting kind 3) are never hits and do not change R's statistics |
     | 3 | d10's ontology and question lists, fused by RRF into the descriptor score (the question list parked by ADR-0075 d13, 2026-11-11: ontology overlap alone) | #207 | after ADR-0051 and #201 land, and phase 2 is built (#201 closed as not planned, 2026-11-11) | (14) a term or question held only by unreadable rows selects nothing and changes no count; (15) a question of a held, demoted or erased memory never scores a source, and erasure removes its postings (parked with the question list by ADR-0075 d13) |
 
@@ -682,6 +698,27 @@ left a reading open, or named a surface main does not have, the build took the r
 | d13 | Tests 9 to 15 are not built, and test 9b is deferred with the widen hint (#244) | tests 9 to 15 hold descriptors, kind-3 postings, ontology overlap and generated questions, phases 2 and 3, none of which phase 1 builds; 9b holds the hint, which returns on a precomputed signal |
 
 The eval (d11) is `eval/recall/federated.sh`; its numbers are in [the recall report](https://github.com/e8kor/open-memory-lab/blob/main/eval/recall/REPORT.md#federated-recall).
+
+## The widen hint as built (2026-11-11)
+
+*Proposed for the operator's acceptance (#244).* d8's hint returns on a precomputed signal, rule 1
+unchanged. A `scope` recall reads no candidate and no count; where it finds no usable signal it
+answers without the hint. The readings below are this build's; d8, d12 and d13 point here.
+
+| Decision | Reading | Why |
+|---|---|---|
+| d8, d12 | **The signal.** Per key, scope, kinds and expiry inclusion, the lead holds R = served(scope) ∪ C, worked out as a `wide` recall works them out, and every word form's exact count on each node of R, read in one statement (`vocabulary_counts`). A recall takes its query's counts out of it (`counts_from_vocabulary`): one read of the query's word forms, which reads no table | the hint then costs a `scope` recall no candidate and no count read; d12's counts stay exact, as of the build. The two ports agree by a law on both stores, pruning or not |
+| d12 | **When it is built.** A `scope` recall that finds no usable signal asks for one; the transport runs a refresh once the answer is composed, off the request path. One refresh runs at a time in the process. It takes the asked-for signals one at a time, oldest request first, and the transport stops a build past 30 s; the database cancels the build's read itself at 25 s (`statement_timeout`), so no aggregate outlives a stopped build. A signal older than 60 s still serves and is rebuilt after the recall; one 300 s old or older serves nothing. A build that fails, is stopped or passes the tenant's share is counted as failed and marked, alone: no recall asks for that signal again for 300 s, and the builds behind it go on | the counts behind a served hint are at most 300 s old. Building on demand spends nothing on a key that never recalls at a scope; one build at a time, in request order, with the timeouts and the marks, keeps builds from competing with recalls, repeating on every recall, or starving a tenant behind another (reviews F1, R3, R4). The share bounds the lead's memory; the statement timeout bounds the database's work |
+| d6, d12 | **Under which grants.** A signal serves only a recall whose key's permission epoch (ADR-0025 d14) is the one it was built under, and whose served nodes equal the signal's; otherwise no hint, and a rebuild | a grant, a denial or a revocation moves the epoch, so counts of a node the key no longer reads never reach an answer. Re-parenting, the other change to what a key reads, is not built; it joins the epoch when it is |
+| d8, d12 | **Missing fails closed.** No signal, a stale one, one built under another epoch, or a failed read: no hint, never one from older or wider counts. Each tenant counts `unserved` recalls, `built` signals and `failed` builds with the last reason; `GET /v2/federation` serves them as `widen_signal`, and `oml doctor` warns on a failed build and on recalls that found no signal while none was ever built | d12: every failure mode has a doctor line |
+| d5, d8 | **What drops a signal at once.** The commit of `lifecycle.erase`, `lifecycle.demote`, `workarea.mode_set`, `workarea.status_transition`, `federation.policy_set` or `workarea.federation_set` drops the tenant's signals and marks in the process that commits it, and raises the tenant's drop generation: a build that began before the drop is discarded when it ends, and never serves. Every use case commits through one helper, `App::commit_requests`, which applies the drop; a test fails if the app commits to the journal around it. Erase and demote are not built yet; when they are, they must commit through that helper, never through the journal directly or by SQL. A commit that fails after the database committed drops nothing, and the 300 s bound covers it. A promotion, a supersession or a retirement reaches the hint within the 300 s bound | no count over an erased or demoted row survives its commit (ADR-0005's inventory lists the signal), and leakage clause (2) holds at once for a node leaving the trust set (reviews F4, F5, R1, R6). A promotion, a supersession or a retirement changes counts of rows the key read, which the bound covers |
+| d8 | **Where no hint is served.** An as-of recall, one that sends `now`, `wide` and a list carry none, nor a recall that read its tenant's policy as off. A build that finds federation off marks the tenant for 300 s, and its `scope` recalls ask for no signal meanwhile | a signal holds today's counts at the server's now. The mark spares a tenant with federation off one build per explicit `scope` recall |
+| d12 | **Memory.** A signal keeps each node's forms as a sorted vector of (form, count), 16 bytes a pair and about 100 bytes a node. One tenant's signals hold at most 2,000,000 pairs (about 32 MB); past that the tenant drops its own oldest first. The lead holds at most 8,000,000 pairs (about 128 MB); past that it drops the oldest of a tenant above its share, then the oldest of all. A signal weighs its pairs and its nodes, so one of no pairs still counts; signals and marks past the 300 s bound are swept whenever a signal is held. An evicted signal is counted (`widen_signal.evicted`, a doctor line) and marked: it is not rebuilt for 300 s, so a tenant whose scopes outgrow its share loses the hint at the oldest scopes instead of rebuilding them in turn. A build reads at most one pair past the tenant's share and stops, so a vocabulary too large is never read whole; it holds the rows read, 32 bytes each, while it builds the signal, 16 bytes a pair: about 100 MB at the share, beside what the lead holds. **Measured, 2026-11-11** (`federation_timing`'s `the_widen_signal_on_a_tenant_of_100k_rows`, release build, PostgreSQL 18, a shared host at load 3.7 to 5.3): 100,000 promoted rows over 50 committed workareas, each row 30 words drawn from a 50,000-word vocabulary skewed toward its first words (word ⌊50,000 · u³⌋), loaded by SQL through the postings triggers. The build took 5.0 s and held 1,333,609 pairs, about 21 MB estimated; the test process's resident set went from 8.7 to 30.3 MB, with a peak of 94 MB during the read. A `scope` recall with that signal held took 11.7 ms p50 and 13.6 ms p95 over 40 runs | a signal holds R's vocabulary per node, so its size follows R's; the share keeps one tenant from evicting another (reviews F2, F3, R2, R5), and sits above the measured tenant so it is served. The corpus is synthetic: a real vocabulary's size per workarea is not measured. A key's signals at several scopes hold near copies of one vocabulary: a vocabulary per node, shared by a tenant's keys with C kept per key, would remove them. It is not built: it needs its own invalidation per node, and the share bounds the copies meanwhile |
+| d12 | **Per process.** Signals live in the lead's memory and start empty on a restart. The drops above happen in the process that commits the event. This holds while one lead serves a deployment, as the chart runs it (ADR-0033 d2). With several lead replicas, a federation-off or `accept_federated` change on one would not drop another's signals; an explicit `scope` recall reads no policy, so another replica could serve the hint for up to 300 s after federation is turned off, and two replicas may answer different hints | the first `scope` recall at each scope after a start carries no hint. Replicas need the policy read on every `scope` recall, or a shared invalidation, before they serve the hint (review F8) |
+| d9 | The hint is a function of the signal's counts, not of the request's: two recalls within the bound may differ in the hint, never in a hit. It is not recorded in `recall_events` | the hint moves no hit, score or source; replay reproduces the answer's hits |
+| d11 | Rule 1 is phase 1's, so its gate stands: silent on 91.7% of the scope-answerable queries, precision 93.5% on the cross split. The eval runs on a static corpus, where a signal and the request's counts agree | the eval was not rerun; on a live tenant a signal may lag the counts by the writes of the last 300 s |
+| d12, d13 | `a_scope_recall_makes_no_federation_read` holds as amended: with its signal held, a `scope` recall makes that signal's one read and no federation read; with federation off it makes no signal read either. **For the operator's acceptance:** (1) d12 as amended on 2026-11-11 says the default path pays nothing for federation; with federation on and the hint served it now pays one statement that reads no table. (2) The bounds: 2,000,000 pairs a tenant and 8,000,000 in all, 300 s for a signal and a mark, 60 s before a rebuild, 30 s for a build and 25 s for its read. They come from one synthetic tenant of 100,000 rows | measured at 1,000 candidates (d12): the hint costs a `scope` recall about 2.5 ms p95, against 58 ms on the request path; with federation off a `scope` recall costs what main's does (review F7) |
+| d13 | Test 9b is rebuilt on the signal, with laws of its own: the signal's counts equal the reference counts, and a vocabulary past its cap is not read; a recall without its signal carries no hint and asks for one; one built under other grants, and one at its age bound, serves none; a status transition drops the tenant's signals at once; a signal past the tenant's share is marked and not rebuilt within the bound; one tenant never evicts another below its share; a build overtaken by a drop is never held; a stopped build marks its own signal and the builds behind it go on; an evicted signal is counted and not rebuilt within the bound; every use case commits through the helper that drops signals | 9b's clauses are phase 1's; the signal adds the epoch, the bound, the missing case, the drops and the bounds |
 
 ## Phase 2 gate as measured (2026-11-11)
 
@@ -744,7 +781,7 @@ evidence that descriptors do not help.
 
 - `docs/architecture/retrieval.md` gains a section on source selection, and `workareas.md` the
   per-workarea `federation` policy and the directory recipe, when phase 1 is built; `errors.md`,
-  `openapi.yaml` and `http-api.md` gain `sources`, their refusals (`search.widen` with the hint, #244)
+  `openapi.yaml` and `http-api.md` gain `sources`, their refusals, `search.widen` (#244)
   and `workarea.federation_set` then, not before (ADR-0039 d9).
 - **Route and usage.** ADR-0074 d12 names the recall route `POST /v2/recall`; main has
   `/v1/memories/recall`, which this record uses, and ADR-0074 follows it (a one-word fix there).
