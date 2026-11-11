@@ -1,0 +1,20 @@
+# Drafts the grown recall set's queries with a local model (ADR-0075 d8, phase 0a).
+# A standalone crate, outside the workspace: nothing in OML depends on it, and
+# it reuses the candle and tokenizers versions the lead already pins.
+[package]
+name = "oml-recall-drafter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[workspace]
+
+[dependencies]
+candle-core = { version = "=0.11.1", default-features = false }
+candle-transformers = { version = "=0.11.1", default-features = false }
+tokenizers = { version = "=0.23.2", default-features = false, features = ["fancy-regex"] }
+serde_json = "1.0"
+
+[profile.release]
+debug = false

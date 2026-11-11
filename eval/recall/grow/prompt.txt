@@ -1,0 +1,22 @@
+You help build a test set for a search engine. A software team's AI coding agents use it to look up the team's own notes.
+
+Here is one note from the team's notes:
+<note>
+{text}
+</note>
+
+Write 4 different searches that a team member who has NOT read this note might type to find what it says.
+- Searches Q1 and Q2 are questions in plain English, the way a person asks a colleague. Each starts with a word like What, How, Why, When, Where, Which, Who, Can, Do, Does, Should or Is, and ends with a question mark.
+- Searches P1 and P2 are paraphrases: describe what you are looking for in your own words, avoiding the note's own distinctive words, names and numbers where you can. Each may be a question or a short phrase.
+- The note must answer every search. Never put the answer itself in the search.
+- After each search, copy the shortest exact part of the note that answers it, word for word.
+
+Reply in exactly this format and nothing else:
+Q1: <question>
+A1: <words copied exactly from the note>
+Q2: <question>
+A2: <words copied exactly from the note>
+P1: <paraphrase>
+A3: <words copied exactly from the note>
+P2: <paraphrase>
+A4: <words copied exactly from the note>
