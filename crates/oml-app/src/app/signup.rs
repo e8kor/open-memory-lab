@@ -89,9 +89,10 @@ impl SignupState {
 }
 
 /// What disabling a person did (ADR-0068 d8): the bearer and connector
-/// keys cut off on `universe`, the keys of the root no denial can cut off
-/// (gone since the listing, or an admin key), and the seq of
-/// `web.user_disabled`.
+/// keys cut off on `universe`, the keys of the root skipped because they
+/// were gone by the time their denial read them, and the seq of
+/// `web.user_disabled`. The HTTP answer carries the count and the seq; a
+/// skipped key is left out of the count and named nowhere else (#277).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserDisabled {
     pub keys_cut_off: usize,
@@ -142,6 +143,11 @@ pub struct UserRow {
     pub under_quotas: bool,
     pub usage: UserUsage,
     pub quotas: Quotas,
+    /// Each live admin key whose row names the person's root, by name (by
+    /// id for a key that predates names): a corrupt row no verb makes,
+    /// which refuses the person's disable and which `oml doctor` warns
+    /// about (ADR-0068 d8, d11; #277).
+    pub admin_keys: Vec<String>,
 }
 
 /// The onboarding page's state (ADR-0068 d10).
@@ -193,12 +199,13 @@ where
         let mut out = Vec::new();
         for (user, (signed_up, disabled)) in by_user {
             let root = self.signup_root(tenant_id, &user).await?;
-            let (usage, quotas) = match root {
+            let (usage, quotas, admin_keys) = match root {
                 Some(root) => (
                     self.journal.user_usage(tenant_id, root).await?,
                     self.quotas_of(tenant_id, root).await?,
+                    self.admin_keys_under(tenant_id, root).await?,
                 ),
-                None => (UserUsage::default(), self.default_quotas()),
+                None => (UserUsage::default(), self.default_quotas(), Vec::new()),
             };
             out.push(UserRow {
                 user,
@@ -208,9 +215,27 @@ where
                 under_quotas,
                 usage,
                 quotas,
+                admin_keys,
             });
         }
         Ok(out)
+    }
+
+    /// The live admin keys whose row names `root`, by name or else by id:
+    /// rows no verb makes, since issuance never gives an admin key a user
+    /// (ADR-0068 d8, d11; #277).
+    async fn admin_keys_under(&self, tenant_id: Uuid, root: Uuid) -> Result<Vec<String>, AppError> {
+        Ok(self
+            .journal
+            .web_user_keys(tenant_id, root)
+            .await?
+            .into_iter()
+            .filter(|k| k.role == Role::Admin && k.revoked_at.is_none())
+            .map(|k| {
+                k.name
+                    .map_or_else(|| k.key_id.to_string(), |n| n.as_str().to_owned())
+            })
+            .collect())
     }
 
     /// `POST /v2/web/users/{user}/quota` (ADR-0070 d5 #8; ADR-0068 d5): one
@@ -303,6 +328,22 @@ where
         if !held {
             return Err(AppError::NotFound);
         }
+        // An admin key under the root is a corrupt row no denial can cut
+        // off, so the disable refuses by name before its first commit and
+        // journals nothing (ADR-0068 d8, d11; #277).
+        let root = self.signup_root(tenant_id, user).await?;
+        if let Some(root) = root
+            && let Some(key) = self
+                .admin_keys_under(tenant_id, root)
+                .await?
+                .into_iter()
+                .next()
+        {
+            return Err(AppError::AdminKeyUnderUserRoot {
+                user: user.clone(),
+                key,
+            });
+        }
         let prev = self.head_event(tenant_id).await?;
         let event = self.seal(
             prev.as_ref(),
@@ -321,7 +362,7 @@ where
             .await?;
         let mut cut = 0;
         let mut skipped = Vec::new();
-        if let Some(root) = self.signup_root(tenant_id, user).await? {
+        if let Some(root) = root {
             let universe_id = self.universe(tenant_id).await?;
             let universe = Reference::Name(Name::parse(UNIVERSE).expect("universe is a name"));
             for key in self.journal.web_user_keys(tenant_id, root).await? {
@@ -336,10 +377,12 @@ where
                 if denied {
                     continue;
                 }
-                // A key no denial can cut off (gone since the listing, or an
-                // admin key, which carries no grant to attenuate) is skipped
-                // and named in the answer: after the first commit no refusal
-                // may end the act, so its claim is never released (#266).
+                // After the first commit no refusal may end the act, so its
+                // claim is never released (#266): a key gone since the
+                // listing, or one a direct row edit made an admin key since
+                // the check above, is skipped, left out of `keys_cut_off`
+                // and kept in `keys_skipped`, which the HTTP answer does not
+                // carry; `oml doctor` names the second (#277).
                 match later_step(|| {
                     self.deny_key_by(&admin.key, Reference::Id(key.key_id), universe.clone())
                 })

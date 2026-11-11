@@ -2202,7 +2202,7 @@ paths:
       tags: [web]
       operationId: disableWebUser
       summary: Disable a person, ending their sessions and cutting off their agent keys.
-      description: 'Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin''s, answers access.not_found and journals nothing. The body is empty: no reason is journalled in this build, so a reason is refused rather than dropped. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act''s last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
+      description: 'Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin''s, answers access.not_found and journals nothing. A live admin key whose row names the person''s root, which no verb makes and no denial cuts off, answers 409 workarea.admin_key_under_root naming it and journals nothing (since v0.7.1). A key gone between the listing and its denial is skipped and left out of keys_cut_off. The body is empty: no reason is journalled in this build, so a reason is refused rather than dropped. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act''s last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -3213,6 +3213,10 @@ components:
             keys: { type: integer }
             connections: { type: integer }
             requests_per_minute: { type: integer }
+        admin_keys:
+          type: array
+          items: { type: string }
+          description: "Each live admin key whose row names the person's user root, by name: a row no verb makes, which refuses the person's disable with workarea.admin_key_under_root and which oml doctor warns about (ADR-0068 d8, d11). Since v0.7.1."
 
     WebEmail:
       type: object
@@ -3354,6 +3358,7 @@ components:
         - workarea.frozen
         - workarea.in_progress_refused
         - workarea.held_remaining
+        - workarea.admin_key_under_root
         - workarea.transition_refused
         - review.author_in_lineage
         - review.ratifier_is_proposer
