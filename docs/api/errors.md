@@ -192,13 +192,13 @@ Reserved. This build serves no attachment uploads.
 
 ## `export` and `settings`
 
-This build serves neither an evidence export nor a settings apply. `settings.invalid` answers one case: a journalled tenant setting this server does not accept.
+Reserved. This build serves neither an evidence export nor a settings apply.
 
 | Code | HTTP | Fires when |
 |---|---|---|
 | `export.not_ready` | 409 | Reserved. |
 | `settings.retired_key` | 422 | Reserved. |
-| `settings.invalid` | 422 | A recall names no `search`, and the tenant's default is a pipeline this server does not serve, as after a restart with a narrower `search.enabled`. `details.reason` is `search_default_unserved`, with `details.tenant_default` and `details.served`. Name a served pipeline in `search`, or an admin sets a served default with `oml search set-default`. The server's own default is never used in its place. |
+| `settings.invalid` | 422 | Reserved. |
 
 ## `system` — the server
 
