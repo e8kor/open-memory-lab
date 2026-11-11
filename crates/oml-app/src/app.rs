@@ -119,7 +119,7 @@ use crate::types::{
 };
 
 use crate::search::{
-    Access, CandidateScope, DID_YOU_MEAN_BELOW, Fused, MatchMode, OwnHeldScope, Pipeline,
+    Access, CandidateScope, DID_YOU_MEAN_BELOW, Fused, Fusion, MatchMode, OwnHeldScope, Pipeline,
     RetrievalQuery, RetrieverKind, SearchConfig, Stage, TIME_DEPTH, Timings, apply_floor,
     fuse_capped, order_time_list, pipeline_access, pruned_words, query_terms, rerank_order,
 };
@@ -6072,11 +6072,24 @@ where
             anchor: req.anchor.clone(),
         };
         timings.lap(Stage::Scope, lap);
+        // A fused pipeline ranks by position, so under a reference set its
+        // lists are read over the whole set and restricted to the searched
+        // nodes after fusion: a hit's fused score is then the union's, and
+        // no selection moves it (ADR-0072 d7, as built).
+        let fused_over_reference =
+            plan.reference.is_some() && matches!(pipeline.fusion(), Fusion::Rrf { .. });
+        let retrieval_scope = match (&plan.reference, fused_over_reference) {
+            (Some(reference), true) => CandidateScope {
+                promoted_nodes: reference.clone(),
+                ..candidate_scope.clone()
+            },
+            _ => candidate_scope.clone(),
+        };
         let ran = self
             .run_pipeline(
                 key.tenant_id,
                 pipeline,
-                &candidate_scope,
+                &retrieval_scope,
                 &query,
                 window.as_ref(),
                 req,
@@ -6117,6 +6130,21 @@ where
         // late or failing leaves the first stage's order and says so
         // (ADR-0053 d1, d5).
         let mut rows: BTreeMap<Uuid, MemoryRecord> = BTreeMap::new();
+        // The fused list read over the reference set keeps the searched
+        // nodes' rows alone, before any cut.
+        if fused_over_reference && !candidates.is_empty() {
+            let ids: Vec<Uuid> = candidates.iter().map(|c| c.memory_id).collect();
+            rows.extend(
+                self.journal
+                    .memories(key.tenant_id, &ids)
+                    .await?
+                    .into_iter()
+                    .filter(|m| admits(m))
+                    .map(|m| (m.memory_id, m)),
+            );
+            candidates.retain(|c| rows.contains_key(&c.memory_id));
+            lap = timings.lap(Stage::Hydrate, lap);
+        }
         let mut rerank = RerankOutcome::NotRun;
         if pipeline.reranks()
             && let Some(reranker) = self.reranker.as_deref()

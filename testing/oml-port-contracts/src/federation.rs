@@ -777,23 +777,23 @@ pub async fn a_list_is_answered_whole_or_refused_in_d5s_order<S: JournalStore + 
     );
     // The inherited channel, measured: an unreadable name's refusal and an
     // absent one's take the same time within noise.
-    let times = |names: [&'static str; 2]| {
-        let w = &w;
-        let key = &key;
-        async move {
-            let mut t = Vec::new();
-            for _ in 0..40 {
-                let started = Instant::now();
-                let _ = w
-                    .recall(key, "invoice", "home", list(&names), "bm25", 10)
-                    .await;
-                t.push(started.elapsed().as_secs_f64());
+    // The two are interleaved, after a warm-up of each, so neither pays
+    // the other's cold caches.
+    let (mut unreadable_t, mut absent_t) = (Vec::new(), Vec::new());
+    for i in 0..44 {
+        for (names, into) in [
+            (["legal", "secret"], &mut unreadable_t),
+            (["legal", "nowhere"], &mut absent_t),
+        ] {
+            let started = Instant::now();
+            let _ = w
+                .recall(&key, "invoice", "home", list(&names), "bm25", 10)
+                .await;
+            if i >= 4 {
+                into.push(started.elapsed().as_secs_f64());
             }
-            t
         }
-    };
-    let unreadable_t = times(["legal", "secret"]).await;
-    let absent_t = times(["legal", "nowhere"]).await;
+    }
     let (a, b) = (quantile(unreadable_t, 0.5), quantile(absent_t, 0.5));
     assert!(
         a <= b * 3.0 + 0.002 && b <= a * 3.0 + 0.002,
@@ -1400,7 +1400,6 @@ pub async fn the_policies_are_never_an_agents_act<S: JournalStore + Clone>(store
                         grants: vec![
                             grant(root, Role::Dreamer, Vec::new()),
                             grant(root, Role::Reader, Vec::new()),
-                            grant(root, Role::Writer, Vec::new()),
                         ],
                         connect_code: false,
                         user: None,

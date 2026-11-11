@@ -1000,9 +1000,9 @@ const REFERENCE_SCOPE: &str = "m.tenant_id = $1 AND NOT m.retirement \
 /// `REFERENCE_SCOPE`, `$10` the reference nodes, and the anchor's binds
 /// start at `$11`; the scored rows are the candidate scope's, so a row's
 /// score is a function of the row, the query and the reference set alone.
-/// A scored row holding a form no reference row holds scores it with a
-/// document frequency of 0. Exported so the suite plans the statement the
-/// adapter runs.
+/// A form no reference row holds scores nothing, as `bm25_postings` leaves
+/// it out, so an own held row ranks alike on both. Exported so the suite
+/// plans the statement the adapter runs.
 #[must_use]
 pub fn bm25_reference_sql_within(anchor: &str) -> String {
     // The filter narrows the scored rows, never the term frequencies the
@@ -1034,9 +1034,9 @@ pub fn bm25_reference_sql_within(anchor: &str) -> String {
                              CROSS JOIN LATERAL unnest(ts_filter(setweight(m.search_vector, 'A', q.fa), '{{a}}')) u \
                              WHERE {SEARCH_SCOPE} AND m.search_vector @@ q.tq), \
          per AS (SELECT tf.id, tf.body_bytes, forms.w, \
-                        max(ln(1 + (s.n - COALESCE(df.df, 0) + 0.5) / (COALESCE(df.df, 0) + 0.5)) \
+                        max(ln(1 + (s.n - df.df + 0.5) / (df.df + 0.5)) \
                             * tf.tf * 2.2 / (tf.tf + 1.2 * (0.25 + 0.75 * tf.dl / s.avgdl))) AS c \
-                 FROM tf LEFT JOIN df USING (lexeme) JOIN forms ON forms.f = tf.lexeme CROSS JOIN stats s \
+                 FROM tf JOIN df USING (lexeme) JOIN forms ON forms.f = tf.lexeme CROSS JOIN stats s \
                  {within} \
                  GROUP BY tf.id, tf.body_bytes, forms.w), \
          scored AS (SELECT id, body_bytes, sum(c) AS score, array_agg(w ORDER BY w COLLATE \"C\") AS words \

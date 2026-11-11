@@ -184,7 +184,9 @@ fn bm25_over_reference<'a>(
             let mut score = 0.0_f64;
             for (t, d) in terms.iter().zip(&df) {
                 let tf = body.iter().filter(|w| *w == t).count();
-                if tf == 0 {
+                // A word no reference row holds scores nothing, as on
+                // PostgreSQL's postings and scan alike.
+                if tf == 0 || *d == 0 {
                     continue;
                 }
                 matched.push(t.clone());
