@@ -1094,22 +1094,11 @@ where
         // its answer is composed (ADR-0072 d12, as built by #244).
         if st.app.widen_signals_wanted() {
             let app = Arc::clone(&st.app);
+            // One refresh at a time in the process, one build at a time,
+            // tenants in turn; a build past its timeout is stopped, counted
+            // and marked, and the next goes on.
             tokio::spawn(async move {
-                // One refresh at a time in the process, one build at a time
-                // in the order recalls asked; a build past its timeout is
-                // stopped, counted and marked, and the next goes on.
-                let Some(refresh) = app.begin_widen_refresh() else {
-                    return;
-                };
-                while let Some(build) = app.next_widen_build(&refresh) {
-                    let run = app.run_widen_build(&build);
-                    if tokio::time::timeout(app.widen_build_timeout(), run)
-                        .await
-                        .is_err()
-                    {
-                        app.widen_build_stopped(&build);
-                    }
-                }
+                app.refresh_widen_signals_with(tokio::time::sleep).await;
             });
         }
         // The budget object is present if and only if max_tokens was sent

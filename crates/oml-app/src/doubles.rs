@@ -424,6 +424,9 @@ pub struct MemStore {
     /// The keys `key` answers absent while a user root's listing still
     /// names them: a key gone between a use case's listing and its read.
     vanished_keys: Arc<Mutex<BTreeSet<Uuid>>>,
+    /// Whether the next vocabulary read never returns, so a test can hold
+    /// that the refresh stops a build at its timeout (#268).
+    hang_vocabulary: Arc<AtomicBool>,
 }
 
 /// A future that is pending once, waking itself, then ready: a point where
@@ -509,6 +512,11 @@ impl MemStore {
     /// Makes the next vocabulary read yield once before it reads (#244).
     pub fn pause_next_vocabulary_read(&self) {
         self.pause_vocabulary.store(true, Ordering::SeqCst);
+    }
+
+    /// Makes the next vocabulary read never return (#268).
+    pub fn hang_next_vocabulary_read(&self) {
+        self.hang_vocabulary.store(true, Ordering::SeqCst);
     }
 
     /// How many widen-signal reads every handle of this store answered.
@@ -2911,6 +2919,9 @@ impl JournalStore for MemStore {
         self.federation_reads.fetch_add(1, Ordering::SeqCst);
         if self.pause_vocabulary.swap(false, Ordering::SeqCst) {
             YieldOnce(false).await;
+        }
+        if self.hang_vocabulary.swap(false, Ordering::SeqCst) {
+            std::future::pending::<()>().await;
         }
         let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
         let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
