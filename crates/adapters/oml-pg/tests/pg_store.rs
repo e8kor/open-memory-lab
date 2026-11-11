@@ -9538,21 +9538,31 @@ async fn the_tip_probe_is_an_index_condition_for_the_serving_role_under_row_secu
     drop_dbs(&created).await;
 }
 
-/// Migration 0041 follows 0026's live-safe shape, and leaves the probe's
-/// index attached on every partition and valid (ADR-0059 d20).
+/// Migration 0041 runs outside a migration transaction and commits after
+/// each partition's build, so a write waits only for its own tenant's
+/// partition; run again after it has applied, as a retry would, it changes
+/// nothing and leaves the probe's index attached on every partition and
+/// valid (ADR-0059 d20).
 #[tokio::test]
-async fn migration_0041_is_live_safe_and_leaves_every_partitions_index_attached() {
+async fn migration_0041_builds_each_partitions_index_in_its_own_transaction_and_a_retry_resumes() {
     let sql = MIGRATOR
         .iter()
         .find(|m| m.version == 41)
         .expect("migration 0041")
         .sql
         .to_string();
+    assert!(
+        sql.starts_with("-- no-transaction"),
+        "0041 runs outside a transaction"
+    );
     for shape in [
         "SET LOCAL lock_timeout = '5s'",
+        "CREATE INDEX IF NOT EXISTS memories_tip_moves",
         "ON ONLY memories (tenant_id, workarea_id, claim_key, version)",
         "INCLUDE (promoted_at)",
         "ATTACH PARTITION",
+        "CONTINUE WHEN EXISTS",
+        "COMMIT;",
     ] {
         assert!(sql.contains(shape), "0041 lacks {shape:?}");
     }
@@ -9571,6 +9581,15 @@ async fn migration_0041_is_live_safe_and_leaves_every_partitions_index_attached(
         .migrate(&owner_url(&db))
         .await
         .expect("0041 applies over a database with a tenant partition");
+    // A retry runs the file again over what it already built.
+    let mut owner = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("owner connect");
+    owner
+        .execute(sql.as_str())
+        .await
+        .expect("a second run of 0041 changes nothing and fails nothing");
+    drop(owner);
     let partitions: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM pg_inherits WHERE inhparent = 'memories'::regclass",
     )
@@ -9588,5 +9607,60 @@ async fn migration_0041_is_live_safe_and_leaves_every_partitions_index_attached(
     assert_eq!(attached, partitions, "one attached per partition");
     assert!(valid, "valid once every partition's is attached");
     drop(conn);
+    drop_dbs(&created).await;
+}
+
+/// A promoted version with no `promoted_at`, as a row folded before 0005
+/// can be, is counted for doctor and served at no instant (ADR-0059 d16).
+#[tokio::test]
+async fn a_promoted_version_without_promoted_at_is_counted_for_doctor_and_served_at_no_instant() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_search_store(&created).await;
+    let db = created
+        .lock()
+        .expect("names lock")
+        .last()
+        .cloned()
+        .expect("the store's database");
+    let w = oml_port_contracts::as_of::AsOfWorld::new(store.clone(), &["bm25"]).await;
+    let v1 = w.promote(w.home, "legacy", "a legacy pager note").await;
+    let mut owner = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("owner connect");
+    let mut tx = owner.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(w.tenant.to_string())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    sqlx::query("UPDATE memories SET promoted_at = NULL WHERE tenant_id = $1 AND id = $2")
+        .bind(w.tenant)
+        .bind(v1)
+        .execute(&mut *tx)
+        .await
+        .expect("legacy row");
+    tx.commit().await.expect("commit");
+    let counts = store
+        .valid_time_counts(w.tenant, i64::MAX)
+        .await
+        .expect("counts")
+        .expect("served");
+    assert_eq!(counts.untimed, 1, "doctor counts it");
+    let at = w.instant();
+    assert!(
+        w.hits(
+            &w.reader,
+            "legacy pager",
+            oml_app::search::Pipeline::Bm25,
+            Some(&at),
+            false
+        )
+        .await
+        .is_empty(),
+        "an as-of read never serves it"
+    );
     drop_dbs(&created).await;
 }

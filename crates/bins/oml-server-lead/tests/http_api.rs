@@ -10547,6 +10547,8 @@ async fn as_of_reads_the_tip_at_an_instant_over_http() {
             "as_of",
         ),
         (format!("/v1/memories?own=true&as_of={at}"), "as_of"),
+        (format!("/v1/memories?with_own=true&as_of={at}"), "as_of"),
+        (format!("/v1/memories?author=x&as_of={at}"), "as_of"),
     ] {
         let (status, _, body) = send(router, "GET", &path, Call::auth(&reader)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{path}: {body}");

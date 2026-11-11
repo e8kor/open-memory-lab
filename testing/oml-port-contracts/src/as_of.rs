@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use oml_app::App;
 use oml_app::domain::access::Covers;
+use oml_app::domain::in_progress::WorkareaMode;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::{EventTime, HeldBy, MemoryKind, Role};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
@@ -662,6 +663,62 @@ pub async fn held_rows_at_an_instant_follow_todays_rules<S: JournalStore + Clone
     }
 }
 
+/// `inside_an_in_progress_scope_another_authors_held_row_is_served_at_an_instant_only_if_recorded_by_it`:
+/// inside an in-progress scope (ADR-0030 d3) a reader meets every author's
+/// held rows today; at an instant, only those recorded by it, and a row held
+/// then and approved since is absent, in recall and the scoped listing.
+pub async fn inside_an_in_progress_scope_held_rows_at_an_instant_follow_todays_rules<
+    S: JournalStore + Clone,
+>(
+    store: S,
+    searches: &[&str],
+) {
+    let w = AsOfWorld::new(store, searches).await;
+    w.app
+        .set_workarea_mode(
+            w.reviewer.value.as_str(),
+            w.home.into(),
+            WorkareaMode::InProgress,
+        )
+        .await
+        .expect("mark home in progress");
+    let early = w
+        .hold_kind(w.home, "wip-a", MemoryKind::Memory, "a ledger draft one")
+        .await;
+    let since = w
+        .hold_kind(w.home, "wip-b", MemoryKind::Memory, "a ledger draft two")
+        .await;
+    let t1 = w.instant();
+    w.approve(since).await;
+    let late = w
+        .hold_kind(w.home, "wip-c", MemoryKind::Memory, "a ledger draft three")
+        .await;
+    for &search in &w.searches {
+        let today = w.hits(&w.reader, "ledger draft", search, None, true).await;
+        assert_eq!(
+            today,
+            BTreeSet::from([early, since, late]),
+            "{search}: inside, every author's held rows today, and the approved one"
+        );
+        let then = w
+            .hits(&w.reader, "ledger draft", search, Some(&t1), true)
+            .await;
+        assert_eq!(
+            then,
+            one(early),
+            "{search}: at t1, the held row recorded by then alone"
+        );
+        w.assert_gettable_today(&w.reader, &then).await;
+    }
+    let listed: BTreeSet<Uuid> = w
+        .list(&w.reader, None, Some(&t1), false)
+        .await
+        .expect("list")
+        .into_iter()
+        .collect();
+    assert_eq!(listed, one(early), "the scoped listing at t1");
+}
+
 /// `an_as_of_after_the_leads_clock_is_refused`, and the arguments `as_of`
 /// does not combine with, each refused naming its field.
 pub async fn an_as_of_after_the_leads_clock_is_refused<S: JournalStore + Clone>(
@@ -734,5 +791,7 @@ where
     an_as_of_read_applies_todays_grants_and_denials(make().await, searches).await;
     a_retired_claim_serves_its_earlier_tip_before_the_retirement(make().await, searches).await;
     held_rows_at_an_instant_follow_todays_rules(make().await, searches).await;
+    inside_an_in_progress_scope_held_rows_at_an_instant_follow_todays_rules(make().await, searches)
+        .await;
     an_as_of_after_the_leads_clock_is_refused(make().await, searches).await;
 }

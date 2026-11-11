@@ -1,14 +1,18 @@
 //! The as-of recall's cost on PostgreSQL (ADR-0059 d18, d20, d21), in a
 //! binary of its own so no other test shares the host while it times. Over
-//! a workarea where every claim has a replaced version, a recall at an
-//! instant reads twice the rows today's reads, the replaced versions beside
-//! the tips, each replaced one probing `memories_tip_moves`: at CI's size its
-//! p50 and p95 stay within three times today's on the same pipeline, plus 10
-//! ms of noise, and at 100,000 rows within five times (measured 3.5 and 4.2).
+//! a workarea where every row matches every query and every claim is a
+//! chain of `k` versions, a recall at an instant reads all `k` versions of
+//! each claim where today's reads the tip alone, and each replaced version
+//! probes `memories_tip_moves` once in each of `bm25`'s two scope reads, so
+//! the cost grows with the chain. Each pair runs a recall of today and one
+//! at the instant back to back, so a burst of load on the host moves both;
+//! CI gates only the median of the pairs' ratios, at CI's size, and the p50
+//! and p95 of each side are printed, never gated.
 
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
+use oml_app::domain::EventTime;
 use oml_app::search::Pipeline;
 use oml_pg::PgStore;
 use oml_port_contracts::as_of::AsOfWorld;
@@ -39,46 +43,67 @@ async fn fresh_store() -> Option<(String, PgStore)> {
     Some((db, store))
 }
 
-/// At CI's size: 5,000 copies of a two-version chain, 10,000 rows.
+/// CI's gate: 5,000 copies of a two-version chain, 10,000 rows; the median
+/// of 30 paired ratios stays within three times. Measured 2.0 on CI
+/// (ADR-0059 d20).
 #[tokio::test]
-async fn an_as_of_recall_keeps_its_p95_near_todays() {
-    as_of_timing(5_000, 3.0).await;
+async fn an_as_of_recall_costs_at_most_three_times_todays_over_two_version_chains() {
+    as_of_timing(5_000, 2, Some(3.0)).await;
 }
 
-/// At the record's size, run by hand (`--ignored --nocapture`): 50,000
-/// copies of a two-version chain, 100,000 rows, every one matching every
-/// query. Measured 2026-11-11 on the shared host under load: today p50 490
-/// ms, p95 541 ms; at an instant p50 1,736 ms, p95 2,284 ms. The bound is
-/// five times today's: the correlated probe runs once per replaced row in
-/// each of `bm25`'s two scope reads, the cost ADR-0059 d20 states.
+/// A measurement, run by hand (`--ignored --nocapture`), never gated:
+/// 50,000 copies of a two-version chain, 100,000 rows.
 #[tokio::test]
-#[ignore = "a measurement: 100,000 rows, several minutes"]
-async fn an_as_of_recall_keeps_its_p95_near_todays_at_100k_rows() {
-    as_of_timing(50_000, 5.0).await;
+#[ignore = "a measurement: 100,000 rows, about half an hour"]
+async fn the_as_of_recall_cost_at_100k_rows() {
+    as_of_timing(50_000, 2, None).await;
+}
+
+/// A measurement, run by hand (`--ignored --nocapture`), never gated: 4,000
+/// copies of a five-version chain, 20,000 rows, 4,000 tips today.
+#[tokio::test]
+#[ignore = "a measurement: five-version chains, several minutes"]
+async fn the_as_of_recall_cost_over_five_version_chains() {
+    as_of_timing(4_000, 5, None).await;
 }
 
 const QUERIES: [&str; 3] = ["deploy runbook", "runbook names", "deploy names"];
 
-async fn sample(
+/// One recall's seconds.
+async fn timed(
     w: &AsOfWorld<PgStore>,
     search: Pipeline,
-    as_of: Option<&oml_app::domain::EventTime>,
+    as_of: Option<&EventTime>,
+    i: usize,
+) -> f64 {
+    let started = Instant::now();
+    let answer = w
+        .recall(&w.reader, QUERIES[i % QUERIES.len()], search, as_of, false)
+        .await
+        .expect("recall");
+    let elapsed = started.elapsed().as_secs_f64();
+    assert!(!answer.hits.is_empty(), "the corpus matches every query");
+    elapsed
+}
+
+/// `runs` pairs, each a recall of today then one at `at`, after one warm
+/// pair: (today's seconds, the instant's seconds).
+async fn paired(
+    w: &AsOfWorld<PgStore>,
+    search: Pipeline,
+    at: &EventTime,
     runs: usize,
-) -> Vec<f64> {
-    let mut out = Vec::with_capacity(runs);
+) -> (Vec<f64>, Vec<f64>) {
+    let (mut today, mut then) = (Vec::with_capacity(runs), Vec::with_capacity(runs));
     for i in 0..=runs {
-        let started = Instant::now();
-        let answer = w
-            .recall(&w.reader, QUERIES[i % QUERIES.len()], search, as_of, false)
-            .await
-            .expect("recall");
-        let elapsed = started.elapsed().as_secs_f64();
-        assert!(!answer.hits.is_empty(), "the corpus matches every query");
+        let a = timed(w, search, None, i).await;
+        let b = timed(w, search, Some(at), i).await;
         if i > 0 {
-            out.push(elapsed);
+            today.push(a);
+            then.push(b);
         }
     }
-    out
+    (today, then)
 }
 
 fn quantile(mut v: Vec<f64>, q: f64) -> f64 {
@@ -93,22 +118,31 @@ fn quantile(mut v: Vec<f64>, q: f64) -> f64 {
     v[i.saturating_sub(1).min(v.len() - 1)]
 }
 
-/// `copies` copies of a claim and its ratified successor, copied in by SQL
-/// as the owner, each copy its own claim: a recall at an instant after
-/// every promotion serves the successors, and its p50 and p95 stay within
-/// `factor` times today's on `bm25`, plus 10 ms; `bm25-postings` at the
-/// instant, read by the scan, is printed beside today's postings read.
-async fn as_of_timing(copies: u32, factor: f64) {
+/// `copies` copies of a claim of `k` ratified versions, copied in by SQL as
+/// the owner, each copy its own claim. A recall at an instant after every
+/// promotion is paired with today's on `bm25` and on `bm25-postings`, which
+/// reads the scan at the instant; with `gate`, the median of `bm25`'s pair
+/// ratios is at most `gate`.
+async fn as_of_timing(copies: u32, k: u32, gate: Option<f64>) {
     let Some((db, store)) = fresh_store().await else {
         return;
     };
     let w = AsOfWorld::new(store, &["bm25", "bm25-postings"]).await;
-    let v1 = w
-        .promote(w.home, "runbook", "the deploy runbook names alpha")
-        .await;
-    let v2 = w
-        .supersede(v1, 1, "the deploy runbook names beta", false)
-        .await;
+    let mut chain = vec![
+        w.promote(w.home, "runbook", "the deploy runbook names version one")
+            .await,
+    ];
+    for v in 1..k {
+        let next = w
+            .supersede(
+                *chain.last().expect("a version"),
+                v,
+                &format!("the deploy runbook names version {}", v + 1),
+                false,
+            )
+            .await;
+        chain.push(next);
+    }
     let mut owner = PgConnection::connect(&owner_url(&db))
         .await
         .expect("owner connect");
@@ -127,7 +161,7 @@ async fn as_of_timing(copies: u32, factor: f64) {
         .collect();
     let pick = |c: &str| match c {
         "id" => "gen_random_uuid()".to_owned(),
-        // One chain per copy: both versions keep their ordinal under the
+        // One chain per copy: every version keeps its ordinal under the
         // copy's own claim key.
         "claim_key" => "claim_key || '-copy-' || g".to_owned(),
         "claim" => "claim || ' copy ' || g".to_owned(),
@@ -144,7 +178,7 @@ async fn as_of_timing(copies: u32, factor: f64) {
         .execute(&mut owner)
         .await
         .expect("tenant");
-    for template in [v1, v2] {
+    for &template in &chain {
         sqlx::query(&sql)
             .bind(w.tenant)
             .bind(template)
@@ -162,29 +196,28 @@ async fn as_of_timing(copies: u32, factor: f64) {
     drop(owner);
     let at = w.instant();
     let runs = 30;
-    let today = sample(&w, Pipeline::Bm25, None, runs).await;
-    let then = sample(&w, Pipeline::Bm25, Some(&at), runs).await;
-    let postings_today = sample(&w, Pipeline::Bm25Postings, None, runs).await;
-    let postings_then = sample(&w, Pipeline::Bm25Postings, Some(&at), runs).await;
-    for (label, v) in [
-        ("bm25 today", &today),
-        ("bm25 as of", &then),
-        ("bm25-postings today", &postings_today),
-        ("bm25-postings as of (the scan)", &postings_then),
-    ] {
+    let rows = copies * k;
+    let mut ratio = 0.0;
+    for search in [Pipeline::Bm25, Pipeline::Bm25Postings] {
+        let (today, then) = paired(&w, search, &at, runs).await;
+        let ratios: Vec<f64> = today.iter().zip(&then).map(|(a, b)| b / a).collect();
+        let median = quantile(ratios, 0.5);
         println!(
-            "{} rows, {label}: p50 {:.1} ms, p95 {:.1} ms",
-            2 * copies,
-            quantile(v.clone(), 0.5) * 1e3,
-            quantile(v.clone(), 0.95) * 1e3
+            "{rows} rows, chains of {k}, {search}: today p50 {:.1} ms p95 {:.1} ms; \
+             at the instant p50 {:.1} ms p95 {:.1} ms; median pair ratio {median:.2}",
+            quantile(today.clone(), 0.5) * 1e3,
+            quantile(today, 0.95) * 1e3,
+            quantile(then.clone(), 0.5) * 1e3,
+            quantile(then, 0.95) * 1e3,
         );
+        if search == Pipeline::Bm25 {
+            ratio = median;
+        }
     }
-    for q in [0.5, 0.95] {
-        let (a, b) = (quantile(today.clone(), q), quantile(then.clone(), q));
+    if let Some(gate) = gate {
         assert!(
-            b <= a * factor + 0.010,
-            "the as-of recall's p{} is {b}s against today's {a}s",
-            (q * 100.0).round()
+            ratio <= gate,
+            "the median as-of to today ratio on bm25 is {ratio:.2}, above {gate}"
         );
     }
     drop_db(&db).await;
