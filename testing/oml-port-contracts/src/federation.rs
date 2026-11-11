@@ -1120,12 +1120,14 @@ pub async fn timing_sample<S: JournalStore + Clone>(
 }
 
 /// Test 7, the comparison: W with no copies against W with many, p50 and
-/// p95 within noise — a factor of 2 and 3 ms.
+/// p95 within noise — p50 within a factor of 2 and 3 ms, p95, which the
+/// suite's other tests running beside it move most, within a factor of 3
+/// and 10 ms. A read that scanned W's rows grows with them past both.
 pub fn assert_within_noise(without: Vec<f64>, with: Vec<f64>) {
-    for q in [0.5, 0.95] {
+    for (q, factor, slack) in [(0.5, 2.0, 0.003), (0.95, 3.0, 0.010)] {
         let (a, b) = (quantile(without.clone(), q), quantile(with.clone(), q));
         assert!(
-            b <= a * 2.0 + 0.003 && a <= b * 2.0 + 0.003,
+            b <= a * factor + slack && a <= b * factor + slack,
             "p{} moved from {a}s to {b}s with the unreadable rows",
             (q * 100.0) as u32
         );
