@@ -2545,7 +2545,10 @@ async fn resubmitting_an_issue_that_landed_on_the_next_free_name_issues_nothing_
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let csrf = csrf_for_page(&rig, &cookie).await;
     // The first name is taken, so this form's issue lands on -2.
-    for nonce in ["11111111111111111111111111111111", "22222222222222222222222222222222"] {
+    for nonce in [
+        "11111111111111111111111111111111",
+        "22222222222222222222222222222222",
+    ] {
         let fields = [
             ("action", "issue_claude_code"),
             ("csrf_token", csrf.as_str()),
@@ -2563,12 +2566,19 @@ async fn resubmitting_an_issue_that_landed_on_the_next_free_name_issues_nothing_
     ];
     let (status, headers, _) = send(&rig.router, post("/web/start", &again, Some(&cookie))).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    assert!(set_cookie(&headers, ONCE_COOKIE).is_none(), "a replay shows nothing");
+    assert!(
+        set_cookie(&headers, ONCE_COOKIE).is_none(),
+        "a replay shows nothing"
+    );
     assert_eq!(rig.head().await, head, "no key issued, nothing journalled");
 }
 
 async fn csrf_for_page(rig: &Rig, cookie: &str) -> String {
-    let (_, _, page) = send(&rig.router, get("/web/start?client=claude-code", Some(cookie))).await;
+    let (_, _, page) = send(
+        &rig.router,
+        get("/web/start?client=claude-code", Some(cookie)),
+    )
+    .await;
     csrf_of(&page)
 }
 
@@ -2580,13 +2590,21 @@ async fn the_start_routes_are_never_stored_and_the_export_holds_only_the_persons
     let value = laptop_key(&rig, &alice).await;
     agent_writes(&rig, &value, "alice's private kestrel").await;
     let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
-    for path in ["/web/start", "/web/start/status", "/web/start/export", "/web/setup"] {
+    for path in [
+        "/web/start",
+        "/web/start/status",
+        "/web/start/export",
+        "/web/setup",
+    ] {
         let (status, headers, _) = send(&rig.router, get(path, Some(&bob))).await;
         assert_eq!(status, StatusCode::OK, "{path}");
         assert_eq!(headers[header::CACHE_CONTROL], "no-store", "{path}");
     }
     let (_, _, export) = send(&rig.router, get("/web/start/export", Some(&bob))).await;
-    assert!(!export.contains("kestrel"), "another person's memory: {export}");
+    assert!(
+        !export.contains("kestrel"),
+        "another person's memory: {export}"
+    );
     let (_, _, export) = send(&rig.router, get("/web/start/export", Some(&alice))).await;
     assert!(export.contains("kestrel"), "{export}");
 }
