@@ -38,7 +38,7 @@ parked and v0.7.1 recommends `bm25-sparse` (d13).
 | d10 | Phase 0 (with 0a, the grown labelled set) decides; phases 1 and 2 ship in one release; phase 3 when #207 is scheduled | 0 to 3 |
 | d11 | Operations: an outage, told from a bad version by a compiled-in canary, pauses the drain and it resumes on its own; parked entries come back with backoff; a backfill is estimated, capped, stoppable and tracked; the bill is metered; doctor names each state | 1 |
 | d12 | Amended 2026-11-11: phase 0 asks whether questions beat `bm25-sparse` (primary) or add to it (secondary) on the 687 question-shaped queries, each by an exact paired test at 0.025 sized for 80% power at a 2.5-point gain; non-inferiority on the other 99 with a computed margin; a go ships the pipeline that passed, opt-in, and otherwise v0.7.1 recommends `bm25-sparse` and questions are parked | 0 |
-| d13 | Decided 2026-11-11: phase 0 ran and did not go (questions 0.926 against `bm25-sparse`'s 0.956 success@5 on 687 question-shaped queries, 2 wins and 23 losses; added to it, +0.1 points, 95% interval −0.4 to +0.7); question indexing is parked, phases 1 to 3 are not built, `bm25-sparse` is v0.7.1's recommended pipeline, and ADR-0072's phase 3 drops generated questions as a signal | — |
+| d13 | Decided 2026-11-11: phase 0 ran and did not go (questions 0.926 against `bm25-sparse`'s 0.958 success@5 on 687 question-shaped queries, 2 wins and 24 losses; added to it, +0.1 points, 95% interval −0.4 to +0.7); question indexing is parked, phases 1 to 3 are not built, `bm25-sparse` is v0.7.1's recommended pipeline, and ADR-0072's phase 3 drops generated questions as a signal (ADR-0072 carries the amendment note) | — |
 
 **Open questions: decided by the operator, 2026-11-10.** Each is detailed at the end.
 
@@ -933,49 +933,61 @@ Decided, not built.
   - **The label check.** A person's check of a seeded 10% of the grown set's labels
     (`person_check` in `eval/recall/queries-grown.json`, PR #245) is still required. Until it
     passes, every phase 0 figure is provisional and no verdict is final. *Done 2026-11-11 (d13):*
-    the operator found one wrong label in 67, and phase 0 was rerun on the corrected set.
+    the operator checked the 67 sampled labels and corrected one (g0113), and phase 0 was rerun
+    on the corrected set.
 
 - **d13 — Phase 0's outcome, and the operator's decision of 2026-11-11: generated questions
   neither beat `bm25-sparse` nor add to it, so question indexing is parked and v0.7.1 recommends
   `bm25-sparse`.** The operator's words: "Park questions, promote sparse."
   - **The label check.** The operator checked the seeded 10% sample of the grown set (67 queries,
-    seed 20261111) on 2026-11-11: 58 marked correct, 6 unsure, 3 wrong. One label was wrong:
-    g0113, "What database table contains financial records for the team?", labelled only the
-    invoices table (m033), where by accounting practice the record is the ledger. Version 2 of the
-    set labels m038 and m037 grade 2 and keeps m033 grade 1. The other eight marks question the
-    fictional company's stack (its cloud provider, Kotlin, Gradle), not whether the labelled memory
-    answers. One bad label in 67 (1.5%) is the check passing; d12's figures are final once rerun
-    on version 2.
+    seed 20261111) on 2026-11-11: 58 marked correct, 6 unsure, 3 wrong. The three wrong marks
+    (g0413, g0422, g0456) and five of the unsure ones (g0354, g0642, g0650, g0651, g0654) object to
+    the fictional company's stack (its cloud provider, Kotlin, Gradle), not to whether the labelled
+    memory answers the query. The sixth unsure mark is g0113, "What database table contains
+    financial records for the team?", labelled only the invoices table (m033). The operator's note
+    called the query vague, with the ledger (m037, m038) and payments (m043) also financial
+    records, and asked to add m037 and m038 or drop the query. The operator then chose, on
+    2026-11-11, to add m037 and m038 and keep m033: version 2 of the set labels all three grade 2.
+    No pass threshold was set before the check; the operator accepted the set with this one
+    correction.
+  - **Who wrote the corpus is unknown.** d8 asks that the grown set's writer (Phi-3-mini) be of
+    another family than the corpus's writer. The operator does not know which model wrote
+    `corpus.json` (2026-11-11), so that condition is unverified. If they were one family, queries
+    and memories would share phrasing, which flatters lexical matching for every pipeline; it
+    cannot explain a paired loss of 24 to 2, and the reopen clause below, real recall misses, is
+    the remedy.
   - **What phase 0 measured** (PR #252, `eval/bench/results/phase0/report.md`, on version 2;
     offline, over migration 0020's lexemes, with `bm25-postings` matching the served success@5 on
-    786 of 786 queries and `bm25-sparse` on 784). Success@5:
+    786 of 786 queries and `bm25-sparse` on 784, the other two, g0468 and g0590, rank-5 and
+    rank-6 boundary flips that favour the offline `bm25-sparse`). Success@5:
 
     | pipeline | all 786 | question-shaped 687 | other 99 |
     |---|---|---|---|
     | `bm25-postings` | 0.916 | 0.911 | 0.950 |
-    | `bm25-sparse` | 0.962 | 0.956 | 1.000 |
+    | `bm25-sparse` | 0.963 | 0.958 | 1.000 |
     | `bm25-questions` (`local`, a doc2query T5, five questions per memory, d6's filters) | 0.927 | 0.926 | 0.939 |
-    | `bm25-sparse` with the question field | 0.963 | 0.958 | 1.000 |
+    | `bm25-sparse` with the question field | 0.964 | 0.959 | 1.000 |
 
-    Primary, `bm25-questions` against `bm25-sparse` on the 687: 2 wins, 23 losses, −3.1 points
-    (95% paired bootstrap −4.5 to −1.8), p 1.00: it fails. Secondary, the combination against
+    Primary, `bm25-questions` against `bm25-sparse` on the 687: 2 wins, 24 losses, −3.2 points
+    (95% paired bootstrap −4.7 to −1.9), p 1.00: it fails. Secondary, the combination against
     `bm25-sparse`: 3 wins, 2 losses, +0.1 points (−0.4 to +0.7), p 0.50: it fails, and its
     interval rules out an added gain above 0.7 points. Both non-inferiority arms pass. At the
-    observed discordance (0.036) the set had 80% power for a 2.2-point gain, so the test could see
+    observed discordance (0.038) the set had 80% power for a 2.2-point gain, so the test could see
     the gain d12 asked for. d8's original arm, questions against `bm25-postings`, gained 1.5 points
     (13 wins, 3 losses, p 0.011), mostly on paraphrases: questions help the lexical pipeline, and
     `bm25-sparse` already makes that gain and more. Ten questions per memory, no filters, or d6's
-    shape filter as worded change none of this (2.6 to 3.9 points behind `bm25-sparse`). Before
-    the relabel the figures were 0.916, 0.963, 0.927 and 0.964 over all 786, and the gate's
-    outcome was the same.
+    shape filter as worded change none of this (2.8 to 4.1 points behind `bm25-sparse`). The
+    correction to g0113 changes no success@5 figure and no test above; it moves nDCG@10 only.
   - **The cost it would have taken.** Generation ran at 0.77 s per memory on 4 CPU threads, and
     kind 3 would have added 0.575 of kind 1's postings; phases 1 and 2 would add a generator
     port, a drain, a migration and a pipeline, for a ranking `bm25-sparse` already beats.
   - **The decision.** By d12's rule, and decided by the operator on 2026-11-11: question indexing
     is parked. Phases 1 to 3 (#236 to #238) and #201 close as not planned; phase 0 (#235) is done.
     v0.7.1 documents `bm25-sparse` as the recommended recall pipeline, with these numbers and its
-    cost. ADR-0072's phase 3 (#207) no longer reads generated questions: d7's counts have no
-    writer, and its descriptor score keeps ontology terms alone. d1 to d11 keep their text as the
+    cost. ADR-0072's phase 3 (#207) no longer reads generated questions: with nothing generated,
+    d7's counts have no writer, so its descriptor score keeps ontology terms alone. That follows
+    from having no writer; phase 0 measured per-memory recall, not ADR-0072's source selection.
+    ADR-0072 carries a dated note to this effect at each place it names generated questions. d1 to d11 keep their text as the
     design a reopening would start from; nothing in them is built.
   - **What would reopen it.** A run of its own: a labelled set of real recall misses that
     `bm25-sparse` leaves out of the top 5, on which a question arm beats or adds to `bm25-sparse`
@@ -1009,7 +1021,9 @@ Decided, not built.
   `search_question_coverage` and kind 3 rows of `search_postings` and the count tables. Nothing
   leaves the host, so nothing is outside it.
 - #176 gains the stored question sets and `questions_seq` as inputs and the three events of d4 as
-  changes. #201's acceptance maps to #235 to #237. ADR-0072's #207 consumes #238.
+  changes. #201's acceptance maps to #235 to #237. ADR-0072's #207 consumes #238. *Parked
+  2026-11-11 (d13):* #201 and #236 to #238 are closed as not planned and #207 reads no questions;
+  these consequences describe the design a reopening starts from.
 - The constitution holds, row by row:
 
     | | R1 | R2 | R3 | R4 |
@@ -1217,8 +1231,10 @@ questions do not clearly win, v0.7.1 recommends `bm25-sparse` for question-style
 question 5 records the decision.
 
 **Outcome, 2026-11-11: phase 0 did not go, and the operator parked question indexing.** The
-operator's check of the grown set's 10% sample found one wrong label in 67 (g0113, relabelled in
-version 2, PR #245). Phase 0 on the corrected set (PR #252): `bm25-questions` 0.926 against
-`bm25-sparse`'s 0.956 success@5 on the 687 question-shaped queries (2 wins, 23 losses), and the
-combination 0.958 (3 wins, 2 losses, p 0.50). The operator decided "Park questions, promote
+operator checked the grown set's 10% sample (58 correct, 6 unsure, 3 wrong) and chose to add two
+answering memories to one vague query, g0113, which was marked unsure (version 2, PR #245). Phase 0
+on that set (PR #252): `bm25-questions` 0.926 against `bm25-sparse`'s 0.958 success@5 on the 687
+question-shaped queries (2 wins, 24 losses), and the combination 0.959 (3 wins, 2 losses, p 0.50).
+Which model wrote the corpus is unknown, so d8's different-family condition is unverified (d13).
+ADR-0072 carries a note at each place its phase 3 names generated questions. The operator decided "Park questions, promote
 sparse"; d13 records the evidence and open question 6 the decision.

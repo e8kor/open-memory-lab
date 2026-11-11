@@ -33,7 +33,7 @@ join only in phase 2, and only if phase 1's measurements ask for them.
 | d7 | A hit's score never depends on which sources were selected | 1 |
 | d8 | The answer names its sources and why; a normalised-rate hint says when to widen | 1; the hint deferred (#244) |
 | d9 | The same inputs give the same answer; no clock, randomness or model | 1 |
-| d10 | Ontology overlap and generated questions read reviewed content only | 3 |
+| d10 | Ontology overlap and generated questions read reviewed content only (generated questions parked by ADR-0075 d13, 2026-11-11: phase 3 is ontology overlap alone) | 3 |
 | d11 | The eval measures every mode against `scope` and the union, with numeric gates | 1, 2 |
 | d12 | Exact counts, a latency budget, a cap, no access cache | 1 |
 | d13 | Three phases, each closed by its leakage tests | 1 to 3 |
@@ -226,7 +226,7 @@ sequenceDiagram
     |---|---|---|
     | `summary` | the author | at most 600 characters: what the workarea holds and for whom |
     | `about` | the author | at most 8 terms, each a CURIE of a readable active term (ADR-0051 d2, d4), linked as `oml:about` edges ratified with the descriptor |
-    | `questions` | the author | at most 8 questions the workarea's promoted rows answer (phase 3 adds generated ones, d10) |
+    | `questions` | the author | at most 8 questions the workarea's promoted rows answer (phase 3 adds generated ones, d10; parked by ADR-0075 d13, 2026-11-11, so none are added) |
     | `owner` | served, never authored | the workarea's crew record (ADR-0008 d7) or, in a user root, its user |
     | `status` | served | the workarea's ladder status |
     | `freshness` | served | the descriptor's promotion time and the workarea's latest promotion time |
@@ -355,7 +355,8 @@ sequenceDiagram
      document, its `summary`, `questions` and the labels of its `about` terms one text, with the
      non-negative IDF above over the candidates' descriptors alone (d12's index). Phase 3 adds two
      lists to the descriptor score, ontology overlap and generated questions (d10), fused with
-     the descriptor list by reciprocal rank, k 60, as ADR-0049 d3 fuses retrievers.
+     the descriptor list by reciprocal rank, k 60, as ADR-0049 d3 fuses retrievers. *Amended 2026-11-11 by [ADR-0075 d13](ADR-0075-each-approved-memory-is-indexed-by-the-questions-it-answers-generated-off-the-request-path-scanned-stored-with-their-generator-and-matched-only-by-an-opt-in-pipeline.md):* generated questions are parked, so
+     phase 3 adds ontology overlap alone until ADR-0075 reopens.
   6. **The tail.** The candidates with E > 0 that were not searched are the `cut`. The answer
      reports how many there are and a lower bound on their rows that hold a kept word, the
      maximum over w of Σ over s in the cut of df_s(w), so an agent knows what it did not search
@@ -548,11 +549,13 @@ sequenceDiagram
 - **d9 — Repeatability: the inputs are named, selection uses no clock, no randomness and no
   model, and ties break by name.** For fixed inputs — the key's grants and denials, the query's
   NFC text, `now`, the promoted rows and descriptors, the federation policies and settings, the
-  `sources` given, the pipeline and, in phase 3, the stored questions — R, the
+  `sources` given, the pipeline and, in phase 3, the stored questions (none while ADR-0075 d13
+  parks them) — R, the
   searched sources, their order and the hits are byte-identical across calls and processes,
   `recall_id` aside (#176). What changes the answer is listed on #176's page: a promotion,
   demotion, supersession or retirement in any node of R; a policy or setting change; a grant
-  change; and, in phase 3, a question set written, regenerated or dropped (ADR-0075 d4).
+  change; and, in phase 3, a question set written, regenerated or dropped (ADR-0075 d4; none is,
+  while ADR-0075 d13 parks generated questions).
   `recall_events` gains `sources` (the mode, or the list as workarea ids), `federated_workarea_ids`
   and `reference_workarea_ids` (R's nodes after any round-1 miss, d4.2), and in phase 2 `selector`, so ADR-0054 d11's replay reproduces a
   federated recall; all fall under recall telemetry's erasure row (ADR-0054 d4). `now` is one
@@ -573,6 +576,11 @@ sequenceDiagram
   The descriptor's own `questions` stay author-written and reviewed; generated questions are
   index data and never shown as a descriptor field (#201's "index data, not claims"). Both lists
   feed d4.5's descriptor score only, so they inherit its slots and its content gate.
+  - *Amended 2026-11-11 by [ADR-0075 d13](ADR-0075-each-approved-memory-is-indexed-by-the-questions-it-answers-generated-off-the-request-path-scanned-stored-with-their-generator-and-matched-only-by-an-opt-in-pipeline.md):* generated questions are parked, so no
+    question set has a writer and the generated-questions list is not built: phase 3 is ontology
+    overlap alone until ADR-0075 reopens. This follows from the missing writer; ADR-0075's
+    phase 0 measured per-memory recall, not source selection. The text above is kept as the
+    design a reopening starts from.
 
 - **d11 — The recall eval gains a cross-workarea split, a skew split and an adversarial
   descriptor, and every mode is measured against `scope` and against the union.** The
@@ -648,7 +656,7 @@ sequenceDiagram
     |---|---|---|---|---|
     | 1 | `sources` (`"scope"`, `"wide"`, a list), d1's trust set, R with its expired subtraction and pruned words, d4's estimate and cap, d5's policies (`enabled`, `default_sources`, `max_sources`, `accept_federated`), d7, d8 without the widen hint (the widen hint (d8) is deferred from phase 1 (#244). Computing it on scope recalls cost ~58 ms p95 on federated tenants (98.7 → 40.2 ms without it). It returns when a precomputed signal makes it cheap (e.g. the per-workarea statistics or sketch planned for phase 2/3)), d9, the eval's cross and skew splits, the directory recipe | #205 | after the candidate-count distribution is reported | (1) an unreadable W (a per-grant deny on a child of a readable parent) whose rows match every query changes no byte of `sources`, `considered`, `cut`, `widen`, hits, scores, `did_you_mean`, `explain` counts or `recall_events`, against W absent; (2) the same for W readable but `development`, in progress or `accept_federated: false`; (3) a reader of the scope without reader on W reads the scope workarea: W's id and name are absent from the whole body; (4) an unreadable W named in a `sources` list gives `access.not_found` byte-identical to a nonexistent name, and a list with one unusable name is refused whole, never answered from the rest, with the latency of an unreadable name compared to an absent one over many runs, and each list-shape refusal (empty, duplicate, over `max_sources`, `Cc`) in the order of d5; (5) reader on S revoked, then a recall at once: S absent, no candidate cache; (6) a scope hit's score is identical whether source X is selected or not, and the `bm25` answer for any searched set equals the union's restricted to it, on `bm25` and on `bm25-postings` with a selection whose postings would cross `POSTING_BUDGET`; (7) timing over many runs, W with 0 against 100,000 matching rows: p50 and p95 within noise; (8) with federation off `scope` reproduces today byte for byte and `wide` and a list are refused; (9a) a list's scores and answer are byte-identical whatever the unlisted workareas hold, and whether any of them is unreachable; an unreachable listed unit refuses `503 cluster.source_unavailable` and an unreachable candidate under `wide` is in `missing` and absent from `reference_workarea_ids`; (9b), the widen hint's law, is deferred with the hint (#244) |
     | 2 | kind `descriptor`, d3's hold rule, check and yield, memory-kind-3 postings, the `selector` setting and the `described` selector with `descriptor_slots` | #206 | only if, after phase 1, content selection's recall on the skew split is below 0.90 or more than two queries below the exact ReDDE analogue (d11), **and** a tenant's measured candidate count exceeds `max_sources`; its admission gate is d11's numeric floor, and open question 1 is decided (2026-11-10: a person promotes a descriptor) | (9) held, rejected and superseded descriptors select exactly what no descriptor selects, and a held descriptor is not served to a non-author; (10) a descriptor on an unreadable W changes no byte; (11) an adversarial descriptor matching every query lowers selection recall by at most one query and displaces at most `descriptor_slots` sources; (12) a descriptor version with a hold finding, at write or added by a rescan after promotion, selects exactly what no descriptor selects, whether a person approved it or dismissed the finding, and no descriptor text appears in any recall answer; (13) memory-kind-3 postings (descriptor postings, not ADR-0075's posting kind 3) are never hits and do not change R's statistics |
-    | 3 | d10's ontology and question lists, fused by RRF into the descriptor score | #207 | after ADR-0051 and #201 land, and phase 2 is built | (14) a term or question held only by unreadable rows selects nothing and changes no count; (15) a question of a held, demoted or erased memory never scores a source, and erasure removes its postings |
+    | 3 | d10's ontology and question lists, fused by RRF into the descriptor score (the question list parked by ADR-0075 d13, 2026-11-11: ontology overlap alone) | #207 | after ADR-0051 and #201 land, and phase 2 is built (#201 closed as not planned, 2026-11-11) | (14) a term or question held only by unreadable rows selects nothing and changes no count; (15) a question of a held, demoted or erased memory never scores a source, and erasure removes its postings (parked with the question list by ADR-0075 d13) |
 
 ## Phase 1 as built (2026-11-10)
 
