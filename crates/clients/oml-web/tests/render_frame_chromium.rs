@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::thread;
 
-use oml_transport_http::web::render::{BUNDLE, bundle_path, frame_document, frame_policy};
+use oml_web::render::{BUNDLE, bundle_path, frame_document, frame_policy};
 
 fn chromium() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("CHROME_PATH")

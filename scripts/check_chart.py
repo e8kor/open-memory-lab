@@ -17,7 +17,7 @@ Run by .github/workflows/ci.yml (job chart). Renders deploy/helm/oml with
   and readiness on GET /readyz on its http port, a ClusterIP Service of its
   own, and OML_WEB__CLIENT_SECRET from the same Secret and key as the lead's
   (ADR-0070 d2), a Secret the chart generates being kept on uninstall; the
-  Ingress routes each of web.ingressPaths, none empty, Exact to oml-web's
+  Ingress routes each of web.ingressPaths, none empty, Exact or Prefix as listed, to oml-web's
   Service and every other path to the lead's; with the NetworkPolicy on, oml-web's pods admit their http
   port alone and reach DNS and the lead's pods alone, and the lead admits
   them;
@@ -368,9 +368,12 @@ def check_options(errors: list[str], docs: list[dict], app_version: str) -> None
             want = web_service if path in web_paths else service_name
             if backend.get("name") != want or backend.get("port") != {"name": "http"}:
                 errors.append(f"{label}: the Ingress routes {path} to {backend!r}, not {want}'s http port")
-        for path in web_paths:
-            if not any(p == path and k == "Exact" and b.get("name") == web_service for p, k, b in routes):
-                errors.append(f"{label}: the Ingress has no Exact route for {path} to {web_service} (ADR-0070 d4)")
+        for entry in values_web_paths():
+            path, kind = entry.get("path"), entry.get("pathType")
+            if kind not in ("Exact", "Prefix"):
+                errors.append(f"{label}: web.ingressPaths {path} is {kind!r}, not Exact or Prefix (ADR-0070 d4)")
+            if not any(p == path and k == kind and b.get("name") == web_service for p, k, b in routes):
+                errors.append(f"{label}: the Ingress has no {kind} route for {path} to {web_service} (ADR-0070 d4)")
         if not backends:
             errors.append(f"{label}: the Ingress routes nothing")
 

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.admin_memory_kind import AdminMemoryKind
 from ..models.admin_memory_state import AdminMemoryState
 from ..types import UNSET, Unset
 
@@ -32,6 +33,8 @@ class AdminReadMemoryResponse200:
         text (str):
         key (str): The authoring key's name.
         created_at (datetime.datetime):
+        kind (AdminMemoryKind | Unset): The kind the version was written as; the admin page refuses to supersede or
+            retire a guardrail by it (ADR-0037 d17; ADR-0070 d5). Since v0.7.0.
         principal (None | str | Unset):
         user (None | str | Unset):
         format_ (str | Unset): The media type signed with the version (ADR-0056 d1).
@@ -60,6 +63,7 @@ class AdminReadMemoryResponse200:
     text: str
     key: str
     created_at: datetime.datetime
+    kind: AdminMemoryKind | Unset = UNSET
     principal: None | str | Unset = UNSET
     user: None | str | Unset = UNSET
     format_: str | Unset = UNSET
@@ -94,6 +98,10 @@ class AdminReadMemoryResponse200:
         key = self.key
 
         created_at = self.created_at.isoformat()
+
+        kind: str | Unset = UNSET
+        if not isinstance(self.kind, Unset):
+            kind = self.kind.value
 
         principal: None | str | Unset
         if isinstance(self.principal, Unset):
@@ -188,6 +196,8 @@ class AdminReadMemoryResponse200:
                 "created_at": created_at,
             }
         )
+        if kind is not UNSET:
+            field_dict["kind"] = kind
         if principal is not UNSET:
             field_dict["principal"] = principal
         if user is not UNSET:
@@ -242,6 +252,13 @@ class AdminReadMemoryResponse200:
         key = d.pop("key")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _kind = d.pop("kind", UNSET)
+        kind: AdminMemoryKind | Unset
+        if isinstance(_kind, Unset):
+            kind = UNSET
+        else:
+            kind = AdminMemoryKind(_kind)
 
         def _parse_principal(data: object) -> None | str | Unset:
             if data is None:
@@ -375,6 +392,7 @@ class AdminReadMemoryResponse200:
             text=text,
             key=key,
             created_at=created_at,
+            kind=kind,
             principal=principal,
             user=user,
             format_=format_,

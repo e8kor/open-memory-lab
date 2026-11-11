@@ -52,7 +52,7 @@ accepts that secret. Check it with:
 
 The Ingress, once enabled, routes each page the web console serves by its own path
 (web.ingressPaths: the Guardrails, Workareas, Memories, Atlas, Review and Keys
-pages and the Memories JSON today) and every other path to the lead.
+pages, one memory, Curate, the Memories JSON and the diagram frame's two prefixes today) and every other path to the lead.
 {{- if not .Values.web.publicUrl }}
 
 web.publicUrl is unset, so the web console accepts a form only from

@@ -99,6 +99,17 @@ pub const USER_KEYS_PATH: &str = "/web/keys";
 /// each, which `oml-web` serves (ADR-0070 d7 (b)).
 pub const ADMIN_KEYS_PATH: &str = "/web/admin/keys";
 
+/// One memory opened by its id, `?id=`, on the user page, which `oml-web`
+/// serves (ADR-0070 d7 (b)).
+pub const USER_MEMORY_PATH: &str = "/web/memory";
+
+/// One memory with its attribution and the supersede form, `?id=`, on the
+/// admin page, which `oml-web` serves.
+pub const ADMIN_MEMORY_PATH: &str = "/web/admin/memory";
+
+/// The admin page's Curate view, which `oml-web` serves.
+pub const ADMIN_CURATE_PATH: &str = "/web/admin/curate";
+
 /// The admin page's tabs, `(href, text)`; the lead's admin views and
 /// `oml-web`'s draw the same nav.
 pub const ADMIN_TABS: [(&str, &str); 8] = [
@@ -108,7 +119,7 @@ pub const ADMIN_TABS: [(&str, &str); 8] = [
     (ADMIN_WORKAREAS_PATH, "Workareas"),
     (ADMIN_REVIEW_PATH, "Review"),
     (ADMIN_KEYS_PATH, "Keys"),
-    ("/web/admin?view=curate", "Curate"),
+    (ADMIN_CURATE_PATH, "Curate"),
     ("/web", "Your page"),
 ];
 

@@ -29,8 +29,9 @@ pub const HUMAN_ONLY: &str = "web_is_human_only";
 
 /// The pages' policy (ADR-0070 d3 layer 5): nothing loads but the one
 /// stylesheet, named by its compile-time digest, forms post only to the
-/// page's origin, and no frame holds a page. No page here runs a script or
-/// frames one, so the policy names neither.
+/// page's origin, and no frame holds a page. No page runs a script; a page
+/// that draws a Mermaid claim adds its one frame source
+/// ([`crate::render::framing_policy`]).
 #[must_use]
 pub fn content_security_policy() -> String {
     oml_page::web::content_security_policy(&[], None)
@@ -292,10 +293,20 @@ fn security_headers(h: &mut HeaderMap) {
 }
 
 /// Layer 5: the headers on every answer that reaches it, a page or the
-/// health probe.
+/// health probe. A policy or a cache rule a handler set stands: a page that
+/// holds a drawing names its frame source, the frame answers under its own
+/// policy and the pinned bundle is immutable (ADR-0056 d9).
 pub async fn headers(req: Request, next: Next) -> Response {
     let mut response = next.run(req).await;
-    security_headers(response.headers_mut());
+    let h = response.headers_mut();
+    let kept: Vec<_> = [header::CONTENT_SECURITY_POLICY, header::CACHE_CONTROL]
+        .into_iter()
+        .filter_map(|name| h.get(&name).cloned().map(|value| (name, value)))
+        .collect();
+    security_headers(h);
+    for (name, value) in kept {
+        h.insert(name, value);
+    }
     response
 }
 

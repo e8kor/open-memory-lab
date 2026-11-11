@@ -5,40 +5,50 @@
 //! `<iframe sandbox="allow-scripts" src="/web/render/<token>">`; the frame is
 //! an opaque origin, so it has no cookie, no storage and no access to the
 //! parent, and its policy forbids every network request. Its one input is
-//! the source the session was already shown. The source stays in the lead's
-//! memory, keyed by the session and the memory; the token sealed into the
+//! the source the session was already shown. The source stays in this
+//! process's memory, keyed by the session and the memory (so more than one
+//! `oml-web` replica needs session affinity for this route, ADR-0070 d4);
+//! the token sealed into the
 //! URL names the memory, the session and an expiry only, so a diagram near
 //! the 64 KiB cap fits in a URL path and a token opens for no other
 //! session. A rendering is not part of what is signed and journals nothing;
 //! the reviewer always has the source beside it.
+//!
+//! Moved from the lead with the memory's own page (ADR-0070 d1, d7 (b)):
+//! `oml-web` holds the source it read from the API for the session it
+//! showed it to, so a reviewer's card draws a held diagram too.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use axum::body::Body;
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::extract::{Path, State};
 use axum::response::Response;
+use http::{HeaderMap, HeaderValue, StatusCode, header};
+use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 use serde_json::{Value, json};
 
 use oml_page::digest::{base64_32, sha256};
 use oml_page::escape;
 
+use crate::session::{PageCalls, call, cookie};
+use crate::{Capacity, SESSION_COOKIE, Web};
+
 /// The pinned Mermaid release (MIT, `assets/mermaid.LICENSE`), vendored and
 /// compiled in; nothing is fetched from a CDN.
 pub const BUNDLE: &[u8] = include_bytes!(
-    "../../assets/mermaid-336df803d87a38b70a01e736e666c8f7601d2ce42f5e47c8fafe5d721074b9a3.js"
+    "../assets/mermaid-336df803d87a38b70a01e736e666c8f7601d2ce42f5e47c8fafe5d721074b9a3.js"
 );
 
 /// The bundle's SHA-256, the digest in its file name; a test holds the two
 /// equal to the bytes.
 pub const BUNDLE_SHA256: &str = "336df803d87a38b70a01e736e666c8f7601d2ce42f5e47c8fafe5d721074b9a3";
 
-/// The routes of the frame, outside [`super::WEB_ROUTES`]: the frame's
-/// document and the bundle it runs.
-pub const RENDER_ROUTES: &[(&str, &str)] = &[
-    ("GET", "/web/render/{token}"),
-    ("GET", "/web/assets/{file}"),
-];
+/// The frame's document, one token a path segment below it.
+pub const RENDER_PREFIX: &str = "/web/render/";
+
+/// The bundle the frame runs, its digest in its file name.
+pub const ASSETS_PREFIX: &str = "/web/assets/";
 
 /// What a render token opens for, so it never opens as another handle.
 pub const RENDER_PURPOSE: &[u8] = b"oml render frame";
@@ -46,7 +56,7 @@ pub const RENDER_PURPOSE: &[u8] = b"oml render frame";
 /// A token's life, seconds (ADR-0056 d9).
 pub const RENDER_TTL_SECS: u64 = 300;
 
-/// How many sources the lead holds for frames at once; the oldest expiry
+/// How many sources the process holds for frames at once; the oldest expiry
 /// goes first. 256 sources of at most 64 KiB is 16 MiB, chosen, not
 /// measured (#159).
 pub const RENDER_SOURCES_MAX: usize = 256;
@@ -157,12 +167,84 @@ pub fn frame_document(source: &str) -> String {
     )
 }
 
+/// The process's key for render tokens, drawn at start and never written
+/// anywhere: a restart voids every token, and the card still shows the
+/// source.
+pub struct Sealer {
+    key: LessSafeKey,
+}
+
+impl Default for Sealer {
+    fn default() -> Self {
+        let mut key = [0_u8; 32];
+        getrandom::getrandom(&mut key).expect("the OS random source answers");
+        Self {
+            key: LessSafeKey::new(
+                UnboundKey::new(&CHACHA20_POLY1305, &key).expect("a 32-byte key"),
+            ),
+        }
+    }
+}
+
+impl Sealer {
+    /// `plain` sealed under this process's key, as lower-case hex of the
+    /// nonce, the ciphertext and the tag.
+    #[must_use]
+    pub fn seal(&self, plain: &[u8]) -> String {
+        let mut nonce = [0_u8; NONCE_LEN];
+        getrandom::getrandom(&mut nonce).expect("the OS random source answers");
+        let mut sealed = plain.to_vec();
+        self.key
+            .seal_in_place_append_tag(
+                Nonce::assume_unique_for_key(nonce),
+                Aad::from(RENDER_PURPOSE),
+                &mut sealed,
+            )
+            .expect("a claim is far below the AEAD's length limit");
+        nonce
+            .iter()
+            .chain(&sealed)
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    /// What `handle` seals under this process's key, or `None`.
+    #[must_use]
+    pub fn open(&self, handle: &str) -> Option<Vec<u8>> {
+        if !handle.len().is_multiple_of(2) || handle.len() < 2 * NONCE_LEN {
+            return None;
+        }
+        let bytes: Vec<u8> = (0..handle.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(handle.get(i..i + 2)?, 16).ok())
+            .collect::<Option<_>>()?;
+        let (nonce, sealed) = bytes.split_at(NONCE_LEN);
+        let nonce = Nonce::try_assume_unique_for_key(nonce).ok()?;
+        let mut sealed = sealed.to_vec();
+        let plain = self
+            .key
+            .open_in_place(nonce, Aad::from(RENDER_PURPOSE), &mut sealed)
+            .ok()?;
+        Some(plain.to_vec())
+    }
+}
+
+/// The process's sealer and held sources.
+#[derive(Default)]
+pub struct Frames {
+    sealer: Sealer,
+    sources: Sources,
+}
+
+/// This process's frames: one key and one bounded store of sources.
+pub static FRAMES: LazyLock<Frames> = LazyLock::new(Frames::default);
+
 /// The token for `source`: it names the memory, the session's CSRF token as
 /// the session binding and an expiry, sealed; the source is put in `sources`
 /// under the same session and memory, never in the token.
 #[must_use]
 pub fn token(
-    sealer: &impl oml_app::ports::HandleSealer,
+    sealer: &Sealer,
     sources: &Sources,
     session: &str,
     memory_id: &str,
@@ -177,10 +259,10 @@ pub fn token(
 
 /// The source a token opens for `session` at `now`, or `None` for a token
 /// that is forged, expired, another session's or not a render token, or
-/// whose source the lead no longer holds.
+/// whose source the process no longer holds.
 #[must_use]
 pub fn open(
-    sealer: &impl oml_app::ports::HandleSealer,
+    sealer: &Sealer,
     sources: &Sources,
     handle: &str,
     session: &str,
@@ -252,21 +334,117 @@ pub fn iframe(token: &str) -> String {
     )
 }
 
+/// The media type of a Mermaid claim (ADR-0056 d1).
+pub const MERMAID: &str = "text/vnd.oml.mermaid";
+
+/// Seconds since the epoch, for a token's expiry.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// The drawing beside a Mermaid claim's source, bound to the session by its
+/// CSRF token: `None` for any other format, or where the public origin the
+/// frame's policy names is not known yet.
+#[must_use]
+pub fn drawing(
+    public_origin: Option<&str>,
+    format: Option<&str>,
+    csrf: &str,
+    memory_id: &str,
+    source: &str,
+) -> Option<String> {
+    public_origin?;
+    (format == Some(MERMAID)).then(|| {
+        iframe(&token(
+            &FRAMES.sealer,
+            &FRAMES.sources,
+            csrf,
+            memory_id,
+            source,
+            unix_now(),
+        ))
+    })
+}
+
+/// The pages' policy with the one frame source a drawing needs: the render
+/// route under the public origin, and nothing else.
+#[must_use]
+pub fn framing_policy(public_origin: &str) -> String {
+    oml_page::web::content_security_policy(&[], Some(&frame_src(public_origin)))
+}
+
+/// `page` under [`framing_policy`] where it holds a drawing; the headers
+/// layer keeps a policy a handler set.
+pub fn allow_frames(page: &mut Response, public_origin: Option<&str>) {
+    if let Some(origin) = public_origin
+        && let Ok(value) = HeaderValue::from_str(&framing_policy(origin))
+    {
+        page.headers_mut()
+            .insert(header::CONTENT_SECURITY_POLICY, value);
+    }
+}
+
+fn not_found() -> Response {
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::NOT_FOUND;
+    response
+}
+
+/// `GET /web/render/{token}`: the frame's document for a token this session
+/// holds, else `404`: a forged, expired or another session's token, no
+/// session, or one the API no longer resolves, answer alike (ADR-0056 d9).
+/// The session is the API's to judge (ADR-0070 d3 layer 3): one `whoami`.
+pub async fn frame(
+    State(web): State<Web>,
+    calls: Option<axum::Extension<Arc<PageCalls>>>,
+    headers: HeaderMap,
+    Path(handle): Path<String>,
+) -> Response {
+    let (Some(origin), Some(session_token)) = (
+        web.layers.public_origin.clone(),
+        cookie(&headers, SESSION_COOKIE),
+    ) else {
+        return not_found();
+    };
+    let calls = calls.map_or_else(|| Arc::new(PageCalls::new("frame")), |c| c.0);
+    let credential =
+        oml_web_credential::capacity_credential(&session_token, Capacity::Web.as_str());
+    let ids = calls.next_ids();
+    if web.api.whoami(&call(&credential, &ids)).await.is_err() {
+        return not_found();
+    }
+    let csrf = oml_web_credential::csrf_token(&session_token);
+    match open(&FRAMES.sealer, &FRAMES.sources, &handle, &csrf, unix_now()) {
+        Some(source) => frame_response(&origin, &source),
+        None => not_found(),
+    }
+}
+
+/// `GET /web/assets/{file}`: the pinned bundle, and no other file.
+pub async fn asset(Path(file): Path<String>) -> Response {
+    if file == format!("mermaid-{BUNDLE_SHA256}.js") {
+        bundle_response()
+    } else {
+        not_found()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use crate::oauth::seal::AeadSealer;
-
     #[test]
     fn the_pinned_bundle_is_the_one_its_file_name_says() {
         let digest = sha256(BUNDLE);
-        assert_eq!(hex::encode(digest), BUNDLE_SHA256);
+        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex, BUNDLE_SHA256);
     }
 
     #[test]
     fn a_token_opens_for_its_session_before_it_expires_and_never_after() {
-        let sealer = AeadSealer::generate_for(RENDER_PURPOSE);
+        let sealer = Sealer::default();
         let sources = Sources::default();
         let t = token(
             &sealer,
@@ -289,18 +467,18 @@ mod tests {
             None,
             "another session"
         );
-        let other = AeadSealer::generate_for(b"oml web sign-in");
+        let other = Sealer::default();
         assert_eq!(
             open(&other, &sources, &t, "csrf-a", 1_000),
             None,
-            "another purpose"
+            "another process's key"
         );
         assert!(!t.contains("flowchart"), "the source is never in the token");
     }
 
     #[test]
     fn the_held_sources_are_bounded_and_the_oldest_expiry_goes_first() {
-        let sealer = AeadSealer::generate_for(RENDER_PURPOSE);
+        let sealer = Sealer::default();
         let sources = Sources::default();
         for i in 0..RENDER_SOURCES_MAX + 10 {
             let _ = token(

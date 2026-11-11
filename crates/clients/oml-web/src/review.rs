@@ -33,11 +33,12 @@ use axum::response::Response;
 use http::{StatusCode, Uri};
 use oml_page::web::{
     ADMIN_REVIEW_PATH, ADMIN_TABS, USER_REVIEW_PATH, attr, form, hidden, input, select, shell,
-    short, state_tag, text, user_tabs,
+    short, text, user_tabs,
 };
-use oml_sdk::{Anchor, Memory, encode};
+use oml_sdk::encode;
 
 use crate::acts::Refusal;
+use crate::card::{anchor_line, card, valid_line};
 use crate::pages::{Fields, refused};
 use crate::session::{PageCalls, Session, call};
 use crate::{Capacity, Web, acts, outcome};
@@ -71,7 +72,7 @@ impl Side {
 }
 
 /// Whether `value` is an id as the API writes one.
-fn is_id(value: &str) -> bool {
+pub(crate) fn is_id(value: &str) -> bool {
     value.len() == 36
         && value.bytes().enumerate().all(|(i, b)| {
             if matches!(i, 8 | 13 | 18 | 23) {
@@ -126,128 +127,6 @@ fn notice(fields: &Fields) -> Option<String> {
     }
 }
 
-/// An anchor as one line for a reviewer (ADR-0057 d2): the repository, the
-/// commit's first 12 digits, the path and the fragment, or the page; a
-/// dash for none.
-fn anchor_line(anchor: Option<&Anchor>) -> String {
-    let Some(a) = anchor else {
-        return "—".to_owned();
-    };
-    let fragment = a
-        .fragment
-        .as_deref()
-        .map_or_else(String::new, |f| format!("#{f}"));
-    let line = match (a.repo.as_deref(), a.uri.as_deref()) {
-        (Some(repo), _) => {
-            let rev = a.rev.as_deref().unwrap_or_default();
-            format!(
-                "{repo} @ {} {}{fragment}",
-                &rev[..rev.len().min(12)],
-                a.path.as_deref().unwrap_or_default()
-            )
-        }
-        (None, Some(uri)) => format!("{uri}{fragment}"),
-        (None, None) => return "—".to_owned(),
-    };
-    short(&line)
-}
-
-/// A version's valid time as one line, and on a held successor the end
-/// approving it gives the version it replaces (ADR-0059 d2, d4).
-fn valid_line(m: &Memory) -> String {
-    let mut line = if m.valid_from.is_none() && m.valid_until.is_none() {
-        "none declared".to_owned()
-    } else {
-        format!(
-            "from {}, {}",
-            m.valid_from.as_deref().unwrap_or("any time"),
-            m.valid_until
-                .as_deref()
-                .map_or_else(|| "open".to_owned(), |u| format!("until {u}"))
-        )
-    };
-    if let (Some(end), Some(replaces)) = (&m.replaces_valid_until, &m.replaces) {
-        let _ = write!(
-            line,
-            "; approving ends version {} at {end}",
-            replaces.version
-        );
-    }
-    text(&line)
-}
-
-fn prose(m: &Memory) -> bool {
-    matches!(
-        m.format.as_deref().unwrap_or("text/plain"),
-        "text/plain" | "text/markdown"
-    )
-}
-
-/// What a card says of a version's format (ADR-0056 d9): the title, the
-/// media type, and what a derived claim will be found by. The source is
-/// the card's text, escaped, never rendered.
-fn format_lines(m: &Memory) -> String {
-    let mut out = String::new();
-    if !prose(m) {
-        let _ = write!(
-            out,
-            r#"<p class="label">format</p><p class="mono">{}</p>"#,
-            text(m.format.as_deref().unwrap_or_default())
-        );
-    }
-    if let Some(found) = &m.search_text {
-        let _ = write!(
-            out,
-            r#"<p class="label">it will be found by</p><p class="text mono dim">{}</p>"#,
-            text(found)
-        );
-    }
-    out
-}
-
-fn memory_state(m: &Memory) -> &str {
-    match m.state.as_str() {
-        "promoted" if !m.tip => "superseded",
-        "held" | "promoted" | "rejected" => m.state.as_str(),
-        _ => "demoted",
-    }
-}
-
-/// The item's card, as the lead drew it. A Mermaid claim's drawing is the
-/// lead's render frame, which only the lead can mint (ADR-0056 d9): the
-/// card shows its whole source and format, and says the drawing shows on
-/// the memory's own page once it is promoted. It links nothing: a held
-/// memory's page opens only for its author and the agent's owner, and a
-/// reviewer is usually neither (ADR-0070, Phase (b) as built; #189).
-fn card(m: &Memory) -> String {
-    let warning = m.load_warning.as_deref().map_or_else(String::new, |w| {
-        format!(r#"<p class="lede">Guardrail: {}.</p>"#, text(w))
-    });
-    let title = m.title.as_deref().map_or_else(String::new, |t| {
-        format!(r#"<p class="label">title</p><p>{}</p>"#, text(t))
-    });
-    let drawing = if m.format.as_deref() == Some("text/vnd.oml.mermaid") {
-        r#"<p class="dim">The drawing shows on the memory's own page once it is promoted; its source is above in full.</p>"#.to_owned()
-    } else {
-        String::new()
-    };
-    format!(
-        r#"{warning}<div class="card"><p class="label">{} · {} · version {}</p>{title}<p class="text{}">{}</p>{drawing}{}<p class="dim mono">{} · from {}</p><p class="dim mono">source: {}</p><p class="dim mono">valid {}</p></div>"#,
-        state_tag(memory_state(m)),
-        short(m.workarea_path.as_deref().unwrap_or("")),
-        m.version,
-        if prose(m) { "" } else { " mono" },
-        text(m.text.as_deref().unwrap_or_default()),
-        format_lines(m),
-        short(&m.claim_key),
-        m.principal
-            .as_deref()
-            .map_or_else(|| "the shared area".to_owned(), short),
-        anchor_line(m.anchor.as_ref()),
-        valid_line(m)
-    )
-}
-
 /// What the view's reads share.
 struct ViewCtx<'a> {
     web: &'a Web,
@@ -284,7 +163,16 @@ async fn served(
                 .to_owned(),
         );
     };
-    let mut out = card(&item);
+    // A held diagram is drawn for the reviewer from the source the API
+    // served them here, bound to their session (ADR-0056 d9; #189).
+    let drawing = crate::render::drawing(
+        view.web.layers.public_origin.as_deref(),
+        item.format.as_deref(),
+        &view.session.csrf(),
+        &item.artifact_id,
+        item.text.as_deref().unwrap_or_default(),
+    );
+    let mut out = card(&item, drawing.as_deref().unwrap_or_default());
     out.push_str(&form(
         view.side.path(),
         "verdict",
@@ -488,7 +376,7 @@ async fn view(
             Err(response) => return *response,
         }
     }
-    outcome::html(
+    let mut response = outcome::html(
         StatusCode::OK,
         shell(
             title(side),
@@ -498,7 +386,11 @@ async fn view(
             notice(&fields).as_deref(),
             &body,
         ),
-    )
+    );
+    if body.contains(crate::render::RENDER_PREFIX) {
+        crate::render::allow_frames(&mut response, web.layers.public_origin.as_deref());
+    }
+    response
 }
 
 /// Any session but an admin entry's answers `access.not_found` on the

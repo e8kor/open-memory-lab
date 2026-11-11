@@ -18,7 +18,6 @@
 pub mod admin_read;
 pub mod emails;
 pub mod page;
-pub mod render;
 pub mod start;
 pub mod views;
 
@@ -139,11 +138,6 @@ pub struct WebPages {
     signup_sealer: AeadSealer,
     /// Sign-ups per client address in the last hour (ADR-0068 d9).
     signups: start::SignupLimiter,
-    /// Seals the frame route's tokens, which open for no other purpose
-    /// (ADR-0056 d9).
-    render_sealer: AeadSealer,
-    /// The sources the frame route draws, held here and never in a token.
-    render_sources: render::Sources,
     counters: [ProviderCounter; 2],
     /// Open sign-up as configured, which the composition hands the app
     /// (ADR-0068 d1).
@@ -179,8 +173,6 @@ impl WebPages {
             sealer: AeadSealer::generate_for(WEB_SIGN_IN_PURPOSE),
             signup_sealer: AeadSealer::generate_for(SIGN_UP_PURPOSE),
             signups: start::SignupLimiter::default(),
-            render_sealer: AeadSealer::generate_for(render::RENDER_PURPOSE),
-            render_sources: render::Sources::default(),
             counters: Default::default(),
             signup: None,
         }
@@ -317,93 +309,9 @@ where
         if self.app.oauth_issuer().is_none() || self.web.is_none() {
             return router;
         }
-        let router = WEB_ROUTES.iter().fold(router, |router, &(method, path)| {
+        WEB_ROUTES.iter().fold(router, |router, &(method, path)| {
             router.route(path, Self::web_handler(method, path))
-        });
-        render::RENDER_ROUTES
-            .iter()
-            .fold(router, |router, &(_, path)| match path {
-                "/web/render/{token}" => router.route(path, get(Self::render_frame)),
-                _ => router.route(path, get(Self::render_asset)),
-            })
-    }
-
-    /// What a page may frame: the render route under the issuer, where the
-    /// pages are served (ADR-0056 d9).
-    pub(crate) fn frame_src(&self) -> Option<String> {
-        self.app
-            .oauth_issuer()
-            .map(|issuer| render::frame_src(issuer.as_str()))
-    }
-
-    /// The iframe a card embeds for a Mermaid claim's source, bound to the
-    /// session by its CSRF token, or nothing where no issuer is set.
-    pub(crate) fn render_iframe(&self, csrf: &str, memory_id: &str, source: &str) -> String {
-        if self.app.oauth_issuer().is_none() {
-            return String::new();
-        }
-        render::iframe(&render::token(
-            &self.pages().render_sealer,
-            &self.pages().render_sources,
-            csrf,
-            memory_id,
-            source,
-            unix_now(),
-        ))
-    }
-
-    // -- GET /web/render/{token}, GET /web/assets/{file} -----------------------
-
-    async fn render_frame(
-        State(st): State<Self>,
-        rid: Rid,
-        headers: HeaderMap,
-        Path(token): Path<String>,
-    ) -> Response {
-        let answer = st.render_frame_inner(&headers, &token).await;
-        Self::web_finish(&rid, answer)
-    }
-
-    /// The frame's document for a token this session holds, else
-    /// `access.not_found`: a forged, expired or another session's token
-    /// answers alike (ADR-0056 d9).
-    async fn render_frame_inner(&self, headers: &HeaderMap, token: &str) -> Answer {
-        let mut line = WebLine::default();
-        if let Some(refused) = human_only(headers) {
-            return self.refused(&refused, line);
-        }
-        let session = match self.session_of(headers).await {
-            Ok(Some(found)) => found,
-            Ok(None) => return self.refused(&ApiError::not_found(), line),
-            Err(e) => return self.refused(&e, line),
-        };
-        line.session(&session.1);
-        let csrf = oml_app::domain::web::csrf_token(&session.0);
-        let source = render::open(
-            &self.pages().render_sealer,
-            &self.pages().render_sources,
-            token,
-            &csrf,
-            unix_now(),
-        );
-        match (source, self.app.oauth_issuer()) {
-            (Some(source), Some(issuer)) => Answer {
-                response: render::frame_response(issuer.as_str(), &source),
-                error_code: None,
-                line,
-            },
-            _ => self.refused(&ApiError::not_found(), line),
-        }
-    }
-
-    async fn render_asset(State(_): State<Self>, Path(file): Path<String>) -> Response {
-        if file == format!("mermaid-{}.js", render::BUNDLE_SHA256) {
-            render::bundle_response()
-        } else {
-            let mut response = Response::new(Body::empty());
-            *response.status_mut() = StatusCode::NOT_FOUND;
-            response
-        }
+        })
     }
 
     fn web_handler(method: &str, path: &str) -> MethodRouter<Self> {
@@ -444,12 +352,7 @@ where
     }
 
     fn page(&self, status: StatusCode, html: String) -> Response {
-        page::page_response(
-            status,
-            html,
-            &self.pages().provider_list(),
-            self.frame_src().as_deref(),
-        )
+        page::page_response(status, html, &self.pages().provider_list(), None)
     }
 
     fn refusal_page(&self, error: &ApiError) -> Response {
@@ -485,7 +388,7 @@ where
             refusal.map(|e| (e.code, e.message.as_str())),
             next,
         );
-        page::page_response(status, html, &providers, self.frame_src().as_deref())
+        page::page_response(status, html, &providers, None)
     }
 
     /// `next` on the configured public origin, never on a request header
@@ -537,10 +440,12 @@ where
         }
         // A view oml-web serves at its own path: a 303 to that fixed path,
         // carrying nothing from the request (ADR-0070 d7 (b) as amended).
-        if let Some(path) = views::moved_view(query).or_else(|| views::moved_memories(query, false))
+        if let Some(path) = views::moved_view(query)
+            .map(ToOwned::to_owned)
+            .or_else(|| views::moved_memories(query, false))
         {
             return Answer {
-                response: self.redirect(path, None),
+                response: self.redirect(&path, None),
                 error_code: None,
                 line,
             };
@@ -552,7 +457,7 @@ where
                 error_code: None,
                 line,
             },
-            Ok(Some((token, session))) => {
+            Ok(Some((_, session))) => {
                 line.session(&session);
                 // The page's default view, Keys, is oml-web's: a signed-in
                 // `GET /web` naming no view is a 303 to its fixed path,
@@ -568,7 +473,7 @@ where
                 }
                 let fields = Self::query_fields(query);
                 let html = match fields {
-                    Ok(q) => self.user_view(&token, &session, &q).await,
+                    Ok(q) => self.user_view(&session, &q).await,
                     Err(e) => Err(e),
                 };
                 match html {
@@ -608,10 +513,11 @@ where
         // A view oml-web serves at its own path: a 303 to that fixed path,
         // carrying nothing from the request (ADR-0070 d7 (b) as amended).
         if let Some(path) = views::moved_view_of(views::MOVED_ADMIN_VIEWS, query)
+            .map(ToOwned::to_owned)
             .or_else(|| views::moved_memories(query, true))
         {
             return Answer {
-                response: self.redirect(path, None),
+                response: self.redirect(&path, None),
                 error_code: None,
                 line,
             };
@@ -1121,11 +1027,7 @@ where
         if let Some(cookie) = cookie {
             append_cookie(&mut response, &cookie);
         }
-        page::secure(
-            response,
-            &self.pages().provider_list(),
-            self.frame_src().as_deref(),
-        )
+        page::secure(response, &self.pages().provider_list(), None)
     }
 }
 
@@ -1226,7 +1128,7 @@ impl WebLine {
     }
 }
 
-/// Seconds since the epoch, for a render token's expiry.
+/// Seconds since the epoch.
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
