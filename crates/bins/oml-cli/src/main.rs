@@ -3526,8 +3526,10 @@ fn run_rescan(
 }
 
 /// The smallest count the rates print: a cell below it prints `<5` and no
-/// rate, since a count of one names a version to anyone who knows where
-/// that version came from (ADR-0074 d18).
+/// rate, so a glance at the table does not show a single version. It is not
+/// disclosure control: an origin's exact `scanned` and the difference
+/// between a total and its other cells can recover a hidden count, so the
+/// output is the operator's (ADR-0074 d18).
 const RATES_FLOOR: usize = 5;
 
 /// A count as the rates print it: the number at or above the floor, `<5`
@@ -3547,10 +3549,11 @@ fn floored(n: usize, of: u64) -> (Value, Value) {
 /// scan would refuse or hold, and their share of the versions scanned (of
 /// that origin, for an origin). A version counts once per cell however
 /// many findings it carries. Every count from 1 to 4 prints as `<5` with
-/// no rate, so only this floored output is fit to publish from a live
-/// tenant's copy. The rescan answer the CLI reads carries artifact ids, as
-/// the plain rescan does for the admin key that asks; no id, claim key or
-/// text leaves this function.
+/// no rate. The output is for the operator, not for publication: the floor
+/// can be undone by subtraction and by a small origin's exact `scanned`.
+/// The rescan answer the CLI reads carries artifact ids, as the plain
+/// rescan does for the admin key that asks; no id, claim key or text leaves
+/// this function.
 fn rescan_rates(
     version: Option<&str>,
     scanned: u64,
@@ -3620,7 +3623,7 @@ fn rates_lines(report: &Value) -> Vec<String> {
     };
     let count = |v: &Value| v.as_str().map_or_else(|| v.to_string(), str::to_owned);
     let mut out = vec![format!(
-        "rates       : {} stored version(s) under {}; aggregates only, counts under {} print as <{}",
+        "rates       : {} stored version(s) under {}; aggregates for the operator, not for publication; counts under {} print as <{}",
         report["scanned"],
         report["scanner_version"]
             .as_str()
@@ -6331,10 +6334,12 @@ mod tests {
 
     /// ADR-0074 d18: the dry run's rates are aggregates per class, per
     /// origin and per class within an origin, a version counts once per
-    /// cell, and a count under the floor prints as `<5` with no rate, so a
-    /// cell of one never names a version; no id or text is printed.
+    /// cell, a count under the floor prints as `<5` with no rate, the
+    /// header says the output is the operator's, and no id or text is
+    /// printed.
     #[test]
-    fn the_rescan_rates_floor_every_count_under_five_and_print_no_id_or_text() {
+    fn the_rescan_rates_print_counts_under_five_as_under_five_for_the_operator_with_no_id_or_text()
+    {
         let id = |n: u128| format!("{:032x}", n);
         let mut findings = Vec::new();
         // Six chat versions held for one rule, one of them twice.
@@ -6367,6 +6372,7 @@ mod tests {
         );
         let lines = rates_lines(&report);
         assert!(lines[0].contains("counts under 5 print as <5"), "{lines:?}");
+        assert!(lines[0].contains("not for publication"), "{lines:?}");
         let text = format!("{report}\n{}", lines.join("\n"));
         assert!(
             !text.contains("refuse 1 ") && !text.contains("\"refuse\":1"),

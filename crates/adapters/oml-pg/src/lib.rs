@@ -2594,9 +2594,11 @@ fn signed_envelope_from_row(row: &PgRow) -> Result<SignedEnvelope, StoreError> {
 
 /// The findings lists of `lists` under the commit's `seq`, each in its
 /// order (ADR-0074 d23). A finding the version's list already holds by
-/// class, rule and field is kept as first recorded (`scan_findings_one`),
-/// and so is one migration 0043 could not place, with no field, by class
-/// and rule alone: a recording rescan never lists a finding twice.
+/// class, rule and field is kept as first recorded (`scan_findings_one`).
+/// A finding migration 0043 could not place, with no field, stands for one
+/// place of its class and rule: the first of `list`'s finds of them, in
+/// order, is taken as that place and not added, and the rest are, so a
+/// finding is never listed twice and a second place is never lost.
 async fn insert_findings(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
@@ -2644,14 +2646,16 @@ async fn insert_findings(
          rule_set, field, line, via, span_start, span_end, found_by, migrated_from) \
          SELECT $1, u.id, $2, u.ord, u.class, u.rule, u.verdict, u.rule_set, u.field, u.line, \
                 u.via, u.span_start, u.span_end, u.found_by, u.migrated_from \
-         FROM unnest($3::uuid[], $4::int4[], $5::text[], $6::text[], $7::text[], $8::text[], \
-                     $9::text[], $10::int4[], $11::text[], $12::int8[], $13::int8[], $14::text[], \
-                     $15::text[]) \
-           AS u(id, ord, class, rule, verdict, rule_set, field, line, via, span_start, span_end, \
-                found_by, migrated_from) \
-         WHERE NOT EXISTS (SELECT 1 FROM scan_findings f \
-                            WHERE f.tenant_id = $1 AND f.memory_id = u.id \
-                              AND f.class = u.class AND f.rule = u.rule AND f.field IS NULL) \
+         FROM (SELECT u.*, row_number() OVER (PARTITION BY u.id, u.class, u.rule \
+                                              ORDER BY u.ord) AS k \
+               FROM unnest($3::uuid[], $4::int4[], $5::text[], $6::text[], $7::text[], \
+                           $8::text[], $9::text[], $10::int4[], $11::text[], $12::int8[], \
+                           $13::int8[], $14::text[], $15::text[]) \
+                 AS u(id, ord, class, rule, verdict, rule_set, field, line, via, span_start, \
+                      span_end, found_by, migrated_from)) u \
+         WHERE u.k > (SELECT count(*) FROM scan_findings f \
+                       WHERE f.tenant_id = $1 AND f.memory_id = u.id \
+                         AND f.class = u.class AND f.rule = u.rule AND f.field IS NULL) \
          ON CONFLICT ON CONSTRAINT scan_findings_one DO NOTHING",
     )
     .bind(tenant_id)

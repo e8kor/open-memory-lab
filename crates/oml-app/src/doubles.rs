@@ -1745,15 +1745,31 @@ fn apply_fold(
                         memory.scan_finding = v.summary;
                     }
                     // A finding the list holds by class, rule and field
-                    // stays as first recorded (scan_findings_one), and so
-                    // does a migrated one with no field, by class and rule.
+                    // stays as first recorded (scan_findings_one); a
+                    // migrated one with no field stands for one place of
+                    // its class and rule, the first this rescan finds.
+                    let mut taken: Vec<(String, String)> = Vec::new();
                     for mut f in v.findings {
-                        let held = state.findings.iter().any(|(id, g)| {
-                            *id == v.memory_id
-                                && g.class == f.class
-                                && g.rule == f.rule
-                                && (g.field == f.field || g.field.is_none())
-                        });
+                        let placeless = state
+                            .findings
+                            .iter()
+                            .filter(|(id, g)| {
+                                *id == v.memory_id
+                                    && g.class == f.class
+                                    && g.rule == f.rule
+                                    && g.field.is_none()
+                            })
+                            .count();
+                        let key = (f.class.clone(), f.rule.clone());
+                        let seen = taken.iter().filter(|k| **k == key).count();
+                        taken.push(key);
+                        let held = seen < placeless
+                            || state.findings.iter().any(|(id, g)| {
+                                *id == v.memory_id
+                                    && g.class == f.class
+                                    && g.rule == f.rule
+                                    && g.field == f.field
+                            });
                         if !held {
                             f.event_seq = Some(seq);
                             state.findings.push((v.memory_id, f));
