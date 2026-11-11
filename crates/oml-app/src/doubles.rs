@@ -382,6 +382,10 @@ pub struct MemStore {
     /// the declining nodes and the reference counts — shared by every
     /// handle, so a law can hold that a recall made none (ADR-0072 d12).
     federation_reads: Arc<AtomicU64>,
+    /// How many widen-signal reads the store answered: a held signal's
+    /// query forms, read on a `scope` recall in place of any count
+    /// (ADR-0072 d8, d12, as built by #244).
+    widen_signal_reads: Arc<AtomicU64>,
 }
 
 /// Work a test lands between a use case's reads and its commit: run once,
@@ -442,6 +446,12 @@ impl MemStore {
     #[must_use]
     pub fn federation_reads(&self) -> u64 {
         self.federation_reads.load(Ordering::SeqCst)
+    }
+
+    /// How many widen-signal reads every handle of this store answered.
+    #[must_use]
+    pub fn widen_signal_reads(&self) -> u64 {
+        self.widen_signal_reads.load(Ordering::SeqCst)
     }
 
     /// The store that answers the `bm25` retriever with its any-word list:
@@ -2722,6 +2732,23 @@ impl JournalStore for MemStore {
             pruned: Vec::new(),
             nodes,
         })
+    }
+
+    async fn vocabulary_counts(
+        &self,
+        _tenant_id: Uuid,
+        _scope: &crate::federation::CountsScope,
+    ) -> Result<crate::federation::VocabularyCounts, StoreError> {
+        Ok(crate::federation::VocabularyCounts::default())
+    }
+
+    async fn counts_from_vocabulary(
+        &self,
+        _vocabulary: &crate::federation::VocabularyCounts,
+        _query: &str,
+        _prunes: bool,
+    ) -> Result<crate::federation::ReferenceCounts, StoreError> {
+        Ok(crate::federation::ReferenceCounts::default())
     }
 
     async fn steering_in_force(

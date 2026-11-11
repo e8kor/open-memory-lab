@@ -13,6 +13,7 @@ mod signup;
 mod sparse;
 mod usage;
 mod web;
+mod widen;
 pub use federation::WideKey;
 pub use pages::{
     AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted, OwnKey, QueueRow,
@@ -24,6 +25,7 @@ pub use signup::{DRAWS_MAX, Person, SignupState, StartStatus, UserDisabled, User
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
 pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
+pub use widen::{WIDEN_SIGNAL_MAX_AGE_SECS, WIDEN_SIGNAL_PAIRS_HELD, WIDEN_SIGNAL_REFRESH_SECS};
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -232,6 +234,9 @@ pub struct App<J, S, C, I, Sc> {
     /// sources since the lead started, by tenant, with the most it met: the
     /// doctor line a tenant admin reads (ADR-0072 d12). It decides nothing.
     wide_keys: std::sync::Mutex<BTreeMap<(Uuid, Uuid), usize>>,
+    /// The widen hint's signals, built off the request path, and the ones
+    /// recalls asked for (ADR-0072 d8, as built by #244).
+    widen: widen::WidenSignals,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -1354,6 +1359,7 @@ where
             formats: Arc::new(crate::ports::ProseFormats),
             signup: None,
             wide_keys: std::sync::Mutex::default(),
+            widen: widen::WidenSignals::default(),
         }
     }
 
@@ -6375,6 +6381,30 @@ where
             candidates.retain(|c| rows.get(&c.memory_id).is_some_and(admits));
             (candidates, below_floor) = apply_floor(candidates, floor);
         }
+        // The widen hint, on a `scope` answer at the server's now: read off
+        // the key's precomputed signal, never off the candidates or their
+        // counts, and absent where no usable signal is held (ADR-0072 d8,
+        // d12, as built by #244).
+        let widen = if plan.report.is_none()
+            && req.as_of.is_none()
+            && req.now.is_none()
+            && policy.is_none_or(|p| p.enabled)
+        {
+            let prunes = pipeline.retrievers().contains(&RetrieverKind::Bm25Postings)
+                && req.match_mode == MatchMode::Any;
+            self.widen_hint(
+                caller,
+                scope,
+                &hit_nodes,
+                &kinds,
+                req.include_expired,
+                prunes,
+                &query,
+            )
+            .await
+        } else {
+            None
+        };
         // Spellings only for an empty or thin result, fewer hits than
         // `DID_YOU_MEAN_BELOW` (or than `k` when it asks fewer) before the
         // budget cut, for the
@@ -6492,6 +6522,7 @@ where
             timings,
             window,
             sources: plan.report,
+            widen,
             federation: plan.record,
         })
     }

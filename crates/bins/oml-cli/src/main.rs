@@ -5105,8 +5105,9 @@ fn formats_doctor(ready: Option<&(u16, Value)>) -> Option<String> {
 }
 
 /// The federation lines (ADR-0072 d12, Consequences), read by an admin
-/// key: federation on with `max_sources` 0, and each key whose recall met
-/// more than 1,000 candidate sources since the lead started.
+/// key: federation on with `max_sources` 0, each key whose recall met more
+/// than 1,000 candidate sources since the lead started, and the widen
+/// hint's signal failing or never built (#244).
 fn federation_doctor(settings: Option<&Value>) -> Vec<String> {
     let Some(settings) = settings else {
         return Vec::new();
@@ -6211,5 +6212,38 @@ mod tests {
         assert_eq!(valid_line(&open), "none declared");
         let ended = serde_json::json!({ "valid_from": null, "valid_until": "2015" });
         assert_eq!(valid_line(&ended), "from any time, until 2015");
+    }
+
+    #[test]
+    fn the_federation_doctor_names_a_widen_signal_that_failed_or_was_never_built() {
+        let settings = |built: u64, unserved: u64, failed: u64| {
+            json!({
+                "enabled": true,
+                "max_sources": 8,
+                "wide_keys": [],
+                "widen_signal": {
+                    "built": built,
+                    "unserved": unserved,
+                    "failed": failed,
+                    "last_failure": if failed > 0 { Value::from("backend: timeout") } else { Value::Null },
+                },
+            })
+        };
+        assert!(federation_doctor(Some(&settings(3, 2, 0))).is_empty());
+        assert!(federation_doctor(Some(&settings(0, 0, 0))).is_empty());
+        assert_eq!(
+            federation_doctor(Some(&settings(1, 0, 2))),
+            vec![
+                "warn the widen hint's signal failed to build 2 times since the lead started, last: backend: timeout; a scope recall without its signal carries no hint"
+                    .to_owned()
+            ]
+        );
+        assert_eq!(
+            federation_doctor(Some(&settings(0, 5, 0))),
+            vec![
+                "warn 5 scope recalls found no widen signal and none was built since the lead started: no scope answer carries the widen hint until one is"
+                    .to_owned()
+            ]
+        );
     }
 }

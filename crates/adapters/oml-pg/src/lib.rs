@@ -5608,6 +5608,91 @@ pub const SPARSE_MAX_ATTEMPTS: i32 = 5;
 /// pass skips them meanwhile (ADR-0052 d15; L1 on review).
 pub const SPARSE_LEASE_SECS: i64 = 300;
 
+impl PgStore {
+    /// A query's counts from per-(node, form) counts (ADR-0072 d4.2): each
+    /// word's frequency is its most frequent form's, and the words a
+    /// pruning pipeline drops are decided over the nodes' sums as
+    /// `bm25_postings` decides them (ADR-0052 d6). Shared by the reference
+    /// counts and the widen signal's lookup, so the two cannot disagree.
+    fn counts_of_forms(
+        &self,
+        forms: &[(String, String)],
+        rows: &BTreeMap<Uuid, u64>,
+        df: &BTreeMap<(Uuid, i64), u64>,
+        prunes: bool,
+    ) -> oml_app::federation::ReferenceCounts {
+        let mut words: Vec<String> = forms.iter().map(|(w, _)| w.clone()).collect();
+        words.dedup();
+        // Each word's forms, in the words' order.
+        let word_forms: Vec<Vec<i64>> = words
+            .iter()
+            .map(|w| {
+                let mut f: Vec<i64> = forms
+                    .iter()
+                    .filter(|(fw, _)| fw == w)
+                    .map(|(_, f)| token_id(f))
+                    .collect();
+                f.sort_unstable();
+                f.dedup();
+                f
+            })
+            .collect();
+        let nodes: BTreeMap<Uuid, oml_app::domain::federation::SourceCounts> = rows
+            .iter()
+            .map(|(node, n)| {
+                (
+                    *node,
+                    oml_app::domain::federation::SourceCounts {
+                        rows: *n,
+                        df: word_forms
+                            .iter()
+                            .map(|fs| {
+                                fs.iter()
+                                    .map(|t| df.get(&(*node, *t)).copied().unwrap_or(0))
+                                    .max()
+                                    .unwrap_or(0)
+                            })
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+        // The words a pruning pipeline drops, decided over the set's sums
+        // as `bm25_postings` decides them (ADR-0052 d6; ADR-0072 d4.2).
+        let pruned = if prunes {
+            let total_rows: u64 = rows.values().sum();
+            let entries: Vec<Vec<(i64, u64)>> = word_forms
+                .iter()
+                .map(|fs| {
+                    fs.iter()
+                        .map(|t| {
+                            let n: u64 = df
+                                .iter()
+                                .filter(|((_, tok), _)| tok == t)
+                                .map(|(_, n)| *n)
+                                .sum();
+                            (*t, n)
+                        })
+                        .filter(|(_, n)| *n > 0)
+                        .collect()
+                })
+                .collect();
+            self.prune
+                .pruned(&entries, total_rows)
+                .into_iter()
+                .map(|i| words[i].clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        oml_app::federation::ReferenceCounts {
+            words,
+            pruned,
+            nodes,
+        }
+    }
+}
+
 impl JournalStore for PgStore {
     async fn user_usage(
         &self,
@@ -6054,8 +6139,6 @@ impl JournalStore for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;
-        let mut words: Vec<String> = forms.iter().map(|(w, _)| w.clone()).collect();
-        words.dedup();
         let kinds = hit_kinds(&scope.kinds);
         let memory_kinds: Vec<i16> = kinds
             .iter()
@@ -6124,73 +6207,24 @@ impl JournalStore for PgStore {
             }
         }
         tx.commit().await.map_err(backend)?;
-        // Each word's forms, in the words' order.
-        let word_forms: Vec<Vec<i64>> = words
-            .iter()
-            .map(|w| {
-                let mut f: Vec<i64> = forms
-                    .iter()
-                    .filter(|(fw, _)| fw == w)
-                    .map(|(_, f)| token_id(f))
-                    .collect();
-                f.sort_unstable();
-                f.dedup();
-                f
-            })
-            .collect();
-        let nodes: BTreeMap<Uuid, oml_app::domain::federation::SourceCounts> = rows
-            .iter()
-            .map(|(node, n)| {
-                (
-                    *node,
-                    oml_app::domain::federation::SourceCounts {
-                        rows: *n,
-                        df: word_forms
-                            .iter()
-                            .map(|fs| {
-                                fs.iter()
-                                    .map(|t| df.get(&(*node, *t)).copied().unwrap_or(0))
-                                    .max()
-                                    .unwrap_or(0)
-                            })
-                            .collect(),
-                    },
-                )
-            })
-            .collect();
-        // The words a pruning pipeline drops, decided over the set's sums
-        // as `bm25_postings` decides them (ADR-0052 d6; ADR-0072 d4.2).
-        let pruned = if scope.prunes {
-            let total_rows: u64 = rows.values().sum();
-            let entries: Vec<Vec<(i64, u64)>> = word_forms
-                .iter()
-                .map(|fs| {
-                    fs.iter()
-                        .map(|t| {
-                            let n: u64 = df
-                                .iter()
-                                .filter(|((_, tok), _)| tok == t)
-                                .map(|(_, n)| *n)
-                                .sum();
-                            (*t, n)
-                        })
-                        .filter(|(_, n)| *n > 0)
-                        .collect()
-                })
-                .collect();
-            self.prune
-                .pruned(&entries, total_rows)
-                .into_iter()
-                .map(|i| words[i].clone())
-                .collect()
-        } else {
-            Vec::new()
-        };
-        Ok(oml_app::federation::ReferenceCounts {
-            words,
-            pruned,
-            nodes,
-        })
+        Ok(self.counts_of_forms(&forms, &rows, &df, scope.prunes))
+    }
+
+    async fn vocabulary_counts(
+        &self,
+        _tenant_id: Uuid,
+        _scope: &oml_app::federation::CountsScope,
+    ) -> Result<oml_app::federation::VocabularyCounts, StoreError> {
+        Ok(oml_app::federation::VocabularyCounts::default())
+    }
+
+    async fn counts_from_vocabulary(
+        &self,
+        _vocabulary: &oml_app::federation::VocabularyCounts,
+        _query: &str,
+        _prunes: bool,
+    ) -> Result<oml_app::federation::ReferenceCounts, StoreError> {
+        Ok(oml_app::federation::ReferenceCounts::default())
     }
 
     async fn steering_in_force(

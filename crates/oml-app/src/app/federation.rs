@@ -82,7 +82,10 @@ where
         require_role(&admin, Role::Admin, "federation_settings")?;
         let policy = self.journal.federation_policy(admin.tenant_id).await?;
         Ok((
-            FederationSettings { policy },
+            FederationSettings {
+                policy,
+                widen_signal: self.widen.health_of(admin.tenant_id),
+            },
             self.wide_keys_of(admin.tenant_id),
         ))
     }
@@ -128,7 +131,13 @@ where
             self.commit(event, MetadataFold::FederationPolicySet(policy), None)
                 .await?;
         }
-        Ok((FederationSettings { policy }, self.wide_keys_of(tenant_id)))
+        Ok((
+            FederationSettings {
+                policy,
+                widen_signal: self.widen.health_of(tenant_id),
+            },
+            self.wide_keys_of(tenant_id),
+        ))
     }
 
     /// `POST /v2/workareas/{workarea}/federation` (d5): a dreamer key a

@@ -14,7 +14,8 @@ use oml_domain::MemoryKind;
 /// set of workareas, answered whole or refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sources {
-    /// Today's answer exactly, plus the widen hint on a federated tenant.
+    /// Today's answer exactly, plus the widen hint where a signal serves it
+    /// (#244).
     Scope,
     /// The scope plus the candidates selection chooses.
     Wide,
@@ -96,6 +97,25 @@ pub struct FederationPolicyChange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FederationSettings {
     pub policy: FederationPolicy,
+    /// The widen hint's signal on this tenant since the lead started, for
+    /// doctor (#244).
+    pub widen_signal: WidenSignalHealth,
+}
+
+/// How the widen hint's precomputed signal fared on a tenant since the
+/// lead started (ADR-0072 d8, as built by #244): a `scope` recall that
+/// found no signal it could use answered without the hint, and a build
+/// that failed left none. It decides nothing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WidenSignalHealth {
+    /// Signals built.
+    pub built: u64,
+    /// `scope` recalls answered without the hint because their signal was
+    /// missing, older than its bound or built under other grants.
+    pub unserved: u64,
+    /// Builds that failed, and the last one's reason.
+    pub failed: u64,
+    pub last_failure: Option<String>,
 }
 
 /// A workarea's federation field as its read serves it (d5).
@@ -137,6 +157,34 @@ pub struct ReferenceCounts {
     pub words: Vec<String>,
     pub pruned: Vec<String>,
     pub nodes: BTreeMap<Uuid, SourceCounts>,
+}
+
+/// Every form's counts over a set of nodes, read once off the request path
+/// and held as the widen hint's signal (ADR-0072 d8, as built by #244):
+/// per node its served versions, and per form, an opaque key the store
+/// gives it, the nodes holding it with their counts. The same subtraction
+/// of expired versions as [`ReferenceCounts`] applies, as of the read.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VocabularyCounts {
+    pub rows: BTreeMap<Uuid, u64>,
+    pub forms: BTreeMap<i64, Vec<(Uuid, u64)>>,
+}
+
+impl VocabularyCounts {
+    /// How many (form, node) counts it holds: its size in memory.
+    #[must_use]
+    pub fn pairs(&self) -> usize {
+        self.forms.values().map(Vec::len).sum::<usize>() + self.rows.len()
+    }
+}
+
+/// `search.widen` on a `scope` answer (d8, as amended): how many
+/// candidates hold a kept word and a lower bound on their matching rows.
+/// It names no workarea.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Widen {
+    pub candidates: usize,
+    pub matches_at_least: u64,
 }
 
 /// Whether a hit came from the scope or a federated source (d8).

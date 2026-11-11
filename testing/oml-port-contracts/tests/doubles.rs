@@ -78,10 +78,54 @@ async fn federated_recall_double_timing_does_not_depend_on_an_unreadable_workare
     assert_within_noise(without, with);
 }
 
+/// The widen hint's laws over the double, one test per sentence
+/// (ADR-0072 d8, d12, as built by #244).
+#[tokio::test]
+async fn the_signals_counts_equal_the_reference_counts() {
+    contracts::federation::the_signals_counts_equal_the_reference_counts(
+        MemStore::new().answering_bm25_with_any_word(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row() {
+    contracts::federation::the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row(
+        MemStore::new().answering_bm25_with_any_word(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_scope_recall_without_its_signal_carries_no_hint_and_asks_for_one() {
+    contracts::federation::a_scope_recall_without_its_signal_carries_no_hint_and_asks_for_one(
+        MemStore::new().answering_bm25_with_any_word(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_signal_built_under_other_grants_serves_no_hint() {
+    contracts::federation::a_signal_built_under_other_grants_serves_no_hint(
+        MemStore::new().answering_bm25_with_any_word(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_signal_at_its_age_bound_serves_no_hint() {
+    contracts::federation::a_signal_at_its_age_bound_serves_no_hint(
+        MemStore::new().answering_bm25_with_any_word(),
+    )
+    .await;
+}
+
 /// A `scope` recall does no federation work: no policy, candidate or
 /// statistics read, whether the tenant has federation on or off, and
 /// whether `sources` is sent or absent; `wide` does (ADR-0072 d12, as
-/// amended: the default path pays nothing for federation).
+/// amended: the default path pays nothing for federation). With its widen
+/// signal held, it makes that signal's one read and still none of these
+/// (#244).
 #[tokio::test]
 async fn a_scope_recall_makes_no_federation_read() {
     use oml_app::federation::{FederationPolicyChange, Sources};
@@ -119,6 +163,43 @@ async fn a_scope_recall_makes_no_federation_read() {
                 "a scope recall with federation {enabled} and sources {sources:?} read federation state"
             );
         }
+    }
+    // Federation on and the key's signal held: the signal's one read, and
+    // still no federation read.
+    w.app
+        .set_federation_policy(
+            w.admin.as_str(),
+            FederationPolicyChange {
+                enabled: Some(true),
+                ..FederationPolicyChange::default()
+            },
+        )
+        .await
+        .expect("federation on");
+    w.fresh_signal(&key, "invoice retry policy", "home", None)
+        .await;
+    for sources in [None, Some(Sources::Scope)] {
+        let (reads, signal_reads) = (store.federation_reads(), store.widen_signal_reads());
+        w.recall(
+            &key,
+            "invoice retry policy",
+            "home",
+            sources.clone(),
+            "bm25",
+            10,
+        )
+        .await
+        .expect("a scope recall");
+        assert_eq!(
+            store.federation_reads(),
+            reads,
+            "a scope recall with its signal held read federation state"
+        );
+        assert_eq!(
+            store.widen_signal_reads(),
+            signal_reads + 1,
+            "a scope recall with its signal held read it other than once ({sources:?})"
+        );
     }
     w.app
         .set_federation_policy(
