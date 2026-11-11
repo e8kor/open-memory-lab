@@ -467,3 +467,57 @@ async fn a_refused_act_frees_its_key_so_the_resubmission_acts_again() {
         "the resubmission acted again and was refused alike"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_request_dropped_after_its_act_committed_never_lets_the_resubmission_act_again() {
+    let w = world().await;
+    let body = json!({"name": "dropped", "parent": "universe"});
+    let park = w.store.park_after_next_commit();
+    let first = {
+        let router = w.router.clone();
+        let admin = w.admin.clone();
+        let body = body.clone();
+        tokio::spawn(async move { send(&router, "/v2/workareas", &admin, "c-7", Some(body)).await })
+    };
+    while !park.reached() {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    // The act committed; the client gives up, as oml-web's call timeout
+    // does, and its request is dropped before the outcome is recorded.
+    first.abort();
+    assert!(first.await.is_err(), "the request was dropped");
+    park.open();
+    let (status, headers, again) =
+        send(&w.router, "/v2/workareas", &w.admin, "c-7", Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "{again}");
+    assert!(
+        replayed(&headers),
+        "the resubmission replays the act: {again}"
+    );
+    assert_eq!(created(&w, "dropped").await, 1, "created once");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_step_that_fails_after_the_act_committed_holds_the_key_so_the_resubmission_acts_nothing()
+{
+    let w = world().await;
+    let path = format!("/v2/workareas/{}/mode", w.draft);
+    let body = json!({"mode": "in_progress"});
+    w.store.fail_workarea_children_after_next_commit();
+    let (status, _, first) = send(&w.router, &path, &w.ann, "m-9", Some(body.clone())).await;
+    assert!(
+        status.is_server_error(),
+        "the read after the commit failed: {first}"
+    );
+    let node = w.store.workarea(w.tenant, w.draft).await.unwrap().unwrap();
+    assert!(node.in_progress, "the act committed");
+    let head = w.store.chain_head(w.tenant).await.unwrap();
+    let (status, _, again) = send(&w.router, &path, &w.ann, "m-9", Some(body)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{again}");
+    assert_eq!(again["error"]["code"], "idempotency.in_progress");
+    assert_eq!(
+        w.store.chain_head(w.tenant).await.unwrap(),
+        head,
+        "the resubmission journalled nothing"
+    );
+}

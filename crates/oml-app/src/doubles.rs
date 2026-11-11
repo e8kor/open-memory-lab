@@ -362,6 +362,13 @@ pub struct MemStore {
     /// nothing, then settles normally: a failure between an act and its
     /// record (#233).
     fail_next_settle: Arc<AtomicBool>,
+    /// The next commit parks once it has applied, until the park opens:
+    /// an act whose commit landed and whose request is still in flight.
+    park_after_commit: Arc<Mutex<Option<CommitPark>>>,
+    /// Armed, the next commit makes the `workarea_children` read after it
+    /// fail once: a step after an act's commit that fails.
+    fail_children_after_commit: Arc<AtomicBool>,
+    fail_next_children: Arc<AtomicBool>,
     /// `similar_candidates` ignores its scope (a store that regressed), so
     /// a test proves the core admits by recall's rule on its own.
     widen_similar: Arc<AtomicBool>,
@@ -555,6 +562,38 @@ impl MemStore {
     /// (#233).
     pub fn fail_next_idempotency_settle(&self) {
         self.fail_next_settle.store(true, Ordering::SeqCst);
+    }
+
+    /// Parks the next commit once it has applied, until the returned park
+    /// opens: the commit has landed and its caller has not seen it, which
+    /// a test uses to drop the request at that point (#233).
+    #[must_use]
+    pub fn park_after_next_commit(&self) -> CommitPark {
+        let park = CommitPark::default();
+        *self.park_after_commit.lock().expect("park lock") = Some(park.clone());
+        park
+    }
+
+    /// Fails the first `workarea_children` read after the next commit, as
+    /// a lost connection would: a read an act makes after its commit fails
+    /// (#233).
+    pub fn fail_workarea_children_after_next_commit(&self) {
+        self.fail_children_after_commit
+            .store(true, Ordering::SeqCst);
+    }
+
+    /// What runs after a commit applied, outside the tenant's lock.
+    async fn after_commit(&self) {
+        if self
+            .fail_children_after_commit
+            .swap(false, Ordering::SeqCst)
+        {
+            self.fail_next_children.store(true, Ordering::SeqCst);
+        }
+        let park = self.park_after_commit.lock().expect("park lock").take();
+        if let Some(park) = park {
+            park.wait().await;
+        }
     }
 
     /// Makes `similar_candidates` ignore its scope and name every version of
@@ -2466,30 +2505,34 @@ impl JournalStore for MemStore {
         // provides with a row lock on the chain head (ADR-0002). The links
         // apply to a copy that replaces the state only once every one has
         // applied, so a refused link leaves the earlier ones unwritten.
-        let mut state = tenant.lock().expect("tenant lock");
-        let mut staged = state.clone();
-        let mut receipt = append(&mut staged, first)?;
-        for req in reqs {
-            if req.event.envelope.tenant_id != tenant_id {
-                return Err(StoreError::Backend(
-                    "a chain commit names one tenant".to_owned(),
-                ));
-            }
-            receipt = append(&mut staged, req)?;
-        }
-        if !tenant_names.is_empty() {
-            let mut names = self.tenant_names.lock().expect("tenant names lock");
-            let mut staged_names = names.clone();
-            for (genesis, name) in &tenant_names {
-                if *genesis {
-                    name_tenant(&mut staged_names, tenant_id, name)?;
-                } else {
-                    assign_tenant_name(&mut staged_names, tenant_id, name)?;
+        let receipt = {
+            let mut state = tenant.lock().expect("tenant lock");
+            let mut staged = state.clone();
+            let mut receipt = append(&mut staged, first)?;
+            for req in reqs {
+                if req.event.envelope.tenant_id != tenant_id {
+                    return Err(StoreError::Backend(
+                        "a chain commit names one tenant".to_owned(),
+                    ));
                 }
+                receipt = append(&mut staged, req)?;
             }
-            *names = staged_names;
-        }
-        *state = staged;
+            if !tenant_names.is_empty() {
+                let mut names = self.tenant_names.lock().expect("tenant names lock");
+                let mut staged_names = names.clone();
+                for (genesis, name) in &tenant_names {
+                    if *genesis {
+                        name_tenant(&mut staged_names, tenant_id, name)?;
+                    } else {
+                        assign_tenant_name(&mut staged_names, tenant_id, name)?;
+                    }
+                }
+                *names = staged_names;
+            }
+            *state = staged;
+            receipt
+        };
+        self.after_commit().await;
         Ok(receipt)
     }
 
@@ -3492,6 +3535,11 @@ impl JournalStore for MemStore {
         tenant_id: Uuid,
         workarea_id: Uuid,
     ) -> Result<Vec<WorkareaRecord>, StoreError> {
+        if self.fail_next_children.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Backend(
+                "the connection was lost reading the children".to_owned(),
+            ));
+        }
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
         };
@@ -4787,6 +4835,50 @@ impl IdGen for SeqIdGen {
         let mut secret = [0_u8; 32];
         secret[24..].copy_from_slice(&n.to_be_bytes());
         secret
+    }
+}
+
+/// A commit parked after it applied, until [`CommitPark::open`]: built on
+/// the standard library alone, as the doubles take no runtime.
+#[derive(Debug, Clone, Default)]
+pub struct CommitPark(Arc<ParkState>);
+
+#[derive(Debug, Default)]
+struct ParkState {
+    reached: AtomicBool,
+    open: AtomicBool,
+    waker: Mutex<Option<std::task::Waker>>,
+}
+
+impl CommitPark {
+    /// Whether a commit has applied and parked here.
+    #[must_use]
+    pub fn reached(&self) -> bool {
+        self.0.reached.load(Ordering::SeqCst)
+    }
+
+    /// Lets the parked commit return.
+    pub fn open(&self) {
+        self.0.open.store(true, Ordering::SeqCst);
+        if let Some(waker) = self.0.waker.lock().expect("waker lock").take() {
+            waker.wake();
+        }
+    }
+
+    async fn wait(&self) {
+        self.0.reached.store(true, Ordering::SeqCst);
+        std::future::poll_fn(|cx| {
+            if self.0.open.load(Ordering::SeqCst) {
+                return std::task::Poll::Ready(());
+            }
+            *self.0.waker.lock().expect("waker lock") = Some(cx.waker().clone());
+            if self.0.open.load(Ordering::SeqCst) {
+                std::task::Poll::Ready(())
+            } else {
+                std::task::Poll::Pending
+            }
+        })
+        .await;
     }
 }
 
