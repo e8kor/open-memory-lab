@@ -5922,7 +5922,7 @@ mod tests {
     }
 
     #[test]
-    fn the_search_doctor_warns_that_a_recall_naming_no_pipeline_is_refused_while_the_tenant_default_is_not_served()
+    fn the_search_doctor_warns_that_a_recall_naming_no_pipeline_runs_the_deployments_default_while_the_tenant_default_is_not_served()
      {
         let ready = (
             200,
@@ -5930,7 +5930,8 @@ mod tests {
         );
         let unserved = json!({
             "enabled": ["keyword-any", "bm25"], "deployment_default": "bm25",
-            "tenant_default": "bm25-sparse", "effective": null,
+            "tenant_default": "bm25-sparse", "effective": "bm25",
+            "tenant_default_served": false,
         });
         let lines = search_doctor(Some(&ready), Some(&unserved), None);
         let line = lines
@@ -5939,11 +5940,12 @@ mod tests {
             .unwrap_or_else(|| panic!("{lines:?}"));
         assert_eq!(
             line,
-            "warn search_tenant_default: this tenant's default bm25-sparse is not served here, so a recall naming no pipeline is refused (settings.invalid); oml search set-default <pipeline>, or serve bm25-sparse"
+            "warn search_tenant_default: this tenant's default bm25-sparse is not served here, so a recall naming no pipeline runs bm25, marked search.fallback tenant_default_unserved; oml search set-default <pipeline>, or serve bm25-sparse"
         );
         let served = json!({
             "enabled": ["keyword-any", "bm25"], "deployment_default": "bm25",
             "tenant_default": "keyword-any", "effective": "keyword-any",
+            "tenant_default_served": true,
         });
         let lines = search_doctor(Some(&ready), Some(&served), None);
         assert!(

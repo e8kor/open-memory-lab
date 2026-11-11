@@ -9022,6 +9022,7 @@ async fn an_admin_sets_the_tenants_default_pipeline_and_the_next_recall_runs_it(
             "deployment_default": "bm25-postings",
             "tenant_default": null,
             "effective": "bm25-postings",
+            "tenant_default_served": true,
         })
     );
     let (status, _, refused) = send(router, "GET", "/v2/search", Call::auth(&reader)).await;
@@ -9066,16 +9067,18 @@ async fn an_admin_sets_the_tenants_default_pipeline_and_the_next_recall_runs_it(
 }
 
 /// A recall naming no pipeline, under a tenant default a lead restarted
-/// with a narrower `search.enabled` does not serve, is refused with one
-/// envelope over HTTP and over `oml_read`; a request naming a served
-/// pipeline still runs on both, and the settings name no effective pipeline
-/// (ADR-0049 d15).
+/// with a narrower `search.enabled` does not serve, runs the deployment's
+/// default and says so with `search.fallback: "tenant_default_unserved"`,
+/// over HTTP and over `oml_read` alike; a request naming a served pipeline
+/// runs unmarked; the settings name the pipeline that runs and flag the
+/// tenant's default; and the start names the tenant (ADR-0049 d15).
 #[tokio::test]
-async fn http_and_mcp_refuse_a_recall_under_an_unserved_tenant_default_with_one_envelope() {
+async fn http_and_mcp_run_the_deployments_default_marked_under_an_unserved_tenant_default() {
     let Some((rig, admin, _crew, agent, dreamer, reader)) = own_held_rig().await else {
         return;
     };
-    promoted_over_http(&rig.router, &agent, &dreamer, "q1", "deploys nightly").await;
+    let memory =
+        promoted_over_http(&rig.router, &agent, &dreamer, "q1", "deploys nightly").await;
     let (status, _, set) = send(
         &rig.router,
         "POST",
@@ -9086,7 +9089,26 @@ async fn http_and_mcp_refuse_a_recall_under_an_unserved_tenant_default_with_one_
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{set}");
+    assert_eq!(set["tenant_default_served"], true, "{set}");
 
+    let search = oml_app::search::SearchConfig::new(
+        &[
+            oml_app::search::Pipeline::KeywordAny,
+            oml_app::search::Pipeline::Bm25,
+        ],
+        oml_app::search::Pipeline::Bm25,
+    )
+    .expect("served");
+    let tenants = oml_server_lead::enumerate_tenants(rig.store.pool())
+        .await
+        .expect("tenants");
+    assert_eq!(
+        oml_server_lead::unserved_tenant_defaults(&rig.store, &tenants, &search)
+            .await
+            .expect("read at start"),
+        vec![(tenants[0], "bm25-postings".to_owned())],
+        "the start names the tenant whose default it does not serve"
+    );
     let narrow = oml_server_lead::start_lead_with(
         &rig.store,
         rig.signing.clone(),
@@ -9095,36 +9117,20 @@ async fn http_and_mcp_refuse_a_recall_under_an_unserved_tenant_default_with_one_
         oml_transport_http::traffic::Traffic::default(),
         None,
         oml_app::domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
-        Some(
-            oml_app::search::SearchConfig::new(
-                &[
-                    oml_app::search::Pipeline::KeywordAny,
-                    oml_app::search::Pipeline::Bm25,
-                ],
-                oml_app::search::Pipeline::Bm25,
-            )
-            .expect("served"),
-        ),
+        Some(search),
         None,
     )
     .await
     .expect("a narrower lead starts over the same store")
     .router;
 
-    let (status, http) =
-        recall_over_http(&narrow, &reader, None, json!({"query": "deployed"})).await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{http}");
-    assert_envelope(&http, "settings.invalid");
-    assert_eq!(http["error"]["retryable"], false, "{http}");
+    let http = recall_ok(&narrow, &reader, json!({"query": "deployed"})).await;
+    assert_eq!(http["search"]["pipeline"], "bm25", "{http}");
     assert_eq!(
-        http["error"]["details"],
-        json!({
-            "reason": "search_default_unserved",
-            "tenant_default": "bm25-postings",
-            "served": ["keyword-any", "bm25"],
-        }),
+        http["search"]["fallback"], "tenant_default_unserved",
         "{http}"
     );
+    assert_eq!(hit_ids(&http), vec![json!(memory)], "{http}");
     let mcp = |id: u64, args: Value| {
         Call::auth(&reader).body(json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/call",
@@ -9139,39 +9145,25 @@ async fn http_and_mcp_refuse_a_recall_under_an_unserved_tenant_default_with_one_
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{rpc}");
-    assert_eq!(rpc["result"]["isError"], true, "{rpc}");
-    assert_eq!(
-        rpc["result"]["structuredContent"]["error"], http["error"],
-        "one refusal on both surfaces"
-    );
+    assert_eq!(rpc["result"]["isError"], false, "{rpc}");
+    let answered = &rpc["result"]["structuredContent"]["search"];
+    assert_eq!(answered["pipeline"], http["search"]["pipeline"], "{rpc}");
+    assert_eq!(answered["fallback"], http["search"]["fallback"], "{rpc}");
 
-    let (status, named) = recall_over_http(
+    let named = recall_ok(
         &narrow,
         &reader,
-        None,
         json!({"query": "deployed", "search": "bm25"}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{named}");
     assert_eq!(named["search"]["pipeline"], "bm25", "{named}");
-    assert_eq!(hit_ids(&named).len(), 1, "{named}");
-    let (_, _, rpc) = send(
-        &narrow,
-        "POST",
-        "/mcp",
-        mcp(2, json!({"query": "deployed", "search": "bm25"})),
-    )
-    .await;
-    assert_eq!(rpc["result"]["isError"], false, "{rpc}");
-    assert_eq!(
-        rpc["result"]["structuredContent"]["search"]["pipeline"], "bm25",
-        "{rpc}"
-    );
+    assert_eq!(named["search"]["fallback"], Value::Null, "{named}");
 
     let (status, _, settings) = send(&narrow, "GET", "/v2/search", Call::auth(&admin)).await;
     assert_eq!(status, StatusCode::OK, "{settings}");
     assert_eq!(settings["tenant_default"], "bm25-postings", "{settings}");
-    assert_eq!(settings["effective"], Value::Null, "{settings}");
+    assert_eq!(settings["effective"], "bm25", "{settings}");
+    assert_eq!(settings["tenant_default_served"], false, "{settings}");
 
     drop_db(&rig.db_name).await;
 }
