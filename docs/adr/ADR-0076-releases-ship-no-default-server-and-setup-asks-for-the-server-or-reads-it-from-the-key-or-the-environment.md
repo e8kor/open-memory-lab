@@ -256,14 +256,15 @@ an option with no default and no saved value reaches neither. Decided, not built
 
     **Server and pages**
 
-    16. `whoami_says_shared_when_server_shared_is_set_or_sign_up_is_open` (`oml-server-lead`), and
+    16. `whoami_says_shared_when_server_shared_is_set_or_sign_up_is_open` (`oml-transport-http`,
+        over the in-memory app; `server.shared`'s parsing in `oml-server-lead`'s unit tests), and
         `docs/api/openapi.yaml` holds `shared` required on `Whoami`
     17. `the_setup_view_shows_the_servers_own_issuer_and_names_no_other_server`
         (`oml-transport-http`)
     18. `a_new_key_is_shown_beside_the_apis_issuer_and_with_none_beside_a_named_no_server_line`
         (`oml-web`)
     24. `doctor_with_an_admin_key_warns_server_origin_when_oauth_issuer_is_unset`
-        (`crates/bins/oml-cli/tests/cli_e2e.rs`)
+        (`crates/bins/oml-cli/tests/no_server.rs`, against a fixture lead)
 
     Numbers 19 to 24 were added in review and sit with their group; the numbering is a handle,
     not an order.
