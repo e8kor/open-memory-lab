@@ -75,18 +75,24 @@ production
                ├─ /web /web/* ──> oml-web :8091 ──HTTP keep-alive──> lead :8090
                └─ /v1/* /v2/* /mcp /oauth/* /.well-known/* ──> lead :8090
 
-local development (oml quickstart starts both)
-  browser ──> oml-web :8091 ──HTTP──> lead :8090
-  browser ──> lead :8090 (sign-in, /v1, /v2, /mcp, /oauth)
+local development (oml quickstart starts all three)
+  browser ── Caddy router, 127.0.0.1:8080, the one published port
+               ├─ the pages oml-web serves ──> oml-web :8091 ──HTTP──> lead :8080
+               └─ everything else (sign-in, /v1, /v2, /mcp, /oauth, /readyz) ──> lead :8080
 ```
 
 - Production routes by path behind one public origin, since `__Host-` cookies
   bind one host. `oml-web` reaches the lead directly on loopback or the LAN,
   never back through the public proxy.
-- Local development runs two processes; `oml quickstart` starts both. The
-  cookie is host-only, so the two ports share it; the lead's `web.page_url`
-  names `oml-web`'s address so sign-in returns there.
-- Kubernetes: two Deployments, the Ingress routes as production does.
+- Local development runs the lead, `oml-web` and a Caddy router as compose
+  services; `oml quickstart` and `docker-compose.yml` start all three, and the
+  router routes exactly as production does, so the browser sees one origin and
+  there is no `web.page_url` setting (ADR-0070 d4).
+- Kubernetes: two Deployments; the Ingress routes each path in
+  `web.ingressPaths` (`/web/guardrails` today) to `oml-web` and every other
+  path to the lead.
+- `deploy/caddy/Caddyfile` is the production route table; a test in `oml-web`
+  holds it and both compose files to `oml_web::PAGES`.
 - The landing is static files from the `oml-site-<version>.tar.gz` release
   archive, built from `site/`; neither the lead nor `oml-web` serves it.
 
@@ -271,9 +277,13 @@ API returns the same JSON as today, but with no page syntax
    - Acceptance: build passes with web parity test; `oml_web_reaches_no_application_crate` fails if wall broken.
 
 5. **Pages move one at a time**
-   - Start route with no state: `/web?view=guardrails`.
+   - Start route with no state: the Guardrails view, now `/web/guardrails`.
    - Then workareas, memories, review and users.
    - Each page gets a parity marker before its old handler is deleted.
+   - Each moved page gets its own path under `/web/`, and the lead answers
+     the old `?view=` form with a `303` to that fixed path, so every proxy,
+     compose router and Ingress routes by path alone (ADR-0070, amended
+     2026-11-11).
    - Acceptance: unchanged web_pages assertions over the loopback hop to a
      separate `oml-web` process.
 

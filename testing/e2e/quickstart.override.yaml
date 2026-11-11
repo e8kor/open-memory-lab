@@ -1,0 +1,12 @@
+# CI's signed-in page check over the stack `oml quickstart` writes
+# (.github/workflows/ci.yml, job compose): copied into that directory as
+# compose.override.yaml, which compose reads beside compose.yaml. The image
+# is the one the job built with oml-server-lead's e2e-sign-in feature
+# (testing/e2e/compose.e2e.yaml); never production.
+services:
+  oml-server:
+    environment:
+      OML_OAUTH__ISSUER: https://localhost:8080
+      OML_WEB__GITHUB__CLIENT_ID: e2e
+      OML_WEB__GITHUB__CLIENT_SECRET: e2e-double-not-a-secret
+      OML_E2E_SIGN_IN_EMAIL: e2e@example.com

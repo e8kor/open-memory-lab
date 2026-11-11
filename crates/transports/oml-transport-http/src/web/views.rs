@@ -153,9 +153,26 @@ fn grant_line(role: Role, path: &str) -> String {
     format!("{} on {}", role.as_str(), short(path))
 }
 
-/// The user page's views `oml-web` serves (ADR-0070 d7 (b)): the proxy
-/// sends `GET /web?view=<view>` there, and the lead no longer renders them.
-pub const MOVED_VIEWS: &[&str] = &["guardrails"];
+/// The user page's views `oml-web` serves, each at a path of its own
+/// (ADR-0070 d7 (b) as amended): the lead answers `GET /web?view=<view>`
+/// with a `303` to that fixed path, and no longer renders the view.
+pub const MOVED_VIEWS: &[(&str, &str)] = &[("guardrails", "/web/guardrails")];
+
+/// The fixed path a moved view lives at, for a query whose one `view` names
+/// it; `None` otherwise.
+#[must_use]
+pub fn moved_view(query: &str) -> Option<&'static str> {
+    let pairs = crate::oauth::form_pairs(query.as_bytes()).ok()?;
+    let mut views = pairs.iter().filter(|(n, _)| n == "view");
+    let (_, view) = views.next()?;
+    if views.next().is_some() {
+        return None;
+    }
+    MOVED_VIEWS
+        .iter()
+        .find(|(v, _)| v == view)
+        .map(|(_, path)| *path)
+}
 
 const ADMIN_TABS: [(&str, &str); 9] = [
     ("/web/admin", "People"),
@@ -230,7 +247,9 @@ where
             // A view oml-web serves: the proxy routes it there, so the lead
             // answers it as an unknown page rather than as another view
             // (ADR-0070 d7 (b)).
-            view if MOVED_VIEWS.contains(&view) => return Err(ApiError::not_found()),
+            view if MOVED_VIEWS.iter().any(|(v, _)| *v == view) => {
+                return Err(ApiError::not_found());
+            }
             _ => ("/web", self.keys_view(&web, session, &csrf).await?),
         };
         Ok(shell(

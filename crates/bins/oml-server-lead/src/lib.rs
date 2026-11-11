@@ -7,6 +7,8 @@
 //! startup naming and names check (ADR-0026 d11), and the start and state
 //! constructors the integration tests share with `main`.
 
+#[cfg(feature = "e2e-sign-in")]
+pub mod e2e;
 pub mod otlp;
 pub mod timed;
 
@@ -964,6 +966,21 @@ impl Config {
             providers.push((Provider::GitHub, github.client_id.clone()));
         }
         (!providers.is_empty()).then(|| {
+            #[cfg(feature = "e2e-sign-in")]
+            if let Some(email) = std::env::var(e2e::EMAIL_VAR)
+                .ok()
+                .filter(|e| !e.trim().is_empty())
+            {
+                eprintln!(
+                    "oml-server-lead: WARNING: built with e2e-sign-in and {} set: every GitHub sign-in admits {email} without calling GitHub; never serve people with this build",
+                    e2e::EMAIL_VAR
+                );
+                let pages = WebPages::new(providers, e2e::E2eSignIn { email });
+                return match &self.signup {
+                    Some(policy) => pages.with_signup(policy.clone()),
+                    None => pages,
+                };
+            }
             let pages = WebPages::new(
                 providers,
                 ProviderClients {

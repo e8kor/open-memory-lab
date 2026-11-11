@@ -1,12 +1,12 @@
 ---
 status: Stable
-verified: 2026-11-06
-answers: "how to install OML on Kubernetes with the release's Helm chart: prerequisites, the PostgreSQL role pair and its Secret, verifying the chart, a minimal values file, claiming the first admin key before any Ingress, oauth.issuer, upgrades, uninstall, and what the chart does not deploy"
+verified: 2026-11-10
+answers: "how to install OML on Kubernetes with the release's Helm chart: prerequisites, the web console beside the server, the PostgreSQL role pair and its Secret, verifying the chart, a minimal values file, claiming the first admin key before any Ingress, oauth.issuer, upgrades, uninstall, and what the chart does not deploy"
 ---
 
 # Install OML on Kubernetes
 
-The chart, `deploy/helm/oml`, runs one `oml-server-lead` against a PostgreSQL you bring. The signing keyring sits on a volume claim that `helm uninstall` keeps. The chart does not deploy the optional lake writer; run it as [Run the lake writer](../operations/lake.md) describes.
+The chart, `deploy/helm/oml`, runs one `oml-server-lead` against a PostgreSQL you bring, and the web console, `oml-web`, as a second Deployment from the same image. The signing keyring sits on a volume claim that `helm uninstall` keeps. The chart does not deploy the optional lake writer; run it as [Run the lake writer](../operations/lake.md) describes.
 
 ## Before you start
 
@@ -72,7 +72,23 @@ helm install oml ./oml-X.Y.Z.tgz --namespace oml --values values.yaml
 kubectl --namespace oml rollout status deployment/oml-server-lead
 ```
 
-A release named `oml` gives `deployment/oml-server-lead`, `service/oml-server` and the claim `oml-keyring`; any other name prefixes them `<release>-oml`.
+A release named `oml` gives `deployment/oml-server-lead`, `service/oml-server`, `deployment/oml-web`, `service/oml-web`, the Secret `oml-web-client` and the claim `oml-keyring`; any other name prefixes them `<release>-oml`.
+
+`oml-web` reaches the server at `service/oml-server` over plain http inside the cluster (`web.allowPlainHttpApi`, on by default) and proves itself with a secret both Deployments read. Create that Secret yourself and name it, so its value never depends on a render:
+
+```sh
+kubectl --namespace oml create secret generic oml-web-client \
+  --from-literal=OML_WEB__CLIENT_SECRET="$(openssl rand -hex 32)"
+helm upgrade --install oml ./oml-X.Y.Z.tgz --namespace oml --reuse-values \
+  --set web.clientSecret.existingSecret=oml-web-client
+```
+
+An install through Argo CD, Flux or `helm template` must do this: those render without reading the cluster, so the chart's fallback would write a new value on every sync, and the server and `oml-web` would disagree until both restart. With `helm install` and `helm upgrade` alone and no `existingSecret`, the chart creates `oml-web-client` once with a random value, reads it back on every upgrade, and keeps it on uninstall. `oml-web` is ready once the server answers ready and accepts the secret:
+
+```sh
+kubectl --namespace oml rollout status deployment/oml-web
+kubectl --namespace oml exec deployment/oml-web -- /usr/local/bin/oml-web --doctor
+```
 
 ## 4. Claim the first admin key before any Ingress
 
@@ -112,6 +128,8 @@ helm upgrade oml ./oml-X.Y.Z.tgz --namespace oml --values values.yaml
 - Give `ingress.hosts` whole, paths included; `--set 'ingress.hosts[0].host=...'` alone renders a rule with no paths.
 - With the NetworkPolicy on, add the controller's namespace to `networkPolicy.ingressFrom` first. The default admits the release's namespace alone.
 - Path `/` also routes `/readyz`, whose body names the build. Narrow `ingress.hosts[].paths` to keep it off the public route; `oml doctor` then cannot read the issuer there.
+- Set `web.publicUrl` to the public origin, such as `https://oml.example.com`; unset, `oml-web` takes `https://` and the first Ingress host. A form whose `Origin` differs is refused.
+- The Ingress routes each page `oml-web` serves by its own path, `web.ingressPaths` (`/web/guardrails`, `Exact`, today), to `service/oml-web`, and every other path to the server. A page that moves in a later release adds its path to the default.
 
 ## 6. Connect claude.ai and mobile
 
@@ -137,7 +155,9 @@ The server runs new migrations at boot. `Recreate` stops the old pod first, so e
 
 ## 8. Uninstall, and what survives
 
-`helm uninstall oml --namespace oml` removes the Deployment, Service, ServiceAccount, Ingress and NetworkPolicy. It keeps:
+`helm uninstall oml --namespace oml` removes both Deployments, both Services and ServiceAccounts, the Ingress and the NetworkPolicies. It keeps:
+
+- **The web client Secret** `oml-web-client`, whether you made it or the chart did (`helm.sh/resource-policy: keep`); a reinstall reads it back.
 
 - **The keyring claim** `oml-keyring` (`helm.sh/resource-policy: keep`). A reinstall under the same release name and namespace takes it back; under another name use `--set keyring.existingClaim=oml-keyring`.
 - **The database** and the `oml-postgres` Secret.

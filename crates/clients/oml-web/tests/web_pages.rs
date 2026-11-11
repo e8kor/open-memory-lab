@@ -86,11 +86,7 @@ fn front(lead: SocketAddr, web: SocketAddr) -> Router {
     Router::new().fallback(move |request: AxumRequest| {
         let client = client.clone();
         async move {
-            let target = if oml_web::serves(
-                request.method().as_str(),
-                request.uri().path(),
-                request.uri().query(),
-            ) {
+            let target = if oml_web::serves(request.method().as_str(), request.uri().path()) {
                 web
             } else {
                 lead
@@ -485,7 +481,7 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let value = laptop_key(&rig, &cookie).await;
     let id = agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
-    let (_, _, page) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
+    let (_, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
     assert!(page.contains("Guardrails"), "{page}");
     assert!(
         page.contains("Rules in force at <code>universe.alice</code>"),
@@ -514,7 +510,7 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    let (_, _, page) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
+    let (_, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
     assert!(
         page.contains("[must] Run the tests before every commit."),
         "{page}"
@@ -561,10 +557,7 @@ async fn the_user_page_shows_guardrail_scope_and_selects_nested_workareas() {
         .workarea_id;
     let (status, _, nested) = send(
         &rig.router,
-        get(
-            &format!("/web?view=guardrails&workarea={docs}"),
-            Some(&cookie),
-        ),
+        get(&format!("/web/guardrails?workarea={docs}"), Some(&cookie)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{nested}");
@@ -618,10 +611,7 @@ async fn the_guardrail_selector_includes_workareas_after_the_first_tree_page() {
         .workarea_id;
     let (status, _, page) = send(
         &rig.router,
-        get(
-            &format!("/web?view=guardrails&workarea={last}"),
-            Some(&cookie),
-        ),
+        get(&format!("/web/guardrails?workarea={last}"), Some(&cookie)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
@@ -648,11 +638,11 @@ async fn a_moved_page_draws_the_header_and_tabs_the_leads_pages_draw() {
         let cookie = signed_in(&rig, subject, email).await;
         let (_, _, lead) = send(&rig.router, get("/web", Some(&cookie))).await;
         let (status, headers, moved) =
-            send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
+            send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
         assert_eq!(status, StatusCode::OK, "{moved}");
         assert_eq!(header_of(&moved), header_of(&lead), "{email}");
         assert!(
-            moved.contains(r#"<a href="/web?view=guardrails" class="on" aria-current="page">"#),
+            moved.contains(r#"<a href="/web/guardrails" class="on" aria-current="page">"#),
             "{moved}"
         );
         // The page came over the hop: oml-web's own policy, no provider.
@@ -662,14 +652,36 @@ async fn a_moved_page_draws_the_header_and_tabs_the_leads_pages_draw() {
 }
 
 #[tokio::test]
+async fn the_old_guardrails_url_goes_through_the_lead_to_the_moved_pages_own_path() {
+    // ADR-0070 d7 (b) as amended: each moved page has its own path under
+    // /web/; the lead answers the old ?view= form with a 303 to it.
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    for old in ["/web?view=guardrails", "/web?view=guardrails&workarea=x"] {
+        let (status, headers, _) = send(&rig.router, get(old, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
+        assert_eq!(headers[header::LOCATION], "/web/guardrails", "{old}");
+    }
+    let (status, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("Rules in force at"), "{page}");
+}
+
+#[tokio::test]
 async fn a_moved_page_without_a_session_goes_to_the_leads_sign_in() {
     let rig = rig().await;
-    let (status, headers, _) = send(&rig.router, get("/web?view=guardrails", None)).await;
+    let (status, headers, _) = send(&rig.router, get("/web/guardrails", None)).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let location = headers[header::LOCATION].to_str().unwrap().to_owned();
+    assert_eq!(location, "/web/sign-in?next=%2Fweb%2Fguardrails");
     let (status, _, page) = send(&rig.router, get(&location, None)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains("Sign in with Google"), "{page}");
+    // The lead's sign-in carries the page on, to come back to it.
+    assert!(
+        page.contains(r#"name="next" value="/web/guardrails""#),
+        "{page}"
+    );
 }
 
 #[tokio::test]
@@ -678,7 +690,10 @@ async fn a_signed_out_session_cookie_goes_to_sign_in_from_a_moved_page() {
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let (status, _, _) = act(&rig, &cookie, "/web", &[("action", "sign_out")]).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let (status, headers, _) = send(&rig.router, get("/web?view=guardrails", Some(&cookie))).await;
+    let (status, headers, _) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], oml_web::SIGN_IN_PATH);
+    assert_eq!(
+        headers[header::LOCATION],
+        "/web/sign-in?next=%2Fweb%2Fguardrails"
+    );
 }

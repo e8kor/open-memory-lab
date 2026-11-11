@@ -13,7 +13,8 @@ spec:
   policyTypes:
     - Ingress
     - Egress
-  # The API port alone, from the listed peers (ADR-0033 d5).
+  # The API port alone, from the listed peers (ADR-0033 d5), and from
+  # oml-web, which reaches the lead at its Service (ADR-0070 d4).
   ingress:
     - ports:
         - port: http
@@ -22,6 +23,13 @@ spec:
       from:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+    - ports:
+        - port: http
+          protocol: TCP
+      from:
+        - podSelector:
+            matchLabels:
+              {{- include "oml.webSelectorLabels" . | nindent 14 }}
   # DNS, and the Postgres port; nothing else.
   egress:
     - ports:
@@ -36,4 +44,42 @@ spec:
       to:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "oml.fullname" . }}-web
+  labels:
+    {{- include "oml.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "oml.webSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  # The pages' port alone, from the same peers as the lead's API port.
+  ingress:
+    - ports:
+        - port: http
+          protocol: TCP
+      {{- with .Values.networkPolicy.ingressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  # DNS, and the lead's pods on their API port; nothing else (ADR-0070 d4).
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - ports:
+        - port: http
+          protocol: TCP
+      to:
+        - podSelector:
+            matchLabels:
+              {{- include "oml.serverSelectorLabels" . | nindent 14 }}
 {{- end }}

@@ -41,6 +41,47 @@ keyring:
   # Empty: the cluster's default StorageClass.
   storageClassName: ""
 
+# The web console, oml-web: its own process over the lead's HTTP API, a
+# second Deployment from the same image under the entrypoint
+# /usr/local/bin/oml-web (ADR-0070 d4). It reaches the lead at the lead's
+# Service, never through the Ingress.
+web:
+  # The browser's origin, which a form's Origin must equal (web.public_url).
+  # Empty: https:// and the first Ingress host below.
+  publicUrl: ""
+  # oml-web's identity to the lead, web.client_secret, at least 32
+  # characters, set on both Deployments from this Secret's key (ADR-0070 d2).
+  #
+  # Recommended: create the Secret yourself and name it here, so the value
+  # never depends on a render:
+  #   kubectl create secret generic oml-web-client \
+  #     --from-literal=OML_WEB__CLIENT_SECRET="$(openssl rand -hex 32)"
+  # A GitOps controller (Argo CD, Flux) or `helm template` renders without a
+  # cluster to read back from, so it must use existingSecret: the fallback
+  # below would write a new value on every sync, and the lead and oml-web
+  # would disagree until both restart.
+  #
+  # Empty existingSecret, with helm install and helm upgrade only: the chart
+  # creates <release>-web-client once with a random value, reads it back on
+  # every upgrade, and keeps it on uninstall (helm.sh/resource-policy: keep).
+  clientSecret:
+    existingSecret: ""
+    key: OML_WEB__CLIENT_SECRET
+  # The hop to the lead's Service carries session credentials in plain http
+  # inside the cluster network; oml-web refuses plain http to a non-loopback
+  # host unless this allows it (web.allow_plain_http_api). Set false only
+  # with a TLS hop in front of the lead.
+  allowPlainHttpApi: true
+  # Ingress paths routed to oml-web, ahead of the lead's, per host: each page
+  # oml-web serves has its own path under /web/ (oml_web::PAGES; ADR-0070
+  # d7 (b)), and every other path goes to the lead. A page that moves in a
+  # later release adds a row here.
+  ingressPaths:
+    - path: /web/guardrails
+      pathType: Exact
+  # Hints, never claims (docs/operations/capacity.md).
+  resources: {}
+
 # Off until the first admin key is claimed through kubectl port-forward: until
 # then, whoever presents the enrollment token from the pod log first receives
 # that key (ADR-0033 d8; NOTES.txt prints the ceremony).

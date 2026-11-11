@@ -165,7 +165,9 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
   `oml-cli-X.Y.Z-x86_64-pc-windows-msvc.zip` (the macOS targets are [paused](#paused-targets)); and
   `oml-server-lead-X.Y.Z-<target>.tar.gz` for `x86_64-unknown-linux-gnu` and
   `aarch64-unknown-linux-gnu`; and, from v0.6.0, `oml-lakewriter-X.Y.Z-<target>.tar.gz` for the same
-  two gnu targets, the lake writer's own service (ADR-0060). `release.yml` job `cli` builds each CLI target on a runner of its
+  two gnu targets, the lake writer's own service (ADR-0060); and `oml-web-X.Y.Z-<target>.tar.gz`
+  for the same two gnu targets, the web console's own process (ADR-0070 d4), which job `web`
+  packages only after the binary prints the tag's version. `release.yml` job `cli` builds each CLI target on a runner of its
   own OS and architecture — `ubuntu-24.04`, `ubuntu-24.04-arm` and
   `windows-2025`, labels GitHub lists for public repositories
   ([GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),

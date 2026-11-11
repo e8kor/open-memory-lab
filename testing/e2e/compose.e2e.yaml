@@ -1,0 +1,24 @@
+# CI's signed-in page check over the docker profile (.github/workflows/ci.yml,
+# job compose; ADR-0070, phase (b) as built). Layered on docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f testing/e2e/compose.e2e.yaml up -d --build
+#
+# The image is built with oml-server-lead's e2e-sign-in feature, and the lead
+# answers every GitHub sign-in with OML_E2E_SIGN_IN_EMAIL, so
+# scripts/check_web_signed_in.sh can sign a person in through the real routes
+# and load a page oml-web serves. Never a release build, never production
+# (crates/bins/oml-server-lead/src/e2e.rs).
+services:
+  oml-server:
+    build:
+      args:
+        OML_CARGO_FEATURES: oml-server-lead/e2e-sign-in
+    environment:
+      OML_OAUTH__ISSUER: https://localhost:8080
+      OML_WEB__GITHUB__CLIENT_ID: e2e
+      OML_WEB__GITHUB__CLIENT_SECRET: e2e-double-not-a-secret
+      OML_E2E_SIGN_IN_EMAIL: e2e@example.com
+  oml-web:
+    build:
+      args:
+        OML_CARGO_FEATURES: oml-server-lead/e2e-sign-in

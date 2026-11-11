@@ -10,7 +10,7 @@ use axum::body::Body;
 use http::{HeaderMap, Request, Response, StatusCode, header};
 use oml_sdk::{Sending, Transport};
 use oml_web::middleware::body_bytes;
-use oml_web::{Layers, SESSION_COOKIE, SIGN_IN_PATH, Web, api, router};
+use oml_web::{Layers, SESSION_COOKIE, Web, api, router};
 use oml_web_credential::capacity_credential;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -123,7 +123,7 @@ async fn page(
     });
     let response = app
         .oneshot(
-            Request::get("/web?view=guardrails")
+            Request::get("/web/guardrails")
                 .header("x-request-id", "page-42")
                 .header(header::COOKIE, format!("{SESSION_COOKIE}={TOKEN}"))
                 .body(Body::empty())
@@ -228,7 +228,10 @@ async fn auth_invalid_from_whoami_sends_the_person_to_sign_in() {
     })
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], SIGN_IN_PATH);
+    assert_eq!(
+        headers[header::LOCATION],
+        "/web/sign-in?next=%2Fweb%2Fguardrails"
+    );
     assert!(calls.iter().all(|(p, _)| p == "/v2/whoami"), "{calls:?}");
 }
 

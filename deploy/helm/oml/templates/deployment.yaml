@@ -70,6 +70,12 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.postgres.secretName | quote }}
                   key: {{ .Values.postgres.ownerSecretKey | quote }}
+            # oml-web's identity, the same value oml-web sends (ADR-0070 d2).
+            - name: OML_WEB__CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "oml.webClientSecret" . | quote }}
+                  key: {{ .Values.web.clientSecret.key | quote }}
           ports:
             - name: http
               containerPort: 8080
