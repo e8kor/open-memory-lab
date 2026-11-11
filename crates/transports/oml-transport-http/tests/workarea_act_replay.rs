@@ -575,3 +575,74 @@ async fn a_panic_after_the_act_committed_is_answered_as_a_handler_panic_and_hold
     assert_eq!(again["error"]["code"], "idempotency.in_progress");
     assert_eq!(created(&w, "panicked").await, 1, "created once");
 }
+
+/// How many allowlist events the journal holds.
+async fn email_events(w: &World) -> usize {
+    w.store
+        .events_range(w.tenant, 1, 100_000)
+        .await
+        .expect("the journal reads")
+        .iter()
+        .filter(|e| e.envelope.event_type.starts_with("web.email"))
+        .count()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_concurrent_allowlist_adds_under_one_key_add_once_and_answer_alike() {
+    // The allowlist acts claim their key before they act, as every console
+    // act does (#233; ADR-0070 d3 layer 4, the seventh table).
+    let w = world().await;
+    let before = email_events(&w).await;
+    let body = json!({"email": "carol@example.com", "user": "carol", "admin": false});
+    let ((s1, h1, b1), (s2, h2, b2)) = tokio::join!(
+        send(&w.router, "/v2/web/emails", &w.admin, "e-1", Some(body.clone())),
+        send(&w.router, "/v2/web/emails", &w.admin, "e-1", Some(body.clone())),
+    );
+    assert_eq!((s1, s2), (StatusCode::OK, StatusCode::OK), "{b1} {b2}");
+    assert_eq!(
+        [replayed(&h1), replayed(&h2)].iter().filter(|r| **r).count(),
+        1,
+        "one send acts and the other replays it"
+    );
+    assert_eq!(b1, b2, "both answers agree");
+    assert_eq!(email_events(&w).await, before + 1, "added once");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn two_concurrent_removals_under_one_key_remove_once_and_answer_alike() {
+    let w = world().await;
+    let (status, _, added) = send(
+        &w.router,
+        "/v2/web/emails",
+        &w.admin,
+        "e-2",
+        Some(json!({"email": "dave@example.com", "user": "dave", "admin": false})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{added}");
+    let before = email_events(&w).await;
+    let body = json!({"email": "dave@example.com"});
+    let ((s1, h1, b1), (s2, h2, b2)) = tokio::join!(
+        send(&w.router, "/v2/web/emails/remove", &w.admin, "r-1", Some(body.clone())),
+        send(&w.router, "/v2/web/emails/remove", &w.admin, "r-1", Some(body.clone())),
+    );
+    assert_eq!((s1, s2), (StatusCode::OK, StatusCode::OK), "{b1} {b2}");
+    assert_eq!(
+        [replayed(&h1), replayed(&h2)].iter().filter(|r| **r).count(),
+        1,
+        "one send acts and the other replays it"
+    );
+    assert_eq!(b1, b2, "both answers agree");
+    assert_eq!(email_events(&w).await, before + 1, "removed once");
+    // The key on another body is refused, never acted.
+    let (status, _, refused) = send(
+        &w.router,
+        "/v2/web/emails/remove",
+        &w.admin,
+        "r-1",
+        Some(json!({"email": "erin@example.com"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(refused["error"]["code"], "idempotency.digest_mismatch");
+}
