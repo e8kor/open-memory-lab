@@ -389,7 +389,7 @@ where
     /// `key.denied` on `universe` for each live bearer and connector key of
     /// the root. Session keys are reached only from sessions, which ended.
     /// Each `key.denied` retries alone on a chain-head conflict
-    /// ([`later_step`]), so a conflict never journals `web.user_disabled`
+    /// (`later_step`), so a conflict never journals `web.user_disabled`
     /// twice in one call (#266).
     pub async fn web_disable_user(
         &self,
