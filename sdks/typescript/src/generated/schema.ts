@@ -1227,7 +1227,7 @@ export interface paths {
         };
         /**
          * The admin page, for a session whose allowlist entry is an admin's.
-         * @description Any other session answers access.not_found. Views by query: view (people, queue, review, curate, and memories with memory, one memory's attribution), memory; view=workarea answers 303 /web/admin/workareas, and view=memories without memory 303 /web/admin/memories, or /web/admin/atlas with display=atlas, which oml-web serves, carrying nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4, the memories views since v0.7.0). The memories list oml-web serves and one memory's attribution here are the admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
+         * @description Every view is oml-web's: the lead answers 303 to the view's own path, /web/admin/people when none is named, before reading a session and carrying nothing from the request but, for one memory, its id (ADR-0070 d7 (b); the overview since v0.7.0). The admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin serves oml-web's memory views, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
          */
         get: operations["adminPage"];
         put?: never;
@@ -1256,94 +1256,6 @@ export interface paths {
          * @description Only where signup.mode is open (ADR-0068 d2, d9). The same-origin check; the sealed __Host-oml_signup cookie the callback set for an unlisted, verified identity; accept_terms=yes and the current terms_version. Takes one slot of the client address's hourly limit (limit.rate past it). Creates the entry under a drawn user, journalled as web.signed_up with the terms version, issues <user>-web and <user>-review, opens a session and answers 303 /web/start. Proposed.
          */
         post: operations["webSignUp"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/web/start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The onboarding page; the sign-in page without a session.
-         * @description Three steps: choose a client (query client: claude-ai, claude-code, other), get its credential, and wait for the first connection and the first memory. The only page with a script, hashed in its CSP with connect-src self, for its copy buttons and its status poll (ADR-0068 d10). Proposed.
-         */
-        get: operations["startPage"];
-        put?: never;
-        /**
-         * One act of the onboarding page, named by action.
-         * @description Requires a session, csrf_token and the same-origin check. issue_claude_ai issues a connector key <user>-claude-ai and shows its connect code once; issue_claude_code and issue_other issue <user>-claude-code and <user>-agent and show the value once; a taken name gains -2 to -9. Past the keys quota, limit.quota. request_deletion with confirm=delete journals web.deletion_requested (ADR-0068 d6, d10). Proposed.
-         */
-        post: operations["startPageAct"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/web/start/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Whether the person's agent has connected and the state of their newest memory.
-         * @description A session only; without one access.not_found (ADR-0068 d7, d10). connected is true once any of the person's agent keys authenticated since the process started or a connector key has an open connection. Proposed.
-         */
-        get: operations["startStatus"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/web/start/export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Everything the person holds, as a JSON download.
-         * @description A session only. Every memory in the person's root and below, every state, with its workarea path, claim key, version, state, text and times; the person's keys (ADR-0068 d6). Proposed.
-         */
-        get: operations["startExport"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/web/admin/users": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The admin's users page — quota use, quotas and pending deletion requests.
-         * @description For an admin session; any other answers access.not_found (ADR-0068 d5, d6, d8). Proposed.
-         */
-        get: operations["usersPage"];
-        put?: never;
-        /**
-         * One act of the users page, named by action, run as <user>-admin.
-         * @description set_quota (user, quota, limit; empty limit returns to the default) journals web.quota_set; disable_user journals web.user_disabled and cuts off every agent key of the person; close_deletion disables the person and journals web.deletion_closed (ADR-0068 d5, d6, d8). Proposed.
-         */
-        post: operations["usersPageAct"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2757,6 +2669,12 @@ export interface components {
              * @description When the person asked for deletion, while the request is pending (ADR-0068 d6).
              */
             deletion_requested_at: string | null;
+            /** @description With start=true, what the onboarding page waits for: whether one of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted, else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0. */
+            start?: {
+                connected?: boolean;
+                /** @enum {string|null} */
+                first_memory?: "held" | "promoted" | null;
+            } | null;
         };
         ListedKey: {
             /** Format: uuid */
@@ -5043,7 +4961,10 @@ export interface operations {
     };
     whoami: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description true: person carries start, the onboarding status the web console's Start page polls (ADR-0068 d10; ADR-0070 d5). Since v0.7.0. */
+                start?: boolean;
+            };
             header?: {
                 /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
                 "X-Request-Id"?: components["parameters"]["XRequestId"];
@@ -7044,185 +6965,6 @@ export interface operations {
                 content: {
                     "text/html": string;
                 };
-            };
-        };
-    };
-    startPage: {
-        parameters: {
-            query?: {
-                client?: "claude-ai" | "claude-code" | "other";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The page. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-        };
-    };
-    startPageAct: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": {
-                    /** @enum {string} */
-                    action: "issue_claude_ai" | "issue_claude_code" | "issue_other" | "request_deletion";
-                    csrf_token: string;
-                    confirm?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description The page with the credential, shown once. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-            /** @description After request_deletion, to /web/start. */
-            303: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    startStatus: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The status. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        connected: boolean;
-                        /** @enum {string|null} */
-                        first_memory: "held" | "promoted" | null;
-                    };
-                };
-            };
-            /** @description access.not_found, on a page. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-        };
-    };
-    startExport: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The export, Content-Disposition attachment. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description access.not_found, on a page. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-        };
-    };
-    usersPage: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The page. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-            /** @description access.not_found, on a page. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/html": string;
-                };
-            };
-        };
-    };
-    usersPageAct: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/x-www-form-urlencoded": {
-                    /** @enum {string} */
-                    action: "set_quota" | "disable_user" | "close_deletion";
-                    csrf_token: string;
-                    user: string;
-                    /** @enum {string} */
-                    quota?: "memories" | "keys" | "connections" | "requests_per_minute";
-                    limit?: string;
-                };
-            };
-        };
-        responses: {
-            /** @description Back to /web/admin/users. */
-            303: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

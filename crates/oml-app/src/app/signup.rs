@@ -68,7 +68,15 @@ pub struct Person {
     pub user: Name,
     pub limits: Option<(UserUsage, Quotas)>,
     pub deletion_requested_at: Option<oml_domain::EventTime>,
+    /// The onboarding status, read only when asked (ADR-0070 d5).
+    pub start: Option<StartStatus>,
 }
+
+/// The least per-minute request rate a person's session keys get, whatever
+/// their quota says: a page view of the console spends two to four
+/// requests, so sixty keep a person on their own pages (ADR-0070, the
+/// seventh table of phase (b); chosen, not measured, #170).
+pub const SESSION_REQUESTS_PER_MINUTE_MIN: u64 = 60;
 
 /// One person of the sign-up tenant as the admin's users page lists them
 /// (ADR-0068 d5, d6, d8).
@@ -572,7 +580,13 @@ where
     /// d5; ADR-0068 d5, d6, d10): the user of its root, whether it is
     /// under the sign-up quotas, its usage and limits there, and when the
     /// person asked for deletion. `None` for a key that names no user.
-    pub async fn whoami_person(&self, bearer: Bearer<'_>) -> Result<Option<Person>, AppError> {
+    pub async fn whoami_person(
+        &self,
+        bearer: Bearer<'_>,
+        start: bool,
+    ) -> Result<Option<Person>, AppError> {
+        // One authentication, so one request of the key's rate, however
+        // much the answer names (ADR-0068 d5; ADR-0070 d5).
         let caller = self.authenticate_bearer(bearer).await?;
         let tenant_id = caller.key.tenant_id;
         let Some(root) = caller.key.user else {
@@ -594,10 +608,16 @@ where
             .into_iter()
             .find(|r| r.user == user)
             .map(|r| r.requested_at);
+        let start = if start {
+            Some(self.web_start_status(&caller).await?)
+        } else {
+            None
+        };
         Ok(Some(Person {
             user,
             limits,
             deletion_requested_at,
+            start,
         }))
     }
 
@@ -783,9 +803,19 @@ where
         let limit = match current {
             Some((m, _, limit)) if m == minute => limit,
             _ => {
-                self.quotas_of(key.tenant_id, root)
+                let limit = self
+                    .quotas_of(key.tenant_id, root)
                     .await?
-                    .requests_per_minute
+                    .requests_per_minute;
+                // A person's own console keeps a floor of its own: a limit
+                // set below it binds their agent keys alone, so no quota
+                // locks a person out of the page that shows it (ADR-0070,
+                // the seventh table of phase (b)).
+                if key.credential == Credential::Session {
+                    limit.max(SESSION_REQUESTS_PER_MINUTE_MIN)
+                } else {
+                    limit
+                }
             }
         };
         let mut windows = state.windows.lock().expect("rate lock");

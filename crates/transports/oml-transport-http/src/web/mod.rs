@@ -60,14 +60,8 @@ pub const WEB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/web/callback/{provider}"),
     ("GET", "/web/admin"),
     ("POST", "/web/admin"),
-    // Open sign-up and onboarding (ADR-0068 d10).
+    // Open sign-up (ADR-0068 d2); onboarding is oml-web's (ADR-0070 d7 (b)).
     ("POST", "/web/sign-up"),
-    ("GET", "/web/start"),
-    ("POST", "/web/start"),
-    ("GET", "/web/start/status"),
-    ("GET", "/web/start/export"),
-    ("GET", "/web/admin/users"),
-    ("POST", "/web/admin/users"),
 ];
 
 /// The user page's closed `action` set (ADR-0045 d1, d9, d28).
@@ -324,12 +318,6 @@ where
             ("GET", "/web/admin") => get(Self::admin_page),
             ("POST", "/web/admin") => post(Self::admin_act),
             ("POST", "/web/sign-up") => post(Self::sign_up),
-            ("GET", "/web/start") => get(Self::start_page),
-            ("POST", "/web/start") => post(Self::start_act),
-            ("GET", "/web/start/status") => get(Self::start_status),
-            ("GET", "/web/start/export") => get(Self::start_export),
-            ("GET", "/web/admin/users") => get(Self::users_page),
-            ("POST", "/web/admin/users") => post(Self::users_act),
             _ => panic!("{method} {path} is in WEB_ROUTES with no handler"),
         }
     }
@@ -425,14 +413,6 @@ where
         Self::web_finish(&rid, answer)
     }
 
-    /// The query's views, each field at most once.
-    fn query_fields(query: &str) -> Result<views::Fields, ApiError> {
-        form_pairs(query.as_bytes())
-            .and_then(|pairs| unique_fields(&pairs))
-            .map(views::Fields::of)
-            .map_err(|e| ApiError::validation(e.description))
-    }
-
     async fn user_page_inner(&self, headers: &HeaderMap, query: &str) -> Answer {
         let mut line = WebLine::default();
         if let Some(refused) = human_only(headers) {
@@ -472,19 +452,8 @@ where
                         line,
                     };
                 }
-                let fields = Self::query_fields(query);
-                let html = match fields {
-                    Ok(q) => self.user_view(&session, &q).await,
-                    Err(e) => Err(e),
-                };
-                match html {
-                    Ok(html) => Answer {
-                        response: self.view_response(html),
-                        error_code: None,
-                        line,
-                    },
-                    Err(e) => self.refused(&e, line),
-                }
+                // Every view the page had is oml-web's (ADR-0070 d7 (b)).
+                self.refused(&ApiError::not_found(), line)
             }
         }
     }
@@ -503,58 +472,25 @@ where
         Self::web_finish(&rid, answer)
     }
 
-    /// Any session but an admin entry's, and no session, answers
-    /// `access.not_found`, so the page's existence confirms nothing
-    /// (ADR-0045 d10).
+    /// Every view of the admin page is oml-web's (ADR-0070 d7 (b)): a `303`
+    /// to the view's fixed path, or to the overview, before the session is
+    /// read and carrying nothing from the request but, for one memory, its
+    /// id, parsed and written anew. oml-web answers anyone but an admin
+    /// `access.not_found` there (ADR-0045 d10).
     async fn admin_page_inner(&self, headers: &HeaderMap, query: &str) -> Answer {
-        let mut line = WebLine::default();
+        let line = WebLine::default();
         if let Some(refused) = human_only(headers) {
             return self.refused(&refused, line);
         }
-        // A view oml-web serves at its own path: a 303 to that fixed path,
-        // carrying nothing from the request but, for one memory, its id,
-        // parsed and written anew (ADR-0070 d7 (b) as amended).
-        if let Some(path) = views::moved_view_of(views::MOVED_ADMIN_VIEWS, query)
+        let path = views::moved_view_of(views::MOVED_ADMIN_VIEWS, query)
             .map(ToOwned::to_owned)
             .or_else(|| views::moved_memories(query, true))
-        {
-            return Answer {
-                response: self.redirect(&path, None),
-                error_code: None,
-                line,
-            };
+            .unwrap_or_else(|| views::PEOPLE_PATH.to_owned());
+        Answer {
+            response: self.redirect(&path, None),
+            error_code: None,
+            line,
         }
-        match self.session_of(headers).await {
-            Err(e) => self.refused(&e, line),
-            Ok(Some((token, session))) if session.admin => {
-                line.session(&session);
-                let fields = Self::query_fields(query);
-                let html = match fields {
-                    Ok(q) => self.admin_view(&token, &session, &q).await,
-                    Err(e) => Err(e),
-                };
-                match html {
-                    Ok(html) => Answer {
-                        response: self.view_response(html),
-                        error_code: None,
-                        line,
-                    },
-                    Err(e) => self.refused(&e, line),
-                }
-            }
-            Ok(other) => {
-                if let Some((_, session)) = &other {
-                    line.session(session);
-                }
-                self.refused(&ApiError::not_found(), line)
-            }
-        }
-    }
-
-    /// A view's page under d8's policy: no view runs script (ADR-0045
-    /// d32), the Atlas included.
-    fn view_response(&self, html: String) -> Response {
-        self.page(StatusCode::OK, html)
     }
 
     // -- POST /web and POST /web/admin ------------------------------------------
@@ -673,28 +609,20 @@ where
                 line,
             };
         }
-        // Every other act runs as one of the person's session keys.
-        if let Err(closed) = self.require_writes_open() {
-            return self.refused(&closed, line);
-        }
-        let fields = views::Fields::of(fields);
-        let outcome = if admin_page {
-            self.admin_page_act(&token, &session, action, &fields).await
-        } else {
-            Self::user_page_act(action)
-        };
-        match outcome {
-            Ok(views::Outcome::Redirect(location)) => Answer {
-                response: self.redirect(&location, None),
+        // Every other act is a view's that oml-web serves: run nothing,
+        // and send the person to the view (ADR-0070 d7 (b)).
+        let _ = (fields, token);
+        match views::moved_action(action, admin_page) {
+            Some(path) => Answer {
+                response: self.redirect(path, None),
                 error_code: None,
                 line,
             },
-            Ok(views::Outcome::Page(html)) => Answer {
-                response: self.page(StatusCode::OK, html),
-                error_code: None,
+            None => self.refused(
+                &ApiError::validation("action is not one of this page's actions")
+                    .with_details(json!({"field": "action"})),
                 line,
-            },
-            Err(e) => self.refused(&e, line),
+            ),
         }
     }
 
