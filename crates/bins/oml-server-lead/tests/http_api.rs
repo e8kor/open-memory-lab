@@ -10781,3 +10781,157 @@ async fn as_of_reads_the_tip_at_an_instant_over_http() {
     assert_eq!(body["error"]["details"]["field"], "/as_of", "{body}");
     drop_db(&rig.db_name).await;
 }
+
+// ---------------------------------------------------------------------------
+// The widen hint on its precomputed signal (ADR-0072 d8, d12; #244)
+// ---------------------------------------------------------------------------
+
+/// `home` and `legal` hold "kiwi" at one rate per row and `orchard` at
+/// twice it: a reader of the root is hinted to widen from `home`. A scope
+/// recall that finds no signal answers without `search.widen` and the lead
+/// builds the signal off the request; then `POST /v1/memories/recall` and
+/// MCP's `oml_read` serve the same `search.widen`, and `GET /v2/federation`
+/// counts the build and the unserved recall (ADR-0072 d8; #244).
+#[tokio::test]
+async fn the_widen_hint_is_the_same_over_http_and_mcp_once_the_lead_builds_its_signal() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let writer = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "orchard/writer",
+        json!([
+            { "workarea": root, "role": "writer" },
+            { "workarea": root, "role": "reader" },
+        ]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned();
+    let dora = dreamer_on(router, &admin, "dora", root).await;
+    let dan = dreamer_on(router, &admin, "dan", root).await;
+    let mut n = 0;
+    for (name, bodies) in [
+        (
+            "home",
+            &[
+                "kiwi orchard notes",
+                "kiwi harvest dates",
+                "pear orchard notes",
+                "plum harvest dates",
+            ][..],
+        ),
+        (
+            "legal",
+            &[
+                "kiwi import rules",
+                "kiwi labelling rules",
+                "pear import rules",
+                "plum labelling rules",
+            ][..],
+        ),
+        ("orchard", &["kiwi grafting", "kiwi pruning"][..]),
+    ] {
+        let node = create_workarea(router, &admin, root, name).await;
+        for body in bodies {
+            n += 1;
+            promote_over_http(
+                router,
+                &writer,
+                &dora,
+                node,
+                (&format!("kiwi-{n}"), "memory", body),
+            )
+            .await;
+        }
+        let (status, _, proposal) = send(
+            router,
+            "POST",
+            &format!("/v2/workareas/{name}/transitions"),
+            Call::auth(&dora)
+                .idem(&format!("t-{name}"))
+                .body(json!({ "to": "committed" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
+        let transition = proposal["transition_id"].as_str().expect("id");
+        let (status, _, ratified) = send(
+            router,
+            "POST",
+            &format!("/v2/workareas/{name}/transitions/{transition}/ratify"),
+            Call::auth(&dan).idem(&format!("r-{name}")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{ratified}");
+    }
+    let (status, _, policy) = send(
+        router,
+        "POST",
+        "/v2/federation",
+        Call::auth(&admin)
+            .idem("federation-on")
+            .body(json!({ "enabled": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{policy}");
+    let reader = issue_key(router, &admin, "reader", "orchard/reader", root).await;
+    let recall = json!({ "query": "kiwi", "workarea": "home", "sources": "scope" });
+    let (status, first) = recall_over_http(router, &reader, None, recall.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert!(
+        first["search"].get("widen").is_none(),
+        "a recall with no signal served the hint: {first}"
+    );
+    // The lead builds the signal off the request; the next recalls read it.
+    let mut http = Value::Null;
+    for _ in 0..200 {
+        let (_, answer) = recall_over_http(router, &reader, None, recall.clone()).await;
+        if let Some(widen) = answer["search"].get("widen") {
+            http = widen.clone();
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert_eq!(
+        http,
+        json!({ "sources": "wide", "candidates": 2, "matches_at_least": 4 }),
+        "legal and orchard hold the word, two rows each"
+    );
+    let (status, _, mcp) = send(
+        router,
+        "POST",
+        "/mcp",
+        Call::auth(&reader).body(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "oml_read",
+                "arguments": { "query": "kiwi", "workarea": "home", "sources": "scope" },
+            },
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{mcp}");
+    assert_eq!(
+        mcp["result"]["structuredContent"]["search"]["widen"], http,
+        "MCP's oml_read and the HTTP recall disagree on the hint: {mcp}"
+    );
+    let (status, _, settings) = send(router, "GET", "/v2/federation", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    assert!(
+        settings["widen_signal"]["built"].as_u64() >= Some(1),
+        "{settings}"
+    );
+    assert!(
+        settings["widen_signal"]["unserved"].as_u64() >= Some(1),
+        "{settings}"
+    );
+    assert_eq!(settings["widen_signal"]["failed"], 0, "{settings}");
+    drop_db(&rig.db_name).await;
+}

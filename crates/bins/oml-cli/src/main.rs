@@ -5114,8 +5114,9 @@ fn formats_doctor(ready: Option<&(u16, Value)>) -> Option<String> {
 }
 
 /// The federation lines (ADR-0072 d12, Consequences), read by an admin
-/// key: federation on with `max_sources` 0, and each key whose recall met
-/// more than 1,000 candidate sources since the lead started.
+/// key: federation on with `max_sources` 0, each key whose recall met more
+/// than 1,000 candidate sources since the lead started, and the widen
+/// hint's signal failing or never built (#244).
 fn federation_doctor(settings: Option<&Value>) -> Vec<String> {
     let Some(settings) = settings else {
         return Vec::new();
@@ -5132,6 +5133,31 @@ fn federation_doctor(settings: Option<&Value>) -> Vec<String> {
             "warn key {} reads {} trusted workareas outside its scopes, above 1,000: each recall of a federated tenant reads their counts, so its statistics read grows with them",
             key["key_id"].as_str().unwrap_or("?"),
             key["candidates"]
+        ));
+    }
+    // The widen hint's signal (ADR-0072 d8, as built by #244): a build that
+    // failed, or recalls that found none while none was ever built.
+    let widen = &settings["widen_signal"];
+    if widen["failed"].as_u64().unwrap_or(0) > 0 {
+        lines.push(format!(
+            "warn the widen hint's signal failed to build {} times since the lead started, last: {}; a scope recall without its signal carries no hint",
+            widen["failed"],
+            widen["last_failure"].as_str().unwrap_or("?")
+        ));
+    }
+    if widen["evicted"].as_u64().unwrap_or(0) > 0 {
+        lines.push(format!(
+            "warn {} widen signals were dropped to keep this tenant or the lead within its share, each not rebuilt for 300 s: their scopes carry no hint meanwhile",
+            widen["evicted"]
+        ));
+    }
+    if settings["enabled"] == true
+        && widen["built"].as_u64() == Some(0)
+        && widen["unserved"].as_u64().unwrap_or(0) > 0
+    {
+        lines.push(format!(
+            "warn {} scope recalls found no widen signal and none was built since the lead started: no scope answer carries the widen hint until one is",
+            widen["unserved"]
         ));
     }
     lines
@@ -6255,5 +6281,46 @@ mod tests {
         assert_eq!(valid_line(&open), "none declared");
         let ended = serde_json::json!({ "valid_from": null, "valid_until": "2015" });
         assert_eq!(valid_line(&ended), "from any time, until 2015");
+    }
+
+    #[test]
+    fn the_federation_doctor_names_a_widen_signal_that_failed_was_evicted_or_was_never_built() {
+        let settings = |built: u64, unserved: u64, failed: u64| {
+            json!({
+                "enabled": true,
+                "max_sources": 8,
+                "wide_keys": [],
+                "widen_signal": {
+                    "built": built,
+                    "unserved": unserved,
+                    "evicted": if built == 7 { 2 } else { 0 },
+                    "failed": failed,
+                    "last_failure": if failed > 0 { Value::from("backend: timeout") } else { Value::Null },
+                },
+            })
+        };
+        assert!(federation_doctor(Some(&settings(3, 2, 0))).is_empty());
+        assert_eq!(
+            federation_doctor(Some(&settings(7, 0, 0))),
+            vec![
+                "warn 2 widen signals were dropped to keep this tenant or the lead within its share, each not rebuilt for 300 s: their scopes carry no hint meanwhile"
+                    .to_owned()
+            ]
+        );
+        assert!(federation_doctor(Some(&settings(0, 0, 0))).is_empty());
+        assert_eq!(
+            federation_doctor(Some(&settings(1, 0, 2))),
+            vec![
+                "warn the widen hint's signal failed to build 2 times since the lead started, last: backend: timeout; a scope recall without its signal carries no hint"
+                    .to_owned()
+            ]
+        );
+        assert_eq!(
+            federation_doctor(Some(&settings(0, 5, 0))),
+            vec![
+                "warn 5 scope recalls found no widen signal and none was built since the lead started: no scope answer carries the widen hint until one is"
+                    .to_owned()
+            ]
+        );
     }
 }

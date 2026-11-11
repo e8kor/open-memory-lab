@@ -334,6 +334,31 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
+    fn vocabulary_counts(
+        &self,
+        tenant_id: Uuid,
+        scope: &oml_app::federation::CountsScope,
+        max_pairs: usize,
+    ) -> impl Future<Output = Result<Option<oml_app::federation::VocabularyCounts>, StoreError>> + Send
+    {
+        timed(
+            "vocabulary_counts",
+            self.inner.vocabulary_counts(tenant_id, scope, max_pairs),
+        )
+    }
+
+    fn counts_from_vocabulary(
+        &self,
+        vocabulary: &oml_app::federation::VocabularyCounts,
+        query: &str,
+        prunes: bool,
+    ) -> impl Future<Output = Result<oml_app::federation::ReferenceCounts, StoreError>> + Send {
+        timed(
+            "counts_from_vocabulary",
+            self.inner.counts_from_vocabulary(vocabulary, query, prunes),
+        )
+    }
+
     fn guardrail_rows(
         &self,
         tenant_id: Uuid,

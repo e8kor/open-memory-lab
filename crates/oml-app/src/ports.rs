@@ -859,6 +859,30 @@ pub trait JournalStore: Retriever + Send + Sync {
         query: &str,
     ) -> impl Future<Output = Result<crate::federation::ReferenceCounts, StoreError>> + Send;
 
+    /// Every form's counts over `scope.nodes`, whatever the query: what
+    /// [`Self::reference_counts`] reads for a query's forms, read for all of
+    /// them at once, `scope.prunes` aside. The widen hint's signal is built
+    /// from it off the request path (ADR-0072 d8, as built by #244). `None`
+    /// once more than `max_pairs` (node, form) counts are read: the read
+    /// stops there and holds no more.
+    fn vocabulary_counts(
+        &self,
+        tenant_id: Uuid,
+        scope: &crate::federation::CountsScope,
+        max_pairs: usize,
+    ) -> impl Future<Output = Result<Option<crate::federation::VocabularyCounts>, StoreError>> + Send;
+
+    /// What [`Self::reference_counts`] answers over the nodes and the state
+    /// `vocabulary` was read from, taken out of it: one read of the query's
+    /// forms and none of any count. The pruned words are decided over the
+    /// vocabulary's sums when `prunes`, as the retriever decides them.
+    fn counts_from_vocabulary(
+        &self,
+        vocabulary: &crate::federation::VocabularyCounts,
+        query: &str,
+        prunes: bool,
+    ) -> impl Future<Output = Result<crate::federation::ReferenceCounts, StoreError>> + Send;
+
     /// The one-transaction commit point. The store refuses a commit whose
     /// `seq`/`prev_hash` do not extend the current head — chain assignment
     /// is serialized per tenant, and the conflict is typed, never silent.
