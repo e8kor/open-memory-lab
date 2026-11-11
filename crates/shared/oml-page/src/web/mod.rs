@@ -84,8 +84,8 @@ pub const USER_WORKAREAS_PATH: &str = "/web/workareas";
 /// The admin page's Workareas view, which `oml-web` serves (ADR-0070 d7 (b)).
 pub const ADMIN_WORKAREAS_PATH: &str = "/web/admin/workareas";
 
-/// The user page's Review view: the queue, review next and bulk review,
-/// which `oml-web` serves (ADR-0070 d7 (b)).
+/// The user page's Review view, review next only; bulk review stays the
+/// admin page's (ADR-0055 d1). `oml-web` serves it (ADR-0070 d7 (b)).
 pub const USER_REVIEW_PATH: &str = "/web/review";
 
 /// The admin page's Review view, with the tenant's queue above it, which

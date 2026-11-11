@@ -520,6 +520,9 @@ pub async fn act(
             )
             .await;
         match issued {
+            // A replay shows neither: the first answer's cookie holds the
+            // secret, and this one sets none over it.
+            Ok(issued) if issued.replayed() => return acts::see_other(&target, &[]),
             Ok(issued) => {
                 let code = issued
                     .connect_code
@@ -536,9 +539,7 @@ pub async fn act(
                         expires_at,
                         connector_url,
                     },
-                    // A replay shows neither: the first answer's cookie holds
-                    // the secret, and this one sets none over it.
-                    (None, None) => return acts::see_other(&target, &[]),
+                    (None, None) => return keys::no_secret(&calls),
                 };
                 let sealed = once::seal(session.token(), START_PATH, &secret);
                 return acts::see_other(&target, &[once::set_cookie(&sealed)]);

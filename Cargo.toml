@@ -133,6 +133,10 @@ syn = { version = "2.0", default-features = false, features = ["full", "parsing"
 # has no no-echo read, and no crate in the graph offers one. Its libc and
 # windows-sys 0.61 are already in the graph.
 rpassword = "7.5"
+# The web client secret file's owner is checked against the process's
+# effective user (#262): std has no geteuid, and rustix answers it without
+# unsafe code. Already in the graph through tempfile.
+rustix = { version = "1.1", default-features = false, features = ["std", "process"] }
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
