@@ -92,7 +92,8 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
       # ring's C, for each musl target, with the wrapper Ubuntu's musl-tools
-      # ships for the runner's own architecture. On the arm64 runner cc counts
+      # ships for the runner's own architecture, or, when Ubuntu's mirrors
+      # cannot be reached, scripts/musl_toolchain.sh's one over Zig's. On the arm64 runner cc counts
       # aarch64-unknown-linux-musl as a cross compile and would otherwise call
       # aarch64-linux-musl-gcc, which musl-tools does not ship
       # (packages.ubuntu.com/noble/arm64/musl-tools/filelist, fetched
@@ -110,7 +111,7 @@ jobs:
           target: ${{ matrix.target }}
       - name: musl C toolchain
         if: endsWith(matrix.target, '-linux-musl')
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        run: scripts/musl_toolchain.sh
       - run: cargo build --release --locked --bin oml --target "$TARGET"
       - name: Package, after the binary prints the tag's version
         run: |
