@@ -4793,7 +4793,7 @@ components:
       description: >-
         The calling key's own record (GET /v2/whoami): everything a client derives from its URL
         and key alone. Never the key's value, its denials or its grants' deny masks (ADR-0039 d15).
-      required: [key_id, name, role, principal, held_by, tenant, default_workarea, crew, user, grants, shared]
+      required: [key_id, name, role, principal, held_by, tenant, default_workarea, crew, user, grants]
       additionalProperties: false
       properties:
         key_id: { type: string }
@@ -4829,7 +4829,7 @@ components:
           oneOf:
             - { $ref: '#/components/schemas/WhoamiPerson' }
             - { type: 'null' }
-        shared: { type: boolean, description: "Whether the server's admins are not the caller's: true when the operator sets server.shared or opens sign-up. oml sync asks consent of a shared server; a client treats an answer without it, from an older server, as false (ADR-0076 d9)." }
+        shared: { type: boolean, description: "Whether the server's admins are not the caller's: true when the operator sets server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9)." }
 
     WhoamiPerson:
       type: object

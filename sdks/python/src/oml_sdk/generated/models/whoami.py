@@ -41,9 +41,6 @@ class Whoami:
             user (None | WhoamiRef): The key's user root, from which a client learns its root; null for a tenant key
                 (ADR-0044 d11).
             grants (list[WhoamiGrant]): The key's stored grants, each with its epoch and without its deny masks.
-            shared (bool): Whether the server's admins are not the caller's: true when the operator sets server.shared or
-                opens sign-up. oml sync asks consent of a shared server; a client treats an answer without it, from an older
-                server, as false (ADR-0076 d9).
             guardrail_scope (GuardrailScope | Unset): Which applicable guardrails the key loads: workarea, the scope node's
                 alone; ancestors, the node's and every ancestor's the key reads. Set at issuance, ancestors when omitted,
                 journalled in key.issued; no request changes it, and any other value is request.validation, details.field
@@ -51,6 +48,9 @@ class Whoami:
             profile (None | Unset | WhoamiProfileType1 | WhoamiProfileType2Type1 | WhoamiProfileType3Type1): The key's
                 profile; null for none (ADR-0030 d8).
             person (None | Unset | WhoamiPerson): The person the key's user root names; null for a tenant key (ADR-0070 d5).
+            shared (bool | Unset): Whether the server's admins are not the caller's: true when the operator sets
+                server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always
+                sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9).
     """
 
     key_id: str
@@ -63,7 +63,6 @@ class Whoami:
     crew: None | WhoamiRef
     user: None | WhoamiRef
     grants: list[WhoamiGrant]
-    shared: bool
     guardrail_scope: GuardrailScope | Unset = UNSET
     profile: (
         None
@@ -73,6 +72,7 @@ class Whoami:
         | WhoamiProfileType3Type1
     ) = UNSET
     person: None | Unset | WhoamiPerson = UNSET
+    shared: bool | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.whoami_person import WhoamiPerson
@@ -119,8 +119,6 @@ class Whoami:
             grants_item = grants_item_data.to_dict()
             grants.append(grants_item)
 
-        shared = self.shared
-
         guardrail_scope: str | Unset = UNSET
         if not isinstance(self.guardrail_scope, Unset):
             guardrail_scope = self.guardrail_scope.value
@@ -145,6 +143,8 @@ class Whoami:
         else:
             person = self.person
 
+        shared = self.shared
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -159,7 +159,6 @@ class Whoami:
                 "crew": crew,
                 "user": user,
                 "grants": grants,
-                "shared": shared,
             }
         )
         if guardrail_scope is not UNSET:
@@ -168,6 +167,8 @@ class Whoami:
             field_dict["profile"] = profile
         if person is not UNSET:
             field_dict["person"] = person
+        if shared is not UNSET:
+            field_dict["shared"] = shared
 
         return field_dict
 
@@ -261,8 +262,6 @@ class Whoami:
 
             grants.append(grants_item)
 
-        shared = d.pop("shared")
-
         _guardrail_scope = d.pop("guardrail_scope", UNSET)
         guardrail_scope: GuardrailScope | Unset
         if isinstance(_guardrail_scope, Unset):
@@ -335,6 +334,8 @@ class Whoami:
 
         person = _parse_person(d.pop("person", UNSET))
 
+        shared = d.pop("shared", UNSET)
+
         whoami = cls(
             key_id=key_id,
             name=name,
@@ -346,10 +347,10 @@ class Whoami:
             crew=crew,
             user=user,
             grants=grants,
-            shared=shared,
             guardrail_scope=guardrail_scope,
             profile=profile,
             person=person,
+            shared=shared,
         )
 
         return whoami

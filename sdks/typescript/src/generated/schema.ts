@@ -2714,8 +2714,8 @@ export interface components {
             profile?: "curator" | null;
             /** @description The person the key's user root names; null for a tenant key (ADR-0070 d5). */
             person?: components["schemas"]["WhoamiPerson"] | null;
-            /** @description Whether the server's admins are not the caller's: true when the operator sets server.shared or opens sign-up. oml sync asks consent of a shared server; a client treats an answer without it, from an older server, as false (ADR-0076 d9). */
-            shared: boolean;
+            /** @description Whether the server's admins are not the caller's: true when the operator sets server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9). */
+            shared?: boolean;
         };
         WhoamiPerson: {
             user: string;

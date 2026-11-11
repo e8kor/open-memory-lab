@@ -32,7 +32,7 @@ server:
     note: The `http` or `https` base URL of an OpenTelemetry collector. The server posts spans to `<endpoint>/v1/traces` over OTLP with protobuf and sends no authentication header.
   server.shared:
     default: "`false`"
-    note: "`true` when the server's admins are not its callers': a server people other than you use, invitation-only included. `GET /v2/whoami` then answers `shared: true`, and `oml sync` asks each clone's consent before it syncs there. Open sign-up (`signup.mode` open) implies it. A server already in use that turns it on does so in the deploy that upgrades it: newer CLIs sync with no disclosure to a server that does not say it is shared."
+    note: "`true` when the server's admins are not its callers': a server people other than you use, invitation-only included. `GET /v2/whoami` then answers `shared: true`, and `oml sync` asks each clone's consent before it syncs there. Open sign-up (`signup.mode` open) implies it. A server already in use turns it on before, or in the same deploy as, its upgrade: newer CLIs sync with no disclosure to a server that does not say it is shared."
   web.google.client_id:
     default: unset (Google sign-in off)
     note: The OAuth client ID of your Google application. Register the redirect URI `<oauth.issuer>/web/callback/google`.
