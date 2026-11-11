@@ -934,17 +934,17 @@ where
 
     // -- #6 GET /v2/web/export -------------------------------------------------
 
-    pub(crate) async fn web_export(
+    pub(crate) async fn export_web_person(
         State(st): State<Self>,
         rid: Rid,
         headers: HeaderMap,
     ) -> Response {
-        finish(&rid, Self::web_export_inner(&st, &headers).await)
+        finish(&rid, Self::export_web_person_inner(&st, &headers).await)
     }
 
     /// `GET /v2/web/export`: everything the person holds, as a JSON
     /// attachment, for their web session key only (ADR-0068 d6).
-    async fn web_export_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
+    async fn export_web_person_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
         let caller = st.console_caller(headers).await?;
         if !is_web_session_key(&caller) {
             return Err(session_key_only(&caller, "export"));
