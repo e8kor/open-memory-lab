@@ -14,8 +14,9 @@ phase 1 built for v0.7.0 (#205), see [Phase 1 as built](#phase-1-as-built-2026-1
 
 **In short.** Recall can search the trusted workareas a key already reads: `sources: "wide"`, or a
 fixed list such as `sources: ["acme.legal", "acme.product"]`. It is off until a tenant admin enables
-it. Every hit says where it came from, a list is answered whole or refused, and a `scope` answer
-says when a wider search would find more. Nothing becomes readable that was not, and no hit's score
+it. Every hit says where it came from, and a list is answered whole or refused. The hint that a
+`scope` answer would find more by widening is deferred from phase 1 (#244), since computing it
+cost every `scope` recall about 58 ms p95 on federated tenants. Nothing becomes readable that was not, and no hit's score
 depends on which sources were chosen. Phase 1 selects by exact word counts; reviewed descriptors
 join only in phase 2, and only if phase 1's measurements ask for them.
 
@@ -30,7 +31,7 @@ join only in phase 2, and only if phase 1's measurements ask for them.
 | d5 | One `sources` field (`scope`, `wide` or a list); one policy per workarea, three per tenant | 1 |
 | d6 | Advertising grants nothing; a key learns of no workarea it cannot read | 1 |
 | d7 | A hit's score never depends on which sources were selected | 1 |
-| d8 | The answer names its sources and why; a normalised-rate hint says when to widen | 1 |
+| d8 | The answer names its sources and why; a normalised-rate hint says when to widen | 1; the hint deferred (#244) |
 | d9 | The same inputs give the same answer; no clock, randomness or model | 1 |
 | d10 | Ontology overlap and generated questions read reviewed content only | 3 |
 | d11 | The eval measures every mode against `scope` and the union, with numeric gates | 1, 2 |
@@ -39,7 +40,7 @@ join only in phase 2, and only if phase 1's measurements ask for them.
 
 **Amends:** ADR-0039 (d4: recall mode gains `sources`), ADR-0044 (d10: `universe` becomes one
 trusted source among others when `sources` is not `scope`), ADR-0049 (d6: the answer says which
-sources it searched and why, and may hint that a wider search would find more)
+sources it searched and why; the hint that a wider search would find more is deferred, #244)
 
 ## Context
 
@@ -172,7 +173,7 @@ flowchart TD
   SL --> P["one pipeline run over the searched nodes<br/>every row scored with R's statistics"]
   U --> P
   T --> P
-  P --> A["answer: hits with via, search.sources,<br/>cut or widen, readable nodes only"]
+  P --> A["answer: hits with via, search.sources,<br/>cut, readable nodes only"]
 ```
 
 A recall with `sources: wide`, in order:
@@ -369,8 +370,7 @@ sequenceDiagram
   journalled.**
   - **`sources`** on `oml_read` recall and `POST /v1/memories/recall` says where to search. A
     string is a mode and an array is a fixed set:
-    - `"scope"`: today's answer exactly, with no federation read (d12 as amended; the widen
-      hint of d8 is not served in phase 1).
+    - `"scope"`: today's answer exactly, with no federation read (d12 as amended; the widen hint (d8) is deferred from phase 1 (#244). Computing it on scope recalls cost ~58 ms p95 on federated tenants (98.7 → 40.2 ms without it). It returns when a precomputed signal makes it cheap (e.g. the per-workarea statistics or sketch planned for phase 2/3)).
     - `"wide"`: the scope plus the candidates d4 selects. The caller states the intent, not the
       algorithm: phase 1 selects by content (d4.4); phase 2 adds the tenant setting
       `federation.selector`, `content` or `described` (d4.5), and a selector other than `content`
@@ -465,7 +465,7 @@ sequenceDiagram
   words taken from R (d4.2), not from the searched nodes. Under a list the searched nodes are the
   listed ones alone (d5), and R is the same nodes, so every listed row scores against exactly the
   listed workareas. Under `scope` nothing here applies: hits score with
-  the scope's statistics, as today, and R is read only for the hint (d8). Precisely:
+  the scope's statistics, as today, and R is not read (d12 as amended). Precisely:
   1. **Score independence.** A row's retriever score is a function of the row, the query and R's
      statistics. It is the same whether or not any other source was selected, whatever the
      selector or the descriptor slots. Under a list the same holds for any listed set: R is the
@@ -513,10 +513,8 @@ sequenceDiagram
   too. Each federated answer's hits gain `via` and their `workarea_path`, so the agent knows a hit
   came from another team's context. The MCP rendering carries `workarea_path` and `via` per hit
   and the `cut` line; the full block is served over HTTP and under `explain: true`.
-  **The widen hint.** *Not served in phase 1 (d12 as amended, 2026-11-11):* the default path
-  pays nothing for federation, and the hint below costs every `scope` recall a candidate and
-  statistics read, so it returns only when it can be computed without one; rule 1 was measured
-  and passes d11's gate (Phase 1 as built). As designed: under `scope`, on a tenant with
+  **The widen hint.** *Deferred, 2026-11-11:* the widen hint (d8) is deferred from phase 1 (#244). Computing it on scope recalls cost ~58 ms p95 on federated tenants (98.7 → 40.2 ms without it). It returns when a precomputed signal makes it cheap (e.g. the per-workarea statistics or sketch planned for phase 2/3). Rule 1 was measured and passes d11's
+  gate (Phase 1 as built). As designed for its return: under `scope`, on a tenant with
   federation enabled, the core reads R's
   counts for the query's words (d12) on every recall. Raw counts would carry the size bias that
   E(s) exists to correct (`universe` holds the rarest word more often than any crew), so the hint
@@ -540,7 +538,7 @@ sequenceDiagram
   agent reads as, for instance, "at least 14 memories in 3 trusted workareas you read share a
   word with the query", and may retry with `sources: "wide"`. It names no workarea and counts
   readable candidates only. d11 measures how often it fires and how often widening then helps,
-  and gates the factor. The MCP server instructions gain one line, "a recall answer with
+  and gates the factor. When it returns, the MCP server instructions gain one line, "a recall answer with
   `search.widen` may be retried with `sources: "wide"`": a hint in the answer, not a tool, as
   ADR-0039 d8 asks.
   Every name and number in the answer is of a node the key reads (d6). A `scope` answer is
@@ -595,7 +593,7 @@ sequenceDiagram
   must not lower selection recall by more than one query; and the **widen hint** (d8) is reported
   by its firing rate and its precision, the share of hints after which `wide` raised success@5,
   on the cross split and on the existing queries run scoped at their relevant topic, and it ships
-  only if it stays silent on at least 90 per cent of those scope-answerable queries and its
+  (it is deferred from phase 1 (#244). Computing it on scope recalls cost ~58 ms p95 on federated tenants (98.7 → 40.2 ms without it). It returns when a precomputed signal makes it cheap (e.g. the per-workarea statistics or sketch planned for phase 2/3)) only if it stays silent on at least 90 per cent of those scope-answerable queries and its
   precision on the cross split is at least 50 per cent; otherwise its factor changes by
   amendment. **The phase 2 floor, in numbers.** The baseline is `bm25` on the 121-query synthetic
   set, success@5 0.926 and nDCG@10 0.876 ([recall-synthetic](../benchmarks/recall-synthetic.md)),
@@ -648,7 +646,7 @@ sequenceDiagram
 
     | Phase | Builds | Issue | Built when | Leakage and invariance tests (each red first by breaking its clause) |
     |---|---|---|---|---|
-    | 1 | `sources` (`"scope"`, `"wide"`, a list), d1's trust set, R with its expired subtraction and pruned words, d4's estimate and cap, d5's policies (`enabled`, `default_sources`, `max_sources`, `accept_federated`), d7, d8 with the widen hint, d9, the eval's cross and skew splits, the directory recipe | #205 | after the candidate-count distribution is reported | (1) an unreadable W (a per-grant deny on a child of a readable parent) whose rows match every query changes no byte of `sources`, `considered`, `cut`, `widen`, hits, scores, `did_you_mean`, `explain` counts or `recall_events`, against W absent; (2) the same for W readable but `development`, in progress or `accept_federated: false`; (3) a reader of the scope without reader on W reads the scope workarea: W's id and name are absent from the whole body; (4) an unreadable W named in a `sources` list gives `access.not_found` byte-identical to a nonexistent name, and a list with one unusable name is refused whole, never answered from the rest, with the latency of an unreadable name compared to an absent one over many runs, and each list-shape refusal (empty, duplicate, over `max_sources`, `Cc`) in the order of d5; (5) reader on S revoked, then a recall at once: S absent, no candidate cache; (6) a scope hit's score is identical whether source X is selected or not, and the `bm25` answer for any searched set equals the union's restricted to it, on `bm25` and on `bm25-postings` with a selection whose postings would cross `POSTING_BUDGET`; (7) timing over many runs, W with 0 against 100,000 matching rows: p50 and p95 within noise; (8) with federation off `scope` reproduces today byte for byte and `wide` and a list are refused; (9a) a list's scores and answer are byte-identical whatever the unlisted workareas hold, and whether any of them is unreachable; an unreachable listed unit refuses `503 cluster.source_unavailable` and an unreachable candidate under `wide` is in `missing` and absent from `reference_workarea_ids`; (9b) the widen hint stays silent on a scope whose rate equals the candidates', fires on one 2 times richer, and ignores a candidate's single stray row |
+    | 1 | `sources` (`"scope"`, `"wide"`, a list), d1's trust set, R with its expired subtraction and pruned words, d4's estimate and cap, d5's policies (`enabled`, `default_sources`, `max_sources`, `accept_federated`), d7, d8 without the widen hint (the widen hint (d8) is deferred from phase 1 (#244). Computing it on scope recalls cost ~58 ms p95 on federated tenants (98.7 → 40.2 ms without it). It returns when a precomputed signal makes it cheap (e.g. the per-workarea statistics or sketch planned for phase 2/3)), d9, the eval's cross and skew splits, the directory recipe | #205 | after the candidate-count distribution is reported | (1) an unreadable W (a per-grant deny on a child of a readable parent) whose rows match every query changes no byte of `sources`, `considered`, `cut`, `widen`, hits, scores, `did_you_mean`, `explain` counts or `recall_events`, against W absent; (2) the same for W readable but `development`, in progress or `accept_federated: false`; (3) a reader of the scope without reader on W reads the scope workarea: W's id and name are absent from the whole body; (4) an unreadable W named in a `sources` list gives `access.not_found` byte-identical to a nonexistent name, and a list with one unusable name is refused whole, never answered from the rest, with the latency of an unreadable name compared to an absent one over many runs, and each list-shape refusal (empty, duplicate, over `max_sources`, `Cc`) in the order of d5; (5) reader on S revoked, then a recall at once: S absent, no candidate cache; (6) a scope hit's score is identical whether source X is selected or not, and the `bm25` answer for any searched set equals the union's restricted to it, on `bm25` and on `bm25-postings` with a selection whose postings would cross `POSTING_BUDGET`; (7) timing over many runs, W with 0 against 100,000 matching rows: p50 and p95 within noise; (8) with federation off `scope` reproduces today byte for byte and `wide` and a list are refused; (9a) a list's scores and answer are byte-identical whatever the unlisted workareas hold, and whether any of them is unreachable; an unreachable listed unit refuses `503 cluster.source_unavailable` and an unreachable candidate under `wide` is in `missing` and absent from `reference_workarea_ids`; (9b), the widen hint's law, is deferred with the hint (#244) |
     | 2 | kind `descriptor`, d3's hold rule, check and yield, memory-kind-3 postings, the `selector` setting and the `described` selector with `descriptor_slots` | #206 | only if, after phase 1, content selection's recall on the skew split is below 0.90 or more than two queries below the exact ReDDE analogue (d11), **and** a tenant's measured candidate count exceeds `max_sources`; its admission gate is d11's numeric floor, and open question 1 is decided (2026-11-10: a person promotes a descriptor) | (9) held, rejected and superseded descriptors select exactly what no descriptor selects, and a held descriptor is not served to a non-author; (10) a descriptor on an unreadable W changes no byte; (11) an adversarial descriptor matching every query lowers selection recall by at most one query and displaces at most `descriptor_slots` sources; (12) a descriptor version with a hold finding, at write or added by a rescan after promotion, selects exactly what no descriptor selects, whether a person approved it or dismissed the finding, and no descriptor text appears in any recall answer; (13) memory-kind-3 postings (descriptor postings, not ADR-0075's posting kind 3) are never hits and do not change R's statistics |
     | 3 | d10's ontology and question lists, fused by RRF into the descriptor score | #207 | after ADR-0051 and #201 land, and phase 2 is built | (14) a term or question held only by unreadable rows selects nothing and changes no count; (15) a question of a held, demoted or erased memory never scores a source, and erasure removes its postings |
 
@@ -663,7 +661,7 @@ left a reading open, or named a surface main does not have, the build took the r
 | d4.2, d5, d13 test 9a | No source is ever unreachable: `search.sources.missing` and `503 cluster.source_unavailable` are not served, and test 9a proves its first half | both are ADR-0073's, which is proposed; on one database every node of R answers or the recall fails whole, as a scope does today |
 | d5 | The tenant policy is read and set at `GET` and `POST /v2/federation`, admin by key role, and from the CLI with `oml search federation`; `max_sources` is 0 to 64; a list name is a workarea name or id, as a scope is | d5 names the fields and the event, not the route; 64 keeps a list's validation and a wide recall's selection bounded |
 | d8 | The recall body has no `explain` member, so a cut's workarea paths are not served; `search.sources.cut` serves its count and lower bound | ADR-0049 d6's block is served as `search` on every answer; serving the paths waits for a member that asks for them |
-| d12, d8 | A `scope` recall makes no federation read, federation on or off, sources sent or absent; a recall naming no `sources` reads the tenant's default with its default pipeline off one row; the widen hint is not served | the default path pays nothing for federation: with the hint, a `scope` recall at 1,000 candidates took 98.7 ms p95 against 43.8 ms with federation off |
+| d12, d8 | A `scope` recall makes no federation read, federation on or off, sources sent or absent; a recall naming no `sources` reads the tenant's default with its default pipeline off one row, the read main makes for the pipeline; one that names a pipeline but no `sources` still reads that row, since `default_sources` may be `wide`, the one read more than main; the widen hint is deferred (#244) | the default path pays nothing for federation: with the hint, a `scope` recall at 1,000 candidates took 98.7 ms p95 against 43.8 ms with federation off |
 | d8, d11 | The widen hint, when it returns, fires on rule 1 alone, a candidate twice as rich per row with a word on two of its rows; rule 2, the thin answer, is dropped | d11's gate, measured: with both rules the hint was silent on 15.7% of the scope-answerable queries (90% asked) with 93.3% precision on the cross split; rule 1 alone was silent on 91.7% with 93.5% precision. Rule 2 fired on 101 of 102 firings, because a scope of 12 to 25 memories rarely holds `k` 10 matches. d11 changes the hint by amendment when it fails; the factor 2 and the floor stand |
 | d9 | `query_digest` gains `sources` only under `wide` or a list, so a `scope` recall digests as it did before | ADR-0059's members joined the digest the same way, only when sent |
 | d12 | The doctor line naming a key above 1,000 candidates reads the keys the lead met since it started, served to a tenant admin by `GET /v2/federation` | no use case lists a tenant's keys with their access, and a doctor line decides nothing |
@@ -673,7 +671,7 @@ left a reading open, or named a surface main does not have, the build took the r
 | d7.2, review m1 | Under a pruning read, the rescore depth `k` × `RESCORE_DEPTH` is taken over the searched rows, so a row past that depth among the union's could in principle enter a narrower search's answer | test 6 holds the law at `k` 1, 3, 10 and 100 under limits whose selections cross the budget; generating over R is the fix should a measurement find it binding |
 | Who gains, d12 | The candidate-count report is `oml-pg`'s `federation_candidates` example, one read of every live key through the core's own C; the measurement at 1,000 candidates is `pg_store`'s `federation_overhead_at_1000_candidates` | this lane has no access to the public server's database, so the live distribution is the operator's run of the report, and `max_sources` stays 8 until it is read. Measured on a shared host: the statistics reads take 10.9 ms at p95 over 1,000 candidates, against d12's 10 ms; working out the candidates adds about as much again |
 | d11 | The cross split re-scopes the existing labelled queries to a topic holding none of their answers; no new cross-team queries were written | it measures what reach buys over the union, not cross-team phrasing; new labelled queries are #205's follow-up |
-| d13 | Tests 9 to 15 are not built | they hold descriptors, kind-3 postings, ontology overlap and generated questions, phases 2 and 3, none of which phase 1 builds |
+| d13 | Tests 9 to 15 are not built, and test 9b is deferred with the widen hint (#244) | tests 9 to 15 hold descriptors, kind-3 postings, ontology overlap and generated questions, phases 2 and 3, none of which phase 1 builds; 9b holds the hint, which returns on a precomputed signal |
 
 The eval (d11) is `eval/recall/federated.sh`; its numbers are in [the recall report](https://github.com/e8kor/open-memory-lab/blob/main/eval/recall/REPORT.md#federated-recall).
 
@@ -681,7 +679,7 @@ The eval (d11) is `eval/recall/federated.sh`; its numbers are in [the recall rep
 
 - `docs/architecture/retrieval.md` gains a section on source selection, and `workareas.md` the
   per-workarea `federation` policy and the directory recipe, when phase 1 is built; `errors.md`,
-  `openapi.yaml` and `http-api.md` gain `sources`, `search.widen`, their refusals
+  `openapi.yaml` and `http-api.md` gain `sources`, their refusals (`search.widen` with the hint, #244)
   and `workarea.federation_set` then, not before (ADR-0039 d9).
 - **Route and usage.** ADR-0074 d12 names the recall route `POST /v2/recall`; main has
   `/v1/memories/recall`, which this record uses, and ADR-0074 follows it (a one-word fix there).
