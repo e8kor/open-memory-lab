@@ -27,9 +27,12 @@ data through [ir_datasets](https://ir-datasets.com/) (MIT), rather than from cod
 | `rerank_probe.py` | reorders a served run's first-stage lists offline with each cross-encoder through onnxruntime, at several depths, to choose a model and a depth before one is served (ADR-0053 d4) |
 | `rerank_floor.py` | sweeps a relevance floor over runs made with none: unanswerable queries emptied against answerable ones lost, and LoCoMo's categories (ADR-0053 d6) |
 | `prune_sweep.py` | asks every query through the PostgreSQL adapter's own `retrieve` (`crates/adapters/oml-pg/examples/search_scale.rs`) for `bm25` and for `bm25-postings` at several pairs of prune constants, and scores each list: the run that set ADR-0052's constants (`results/prune-sweep.json`) |
+| `power.py` | ADR-0075 d8's power computation rerun on measured runs (phase 0a): success@5 with 95% intervals on the grown set, the exact McNemar power at its n, each non-inferiority margin from the measured SDs, and the joint power; standard library |
 | `requirements.txt` | the Python packages, pinned |
 | `results/<suite>/<method>.json` | the committed results, one file per suite and method, schema `oml-bench/1` |
 | `results/tables.md`, `results/load-*.json` | the report tables and each dataset's load log |
+| `results/per-query/<suite>/<method>.json` | each query's category, first 10 served ids, scores and latency, schema `oml-bench-per-query/1`, which the page generator does not render (ADR-0075 d8 commits every run's per-query results) |
+| `results/phase0a/` | `power.md` and `power.json`, `power.py`'s output for ADR-0075's phase 0a |
 
 ## Running it
 
@@ -106,7 +109,8 @@ produced it:
  "notes": "the limits, in one sentence"}
 ```
 
-- Suites: `recall-synthetic` (eval/recall's served results, converted), `beir-scifact`,
+- Suites: `recall-synthetic` (eval/recall's served results, converted), `recall-grown`
+  (eval/recall's grown set run as the dataset `grown`, ADR-0075 d8), `beir-scifact`,
   `beir-nfcorpus`, `locomo`, `beir-scifact-x10`. Earlier runs move to
   `results/archive/<commit>/`; `scripts/gen_bench_pages.py` renders every file into the API
   docs' benchmark pages, current and earlier side by side. Methods: the four served pipelines, and the two offline
