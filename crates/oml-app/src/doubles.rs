@@ -348,6 +348,10 @@ pub struct MemStore {
     /// tested over this store; never a law of `bm25`, which the in-memory
     /// store does not serve (ADR-0049 d7).
     bm25_as_any_word: bool,
+    /// How many federation reads the store answered — the tenant's policy,
+    /// the declining nodes and the reference counts — shared by every
+    /// handle, so a law can hold that a recall made none (ADR-0072 d12).
+    federation_reads: Arc<AtomicU64>,
 }
 
 /// Work a test lands between a use case's reads and its commit: run once,
@@ -402,6 +406,12 @@ impl MemStore {
                 .insert(copy.memory_id);
             state.memories.insert(copy.memory_id, copy);
         }
+    }
+
+    /// How many federation reads every handle of this store answered.
+    #[must_use]
+    pub fn federation_reads(&self) -> u64 {
+        self.federation_reads.load(Ordering::SeqCst)
     }
 
     /// The store that answers the `bm25` retriever with its any-word list:
@@ -2572,6 +2582,7 @@ impl JournalStore for MemStore {
         &self,
         tenant_id: Uuid,
     ) -> Result<crate::federation::FederationPolicy, StoreError> {
+        self.federation_reads.fetch_add(1, Ordering::SeqCst);
         Ok(self
             .tenant_existing(tenant_id)
             .map(|t| t.lock().expect("tenant lock").federation)
@@ -2583,6 +2594,7 @@ impl JournalStore for MemStore {
         tenant_id: Uuid,
         nodes: &[Uuid],
     ) -> Result<Vec<Uuid>, StoreError> {
+        self.federation_reads.fetch_add(1, Ordering::SeqCst);
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
         };
@@ -2606,6 +2618,7 @@ impl JournalStore for MemStore {
         scope: &crate::federation::CountsScope,
         query: &str,
     ) -> Result<crate::federation::ReferenceCounts, StoreError> {
+        self.federation_reads.fetch_add(1, Ordering::SeqCst);
         let words: Vec<String> = words(query).into_iter().collect();
         let mut nodes: BTreeMap<Uuid, oml_domain::federation::SourceCounts> = scope
             .nodes
