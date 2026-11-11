@@ -37,8 +37,15 @@ fn every_corpus_sample_states_its_expected_verdict() {
             );
         }
         assert!(
-            ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "CC-BY-4.0", "CC0-1.0"]
-                .contains(&s.raw["spdx"].as_str().unwrap_or_default()),
+            [
+                "Apache-2.0",
+                "MIT",
+                "BSD-2-Clause",
+                "BSD-3-Clause",
+                "CC-BY-4.0",
+                "CC0-1.0"
+            ]
+            .contains(&s.raw["spdx"].as_str().unwrap_or_default()),
             "{at}: a licence d15 admits"
         );
         assert!(!s.text.is_empty(), "{at}: a text that decodes");
@@ -83,7 +90,7 @@ fn the_redteam_report_matches_the_committed_baseline() {
             .lines()
             .zip(report.lines())
             .position(|(a, b)| a != b)
-            .map_or(committed.lines().count().min(report.lines().count()), |i| i);
+            .unwrap_or(committed.lines().count().min(report.lines().count()));
         panic!(
             "the redteam report differs from tests/corpus/baseline.txt from line {}: \
              rerun with OML_REDTEAM_BLESS=1 and commit the baseline with the rule change\n\

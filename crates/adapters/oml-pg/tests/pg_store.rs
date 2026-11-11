@@ -47,7 +47,9 @@ use oml_app::ports::{
     Retriever, StoreError,
 };
 use oml_app::search::{CandidateScope, MatchMode, OwnHeldScope, RetrievalQuery, RetrieverKind};
-use oml_app::types::{AppError, BootstrapRequest, ClaimEdgeRecord, KeyRecord, PROVIDER_TENANT};
+use oml_app::types::{
+    AppError, BootstrapRequest, ClaimEdgeRecord, KeyRecord, MemoryRecord, PROVIDER_TENANT,
+};
 use oml_pg::{
     ForkCheckError, MIGRATOR, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
@@ -832,6 +834,7 @@ async fn the_serving_role_sees_nothing_of_another_tenant_in_a_tenant_tables_pg_s
                 MetadataFold::MemoryHeld {
                     memory,
                     enqueue: false,
+                    findings: Box::default(),
                 },
                 None,
             )
@@ -2214,6 +2217,7 @@ async fn the_served_tip_index_refuses_a_second_tip() {
             MetadataFold::MemoryHeld {
                 memory,
                 enqueue: false,
+                findings: Box::default(),
             },
             None,
         )
@@ -3416,6 +3420,7 @@ async fn hold(
         MetadataFold::MemoryHeld {
             memory: held_memory(rig.tenant_id, workarea, memory, "wanda", author, "held"),
             enqueue,
+            findings: Box::default(),
         },
         None,
     )
@@ -4171,6 +4176,7 @@ async fn the_widening_statement_names_its_tenant_and_touches_no_other_tenants_ro
                 MetadataFold::MemoryHeld {
                     memory: memory.clone(),
                     enqueue: false,
+                    findings: Box::default(),
                 },
                 None,
             )
@@ -5899,7 +5905,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 41, "every migration through 0041_as_of_tips");
+    assert_eq!(applied, 43, "every migration through 0043_scan_findings");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7346,7 +7352,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 41, "every migration through 0041_as_of_tips");
+    assert_eq!(applied, 43, "every migration through 0043_scan_findings");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8222,7 +8228,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 41, "every migration through 0041_as_of_tips");
+    assert_eq!(applied, 43, "every migration through 0043_scan_findings");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -9767,4 +9773,160 @@ async fn tip_moves_state(conn: &mut PgConnection) -> (Vec<(String, bool)>, i64, 
     .await
     .expect("parent");
     (attached, copies, parent_valid)
+}
+
+// ---------------------------------------------------------------------------
+// The scan's rule set and findings list (migrations 0038, 0043; ADR-0074)
+// ---------------------------------------------------------------------------
+
+/// A held version a database at 0037 stored, before the rule set was
+/// stamped, reads `oml-scan/1` once 0038 runs, so it stays its author's in
+/// an in-progress scope until the recording rescan reads it (ADR-0074 d18
+/// phase 1, d28).
+#[tokio::test]
+async fn the_migration_marks_every_existing_version_scanned_under_oml_scan_1() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, conn) = schema_through(&created, 37).await;
+    drop(conn);
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(380);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0x380A);
+    let key = Uuid::from_u128(0x380B);
+    let ids = [Uuid::from_u128(0x380C), Uuid::from_u128(0x380D)];
+    for (n, id) in ids.iter().enumerate() {
+        rig.commit(
+            &store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: MemoryRecord {
+                    scan_finding: (n == 0).then(|| {
+                        "injection.override: ignore-instructions at /body line 1".to_owned()
+                    }),
+                    ..held_memory(rig.tenant_id, wa, *id, "wanda", key, "stored at 0037")
+                },
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("a version stored at 0037");
+    }
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0038 and later apply");
+    for id in ids {
+        let row = store
+            .memory(rig.tenant_id, id)
+            .await
+            .expect("read")
+            .expect("the row");
+        assert_eq!(row.scanned_under.as_deref(), Some("oml-scan/1"), "{id}");
+    }
+    drop_dbs(&created).await;
+}
+
+/// 0043 lists each `scan_finding` a database at 0041 stored as one finding
+/// recorded by admission, under the rule set the version was scanned under
+/// and the seq of the event that admitted it, the stored text kept, and
+/// adds none for a version with no finding; doctor's unlisted count is then
+/// zero (ADR-0074 d23).
+#[tokio::test]
+async fn migration_0043_lists_each_stored_scan_finding_as_one_admission_finding() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, conn) = schema_through(&created, 41).await;
+    drop(conn);
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(430);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0x430A);
+    let key = Uuid::from_u128(0x430B);
+    let flagged = Uuid::from_u128(0x430C);
+    let clean = Uuid::from_u128(0x430D);
+    let stored = "injection.override: ignore-instructions at /body line 3; unicode.bidi: bidi-control at /body line 1";
+    let receipt = rig
+        .commit(
+            &store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": flagged.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: MemoryRecord {
+                    scan_finding: Some(stored.to_owned()),
+                    scanned_under: Some("oml-scan/1.1".to_owned()),
+                    ..held_memory(rig.tenant_id, wa, flagged, "wanda", key, "flagged")
+                },
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("a flagged version stored at 0041");
+    rig.commit(
+        &store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": clean.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory: MemoryRecord {
+                claim_key: "clean".to_owned(),
+                scanned_under: Some("oml-scan/1.1".to_owned()),
+                ..held_memory(rig.tenant_id, wa, clean, "wanda", key, "clean")
+            },
+            enqueue: true,
+            findings: Box::default(),
+        },
+        None,
+    )
+    .await
+    .expect("a clean version stored at 0041");
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0043 applies over a database at 0041");
+    assert_eq!(
+        store
+            .scan_findings(rig.tenant_id, &[flagged, clean])
+            .await
+            .expect("scan_findings"),
+        vec![(
+            flagged,
+            oml_app::types::VersionFinding {
+                class: "injection.override".to_owned(),
+                rule: "ignore-instructions".to_owned(),
+                verdict: oml_app::types::FindingVerdict::Hold,
+                rule_set: Some("oml-scan/1.1".to_owned()),
+                field: None,
+                line: None,
+                via: None,
+                span: None,
+                found_by: oml_app::types::FoundBy::Admission,
+                event_seq: Some(receipt.seq),
+                migrated_from: Some(stored.to_owned()),
+            },
+        )]
+    );
+    assert_eq!(
+        store
+            .scan_backlog(rig.tenant_id, Some("oml-scan/1.1"))
+            .await
+            .expect("backlog")
+            .findings_unlisted,
+        0
+    );
+    drop_dbs(&created).await;
 }

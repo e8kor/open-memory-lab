@@ -2888,6 +2888,82 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
     );
 }
 
+/// The review card names every finding stored on the version, one line
+/// each with its verdict, its class and rule and where it fired, and the
+/// bulk table counts them by verdict (ADR-0074 d17, d18 phase 1, d23). The
+/// double holds on its marker in the body and in the title alike, so the
+/// version carries two findings where the single stored `scan_finding`
+/// named one.
+#[tokio::test]
+async fn the_review_card_names_every_scan_finding() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    rig.app
+        .submit_memory(
+            value.as_str(),
+            &oml_app::types::SubmitRequest {
+                origin: None,
+                anchor: None,
+                idempotency_key: "k-flagged".to_owned(),
+                claim_key: Some("flagged".to_owned()),
+                verb: Some(oml_app::types::SubmitVerb::Remember),
+                kind: oml_app::domain::MemoryKind::Memory,
+                body: "the deploy note [needs-human] in the body".to_owned(),
+                workarea: None,
+                derives_from: Vec::new(),
+                severity: None,
+                rule: None,
+                valid_from: None,
+                valid_until: None,
+                format: None,
+                title: Some("[needs-human] in the title".to_owned()),
+                on_similar: Default::default(),
+            },
+        )
+        .await
+        .expect("the agent writes");
+    // The bulk table first: a serve claims the item for its reviewer.
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    act(
+        &rig,
+        &admin,
+        "/web/admin",
+        &[
+            ("action", "grant_review"),
+            ("user", "boss"),
+            ("workarea", "alice"),
+        ],
+    )
+    .await;
+    let (_, _, page) = send(&rig.router, get("/web/admin/review", Some(&admin))).await;
+    assert!(page.contains("<th>Findings</th>"), "{page}");
+    assert!(
+        page.contains(r#"<td class="mono findings">2 hold</td>"#),
+        "{page}"
+    );
+    let (status, _, page) =
+        act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("scan findings · 2"), "{page}");
+    let block = page
+        .split(r#"<div class="findings">"#)
+        .nth(1)
+        .and_then(|rest| rest.split("</div>").next())
+        .expect("a findings block");
+    assert_eq!(
+        block
+            .matches(r#"<span class="tag oml-chip is-held">hold</span>"#)
+            .count(),
+        2,
+        "{block}"
+    );
+    for field in [">/body<", ">/title<"] {
+        assert!(block.contains(field), "{field}: {block}");
+    }
+}
+
 #[tokio::test]
 async fn the_review_card_shows_the_source_the_format_and_what_it_will_be_found_by() {
     let rig = rig().await;

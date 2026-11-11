@@ -86,8 +86,8 @@ pub fn load() -> Vec<Sample> {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         let body = std::fs::read_to_string(&path).expect("read a corpus file");
         for (n, line) in body.lines().enumerate() {
-            let raw: serde_json::Value = serde_json::from_str(line)
-                .unwrap_or_else(|e| panic!("{name}:{}: {e}", n + 1));
+            let raw: serde_json::Value =
+                serde_json::from_str(line).unwrap_or_else(|e| panic!("{name}:{}: {e}", n + 1));
             let s = |k: &str| raw[k].as_str().unwrap_or_default().to_owned();
             let text = if let Some(t) = raw["text"].as_str() {
                 t.to_owned()
@@ -203,10 +203,7 @@ fn per_word(text: &str, f: impl Fn(&str) -> String) -> String {
 
 fn spaced(text: &str, sep: &str) -> String {
     per_word(text, |w| {
-        w.chars()
-            .map(String::from)
-            .collect::<Vec<_>>()
-            .join(sep)
+        w.chars().map(String::from).collect::<Vec<_>>().join(sep)
     })
 }
 
@@ -329,11 +326,7 @@ pub const MUTATIONS: &[Mutation] = &[
         body(fullwidth(&t.chars().map(percent).collect::<String>()))
     }),
     ("percent-double", |t| {
-        body(
-            t.chars()
-                .map(|c| percent(c).replace('%', "%25"))
-                .collect(),
-        )
+        body(t.chars().map(|c| percent(c).replace('%', "%25")).collect())
     }),
     ("entity-double", |t| {
         body(t.chars().map(|c| format!("&amp;#{};", c as u32)).collect())
@@ -455,8 +448,7 @@ pub fn report(samples: &[Sample], verdicts: bool) -> String {
     let held: Vec<usize> = (0..samples.len())
         .filter(|&i| samples[i].set == "heldout")
         .collect();
-    let (inj, ben): (Vec<usize>, Vec<usize>) =
-        held.iter().partition(|&&i| samples[i].malicious());
+    let (inj, ben): (Vec<usize>, Vec<usize>) = held.iter().partition(|&&i| samples[i].malicious());
     let k_inj = inj.iter().filter(|&&i| caught(i)).count();
     let k_ben = ben.iter().filter(|&&i| caught(i)).count();
     let (lo, hi) = wilson(k_inj, inj.len());
