@@ -44,3 +44,29 @@ fn every_use_case_commits_through_the_helper_that_drops_widen_signals() {
         "a use case commits to the journal around the helper: {outside:?}"
     );
 }
+
+/// Each way round the helper that the review of #260 named (L1, #268): a
+/// local binding of the journal, a fully qualified call, a chain commit and
+/// a commit on a line of its own.
+#[test]
+fn the_guard_finds_a_commit_through_a_binding_a_qualified_call_or_a_chain() {
+    for bypass in [
+        "let j = &self.journal;\n        j.commit(request).await?;",
+        "JournalStore::commit(&self.journal, request).await?;",
+        "<J as JournalStore>::commit_chain(&self.journal, requests).await?;",
+        "self.journal.commit_chain(requests).await?;",
+        "self\n            .journal\n            .commit(request)\n            .await?;",
+    ] {
+        assert_eq!(journal_commits(bypass).len(), 1, "missed: {bypass}");
+    }
+    for helper_call in [
+        "self.commit(event, fold, None).await?;",
+        "self\n            .commit_chain(links)\n            .await?;",
+        "// a comment naming j.commit(request)",
+    ] {
+        assert!(
+            journal_commits(helper_call).is_empty(),
+            "flagged: {helper_call}"
+        );
+    }
+}

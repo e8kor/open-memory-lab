@@ -298,6 +298,16 @@ impl WidenSignals {
             .map(|(k, _)| k.clone())
     }
 
+    /// The next signal to build, taken off the queue and recorded as the
+    /// one building.
+    fn take_next(&self) -> Option<SignalKey> {
+        let key = self.wanted.lock().ok()?.pop_front()?;
+        if let Ok(mut b) = self.building.lock() {
+            *b = Some(key.clone());
+        }
+        Some(key)
+    }
+
     /// Marks `key` so no recall asks for it again within the bound.
     fn mark(&self, key: &SignalKey, now_us: i64) {
         if let Ok(mut marked) = self.marked.lock() {
@@ -436,11 +446,7 @@ where
     /// a time, in the order recalls asked, so a tenant behind another waits
     /// one build each, never for a tenant's whole demand.
     pub fn next_widen_build(&self, _refresh: &WidenRefresh<'_>) -> Option<WidenBuild> {
-        let key = self.widen.wanted.lock().ok()?.pop_front()?;
-        if let Ok(mut b) = self.widen.building.lock() {
-            *b = Some(key.clone());
-        }
-        Some(WidenBuild(key))
+        self.widen.take_next().map(WidenBuild)
     }
 
     /// Runs one build and holds, discards or marks what it found; whether
@@ -770,5 +776,64 @@ mod tests {
             "tenant 1 past its share kept its oldest"
         );
         assert!(held.contains(&key(2, 2)) && held.contains(&key(1, 4)));
+    }
+
+    /// The weight of every signal the lead holds.
+    fn held_weight(signals: &WidenSignals) -> usize {
+        signals
+            .held
+            .lock()
+            .expect("held")
+            .values()
+            .map(|s| s.weight())
+            .sum()
+    }
+
+    #[test]
+    fn a_signal_over_its_tenants_share_alone_still_keeps_the_lead_within_its_bound() {
+        let signals = WidenSignals {
+            limits: WidenLimits {
+                held_pairs: 10,
+                tenant_pairs: 6,
+                ..WidenLimits::default()
+            },
+            ..WidenSignals::default()
+        };
+        for (t, s, at) in [(1, 1, 1), (1, 2, 2), (2, 1, 3)] {
+            assert!(signals.hold(key(t, s), signal(at, 3), at));
+        }
+        // Tenant 3's one signal is past its share on its own: it has no
+        // older signal to drop, so the lead's bound drops the oldest of all.
+        assert!(signals.hold(key(3, 1), signal(4, 7), 4));
+        assert!(
+            held_weight(&signals) <= 10,
+            "the lead holds {} pairs past its bound of 10",
+            held_weight(&signals)
+        );
+        let held: BTreeSet<SignalKey> =
+            signals.held.lock().expect("held").keys().cloned().collect();
+        assert!(held.contains(&key(3, 1)), "the signal just built went");
+        assert!(!held.contains(&key(1, 1)), "the oldest of all stayed");
+    }
+
+    #[test]
+    fn each_tenant_waiting_for_a_signal_gets_a_build_before_any_tenant_gets_another() {
+        let signals = WidenSignals::default();
+        for (t, s) in [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (3, 1)] {
+            signals.want(key(t, s));
+        }
+        let order: Vec<(u128, u128)> = std::iter::from_fn(|| signals.take_next())
+            .map(|k| (k.tenant_id.as_u128(), k.scope.as_u128()))
+            .collect();
+        assert_eq!(
+            order,
+            [(1, 1), (2, 1), (3, 1), (1, 2), (2, 2), (1, 3)],
+            "tenants 2 and 3 waited behind tenant 1's whole demand"
+        );
+        // A tenant that asks later is served before one already served.
+        signals.want(key(1, 4));
+        signals.want(key(1, 5));
+        signals.want(key(4, 1));
+        assert_eq!(signals.take_next(), Some(key(4, 1)));
     }
 }
