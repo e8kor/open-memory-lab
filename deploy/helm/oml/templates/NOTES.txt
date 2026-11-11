@@ -51,8 +51,8 @@ accepts that secret. Check it with:
      kubectl --namespace {{ $ns }} exec deployment/{{ $fullname }}-web -- /usr/local/bin/oml-web --doctor
 
 The Ingress, once enabled, routes each page the web console serves by its own path
-(web.ingressPaths: /web/guardrails, /web/workareas and /web/admin/workareas
-today) and every other path to the lead.
+(web.ingressPaths: the Guardrails, Workareas, Memories, Atlas, Review and Keys
+pages, one memory, Curate, the Memories JSON and the diagram frame's two prefixes today) and every other path to the lead.
 {{- if not .Values.web.publicUrl }}
 
 web.publicUrl is unset, so the web console accepts a form only from

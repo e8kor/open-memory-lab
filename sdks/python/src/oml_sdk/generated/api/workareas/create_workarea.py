@@ -93,7 +93,11 @@ def sync_detailed(
     names no crew record of the tenant answers access.not_found, checked after the parent and before
     name.taken. name must be unique in the tenant (409 name.taken, checked after every other check;
     universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe
-    cannot be created or deleted.
+    cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the
+    recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
+    body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
+    (<user>-web, through its capacity credential) creates under its own root, as the web console's
+    Workareas view does (ADR-0070 d5).
 
     Args:
         x_request_id (str | Unset):
@@ -141,7 +145,11 @@ def sync(
     names no crew record of the tenant answers access.not_found, checked after the parent and before
     name.taken. name must be unique in the tenant (409 name.taken, checked after every other check;
     universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe
-    cannot be created or deleted.
+    cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the
+    recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
+    body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
+    (<user>-web, through its capacity credential) creates under its own root, as the web console's
+    Workareas view does (ADR-0070 d5).
 
     Args:
         x_request_id (str | Unset):
@@ -184,7 +192,11 @@ async def asyncio_detailed(
     names no crew record of the tenant answers access.not_found, checked after the parent and before
     name.taken. name must be unique in the tenant (409 name.taken, checked after every other check;
     universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe
-    cannot be created or deleted.
+    cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the
+    recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
+    body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
+    (<user>-web, through its capacity credential) creates under its own root, as the web console's
+    Workareas view does (ADR-0070 d5).
 
     Args:
         x_request_id (str | Unset):
@@ -230,7 +242,11 @@ async def asyncio(
     names no crew record of the tenant answers access.not_found, checked after the parent and before
     name.taken. name must be unique in the tenant (409 name.taken, checked after every other check;
     universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe
-    cannot be created or deleted.
+    cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the
+    recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another
+    body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key
+    (<user>-web, through its capacity credential) creates under its own root, as the web console's
+    Workareas view does (ADR-0070 d5).
 
     Args:
         x_request_id (str | Unset):

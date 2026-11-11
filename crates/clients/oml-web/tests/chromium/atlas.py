@@ -99,7 +99,7 @@ def main() -> int:
                         if a.shots:
                             page.screenshot(path=f"{a.shots}/{tag}-{name}.png", full_page=True)
 
-                    page.goto(f"{issuer}{base}?view=memories")
+                    page.goto(f"{issuer}{base}/memories")
                     out[f"{tag}_cards"] = page.locator("details.oml-mrow").count()
                     # The provenance is folded by default; one card opened for the picture.
                     out[f"{tag}_folded"] = page.locator("details.oml-mrow[open]").count() == 0
@@ -109,7 +109,7 @@ def main() -> int:
                         details.click()
                         shot("memories-details")
 
-                    page.goto(f"{issuer}{base}?view=memories&display=atlas")
+                    page.goto(f"{issuer}{base}/atlas")
                     svg = "svg.tm.narrow" if width < 600 else "svg.tm.wide"
                     out[f"{tag}_regions"] = page.locator(f"{svg} a").count()
                     out[f"{tag}_rows"] = page.locator("#atlas-table tbody tr").count()

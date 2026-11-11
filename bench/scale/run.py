@@ -104,6 +104,10 @@ def create_db(db: str) -> None:
             description text NOT NULL, installed_on timestamptz NOT NULL DEFAULT now(),
             success boolean NOT NULL, checksum bytea NOT NULL, execution_time bigint NOT NULL)""")
         for f in sorted((REPO / "migrations").glob("*.sql")):
+            # A `-- no-transaction` file runs outside one, as sqlx runs it.
+            if f.read_text().startswith("-- no-transaction"):
+                c.execute(f.read_text())
+                continue
             with c.transaction():
                 c.execute(f.read_text())
         # Bench additions, owned by the owner role like the rest:

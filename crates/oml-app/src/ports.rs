@@ -951,6 +951,31 @@ pub trait JournalStore: Retriever + Send + Sync {
         nodes: &[Uuid],
     ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
 
+    /// [`Self::steering_in_force`] at the instant `as_of` (ADR-0059 d15,
+    /// d18): of kind `steering` on `nodes`, each claim's tip at `as_of`,
+    /// the version of greatest `version` among its versions whose
+    /// `promoted_at` is at or before it, served only when it is promoted
+    /// today and no retirement version; ordered as `steering_in_force`
+    /// orders, by node depth, then `promoted_at`, then `artifact_id`.
+    fn steering_as_of(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        as_of: &EventTime,
+    ) -> impl Future<Output = Result<Vec<MemoryRecord>, StoreError>> + Send;
+
+    /// Which of `memory_ids` were their claim's tip at `as_of`: promoted
+    /// at or before it, with no later version of the claim (one
+    /// `workarea_id` and `claim_key`) promoted at or before it, in any
+    /// state today (ADR-0059 d15, d16). The core's re-check of every
+    /// promoted row an as-of read serves; an id no row has is absent.
+    fn tips_as_of(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+        as_of: &EventTime,
+    ) -> impl Future<Output = Result<Vec<Uuid>, StoreError>> + Send;
+
     /// The guardrail rows on `nodes` (proposed ADR-0037 d3, d4): every
     /// promoted served tip of kind `guardrail` whose workarea is one of them,
     /// never a retirement version, and every held version of kind

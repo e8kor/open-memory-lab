@@ -80,10 +80,12 @@ def sync_detailed(
 ) -> Response[Any | str]:
     """The admin page, for a session whose allowlist entry is an admin's.
 
-     Any other session answers access.not_found. Views by query: view (people, queue, review, curate,
-    memories), q, memory; view=workarea answers 303 /web/admin/workareas, which oml-web serves, carrying
-    nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4). The memories view and
-    one memory's attribution are the admin read (POST /v2/admin/memories/search, GET
+     Any other session answers access.not_found. Views by query: view (people, queue, review, curate, and
+    memories with memory, one memory's attribution), memory; view=workarea answers 303
+    /web/admin/workareas, and view=memories without memory 303 /web/admin/memories, or /web/admin/atlas
+    with display=atlas, which oml-web serves, carrying nothing from the request, signed in or not
+    (ADR-0070 d7 (b); since v0.6.4, the memories views since v0.7.0). The memories list oml-web serves
+    and one memory's attribution here are the admin read (POST /v2/admin/memories/search, GET
     /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read
     journalled (ADR-0045 d10, d21). Since v0.5.0.
 
@@ -122,10 +124,12 @@ def sync(
 ) -> Any | str | None:
     """The admin page, for a session whose allowlist entry is an admin's.
 
-     Any other session answers access.not_found. Views by query: view (people, queue, review, curate,
-    memories), q, memory; view=workarea answers 303 /web/admin/workareas, which oml-web serves, carrying
-    nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4). The memories view and
-    one memory's attribution are the admin read (POST /v2/admin/memories/search, GET
+     Any other session answers access.not_found. Views by query: view (people, queue, review, curate, and
+    memories with memory, one memory's attribution), memory; view=workarea answers 303
+    /web/admin/workareas, and view=memories without memory 303 /web/admin/memories, or /web/admin/atlas
+    with display=atlas, which oml-web serves, carrying nothing from the request, signed in or not
+    (ADR-0070 d7 (b); since v0.6.4, the memories views since v0.7.0). The memories list oml-web serves
+    and one memory's attribution here are the admin read (POST /v2/admin/memories/search, GET
     /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read
     journalled (ADR-0045 d10, d21). Since v0.5.0.
 
@@ -159,10 +163,12 @@ async def asyncio_detailed(
 ) -> Response[Any | str]:
     """The admin page, for a session whose allowlist entry is an admin's.
 
-     Any other session answers access.not_found. Views by query: view (people, queue, review, curate,
-    memories), q, memory; view=workarea answers 303 /web/admin/workareas, which oml-web serves, carrying
-    nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4). The memories view and
-    one memory's attribution are the admin read (POST /v2/admin/memories/search, GET
+     Any other session answers access.not_found. Views by query: view (people, queue, review, curate, and
+    memories with memory, one memory's attribution), memory; view=workarea answers 303
+    /web/admin/workareas, and view=memories without memory 303 /web/admin/memories, or /web/admin/atlas
+    with display=atlas, which oml-web serves, carrying nothing from the request, signed in or not
+    (ADR-0070 d7 (b); since v0.6.4, the memories views since v0.7.0). The memories list oml-web serves
+    and one memory's attribution here are the admin read (POST /v2/admin/memories/search, GET
     /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read
     journalled (ADR-0045 d10, d21). Since v0.5.0.
 
@@ -199,10 +205,12 @@ async def asyncio(
 ) -> Any | str | None:
     """The admin page, for a session whose allowlist entry is an admin's.
 
-     Any other session answers access.not_found. Views by query: view (people, queue, review, curate,
-    memories), q, memory; view=workarea answers 303 /web/admin/workareas, which oml-web serves, carrying
-    nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4). The memories view and
-    one memory's attribution are the admin read (POST /v2/admin/memories/search, GET
+     Any other session answers access.not_found. Views by query: view (people, queue, review, curate, and
+    memories with memory, one memory's attribution), memory; view=workarea answers 303
+    /web/admin/workareas, and view=memories without memory 303 /web/admin/memories, or /web/admin/atlas
+    with display=atlas, which oml-web serves, carrying nothing from the request, signed in or not
+    (ADR-0070 d7 (b); since v0.6.4, the memories views since v0.7.0). The memories list oml-web serves
+    and one memory's attribution here are the admin read (POST /v2/admin/memories/search, GET
     /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read
     journalled (ADR-0045 d10, d21). Since v0.5.0.
 

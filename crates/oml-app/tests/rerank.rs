@@ -203,6 +203,7 @@ fn recall(query: &str) -> RecallRequest {
         match_mode: MatchMode::Any,
         include_expired: false,
         now: None,
+        as_of: None,
     }
 }
 

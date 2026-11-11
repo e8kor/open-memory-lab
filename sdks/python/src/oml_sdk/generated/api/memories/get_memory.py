@@ -1,3 +1,4 @@
+import datetime
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
@@ -13,6 +14,7 @@ from ...types import UNSET, Response, Unset
 def _get_kwargs(
     artifact_id: str,
     *,
+    as_of: datetime.datetime | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -27,11 +29,21 @@ def _get_kwargs(
     if not isinstance(traceparent, Unset):
         headers["traceparent"] = traceparent
 
+    params: dict[str, Any] = {}
+
+    json_as_of: str | Unset = UNSET
+    if not isinstance(as_of, Unset):
+        json_as_of = as_of.isoformat()
+    params["as_of"] = json_as_of
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/memories/{artifact_id}".format(
             artifact_id=quote(str(artifact_id), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["headers"] = headers
@@ -81,6 +93,7 @@ def sync_detailed(
     artifact_id: str,
     *,
     client: AuthenticatedClient | Client,
+    as_of: datetime.datetime | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -97,10 +110,13 @@ def sync_detailed(
     its workarea; readability is checked first, and every other key gets access.not_found. Resolves no
     workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from
     lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced
-    version, and workarea_id is null on an own row whose node the key holds no role on.
+    version, and workarea_id is null on an own row whose node the key holds no role on. With as_of, a
+    version recorded after the instant is access.not_found and any other answers as get does today
+    (ADR-0059 d19); as_of is the only query parameter get takes.
 
     Args:
         artifact_id (str):
+        as_of (datetime.datetime | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -115,6 +131,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         artifact_id=artifact_id,
+        as_of=as_of,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -131,6 +148,7 @@ def sync(
     artifact_id: str,
     *,
     client: AuthenticatedClient | Client,
+    as_of: datetime.datetime | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -147,10 +165,13 @@ def sync(
     its workarea; readability is checked first, and every other key gets access.not_found. Resolves no
     workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from
     lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced
-    version, and workarea_id is null on an own row whose node the key holds no role on.
+    version, and workarea_id is null on an own row whose node the key holds no role on. With as_of, a
+    version recorded after the instant is access.not_found and any other answers as get does today
+    (ADR-0059 d19); as_of is the only query parameter get takes.
 
     Args:
         artifact_id (str):
+        as_of (datetime.datetime | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -166,6 +187,7 @@ def sync(
     return sync_detailed(
         artifact_id=artifact_id,
         client=client,
+        as_of=as_of,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -176,6 +198,7 @@ async def asyncio_detailed(
     artifact_id: str,
     *,
     client: AuthenticatedClient | Client,
+    as_of: datetime.datetime | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -192,10 +215,13 @@ async def asyncio_detailed(
     its workarea; readability is checked first, and every other key gets access.not_found. Resolves no
     workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from
     lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced
-    version, and workarea_id is null on an own row whose node the key holds no role on.
+    version, and workarea_id is null on an own row whose node the key holds no role on. With as_of, a
+    version recorded after the instant is access.not_found and any other answers as get does today
+    (ADR-0059 d19); as_of is the only query parameter get takes.
 
     Args:
         artifact_id (str):
+        as_of (datetime.datetime | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -210,6 +236,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         artifact_id=artifact_id,
+        as_of=as_of,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -224,6 +251,7 @@ async def asyncio(
     artifact_id: str,
     *,
     client: AuthenticatedClient | Client,
+    as_of: datetime.datetime | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -240,10 +268,13 @@ async def asyncio(
     its workarea; readability is checked first, and every other key gets access.not_found. Resolves no
     workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from
     lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced
-    version, and workarea_id is null on an own row whose node the key holds no role on.
+    version, and workarea_id is null on an own row whose node the key holds no role on. With as_of, a
+    version recorded after the instant is access.not_found and any other answers as get does today
+    (ADR-0059 d19); as_of is the only query parameter get takes.
 
     Args:
         artifact_id (str):
+        as_of (datetime.datetime | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -260,6 +291,7 @@ async def asyncio(
         await asyncio_detailed(
             artifact_id=artifact_id,
             client=client,
+            as_of=as_of,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,
             traceparent=traceparent,

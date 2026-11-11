@@ -57,7 +57,7 @@ export interface paths {
         };
         /**
          * One memory with its text (decrypted on the serving path) and attachment descriptors.
-         * @description The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row's own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author's key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on.
+         * @description The calling key may fetch its own rows in any state, with no grant needed (global denials still mask). Anyone else needs reader effective access on the row's workarea and sees promoted versions only — superseded versions and every version of a retired claim stay fetchable as history. Get takes the row's own workarea as its implicit scope, so a non-own self_signed version is served to a key with reader effective access there. Anything else answers access.not_found (ADR-0025 d3). Erased answers 410 lifecycle.erased only to a key that could read the version immediately before its erasure — its author's key set, or, when it was promoted then, a key with reader effective access on its workarea; readability is checked first, and every other key gets access.not_found. Resolves no workarea: an X-OML-Workarea header is request.validation, details.field X-OML-Workarea. derives_from lists only ancestors the caller can read, replaces is null when the caller cannot read the replaced version, and workarea_id is null on an own row whose node the key holds no role on. With as_of, a version recorded after the instant is access.not_found and any other answers as get does today (ADR-0059 d19); as_of is the only query parameter get takes.
          */
         get: operations["getMemory"];
         put?: never;
@@ -139,7 +139,7 @@ export interface paths {
         put?: never;
         /**
          * Create a child workarea in development.
-         * @description Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created or deleted.
+         * @description Requires: admin key role. parent and crew each take an id or a name, and parent_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /parent (ADR-0039 d7); a crew that names no crew record of the tenant answers access.not_found, checked after the parent and before name.taken. name must be unique in the tenant (409 name.taken, checked after every other check; universe is always taken, by the root). Refused under a validated parent (workarea.frozen); universe cannot be created or deleted. A resubmission under the same Idempotency-Key and body answers the recorded creation with Idempotency-Replay: true and creates nothing again; the same key with another body is idempotency.digest_mismatch (ADR-0070 d3 layer 4; since v0.7.0). A person's web session key (<user>-web, through its capacity credential) creates under its own root, as the web console's Workareas view does (ADR-0070 d5).
          */
         post: operations["createWorkarea"];
         delete?: never;
@@ -1159,13 +1159,13 @@ export interface paths {
         };
         /**
          * The sign-in page without a session; the user page with one.
-         * @description Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys, setup, memories, review), q, memory, workarea. Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
+         * @description Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys, setup, review, and memories with memory, one memory opened by its id), memory. The Memories list and the Atlas are oml-web's, at /web/memories and /web/atlas. Served with the connect page's headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.
          */
         get: operations["userPage"];
         put?: never;
         /**
          * One act of the user page, named by action.
-         * @description Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off, create_workarea, review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key, which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea answers 303 /web/workareas?done=created. workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.
+         * @description Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off, review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key, which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea, workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.
          */
         post: operations["userPageAct"];
         delete?: never;
@@ -1218,46 +1218,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/web/data/memories": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The user page's page of memories as JSON.
-         * @description The Memories view's query (state, workarea, origin, author, q, limit, cursor) and its scope, as <user>-web: the rows the list shows with the card's fields alone, and the workareas the key may read under the filter with their rows counted by state and their dropdown's acts. The session cookie alone; an Authorization header is access.verb_ceiling web_is_human_only, no session access.not_found; no-store, nosniff, no CORS (ADR-0045 d25, d30).
-         */
-        get: operations["userPageMemoriesData"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/web/admin/data/memories": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The admin page's page of memories as JSON.
-         * @description As /web/data/memories, as <user>-admin through the admin read: the page is one memory.admin_read; the workareas are the tenant's tree, counted as structure (ADR-0045 d24, d25, d30).
-         */
-        get: operations["adminPageMemoriesData"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/web/admin": {
         parameters: {
             query?: never;
@@ -1267,7 +1227,7 @@ export interface paths {
         };
         /**
          * The admin page, for a session whose allowlist entry is an admin's.
-         * @description Any other session answers access.not_found. Views by query: view (people, queue, review, curate, memories), q, memory; view=workarea answers 303 /web/admin/workareas, which oml-web serves, carrying nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4). The memories view and one memory's attribution are the admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
+         * @description Any other session answers access.not_found. Views by query: view (people, queue, review, curate, and memories with memory, one memory's attribution), memory; view=workarea answers 303 /web/admin/workareas, and view=memories without memory 303 /web/admin/memories, or /web/admin/atlas with display=atlas, which oml-web serves, carrying nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4, the memories views since v0.7.0). The memories list oml-web serves and one memory's attribution here are the admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory's text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.
          */
         get: operations["adminPage"];
         put?: never;
@@ -1467,12 +1427,34 @@ export interface components {
             state: "held" | "promoted" | "rejected" | "superseded" | "demoted";
             workarea_path: string;
             text: string;
+            /**
+             * @description The kind the version was written as; the admin page refuses to supersede or retire a guardrail by it (ADR-0037 d17; ADR-0070 d5). Since v0.7.0.
+             * @enum {string}
+             */
+            kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
             /** @description The authoring key's name. */
             key: string;
             principal?: string | null;
             user?: string | null;
             /** Format: date-time */
             created_at: string;
+            /** @description The media type signed with the version (ADR-0056 d1). */
+            format?: string;
+            /** @description The title signed with the version, or null (ADR-0056 d10). */
+            title?: string | null;
+            /** @description The authoring key's holder, agent, human or service (ADR-0045 d32; ADR-0070 d5). Since v0.7.0. */
+            held_by?: string | null;
+            /**
+             * Format: date-time
+             * @description When the version was promoted, or null. Since v0.7.0.
+             */
+            promoted_at?: string | null;
+            /** @description When the version says it begins to hold, as signed, or null (ADR-0059 d2). Since v0.7.0. */
+            valid_from?: string | null;
+            /** @description When it stops holding, or null when open (ADR-0059 d2). Since v0.7.0. */
+            valid_until?: string | null;
+            /** @description Admission's scan finding, class: rule at place, never the matched text, or null (ADR-0065 d8). Since v0.7.0. */
+            scan_finding?: string | null;
             /** @description The version's anchor, which the reviewer judges beside the text, or null (ADR-0057 d2). */
             anchor?: components["schemas"]["Anchor"] | null;
         };
@@ -1557,9 +1539,9 @@ export interface components {
              * @enum {string}
              */
             kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release" | "guardrail";
-            /** @description When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the submission; only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0059 d2). */
+            /** @description When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the submission; only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (ADR-0059 d2). */
             valid_from?: components["schemas"]["ValidEnd"];
-            /** @description When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3). */
+            /** @description When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (ADR-0059 d2, d3). */
             valid_until?: components["schemas"]["ValidEnd"];
             severity?: components["schemas"]["Severity"];
             rule?: components["schemas"]["GuardrailRule"];
@@ -1669,6 +1651,10 @@ export interface components {
             load_warning?: string;
             /** @description The authoring principal; null on a version in universe served to a key outside its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its source (ADR-0044 d9). */
             principal?: string | null;
+            /** @description The authoring key's id; null wherever principal is (ADR-0044 d9). The web console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since v0.7.0. */
+            author_key_id?: string | null;
+            /** @description Admission's scan finding on the version, class: rule at place, never the matched text; null when the scan found nothing (ADR-0065 d8; ADR-0070 d5). Since v0.7.0. */
+            scan_finding?: string | null;
             /** @enum {string} */
             provenance?: "agent" | "human" | "connector" | "simulation";
             simulation_id?: string | null;
@@ -1707,25 +1693,27 @@ export interface components {
             stale: components["schemas"]["Stale"] | null;
             /** @description The version's latest source check, or null; always null on a held version (ADR-0057 d5). */
             source_checked: components["schemas"]["SourceChecked"] | null;
-            /** @description When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM, YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2). */
+            /** @description When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM, YYYY-MM-DD) or an instant; null when it declares none (ADR-0059 d2). */
             valid_from?: string | null;
-            /** @description When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (proposed ADR-0059 d2, d4). */
+            /** @description When it stops holding, as signed, or the instant a ratified supersession ended it at; null when open (ADR-0059 d2, d4). */
             valid_until?: string | null;
             /** @description The media type signed with the version; text/plain for every version written before formats (ADR-0056 d1, d12). */
             format?: string;
             /** @description The title signed with the version, or null (ADR-0056 d10). */
             title?: string | null;
-            /** @description On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (proposed ADR-0059 d4). */
+            /** @description For a format whose text is not prose, what the claim will be found by, derived from its source; absent for prose, so a reviewer sees it on the card before the verdict (ADR-0056 d9; ADR-0070 d5). Since v0.6.4. */
+            search_text?: string;
+            /** @description On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (ADR-0059 d4). */
             replaces_valid_until?: string;
         };
-        /** @description YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2). */
+        /** @description YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (ADR-0059 d2). */
         ValidEnd: string;
         Memory: components["schemas"]["MemorySummary"] & {
-            /** @description The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7). Absent from a recall item sent with include_text false. */
+            /** @description The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7). Absent from a recall item sent with include_text false, and from a listing item unless include_text is true (ADR-0070 d5). */
             text?: string;
         };
         MemoryPage: {
-            items: components["schemas"]["MemorySummary"][];
+            items: components["schemas"]["Memory"][];
             next_cursor: string | null;
         };
         /** @description The scope is workarea's subtree, else the key's default_workarea's (ADR-0039 d4). Unknown fields are refused (request.validation), and so are the designed vocabulary filter's terms and expand_terms, declared in openapi-designed.yaml (ADR-0039 d9); v0.3.0's include_bodies and include_own_held are request.validation naming include_text and include_unreviewed in details.renamed_to (ADR-0039 d7). */
@@ -1767,12 +1755,17 @@ export interface components {
             /** @description Omitted, false. true serves the answer's per-stage timings; refused with request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d14). Since v0.5.9. */
             timings?: boolean;
             /**
-             * @description true also serves memories whose valid_until has passed, which recall hides by default; get and the listings always serve them (proposed ADR-0059 d3).
+             * @description true also serves memories whose valid_until has passed, which recall hides by default; get and the listings always serve them (ADR-0059 d3).
              * @default false
              */
             include_expired?: boolean;
-            /** @description The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired and anchors the query's relative dates (last week, three days ago) (proposed ADR-0059 d5). */
+            /** @description The instant the recall is read at, a period naming its first instant; omitted, the server's clock. It decides which memories have expired and anchors the query's relative dates (last week, three days ago) (ADR-0059 d5). */
             now?: components["schemas"]["ValidEnd"];
+            /**
+             * Format: date-time
+             * @description Recall memory as it was at this past instant, under today's grants: each claim's tip then, the caller's held rows recorded by then, and the steering in force then; scores are today's. A pipeline that reads postings is answered by bm25's scan over the scope at the instant, keyword-all by keyword-any with every word, and search.pipeline names the one asked. Only sources scope combines with it. An RFC 3339 date-time; a date or an instant after the server's clock is request.validation naming /as_of. Digested with the request when sent (ADR-0059 d14, d15, d17, d18).
+             */
+            as_of?: string;
             /** @description Where to search (ADR-0072 d5). scope, the default, is the workarea's subtree as always. wide adds the committed and validated workareas the key already reads outside it that accept federated reads: all of them up to the tenant's max_sources, above it those holding the largest share of the query's matching rows. A list of 1 to max_sources distinct workarea names or ids searches exactly those, answered whole or refused. Every hit of wide or a list is scored with one set of statistics fixed before any selection, so no hit's score depends on which sources were selected (d7). Absent, the tenant's federation.default_sources. Refusals, in this order: an empty list, a name twice, more than max_sources names, or a non-string element is request.validation at /sources; wide or a list with federation off is request.validation at /sources; wide or a list on bm25-sparse is request.validation at /search; then each name in order: one the key cannot read and one that does not exist are the same access.not_found with details.field /sources/<i>, and a readable name that is not committed or validated, or lies outside the scope on a workarea declining federated reads, is request.validation at /sources/<i> with details.reason source_untrusted or source_declines_federation. Since v0.7.0. */
             sources?: ("scope" | "wide") | string[];
         };
@@ -1814,7 +1807,7 @@ export interface components {
             terms: string[];
             /** @description How many words the query had. */
             of: number;
-            /** @description The retrievers whose lists held the row; time when its valid time overlaps the window the query named (proposed ADR-0059 d7). */
+            /** @description The retrievers whose lists held the row; time when its valid time overlaps the window the query named (ADR-0059 d7). */
             via: ("keyword_all" | "keyword_any" | "bm25" | "trigram" | "bm25_postings" | "sparse" | "time")[];
             /** @description The reranker's relevance of the row to the query, when a reranking pipeline scored it; the hit's score is then this relevance (ADR-0053 d7). */
             rerank?: number | null;
@@ -1850,7 +1843,7 @@ export interface components {
             access: "postings" | "scan";
             /** @description The query words left out of the postings read because they are frequent among the rows the key may read; a hit the other words reach is still scored with them, and a memory holding only them is not found. Empty for a scan (ADR-0052 d6, d11). */
             pruned: string[];
-            /** @description The date window read from the query by rule oml-when/1, anchored to the recall's now; null when the query names no date (proposed ADR-0059 d6). */
+            /** @description The date window read from the query by rule oml-when/1, anchored to the recall's now; null when the query names no date (ADR-0059 d6). */
             window?: {
                 /**
                  * Format: date-time
@@ -1938,10 +1931,12 @@ export interface components {
             /** @description The pipeline a recall naming none runs now. */
             effective: string;
             postings?: components["schemas"]["PostingsHealth"];
-            /** @description The tenant's served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (proposed ADR-0059 d12). */
+            /** @description The tenant's served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (ADR-0059 d12). */
             valid_time?: {
                 declared: number;
                 expired: number;
+                /** @description Promoted versions with no promoted_at, which a row folded before migration 0005 can be: an as-of read never serves one and serves the version before it in its place (ADR-0059 d16). */
+                untimed?: number;
             };
         };
         UsageSettings: {
@@ -2084,9 +2079,9 @@ export interface components {
              * @enum {string}
              */
             on_similar?: "hold" | "refuse";
-            /** @description When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the successor, which inherits no valid time from its target; once ratified, a declared valid_from also ends the replaced version there (proposed ADR-0059 d4); only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (proposed ADR-0059 d2). */
+            /** @description When the memory begins to hold in the world, as its author declares it: a period names its first instant, so 2015 begins on 1 January 2015. Signed with the successor, which inherits no valid time from its target; once ratified, a declared valid_from also ends the replaced version there (ADR-0059 d4); only memory and derived_fact take it, anything else is request.validation with details.field /valid_from (ADR-0059 d2). */
             valid_from?: components["schemas"]["ValidEnd"];
-            /** @description When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (proposed ADR-0059 d2, d3). */
+            /** @description When it stops holding: a period names its whole span, so 2015 holds through 31 December 2015 and a day through that day; an instant is exclusive. Must end after valid_from begins. A recall hides a memory whose valid_until has passed unless include_expired is true (ADR-0059 d2, d3). */
             valid_until?: components["schemas"]["ValidEnd"];
             /** @description The media type of body, signed with the successor and fixed for it; nothing is inherited from the target, so a format changes by supersession alone: text/plain (the default), text/markdown, text/vnd.oml.mermaid, application/json, application/yaml, or text/vnd.oml.code; lang=<language>. An unknown value is request.validation with details.field format and details.allowed; a source its format refuses is 422 submission.format_invalid; kinds other than memory and derived_fact take text/plain or text/markdown only (ADR-0056 d1, d13). */
             format?: string;
@@ -3135,6 +3130,8 @@ export interface components {
         Limit: number;
         /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
         Cursor: string;
+        /** @description Read memory as it was at this past instant, under today's grants (ADR-0059 d14, d15): a version recorded after it does not exist, and a claim's tip is the version promoted latest at or before it; state, access, retirement and expiry are read today, so a version erased or demoted today is never served and no earlier one stands in. An RFC 3339 date-time with an offset and at most six fractional digits; a date, or an instant after the server's clock, is request.validation with details.field as_of. The answer never echoes it. */
+        AsOf: string;
         ArtifactId: string;
         WorkareaId: components["schemas"]["WorkareaRef"];
         ConnectionId: string;
@@ -3163,10 +3160,12 @@ export interface operations {
                 state?: "held" | "promoted" | "demoted" | "rejected" | "erased";
                 kind?: "memory" | "derived_fact" | "steering" | "term" | "term_mapping" | "vocab_release";
                 own?: boolean;
-                /** @description true: the scoped listing (at workarea, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, workarea, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
+                /** @description true: the scoped listing (at workarea, else universe) and the caller's own rows, every key naming its user's for a person's web session key, merged newest first under one cursor, a row in both once (ADR-0045 d22, d23; ADR-0070 d5). Combines only with author, include_text, workarea, state (held, promoted, rejected, superseded, demoted), one origin_kinds, limit and cursor; any other parameter is request.validation. Since v0.6.4. */
                 with_own?: boolean;
                 /** @description One of the caller's own keys, by name: the caller's rows by that key alone, the scoped part dropped; a key that is not the caller's is access.not_found. Implies the with_own listing (ADR-0045 d23; ADR-0070 d5). Since v0.6.4. */
                 author?: string;
+                /** @description With with_own or author alone: true serves each item with its text, as the web console's Memories list shows it (ADR-0045 d22; ADR-0070 d5); false or absent, summaries. Since v0.7.0. */
+                include_text?: boolean;
                 /** @description Rows whose anchor names this repository, with own or without it; unanchored rows are left out (ADR-0057 d4). Malformed is request.validation naming anchor_repo. */
                 anchor_repo?: components["schemas"]["AnchorRepo"];
                 /** @description Rows whose anchor path starts with these bytes; unanchored rows are left out (ADR-0057 d4). */
@@ -3175,6 +3174,8 @@ export interface operations {
                 origin_kinds?: components["schemas"]["OriginKinds"];
                 since?: string;
                 until?: string;
+                /** @description Read memory as it was at this past instant, under today's grants (ADR-0059 d14, d15): a version recorded after it does not exist, and a claim's tip is the version promoted latest at or before it; state, access, retirement and expiry are read today, so a version erased or demoted today is never served and no earlier one stands in. An RFC 3339 date-time with an offset and at most six fractional digits; a date, or an instant after the server's clock, is request.validation with details.field as_of. The answer never echoes it. */
+                as_of?: components["parameters"]["AsOf"];
                 /** @description Page size, at most 200. Unless an endpoint states otherwise, listings order by created_at descending; the events tail is the deliberate exception (seq ascending). */
                 limit?: components["parameters"]["Limit"];
                 /** @description Opaque, from the previous page's next_cursor. Cursors are positional, not snapshots — rows written between pages can appear in later pages. A cursor is scoped to the key that obtained it and expires (the TTL is a named deployment setting); a stale or foreign cursor answers 400 request.validation. */
@@ -3419,7 +3420,10 @@ export interface operations {
     };
     getMemory: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Read memory as it was at this past instant, under today's grants (ADR-0059 d14, d15): a version recorded after it does not exist, and a claim's tip is the version promoted latest at or before it; state, access, retirement and expiry are read today, so a version erased or demoted today is never served and no earlier one stands in. An RFC 3339 date-time with an offset and at most six fractional digits; a date, or an instant after the server's clock, is request.validation with details.field as_of. The answer never echoes it. */
+                as_of?: components["parameters"]["AsOf"];
+            };
             header?: {
                 /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
                 "X-Request-Id"?: components["parameters"]["XRequestId"];
@@ -6750,7 +6754,7 @@ export interface operations {
                     "text/html": string;
                 };
             };
-            /** @description A view oml-web now serves at its own path, view=guardrails or view=workarea: to the fixed /web/guardrails or /web/workareas, carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4. */
+            /** @description A view oml-web now serves at its own path, view=guardrails or view=workarea: to the fixed /web/guardrails or /web/workareas; view=memories without memory: to /web/memories, or /web/atlas with display=atlas; each carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4; the memories views since v0.7.0. */
             303: {
                 headers: {
                     [name: string]: unknown;
@@ -6785,7 +6789,7 @@ export interface operations {
                     "text/html": string;
                 };
             };
-            /** @description After sign_out, to /web; after create_workarea, to /web/workareas?done=created; for workarea_mode, workarea_transition and workarea_ratify, to /web/workareas, having run nothing. */
+            /** @description After sign_out, to /web; for create_workarea, workarea_mode, workarea_transition and workarea_ratify, to /web/workareas, having run nothing. */
             303: {
                 headers: {
                     [name: string]: unknown;
@@ -6896,64 +6900,6 @@ export interface operations {
                 };
                 content: {
                     "text/html": string;
-                };
-            };
-        };
-    };
-    userPageMemoriesData: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description {items, next_cursor, workareas, base}. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description access.not_found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
-    adminPageMemoriesData: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description {items, next_cursor, workareas, base}. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": Record<string, never>;
-                };
-            };
-            /** @description access.not_found, for a session that is not an admin's. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -7290,6 +7236,7 @@ export interface operations {
                     origin_kind?: "repo" | "doc" | "code" | "lake" | "chat" | "web" | "manual";
                     /** @description The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4. */
                     author?: string;
+                    /** @description At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0). */
                     limit?: number;
                     cursor?: string;
                 };
