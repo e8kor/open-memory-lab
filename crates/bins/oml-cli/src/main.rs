@@ -5126,6 +5126,25 @@ fn federation_doctor(settings: Option<&Value>) -> Vec<String> {
             key["candidates"]
         ));
     }
+    // The widen hint's signal (ADR-0072 d8, as built by #244): a build that
+    // failed, or recalls that found none while none was ever built.
+    let widen = &settings["widen_signal"];
+    if widen["failed"].as_u64().unwrap_or(0) > 0 {
+        lines.push(format!(
+            "warn the widen hint's signal failed to build {} times since the lead started, last: {}; a scope recall without its signal carries no hint",
+            widen["failed"],
+            widen["last_failure"].as_str().unwrap_or("?")
+        ));
+    }
+    if settings["enabled"] == true
+        && widen["built"].as_u64() == Some(0)
+        && widen["unserved"].as_u64().unwrap_or(0) > 0
+    {
+        lines.push(format!(
+            "warn {} scope recalls found no widen signal and none was built since the lead started: no scope answer carries the widen hint until one is",
+            widen["unserved"]
+        ));
+    }
     lines
 }
 

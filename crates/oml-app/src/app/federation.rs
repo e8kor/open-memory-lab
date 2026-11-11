@@ -58,8 +58,8 @@ pub(super) struct SourcePlan {
 
 /// A candidate source: a trusted node outside the scope the key reads.
 #[derive(Debug, Clone)]
-struct Candidate {
-    id: Uuid,
+pub(super) struct Candidate {
+    pub(super) id: Uuid,
     name: String,
 }
 
@@ -130,6 +130,8 @@ where
             )?;
             self.commit(event, MetadataFold::FederationPolicySet(policy), None)
                 .await?;
+            // A widen signal holds the old policy's candidates (#244).
+            self.widen.drop_tenant(tenant_id);
         }
         Ok((
             FederationSettings {
@@ -203,6 +205,8 @@ where
             None,
         )
         .await?;
+        // A widen signal holds the node as a candidate or not (#244).
+        self.widen.drop_tenant(tenant_id);
         Ok(WorkareaFederation { accept_federated })
     }
 
@@ -464,7 +468,7 @@ where
     /// and denials this request read, cached nowhere; ordered by name. With
     /// it, the path of every node of subtree(scope) and of every candidate,
     /// derived from the subtrees read, so no node costs a read of its own.
-    async fn candidates(
+    pub(super) async fn candidates(
         &self,
         caller: &Caller,
         scope: Uuid,
@@ -739,13 +743,13 @@ where
 
 /// The reference counts restricted to the kept words, those the pipeline
 /// does not prune over R (d4.2, d4.4).
-struct Kept {
-    words: Vec<String>,
+pub(super) struct Kept {
+    pub(super) words: Vec<String>,
     nodes: BTreeMap<Uuid, SourceCounts>,
 }
 
 impl Kept {
-    fn of(counts: &crate::federation::ReferenceCounts) -> Self {
+    pub(super) fn of(counts: &crate::federation::ReferenceCounts) -> Self {
         let keep: Vec<usize> = counts
             .words
             .iter()
@@ -774,7 +778,7 @@ impl Kept {
         }
     }
 
-    fn of_node(&self, node: &Uuid) -> SourceCounts {
+    pub(super) fn of_node(&self, node: &Uuid) -> SourceCounts {
         self.nodes
             .get(node)
             .cloned()
@@ -784,7 +788,7 @@ impl Kept {
             })
     }
 
-    fn sum<'a>(&self, nodes: impl Iterator<Item = &'a Uuid>) -> SourceCounts {
+    pub(super) fn sum<'a>(&self, nodes: impl Iterator<Item = &'a Uuid>) -> SourceCounts {
         let of: Vec<SourceCounts> = nodes.map(|n| self.of_node(n)).collect();
         SourceCounts::sum(self.words.len(), &of)
     }

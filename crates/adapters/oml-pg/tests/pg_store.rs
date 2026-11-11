@@ -9327,7 +9327,10 @@ async fn the_signals_counts_equal_the_reference_counts_under_pruning() {
             frequent_share: 0.2,
             posting_budget: 4,
         });
-    oml_port_contracts::federation::the_signals_counts_equal_the_reference_counts(store).await;
+    assert!(
+        oml_port_contracts::federation::the_signals_counts_equal_the_reference_counts(store).await,
+        "no read pruned a word under limits this small"
+    );
     drop_dbs(&created).await;
 }
 

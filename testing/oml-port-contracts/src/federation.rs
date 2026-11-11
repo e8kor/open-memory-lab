@@ -1474,8 +1474,12 @@ pub async fn a_signal_at_its_age_bound_serves_no_hint<S: JournalStore + Clone>(s
 /// The widen signal's counts and the reference counts agree: for any
 /// query, the counts taken out of a vocabulary read over a set of nodes
 /// equal the reference counts read over the same nodes, kinds and expiry,
-/// pruning or not (#244).
-pub async fn the_signals_counts_equal_the_reference_counts<S: JournalStore + Clone>(store: S) {
+/// pruning or not (#244). Whether any read pruned a word, so a store that
+/// prunes can hold that the law met its pruning.
+pub async fn the_signals_counts_equal_the_reference_counts<S: JournalStore + Clone>(
+    store: S,
+) -> bool {
+    let mut pruned_any = false;
     use oml_app::federation::CountsScope;
     let w = FedWorld::seeded(store).await;
     // One promoted row that expires, so the subtraction is exercised.
@@ -1554,10 +1558,12 @@ pub async fn the_signals_counts_equal_the_reference_counts<S: JournalStore + Clo
                         looked_up, read,
                         "{query:?} under kinds {kinds:?}, expired_at {expired_at:?}, prunes {prunes}"
                     );
+                    pruned_any |= !read.pruned.is_empty();
                 }
             }
         }
     }
+    pruned_any
 }
 
 /// A `wide` answer marks each hit's source: `scope` for the scope's
@@ -1921,7 +1927,7 @@ where
     F: Fn() -> Fut,
     Fut: core::future::Future<Output = S>,
 {
-    the_signals_counts_equal_the_reference_counts(make().await).await;
+    let _ = the_signals_counts_equal_the_reference_counts(make().await).await;
     the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row(make().await).await;
     a_scope_recall_without_its_signal_carries_no_hint_and_asks_for_one(make().await).await;
     a_signal_built_under_other_grants_serves_no_hint(make().await).await;

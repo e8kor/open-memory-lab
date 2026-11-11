@@ -157,6 +157,17 @@ fn keyword_ranked<'a>(
 
 /// Whether `m` counts in a reference set (ADR-0072 d4.2): a served tip of
 /// the kinds, never a retirement, unexpired at `expired_at`.
+/// This store's key for a form, its word: FNV-1a over the word's bytes, an
+/// opaque key as PostgreSQL's token id is.
+fn form_key(word: &str) -> i64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in word.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    i64::from_ne_bytes(h.to_ne_bytes())
+}
+
 fn reference_row(m: &MemoryRecord, kinds: &[MemoryKind], expired_at: Option<i64>) -> bool {
     served_tip(m)
         && HIT_KINDS.contains(&m.kind)
@@ -2734,21 +2745,90 @@ impl JournalStore for MemStore {
         })
     }
 
+    /// Every word's counts over the nodes, as [`Self::reference_counts`]
+    /// counts a query's words: a federation read, made off the request path.
     async fn vocabulary_counts(
         &self,
-        _tenant_id: Uuid,
-        _scope: &crate::federation::CountsScope,
+        tenant_id: Uuid,
+        scope: &crate::federation::CountsScope,
     ) -> Result<crate::federation::VocabularyCounts, StoreError> {
-        Ok(crate::federation::VocabularyCounts::default())
+        self.federation_reads.fetch_add(1, Ordering::SeqCst);
+        let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
+        let mut df: BTreeMap<i64, BTreeMap<Uuid, u64>> = BTreeMap::new();
+        if let Some(tenant) = self.tenant_existing(tenant_id) {
+            let state = tenant.lock().expect("tenant lock");
+            let held = scope
+                .nodes
+                .iter()
+                .filter_map(|n| state.by_workarea.get(n))
+                .flatten()
+                .filter_map(|id| state.memories.get(id));
+            for m in held {
+                if !reference_row(m, &scope.kinds, scope.expired_at) {
+                    continue;
+                }
+                let Some(n) = rows.get_mut(&m.workarea_id) else {
+                    continue;
+                };
+                *n += 1;
+                for w in words(&m.body) {
+                    *df.entry(form_key(&w))
+                        .or_default()
+                        .entry(m.workarea_id)
+                        .or_default() += 1;
+                }
+            }
+        }
+        Ok(crate::federation::VocabularyCounts {
+            rows,
+            forms: df
+                .into_iter()
+                .map(|(form, nodes)| (form, nodes.into_iter().collect()))
+                .collect(),
+        })
     }
 
+    /// The query's words looked up in the vocabulary: one signal read, no
+    /// count read. This store prunes nothing.
     async fn counts_from_vocabulary(
         &self,
-        _vocabulary: &crate::federation::VocabularyCounts,
-        _query: &str,
+        vocabulary: &crate::federation::VocabularyCounts,
+        query: &str,
         _prunes: bool,
     ) -> Result<crate::federation::ReferenceCounts, StoreError> {
-        Ok(crate::federation::ReferenceCounts::default())
+        self.widen_signal_reads.fetch_add(1, Ordering::SeqCst);
+        let words: Vec<String> = words(query).into_iter().collect();
+        let held: Vec<BTreeMap<Uuid, u64>> = words
+            .iter()
+            .map(|w| {
+                vocabulary
+                    .forms
+                    .get(&form_key(w))
+                    .map(|nodes| nodes.iter().copied().collect())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let nodes = vocabulary
+            .rows
+            .iter()
+            .map(|(node, n)| {
+                (
+                    *node,
+                    oml_domain::federation::SourceCounts {
+                        rows: *n,
+                        df: held
+                            .iter()
+                            .map(|h| h.get(node).copied().unwrap_or(0))
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+        Ok(crate::federation::ReferenceCounts {
+            words,
+            pruned: Vec::new(),
+            nodes,
+        })
     }
 
     async fn steering_in_force(

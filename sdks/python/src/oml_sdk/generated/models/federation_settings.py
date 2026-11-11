@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.federation_settings_wide_keys_item import (
         FederationSettingsWideKeysItem,
     )
+    from ..models.federation_settings_widen_signal import FederationSettingsWidenSignal
 
 
 T = TypeVar("T", bound="FederationSettings")
@@ -21,7 +22,7 @@ T = TypeVar("T", bound="FederationSettings")
 @_attrs_define
 class FederationSettings:
     """The tenant's federation policy (ADR-0072 d5), and for doctor the keys whose recall met more than 1,000 candidate
-    sources since the lead started (d12).
+    sources since the lead started (d12) and how the widen hint's signal fared (d8).
 
         Attributes:
             enabled (bool): Whether recall may search beyond its scope when asked; off by default.
@@ -29,12 +30,15 @@ class FederationSettings:
             max_sources (int): The most workareas a wide recall searches beside its scope, and the most a list names; 8 by
                 default.
             wide_keys (list[FederationSettingsWideKeysItem]):
+            widen_signal (FederationSettingsWidenSignal): The widen hint's signals on this tenant since the lead started;
+                doctor warns on a failed build, and on recalls that found none while none was built.
     """
 
     enabled: bool
     default_sources: FederationSettingsDefaultSources
     max_sources: int
     wide_keys: list[FederationSettingsWideKeysItem]
+    widen_signal: FederationSettingsWidenSignal
 
     def to_dict(self) -> dict[str, Any]:
         enabled = self.enabled
@@ -48,6 +52,8 @@ class FederationSettings:
             wide_keys_item = wide_keys_item_data.to_dict()
             wide_keys.append(wide_keys_item)
 
+        widen_signal = self.widen_signal.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -56,6 +62,7 @@ class FederationSettings:
                 "default_sources": default_sources,
                 "max_sources": max_sources,
                 "wide_keys": wide_keys,
+                "widen_signal": widen_signal,
             }
         )
 
@@ -65,6 +72,9 @@ class FederationSettings:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.federation_settings_wide_keys_item import (
             FederationSettingsWideKeysItem,
+        )
+        from ..models.federation_settings_widen_signal import (
+            FederationSettingsWidenSignal,
         )
 
         d = dict(src_dict)
@@ -83,11 +93,14 @@ class FederationSettings:
 
             wide_keys.append(wide_keys_item)
 
+        widen_signal = FederationSettingsWidenSignal.from_dict(d.pop("widen_signal"))
+
         federation_settings = cls(
             enabled=enabled,
             default_sources=default_sources,
             max_sources=max_sources,
             wide_keys=wide_keys,
+            widen_signal=widen_signal,
         )
 
         return federation_settings

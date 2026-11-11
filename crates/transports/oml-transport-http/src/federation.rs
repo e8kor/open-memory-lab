@@ -38,8 +38,9 @@ struct WorkareaBody {
     accept_federated: bool,
 }
 
-/// openapi.yaml `FederationSettings`: the policy, and the keys that met
-/// more than 1,000 candidate sources since the lead started (d12).
+/// openapi.yaml `FederationSettings`: the policy, the keys that met more
+/// than 1,000 candidate sources since the lead started (d12), and how the
+/// widen hint's signal fared (#244).
 fn settings_json(settings: &FederationSettings, wide_keys: &[WideKey]) -> Value {
     json!({
         "enabled": settings.policy.enabled,
@@ -49,6 +50,12 @@ fn settings_json(settings: &FederationSettings, wide_keys: &[WideKey]) -> Value 
             "key_id": k.key_id,
             "candidates": k.candidates,
         })).collect::<Vec<_>>(),
+        "widen_signal": {
+            "built": settings.widen_signal.built,
+            "unserved": settings.widen_signal.unserved,
+            "failed": settings.widen_signal.failed,
+            "last_failure": settings.widen_signal.last_failure,
+        },
     })
 }
 

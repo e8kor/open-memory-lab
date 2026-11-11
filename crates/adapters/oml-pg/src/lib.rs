@@ -1184,6 +1184,28 @@ const REFERENCE_EXPIRED: &str = "SELECT m.id, m.workarea_id FROM memories m \
        AND m.is_tip AND NOT m.retirement AND m.workarea_id = ANY($2::uuid[]) \
        AND m.kind = ANY($3::text[])";
 
+/// Every token's counts per node of `$2`, [`REFERENCE_COUNTS`] without its
+/// token filter: the widen signal's read, made off the request path
+/// (ADR-0072 d8, as built by #244).
+const VOCABULARY_COUNTS: &str = "SELECT c.workarea_id, NULL::int8 AS token_id, \
+            COALESCE(sum(c.rows), 0)::int8 AS n \
+     FROM search_workarea_rows c \
+     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+       AND c.memory_kind = ANY($3::int2[]) \
+     GROUP BY c.workarea_id \
+     UNION ALL \
+     SELECT c.workarea_id, c.token_id, sum(c.rows)::int8 \
+     FROM search_term_rows c \
+     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+       AND c.memory_kind = ANY($3::int2[]) \
+     GROUP BY c.workarea_id, c.token_id";
+
+/// Every token each expired version `$2` holds, from its postings by the
+/// `(memory_id)` index.
+const VOCABULARY_EXPIRED_TOKENS: &str = "SELECT DISTINCT p.memory_id, p.token_id \
+     FROM search_postings p \
+     WHERE p.tenant_id = $1 AND p.memory_id = ANY($2::uuid[]) AND p.kind = 1";
+
 /// Which tokens of `$3` each expired version `$2` holds, from its postings
 /// by the `(memory_id)` index.
 const REFERENCE_EXPIRED_TOKENS: &str = "SELECT DISTINCT p.memory_id, p.token_id \
@@ -6212,19 +6234,105 @@ impl JournalStore for PgStore {
 
     async fn vocabulary_counts(
         &self,
-        _tenant_id: Uuid,
-        _scope: &oml_app::federation::CountsScope,
+        tenant_id: Uuid,
+        scope: &oml_app::federation::CountsScope,
     ) -> Result<oml_app::federation::VocabularyCounts, StoreError> {
-        Ok(oml_app::federation::VocabularyCounts::default())
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let kinds = hit_kinds(&scope.kinds);
+        let memory_kinds: Vec<i16> = kinds
+            .iter()
+            .filter_map(|k| match *k {
+                "memory" => Some(1_i16),
+                "derived_fact" => Some(2_i16),
+                _ => None,
+            })
+            .collect();
+        let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
+        let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
+        if !scope.nodes.is_empty() {
+            let counted: Vec<(Uuid, Option<i64>, i64)> = sqlx::query_as(VOCABULARY_COUNTS)
+                .bind(tenant_id)
+                .bind(&scope.nodes)
+                .bind(&memory_kinds)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(backend)?;
+            for (node, token, n) in counted {
+                let n = u64::try_from(n).map_err(backend)?;
+                match token {
+                    None => *rows.entry(node).or_default() += n,
+                    Some(token) => *df.entry((node, token)).or_default() += n,
+                }
+            }
+            if let Some(now) = scope.expired_at {
+                let expired: Vec<(Uuid, Uuid)> = sqlx::query_as(REFERENCE_EXPIRED)
+                    .bind(tenant_id)
+                    .bind(&scope.nodes)
+                    .bind(&kinds)
+                    .bind(now)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                if !expired.is_empty() {
+                    let home: BTreeMap<Uuid, Uuid> = expired.iter().copied().collect();
+                    for node in home.values() {
+                        if let Some(r) = rows.get_mut(node) {
+                            *r = r.saturating_sub(1);
+                        }
+                    }
+                    let ids: Vec<Uuid> = home.keys().copied().collect();
+                    let held: Vec<(Uuid, i64)> = sqlx::query_as(VOCABULARY_EXPIRED_TOKENS)
+                        .bind(tenant_id)
+                        .bind(&ids)
+                        .fetch_all(&mut *tx)
+                        .await
+                        .map_err(backend)?;
+                    for (memory_id, token) in held {
+                        if let Some(node) = home.get(&memory_id)
+                            && let Some(d) = df.get_mut(&(*node, token))
+                        {
+                            *d = d.saturating_sub(1);
+                        }
+                    }
+                }
+            }
+        }
+        tx.commit().await.map_err(backend)?;
+        let mut forms: BTreeMap<i64, Vec<(Uuid, u64)>> = BTreeMap::new();
+        for ((node, token), n) in df {
+            if n > 0 {
+                forms.entry(token).or_default().push((node, n));
+            }
+        }
+        Ok(oml_app::federation::VocabularyCounts { rows, forms })
     }
 
+    /// The query's forms, one statement over no table, then their counts out
+    /// of the vocabulary as [`Self::reference_counts`] reads them.
     async fn counts_from_vocabulary(
         &self,
-        _vocabulary: &oml_app::federation::VocabularyCounts,
-        _query: &str,
-        _prunes: bool,
+        vocabulary: &oml_app::federation::VocabularyCounts,
+        query: &str,
+        prunes: bool,
     ) -> Result<oml_app::federation::ReferenceCounts, StoreError> {
-        Ok(oml_app::federation::ReferenceCounts::default())
+        let forms: Vec<(String, String)> = sqlx::query_as(&search_forms_sql())
+            .bind(query)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
+        for (_, form) in &forms {
+            let token = token_id(form);
+            for (node, n) in vocabulary.forms.get(&token).into_iter().flatten() {
+                df.insert((*node, token), *n);
+            }
+        }
+        Ok(self.counts_of_forms(&forms, &vocabulary.rows, &df, prunes))
     }
 
     async fn steering_in_force(

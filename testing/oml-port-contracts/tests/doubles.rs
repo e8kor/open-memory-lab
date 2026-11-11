@@ -82,7 +82,7 @@ async fn federated_recall_double_timing_does_not_depend_on_an_unreadable_workare
 /// (ADR-0072 d8, d12, as built by #244).
 #[tokio::test]
 async fn the_signals_counts_equal_the_reference_counts() {
-    contracts::federation::the_signals_counts_equal_the_reference_counts(
+    let _ = contracts::federation::the_signals_counts_equal_the_reference_counts(
         MemStore::new().answering_bm25_with_any_word(),
     )
     .await;
