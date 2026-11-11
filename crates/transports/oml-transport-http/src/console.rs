@@ -8,6 +8,8 @@
 //! through its capacity credential, so an agent's bearer key cannot list,
 //! end, export or delete its person (ADR-0045 d16).
 
+use std::sync::Arc;
+
 use axum::body::Bytes;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
@@ -16,7 +18,7 @@ use axum::response::Response;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use oml_app::app::{Caller, Capacity, OwnKey, WorkareaOffer};
+use oml_app::app::{ActClaim, ActTicket, Caller, Capacity, OwnKey, WorkareaOffer};
 use oml_app::domain::Role;
 use oml_app::domain::name::{Name, Reference};
 use oml_app::domain::signup::Quota;
@@ -169,74 +171,390 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))
     }
 
-    /// The outcome recorded for this act under the request's
-    /// `Idempotency-Key`, answered as it was with `Idempotency-Replay:
-    /// true`, or `None` to act (http-api.md idempotency; ADR-0070 d3 layer
-    /// 4).
-    pub(crate) async fn replayed(
+    /// Claims this act's `Idempotency-Key` before it acts (http-api.md
+    /// idempotency; ADR-0070 d3 layer 4, d5; #233): the outcome recorded
+    /// under it, answered as it was with `Idempotency-Replay: true`, or the
+    /// claim to act under. A claim another attempt holds is waited on, at
+    /// a backing-off pace, and then replayed, so two sends of one form, from
+    /// any number of `oml-web` processes, act once and answer alike.
+    pub(crate) async fn claim(
         &self,
         caller: &Caller,
-        act: &str,
+        act: &'static str,
         idem: &str,
         digest: &str,
-    ) -> Result<Option<Response>, ApiError> {
-        let Some(recorded) = self
-            .app
-            .recorded_act(caller, act, idem, digest)
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?
-        else {
-            return Ok(None);
+    ) -> Result<Claimed<J, S, C, I, Sc>, ApiError> {
+        let claim_id = fresh_claim_id();
+        let deadline = tokio::time::Instant::now() + ACT_CLAIM_WAIT;
+        let mut pause = ACT_CLAIM_POLL_FIRST;
+        loop {
+            match self
+                .app
+                .claim_act(caller, act, idem, digest, claim_id)
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?
+            {
+                ActClaim::InProgress => {
+                    let now = tokio::time::Instant::now();
+                    if now >= deadline {
+                        return Err(map_app_error(
+                            AppError::IdempotencyInProgress,
+                            ErrorContext::Write,
+                        ));
+                    }
+                    tokio::time::sleep(pause.min(deadline - now)).await;
+                    pause = (pause * 2).min(ACT_CLAIM_POLL_MAX);
+                }
+                ActClaim::Replay(recorded) => {
+                    let status = recorded["status"]
+                        .as_u64()
+                        .and_then(|s| u16::try_from(s).ok())
+                        .and_then(|s| StatusCode::from_u16(s).ok())
+                        .unwrap_or(StatusCode::OK);
+                    let mut response = json_response(status, &recorded["body"]);
+                    response
+                        .headers_mut()
+                        .insert("idempotency-replay", HeaderValue::from_static("true"));
+                    return Ok(Claimed::Replayed(response));
+                }
+                ActClaim::Act(ticket) => {
+                    return Ok(Claimed::Act(ActGuard {
+                        app: self.app.clone(),
+                        metrics: self.traffic.metrics().clone(),
+                        act,
+                        ticket: Some(ticket),
+                        committing: false,
+                    }));
+                }
+            }
+        }
+    }
+}
+
+/// A claim id no other attempt draws: the process, the wall clock and a
+/// counter, digested. Drawn here rather than from the core's id source, so
+/// a claim never moves the ids the acts themselves draw.
+fn fresh_claim_id() -> uuid::Uuid {
+    static DRAWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = DRAWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let seed = format!("{}:{nanos}:{n}", std::process::id());
+    let digest = oml_app::domain::Sha256Hash::digest(seed.as_bytes()).0;
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    uuid::Uuid::from_bytes(bytes)
+}
+
+/// How long a web console act waits on a claim another attempt under the
+/// same `Idempotency-Key` holds before it answers `idempotency.in_progress`:
+/// under `oml-web`'s ten-second call timeout, so a second send of one form
+/// is answered the first's outcome rather than a timeout (ADR-0070 d5, d8;
+/// #233).
+pub(crate) const ACT_CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The wait's first pause before it claims again; each pause doubles, up to
+/// [`ACT_CLAIM_POLL_MAX`], so a five-second wait claims about twenty-five
+/// times rather than two hundred.
+const ACT_CLAIM_POLL_FIRST: std::time::Duration = std::time::Duration::from_millis(25);
+
+/// The longest pause between two claims of one wait.
+const ACT_CLAIM_POLL_MAX: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// What claiming an act's `Idempotency-Key` answered: the recorded
+/// outcome, or the claim to act under.
+pub(crate) enum Claimed<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
+    Replayed(Response),
+    Act(ActGuard<J, S, C, I, Sc>),
+}
+
+/// An act's answer: `answer` to the caller, `kept` recorded for a
+/// resubmission to replay, which leaves out what is shown once.
+pub(crate) struct Acted {
+    pub(crate) status: StatusCode,
+    pub(crate) answer: Value,
+    pub(crate) kept: Value,
+}
+
+impl Acted {
+    /// An answer recorded as it is answered.
+    pub(crate) fn new(status: StatusCode, body: Value) -> Self {
+        Self {
+            status,
+            kept: body.clone(),
+            answer: body,
+        }
+    }
+}
+
+/// `answer` as a resubmission replays it: without a key's value, a connect
+/// code's `code`, or the code inside an issued key's `connect_code`, each
+/// shown once, so no record holds one (ADR-0031 d7; #127).
+pub(crate) fn without_secrets(answer: &Value) -> Value {
+    let mut kept = answer.clone();
+    if let Some(kept) = kept.as_object_mut() {
+        kept.remove("value");
+        kept.remove("code");
+        if let Some(code) = kept.get_mut("connect_code").and_then(Value::as_object_mut) {
+            code.remove("code");
+        }
+    }
+    kept
+}
+
+/// How an act failed, which decides what becomes of its claim (#233).
+pub(crate) enum ActFailure {
+    /// Refused before anything committed: the claim is released, so a
+    /// resubmission acts again, as a refused request records nothing.
+    Refused(ApiError),
+    /// Failed once something may have committed: the claim stays, so a
+    /// resubmission answers `idempotency.in_progress` and never acts twice.
+    MayHaveCommitted(ApiError),
+}
+
+impl ActFailure {
+    /// The act's first commit failed: a refusal (`4xx`) wrote nothing, and
+    /// any other failure (a lost connection, `5xx`) may have committed.
+    pub(crate) fn first(e: ApiError) -> Self {
+        if e.status.is_client_error() {
+            Self::Refused(e)
+        } else {
+            Self::MayHaveCommitted(e)
+        }
+    }
+
+    /// A step after the act's first commit failed: the act stands.
+    pub(crate) fn after(e: ApiError) -> Self {
+        Self::MayHaveCommitted(e)
+    }
+}
+
+/// The claim an act holds on its `Idempotency-Key`. [`ActGuard::run`] acts
+/// in a task of its own, so a request dropped mid-act (a client timeout, a
+/// closed connection) cannot stop the act between its commit and its
+/// record: the act records its outcome, and the resubmission waits and
+/// replays it. Dropped before the act runs, as a validation refusal's `?`
+/// drops it, the guard releases the claim; dropped once the act runs, as a
+/// panic drops it, it leaves the claim and counts it unsettled, because
+/// the act may have committed (http-api.md idempotency; #233).
+pub(crate) struct ActGuard<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
+    app: std::sync::Arc<oml_app::App<J, S, C, I, Sc>>,
+    metrics: std::sync::Arc<crate::traffic::metrics::Metrics>,
+    act: &'static str,
+    ticket: Option<ActTicket>,
+    /// Set once the act starts: from then on nothing releases the claim.
+    committing: bool,
+}
+
+impl<J, S, C, I, Sc> ActGuard<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + WebStore + Clone + Send + Sync + 'static,
+    S: Signer + Send + Sync + 'static,
+    C: Clock + Send + Sync + 'static,
+    I: IdGen + Send + Sync + 'static,
+    Sc: Scanner + Send + Sync + 'static,
+{
+    /// Runs `act` to its end in a task of its own and answers its outcome:
+    /// recorded under the key when it acted, the claim released when it was
+    /// refused before anything committed, and the claim left when it failed
+    /// after something may have committed. A panic in the act is resumed
+    /// here, for the panic guard to answer, and leaves the claim.
+    pub(crate) async fn run<F>(mut self, act: F) -> Result<Response, ApiError>
+    where
+        F: std::future::Future<Output = Result<Acted, ActFailure>> + Send + 'static,
+    {
+        // The task carries the request's span, its traffic scope (the key,
+        // the workarea, the store time and the counters the act observes)
+        // and its session, as every task-local the request set (#233).
+        let span = tracing::Span::current();
+        let scope = crate::traffic::current_scope();
+        let session = crate::session::current_session();
+        let work = async move {
+            self.committing = true;
+            match act.await {
+                Ok(acted) => Ok(self.settle(&acted).await),
+                Err(ActFailure::Refused(e)) => {
+                    self.release().await;
+                    Err(e)
+                }
+                Err(ActFailure::MayHaveCommitted(e)) => {
+                    self.leave(&format!(
+                        "the act failed after it may have committed: {}",
+                        e.message
+                    ));
+                    Err(e)
+                }
+            }
         };
-        let status = recorded["status"]
-            .as_u64()
-            .and_then(|s| u16::try_from(s).ok())
-            .and_then(|s| StatusCode::from_u16(s).ok())
-            .unwrap_or(StatusCode::OK);
-        let mut response = json_response(status, &recorded["body"]);
-        response
-            .headers_mut()
-            .insert("idempotency-replay", HeaderValue::from_static("true"));
-        Ok(Some(response))
+        // The record and a release run inside the request's scope too, so
+        // the request line counts every store call the act made.
+        let work =
+            crate::traffic::within_scope(scope, crate::session::within_session(session, work));
+        let task = tokio::spawn(tracing::Instrument::instrument(work, span));
+        match task.await {
+            Ok(answered) => answered,
+            Err(stopped) if stopped.is_panic() => std::panic::resume_unwind(stopped.into_panic()),
+            Err(_) => Err(ApiError::unavailable(
+                "the act's task was stopped as the lead shut down",
+            )),
+        }
     }
 
-    /// Records the act's answer under its `Idempotency-Key` and answers it.
-    pub(crate) async fn record_outcome(
-        &self,
-        caller: &Caller,
-        act: &str,
-        idem: &str,
-        digest: &str,
-        status: StatusCode,
-        body: &Value,
-    ) -> Result<Response, ApiError> {
-        self.record(caller, act, idem, digest, status, body).await?;
-        Ok(json_response(status, body))
+    /// Records `acted.kept` under the key and answers `acted.answer`. The
+    /// act has committed, so a record that cannot be written still answers
+    /// it, and the claim stays.
+    async fn settle(&mut self, acted: &Acted) -> Response {
+        if let Some(ticket) = self.ticket.take() {
+            let claim_id = ticket.claim_id();
+            let key_id = ticket.key_id();
+            let recorded = self
+                .app
+                .settle_act(
+                    ticket,
+                    json!({ "status": acted.status.as_u16(), "body": acted.kept }),
+                )
+                .await;
+            if !matches!(recorded, Ok(true)) {
+                let reason = match recorded {
+                    Err(e) => e.to_string(),
+                    _ => "the claim was no longer held".to_owned(),
+                };
+                unsettled(&self.metrics, self.act, key_id, claim_id, &reason);
+            }
+        }
+        json_response(acted.status, &acted.answer)
     }
 
-    /// Records `body` as the act's answer under its `Idempotency-Key`, the
-    /// answer a resubmission replays.
-    async fn record(
-        &self,
-        caller: &Caller,
-        act: &str,
-        idem: &str,
-        digest: &str,
-        status: StatusCode,
-        body: &Value,
-    ) -> Result<(), ApiError> {
-        self.app
-            .record_act(
-                caller,
+    /// Releases the claim of an act refused before anything committed.
+    async fn release(&mut self) {
+        if let Some(ticket) = self.ticket.take() {
+            let claim_id = ticket.claim_id();
+            let key_id = ticket.key_id();
+            if let Err(e) = self.app.release_act(ticket).await {
+                unsettled(
+                    &self.metrics,
+                    self.act,
+                    key_id,
+                    claim_id,
+                    &format!("a refused act's claim was not released: {e}"),
+                );
+            }
+        }
+    }
+
+    /// Leaves the claim of an act that may have committed, counted.
+    fn leave(&mut self, reason: &str) {
+        if let Some(ticket) = self.ticket.take() {
+            unsettled(
+                &self.metrics,
+                self.act,
+                ticket.key_id(),
+                ticket.claim_id(),
+                reason,
+            );
+        }
+    }
+}
+
+/// Logs and counts a claim left held without a recorded outcome: a
+/// resubmission under its key answers `idempotency.in_progress` and acts
+/// nothing (#233; operations/runbooks.md, a form that answers in progress).
+fn unsettled(
+    metrics: &crate::traffic::metrics::Metrics,
+    act: &'static str,
+    key_id: uuid::Uuid,
+    claim_id: uuid::Uuid,
+    reason: &str,
+) {
+    tracing::warn!(
+        event = "idempotency_unsettled",
+        act,
+        key_id = %key_id,
+        claim_id = %claim_id,
+        reason = %reason,
+        "an act's Idempotency-Key claim was left without a recorded outcome; a resubmission under the key answers idempotency.in_progress and acts nothing"
+    );
+    metrics.idempotency_unsettled();
+}
+
+impl<J, S, C, I, Sc> Drop for ActGuard<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
+    fn drop(&mut self) {
+        let Some(ticket) = self.ticket.take() else {
+            return;
+        };
+        if self.committing {
+            // The act may have committed: releasing would let a
+            // resubmission act twice.
+            unsettled(
+                &self.metrics,
+                self.act,
+                ticket.key_id(),
+                ticket.claim_id(),
+                "the act stopped before its outcome was recorded",
+            );
+            return;
+        }
+        // Dropped before the act ran: a validation refusal.
+        let app = self.app.clone();
+        let metrics = self.metrics.clone();
+        let act = self.act;
+        let (key_id, claim_id) = (ticket.key_id(), ticket.claim_id());
+        let release = async move {
+            if let Err(e) = app.release_act(ticket).await {
+                unsettled(
+                    &metrics,
+                    act,
+                    key_id,
+                    claim_id,
+                    &format!("a refused act's claim was not released: {e}"),
+                );
+            }
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(release);
+            }
+            Err(_) => unsettled(
+                &self.metrics,
                 act,
-                idem,
-                digest,
-                json!({ "status": status.as_u16(), "body": body }),
-            )
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))
+                key_id,
+                claim_id,
+                "no runtime to release a refused act's claim on",
+            ),
+        }
     }
+}
 
+impl<J, S, C, I, Sc> ApiState<J, S, C, I, Sc>
+where
+    J: JournalStore + ConnectionStore + WebStore + Clone + 'static,
+    S: Signer + 'static,
+    C: Clock + 'static,
+    I: IdGen + 'static,
+    Sc: Scanner + 'static,
+{
     // -- #1 GET /v2/keys ------------------------------------------------------
 
     pub(crate) async fn list_keys(
@@ -421,15 +739,13 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let caller = st.console_caller(headers).await?;
+        let caller = Arc::new(st.console_caller(headers).await?);
         let idem = idempotency_key(headers)?;
         let digest = act_digest(user, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "web.capacities", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(&caller, "web.capacities", &idem, &digest).await? {
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         let user = user_param(user)?;
         let req: CapacitiesBody = parse_json(headers, body)?;
         let curate = match req.capacity.as_str() {
@@ -452,32 +768,43 @@ where
             .enumerate()
             .map(|(i, w)| reference(&format!("/workareas/{i}"), w))
             .collect::<Result<_, _>>()?;
-        let mut key = None;
-        let mut added = Vec::new();
-        for workarea in workareas {
-            let granted = if curate {
-                retry_chain(|| st.app.web_grant_curation(&caller, &user, workarea.clone())).await
-            } else {
-                retry_chain(|| st.app.web_grant_review(&caller, &user, workarea.clone())).await
-            }
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-            added.extend(granted.grants_added);
-            key = Some(granted.key);
-        }
-        let key = key.ok_or_else(ApiError::not_found)?;
-        st.record_outcome(
-            &caller,
-            "web.capacities",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &json!({
-                "key": { "id": key.key_id, "name": key.name.as_ref().map(Name::as_str) },
-                "grants_added": added.iter().map(grant_json).collect::<Vec<_>>(),
-                "journal_seq": added.iter().map(|g| g.epoch).max(),
-            }),
-        )
-        .await
+        let st = st.clone();
+        claim
+            .run(async move {
+                let mut key = None;
+                let mut added = Vec::new();
+                for workarea in workareas {
+                    let granted = if curate {
+                        retry_chain(|| st.app.web_grant_curation(&caller, &user, workarea.clone()))
+                            .await
+                    } else {
+                        retry_chain(|| st.app.web_grant_review(&caller, &user, workarea.clone()))
+                            .await
+                    }
+                    .map_err(|e| {
+                        let e = map_app_error(e, ErrorContext::Write);
+                        // A grant refused after an earlier one committed
+                        // leaves the earlier one standing.
+                        if key.is_none() {
+                            ActFailure::first(e)
+                        } else {
+                            ActFailure::after(e)
+                        }
+                    })?;
+                    added.extend(granted.grants_added);
+                    key = Some(granted.key);
+                }
+                let key = key.ok_or_else(|| ActFailure::Refused(ApiError::not_found()))?;
+                Ok(Acted::new(
+                    StatusCode::OK,
+                    json!({
+                        "key": { "id": key.key_id, "name": key.name.as_ref().map(Name::as_str) },
+                        "grants_added": added.iter().map(grant_json).collect::<Vec<_>>(),
+                        "journal_seq": added.iter().map(|g| g.epoch).max(),
+                    }),
+                ))
+            })
+            .await
     }
 
     // -- #4 GET /v2/workareas/{workarea}/offers -------------------------------
@@ -644,40 +971,41 @@ where
     /// no access. For their web session key only (ADR-0068 d6).
     async fn request_deletion_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let caller = st.console_caller(headers).await?;
+        let caller = Arc::new(st.console_caller(headers).await?);
         let idem = idempotency_key(headers)?;
         let digest = act_digest("", &Bytes::new());
-        if let Some(replayed) = st
-            .replayed(&caller, "web.deletion_requested", &idem, &digest)
+        let claim = match st
+            .claim(&caller, "web.deletion_requested", &idem, &digest)
             .await?
         {
-            return Ok(replayed);
-        }
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         if !is_web_session_key(&caller) {
             return Err(session_key_only(&caller, "request_deletion"));
         }
-        let seq = retry_chain(|| st.app.web_request_deletion(&caller))
+        let st = st.clone();
+        claim
+            .run(async move {
+                let seq = retry_chain(|| st.app.web_request_deletion(&caller))
+                    .await
+                    .map_err(|e| ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                let person = st
+                    .app
+                    .whoami_person(Bearer::Session(&caller))
+                    .await
+                    .map_err(|e| ActFailure::after(map_app_error(e, ErrorContext::Write)))?;
+                Ok(Acted::new(
+                    StatusCode::OK,
+                    json!({
+                        "requested_at": person
+                            .and_then(|p| p.deletion_requested_at)
+                            .map(|t| t.as_str().to_owned()),
+                        "journal_seq": seq,
+                    }),
+                ))
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let person = st
-            .app
-            .whoami_person(Bearer::Session(&caller))
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        st.record_outcome(
-            &caller,
-            "web.deletion_requested",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &json!({
-                "requested_at": person
-                    .and_then(|p| p.deletion_requested_at)
-                    .map(|t| t.as_str().to_owned()),
-                "journal_seq": seq,
-            }),
-        )
-        .await
     }
 
     // -- #8 POST /v2/web/users/{user}/quota -------------------------------------
@@ -706,15 +1034,13 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let caller = st.console_caller(headers).await?;
+        let caller = Arc::new(st.console_caller(headers).await?);
         let idem = idempotency_key(headers)?;
         let digest = act_digest(user, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "web.quota_set", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(&caller, "web.quota_set", &idem, &digest).await? {
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         let user = user_param(user)?;
         let req: QuotaBody = parse_json(headers, body)?;
         let sent: Vec<(Quota, Option<u64>)> = [
@@ -731,32 +1057,43 @@ where
                 "send at least one of memories, keys, connections and requests_per_minute",
             ));
         }
-        for (quota, limit) in sent {
-            retry_chain(|| st.app.web_set_quota(&caller, &user, quota, limit))
-                .await
-                .map_err(|e| match e {
-                    AppError::WebField { message, .. } => ApiError::validation(message)
-                        .with_details(json!({ "field": format!("/{}", quota.as_str()) })),
-                    e => map_app_error(e, ErrorContext::Write),
-                })?;
-        }
-        let row = st
-            .app
-            .web_users(&caller)
+        let st = st.clone();
+        claim
+            .run(async move {
+                for (i, (quota, limit)) in sent.into_iter().enumerate() {
+                    retry_chain(|| st.app.web_set_quota(&caller, &user, quota, limit))
+                        .await
+                        .map_err(|e| {
+                            let e = match e {
+                                AppError::WebField { message, .. } => ApiError::validation(message)
+                                    .with_details(
+                                        json!({ "field": format!("/{}", quota.as_str()) }),
+                                    ),
+                                e => map_app_error(e, ErrorContext::Write),
+                            };
+                            // A quota refused after an earlier one was set
+                            // leaves the earlier one standing.
+                            if i == 0 {
+                                ActFailure::first(e)
+                            } else {
+                                ActFailure::after(e)
+                            }
+                        })?;
+                }
+                let row = st
+                    .app
+                    .web_users(&caller)
+                    .await
+                    .map_err(|e| ActFailure::after(map_app_error(e, ErrorContext::Write)))?
+                    .into_iter()
+                    .find(|u| u.user == user)
+                    .ok_or_else(|| ActFailure::after(ApiError::not_found()))?;
+                Ok(Acted::new(
+                    StatusCode::OK,
+                    crate::web::emails::user_row_json(&row),
+                ))
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?
-            .into_iter()
-            .find(|u| u.user == user)
-            .ok_or_else(ApiError::not_found)?;
-        st.record_outcome(
-            &caller,
-            "web.quota_set",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &crate::web::emails::user_row_json(&row),
-        )
-        .await
     }
 
     // -- #9 POST /v2/web/users/{user}/disable -----------------------------------
@@ -786,31 +1123,32 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let caller = st.console_caller(headers).await?;
+        let caller = Arc::new(st.console_caller(headers).await?);
         let idem = idempotency_key(headers)?;
         let digest = act_digest(user, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "web.user_disabled", &idem, &digest)
+        let claim = match st
+            .claim(&caller, "web.user_disabled", &idem, &digest)
             .await?
         {
-            return Ok(replayed);
-        }
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         let user = user_param(user)?;
         if !body.is_empty() {
             let _: DisableBody = parse_json(headers, body)?;
         }
-        let done = retry_chain(|| st.app.web_disable_user(&caller, &user))
+        let st = st.clone();
+        claim
+            .run(async move {
+                let done = retry_chain(|| st.app.web_disable_user(&caller, &user))
+                    .await
+                    .map_err(|e| ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                Ok(Acted::new(
+                    StatusCode::OK,
+                    json!({ "keys_cut_off": done.keys_cut_off, "journal_seq": done.journal_seq }),
+                ))
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        st.record_outcome(
-            &caller,
-            "web.user_disabled",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &json!({ "keys_cut_off": done.keys_cut_off, "journal_seq": done.journal_seq }),
-        )
-        .await
     }
 
     // -- #10 POST /v2/web/users/{user}/deletion/close ----------------------------
@@ -840,33 +1178,31 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let caller = st.console_caller(headers).await?;
+        let caller = Arc::new(st.console_caller(headers).await?);
         let idem = idempotency_key(headers)?;
         let digest = act_digest(user, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "web.deletion_closed", &idem, &digest)
+        let claim = match st
+            .claim(&caller, "web.deletion_closed", &idem, &digest)
             .await?
         {
-            return Ok(replayed);
-        }
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         let user = user_param(user)?;
         let req: CloseBody = parse_json(headers, body)?;
         if req.outcome != "deleted" {
             return Err(ApiError::validation("outcome is deleted")
                 .with_details(json!({ "field": "/outcome" })));
         }
-        let seq = retry_chain(|| st.app.web_close_deletion(&caller, &user))
+        let st = st.clone();
+        claim
+            .run(async move {
+                let seq = retry_chain(|| st.app.web_close_deletion(&caller, &user))
+                    .await
+                    .map_err(|e| ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                Ok(Acted::new(StatusCode::OK, json!({ "journal_seq": seq })))
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        st.record_outcome(
-            &caller,
-            "web.deletion_closed",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &json!({ "journal_seq": seq }),
-        )
-        .await
     }
 
     // -- d5's unchanged key operations, as a session key -------------------
@@ -882,19 +1218,20 @@ where
     /// (ADR-0070 d3 layer 4, as built).
     pub(crate) async fn issue_key_as_session(
         st: &Self,
-        caller: &Caller,
+        caller: Arc<Caller>,
         req: &KeyIssueBody,
         name: &Name,
         idem: &str,
         body: &Bytes,
     ) -> Result<Response, ApiError> {
-        if !is_web_session_key(caller) {
-            return Err(session_capacity(caller, "issue_key"));
+        if !is_web_session_key(&caller) {
+            return Err(session_capacity(&caller, "issue_key"));
         }
         let digest = act_digest("", body);
-        if let Some(replayed) = st.replayed(caller, "keys.issue", idem, &digest).await? {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(&caller, "keys.issue", idem, &digest).await? {
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         let set: [(&str, bool); 9] = [
             ("/grants", !req.grants.is_empty()),
             ("/label", req.label.is_some()),
@@ -930,35 +1267,31 @@ where
             })?
             .to_owned();
         let role = parse_role(&req.role)?;
-        let issued = retry_chain(|| {
-            st.app
-                .web_issue_key(caller, &suffix, role, req.connect_code)
-        })
-        .await
-        .map_err(|e| match e {
-            AppError::WebField { field, message } => {
-                ApiError::validation(message).with_details(json!({ "field": format!("/{field}") }))
-            }
-            e => map_app_error(e, ErrorContext::Write),
-        })?;
-        let answer = key_issued_json(&issued, None);
-        let mut kept = answer.clone();
-        if let Some(kept) = kept.as_object_mut() {
-            kept.remove("value");
-            if let Some(code) = kept.get_mut("connect_code").and_then(Value::as_object_mut) {
-                code.remove("code");
-            }
-        }
-        st.record(
-            caller,
-            "keys.issue",
-            idem,
-            &digest,
-            StatusCode::CREATED,
-            &kept,
-        )
-        .await?;
-        Ok(json_response(StatusCode::CREATED, &answer))
+        let connect_code = req.connect_code;
+        let st = st.clone();
+        claim
+            .run(async move {
+                let issued =
+                    retry_chain(|| st.app.web_issue_key(&caller, &suffix, role, connect_code))
+                        .await
+                        .map_err(|e| {
+                            ActFailure::first(match e {
+                                AppError::WebField { field, message } => {
+                                    ApiError::validation(message)
+                                        .with_details(json!({ "field": format!("/{field}") }))
+                                }
+                                e => map_app_error(e, ErrorContext::Write),
+                            })
+                        })?;
+                let answer = key_issued_json(&issued, None);
+                let kept = without_secrets(&answer);
+                Ok(Acted {
+                    status: StatusCode::CREATED,
+                    answer,
+                    kept,
+                })
+            })
+            .await
     }
 
     /// `POST /v2/keys/{key}/denials` as a session key: `<user>-web` cuts
@@ -970,21 +1303,22 @@ where
     /// answer and cuts nothing off again (ADR-0070 d3 layer 4, as built).
     pub(crate) async fn cut_off_as_session(
         st: &Self,
-        caller: &Caller,
+        caller: Arc<Caller>,
         key: &Reference,
         node: &Reference,
         idem: &str,
         key_id: &str,
         body: &Bytes,
     ) -> Result<Response, ApiError> {
-        let capacity_web = is_web_session_key(caller);
+        let capacity_web = is_web_session_key(&caller);
         if !capacity_web && caller.key().role != Role::Admin {
-            return Err(session_capacity(caller, "deny_key"));
+            return Err(session_capacity(&caller, "deny_key"));
         }
         let digest = act_digest(key_id, body);
-        if let Some(replayed) = st.replayed(caller, "keys.deny", idem, &digest).await? {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(&caller, "keys.deny", idem, &digest).await? {
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         if !matches!(node, Reference::Name(n) if n.as_str() == "universe") {
             return Err(
                 ApiError::validation("a session key cuts a key off on universe only")
@@ -997,23 +1331,22 @@ where
                     .with_details(json!({ "field": "key" })),
             );
         };
-        let denial = retry_chain(|| st.app.web_cut_off(caller, key))
+        let key = key.clone();
+        let st = st.clone();
+        claim
+            .run(async move {
+                let denial = retry_chain(|| st.app.web_cut_off(&caller, &key))
+                    .await
+                    .map_err(|e| {
+                        ActFailure::first(match e {
+                            AppError::WebField { field, message } => ApiError::validation(message)
+                                .with_details(json!({ "field": field })),
+                            e => map_app_error(e, ErrorContext::Write),
+                        })
+                    })?;
+                Ok(Acted::new(StatusCode::CREATED, denial_json(&denial)))
+            })
             .await
-            .map_err(|e| match e {
-                AppError::WebField { field, message } => {
-                    ApiError::validation(message).with_details(json!({ "field": field }))
-                }
-                e => map_app_error(e, ErrorContext::Write),
-            })?;
-        st.record_outcome(
-            caller,
-            "keys.deny",
-            idem,
-            &digest,
-            StatusCode::CREATED,
-            &denial_json(&denial),
-        )
-        .await
     }
 
     /// `POST /v2/keys/{key}/connect-codes` as `<user>-web`: a fresh code
@@ -1026,23 +1359,24 @@ where
     /// d3 layer 4, as built).
     pub(crate) async fn connect_code_as_session(
         st: &Self,
-        caller: &Caller,
+        caller: Arc<Caller>,
         key: &Reference,
         ttl_seconds: Option<i64>,
         idem: &str,
         key_id: &str,
         body: &Bytes,
     ) -> Result<Response, ApiError> {
-        if !is_web_session_key(caller) {
-            return Err(session_capacity(caller, "mint_connect_code"));
+        if !is_web_session_key(&caller) {
+            return Err(session_capacity(&caller, "mint_connect_code"));
         }
         let digest = act_digest(key_id, body);
-        if let Some(replayed) = st
-            .replayed(caller, "keys.connect_code", idem, &digest)
+        let claim = match st
+            .claim(&caller, "keys.connect_code", idem, &digest)
             .await?
         {
-            return Ok(replayed);
-        }
+            Claimed::Replayed(replayed) => return Ok(replayed),
+            Claimed::Act(claim) => claim,
+        };
         if ttl_seconds.is_some() {
             return Err(
                 ApiError::validation("a person's connect code lives the default lifetime")
@@ -1055,23 +1389,21 @@ where
                     .with_details(json!({ "field": "key" })),
             );
         };
-        let code = retry_chain(|| st.app.web_connect_code(caller, key))
+        let key = key.clone();
+        let st = st.clone();
+        claim
+            .run(async move {
+                let code = retry_chain(|| st.app.web_connect_code(&caller, &key))
+                    .await
+                    .map_err(|e| ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                let answer = connect_code_json(&code);
+                let kept = without_secrets(&answer);
+                Ok(Acted {
+                    status: StatusCode::CREATED,
+                    answer,
+                    kept,
+                })
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let answer = connect_code_json(&code);
-        let mut kept = answer.clone();
-        if let Some(kept) = kept.as_object_mut() {
-            kept.remove("code");
-        }
-        st.record(
-            caller,
-            "keys.connect_code",
-            idem,
-            &digest,
-            StatusCode::CREATED,
-            &kept,
-        )
-        .await?;
-        Ok(json_response(StatusCode::CREATED, &answer))
     }
 }

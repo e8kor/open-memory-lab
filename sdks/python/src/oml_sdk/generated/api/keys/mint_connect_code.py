@@ -102,9 +102,13 @@ def sync_detailed(
     details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here;
     the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry,
     never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as
-    docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency
-    record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl
-    setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
+    docs/architecture/roles-and-keys.md (Connections) declares. The Idempotency-Key is claimed for the
+    calling key before the code is minted: a resubmission under the same key and body answers the first
+    201 with Idempotency-Replay: true and mints nothing, without code, which the first answer alone
+    carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the
+    first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress
+    (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0). Lifetime: the oauth.connect_code_ttl setting,
+    or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -159,9 +163,13 @@ def sync(
     details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here;
     the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry,
     never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as
-    docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency
-    record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl
-    setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
+    docs/architecture/roles-and-keys.md (Connections) declares. The Idempotency-Key is claimed for the
+    calling key before the code is minted: a resubmission under the same key and body answers the first
+    201 with Idempotency-Replay: true and mints nothing, without code, which the first answer alone
+    carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the
+    first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress
+    (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0). Lifetime: the oauth.connect_code_ttl setting,
+    or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -211,9 +219,13 @@ async def asyncio_detailed(
     details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here;
     the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry,
     never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as
-    docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency
-    record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl
-    setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
+    docs/architecture/roles-and-keys.md (Connections) declares. The Idempotency-Key is claimed for the
+    calling key before the code is minted: a resubmission under the same key and body answers the first
+    201 with Idempotency-Replay: true and mints nothing, without code, which the first answer alone
+    carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the
+    first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress
+    (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0). Lifetime: the oauth.connect_code_ttl setting,
+    or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a
@@ -266,9 +278,13 @@ async def asyncio(
     details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here;
     the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry,
     never the code (ADR-0031 d7, d8). The same commit voids the key's earlier codes as
-    docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency
-    record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl
-    setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
+    docs/architecture/roles-and-keys.md (Connections) declares. The Idempotency-Key is claimed for the
+    calling key before the code is minted: a resubmission under the same key and body answers the first
+    201 with Idempotency-Replay: true and mints nothing, without code, which the first answer alone
+    carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the
+    first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress
+    (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0). Lifetime: the oauth.connect_code_ttl setting,
+    or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).
 
     Args:
         key (str): A key, by its id or its name, resolved server-side like every reference; a

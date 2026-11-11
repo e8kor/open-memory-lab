@@ -100,8 +100,10 @@ def sync_detailed(
     or an admin's, answers access.not_found and journals nothing. The body is empty: no reason is
     journalled in this build, so a reason is refused rather than dropped. A resubmission under the same
     Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again,
-    the outcome recorded after the act's last commit; the same key on another request is
-    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+    the key claimed before the act and its outcome recorded after the act's last commit, so a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -153,8 +155,10 @@ def sync(
     or an admin's, answers access.not_found and journals nothing. The body is empty: no reason is
     journalled in this build, so a reason is refused rather than dropped. A resubmission under the same
     Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again,
-    the outcome recorded after the act's last commit; the same key on another request is
-    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+    the key claimed before the act and its outcome recorded after the act's last commit, so a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -201,8 +205,10 @@ async def asyncio_detailed(
     or an admin's, answers access.not_found and journals nothing. The body is empty: no reason is
     journalled in this build, so a reason is refused rather than dropped. A resubmission under the same
     Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again,
-    the outcome recorded after the act's last commit; the same key on another request is
-    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+    the key claimed before the act and its outcome recorded after the act's last commit, so a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -252,8 +258,10 @@ async def asyncio(
     or an admin's, answers access.not_found and journals nothing. The body is empty: no reason is
     journalled in this build, so a reason is refused rather than dropped. A resubmission under the same
     Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again,
-    the outcome recorded after the act's last commit; the same key on another request is
-    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+    the key claimed before the act and its outcome recorded after the act's last commit, so a
+    resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4). Since v0.6.4.
 
     Args:
         user (str):

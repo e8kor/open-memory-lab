@@ -31,10 +31,10 @@ use oml_domain::{
 use crate::ports::Retriever;
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
-    DocumentFetchFailure, FetchedDocument, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord,
-    IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold, OutboxRow,
-    ScanOutcome, Scanner, SignInExchange, Signer, StoreError, SubjectRow, TailEvent, TailScan,
-    WebStore, claim_subject,
+    DocumentFetchFailure, FetchedDocument, HandleSealer, IdGen, IdempotencyClaim, IdempotencyPut,
+    IdempotencyRecord, IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold,
+    OutboxRow, ScanOutcome, Scanner, SignInExchange, Signer, StoreError, SubjectRow, TailEvent,
+    TailScan, WebStore, claim_subject,
 };
 use crate::search::{
     Candidate, CandidateScope, MatchMode, RetrievalQuery, Retrieved, RetrieverKind,
@@ -321,6 +321,10 @@ struct TenantState {
     transitions: BTreeMap<Uuid, (u64, TransitionRecord)>,
     outbox: Vec<OutboxRow>,
     idempotency: BTreeMap<(Uuid, Uuid, String), IdempotencyRecord>,
+    /// The scopes an act claimed and has not settled or released, each with
+    /// its request digest and claim id: the `idempotency` rows whose
+    /// `committed_at` is null (ADR-0070 d5; #233).
+    idempotency_claims: BTreeMap<(Uuid, Uuid, String), (String, Uuid)>,
     /// The web allowlist by the email's digest (postgres-schema.md
     /// `web_emails`; ADR-0045 d2).
     web_entries: BTreeMap<[u8; 32], WebEntry>,
@@ -365,6 +369,20 @@ pub struct MemStore {
     refuse_next: Arc<Mutex<Option<(&'static str, StoreError)>>>,
     /// The next idempotency lookup answers no record, then reads normally.
     miss_next_lookup: Arc<AtomicBool>,
+    /// The next idempotency settle fails as a lost connection would, writing
+    /// nothing, then settles normally: a failure between an act and its
+    /// record (#233).
+    fail_next_settle: Arc<AtomicBool>,
+    /// The next commit parks once it has applied, until the park opens:
+    /// an act whose commit landed and whose request is still in flight.
+    park_after_commit: Arc<Mutex<Option<CommitPark>>>,
+    /// Armed, the next commit makes the `workarea_children` read after it
+    /// fail once: a step after an act's commit that fails.
+    fail_children_after_commit: Arc<AtomicBool>,
+    fail_next_children: Arc<AtomicBool>,
+    /// The next commit panics once it has applied: a defect in an act
+    /// after its commit landed.
+    panic_after_commit: Arc<AtomicBool>,
     /// `similar_candidates` ignores its scope (a store that regressed), so
     /// a test proves the core admits by recall's rule on its own.
     widen_similar: Arc<AtomicBool>,
@@ -588,6 +606,56 @@ impl MemStore {
     /// any handle after that commit.
     pub fn miss_next_idempotency_lookup(&self) {
         self.miss_next_lookup.store(true, Ordering::SeqCst);
+    }
+
+    /// Fails the next idempotency settle with a backend error, writing
+    /// nothing, then settles normally again: the act committed and its
+    /// record was lost, as a process that dies between them loses it
+    /// (#233).
+    pub fn fail_next_idempotency_settle(&self) {
+        self.fail_next_settle.store(true, Ordering::SeqCst);
+    }
+
+    /// Parks the next commit once it has applied, until the returned park
+    /// opens: the commit has landed and its caller has not seen it, which
+    /// a test uses to drop the request at that point (#233).
+    #[must_use]
+    pub fn park_after_next_commit(&self) -> CommitPark {
+        let park = CommitPark::default();
+        *self.park_after_commit.lock().expect("park lock") = Some(park.clone());
+        park
+    }
+
+    /// Fails the first `workarea_children` read after the next commit, as
+    /// a lost connection would: a read an act makes after its commit fails
+    /// (#233).
+    pub fn fail_workarea_children_after_next_commit(&self) {
+        self.fail_children_after_commit
+            .store(true, Ordering::SeqCst);
+    }
+
+    /// Panics once the next commit has applied, as a defect after an act's
+    /// commit would (#233).
+    pub fn panic_after_next_commit(&self) {
+        self.panic_after_commit.store(true, Ordering::SeqCst);
+    }
+
+    /// What runs after a commit applied, outside the tenant's lock.
+    async fn after_commit(&self) {
+        assert!(
+            !self.panic_after_commit.swap(false, Ordering::SeqCst),
+            "a defect after the commit applied"
+        );
+        if self
+            .fail_children_after_commit
+            .swap(false, Ordering::SeqCst)
+        {
+            self.fail_next_children.store(true, Ordering::SeqCst);
+        }
+        let park = self.park_after_commit.lock().expect("park lock").take();
+        if let Some(park) = park {
+            park.wait().await;
+        }
     }
 
     /// Makes `similar_candidates` ignore its scope and name every version of
@@ -2130,7 +2198,7 @@ fn append(state: &mut TenantState, req: CommitRequest) -> Result<CommitReceipt, 
         // One scope holds one record; the caller drops the staged state on
         // a refusal, so the fold above is undone with it.
         let scope = (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key);
-        if state.idempotency.contains_key(&scope) {
+        if state.idempotency.contains_key(&scope) || state.idempotency_claims.contains_key(&scope) {
             return Err(StoreError::IdempotencyRecorded);
         }
         state.idempotency.insert(scope, put.record);
@@ -2499,30 +2567,34 @@ impl JournalStore for MemStore {
         // provides with a row lock on the chain head (ADR-0002). The links
         // apply to a copy that replaces the state only once every one has
         // applied, so a refused link leaves the earlier ones unwritten.
-        let mut state = tenant.lock().expect("tenant lock");
-        let mut staged = state.clone();
-        let mut receipt = append(&mut staged, first)?;
-        for req in reqs {
-            if req.event.envelope.tenant_id != tenant_id {
-                return Err(StoreError::Backend(
-                    "a chain commit names one tenant".to_owned(),
-                ));
-            }
-            receipt = append(&mut staged, req)?;
-        }
-        if !tenant_names.is_empty() {
-            let mut names = self.tenant_names.lock().expect("tenant names lock");
-            let mut staged_names = names.clone();
-            for (genesis, name) in &tenant_names {
-                if *genesis {
-                    name_tenant(&mut staged_names, tenant_id, name)?;
-                } else {
-                    assign_tenant_name(&mut staged_names, tenant_id, name)?;
+        let receipt = {
+            let mut state = tenant.lock().expect("tenant lock");
+            let mut staged = state.clone();
+            let mut receipt = append(&mut staged, first)?;
+            for req in reqs {
+                if req.event.envelope.tenant_id != tenant_id {
+                    return Err(StoreError::Backend(
+                        "a chain commit names one tenant".to_owned(),
+                    ));
                 }
+                receipt = append(&mut staged, req)?;
             }
-            *names = staged_names;
-        }
-        *state = staged;
+            if !tenant_names.is_empty() {
+                let mut names = self.tenant_names.lock().expect("tenant names lock");
+                let mut staged_names = names.clone();
+                for (genesis, name) in &tenant_names {
+                    if *genesis {
+                        name_tenant(&mut staged_names, tenant_id, name)?;
+                    } else {
+                        assign_tenant_name(&mut staged_names, tenant_id, name)?;
+                    }
+                }
+                *names = staged_names;
+            }
+            *state = staged;
+            receipt
+        };
+        self.after_commit().await;
         Ok(receipt)
     }
 
@@ -3600,6 +3672,11 @@ impl JournalStore for MemStore {
         tenant_id: Uuid,
         workarea_id: Uuid,
     ) -> Result<Vec<WorkareaRecord>, StoreError> {
+        if self.fail_next_children.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Backend(
+                "the connection was lost reading the children".to_owned(),
+            ));
+        }
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
         };
@@ -3670,15 +3747,68 @@ impl JournalStore for MemStore {
             .cloned())
     }
 
-    async fn idempotency_put(&self, put: IdempotencyPut) -> Result<bool, StoreError> {
+    async fn idempotency_claim(
+        &self,
+        scope: &IdempotencyScope,
+        request_digest: &str,
+        claim_id: Uuid,
+    ) -> Result<IdempotencyClaim, StoreError> {
+        let state = self.tenant(scope.tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        let key = (scope.key_id, scope.workarea_id, scope.idem_key.clone());
+        if let Some(record) = state.idempotency.get(&key) {
+            return Ok(IdempotencyClaim::Recorded(record.clone()));
+        }
+        if let Some((digest, _)) = state.idempotency_claims.get(&key) {
+            return Ok(IdempotencyClaim::InProgress {
+                request_digest: digest.clone(),
+            });
+        }
+        state
+            .idempotency_claims
+            .insert(key, (request_digest.to_owned(), claim_id));
+        Ok(IdempotencyClaim::Claimed)
+    }
+
+    async fn idempotency_settle(
+        &self,
+        put: IdempotencyPut,
+        claim_id: Uuid,
+    ) -> Result<bool, StoreError> {
+        if self.fail_next_settle.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Backend(
+                "the connection was lost before the record was written".to_owned(),
+            ));
+        }
         let state = self.tenant(put.scope.tenant_id);
         let mut state = state.lock().expect("tenant lock");
         let key = (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key);
-        if state.idempotency.contains_key(&key) {
+        if state.idempotency_claims.get(&key)
+            != Some(&(put.record.request_digest.clone(), claim_id))
+        {
             return Ok(false);
         }
+        state.idempotency_claims.remove(&key);
         state.idempotency.insert(key, put.record);
         Ok(true)
+    }
+
+    async fn idempotency_release(
+        &self,
+        scope: &IdempotencyScope,
+        claim_id: Uuid,
+    ) -> Result<(), StoreError> {
+        let state = self.tenant(scope.tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        let key = (scope.key_id, scope.workarea_id, scope.idem_key.clone());
+        if state
+            .idempotency_claims
+            .get(&key)
+            .is_some_and(|(_, held)| *held == claim_id)
+        {
+            state.idempotency_claims.remove(&key);
+        }
+        Ok(())
     }
 
     async fn brief_edge(
@@ -4858,6 +4988,50 @@ impl IdGen for SeqIdGen {
         let mut secret = [0_u8; 32];
         secret[24..].copy_from_slice(&n.to_be_bytes());
         secret
+    }
+}
+
+/// A commit parked after it applied, until [`CommitPark::open`]: built on
+/// the standard library alone, as the doubles take no runtime.
+#[derive(Debug, Clone, Default)]
+pub struct CommitPark(Arc<ParkState>);
+
+#[derive(Debug, Default)]
+struct ParkState {
+    reached: AtomicBool,
+    open: AtomicBool,
+    waker: Mutex<Option<std::task::Waker>>,
+}
+
+impl CommitPark {
+    /// Whether a commit has applied and parked here.
+    #[must_use]
+    pub fn reached(&self) -> bool {
+        self.0.reached.load(Ordering::SeqCst)
+    }
+
+    /// Lets the parked commit return.
+    pub fn open(&self) {
+        self.0.open.store(true, Ordering::SeqCst);
+        if let Some(waker) = self.0.waker.lock().expect("waker lock").take() {
+            waker.wake();
+        }
+    }
+
+    async fn wait(&self) {
+        self.0.reached.store(true, Ordering::SeqCst);
+        std::future::poll_fn(|cx| {
+            if self.0.open.load(Ordering::SeqCst) {
+                return std::task::Poll::Ready(());
+            }
+            *self.0.waker.lock().expect("waker lock") = Some(cx.waker().clone());
+            if self.0.open.load(Ordering::SeqCst) {
+                std::task::Poll::Ready(())
+            } else {
+                std::task::Poll::Pending
+            }
+        })
+        .await;
     }
 }
 
