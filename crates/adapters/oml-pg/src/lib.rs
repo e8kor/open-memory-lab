@@ -6355,8 +6355,10 @@ impl JournalStore for PgStore {
             .await
             .map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        // The database cancels the read itself before the lead's timeout
-        // stops the build, so no aggregate outlives a stopped build.
+        // The database cancels each statement of the read at 25 s. The
+        // limit is per statement and the read runs up to four, so a build
+        // the lead stops at 30 s can leave its last statement running for
+        // at most 25 s more, one at a time (ADR-0072 d12; #268).
         sqlx::query(&format!(
             "SET LOCAL statement_timeout = '{}s'",
             oml_app::app::WIDEN_SIGNAL_STATEMENT_SECS

@@ -3047,6 +3047,15 @@ pub enum AppError {
         "a global denial on an admin key is refused: an admin key carries no grant for it to attenuate (roles-and-keys.md permission matrix footnote 6, request.validation, field key)"
     )]
     DenialOnAdminKey,
+    /// A person's disable met a live admin key whose row names their user
+    /// root. No verb issues one, so the row was edited directly; no denial
+    /// can cut an admin key off, so the disable refuses before its first
+    /// commit and journals nothing (errors.md `workarea.admin_key_under_root`;
+    /// ADR-0068 d8, d11; #277).
+    #[error(
+        "admin key {key} names the user root of {}, which no verb does, and no denial can cut it off: the disable journals nothing until the row's user_root_id is cleared (ADR-0068 d8, workarea.admin_key_under_root)", .user.as_str()
+    )]
+    AdminKeyUnderUserRoot { user: Name, key: String },
     #[error(
         "a crew update sends charter_uri or external_manager, at least one (http-api.md crews, request.validation)"
     )]

@@ -618,6 +618,11 @@ pub struct WebUser {
     pub under_quotas: bool,
     pub usage: Usage,
     pub quotas: Limits,
+    /// Each live admin key whose row names the person's root, a row no verb
+    /// makes, which refuses their disable (ADR-0068 d8, d11); empty from a
+    /// server before v0.7.1.
+    #[serde(default)]
+    pub admin_keys: Vec<String>,
 }
 
 /// A pending deletion request.

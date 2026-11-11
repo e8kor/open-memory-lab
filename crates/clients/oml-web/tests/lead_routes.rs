@@ -1,8 +1,10 @@
 //! The route wall of ADR-0070 d7 (d): every page is `oml-web`'s, and the
 //! lead serves under `/web` only what the auth context keeps (sign-in, its
-//! callback, sign-up and its terms page, sign-out) and the `303`s from the
-//! old page URLs. A page route added to the lead, in its web table, in its
-//! API table or at one of `oml-web`'s paths, fails this test.
+//! callback, sign-up and its terms page, sign-out). The `303`s from the old
+//! page URLs are deleted in v0.7.1 (ADR-0070, "The old URLs deleted"), so
+//! the old admin page URL is an unknown path. A page route added to the
+//! lead, in its web table, in its API table or at one of `oml-web`'s paths,
+//! fails this test.
 
 use std::sync::Arc;
 
@@ -26,25 +28,15 @@ enum Serves {
     /// callback draws the terms page for an address not yet signed up
     /// (ADR-0068 d2); `POST /web` runs `sign_out` alone.
     Auth,
-    /// Only `303`s from a page URL of v0.6 to its path in `oml-web`, running
-    /// nothing (ADR-0070 "Phase (c) as built", d7 (b), d7 (d)). They stay
-    /// through v0.7.0 and are deleted in v0.7.1, pending the operator's
-    /// decision to delete or keep them (#190's checklist); deleting them
-    /// deletes these rows.
-    OldUrlRedirect,
 }
 
-/// The lead's web routes, each named: exactly [`WEB_ROUTES`]. `GET /web`
-/// and `POST /web` also answer an old `?view=` URL or a moved act with a
-/// `303`, which goes with the redirects in v0.7.1.
+/// The lead's web routes, each named: exactly [`WEB_ROUTES`].
 const LEAD_WEB_ROUTES: &[(&str, &str, Serves)] = &[
     ("GET", "/web", Serves::Auth),
     ("POST", "/web", Serves::Auth),
     ("GET", "/web/sign-in", Serves::Auth),
     ("POST", "/web/sign-in", Serves::Auth),
     ("GET", "/web/callback/{provider}", Serves::Auth),
-    ("GET", "/web/admin", Serves::OldUrlRedirect),
-    ("POST", "/web/admin", Serves::OldUrlRedirect),
     ("POST", "/web/sign-up", Serves::Auth),
 ];
 
@@ -141,7 +133,7 @@ async fn the_lead_serves_no_page_route_outside_oml_web_and_auth() {
     let named: Vec<(&str, &str)> = LEAD_WEB_ROUTES.iter().map(|&(m, p, _)| (m, p)).collect();
     assert_eq!(
         WEB_ROUTES, named,
-        "the lead's web routes are the auth context's and the old URLs' redirects alone"
+        "the lead's web routes are the auth context's alone"
     );
 
     // Its other tables hold no page: the API, the probes, and the OAuth
@@ -174,6 +166,15 @@ async fn the_lead_serves_no_page_route_outside_oml_web_and_auth() {
     let router = lead();
     let unknown = answer(&router, "GET", "/web/no-such-page").await;
     assert_eq!(unknown.0, StatusCode::NOT_FOUND, "an unknown path");
+
+    // The old admin page URL, whose `303`s v0.7.1 deletes, is one too.
+    for method in ["GET", "POST"] {
+        assert_eq!(
+            answer(&router, method, "/web/admin").await,
+            unknown,
+            "{method} /web/admin is answered as a route of the lead's"
+        );
+    }
     let prefixed: Vec<(&str, String)> = oml_web::PREFIXES
         .iter()
         .map(|prefix| ("GET", format!("{prefix}x")))

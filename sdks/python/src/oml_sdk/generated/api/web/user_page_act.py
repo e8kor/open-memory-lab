@@ -30,13 +30,13 @@ def _get_kwargs(
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
 ) -> Any | str | None:
-    if response.status_code == 200:
-        response_200 = response.text
-        return response_200
-
     if response.status_code == 303:
         response_303 = cast(Any, None)
         return response_303
+
+    if response.status_code == 400:
+        response_400 = response.text
+        return response_400
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -60,18 +60,12 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: UserPageActBody,
 ) -> Response[Any | str]:
-    """One act of the user page, named by action.
+    """Sign out, the one act the lead keeps.
 
      Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation
-    with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off,
-    review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key,
-    which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that
-    key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a
-    field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea,
-    workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web
-    runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas
-    (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the
-    answering page, never in a redirect. Since v0.5.0.
+    with details.field csrf_token). action is sign_out, which takes no other field; every other act is
+    oml-web's at its view's own path, and an old form's action is request.validation with details.field
+    action, running nothing (ADR-0070 d6, d7 (b); the moved acts' 303s deleted in v0.7.1). Since v0.5.0.
 
     Args:
         body (UserPageActBody):
@@ -100,18 +94,12 @@ def sync(
     client: AuthenticatedClient | Client,
     body: UserPageActBody,
 ) -> Any | str | None:
-    """One act of the user page, named by action.
+    """Sign out, the one act the lead keeps.
 
      Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation
-    with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off,
-    review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key,
-    which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that
-    key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a
-    field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea,
-    workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web
-    runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas
-    (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the
-    answering page, never in a redirect. Since v0.5.0.
+    with details.field csrf_token). action is sign_out, which takes no other field; every other act is
+    oml-web's at its view's own path, and an old form's action is request.validation with details.field
+    action, running nothing (ADR-0070 d6, d7 (b); the moved acts' 303s deleted in v0.7.1). Since v0.5.0.
 
     Args:
         body (UserPageActBody):
@@ -135,18 +123,12 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: UserPageActBody,
 ) -> Response[Any | str]:
-    """One act of the user page, named by action.
+    """Sign out, the one act the lead keeps.
 
      Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation
-    with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off,
-    review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key,
-    which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that
-    key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a
-    field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea,
-    workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web
-    runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas
-    (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the
-    answering page, never in a redirect. Since v0.5.0.
+    with details.field csrf_token). action is sign_out, which takes no other field; every other act is
+    oml-web's at its view's own path, and an old form's action is request.validation with details.field
+    action, running nothing (ADR-0070 d6, d7 (b); the moved acts' 303s deleted in v0.7.1). Since v0.5.0.
 
     Args:
         body (UserPageActBody):
@@ -173,18 +155,12 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: UserPageActBody,
 ) -> Any | str | None:
-    """One act of the user page, named by action.
+    """Sign out, the one act the lead keeps.
 
      Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation
-    with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off,
-    review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key,
-    which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that
-    key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a
-    field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea,
-    workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web
-    runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas
-    (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the
-    answering page, never in a redirect. Since v0.5.0.
+    with details.field csrf_token). action is sign_out, which takes no other field; every other act is
+    oml-web's at its view's own path, and an old form's action is request.validation with details.field
+    action, running nothing (ADR-0070 d6, d7 (b); the moved acts' 303s deleted in v0.7.1). Since v0.5.0.
 
     Args:
         body (UserPageActBody):

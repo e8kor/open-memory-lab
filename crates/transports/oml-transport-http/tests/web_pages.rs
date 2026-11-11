@@ -26,9 +26,7 @@ use oml_app::types::{
 use oml_transport_http::ROUTES;
 use oml_transport_http::session::WebClient;
 use oml_transport_http::traffic::{ScopeObserver, Traffic};
-use oml_transport_http::web::{
-    ADMIN_ACTIONS, SESSION_COOKIE, SIGN_IN_COOKIE, USER_ACTIONS, WEB_ROUTES, WebPages,
-};
+use oml_transport_http::web::{SESSION_COOKIE, SIGN_IN_COOKIE, USER_ACTIONS, WEB_ROUTES, WebPages};
 
 use support::{Captured, TestApp, app, state};
 
@@ -338,8 +336,6 @@ async fn the_lead_serves_exactly_web_routes() {
             .expect("a request");
         let (status, _, body) = send(&rig.router, request).await;
         assert_ne!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {path}");
-        // The admin page answers a signed-out browser access.not_found on
-        // a page of its own, never the router's empty 404.
         assert!(
             status != StatusCode::NOT_FOUND || body.contains("access.not_found"),
             "{method} {path}"
@@ -347,45 +343,10 @@ async fn the_lead_serves_exactly_web_routes() {
     }
     assert_eq!(
         WEB_ROUTES.len(),
-        8,
-        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven, ADR-0070 d4 GET /web/sign-in, and ADR-0070 d7 (b) moved the two JSON routes, the onboarding page with its poll and export, and the users page to oml-web"
+        6,
+        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven, ADR-0070 d4 GET /web/sign-in, ADR-0070 d7 (b) moved the two JSON routes, the onboarding page with its poll and export, and the users page to oml-web, and v0.7.1 deleted GET and POST /web/admin (ADR-0070, \"The old URLs deleted\")"
     );
-    assert_eq!(
-        USER_ACTIONS,
-        [
-            "issue_key",
-            "connect_key",
-            "connect_code",
-            "cut_off",
-            "create_workarea",
-            "workarea_mode",
-            "workarea_transition",
-            "workarea_ratify",
-            "review_next",
-            "verdict",
-            "sign_out"
-        ]
-    );
-    assert_eq!(
-        ADMIN_ACTIONS,
-        [
-            "allow_email",
-            "remove_email",
-            "set_admin",
-            "grant_review",
-            "grant_curation",
-            "review_next",
-            "verdict",
-            "bulk_confirm",
-            "bulk_verdict",
-            "curate",
-            "supersede",
-            "cut_off",
-            "workarea_mode",
-            "workarea_transition",
-            "workarea_ratify"
-        ]
-    );
+    assert_eq!(USER_ACTIONS, ["sign_out"]);
     // An unknown provider in the path is an unknown page.
     let (status, _, _) = send(&rig.router, get("/web/callback/facebook", None)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -520,19 +481,6 @@ async fn a_listed_verified_google_email_signs_in_and_sees_who_it_is() {
     assert_eq!(code, "the-code-4711");
     assert_eq!(verifier.len(), 64);
     assert_eq!(redirect, "https://oml.example.com/web/callback/google");
-    // The setup view is oml-web's (ADR-0070 d7 (b), sixth change, 6b):
-    // `oml-web/tests/web_pages.rs` holds that it names who and never the
-    // email; the lead answers its old URL with a redirect.
-    let (status, headers, _) = send(
-        &rig.router,
-        get(
-            "/web?view=setup",
-            Some(&format!("{SESSION_COOKIE}={token}")),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/web/setup");
     // The landing is the Keys view, which oml-web serves (ADR-0070 d7 (b)):
     // `oml-web/tests/web_pages.rs` holds that it lists the session keys.
     let (status, headers, _) = send(
@@ -782,7 +730,7 @@ async fn a_post_from_another_origin_is_refused_before_the_session_is_read() {
     let (_, token, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
     let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
     for (name, value) in [("sec-fetch-site", "cross-site"), ("origin", "null")] {
-        for path in ["/web", "/web/admin", "/web/sign-in"] {
+        for path in ["/web", "/web/sign-in"] {
             let request = Request::post(path)
                 .header(header::CONTENT_TYPE, FORM)
                 .header(name, value)
@@ -832,43 +780,67 @@ async fn sign_out_ends_the_session_and_clears_the_cookie() {
 }
 
 #[tokio::test]
-async fn the_lead_answers_the_admin_page_with_a_redirect_to_the_overview_before_reading_a_session()
-{
-    // The admin overview is oml-web's at /web/admin/people (ADR-0070 d7
-    // (b)), which answers anyone but an admin not found: the lead sends
-    // every GET /web/admin there, signed in or not, carrying nothing.
+async fn the_old_page_urls_and_acts_answer_not_found_or_refused_and_run_nothing() {
+    // The 303s from the page URLs and acts of v0.6 are deleted in v0.7.1
+    // (ADR-0070, "The old URLs deleted"): the old admin page URL is an
+    // unknown path, an old `?view=` is a view the lead does not have, and an
+    // old act is no action of `POST /web`, signed in or not, admin or not.
     let rig = rig().await;
-    let (_, token, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
-    let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
-    for (path, who) in [
-        ("/web/admin", Some(cookie.as_str())),
-        ("/web/admin", None),
-        ("/web/admin?view=people&x=1", None),
-    ] {
-        let (status, headers, _) = send(&rig.router, get(path, who)).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{path}");
-        assert_eq!(headers[header::LOCATION], "/web/admin/people", "{path}");
-    }
-    // The old acts of the overview run nothing and land there.
     rig.allow("boss@example.com", "boss", true).await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for who in [Some(cookie.as_str()), Some(admin.as_str()), None] {
+        for path in ["/web/admin", "/web/admin?view=people"] {
+            let (status, headers, _) = send(&rig.router, get(path, who)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "GET {path}");
+            assert!(headers.get(header::LOCATION).is_none(), "GET {path}");
+        }
+    }
     let head = rig.head().await;
-    for action in [
-        "allow_email",
-        "remove_email",
-        "set_admin",
-        "grant_review",
-        "grant_curation",
+    let csrf = csrf_for(&admin);
+    let request = Request::post("/web/admin")
+        .header(header::CONTENT_TYPE, FORM)
+        .header(header::COOKIE, &admin)
+        .body(Body::from(form(&[
+            ("action", "allow_email"),
+            ("csrf_token", &csrf),
+            ("email", "carol@example.com"),
+        ])))
+        .expect("a request");
+    let (status, headers, _) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "POST /web/admin");
+    assert!(headers.get(header::LOCATION).is_none());
+    for view in [
+        "guardrails",
+        "setup",
+        "workarea",
+        "memories",
+        "review",
+        "keys",
     ] {
-        let (status, headers, body) = act(
-            &rig,
-            &admin,
-            "/web/admin",
-            &[("action", action), ("email", "carol@example.com")],
-        )
-        .await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{action}: {body}");
-        assert_eq!(headers[header::LOCATION], "/web/admin/people");
+        let path = format!("/web?view={view}");
+        let (status, headers, body) = send(&rig.router, get(&path, Some(&admin))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+        assert!(body.contains("access.not_found"), "{path}: {body}");
+        assert!(headers.get(header::LOCATION).is_none(), "{path}");
+    }
+    for action in [
+        "issue_key",
+        "connect_key",
+        "connect_code",
+        "cut_off",
+        "create_workarea",
+        "workarea_mode",
+        "review_next",
+        "verdict",
+    ] {
+        let (status, headers, body) = act(&rig, &admin, "/web", &[("action", action)]).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{action}: {body}");
+        assert!(
+            body.contains("request.validation") && body.contains("action"),
+            "{action}: {body}"
+        );
+        assert!(headers.get(header::LOCATION).is_none(), "{action}");
     }
     assert_eq!(rig.head().await, head, "nothing journalled");
     // The onboarding and users pages are not the lead's at all.
@@ -1551,302 +1523,6 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
 // Guardrails on the pages (ADR-0037 d17, d18 Q5; build step S6)
 // ---------------------------------------------------------------------------
 
-async fn laptop_key(rig: &Rig, cookie: &str) -> String {
-    let page = issued(rig, cookie, "laptop").await;
-    value_of(&page)
-}
-
-#[tokio::test]
-async fn the_lead_answers_the_old_guardrails_url_with_a_redirect_to_its_own_path() {
-    // oml-web serves the view at /web/guardrails (ADR-0070 d7 (b) as
-    // amended): the lead sends the old ?view= form there, to a fixed target
-    // that carries nothing from the request, signed in or not.
-    let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    for (old, cookie) in [
-        ("/web?view=guardrails", Some(cookie.as_str())),
-        (
-            "/web?view=guardrails&workarea=%2F%2Fevil.example",
-            Some(cookie.as_str()),
-        ),
-        ("/web?view=guardrails", None),
-    ] {
-        let (status, headers, page) = send(&rig.router, get(old, cookie)).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}: {page}");
-        assert_eq!(headers[header::LOCATION], "/web/guardrails", "{old}");
-        assert!(!page.contains("Rules in force at"), "{page}");
-    }
-    // The lead serves no page at the moved path.
-    let (status, _, _) = send(&rig.router, get("/web/guardrails", None)).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn the_lead_answers_the_workareas_view_and_its_acts_with_a_redirect_to_their_own_paths() {
-    // oml-web serves the Workareas view and runs its acts at
-    // /web/workareas and /web/admin/workareas (ADR-0070 d7 (b) as amended):
-    // the lead sends the old ?view= forms there, carrying nothing from the
-    // request, and runs none of the old acts.
-    let rig = rig().await;
-    rig.allow("boss@example.com", "boss", true).await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    for (old, cookie, new) in [
-        (
-            "/web?view=workarea",
-            Some(cookie.as_str()),
-            "/web/workareas",
-        ),
-        (
-            "/web?view=workarea&workarea=alice&op=mode:in_progress",
-            Some(cookie.as_str()),
-            "/web/workareas",
-        ),
-        ("/web?view=workarea", None, "/web/workareas"),
-        (
-            "/web/admin?view=workarea",
-            Some(boss.as_str()),
-            "/web/admin/workareas",
-        ),
-        ("/web/admin?view=workarea", None, "/web/admin/workareas"),
-    ] {
-        let (status, headers, page) = send(&rig.router, get(old, cookie)).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}: {page}");
-        assert_eq!(headers[header::LOCATION], new, "{old}");
-    }
-    // Creating a workarea is the view's act too (ADR-0070 d7 (b)); the
-    // tenant's admin key makes the one these acts name, through the API.
-    let root = key_named(&rig, "alice-web").await.user.expect("a root");
-    let (status, _, created) = send(
-        &rig.router,
-        Request::post("/v2/workareas")
-            .header(
-                header::AUTHORIZATION,
-                format!("Bearer {}", rig.boot.admin_key.value),
-            )
-            .header(header::CONTENT_TYPE, "application/json")
-            .header("idempotency-key", "create-proj")
-            .body(Body::from(
-                json!({"name": "proj", "parent": root.to_string()}).to_string(),
-            ))
-            .expect("a request"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{created}");
-    let proj: uuid::Uuid = serde_json::from_str::<Value>(&created).expect("JSON")["id"]
-        .as_str()
-        .expect("an id")
-        .parse()
-        .expect("a uuid");
-    let (status, headers, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[("action", "create_workarea"), ("name", "docs")],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
-    assert_eq!(headers[header::LOCATION], "/web/workareas");
-    assert!(
-        rig.store
-            .workarea_children(rig.boot.tenant_id, root)
-            .await
-            .unwrap()
-            .iter()
-            .all(|w| w.name.as_str() != "docs"),
-        "the lead created nothing"
-    );
-    for (cookie, path, fields, new) in [
-        (
-            &cookie,
-            "/web",
-            [
-                ("action", "workarea_mode"),
-                ("workarea", "alice.proj"),
-                ("mode", "in_progress"),
-            ],
-            "/web/workareas",
-        ),
-        (
-            &cookie,
-            "/web",
-            [
-                ("action", "workarea_transition"),
-                ("workarea", "alice.proj"),
-                ("to", "committed"),
-            ],
-            "/web/workareas",
-        ),
-        (
-            &boss,
-            "/web/admin",
-            [
-                ("action", "workarea_transition"),
-                ("workarea", "alice.proj"),
-                ("to", "committed"),
-            ],
-            "/web/admin/workareas",
-        ),
-        (
-            &boss,
-            "/web/admin",
-            [
-                ("action", "workarea_mode"),
-                ("workarea", "alice.proj"),
-                ("mode", "in_progress"),
-            ],
-            "/web/admin/workareas",
-        ),
-        (
-            &cookie,
-            "/web",
-            [
-                ("action", "workarea_ratify"),
-                ("workarea", "alice.proj"),
-                ("transition", "00000000-0000-4000-8000-000000000001"),
-            ],
-            "/web/workareas",
-        ),
-        (
-            &boss,
-            "/web/admin",
-            [
-                ("action", "workarea_ratify"),
-                ("workarea", "alice.proj"),
-                ("transition", "00000000-0000-4000-8000-000000000001"),
-            ],
-            "/web/admin/workareas",
-        ),
-    ] {
-        let (status, headers, page) = act(&rig, cookie, path, &fields).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{path}: {page}");
-        assert_eq!(headers[header::LOCATION], new, "{path}");
-    }
-    let node = rig
-        .store
-        .workarea(rig.boot.tenant_id, proj)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(!node.in_progress, "the lead ran no act");
-    assert!(
-        rig.store
-            .pending_transitions(rig.boot.tenant_id, proj)
-            .await
-            .unwrap()
-            .is_empty(),
-        "the lead proposed nothing"
-    );
-    // The lead serves no page at the moved paths.
-    for path in ["/web/workareas", "/web/admin/workareas"] {
-        let (status, _, _) = send(&rig.router, get(path, Some(&cookie))).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
-    }
-}
-
-#[tokio::test]
-async fn the_lead_answers_the_memories_views_with_a_redirect_to_their_own_paths() {
-    // oml-web serves the Memories list and the Atlas at /web/memories,
-    // /web/atlas, /web/admin/memories and /web/admin/atlas, and their JSON
-    // at /web/data/memories and /web/admin/data/memories (ADR-0070 d7 (b)
-    // as amended): the lead sends the old ?view= forms there, carrying
-    // nothing from the request, signed in or not.
-    let rig = rig().await;
-    rig.allow("boss@example.com", "boss", true).await;
-    let (cookie, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
-    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    for (old, cookie, new) in [
-        ("/web?view=memories", Some(cookie.as_str()), "/web/memories"),
-        (
-            "/web?view=memories&state=held&cursor=x",
-            Some(cookie.as_str()),
-            "/web/memories",
-        ),
-        ("/web?view=memories", None, "/web/memories"),
-        (
-            "/web?view=memories&display=atlas",
-            Some(cookie.as_str()),
-            "/web/atlas",
-        ),
-        (
-            "/web?view=memories&display=atlas&workarea=alice",
-            None,
-            "/web/atlas",
-        ),
-        (
-            "/web/admin?view=memories",
-            Some(boss.as_str()),
-            "/web/admin/memories",
-        ),
-        ("/web/admin?view=memories", None, "/web/admin/memories"),
-        (
-            "/web/admin?view=memories&display=atlas",
-            Some(boss.as_str()),
-            "/web/admin/atlas",
-        ),
-    ] {
-        let (status, headers, page) = send(&rig.router, get(old, cookie)).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}: {page}");
-        assert_eq!(headers[header::LOCATION], new, "{old}");
-    }
-    // One memory opened by its id goes to its own page, carrying the id
-    // alone, parsed and written anew (ADR-0070 d7 (b), sixth change).
-    let memory = agent_writes(&rig, &agent, "opened on oml-web").await;
-    for (old, cookie, new) in [
-        (
-            format!("/web?view=memories&memory={memory}&state=held"),
-            Some(cookie.as_str()),
-            format!("/web/memory?id={memory}"),
-        ),
-        (
-            format!("/web?view=memories&memory={}", memory.simple()),
-            None,
-            format!("/web/memory?id={memory}"),
-        ),
-        (
-            format!("/web/admin?view=memories&memory={memory}"),
-            Some(boss.as_str()),
-            format!("/web/admin/memory?id={memory}"),
-        ),
-        (
-            "/web/admin?view=curate&memory=x".to_owned(),
-            None,
-            "/web/admin/curate".to_owned(),
-        ),
-    ] {
-        let (status, headers, page) = send(&rig.router, get(&old, cookie)).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}: {page}");
-        assert_eq!(headers[header::LOCATION], new.as_str(), "{old}");
-    }
-    // A memory that is not one id is no redirect and no page.
-    let (status, headers, _) = send(
-        &rig.router,
-        get(
-            "/web?view=memories&memory=%2F%2Fevil.example",
-            Some(&cookie),
-        ),
-    )
-    .await;
-    assert_ne!(status, StatusCode::SEE_OTHER);
-    assert!(headers.get(header::LOCATION).is_none());
-    // The lead serves no page and no JSON at the moved paths.
-    for path in [
-        "/web/memories",
-        "/web/atlas",
-        "/web/admin/memories",
-        "/web/admin/atlas",
-        "/web/data/memories",
-        "/web/admin/data/memories",
-        "/web/memory",
-        "/web/admin/memory",
-        "/web/admin/curate",
-        "/web/assets/mermaid-0.js",
-    ] {
-        let (status, _, _) = send(&rig.router, get(path, Some(&boss))).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
-    }
-}
-
 #[tokio::test]
 async fn a_sign_in_form_that_repeats_a_field_is_refused() {
     let rig = rig().await;
@@ -1999,132 +1675,11 @@ async fn a_sign_in_returns_to_its_next_on_the_public_origin() {
     assert_eq!(headers[header::LOCATION], "/web");
 }
 
-#[tokio::test]
-async fn the_lead_answers_the_supersede_and_curate_acts_with_a_redirect_and_runs_neither() {
-    // The admin page's supersede and curate acts are oml-web's at
-    // /web/admin/memory and /web/admin/curate (ADR-0070 d7 (b), sixth
-    // change): a cached form posting either to the lead runs nothing and
-    // lands on the moved view.
-    let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let value = laptop_key(&rig, &cookie).await;
-    let id = agent_writes(&rig, &value, "a row nobody supersedes here").await;
-    rig.allow("boss@example.com", "boss", true).await;
-    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    let head = rig.head().await;
-    let target = id.to_string();
-    for (fields, new) in [
-        (
-            vec![
-                ("action", "supersede"),
-                ("memory", target.as_str()),
-                ("expected_version", "1"),
-                ("text", "replaced"),
-            ],
-            "/web/admin/memories",
-        ),
-        (
-            vec![
-                ("action", "curate"),
-                ("source", target.as_str()),
-                ("text", "a copy"),
-            ],
-            "/web/admin/curate",
-        ),
-    ] {
-        let (status, headers, body) = act(&rig, &admin, "/web/admin", &fields).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
-        assert_eq!(headers[header::LOCATION], new);
-    }
-    let events = rig
-        .store
-        .events_range(rig.boot.tenant_id, head + 1, 500)
-        .await
-        .unwrap();
-    assert!(
-        events
-            .iter()
-            .all(|e| !e.envelope.event_type.starts_with("submission.")),
-        "nothing was written"
-    );
-}
-
 /// A signed-in person with a writer agent key; the cookie and the value.
 async fn person_with_agent(rig: &Rig, subject: &str, email: &str) -> (String, String) {
     let cookie = signed_in(rig, subject, email).await;
     let page = issued(rig, &cookie, "laptop").await;
     (cookie, value_of(&page))
-}
-
-#[tokio::test]
-async fn the_lead_answers_the_review_and_keys_views_and_their_acts_with_a_redirect_to_their_own_paths()
- {
-    // oml-web serves the Review and Keys views and runs their acts at
-    // /web/review, /web/keys and their admin paths (ADR-0070 d7 (b) as
-    // amended): the lead sends the old forms there, carrying nothing from
-    // the request, and runs none of the acts.
-    let rig = rig().await;
-    rig.allow("boss@example.com", "boss", true).await;
-    let cookie = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    for (old, new) in [
-        ("/web", "/web/keys"),
-        ("/web?done=cut+off", "/web/keys"),
-        ("/web?view=keys", "/web/keys"),
-        ("/web?view=review", "/web/review"),
-        ("/web/admin?view=review", "/web/admin/review"),
-        (
-            "/web/admin?view=held&cursor=%2F%2Fevil",
-            "/web/admin/review",
-        ),
-        ("/web/admin?view=queue", "/web/admin/review"),
-    ] {
-        let (status, headers, page) = send(&rig.router, get(old, Some(&cookie))).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}: {page}");
-        assert_eq!(headers[header::LOCATION], new, "{old}");
-    }
-    let before = rig.head().await;
-    for (page, action, new) in [
-        ("/web", "issue_key", "/web/keys"),
-        ("/web", "connect_key", "/web/keys"),
-        ("/web", "connect_code", "/web/keys"),
-        ("/web", "cut_off", "/web/keys"),
-        ("/web", "review_next", "/web/review"),
-        ("/web", "verdict", "/web/review"),
-        ("/web/admin", "review_next", "/web/admin/review"),
-        ("/web/admin", "verdict", "/web/admin/review"),
-        ("/web/admin", "bulk_confirm", "/web/admin/review"),
-        ("/web/admin", "bulk_verdict", "/web/admin/review"),
-        ("/web/admin", "cut_off", "/web/admin/keys"),
-    ] {
-        let (status, headers, body) = act(
-            &rig,
-            &cookie,
-            page,
-            &[
-                ("action", action),
-                ("name", "laptop"),
-                ("key", "root-admin"),
-            ],
-        )
-        .await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{page} {action}: {body}");
-        assert_eq!(headers[header::LOCATION], new, "{page} {action}");
-    }
-    assert_eq!(
-        rig.head().await,
-        before,
-        "the lead ran none of the old acts"
-    );
-    // The lead serves no page at the moved paths.
-    for path in [
-        "/web/review",
-        "/web/keys",
-        "/web/admin/review",
-        "/web/admin/keys",
-    ] {
-        let (status, _, _) = send(&rig.router, get(path, Some(&cookie))).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2231,16 +1786,10 @@ async fn a_close_whose_closing_commit_loses_the_chain_race_journals_each_event_o
     assert_eq!(done["journal_seq"], closed[0], "{done}");
 }
 
-/// A key under the person's root that no denial can cut off, as an admin
-/// key there is (`DenialOnAdminKey`), is skipped: the disable denies every
-/// other key, journals `web.user_disabled` once, answers 200, and a
-/// resubmission under the same key replays it, so no refusal ever follows
-/// the disable's first commit (ADR-0068 d8, #266).
-#[tokio::test]
-async fn a_disable_skips_a_key_it_cannot_deny_denies_the_rest_and_a_resubmission_replays() {
-    use oml_app::domain::event_types::{KEY_DENIED, WEB_USER_DISABLED};
-    let rig = rig().await;
-    let _ = alice_with_two_keys(&rig).await;
+/// An admin key of the tenant whose row names alice's root, as only a
+/// direct row edit makes one (no verb issues an admin key under a user
+/// root): the fixture of #277.
+async fn stray_admin_under_alice(rig: &Rig) -> uuid::Uuid {
     let stray = rig
         .app
         .issue_key(
@@ -2261,35 +1810,166 @@ async fn a_disable_skips_a_key_it_cannot_deny_denies_the_rest_and_a_resubmission
         )
         .await
         .expect("an admin key");
-    let root = key_named(&rig, "alice-web")
+    let root = key_named(rig, "alice-web")
         .await
         .user
         .expect("alice's root");
     rig.store
         .set_key_user(rig.boot.tenant_id, stray.key_id, Some(root));
-    let request = || {
-        Request::post("/v2/web/users/alice/disable")
+    stray.key_id
+}
+
+/// Whether `key_id` carries a denial on any node.
+async fn denied(rig: &Rig, key_id: uuid::Uuid) -> bool {
+    rig.store
+        .key_access(rig.boot.tenant_id, key_id)
+        .await
+        .expect("the key's access")
+        .is_some_and(|a| !a.denials.is_empty())
+}
+
+/// An admin key whose row names the person's root is a corrupt row, not a
+/// key the person holds, and no denial can cut it off: the disable refuses
+/// before its first commit with `workarea.admin_key_under_root`, naming the
+/// key, journals nothing and denies no key, the stray one included; once
+/// the row is repaired the disable cuts off the person's keys (ADR-0068 d8,
+/// d11; #277).
+#[tokio::test]
+async fn a_disable_is_refused_by_name_while_an_admin_key_names_the_persons_root_and_journals_nothing()
+ {
+    use oml_app::domain::event_types::{KEY_DENIED, WEB_USER_DISABLED};
+    let rig = rig().await;
+    let _ = alice_with_two_keys(&rig).await;
+    let stray = stray_admin_under_alice(&rig).await;
+    let (status, refused) = as_admin(
+        &rig,
+        "/v2/web/users/alice/disable",
+        "disable-stray",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(
+        refused["error"]["code"], "workarea.admin_key_under_root",
+        "{refused}"
+    );
+    assert_eq!(
+        refused["error"]["details"]["key"], "stray-admin",
+        "{refused}"
+    );
+    assert_eq!(refused["error"]["details"]["user"], "alice", "{refused}");
+    assert!(journalled(&rig, WEB_USER_DISABLED).await.is_empty());
+    assert!(journalled(&rig, KEY_DENIED).await.is_empty());
+    assert!(!denied(&rig, stray).await, "the stray key is not denied");
+    rig.store.set_key_user(rig.boot.tenant_id, stray, None);
+    let (status, done) = as_admin(
+        &rig,
+        "/v2/web/users/alice/disable",
+        "disable-repaired",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert_eq!(done["keys_cut_off"], 2, "{done}");
+    assert_eq!(journalled(&rig, WEB_USER_DISABLED).await.len(), 1);
+    assert_eq!(journalled(&rig, KEY_DENIED).await.len(), 2);
+    assert!(
+        !denied(&rig, stray).await,
+        "the repaired key is not alice's"
+    );
+}
+
+/// A deletion close disables the person first, so it is refused the same
+/// way and closes nothing while an admin key names the root (ADR-0068 d6,
+/// d8; #277).
+#[tokio::test]
+async fn a_deletion_close_is_refused_by_name_while_an_admin_key_names_the_persons_root() {
+    use oml_app::domain::event_types::{WEB_DELETION_CLOSED, WEB_USER_DISABLED};
+    let rig = rig().await;
+    let cookie = alice_with_two_keys(&rig).await;
+    let (status, asked) =
+        as_web(&rig, &cookie, "web", "/v2/web/deletion-requests", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{asked}");
+    let _ = stray_admin_under_alice(&rig).await;
+    let (status, refused) = as_admin(
+        &rig,
+        "/v2/web/users/alice/deletion/close",
+        "close-stray",
+        json!({ "outcome": "deleted" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(
+        refused["error"]["code"], "workarea.admin_key_under_root",
+        "{refused}"
+    );
+    assert!(journalled(&rig, WEB_USER_DISABLED).await.is_empty());
+    assert!(journalled(&rig, WEB_DELETION_CLOSED).await.is_empty());
+}
+
+/// A key gone between the disable's listing and its denial (`NotFound`)
+/// is skipped: every other key is cut off, `web.user_disabled` is
+/// journalled once, the answer counts only the keys cut off, and a
+/// resubmission under the same key replays it (ADR-0068 d8; #266, #277).
+#[tokio::test]
+async fn a_disable_skips_a_key_gone_since_the_listing_and_cuts_off_the_rest() {
+    use oml_app::domain::event_types::{KEY_DENIED, WEB_USER_DISABLED};
+    let rig = rig().await;
+    let _ = alice_with_two_keys(&rig).await;
+    let gone = key_named(&rig, "alice-laptop").await.key_id;
+    let kept = key_named(&rig, "alice-phone").await.key_id;
+    rig.store.vanish_key(gone);
+    let (status, done) = as_admin(
+        &rig,
+        "/v2/web/users/alice/disable",
+        "disable-gone",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert_eq!(done["keys_cut_off"], 1, "{done}");
+    assert_eq!(journalled(&rig, WEB_USER_DISABLED).await.len(), 1);
+    assert_eq!(journalled(&rig, KEY_DENIED).await.len(), 1);
+    assert!(denied(&rig, kept).await, "the listed key is cut off");
+    assert!(!denied(&rig, gone).await, "the gone key is skipped");
+    let (status, again) = as_admin(
+        &rig,
+        "/v2/web/users/alice/disable",
+        "disable-gone",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again, done, "the resubmission replays");
+    assert_eq!(journalled(&rig, WEB_USER_DISABLED).await.len(), 1);
+}
+
+/// `GET /v2/web/users` names, per person, each live admin key whose row
+/// names their root, which `oml doctor` warns about (ADR-0068 d11; #277).
+#[tokio::test]
+async fn the_users_listing_names_an_admin_key_whose_row_names_a_persons_root() {
+    let rig = rig().await;
+    let _ = alice_with_two_keys(&rig).await;
+    let listed = || async {
+        let request = Request::get("/v2/web/users")
             .header(
                 header::AUTHORIZATION,
                 format!("Bearer {}", rig.boot.admin_key.value),
             )
-            .header(header::CONTENT_TYPE, "application/json")
-            .header("idempotency-key", "disable-stray")
-            .body(Body::from("{}"))
-            .expect("a request")
+            .body(Body::empty())
+            .expect("a request");
+        let (status, _, body) = send(&rig.router, request).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let v: Value = serde_json::from_str(&body).expect("JSON");
+        v["users"]
+            .as_array()
+            .expect("users")
+            .iter()
+            .find(|u| u["user"] == "alice")
+            .expect("alice")
+            .clone()
     };
-    let (status, _, body) = send(&rig.router, request()).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let done: Value = serde_json::from_str(&body).expect("JSON");
-    assert_eq!(done["keys_cut_off"], 2, "{done}");
-    assert_eq!(journalled(&rig, WEB_USER_DISABLED).await.len(), 1);
-    assert_eq!(journalled(&rig, KEY_DENIED).await.len(), 2);
-    let (status, headers, again) = send(&rig.router, request()).await;
-    assert_eq!(status, StatusCode::OK, "{again}");
-    assert_eq!(headers["idempotency-replay"], "true", "{again}");
-    assert_eq!(
-        journalled(&rig, WEB_USER_DISABLED).await.len(),
-        1,
-        "the resubmission replays"
-    );
+    assert_eq!(listed().await["admin_keys"], json!([]));
+    let _ = stray_admin_under_alice(&rig).await;
+    assert_eq!(listed().await["admin_keys"], json!(["stray-admin"]));
 }
