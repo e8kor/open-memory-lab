@@ -30,7 +30,9 @@ fn settings_json(settings: &SearchSettings) -> Value {
         "enabled": settings.enabled.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
         "deployment_default": settings.deployment_default.as_str(),
         "tenant_default": settings.tenant_default,
-        "effective": settings.effective.as_str(),
+        // null while the tenant's default is not served here, when a
+        // recall naming no pipeline is refused (ADR-0049 d15).
+        "effective": settings.effective.map(|p| p.as_str()),
     });
     // The tenant's valid time doctor reads where a time pipeline is served
     // (ADR-0059 d12).

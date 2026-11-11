@@ -6693,10 +6693,10 @@ where
     }
 
     /// The pipeline a recall runs: the request's `search` when it names a
-    /// served one, else the tenant's journalled default while the
-    /// deployment still serves it, else the deployment's (ADR-0049 d4). A
-    /// name the deployment does not serve, unknown or disabled, is refused
-    /// naming the field, never replaced by another pipeline.
+    /// served one, else the tenant's journalled default, else the
+    /// deployment's (ADR-0049 d4, d15). A name the deployment does not
+    /// serve, the request's or the tenant's, unknown or disabled, is
+    /// refused naming it, never replaced by another pipeline.
     async fn pipeline_for(
         &self,
         tenant_id: Uuid,
@@ -6715,8 +6715,10 @@ where
     }
 
     /// The pipeline a recall runs: the one it names, which the deployment
-    /// must serve, else the tenant's default where served, else the
-    /// deployment's (ADR-0049 d4).
+    /// must serve, else the tenant's default, which it must serve too, else
+    /// the deployment's (ADR-0049 d4, d15). A tenant default the deployment
+    /// does not serve refuses the recall naming it, never replaced by the
+    /// deployment's.
     fn pipeline_from(
         &self,
         requested: Option<&str>,
@@ -6730,10 +6732,15 @@ where
                     served: self.served_pipelines(),
                 });
         }
-        Ok(tenant_default
-            .and_then(|name| Pipeline::parse(&name))
-            .filter(|p| self.search.serves(*p))
-            .unwrap_or_else(|| self.search.default_pipeline()))
+        match tenant_default {
+            None => Ok(self.search.default_pipeline()),
+            Some(name) => Pipeline::parse(&name)
+                .filter(|p| self.search.serves(*p))
+                .ok_or_else(|| AppError::SearchDefaultUnserved {
+                    tenant_default: name,
+                    served: self.served_pipelines(),
+                }),
+        }
     }
 
     /// The served pipeline names, comma-separated, for a refusal's text.

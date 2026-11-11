@@ -21,9 +21,10 @@ class SearchSettings:
     Attributes:
         enabled (list[str]): The pipelines the deployment serves (search.enabled).
         deployment_default (str): search.default.
-        tenant_default (None | str): The tenant's journalled default; a name the deployment no longer serves stays here
-            and is not effective.
-        effective (str): The pipeline a recall naming none runs now.
+        tenant_default (None | str): The tenant's journalled default; a name the deployment no longer serves stays here,
+            and effective is then null.
+        effective (None | str): The pipeline a recall naming none runs now; null while tenant_default names a pipeline
+            the deployment does not serve, when such a recall is refused with settings.invalid (ADR-0049 d15).
         postings (PostingsHealth | Unset): The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present
             on GET /v2/search where the deployment serves bm25-postings or a sparse pipeline; absent from the answer to POST
             /v2/search/default.
@@ -34,7 +35,7 @@ class SearchSettings:
     enabled: list[str]
     deployment_default: str
     tenant_default: None | str
-    effective: str
+    effective: None | str
     postings: PostingsHealth | Unset = UNSET
     valid_time: SearchSettingsValidTime | Unset = UNSET
 
@@ -46,6 +47,7 @@ class SearchSettings:
         tenant_default: None | str
         tenant_default = self.tenant_default
 
+        effective: None | str
         effective = self.effective
 
         postings: dict[str, Any] | Unset = UNSET
@@ -90,7 +92,12 @@ class SearchSettings:
 
         tenant_default = _parse_tenant_default(d.pop("tenant_default"))
 
-        effective = d.pop("effective")
+        def _parse_effective(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        effective = _parse_effective(d.pop("effective"))
 
         _postings = d.pop("postings", UNSET)
         postings: PostingsHealth | Unset

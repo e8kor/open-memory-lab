@@ -39,7 +39,7 @@ export interface paths {
         put?: never;
         /**
          * Ranked retrieval over promoted rows by a named search pipeline; steering rows precede hits, unranked.
-         * @description Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea, by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4); recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
+         * @description Requires: reader effective access on the subtree. The scope is the subtree of the body's workarea, by id or name, else of the key's default_workarea (ADR-0039 d4); neither answers request.workarea_unresolved, with no tenant-wide fallback, and an X-OML-Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7). Read-shaped POST: no Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4); a body naming no search under a tenant default the deployment does not serve is 422 settings.invalid with details.reason search_default_unserved, details.tenant_default and details.served, never answered by the deployment's default (ADR-0049 d15); recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
          */
         post: operations["recallMemories"];
         delete?: never;
@@ -1926,10 +1926,10 @@ export interface components {
             enabled: string[];
             /** @description search.default. */
             deployment_default: string;
-            /** @description The tenant's journalled default; a name the deployment no longer serves stays here and is not effective. */
+            /** @description The tenant's journalled default; a name the deployment no longer serves stays here, and effective is then null. */
             tenant_default: string | null;
-            /** @description The pipeline a recall naming none runs now. */
-            effective: string;
+            /** @description The pipeline a recall naming none runs now; null while tenant_default names a pipeline the deployment does not serve, when such a recall is refused with settings.invalid (ADR-0049 d15). */
+            effective: string | null;
             postings?: components["schemas"]["PostingsHealth"];
             /** @description The tenant's served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (ADR-0059 d12). */
             valid_time?: {
@@ -3414,6 +3414,7 @@ export interface operations {
                 };
             };
             415: components["responses"]["UnsupportedMedia"];
+            422: components["responses"]["Unprocessable"];
             429: components["responses"]["RateLimited"];
             default: components["responses"]["Error"];
         };

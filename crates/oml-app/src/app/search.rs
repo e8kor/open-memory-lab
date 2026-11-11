@@ -13,7 +13,7 @@ use crate::types::{AppError, Bearer};
 
 /// What `GET /v2/search` answers: the deployment's served pipelines and
 /// default, the tenant's journalled default, and the one a recall naming
-/// none runs now (ADR-0049 d4).
+/// none runs now, if any (ADR-0049 d4, d15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchSettings {
     pub enabled: Vec<Pipeline>,
@@ -21,7 +21,10 @@ pub struct SearchSettings {
     /// The tenant's journalled default, by name, as journalled: a name the
     /// deployment stopped serving stays here and is not `effective`.
     pub tenant_default: Option<String>,
-    pub effective: Pipeline,
+    /// The pipeline a recall naming none runs; `None` while the tenant's
+    /// default is one the deployment does not serve, when such a recall is
+    /// refused (ADR-0049 d15).
+    pub effective: Option<Pipeline>,
     /// The tenant's postings health, read by `GET /v2/search` where the
     /// deployment serves `bm25-postings` and the store keeps postings, for
     /// doctor (ADR-0052 d12); `None` otherwise.
@@ -108,11 +111,10 @@ where
 
     async fn settings_of(&self, tenant_id: uuid::Uuid) -> Result<SearchSettings, AppError> {
         let tenant_default = self.journal.tenant_search_default(tenant_id).await?;
-        let effective = tenant_default
-            .as_deref()
-            .and_then(Pipeline::parse)
-            .filter(|p| self.search.serves(*p))
-            .unwrap_or_else(|| self.search.default_pipeline());
+        let effective = match tenant_default.as_deref() {
+            None => Some(self.search.default_pipeline()),
+            Some(name) => Pipeline::parse(name).filter(|p| self.search.serves(*p)),
+        };
         Ok(SearchSettings {
             enabled: self.search.enabled().to_vec(),
             deployment_default: self.search.default_pipeline(),
