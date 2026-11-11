@@ -33,12 +33,13 @@ SERVED = ["keyword-all", "keyword-any", "bm25", "bm25-trigram", "bm25-postings",
           "sparse", "bm25-sparse", "bm25-sparse-rrf"]
 SUITE_TITLES = {
     "recall-synthetic": "Synthetic recall set",
+    "recall-grown": "Grown recall set",
     "beir-scifact": "BEIR SciFact",
     "beir-nfcorpus": "BEIR NFCorpus",
     "beir-scifact-x10": "SciFact ×10 (latency at 50k rows)",
     "locomo": "LoCoMo",
 }
-SUITE_ORDER = ["recall-synthetic", "beir-scifact", "beir-nfcorpus", "locomo", "beir-scifact-x10"]
+SUITE_ORDER = ["recall-synthetic", "recall-grown", "beir-scifact", "beir-nfcorpus", "locomo", "beir-scifact-x10"]
 QUALITY = [("ndcg@10", "nDCG@10"), ("recall@10", "R@10"), ("recall@20", "R@20"),
            ("recall@100", "R@100"),
            ("mrr@10", "RR@10"), ("success@1", "S@1"), ("success@5", "S@5"),
@@ -135,6 +136,12 @@ DEFINITIONS = ("## Metric definitions\n\n"
 WHAT_NOT = {
     "recall-synthetic": "One model wrote the corpus, the queries and the labels, and its name was not recorded. "
                         "The scores compare OML pipelines with each other; do not compare them with BEIR or LoCoMo.",
+    "recall-grown": "Phi-3-mini drafted the queries. Which model wrote the corpus is unknown, so whether "
+                    "the two are of different families, as ADR-0075 d8 asks, is unverified. Each query labels "
+                    "only the memory it was drafted from (except g0113, relabelled by the operator's "
+                    "check), so a second memory that also answers is not credited. "
+                    "The set exists to give ADR-0075's phase 0 a baseline with 90% power; compare pipelines "
+                    "with each other on it, not with BEIR or LoCoMo.",
     "beir-scifact": "SciFact is scientific abstracts and claims. It does not predict recall over short chat notes.",
     "beir-nfcorpus": "NFCorpus is nutrition and medical text. It does not predict recall over short chat notes.",
     "locomo": "Dialogue turns are short and English only. The result does not predict recall over long documents. "
@@ -308,7 +315,8 @@ def suite_page(suite, docs, earlier_docs):
              f"memories, {any_doc['n_queries']:,} queries; a method marked sampled asked a "
              "seeded subset, named in its row.\n",
              fold("Run details", [run_line(list(docs.values()))]),
-             REPRODUCE.format(dataset={"recall-synthetic": "synthetic", "beir-scifact": "scifact",
+             REPRODUCE.format(dataset={"recall-synthetic": "synthetic", "recall-grown": "grown",
+                                       "beir-scifact": "scifact",
                                        "beir-nfcorpus": "nfcorpus", "locomo": "locomo"}.get(suite, suite)),
              "[All suites](index.md)\n", "## Quality\n",
              "| method | queries | " + " | ".join(h for _, h in QUALITY) + " |",
