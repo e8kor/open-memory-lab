@@ -295,6 +295,21 @@ impl Acted {
     }
 }
 
+/// `answer` as a resubmission replays it: without a key's value, a connect
+/// code's `code`, or the code inside an issued key's `connect_code`, each
+/// shown once, so no record holds one (ADR-0031 d7; #127).
+pub(crate) fn without_secrets(answer: &Value) -> Value {
+    let mut kept = answer.clone();
+    if let Some(kept) = kept.as_object_mut() {
+        kept.remove("value");
+        kept.remove("code");
+        if let Some(code) = kept.get_mut("connect_code").and_then(Value::as_object_mut) {
+            code.remove("code");
+        }
+    }
+    kept
+}
+
 /// How an act failed, which decides what becomes of its claim (#233).
 pub(crate) enum ActFailure {
     /// Refused before anything committed: the claim is released, so a
@@ -363,7 +378,13 @@ where
     where
         F: std::future::Future<Output = Result<Acted, ActFailure>> + Send + 'static,
     {
+        // The task carries the request's span, its traffic scope (the key,
+        // the workarea, the store time and the counters the act observes)
+        // and its session, as every task-local the request set (#233).
         let span = tracing::Span::current();
+        let scope = crate::traffic::current_scope();
+        let session = crate::session::current_session();
+        let act = crate::traffic::within_scope(scope, crate::session::within_session(session, act));
         let task = tokio::spawn(tracing::Instrument::instrument(
             async move {
                 self.committing = true;
@@ -1262,14 +1283,7 @@ where
                             })
                         })?;
                 let answer = key_issued_json(&issued, None);
-                let mut kept = answer.clone();
-                if let Some(kept) = kept.as_object_mut() {
-                    kept.remove("value");
-                    if let Some(code) = kept.get_mut("connect_code").and_then(Value::as_object_mut)
-                    {
-                        code.remove("code");
-                    }
-                }
+                let kept = without_secrets(&answer);
                 Ok(Acted {
                     status: StatusCode::CREATED,
                     answer,
@@ -1382,10 +1396,7 @@ where
                     .await
                     .map_err(|e| ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 let answer = connect_code_json(&code);
-                let mut kept = answer.clone();
-                if let Some(kept) = kept.as_object_mut() {
-                    kept.remove("code");
-                }
+                let kept = without_secrets(&answer);
                 Ok(Acted {
                     status: StatusCode::CREATED,
                     answer,
