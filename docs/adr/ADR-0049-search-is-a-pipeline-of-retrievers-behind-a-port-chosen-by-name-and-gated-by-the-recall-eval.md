@@ -2,7 +2,7 @@
 id: adr/ADR-0049-search-is-a-pipeline-of-retrievers-behind-a-port-chosen-by-name-and-gated-by-the-recall-eval
 tier: engineering
 status: proposed
-answers: how search plugs into the hexagonal core; which port a retriever implements, what the core hands it and what it may never decide; where fusion, the budget cut, steering and held rows live; what a named pipeline is and which ones v0.5.5 serves; how a deployment, a tenant and a request each choose one, and what is refused; what a recall answers about the pipeline, the matched words and a fallback; the laws every adapter passes; how the recall eval gates a pipeline before it may be the default, and what it measured; which API changes break v0.5.0 callers and how to migrate; the doctor lines, the request log field and the metric; the increments after this one; the per-retriever cap before fusion (d13); and how this record relates to ADR-0048
+answers: how search plugs into the hexagonal core; which port a retriever implements, what the core hands it and what it may never decide; where fusion, the budget cut, steering and held rows live; what a named pipeline is and which ones v0.5.5 serves; how a deployment, a tenant and a request each choose one, and what is refused; what a recall answers about the pipeline, the matched words and a fallback; the laws every adapter passes; how the recall eval gates a pipeline before it may be the default, and what it measured; which API changes break v0.5.0 callers and how to migrate; the doctor lines, the request log field and the metric; the increments after this one; the per-retriever cap before fusion (d13); what a recall does under a tenant default the deployment does not serve, and which pipeline is recommended beside the default (d15); and how this record relates to ADR-0048
 -->
 
 # ADR-0049 — Search is a pipeline of retrievers behind a port, chosen by name and gated by the recall eval
@@ -11,7 +11,8 @@ answers: how search plugs into the hexagonal core; which port a retriever implem
 
 **Release:** introduced in v0.5.5 (increment 1, with ADR-0048's S1–S3 as its pipelines); d13,
 each retriever's list capped before fusion, introduced in v0.5.8 with ADR-0057 d22; d14 proposed
-for v0.5.9; later increments not assigned ([releases](../changelog.md))
+for v0.5.9; d15, a tenant default this deployment does not serve replaced by the deployment's and marked,
+proposed for v0.7.1; later increments not assigned ([releases](../changelog.md))
 
 **Amends:** [ADR-0048](ADR-0048-search-improves-in-stages-any-word-first-meaning-last-each-gated-on-the-recall-eval.md) (proposed): ADR-0048 stays the record of *what*
 search becomes and *when*, stage by stage; this record is *how* each stage plugs in. ADR-0048
@@ -107,7 +108,9 @@ reorders results, and steering rows, which precede hits, are never ranked"
     `GET /v2/search` and `oml search show` answer the enabled set, both defaults and the one in
     effect. A request names one with `search` on `oml_read` and on `POST /v1/memories/recall`;
     no new MCP tool (ADR-0039 d8). Precedence: the request's, else the tenant's while the
-    deployment still serves it, else the deployment's. A name the build does not know, or the
+    deployment still serves it, else the deployment's. *Amended by d15: when the
+    deployment's replaces a tenant default it does not serve, the answer says so with
+    `search.fallback: "tenant_default_unserved"`, and the start names the tenant.* A name the build does not know, or the
     deployment does not enable, is refused `request.validation` with `details.field: "/search"`
     and the served names, never replaced by another pipeline; the same name on the admin route is
     refused the same way. The names are a closed set, so the request log and the metric stay
@@ -160,7 +163,7 @@ reorders results, and steering rows, which precede hits, are never ranked"
   (d12). `/readyz` names the enabled set and the default. `oml doctor` prints
   `search: default <p>; enabled <list>`, warns when the default is `keyword-all`, and, read by an
   admin key, warns when the tenant's journalled default is one the deployment no longer serves
-  (the deployment's then applies). The request line gains `search` and `search_fallback`; the
+  (the deployment's then applies; *d15 marks each such answer and names the tenant at start*). The request line gains `search` and `search_fallback`; the
   metric `oml_recalls_total{pipeline, fallback}` counts recalls by pipeline.
 
 - **d9 — The default is the best pipeline that passes its gate in CI, measured, not planned.**
@@ -409,6 +412,90 @@ reorders results, and steering rows, which precede hits, are never ranked"
   tokens an agent does not use); timings on the request log line (a line per recall stays one
   line; the histogram serves the aggregate); per-candidate ranks before and after reranking as
   basic-memory keeps (each hit already carries `rank_before`, ADR-0053 d7).
+
+- **d15 — A tenant default the deployment does not serve is replaced by the deployment's, and
+  the answer and the start say so; `bm25-sparse` is recommended where its model is loaded**
+  (added 2026-11-11 for v0.7.1, after ADR-0075 phase 0 found generated questions lose to
+  `bm25-sparse`, #252). *Amends d4 and d8.* **Fall back and mark is the operator's choice of
+  2026-11-11**, over the first draft of this decision, which refused such a recall.
+    1. **Precedence stays d4's, and the fallback is marked.** A request's `search` wins; a
+       request naming none runs the tenant's journalled default; a tenant with none runs
+       `search.default`. When the tenant's default names a pipeline this deployment does not
+       serve (unknown to the build, or absent from `search.enabled`: the operator removed it,
+       for instance after ADR-0052 d16 refused a start whose sparse model was missing), a recall
+       naming no pipeline runs `search.default` and answers `search.fallback:
+       "tenant_default_unserved"`, d5's field, on `POST /v1/memories/recall` and `oml_read`
+       alike, whether it names `sources` or not. Steering is served as always: it does not
+       depend on the pipeline. When `match: all` falls back too, `tenant_default_unserved` is
+       the value, and each hit's `matched.of` still shows the any-word match. The request
+       line's `search_fallback` and `oml_recalls_total`'s `fallback` label count either
+       fallback. A request that names a served pipeline runs it, unmarked.
+    2. **The settings, the start and doctor name it.** `GET /v2/search` keeps `effective` the
+       pipeline a recall naming none runs (here the deployment's) and gains
+       `tenant_default_served`, `false` in this state; `oml search show` prints the effective
+       pipeline with "the tenant's default is not served here"; the field is optional to a
+       client, since an older server does not send it. The lead's start logs one
+       `search_tenant_default_unserved` warning per such tenant, naming the tenant, its
+       pipeline and the deployment's default, and one `search_tenant_default_unread` per tenant
+       whose default it could not read, and starts either way, since the read only warns. So the
+       operator, who alone can serve the pipeline again, is told without an admin key of that
+       tenant. `oml doctor`, read by an admin key,
+       warns `search_tenant_default: this tenant's default <p> is not served here, so a recall
+       naming no pipeline runs <effective>, marked search.fallback tenant_default_unserved; oml
+       search set-default <pipeline>, or serve <p>`.
+    3. **`bm25-sparse` is recommended where the deployment loads its model and scopes stay in the
+       low thousands of memories; `bm25-postings` stays the shipped default.** On the recall
+       eval as served, `bm25-sparse` measured success@5 0.983 against `bm25-postings`' 0.934 on
+       the 121 queries (`eval/recall/results/served_*.json`), and nDCG@10 0.730 against 0.685
+       on BEIR SciFact ([benchmarks](../benchmarks/index.md)), and 0.956 against 0.913 on the 665
+       grown queries of #245 ([recall-grown](../benchmarks/recall-grown.md)); #252, open when this
+       was written, measured 0.963 against 0.916 on the 786 together. It costs a model: `doc-v3-distill`, 67M parameters, Apache-2.0, its
+       `model.safetensors` 267,954,768 bytes at the pinned revision, run on the lead's CPU by
+       the encoder off the commit path for each written version (ADR-0052 d14, d15); a query
+       runs only its tokenizer and `idf.json`. Client p95 per recall: 65.9 ms against 54.8 ms
+       at 3,633 memories and 83.7 against 65.6 at 5,183, so both miss 50 ms above a few
+       thousand and `bm25-sparse` by more ([scale](../benchmarks/scale.md)); at 100,000
+       memories, at the database, its two lists read 100 deep took 272 ms p95 at universe
+       scope and 114 ms at every scope, where `bm25_postings` at `k` 10 took 29.2 and 20.4
+       (`bench/scale/REPORT.md`, which reuses the 10,000 point's encodings; #104). The shipped
+       default stays `bm25-postings`: it needs no model file and no network to fetch one, it
+       ranks a version the moment it is promoted, where the sparse leg misses it until the
+       encoder reaches it, and its answer is a function of the readable rows and the query
+       alone, which #176's repeatability rests on. A deployment that loads the model enables
+       `bm25-sparse`, and a tenant's admin chooses it with `oml search set-default bm25-sparse`,
+       or the operator sets `search.default`.
+    4. **Laws.** In `oml-app`'s use cases:
+       `a_recall_naming_no_pipeline_under_a_tenant_default_this_deployment_does_not_serve_runs_the_deployments_default_marked`,
+       `a_recall_naming_sources_under_an_unserved_tenant_default_runs_the_deployments_default_marked`,
+       `steering_is_served_whole_under_a_tenant_default_fallback`,
+       `a_request_naming_a_served_pipeline_runs_unmarked_whatever_the_tenant_default`,
+       `search_settings_name_the_pipeline_that_runs_and_flag_a_tenant_default_not_served`; in the
+       lead's HTTP suite,
+       `http_and_mcp_run_the_deployments_default_marked_under_an_unserved_tenant_default`
+       (HTTP and MCP answer the same pipeline and fallback, and the start names the tenant),
+       `when_match_all_and_an_unserved_tenant_default_both_fall_back_the_answer_names_tenant_default_unserved`,
+       `the_start_scan_of_tenant_defaults_names_a_read_failure_and_does_not_stop`; in the
+       transport's,
+       `a_recall_under_an_unserved_tenant_default_counts_as_a_fallback_on_the_request_line_and_the_metric`;
+       in the CLI,
+       `the_search_doctor_warns_that_a_recall_naming_no_pipeline_runs_the_deployments_default_while_the_tenant_default_is_not_served`.
+    5. **Rejected.** *Fail closed: refuse a recall naming no pipeline* (this decision's first
+       draft, with `settings.invalid`). No agent surface names a pipeline (the plugin's skill,
+       librarian and hooks, and the web console's search send none), so the tenant would lose
+       recall entirely, and steering with it, since the refusal discards the whole answer; the
+       state's likeliest cause is ADR-0052 d16's start refusal, which an operator answers by
+       removing `bm25-sparse` from `search.enabled`; the refused reader cannot repair it and the
+       admin who can is not told; and a tenant already in this state under d4's quiet fallback
+       would go from working to refused on upgrade. The fallback ranks the same readable rows by
+       another pipeline, so R3 is untouched. *Refuse the hits and serve steering*: a part answer
+       is a new contract. *Keep d4's unmarked fallback*: `search.pipeline` alone does not say the
+       tenant's choice was not run. *Refuse to start while any tenant's default is unserved*: one
+       tenant's setting would stop every tenant. *Clear the tenant's default at start*: a
+       journalled choice changed by no admin's act, lost when the operator restores the
+       pipeline. *`effective: null` in the settings*: a breaking type change for no information
+       `tenant_default_served` does not carry. *Make `bm25-sparse` the shipped default*: every
+       self-hosted lead would need the model before its first recall, and the default would no
+       longer be repeatable or model-free.
 
 ## Consequences
 

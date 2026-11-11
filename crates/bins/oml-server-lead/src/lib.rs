@@ -1419,6 +1419,37 @@ pub fn scan_counts() -> Vec<(&'static str, &'static str, &'static str, u64)> {
 // Startup: tenant enumeration, fork check, enrollment token
 // ---------------------------------------------------------------------------
 
+/// What the start's read of each tenant's default search pipeline found
+/// (ADR-0049 d15): the tenants whose default the lead does not serve, with
+/// that name, and the tenants whose default could not be read, with the
+/// failure. The read only warns, so a failure is named, never fatal.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TenantDefaultScan {
+    pub unserved: Vec<(Uuid, String)>,
+    pub unread: Vec<(Uuid, String)>,
+}
+
+/// Reads each of `tenants`' journalled default search pipeline, in order,
+/// and sorts out the ones `search` does not serve and the ones whose read
+/// failed: what the start warns about (ADR-0049 d15).
+pub async fn unserved_tenant_defaults(
+    store: &PgStore,
+    tenants: &[Uuid],
+    search: &SearchConfig,
+) -> TenantDefaultScan {
+    let mut scan = TenantDefaultScan::default();
+    for &tenant in tenants {
+        match oml_app::ports::JournalStore::tenant_search_default(store, tenant).await {
+            Ok(Some(name)) if !Pipeline::parse(&name).is_some_and(|p| search.serves(p)) => {
+                scan.unserved.push((tenant, name));
+            }
+            Ok(_) => {}
+            Err(e) => scan.unread.push((tenant, e.to_string())),
+        }
+    }
+    scan
+}
+
 /// Every tenant id, under the 0003 startup-enumeration policy (the ordinary
 /// RLS context names one tenant; the startup sweep must see them all).
 pub async fn enumerate_tenants(pool: &PgPool) -> Result<Vec<Uuid>, sqlx::Error> {
@@ -1865,6 +1896,27 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
         .await
         .map_err(|e| format!("tenant enumeration: {e}"))?;
     let fork_check = startup_fork_check(store, signing_key.verifying_key(), &tenants).await;
+    // A tenant whose default this lead does not serve gets the deployment's
+    // default, marked in each answer; the start names it for the operator,
+    // who alone can serve it again (ADR-0049 d15).
+    let scan = unserved_tenant_defaults(store, &tenants, &search).await;
+    for (tenant, error) in &scan.unread {
+        tracing::warn!(
+            event = "search_tenant_default_unread",
+            tenant = %tenant,
+            error = %error,
+            "a tenant's default search pipeline could not be read at start; the start goes on, and its recalls report any fallback in each answer"
+        );
+    }
+    for (tenant, pipeline) in &scan.unserved {
+        tracing::warn!(
+            event = "search_tenant_default_unserved",
+            tenant = %tenant,
+            pipeline = %pipeline,
+            deployment_default = search.default_pipeline().as_str(),
+            "a tenant's default search pipeline is not in search.enabled: its recalls naming no pipeline run the deployment's default, marked search.fallback tenant_default_unserved"
+        );
+    }
     let app = lead_app(store, signing_key)
         .with_brief_max_tokens(brief_max_tokens)
         .with_search(search);

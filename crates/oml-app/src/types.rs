@@ -1810,6 +1810,11 @@ pub struct RecallResult {
     /// Set when `match: all` found no row with every term and the any-term
     /// list was served instead (ADR-0049 d5).
     pub fallback: bool,
+    /// The tenant's journalled default, by name, when the recall named no
+    /// pipeline and the deployment does not serve that default, so its own
+    /// default ranked the hits instead; answered as `search.fallback:
+    /// "tenant_default_unserved"` (ADR-0049 d15).
+    pub tenant_default_unserved: Option<String>,
     /// Spellings from readable rows for terms no hit matched, from a
     /// pipeline with a trigram list, when no hit holds every term
     /// (`explain.did_you_mean`; ADR-0049 d6).

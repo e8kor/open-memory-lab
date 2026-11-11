@@ -3651,7 +3651,16 @@ fn run_search(
             .flatten()
             .filter_map(Value::as_str)
             .collect();
-        println!("effective: {}", field(&settings, "effective"));
+        // The deployment's default runs while the tenant's is not served
+        // here (ADR-0049 d15).
+        if settings["tenant_default_served"] == false {
+            println!(
+                "effective: {} (the tenant's default is not served here)",
+                field(&settings, "effective")
+            );
+        } else {
+            println!("effective: {}", field(&settings, "effective"));
+        }
         println!(
             "tenant default: {}",
             settings["tenant_default"]
@@ -5198,13 +5207,15 @@ fn search_doctor(
                 .to_owned(),
         );
     }
+    // A tenant default the deployment does not serve: recalls naming no
+    // pipeline run the deployment's default, marked (ADR-0049 d15).
     if let Some(settings) = settings
         && let Some(tenant) = settings["tenant_default"].as_str()
         && settings["effective"].as_str() != Some(tenant)
     {
         lines.push(format!(
-            "warn search: this tenant's default {tenant} is not served here, so {} applies; oml search set-default <pipeline>",
-            settings["effective"].as_str().unwrap_or("the deployment's")
+            "warn search_tenant_default: this tenant's default {tenant} is not served here, so a recall naming no pipeline runs {}, marked search.fallback tenant_default_unserved; oml search set-default <pipeline>, or serve {tenant}",
+            settings["effective"].as_str().unwrap_or("the deployment's default")
         ));
     }
     let recall_counts = scrape.map(|scrape| {
@@ -5921,6 +5932,39 @@ mod tests {
         assert_eq!(rust_hashers_line(Some("0.6.1"), "0.6.1"), None);
         assert_eq!(rust_hashers_line(Some("0.6.0"), "0.6.0"), None);
         assert_eq!(rust_hashers_line(None, "0.6.1"), None);
+    }
+
+    #[test]
+    fn the_search_doctor_warns_that_a_recall_naming_no_pipeline_runs_the_deployments_default_while_the_tenant_default_is_not_served()
+     {
+        let ready = (
+            200,
+            json!({"search": {"enabled": ["keyword-any", "bm25"], "default": "bm25"}}),
+        );
+        let unserved = json!({
+            "enabled": ["keyword-any", "bm25"], "deployment_default": "bm25",
+            "tenant_default": "bm25-sparse", "effective": "bm25",
+            "tenant_default_served": false,
+        });
+        let lines = search_doctor(Some(&ready), Some(&unserved), None);
+        let line = lines
+            .iter()
+            .find(|l| l.starts_with("warn search_tenant_default:"))
+            .unwrap_or_else(|| panic!("{lines:?}"));
+        assert_eq!(
+            line,
+            "warn search_tenant_default: this tenant's default bm25-sparse is not served here, so a recall naming no pipeline runs bm25, marked search.fallback tenant_default_unserved; oml search set-default <pipeline>, or serve bm25-sparse"
+        );
+        let served = json!({
+            "enabled": ["keyword-any", "bm25"], "deployment_default": "bm25",
+            "tenant_default": "keyword-any", "effective": "keyword-any",
+            "tenant_default_served": true,
+        });
+        let lines = search_doctor(Some(&ready), Some(&served), None);
+        assert!(
+            !lines.iter().any(|l| l.contains("search_tenant_default")),
+            "{lines:?}"
+        );
     }
 
     #[test]

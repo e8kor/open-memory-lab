@@ -31,6 +31,9 @@ fn settings_json(settings: &SearchSettings) -> Value {
         "deployment_default": settings.deployment_default.as_str(),
         "tenant_default": settings.tenant_default,
         "effective": settings.effective.as_str(),
+        // false while the tenant's default is not served here, so a recall
+        // naming no pipeline runs `effective`, marked (ADR-0049 d15).
+        "tenant_default_served": settings.tenant_default_served,
     });
     // The tenant's valid time doctor reads where a time pipeline is served
     // (ADR-0059 d12).

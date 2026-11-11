@@ -92,8 +92,10 @@ def sync_detailed(
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
     truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search
-    pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4);
-    recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
+    pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4); a
+    body naming no search under a tenant default the deployment does not serve is ranked by the
+    deployment's default and answers search.fallback tenant_default_unserved (ADR-0049 d15); recall
+    quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
 
     Args:
         x_request_id (str | Unset):
@@ -145,8 +147,10 @@ def sync(
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
     truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search
-    pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4);
-    recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
+    pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4); a
+    body naming no search under a tenant default the deployment does not serve is ranked by the
+    deployment's default and answers search.fallback tenant_default_unserved (ADR-0049 d15); recall
+    quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
 
     Args:
         x_request_id (str | Unset):
@@ -193,8 +197,10 @@ async def asyncio_detailed(
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
     truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search
-    pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4);
-    recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
+    pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4); a
+    body naming no search under a tenant default the deployment does not serve is ranked by the
+    deployment's default and answers search.fallback tenant_default_unserved (ADR-0049 d15); recall
+    quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
 
     Args:
         x_request_id (str | Unset):
@@ -244,8 +250,10 @@ async def asyncio(
     Idempotency-Key. Applicable steering, the total hit order, own held rows and the max_tokens cut are
     declared in docs/architecture/retrieval.md (ADR-0025 d4, d7, d8). Logged with the ids served after
     truncation and the canonical request digest (D12, ADR-0025 d9). The hits are ranked by the search
-    pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4);
-    recall quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
+    pipeline the body's search names, else the tenant's default, else the deployment's (ADR-0049 d4); a
+    body naming no search under a tenant default the deployment does not serve is ranked by the
+    deployment's default and answers search.fallback tenant_default_unserved (ADR-0049 d15); recall
+    quality is measured per pipeline by the recall eval (eval/recall, ADR-0049 d9).
 
     Args:
         x_request_id (str | Unset):
