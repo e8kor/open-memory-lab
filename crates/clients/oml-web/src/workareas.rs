@@ -179,6 +179,34 @@ impl Act {
     }
 }
 
+/// Whether `sent` is a nonce as [`nonce`] draws it.
+fn is_nonce(sent: &str) -> bool {
+    sent.len() == 32 && sent.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// The lock of one act's idempotency key in this process, kept while a send
+/// under it is in flight and dropped from the table once none holds it.
+fn in_flight(key: &str) -> Arc<tokio::sync::Mutex<()>> {
+    static TABLE: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    > = std::sync::LazyLock::new(Default::default);
+    let mut table = TABLE.lock().expect("unpoisoned");
+    table.retain(|_, lock| Arc::strong_count(lock) > 1);
+    table.entry(key.to_owned()).or_default().clone()
+}
+
+/// The notice a `done` the view's own acts name shows; any other is none,
+/// so a crafted link cannot put text on the page.
+fn notice(done: Option<&str>) -> Option<&'static str> {
+    match done? {
+        "proposed" => Some("proposed"),
+        "ratified" => Some("ratified"),
+        "mode set" => Some("mode set"),
+        "created" => Some("created"),
+        _ => None,
+    }
+}
+
 /// A form's nonce: 16 random bytes as hex.
 fn nonce() -> String {
     let mut bytes = [0u8; 16];
@@ -384,7 +412,7 @@ async fn rows(
     out.into_iter()
         .map(|row| {
             row.unwrap_or(Row {
-                offers: Err(String::new()),
+                offers: Err("a read that did not finish".to_owned()),
                 pending: Vec::new(),
             })
         })
@@ -656,7 +684,7 @@ async fn view(
             &session.who(),
             &tabs,
             page,
-            fields.get("done"),
+            notice(fields.get("done")),
             &body,
         ),
     )
@@ -771,7 +799,27 @@ async fn act(
     }
     let field = |name: &str| fields.get(name).unwrap_or_default();
     let workarea = field("workarea");
-    let key = session.act_key(&fields.get("nonce").map_or_else(nonce, str::to_owned));
+    // A nonce the page did not draw is refused, so a mangled form never
+    // loses its replay silently; a form without one acts once under a
+    // fresh key.
+    let nonce = match fields.get("nonce") {
+        Some(sent) if is_nonce(sent) => sent.to_owned(),
+        Some(_) => {
+            return refused(
+                StatusCode::BAD_REQUEST,
+                "request.validation",
+                "nonce is not one this page draws: 32 lower-case hexadecimal characters",
+                &calls,
+            );
+        }
+        None => nonce(),
+    };
+    let key = session.act_key(&nonce);
+    // A second send of the same form while the first is in flight (a double
+    // click) waits for it, then replays its recorded outcome at the API.
+    // Two oml-web processes racing one key are #233's case, closed where
+    // the API records the outcome.
+    let _in_flight = in_flight(&key).lock_owned().await;
     let ids = calls.next_ids();
     let (outcome, done) = match action {
         "workarea_transition" => {

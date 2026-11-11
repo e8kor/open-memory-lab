@@ -103,7 +103,7 @@ def render(doc: dict) -> str:
         f"*{docgen.BANNER.format(script='scripts/gen_http_api_reference.py')} Source: `docs/api/openapi.yaml`. It lists {total} operations.*\n",
         "## Conventions\n",
         "- **Authentication.** Send `Authorization: Bearer <key>`. The key carries one role (`reader`, `writer`, `dreamer`, `admin`, `operator`); the server derives the tenant from it, never from the request.",
-        "- **Idempotency.** Every `POST` that creates state needs an `Idempotency-Key` header. A replay returns the stored answer and sets `Idempotency-Replay: true`.",
+        "- **Idempotency.** Every `POST` that creates state needs an `Idempotency-Key` header. A replay returns the stored answer and sets `Idempotency-Replay: true`. A refused request records nothing, so a retry under the same key runs again and may answer differently.",
         "- **Request ids.** Every response carries `X-Request-Id` and `X-Correlation-Id`. You may send your own `X-Request-Id`, `X-Correlation-Id` and `traceparent`.",
         "- **Errors.** Every failure has one JSON shape with a `code` from the [error codes](errors.md). Any operation can answer `429 limit.rate` or `limit.quota`.",
         "- **Absence.** A read the key may not make answers `404 access.not_found`, the same answer as a missing id.",

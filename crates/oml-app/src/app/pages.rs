@@ -1398,6 +1398,8 @@ where
                 .workarea_offer_check(&caller, &caller, workarea_id, act)
                 .await
             {
+                // Offered by the same check, so not reached; a page that
+                // meets an act neither offered nor refused says so.
                 Ok(()) => {}
                 Err(AppError::Store(e)) => return Err(AppError::Store(e)),
                 Err(e) => refused.push((act, e)),
