@@ -42,7 +42,7 @@ pub const WIDEN_SIGNAL_PAIRS_HELD: usize = 8_000_000;
 /// The most (form, node) counts one tenant's signals hold, about 32 MB: a
 /// tenant past it drops its own oldest first, so no tenant evicts another
 /// below its share, and a signal larger on its own is never read whole. A
-/// tenant of 100,000 rows over 50 workareas measured 1,333,609.
+/// tenant of 100,000 rows over 50 workareas measured 1,332,730 (#268).
 pub const WIDEN_SIGNAL_TENANT_PAIRS: usize = 2_000_000;
 
 /// A build taking longer is stopped by the transport, counted as failed
