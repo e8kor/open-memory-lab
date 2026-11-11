@@ -653,9 +653,10 @@ enum AdminCommand {
         /// scan.findings_recorded.
         #[arg(long)]
         record_held: bool,
-        /// Print only aggregates: per class and per origin kind, how many
+        /// Print only aggregates for the operator, not for publication: per
+        /// class, per origin kind and per class within an origin, how many
         /// versions the scan would refuse or hold and their share of those
-        /// scanned; no artifact id, claim key or text.
+        /// scanned, counts under 5 as <5; no artifact id, claim key or text.
         #[arg(long, conflicts_with = "record_held")]
         rates: bool,
     },
