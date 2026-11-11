@@ -35,7 +35,7 @@ Sign in at [memory.doublegate.io](https://memory.doublegate.io) with GitHub or G
 by invitation) and issue an agent key. Then:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.3/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.7.0/scripts/install/install.sh | sh
 oml login https://memory.doublegate.io
 oml setup claude-code
 ```
