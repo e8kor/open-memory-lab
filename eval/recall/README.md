@@ -148,21 +148,29 @@ overall.
    `sparse`, E(s) per candidate, the served `wide` answer, and the descriptor scores) and
    `fed2.json`, the gate. The readings it takes are ADR-0072's "Phase 2 gate as measured":
 
-   - **The split** is d11's as phase 1 built it, cross and skew together (242 queries) for the
-     floor and the scoped split for "scope-only queries".
-   - **The descriptors** were written once, from `corpus.json` alone, before `queries.json` was
-     read, by the lane that ran the gate. Each is a summary of at most 600 characters and eight
-     questions. `about` is empty, since no ontology terms are on main.
+   - **The split** is d11's as phase 1 built it: the floor pools cross and skew (242 queries),
+     and "scope-only queries" is the scoped split. Pooled, the 3-point floor is about 7 queries,
+     not d11's "four of the 121".
+   - **d13's ReDDE clause** is read on success@5, and selection recall is reported beside it.
+   - **The descriptors** were written once, from `corpus.json`, by the lane that ran the gate. The
+     lane attests that it had not read `queries.json`, but one commit holds both files, so the
+     order cannot be checked. Each descriptor is a summary of at most 600 characters and eight
+     questions. `about` is empty, since no ontology terms are on main. A future run should commit
+     its descriptors before it reads the queries.
    - **The descriptor score** is BM25 over the candidates' descriptors alone. It comes from a
      served `bm25` recall whose `sources` lists one workarea per candidate descriptor, because
      memory-kind-3 postings are not built.
    - **The replay.** A searched set's answer is the union's ranking restricted to it (d7.2).
-     `analyze` checks this against the served `wide` answer on every query. `bm25-sparse` is
-     refused under `wide`, so its legs are fused over R and restricted after fusion.
+     `analyze` checks this against the served `wide` answer, which is served for `content` alone.
+     `bm25-sparse` is refused under `wide`, so its legs are fused over R and restricted after
+     fusion. Its check against the served `scope` answer covers the fusion arithmetic, not the
+     restriction.
    - **α** is the largest value in 0.0 to 1.0, in steps of 0.1, with the best selection recall
      on a seeded random half of the skew split, and it is reported on the other half.
-     `descriptor_slots` is its default of 2.
-   - **The interval** is a paired percentile bootstrap, 10,000 resamples, seed 20261111.
+     `descriptor_slots` is its default of 2. The pooled floor includes the tuning half: the one
+     query gained, q063, is in it, and on the held-out half `described` gains nothing.
+   - **The interval** is a paired percentile bootstrap, 10,000 resamples, seed 20261111. The
+     oracle ceiling ignores d4.5's E > 0 rule, so it bounds any selector, not only d4.5's.
    - **The adversarial descriptor** holds every word of every query, unbounded by the schema. It
      replaces each topic's descriptor in turn, and the worst topic is reported.
 
