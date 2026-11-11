@@ -3424,7 +3424,7 @@ async fn the_review_card_names_every_scan_finding() {
     act(
         &rig,
         &admin,
-        "/web/admin",
+        "/web/admin/people",
         &[
             ("action", "grant_review"),
             ("user", "boss"),
