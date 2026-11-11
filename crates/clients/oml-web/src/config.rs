@@ -329,6 +329,101 @@ mod tests {
         }
     }
 
+    /// A file under the system temporary directory with `mode`, removed on
+    /// drop.
+    struct TempSecret(std::path::PathBuf);
+
+    impl TempSecret {
+        fn new(name: &str, text: &str, mode: u32) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("oml-web-config-{}-{name}", std::process::id()));
+            std::fs::write(&path, text).expect("write the secret file");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                    .expect("set the mode");
+            }
+            #[cfg(not(unix))]
+            let _ = mode;
+            Self(path)
+        }
+
+        fn path(&self) -> &str {
+            self.0.to_str().expect("a UTF-8 path")
+        }
+    }
+
+    impl Drop for TempSecret {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// `web.client_secret_file` names an owner-only file holding the
+    /// secret, the shape systemd's `LoadCredential=` and a mounted Secret
+    /// give; a file others can read stops the start, naming the setting
+    /// and the mode and never the value (ADR-0070 d2, #230).
+    #[test]
+    fn the_client_secret_is_read_from_an_owner_only_file_and_refused_when_others_can_read_it() {
+        let file = TempSecret::new("owner", &format!("{SECRET}\n"), 0o600);
+        let config = load(&[
+            ("OML_WEB__API_URL", "http://127.0.0.1:8090"),
+            ("OML_WEB__CLIENT_SECRET_FILE", file.path()),
+        ])
+        .expect("an owner-only file loads");
+        assert_eq!(config.client_secret.expose(), SECRET);
+        #[cfg(unix)]
+        {
+            let open = TempSecret::new("open", SECRET, 0o644);
+            let err = load(&[
+                ("OML_WEB__API_URL", "http://127.0.0.1:8090"),
+                ("OML_WEB__CLIENT_SECRET_FILE", open.path()),
+            ])
+            .unwrap_err();
+            assert!(matches!(err, ConfigError::Invalid(KEY_CLIENT_SECRET_FILE, _)));
+            let shown = err.to_string();
+            assert!(shown.contains("web.client_secret_file") && shown.contains("644"), "{shown}");
+            assert!(!shown.contains(SECRET), "{shown}");
+        }
+        let err = load(&[
+            ("OML_WEB__API_URL", "http://127.0.0.1:8090"),
+            ("OML_WEB__CLIENT_SECRET_FILE", "/nonexistent/oml-web-client"),
+        ])
+        .unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid(KEY_CLIENT_SECRET_FILE, _)));
+    }
+
+    /// One source for the secret: set inline and as a file, the start
+    /// cannot tell which the operator meant, so it refuses both (#230).
+    #[test]
+    fn a_client_secret_set_both_inline_and_as_a_file_is_refused() {
+        let file = TempSecret::new("both", SECRET, 0o600);
+        let err = load(&[
+            ("OML_WEB__API_URL", "http://127.0.0.1:8090"),
+            ("OML_WEB__CLIENT_SECRET", SECRET),
+            ("OML_WEB__CLIENT_SECRET_FILE", file.path()),
+        ])
+        .unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid(KEY_CLIENT_SECRET_FILE, _)));
+        assert!(err.to_string().contains("web.client_secret"), "{err}");
+    }
+
+    /// A secret 32 characters long but of few distinct characters, or one
+    /// with a space, is refused as a short one is: the lead applies the
+    /// same rule, `oml_web_credential::client_secret_refusal` (#230).
+    #[test]
+    fn a_repetitive_or_whitespace_client_secret_is_refused() {
+        for weak in ["a".repeat(40), "ab".repeat(20), format!("{SECRET} x")] {
+            let err = load(&[
+                ("OML_WEB__API_URL", "http://127.0.0.1:8090"),
+                ("OML_WEB__CLIENT_SECRET", &weak),
+            ])
+            .unwrap_err();
+            assert!(matches!(err, ConfigError::Invalid(KEY_CLIENT_SECRET, _)), "{weak}");
+        }
+    }
+
     #[test]
     fn the_client_secret_never_appears_in_debug_output() {
         let config = load(&[

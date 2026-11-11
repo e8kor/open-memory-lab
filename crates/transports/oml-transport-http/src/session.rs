@@ -212,6 +212,9 @@ mod tests {
     use super::*;
     use axum::http::HeaderValue;
 
+    /// An instant for the gate's clock, in microseconds since the epoch.
+    const NOW: i64 = 1_800_000_000_000_000;
+
     fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
         let mut headers = HeaderMap::new();
         for (name, value) in pairs {
@@ -226,15 +229,12 @@ mod tests {
     #[test]
     fn oml_web_is_proven_by_its_secret_or_a_verified_certificate_never_by_a_header() {
         let secret = WebClient::new(Some("the-secret".to_owned()), None);
-        assert!(secret.proven(&headers(&[(WEB_CLIENT_HEADER, "the-secret")]), None));
-        assert!(!secret.proven(&headers(&[(WEB_CLIENT_HEADER, "the-secre")]), None));
-        assert!(!secret.proven(&headers(&[]), None));
+        assert!(secret.proven(&headers(&[(WEB_CLIENT_HEADER, "the-secret")]), None, NOW));
+        assert!(!secret.proven(&headers(&[(WEB_CLIENT_HEADER, "the-secre")]), None, NOW));
+        assert!(!secret.proven(&headers(&[]), None, NOW));
         for forwarded in FORWARDED_CERTIFICATE_HEADERS {
             assert!(
-                !secret.proven(
-                    &headers(&[(WEB_CLIENT_HEADER, "the-secret"), (forwarded, "CN=oml-web")]),
-                    None
-                ),
+                !secret.proven(&headers(&[(WEB_CLIENT_HEADER, "the-secret"), (forwarded, "CN=oml-web")]), None, NOW),
                 "{forwarded}"
             );
         }
@@ -245,11 +245,44 @@ mod tests {
         let other = VerifiedClientCertificate {
             subject: "CN=someone".to_owned(),
         };
-        assert!(mtls.proven(&headers(&[]), Some(&verified)));
-        assert!(!mtls.proven(&headers(&[]), Some(&other)));
-        assert!(!mtls.proven(&headers(&[(WEB_CLIENT_HEADER, "the-secret")]), None));
-        assert!(!WebClient::default().proven(&headers(&[(WEB_CLIENT_HEADER, "")]), None));
+        assert!(mtls.proven(&headers(&[]), Some(&verified), NOW));
+        assert!(!mtls.proven(&headers(&[]), Some(&other), NOW));
+        assert!(!mtls.proven(&headers(&[(WEB_CLIENT_HEADER, "the-secret")]), None, NOW));
+        assert!(!WebClient::default().proven(&headers(&[(WEB_CLIENT_HEADER, "")]), None, NOW));
         assert_eq!(WebClient::default().identity(), "none");
         assert!(!format!("{secret:?}").contains("the-secret"));
+    }
+
+    /// Rotation without downtime (#230): the previous secret proves
+    /// `oml-web` beside the current one until its window closes, and never
+    /// after; the identity `/readyz` names stays `secret`, and neither
+    /// value is in the debug form.
+    #[test]
+    fn the_previous_secret_proves_oml_web_only_until_its_window_closes() {
+        let until = NOW + 60_000_000;
+        let rotating = WebClient::new(Some("the-new-secret".to_owned()), None)
+            .with_previous("the-old-secret".to_owned(), until);
+        let old = headers(&[(WEB_CLIENT_HEADER, "the-old-secret")]);
+        let new = headers(&[(WEB_CLIENT_HEADER, "the-new-secret")]);
+        assert!(rotating.proven(&new, None, NOW));
+        assert!(rotating.proven(&old, None, NOW));
+        assert!(rotating.proven(&old, None, until - 1));
+        assert!(!rotating.proven(&old, None, until), "closed at the instant");
+        assert!(rotating.proven(&new, None, until + 1));
+        assert!(!rotating.proven(&headers(&[(WEB_CLIENT_HEADER, "the-old-secre")]), None, NOW));
+        for forwarded in FORWARDED_CERTIFICATE_HEADERS {
+            assert!(
+                !rotating.proven(
+                    &headers(&[(WEB_CLIENT_HEADER, "the-old-secret"), (forwarded, "CN=oml-web")]),
+                    None,
+                    NOW
+                ),
+                "{forwarded}"
+            );
+        }
+        assert_eq!(rotating.identity(), "secret");
+        assert_eq!(rotating.previous_until(), Some(until));
+        let shown = format!("{rotating:?}");
+        assert!(!shown.contains("the-old-secret") && !shown.contains("the-new-secret"), "{shown}");
     }
 }

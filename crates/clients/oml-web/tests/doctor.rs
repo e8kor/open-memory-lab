@@ -78,3 +78,30 @@ fn the_doctor_fails_a_missing_setting_by_name_and_never_prints_the_secret() {
         "{all:?}"
     );
 }
+
+/// A secret the start refuses as weak, or set both inline and as a file,
+/// is a `fail` naming the setting, and `web.api_url` still gets its own
+/// line (#230).
+#[test]
+fn the_doctor_fails_a_weak_or_doubly_set_client_secret_by_name() {
+    for pairs in [
+        vec![
+            ("OML_WEB__API_URL", "https://memory.example"),
+            ("OML_WEB__CLIENT_SECRET", "ssssssssssssssssssssssssssssssssssss"),
+        ],
+        vec![
+            ("OML_WEB__API_URL", "https://memory.example"),
+            ("OML_WEB__CLIENT_SECRET", SECRET),
+            ("OML_WEB__CLIENT_SECRET_FILE", "/run/credentials/oml-web/client"),
+        ],
+    ] {
+        let got = lines(&pairs);
+        assert_eq!(api_url_line(&got).0, Level::Ok, "{got:?}");
+        assert!(
+            got.iter()
+                .any(|(level, text)| *level == Level::Fail && text.starts_with("web.client_secret")),
+            "{got:?}"
+        );
+        assert!(got.iter().all(|(_, text)| !text.contains(SECRET)), "{got:?}");
+    }
+}

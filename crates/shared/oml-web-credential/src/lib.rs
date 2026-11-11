@@ -129,6 +129,87 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 mod tests {
     use super::*;
 
+    /// A file under the system temporary directory with `mode`, removed on
+    /// drop.
+    struct TempSecret(std::path::PathBuf);
+
+    impl TempSecret {
+        fn new(name: &str, text: &str, mode: u32) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "oml-web-credential-{}-{name}",
+                std::process::id()
+            ));
+            std::fs::write(&path, text).expect("write the secret file");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                    .expect("set the mode");
+            }
+            #[cfg(not(unix))]
+            let _ = mode;
+            Self(path)
+        }
+    }
+
+    impl Drop for TempSecret {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    const STRONG: &str = "Zq3vN8xK2mP7rT4wY9bC6dF1gH5jL0sA";
+
+    /// Both processes refuse the same secrets (ADR-0070 d2, #230): shorter
+    /// than 32 characters, fewer than 8 distinct characters, or anything
+    /// but visible ASCII, which a header cannot carry whole.
+    #[test]
+    fn a_web_client_secret_is_refused_when_short_repetitive_or_not_visible_ascii() {
+        assert_eq!(client_secret_refusal(STRONG), None);
+        assert_eq!(
+            client_secret_refusal(&"0123456789abcdef".repeat(4)),
+            None,
+            "openssl rand -hex 32"
+        );
+        for weak in [
+            "changeme".to_owned(),
+            STRONG[..31].to_owned(),
+            "s".repeat(64),
+            "ab".repeat(32),
+            "0123456".repeat(6),
+        ] {
+            assert!(client_secret_refusal(&weak).is_some(), "{weak}");
+        }
+        for (bad, why) in [
+            (format!("{STRONG} "), "a space"),
+            (format!("{STRONG}\t"), "a tab"),
+            (format!("{STRONG}é"), "non-ASCII"),
+            (format!("{STRONG}\n"), "a line ending"),
+        ] {
+            assert!(client_secret_refusal(&bad).is_some(), "{why}");
+        }
+    }
+
+    /// A secret file is read only when no one but its owner can read it,
+    /// and one line ending is dropped, as `echo` and editors leave one
+    /// (ADR-0070 d2, #230).
+    #[test]
+    fn a_secret_file_is_read_only_when_owner_only_and_its_line_ending_is_dropped() {
+        let file = TempSecret::new("owner", &format!("{STRONG}\n"), 0o600);
+        assert_eq!(read_secret_file(&file.0).as_deref(), Ok(STRONG));
+        let crlf = TempSecret::new("crlf", &format!("{STRONG}\r\n"), 0o400);
+        assert_eq!(read_secret_file(&crlf.0).as_deref(), Ok(STRONG));
+        #[cfg(unix)]
+        for mode in [0o640, 0o604, 0o644, 0o660] {
+            let open = TempSecret::new(&format!("open{mode:o}"), STRONG, mode);
+            let err = read_secret_file(&open.0).expect_err("readable by others");
+            assert!(err.contains(&format!("{mode:o}")), "{err}");
+            assert!(!err.contains(STRONG), "{err}");
+        }
+        let missing = std::env::temp_dir().join("oml-web-credential-no-such-file");
+        assert!(read_secret_file(&missing).is_err());
+    }
+
     #[test]
     fn an_acts_key_is_the_same_for_the_same_form_and_differs_by_nonce_and_session() {
         let key = act_idempotency_key("token-a", "nonce-1");

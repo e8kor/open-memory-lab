@@ -16,7 +16,13 @@ Run by .github/workflows/ci.yml (job chart). Renders deploy/helm/oml with
   through OML_WEB__API_URL, with startup and liveness on GET /web/healthz
   and readiness on GET /readyz on its http port, a ClusterIP Service of its
   own, and OML_WEB__CLIENT_SECRET from the same Secret and key as the lead's
-  (ADR-0070 d2), a Secret the chart generates being kept on uninstall; the
+  (ADR-0070 d2), a Secret the chart generates being kept on uninstall, and
+  none rendered when web.clientSecret.existingSecret names one; the lead, and
+  only the lead, reads OML_WEB__CLIENT_SECRET_PREVIOUS and
+  OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL from that Secret, each optional, so a
+  rotation keeps oml-web's old secret accepted; no web client secret is a
+  literal env value, and values.yaml names Secrets and keys, never a value
+  (#230, #242); the
   Ingress routes each of web.ingressPaths, none empty, Exact or Prefix as listed, to oml-web's
   Service and every other path to the lead's; with the NetworkPolicy on, oml-web's pods admit their http
   port alone and reach DNS and the lead's pods alone, and the lead admits
@@ -86,6 +92,12 @@ SERVER_COMPONENT = ("app.kubernetes.io/component", "server")
 LEAD_ROLE = ("oml.e8kor.github.io/role", "lead")
 PROBES = {"startupProbe": "/healthz", "livenessProbe": "/healthz", "readinessProbe": "/readyz"}
 WEB_COMPONENT = ("app.kubernetes.io/component", "web")
+# The lead's rotation settings and the values.yaml key naming each (ADR-0070 d2, #230).
+WEB_SECRET_ROTATION_ENV = {
+    "OML_WEB__CLIENT_SECRET_PREVIOUS": "previousKey",
+    "OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL": "previousUntilKey",
+}
+WEB_SECRET_VALUES = {"existingSecret", "key", "previousKey", "previousUntilKey"}
 WEB_PROBES = {"startupProbe": "/web/healthz", "livenessProbe": "/web/healthz", "readinessProbe": "/readyz"}
 
 
@@ -171,6 +183,7 @@ def main() -> int:
 
     if not values_web_paths():
         errors.append("values.yaml web.ingressPaths is empty, so the Ingress routes no page to oml-web (ADR-0070 d4)")
+    check_web_secret_values(errors)
     check_notes(errors)
     return report(errors)
 
@@ -513,6 +526,7 @@ def check_web(errors: list[str], label: str, docs: list[dict], image_user: str |
         refs.append(ref)
     if None not in refs and refs[0] != refs[1]:
         errors.append(f"{label}: the lead and oml-web read OML_WEB__CLIENT_SECRET from {refs[1]!r} and {refs[0]!r}")
+    check_web_secret_rotation(errors, label, c, containers(lead)[0], refs[1])
     if None not in refs:
         secrets = {d["metadata"]["name"]: d for d in of_kind(docs, "Secret")}
         rendered = secrets.get(refs[0].get("name"))
@@ -532,6 +546,52 @@ def check_web(errors: list[str], label: str, docs: list[dict], image_user: str |
             errors.append(f"{label}: oml-web's Service is a {sspec.get('type')}, not cluster-internal")
         if not any(p.get("name") == "http" and p.get("targetPort") in ("http", port) for p in sspec.get("ports", [])):
             errors.append(f"{label}: oml-web's Service has no http port targeting its pods' http port")
+
+
+def check_web_secret_rotation(errors: list[str], label: str, web: dict, lead: dict, current: dict | None) -> None:
+    """The lead reads the previous secret and its bound from the current secret's Secret, each optional;
+    oml-web sends the current secret alone, and no env value of either is a literal (ADR-0070 d2, #230)."""
+    values = (yaml.safe_load((CHART / "values.yaml").read_text()) or {}).get("web", {}).get("clientSecret", {})
+    for container, who in ((web, "oml-web"), (lead, "the lead")):
+        for env in container.get("env", []):
+            if env.get("name", "").startswith("OML_WEB__CLIENT_SECRET") and "value" in env:
+                errors.append(f"{label}: {who}'s {env['name']} is a literal value, not a secretKeyRef (#230)")
+    for name in WEB_SECRET_ROTATION_ENV:
+        if env_of(web, name) is not None:
+            errors.append(f"{label}: oml-web reads {name}; it sends the current secret alone (#230)")
+    if current is None:
+        return
+    for name, values_key in WEB_SECRET_ROTATION_ENV.items():
+        ref = ((env_of(lead, name) or {}).get("valueFrom") or {}).get("secretKeyRef")
+        if ref is None:
+            errors.append(f"{label}: the lead does not read {name} from a secretKeyRef, so a rotation cannot keep oml-web's old secret accepted (#230)")
+            continue
+        if ref.get("name") != current.get("name"):
+            errors.append(f"{label}: the lead reads {name} from Secret {ref.get('name')!r}, not {current.get('name')!r}, which holds OML_WEB__CLIENT_SECRET")
+        if ref.get("key") != values.get(values_key):
+            errors.append(f"{label}: the lead reads {name} from key {ref.get('key')!r}, not web.clientSecret.{values_key} {values.get(values_key)!r}")
+        if ref.get("optional") is not True:
+            errors.append(f"{label}: the lead's {name} is not optional, so the lead waits for it outside a rotation (#230)")
+
+
+def check_web_secret_values(errors: list[str]) -> None:
+    """values.yaml names where the web client secret lives and never holds one, and with
+    web.clientSecret.existingSecret the chart renders no Secret of its own (#242)."""
+    values = (yaml.safe_load((CHART / "values.yaml").read_text()) or {}).get("web", {}).get("clientSecret", {})
+    extra = set(values) - WEB_SECRET_VALUES
+    if extra:
+        errors.append(f"values.yaml web.clientSecret has {sorted(extra)}; it names a Secret and its keys, never a value (#242)")
+    named = render(errors, "--set", "web.clientSecret.existingSecret=operator-web-client")
+    if named is None:
+        return
+    if [d for d in of_kind(named, "Secret")]:
+        errors.append("web.clientSecret.existingSecret set: the chart still renders a Secret of its own (#242)")
+    for deployment in (lead_deployment(errors, "existingSecret", named), web_deployment(errors, "existingSecret", named)):
+        if deployment is None:
+            continue
+        ref = ((env_of(containers(deployment)[0], "OML_WEB__CLIENT_SECRET") or {}).get("valueFrom") or {}).get("secretKeyRef") or {}
+        if ref.get("name") != "operator-web-client":
+            errors.append(f"existingSecret: {deployment['metadata']['name']} reads the secret from {ref.get('name')!r}, not the named Secret (#242)")
 
 
 def check_web_policy(errors: list[str], label: str, docs: list[dict]) -> None:

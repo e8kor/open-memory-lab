@@ -2358,6 +2358,182 @@ mod tests {
         }
     }
 
+    /// A file under the system temporary directory with `mode`, removed on
+    /// drop.
+    struct TempSecret(std::path::PathBuf);
+
+    impl TempSecret {
+        fn new(name: &str, text: &str, mode: u32) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("oml-lead-config-{}-{name}", std::process::id()));
+            std::fs::write(&path, text).expect("write the secret file");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                    .expect("set the mode");
+            }
+            #[cfg(not(unix))]
+            let _ = mode;
+            Self(path)
+        }
+
+        fn path(&self) -> &str {
+            self.0.to_str().expect("a UTF-8 path")
+        }
+    }
+
+    impl Drop for TempSecret {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    const WEB_SECRET: &str = "Zq3vN8xK2mP7rT4wY9bC6dF1gH5jL0sA";
+    const WEB_SECRET_OLD: &str = "pR4tW7yZ0cF3hK6mQ9sV2xB5eG8jN1uD";
+
+    /// `web.client_secret_file` names an owner-only file holding the
+    /// secret; a file others can read, a secret set both ways, or one of
+    /// few distinct characters stops the start, naming the setting and
+    /// never the value (ADR-0070 d2, #230).
+    #[test]
+    fn the_web_client_secret_is_read_from_an_owner_only_file_and_a_weak_one_stops_the_start() {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let file = TempSecret::new("owner", &format!("{WEB_SECRET}\n"), 0o600);
+        let mut env = env_of(&base);
+        env.insert("OML_WEB__CLIENT_SECRET_FILE".to_owned(), file.path().to_owned());
+        let cfg = Config::from_sources(None, &|k| env.get(k).cloned()).expect("a file loads");
+        assert_eq!(cfg.web_client.identity(), "secret");
+        env.insert("OML_WEB__CLIENT_SECRET".to_owned(), WEB_SECRET.to_owned());
+        let err = Config::from_sources(None, &|k| env.get(k).cloned())
+            .expect_err("inline and file together");
+        assert!(err.to_string().contains("web.client_secret_file"), "{err}");
+        #[cfg(unix)]
+        {
+            let open = TempSecret::new("open", WEB_SECRET, 0o640);
+            let mut env = env_of(&base);
+            env.insert("OML_WEB__CLIENT_SECRET_FILE".to_owned(), open.path().to_owned());
+            let err = Config::from_sources(None, &|k| env.get(k).cloned())
+                .expect_err("a file others can read");
+            let shown = err.to_string();
+            assert!(shown.contains("web.client_secret_file") && shown.contains("640"), "{shown}");
+            assert!(!shown.contains(WEB_SECRET), "{shown}");
+        }
+        let mut env = env_of(&base);
+        env.insert("OML_WEB__CLIENT_SECRET".to_owned(), "x".repeat(48));
+        let err = Config::from_sources(None, &|k| env.get(k).cloned())
+            .expect_err("a repetitive secret");
+        assert!(err.to_string().contains("web.client_secret"), "{err}");
+    }
+
+    /// Rotation without downtime (#230): the lead accepts
+    /// `web.client_secret_previous` beside the current secret only with
+    /// `web.client_secret_previous_until`, an instant at most seven days
+    /// after the start; a previous secret without the current one, equal to
+    /// it, or with no bound or a later one stops the start, naming the
+    /// setting.
+    #[test]
+    fn a_previous_web_client_secret_is_accepted_only_with_a_bound_of_at_most_seven_days() {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_micros();
+        let now = i64::try_from(now).expect("in range");
+        let day = 86_400_000_000_i64;
+        let at = |micros: i64| oml_app::domain::valid_time::fixed_width(micros);
+        let load = |pairs: &[(&str, String)]| {
+            let mut env = env_of(&base);
+            for (k, v) in pairs {
+                env.insert((*k).to_owned(), v.clone());
+            }
+            Config::from_sources(None, &|k| env.get(k).cloned())
+        };
+        let cfg = load(&[
+            ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+            ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD.to_owned()),
+            ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now + day)),
+        ])
+        .expect("a previous secret for a day");
+        assert_eq!(cfg.web_client.identity(), "secret");
+        assert!(cfg.web_client.previous_until().is_some());
+        assert!(!format!("{cfg:?}").contains(WEB_SECRET_OLD), "never in the debug form");
+        for (pairs, named) in [
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD.to_owned()),
+                ],
+                "web.client_secret_previous_until",
+            ),
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now + 8 * day)),
+                ],
+                "web.client_secret_previous_until",
+            ),
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", "tomorrow".to_owned()),
+                ],
+                "web.client_secret_previous_until",
+            ),
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now + day)),
+                ],
+                "web.client_secret_previous",
+            ),
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now + day)),
+                ],
+                "web.client_secret_previous",
+            ),
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS", "short".to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now + day)),
+                ],
+                "web.client_secret_previous",
+            ),
+            (
+                vec![
+                    ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+                    ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now + day)),
+                ],
+                "web.client_secret_previous_until",
+            ),
+        ] {
+            let err = load(&pairs).expect_err(named);
+            assert!(err.to_string().contains(named), "{named}: {err}");
+            assert!(!err.to_string().contains(WEB_SECRET_OLD), "{err}");
+        }
+        // A window already closed at start loads: the gate never accepts
+        // the previous secret, and the start warns (main) until it is unset.
+        let closed = load(&[
+            ("OML_WEB__CLIENT_SECRET", WEB_SECRET.to_owned()),
+            ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD.to_owned()),
+            ("OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL", at(now - day)),
+        ])
+        .expect("a closed window loads");
+        assert_eq!(closed.web_client.previous_until(), Some(now - day));
+    }
+
     #[test]
     fn a_provider_without_its_secret_stops_the_process() {
         let base = [
