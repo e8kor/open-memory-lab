@@ -7,9 +7,11 @@
 //! reverse proxy sends each moved page's URL here and every other to the
 //! lead. [`PAGES`] is that routing table, and [`serves`] its reading.
 
+pub mod atlas;
 pub mod config;
 pub mod doctor;
 pub mod frame;
+pub mod memories;
 pub mod middleware;
 pub mod outcome;
 pub mod pages;
@@ -56,7 +58,20 @@ pub const PAGES: &[(&str, &str)] = &[
     ("POST", USER_WORKAREAS_PATH),
     ("GET", ADMIN_WORKAREAS_PATH),
     ("POST", ADMIN_WORKAREAS_PATH),
+    ("GET", USER_MEMORIES_PATH),
+    ("GET", USER_ATLAS_PATH),
+    ("GET", ADMIN_MEMORIES_PATH),
+    ("GET", ADMIN_ATLAS_PATH),
+    ("GET", memories::USER_DATA_PATH),
+    ("GET", memories::ADMIN_DATA_PATH),
 ];
+
+/// The Memories list and the Atlas of each page (ADR-0045 d22-d32), moved
+/// from `GET /web?view=memories` and `GET /web/admin?view=memories`, the
+/// Atlas from their `display=atlas`.
+pub use oml_page::web::{
+    ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, USER_ATLAS_PATH, USER_MEMORIES_PATH,
+};
 
 /// The user page's Workareas view and its acts (ADR-0045 d28), moved from
 /// `GET /web?view=workarea` and the user page's workarea actions.
@@ -207,15 +222,26 @@ pub fn router(web: Web) -> Router {
             ADMIN_WORKAREAS_PATH,
             get(workareas::admin_page).post(workareas::admin_act),
         )
+        .route(USER_MEMORIES_PATH, get(memories::user_list))
+        .route(ADMIN_MEMORIES_PATH, get(memories::admin_list))
+        .route(USER_ATLAS_PATH, get(memories::user_atlas))
+        .route(ADMIN_ATLAS_PATH, get(memories::admin_atlas))
         .route_layer(axum::middleware::from_fn_with_state(
             web.clone(),
             session::load,
         ))
         .with_state(web.clone());
+    // The JSON routes load their own session: no session is not found as
+    // data, never a redirect to sign in (ADR-0045 d25).
+    let data = Router::new()
+        .route(memories::USER_DATA_PATH, get(memories::user_data))
+        .route(memories::ADMIN_DATA_PATH, get(memories::admin_data))
+        .with_state(web.clone());
     Router::new()
         .route(HEALTH_PATH, get(health))
         .route(READY_PATH, get(ready).with_state(web.clone()))
         .merge(pages)
+        .merge(data)
         .fallback(not_found)
         .layer(
             ServiceBuilder::new()
@@ -244,6 +270,17 @@ mod tests {
         assert!(serves("POST", "/web/workareas"));
         assert!(serves("GET", "/web/admin/workareas"));
         assert!(serves("POST", "/web/admin/workareas"));
+        for path in [
+            "/web/memories",
+            "/web/atlas",
+            "/web/admin/memories",
+            "/web/admin/atlas",
+            "/web/data/memories",
+            "/web/admin/data/memories",
+        ] {
+            assert!(serves("GET", path), "{path}");
+            assert!(!serves("POST", path), "{path}");
+        }
         assert!(serves("GET", "/web/healthz"));
         assert!(!serves("GET", "/web"));
         assert!(!serves("POST", "/web"));
