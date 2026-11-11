@@ -220,6 +220,17 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     later sign-up then creates a new root, and the old one stays cut off. The cost is that
     "disabled" is a cut-off and not a revocation. Revocation is designed and not built.
 
+    Each `key.denied`, and the closing commit of `close_deletion` (d6), retries alone on a
+    chain-head conflict. One request therefore journals each of its events at most once, and a
+    conflict that outlasts the retries answers `system.unavailable` without re-running the act
+    ([#266](https://github.com/e8kor/open-memory-lab/issues/266)). A refusal can still follow a
+    landed commit. A key deleted between the listing and its denial answers
+    `access.not_found` after `web.user_disabled` landed, and an admin key under the root
+    answers `request.validation`. Such a 4xx means the act stopped, not that it journalled
+    nothing. The person stays disabled and the keys not yet denied stay live. A resubmission
+    journals a second `web.user_disabled` and denies the rest. An idempotency layer reads a
+    4xx from `disable_user` or `close_deletion` as possibly committed.
+
 - **d9 — Sign-ups are limited per client address, at the terms page's `POST`.** The address is
   the request line's `client_ip` under `server.trusted_proxies` (ADR-0042 d7). ADR-0045 d15
   declined address limits because behind a proxy every request shares the proxy's address. With
