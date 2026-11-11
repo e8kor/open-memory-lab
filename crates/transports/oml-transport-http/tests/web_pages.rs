@@ -347,8 +347,8 @@ async fn the_lead_serves_exactly_web_routes() {
     }
     assert_eq!(
         WEB_ROUTES.len(),
-        14,
-        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven, ADR-0070 d4 GET /web/sign-in, and ADR-0070 d7 (b) moved the two JSON routes to oml-web"
+        8,
+        "a new route is a new decision amending ADR-0045; ADR-0068 d10 added seven, ADR-0070 d4 GET /web/sign-in, and ADR-0070 d7 (b) moved the two JSON routes, the onboarding page with its poll and export, and the users page to oml-web"
     );
     assert_eq!(
         USER_ACTIONS,
@@ -520,7 +520,10 @@ async fn a_listed_verified_google_email_signs_in_and_sees_who_it_is() {
     assert_eq!(code, "the-code-4711");
     assert_eq!(verifier.len(), 64);
     assert_eq!(redirect, "https://oml.example.com/web/callback/google");
-    let (status, _, page) = send(
+    // The setup view is oml-web's (ADR-0070 d7 (b), sixth change, 6b):
+    // `oml-web/tests/web_pages.rs` holds that it names who and never the
+    // email; the lead answers its old URL with a redirect.
+    let (status, headers, _) = send(
         &rig.router,
         get(
             "/web?view=setup",
@@ -528,12 +531,8 @@ async fn a_listed_verified_google_email_signs_in_and_sees_who_it_is() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(
-        page.contains("alice · oml"),
-        "who and the organisation: {page}"
-    );
-    assert!(!page.contains(EMAIL), "the page never echoes the email");
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/web/setup");
     // The landing is the Keys view, which oml-web serves (ADR-0070 d7 (b)):
     // `oml-web/tests/web_pages.rs` holds that it lists the session keys.
     let (status, headers, _) = send(
@@ -771,8 +770,10 @@ async fn a_post_without_the_csrf_token_journals_nothing() {
         );
     }
     assert_eq!(rig.head().await, before);
-    let (_, _, page) = send(&rig.router, get("/web?view=setup", Some(&cookie))).await;
-    assert!(page.contains("alice · oml"), "the session stands");
+    // The session stands: a signed-in GET /web goes on to the Keys view.
+    let (status, headers, _) = send(&rig.router, get("/web", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/web/keys", "the session stands");
 }
 
 #[tokio::test]
@@ -831,27 +832,55 @@ async fn sign_out_ends_the_session_and_clears_the_cookie() {
 }
 
 #[tokio::test]
-async fn a_non_admin_session_gets_not_found_on_the_admin_page() {
+async fn the_lead_answers_the_admin_page_with_a_redirect_to_the_overview_before_reading_a_session()
+{
+    // The admin overview is oml-web's at /web/admin/people (ADR-0070 d7
+    // (b)), which answers anyone but an admin not found: the lead sends
+    // every GET /web/admin there, signed in or not, carrying nothing.
     let rig = rig().await;
     let (_, token, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
     let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
-    let (status, _, body) = send(&rig.router, get("/web/admin", Some(&cookie))).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(body.contains("access.not_found"));
-    let (status, _, _) = send(&rig.router, get("/web/admin", None)).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    for (path, who) in [
+        ("/web/admin", Some(cookie.as_str())),
+        ("/web/admin", None),
+        ("/web/admin?view=people&x=1", None),
+    ] {
+        let (status, headers, _) = send(&rig.router, get(path, who)).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{path}");
+        assert_eq!(headers[header::LOCATION], "/web/admin/people", "{path}");
+    }
+    // The old acts of the overview run nothing and land there.
     rig.allow("boss@example.com", "boss", true).await;
-    let (_, admin, _) = sign_in_google(&rig, "sub-boss", "boss@example.com").await;
-    let (status, _, page) = send(
-        &rig.router,
-        get(
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let head = rig.head().await;
+    for action in [
+        "allow_email",
+        "remove_email",
+        "set_admin",
+        "grant_review",
+        "grant_curation",
+    ] {
+        let (status, headers, body) = act(
+            &rig,
+            &admin,
             "/web/admin",
-            Some(&format!("{SESSION_COOKIE}={}", admin.expect("a session"))),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(page.contains("Administration"));
+            &[("action", action), ("email", "carol@example.com")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{action}: {body}");
+        assert_eq!(headers[header::LOCATION], "/web/admin/people");
+    }
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    // The onboarding and users pages are not the lead's at all.
+    for path in [
+        "/web/start",
+        "/web/start/status",
+        "/web/start/export",
+        "/web/admin/users",
+    ] {
+        let (status, _, _) = send(&rig.router, get(path, Some(&admin))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
 }
 
 #[tokio::test]
@@ -1419,54 +1448,6 @@ async fn a_session_key_has_no_value_and_no_connect_code() {
         .await
         .expect_err("a session key holds no connection");
     assert!(format!("{refused:?}").contains("SessionKey"), "{refused:?}");
-}
-
-#[tokio::test]
-async fn the_last_admin_address_is_never_removed_or_unflagged_from_the_page() {
-    let rig = rig().await;
-    rig.allow("boss@example.com", "boss", true).await;
-    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    for fields in [
-        vec![
-            ("action", "set_admin"),
-            ("email", "boss@example.com"),
-            ("admin", "no"),
-        ],
-        vec![
-            ("action", "remove_email"),
-            ("email", "boss@example.com"),
-            ("confirm", "yes"),
-        ],
-    ] {
-        let (status, _, body) = act(&rig, &admin, "/web/admin", &fields).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-        assert!(body.contains("last admin"), "{body}");
-    }
-    let (status, _, _) = act(
-        &rig,
-        &admin,
-        "/web/admin",
-        &[
-            ("action", "allow_email"),
-            ("email", "carol@example.com"),
-            ("user", "carol"),
-            ("admin", "yes"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    let (status, _, _) = act(
-        &rig,
-        &admin,
-        "/web/admin",
-        &[
-            ("action", "set_admin"),
-            ("email", "carol@example.com"),
-            ("admin", "no"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
 }
 
 #[tokio::test]
@@ -2144,4 +2125,171 @@ async fn the_lead_answers_the_review_and_keys_views_and_their_acts_with_a_redire
         let (status, _, _) = send(&rig.router, get(path, Some(&cookie))).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// #266: a chain conflict after a disable's first commit never journals it twice
+// ---------------------------------------------------------------------------
+
+/// A call to the API with the tenant's admin key, as `oml admin` makes it.
+async fn as_admin(rig: &Rig, path: &str, idem: &str, body: Value) -> (StatusCode, Value) {
+    let request = Request::post(path)
+        .header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", rig.boot.admin_key.value),
+        )
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("idempotency-key", idem)
+        .body(Body::from(body.to_string()))
+        .expect("a request");
+    let (status, _, answer) = send(&rig.router, request).await;
+    (status, serde_json::from_str(&answer).unwrap_or(Value::Null))
+}
+
+/// The tenant's events of `event_type`, oldest first.
+async fn journalled(rig: &Rig, event_type: &str) -> Vec<u64> {
+    rig.store
+        .events_range(rig.boot.tenant_id, 1, 1000)
+        .await
+        .expect("the chain")
+        .iter()
+        .filter(|e| e.envelope.event_type == event_type)
+        .map(|e| e.envelope.seq)
+        .collect()
+}
+
+/// A chain-head conflict as a concurrent writer causes it.
+fn lost_race() -> oml_app::ports::StoreError {
+    oml_app::ports::StoreError::SeqConflict {
+        expected_seq: 0,
+        found_seq: 0,
+    }
+}
+
+/// alice signed in, with two writer keys of her own to cut off.
+async fn alice_with_two_keys(rig: &Rig) -> String {
+    let cookie = signed_in(rig, "sub-1", EMAIL).await;
+    let _ = issued(rig, &cookie, "laptop").await;
+    let _ = issued(rig, &cookie, "phone").await;
+    cookie
+}
+
+#[tokio::test]
+async fn a_disable_whose_key_denial_loses_the_chain_race_journals_web_user_disabled_once() {
+    let rig = rig().await;
+    let _ = alice_with_two_keys(&rig).await;
+    rig.store
+        .refuse_next_commit_of(oml_app::domain::event_types::KEY_DENIED, lost_race());
+    let (status, done) =
+        as_admin(&rig, "/v2/web/users/alice/disable", "disable-1", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    let disabled = journalled(&rig, oml_app::domain::event_types::WEB_USER_DISABLED).await;
+    assert_eq!(disabled.len(), 1, "journalled once: {disabled:?}");
+    assert_eq!(done["journal_seq"], disabled[0], "{done}");
+    assert_eq!(done["keys_cut_off"], 2, "{done}");
+    assert_eq!(
+        journalled(&rig, oml_app::domain::event_types::KEY_DENIED)
+            .await
+            .len(),
+        2,
+        "each key denied once"
+    );
+}
+
+#[tokio::test]
+async fn a_close_whose_closing_commit_loses_the_chain_race_journals_each_event_once() {
+    let rig = rig().await;
+    let cookie = alice_with_two_keys(&rig).await;
+    let (status, asked) =
+        as_web(&rig, &cookie, "web", "/v2/web/deletion-requests", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{asked}");
+    rig.store.refuse_next_commit_of(
+        oml_app::domain::event_types::WEB_DELETION_CLOSED,
+        lost_race(),
+    );
+    let (status, done) = as_admin(
+        &rig,
+        "/v2/web/users/alice/deletion/close",
+        "close-1",
+        json!({ "outcome": "deleted" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    use oml_app::domain::event_types::{KEY_DENIED, WEB_DELETION_CLOSED, WEB_USER_DISABLED};
+    assert_eq!(
+        journalled(&rig, WEB_USER_DISABLED).await.len(),
+        1,
+        "disabled once"
+    );
+    assert_eq!(
+        journalled(&rig, KEY_DENIED).await.len(),
+        2,
+        "each key denied once"
+    );
+    let closed = journalled(&rig, WEB_DELETION_CLOSED).await;
+    assert_eq!(closed.len(), 1, "closed once");
+    assert_eq!(done["journal_seq"], closed[0], "{done}");
+}
+
+/// A key under the person's root that no denial can cut off, as an admin
+/// key there is (`DenialOnAdminKey`), is skipped: the disable denies every
+/// other key, journals `web.user_disabled` once, answers 200, and a
+/// resubmission under the same key replays it, so no refusal ever follows
+/// the disable's first commit (ADR-0068 d8, #266).
+#[tokio::test]
+async fn a_disable_skips_a_key_it_cannot_deny_denies_the_rest_and_a_resubmission_replays() {
+    use oml_app::domain::event_types::{KEY_DENIED, WEB_USER_DISABLED};
+    let rig = rig().await;
+    let _ = alice_with_two_keys(&rig).await;
+    let stray = rig
+        .app
+        .issue_key(
+            &rig.boot.admin_key.value,
+            &IssueKeyRequest {
+                profile: None,
+                role: Role::Admin,
+                name: Name::parse("stray-admin").expect("a name"),
+                principal: "operator-2".to_owned(),
+                held_by: Some(HeldBy::Human),
+                default_workarea: None,
+                crew: None,
+                grants: Vec::new(),
+                connect_code: false,
+                user: None,
+                guardrail_scope: None,
+            },
+        )
+        .await
+        .expect("an admin key");
+    let root = key_named(&rig, "alice-web")
+        .await
+        .user
+        .expect("alice's root");
+    rig.store
+        .set_key_user(rig.boot.tenant_id, stray.key_id, Some(root));
+    let request = || {
+        Request::post("/v2/web/users/alice/disable")
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", rig.boot.admin_key.value),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", "disable-stray")
+            .body(Body::from("{}"))
+            .expect("a request")
+    };
+    let (status, _, body) = send(&rig.router, request()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let done: Value = serde_json::from_str(&body).expect("JSON");
+    assert_eq!(done["keys_cut_off"], 2, "{done}");
+    assert_eq!(journalled(&rig, WEB_USER_DISABLED).await.len(), 1);
+    assert_eq!(journalled(&rig, KEY_DENIED).await.len(), 2);
+    let (status, headers, again) = send(&rig.router, request()).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(headers["idempotency-replay"], "true", "{again}");
+    assert_eq!(
+        journalled(&rig, WEB_USER_DISABLED).await.len(),
+        1,
+        "the resubmission replays"
+    );
 }

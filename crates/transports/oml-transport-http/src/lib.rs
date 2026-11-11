@@ -2724,14 +2724,27 @@ where
         Ok(json_response(StatusCode::OK, &connection_json(&revoked)))
     }
 
-    async fn whoami(State(st): State<Self>, rid: Rid, headers: HeaderMap) -> Response {
-        finish(&rid, Self::whoami_inner(&st, &headers).await)
+    async fn whoami(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        uri: axum::http::Uri,
+    ) -> Response {
+        let start = uri
+            .query()
+            .and_then(|q| crate::oauth::form_pairs(q.as_bytes()).ok())
+            .is_some_and(|pairs| pairs.iter().any(|(n, v)| n == "start" && v == "true"));
+        finish(&rid, Self::whoami_inner(&st, &headers, start).await)
     }
 
     /// `GET /v2/whoami`: the calling key's own record, for any live key;
     /// never its denials, and no read is journalled (http-api.md whoami;
     /// ADR-0039 d15).
-    async fn whoami_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
+    async fn whoami_inner(
+        st: &Self,
+        headers: &HeaderMap,
+        start: bool,
+    ) -> Result<Response, ApiError> {
         let acting = acting(headers, None)?;
         let whoami = st
             .app
@@ -2740,15 +2753,13 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let person = st
             .app
-            .whoami_person(acting.bearer())
+            .whoami_person(acting.bearer(), start)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let person = person.as_ref().map_or(Value::Null, person_json);
         let mut body = whoami_json(&whoami);
         if let Some(obj) = body.as_object_mut() {
-            obj.insert(
-                "person".to_owned(),
-                person.as_ref().map_or(Value::Null, person_json),
-            );
+            obj.insert("person".to_owned(), person);
         }
         Ok(json_response(StatusCode::OK, &body))
     }
@@ -4115,13 +4126,29 @@ fn person_json(person: &oml_app::app::Person) -> Value {
         ),
         None => (Value::Null, Value::Null),
     };
-    json!({
+    let mut out = json!({
         "user": person.user.as_str(),
         "under_quotas": person.limits.is_some(),
         "usage": usage,
         "quotas": quotas,
         "deletion_requested_at": person.deletion_requested_at.as_ref().map(|t| t.as_str()),
-    })
+    });
+    // The onboarding status, only when asked (`start=true`): every page's
+    // session check calls whoami (ADR-0070 d5, d8).
+    if let (Some(status), Some(obj)) = (&person.start, out.as_object_mut()) {
+        obj.insert(
+            "start".to_owned(),
+            json!({
+                "connected": status.connected,
+                "first_memory": match status.first_memory {
+                    Some(oml_app::domain::MemoryStatus::Held) => Some("held"),
+                    Some(oml_app::domain::MemoryStatus::Promoted) => Some("promoted"),
+                    _ => None,
+                },
+            }),
+        );
+    }
+    out
 }
 
 /// openapi.yaml `WhoamiGrant`: a stored grant as `whoami` serves it, its

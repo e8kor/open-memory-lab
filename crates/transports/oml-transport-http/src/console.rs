@@ -992,7 +992,7 @@ where
                     .map_err(|e| ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
                 let person = st
                     .app
-                    .whoami_person(Bearer::Session(&caller))
+                    .whoami_person(Bearer::Session(&caller), false)
                     .await
                     .map_err(|e| ActFailure::after(map_app_error(e, ErrorContext::Write)))?;
                 Ok(Acted::new(

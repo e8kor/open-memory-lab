@@ -242,12 +242,9 @@ async fn the_first_admin_email_is_added_under_an_admin_key_and_signs_in_through_
             .expect("a request"),
     )
     .await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "an admin entry opens the admin page"
-    );
-    assert!(page.contains("alice · oml"), "{page}");
+    // The admin page is oml-web's (ADR-0070 d7 (b)): the lead sends it to
+    // the overview's own path, where oml-web opens it for an admin entry.
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
 
     // The first sign-in issued alice's session keys under the serving role:
     // credential `session` and `session_user` round-trip through the store.

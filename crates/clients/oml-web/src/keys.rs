@@ -53,7 +53,7 @@ const KEY_PAGES_MAX: usize = 50;
 
 /// Which page the view is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Side {
+pub(crate) enum Side {
     User,
     Admin,
 }
@@ -84,7 +84,7 @@ fn notice(done: Option<&str>) -> Option<&'static str> {
 
 /// Every key `user` names (the session's own where `None`), a page at a
 /// time.
-async fn keys(
+pub(crate) async fn keys(
     web: &Web,
     credential: &str,
     calls: &PageCalls,
@@ -163,7 +163,7 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str) -> String {
     )
 }
 
-fn table(keys: &[ListedKey], side: Side, csrf: &str, user: &str) -> String {
+pub(crate) fn table(keys: &[ListedKey], side: Side, csrf: &str, user: &str) -> String {
     let mut out = String::from(
         "<table><tr><th>Key</th><th>Role</th><th>Access</th><th>State</th><th></th></tr>",
     );
@@ -184,7 +184,7 @@ fn secret_card(secret: &Secret) -> (&'static str, String) {
         } => (
             "Key issued",
             format!(
-                r#"<h1>{}</h1><p class="desc">Shown once: copy it now. Then <a href="/web?view=setup">set up</a> your agent.</p><div class="card secret"><p class="label">For your agent</p><pre>OML_URL={}
+                r#"<h1>{}</h1><p class="desc">Shown once: copy it now. Then <a href="/web/setup">set up</a> your agent.</p><div class="card secret"><p class="label">For your agent</p><pre>OML_URL={}
 OML_API_KEY={}</pre></div><p><a href="{USER_KEYS_PATH}">Back to your keys</a></p>"#,
                 short(name),
                 attr(server),
@@ -211,7 +211,7 @@ OML_API_KEY={}</pre></div><p><a href="{USER_KEYS_PATH}">Back to your keys</a></p
 
 /// The page with the `Set-Cookie` that clears a sealed secret, whether or
 /// not it opened.
-fn clearing(mut response: Response) -> Response {
+pub(crate) fn clearing(mut response: Response) -> Response {
     if let Ok(value) = HeaderValue::from_str(&once::clear_cookie()) {
         response.headers_mut().append(header::SET_COOKIE, value);
     }
@@ -394,7 +394,7 @@ fn defined(side: Side, action: &str, name: &str) -> bool {
 }
 
 /// The server URL an agent sets beside its key: the API's issuer.
-async fn server(web: &Web) -> String {
+pub(crate) async fn server(web: &Web) -> String {
     match web.api.issuer().await {
         Ok(issuer) => issuer,
         Err(_) => web

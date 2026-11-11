@@ -6,7 +6,8 @@
 #     crates/clients/oml-web/src/lib.rs) goes to oml-web, 127.0.0.1:8091;
 #   - every other path goes to the lead, 127.0.0.1:8090: the API (/v1, /v2),
 #     /mcp, /oauth, /.well-known, /readyz, sign-in (/web/sign-in,
-#     /web/callback/*, /web/sign-up) and the pages that have not moved yet;
+#     /web/callback/*, /web/sign-up), sign-out (POST /web) and the old page
+#     URLs, which it answers with a redirect to the moved page;
 #   - the landing pages are static files from oml-site-<version>.tar.gz.
 #
 # oml-web reaches the lead at its own address (web.api_url), never back
@@ -23,7 +24,7 @@ memory.example.com {
 		file_server
 	}
 
-	@oml_web path /web/guardrails /web/workareas /web/admin/workareas /web/memories /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/keys /web/admin/keys /web/memory /web/admin/memory /web/admin/curate /web/render/* /web/assets/*
+	@oml_web path /web/guardrails /web/workareas /web/admin/workareas /web/memories /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/keys /web/admin/keys /web/memory /web/admin/memory /web/admin/curate /web/start /web/start/status /web/start/export /web/setup /web/admin/people /web/admin/users /web/render/* /web/assets/*
 	reverse_proxy @oml_web 127.0.0.1:8091
 
 	reverse_proxy 127.0.0.1:8090

@@ -264,20 +264,6 @@ from .source_checked import SourceChecked
 from .source_checked_moved_to_type_0 import SourceCheckedMovedToType0
 from .source_checked_result import SourceCheckedResult
 from .stale import Stale
-from .start_export_response_200 import StartExportResponse200
-from .start_page_act_body import StartPageActBody
-from .start_page_act_body_action import StartPageActBodyAction
-from .start_page_client import StartPageClient
-from .start_status_response_200 import StartStatusResponse200
-from .start_status_response_200_first_memory_type_1 import (
-    StartStatusResponse200FirstMemoryType1,
-)
-from .start_status_response_200_first_memory_type_2_type_1 import (
-    StartStatusResponse200FirstMemoryType2Type1,
-)
-from .start_status_response_200_first_memory_type_3_type_1 import (
-    StartStatusResponse200FirstMemoryType3Type1,
-)
 from .submit_accepted import SubmitAccepted
 from .submit_accepted_replaces_type_0 import SubmitAcceptedReplacesType0
 from .submit_accepted_scan import SubmitAcceptedScan
@@ -306,9 +292,6 @@ from .usage_settings import UsageSettings
 from .user_page_act_body import UserPageActBody
 from .user_page_act_body_action import UserPageActBodyAction
 from .user_page_view import UserPageView
-from .users_page_act_body import UsersPageActBody
-from .users_page_act_body_action import UsersPageActBodyAction
-from .users_page_act_body_quota import UsersPageActBodyQuota
 from .verdict_request import VerdictRequest
 from .verdict_request_verdict import VerdictRequestVerdict
 from .verdict_result import VerdictResult
@@ -330,6 +313,16 @@ from .whoami_grant_role import WhoamiGrantRole
 from .whoami_held_by import WhoamiHeldBy
 from .whoami_person import WhoamiPerson
 from .whoami_person_quotas_type_0 import WhoamiPersonQuotasType0
+from .whoami_person_start_type_0 import WhoamiPersonStartType0
+from .whoami_person_start_type_0_first_memory_type_1 import (
+    WhoamiPersonStartType0FirstMemoryType1,
+)
+from .whoami_person_start_type_0_first_memory_type_2_type_1 import (
+    WhoamiPersonStartType0FirstMemoryType2Type1,
+)
+from .whoami_person_start_type_0_first_memory_type_3_type_1 import (
+    WhoamiPersonStartType0FirstMemoryType3Type1,
+)
 from .whoami_person_usage_type_0 import WhoamiPersonUsageType0
 from .whoami_profile_type_1 import WhoamiProfileType1
 from .whoami_profile_type_2_type_1 import WhoamiProfileType2Type1
@@ -602,14 +595,6 @@ __all__ = (
     "SourceCheckedMovedToType0",
     "SourceCheckedResult",
     "Stale",
-    "StartExportResponse200",
-    "StartPageActBody",
-    "StartPageActBodyAction",
-    "StartPageClient",
-    "StartStatusResponse200",
-    "StartStatusResponse200FirstMemoryType1",
-    "StartStatusResponse200FirstMemoryType2Type1",
-    "StartStatusResponse200FirstMemoryType3Type1",
     "SubmitAccepted",
     "SubmitAcceptedReplacesType0",
     "SubmitAcceptedScan",
@@ -638,9 +623,6 @@ __all__ = (
     "UserPageActBody",
     "UserPageActBodyAction",
     "UserPageView",
-    "UsersPageActBody",
-    "UsersPageActBodyAction",
-    "UsersPageActBodyQuota",
     "VerdictRequest",
     "VerdictRequestVerdict",
     "VerdictResult",
@@ -662,6 +644,10 @@ __all__ = (
     "WhoamiHeldBy",
     "WhoamiPerson",
     "WhoamiPersonQuotasType0",
+    "WhoamiPersonStartType0",
+    "WhoamiPersonStartType0FirstMemoryType1",
+    "WhoamiPersonStartType0FirstMemoryType2Type1",
+    "WhoamiPersonStartType0FirstMemoryType3Type1",
     "WhoamiPersonUsageType0",
     "WhoamiProfileType1",
     "WhoamiProfileType2Type1",

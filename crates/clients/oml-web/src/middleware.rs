@@ -293,8 +293,9 @@ fn security_headers(h: &mut HeaderMap) {
 }
 
 /// The mark of an answer whose own policy, cache rule and referrer policy
-/// layer 5 keeps: set only by [`crate::render`], on the frame, its bundle
-/// and a page that holds a drawing (ADR-0056 d9). Every other answer gets
+/// layer 5 keeps: set by [`crate::render`] on the frame, its bundle and a
+/// page that holds a drawing (ADR-0056 d9), and by [`crate::start`] on the
+/// Start page for its one hashed script (ADR-0068 d10). Every other answer gets
 /// the pages' headers whatever its handler set, so no handler weakens them
 /// by setting a header.
 #[derive(Debug, Clone, Copy)]

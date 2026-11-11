@@ -8,6 +8,7 @@
 //! lead. [`PAGES`] is that routing table, and [`serves`] its reading.
 
 mod acts;
+pub mod admin;
 pub mod atlas;
 mod card;
 pub mod config;
@@ -23,6 +24,7 @@ pub mod pages;
 pub mod render;
 pub mod review;
 pub mod session;
+pub mod start;
 pub mod workareas;
 
 use std::sync::Arc;
@@ -84,6 +86,15 @@ pub const PAGES: &[(&str, &str)] = &[
     ("POST", ADMIN_MEMORY_PATH),
     ("GET", ADMIN_CURATE_PATH),
     ("POST", ADMIN_CURATE_PATH),
+    ("GET", start::START_PATH),
+    ("POST", start::START_PATH),
+    ("GET", start::STATUS_PATH),
+    ("GET", start::EXPORT_PATH),
+    ("GET", start::SETUP_PATH),
+    ("GET", admin::PEOPLE_PATH),
+    ("POST", admin::PEOPLE_PATH),
+    ("GET", admin::USERS_PATH),
+    ("POST", admin::USERS_PATH),
 ];
 
 /// The path prefixes this process serves for `GET` alone, each a fixed
@@ -299,6 +310,16 @@ pub fn router(web: Web) -> Router {
             ADMIN_CURATE_PATH,
             get(memory::curate_page).post(memory::curate_act),
         )
+        .route(start::START_PATH, get(start::page).post(start::act))
+        .route(start::SETUP_PATH, get(start::setup))
+        .route(
+            admin::PEOPLE_PATH,
+            get(admin::people_page).post(admin::people_act),
+        )
+        .route(
+            admin::USERS_PATH,
+            get(admin::users_page).post(admin::users_act),
+        )
         .route_layer(axum::middleware::from_fn_with_state(
             web.clone(),
             session::load,
@@ -309,6 +330,8 @@ pub fn router(web: Web) -> Router {
     let data = Router::new()
         .route(memories::USER_DATA_PATH, get(memories::user_data))
         .route(memories::ADMIN_DATA_PATH, get(memories::admin_data))
+        .route(start::STATUS_PATH, get(start::status))
+        .route(start::EXPORT_PATH, get(start::export))
         .with_state(web.clone());
     // The frame resolves its own session: a frame that does not open is not
     // found, never a redirect inside the frame (ADR-0056 d9).
