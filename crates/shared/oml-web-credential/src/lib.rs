@@ -4,7 +4,9 @@
 //! context computes the first at session open and the lead checks the
 //! second; `oml-web` computes both from the cookie. One implementation, so the two processes
 //! cannot derive different values, in a leaf `oml-web` may link without
-//! reaching the application core (ADR-0070 d1).
+//! reaching the application core (ADR-0070 d1). The web client secret's
+//! rule lives here too, for the same reason: the lead and `oml-web` refuse
+//! the same secrets and read a secret file the same way (ADR-0070 d2, #230).
 
 #![forbid(unsafe_code)]
 
@@ -125,6 +127,72 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0_u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+/// The shortest web client secret either process accepts: 32 characters,
+/// the length of a 192-bit secret in base64, chosen, not measured.
+pub const CLIENT_SECRET_MIN: usize = 32;
+
+/// The fewest distinct characters a web client secret holds, so a
+/// placeholder of one repeated character or a short repeated pattern is
+/// refused; 32 hex digits from a random source hold fewer with a
+/// probability below one in ten million. Chosen, not measured.
+pub const CLIENT_SECRET_DISTINCT_MIN: usize = 8;
+
+/// Why `secret` is refused as a web client secret, or `None`: shorter than
+/// [`CLIENT_SECRET_MIN`], fewer than [`CLIENT_SECRET_DISTINCT_MIN`] distinct
+/// characters, or a character that is not visible ASCII, which an
+/// `OML-Web-Client` header cannot carry whole (ADR-0070 d2, #230). The
+/// reason never quotes the value.
+#[must_use]
+pub fn client_secret_refusal(secret: &str) -> Option<&'static str> {
+    if !secret.bytes().all(|b| b.is_ascii_graphic()) {
+        return Some("must be visible ASCII, with no space or line ending");
+    }
+    if secret.len() < CLIENT_SECRET_MIN {
+        return Some("must be at least 32 characters; `openssl rand -hex 32` writes one");
+    }
+    let mut seen = [false; 128];
+    for b in secret.bytes() {
+        seen[usize::from(b)] = true;
+    }
+    if seen.iter().filter(|s| **s).count() < CLIENT_SECRET_DISTINCT_MIN {
+        return Some("must hold at least 8 distinct characters; `openssl rand -hex 32` writes one");
+    }
+    None
+}
+
+/// The secret in the file at `path`, without its one trailing line ending
+/// (`\n` or `\r\n`). On Unix a file group or others may read is refused,
+/// naming its mode, as the keyring is (ADR-0023 d4): a secret file is
+/// owner-only. The error names the path, never the content.
+///
+/// # Errors
+/// The file cannot be read, or others can read it.
+pub fn read_secret_file(path: &std::path::Path) -> Result<String, String> {
+    let shown = path.display();
+    let meta = std::fs::metadata(path).map_err(|e| format!("cannot read {shown}: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = meta.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            return Err(format!(
+                "{shown} has mode {mode:o}; a secret file is readable by its owner alone (chmod 600)"
+            ));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = &meta;
+    let mut text =
+        std::fs::read_to_string(path).map_err(|e| format!("cannot read {shown}: {e}"))?;
+    if text.ends_with('\n') {
+        text.pop();
+        if text.ends_with('\r') {
+            text.pop();
+        }
+    }
+    Ok(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,10 +203,8 @@ mod tests {
 
     impl TempSecret {
         fn new(name: &str, text: &str, mode: u32) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "oml-web-credential-{}-{name}",
-                std::process::id()
-            ));
+            let path = std::env::temp_dir()
+                .join(format!("oml-web-credential-{}-{name}", std::process::id()));
             std::fs::write(&path, text).expect("write the secret file");
             #[cfg(unix)]
             {
