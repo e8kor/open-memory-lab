@@ -29,7 +29,9 @@ third table of Phase (b) as built. Amended by the fourth change of phase (b), th
 Atlas and the creation of a workarea through `oml-web` (d3, d5, d7 and d8 revised): see the fourth
 table of Phase (b) as built. Amended by the fifth change of phase (b), the Review and Keys views and
 their acts through `oml-web` (d3, d5, d7 (b) and d8 revised): see the fifth table of Phase (b) as
-built.
+built. Amended by the sixth change of phase (b), one memory opened by its id, the admin's Curate
+view and the Mermaid frame through `oml-web` (d1, d3, d4, d5 and d7 (b) revised): see the sixth
+table of Phase (b) as built.
 
 ## Context
 
@@ -589,6 +591,22 @@ Where it reads a decision differently:
 | d5 | `Memory` names the format and title | it also names `search_text`, what a derived format's claim will be found by, absent for prose | the reviewer's card shows it before the verdict (ADR-0056 d9) and `oml-web` cannot derive it |
 | d5 | (silent) | the moved card does not draw a Mermaid claim: it shows the whole source, the format and the title, and says the drawing shows on the memory's own page once the memory is promoted, with no link | the frame's token is sealed by the lead's per-process key over a source it caches (ADR-0056 d9); an API to mint one has no other use case; a held memory's own page opens only for its author and the agent's owner, so a link would answer a reviewer who is neither `access.not_found`. Drawing it on the card is an exit criterion of the change that moves the memory's own page ([#189](https://github.com/e8kor/open-memory-lab/issues/189)) |
 | (none) | the person lane (ADR-0074 d19) on the Review view | not built: it is not on `main` | it moves with the view when it lands |
+
+The sixth change of phase (b) moves one memory opened by its id, on the user page and on the
+admin page with the admin page's supersede act, the admin page's Curate view with its act, and the
+frame that draws a Mermaid claim (ADR-0056 d9). The Start page, the admin overview (the allowlist,
+the capacities and the removal confirmation) and the users and quotas page stay the lead's until the
+next change. Where it reads a decision differently:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d7 (b), d4 | one memory opened by its id stays the lead's view (fourth change); the lead's `303` carries nothing from the request | one memory is at `/web/memory?id=` and, with its attribution and the supersede form, at `/web/admin/memory?id=` (`GET`, and `POST` for the admin's supersede act); Curate is at `/web/admin/curate`, `GET` and `POST`. The lead answers `?view=memories&memory=<id>` on either page with a `303` to the new page carrying the id alone, parsed as a UUID and written anew, and a `memory` that is not one id with no redirect; `?view=curate` with a `303` carrying nothing; the old `supersede` and `curate` acts with a `303` to the admin Memories list and to Curate, running nothing | a link to one memory without its id is a link to nothing; a parsed and re-serialized id carries no byte of the request, so the rule's purpose (no smuggled target) holds |
+| d1, d4 | the frame route `web/render.rs` belongs to `oml-web`; the routes are exact paths | `oml-web` serves `GET /web/render/{token}` and `GET /web/assets/{file}`, listed as `oml_web::PREFIXES`; Caddy and both compose routers match `/web/render/*` and `/web/assets/*`, the chart's `web.ingressPaths` lists `/web/render` and `/web/assets` as `Prefix`, and `check_chart.py` holds each listed `pathType`. The token is sealed under a key `oml-web` draws at start (ChaCha20-Poly1305), bound to the session's CSRF token, and the source is held in its memory, bounded as before (`RENDER_SOURCES_MAX`); the frame answers only after `GET /v2/whoami` resolves the session's `web` credential, and every failure is `404` | a token names a source, so the route cannot be one exact path; the process that showed the source holds it, which d4 already names as the reason replicas need affinity for this route; the session is the API's to judge (d3 layer 3) |
+| d3 layer 5 | every page under the one policy with no `frame-src` | a page that holds a drawing names `frame-src <public origin>/web/render/`; the frame keeps its own policy and the bundle its `immutable` cache rule: the headers layer no longer overwrites a policy or cache rule a handler set | the lead framed only where a page showed a diagram, and the frame's policy is ADR-0056 d9's |
+| d5 | (the fifth change) the Review card shows a Mermaid claim's source and says the drawing shows on the memory's own page once promoted, linking nothing | the Review card draws the frame from the source `GET /v2/review/held?ids=` served the reviewer, bound to the reviewer's session; still no link to the held memory's own page, which opens only for its author and the agent's owner | the exit criterion named on #189: `oml-web` now mints the frame's token over a source it was served, so no API operation is needed for it |
+| d5 | the admin read serves the fields of the search plus attribution | it also names `kind`, on every item of the search and on the read | the admin page refuses to supersede or retire a guardrail (ADR-0037 d17) and `oml-web` cannot otherwise tell one; a field on an existing operation |
+| d5 | `submit_memory` for `curate` and `supersede`, as the capacity the act needs | the supersession runs as `<user>-curate` when `GET /v2/whoami` as that capacity names the key the admin read says wrote the memory, else as `<user>-review`; curation runs as `<user>-curate`, and a session whose curate credential the API does not resolve gets `access.not_found` naming the next sign-in, never the sign-in redirect; both under the form's nonce as `Idempotency-Key`, so a resubmitted form replays the recorded answer (the operations' own record and replay) | the lead compared key ids in process; the key's name is what the wire serves. Capacities are fixed when the session opens (phase (a) as built), so a designation given during the session reaches the next one; the moved curation test signs in again after it |
+| d3 layer 4 | the lead's curate and supersede keys were digests of the source and the text | the act's key is the form's nonce's, as every moved act's | a person who curates the same text twice on purpose writes twice, as the API does for any client |
 
 ## Consequences
 
