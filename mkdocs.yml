@@ -123,6 +123,7 @@ nav:
       - Run the web console: operations/web-console.md
       - Run the lake writer: operations/lake.md
       - Capacity and SLOs: operations/operating.md
+      - Measure recall on your build: operations/recall-eval.md
   - Reference:
       - reference/index.md
       - CLI: cli/reference.md

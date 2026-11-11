@@ -16,6 +16,7 @@ recall finds what an agent asks for, and where it fails. The findings are in
 | `tables.py` | prints `results/tables.md` from `results/*.json` |
 | `check_data.py` | CI check: the data parses and every label resolves (job `recall-eval-data`) |
 | `served.sh` | boots a lead against a throwaway database, loads the set and runs `run.py` once per served search pipeline, then `gate.py` (job `recall-eval`) |
+| `selfhost.sh` | the one command: builds the lead and the CLI, fetches the pinned model files the pipelines need, then runs `served.sh` with every pipeline CI measures (job `recall-eval` runs it) |
 | `gate.py` | each pipeline's gate (ADR-0049 d9; `bm25-rerank`'s from ADR-0053 d9); fails when the default misses its gate or a category falls by more than one query, or when `keyword-all` does not reproduce v0.5.0 |
 | `federated.sh`, `federated.py` | the federated recall eval (ADR-0072 d11): one committed workarea per topic, `sources` scope, wide and the union on a scoped and a cross split, the widen hint, and a skew split padded with SciFact abstracts |
 | `results/` | one JSON per method (summary per category, and per query the ranked ids and latency), and `tables.md` |
@@ -74,6 +75,29 @@ overall.
 
 ## Running it
 
+### In one command
+
+You need Rust (`rustup`), `psql`, `jq`, `curl`, `sha256sum` and Python 3, and a PostgreSQL
+superuser on a cluster you can throw away. The compose database is one:
+
+```sh
+docker compose up -d postgres
+PGPORT=5432 eval/recall/selfhost.sh             # results in .tmp/recall-eval
+```
+
+It builds `oml-server-lead` and `oml` in release, fetches `ms-marco-MiniLM-L6-v2` (about
+90 MB) and `doc-v3-distill` (about 260 MB) into `.tmp/oml-models` from their pinned revisions,
+checking each file's SHA-256, and runs `served.sh` over the eight pipelines CI measures. It
+exits non-zero when the default pipeline misses its gate, when a category of it falls by more
+than one query against `results/`, or when `keyword-all` stops reproducing v0.5.0. A missing
+tool or an unset `PGPORT` stops it before anything is built, naming what is missing.
+
+`EVAL_PIPELINES="bm25-postings bm25-sparse"` measures two; a list with no `bm25-rerank`,
+`sparse` or `bm25-sparse` fetches no model. `OML_BIN_DIR` points at binaries already built,
+such as a release's. The steps below are what the script does, by hand.
+
+### By hand
+
 1. A throwaway PostgreSQL with a superuser, and a lead built from this tree
    against it, booted and claimed the way `scripts/poc-demo.sh` does: an
    owner/serving role pair, `OML_POSTGRES__URL`, `OML_POSTGRES__OWNER_URL`,
@@ -120,12 +144,17 @@ overall.
    `pg_simple_and` is the served statement and must reproduce `oml`'s scores;
    if it does not, the harness is wrong.
 
-5. Every served search pipeline, gated (ADR-0049), the way CI's `recall-eval` job runs it:
+5. Every served search pipeline, gated (ADR-0049), as `selfhost.sh` runs it:
 
    ```sh
    cargo build --release --bin oml-server-lead --bin oml
    PGHOST=127.0.0.1 PGPORT=5432 PGUSER=oml PGPASSWORD=... eval/recall/served.sh .tmp/recall-eval
    ```
+
+   Without model files, `served.sh` measures the five pipelines that need none. The sparse
+   pipelines need `OML_SEARCH__SPARSE__MODEL_DIR` holding the files
+   `scripts/fetch_sparse_model.sh` fetches, and `bm25-rerank` needs `OML_SEARCH__RERANK__MODEL_DIR`
+   from `scripts/fetch_rerank_model.sh`.
 
    It writes `served_<pipeline>.json` per pipeline (`run.py --search <pipeline>`) and
    `hook_<pipeline>.json`, the failure hook's own shape (the query minus stop words, `k` 3,
