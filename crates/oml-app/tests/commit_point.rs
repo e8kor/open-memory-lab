@@ -4,15 +4,54 @@
 //! R6). A direct `journal.commit*` elsewhere in the app would commit such
 //! an event without the drop.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-/// The byte offsets of every `self.journal` followed, across whitespace, by
-/// `.commit`.
+/// The byte offsets of every commit to something other than the App
+/// itself: a `.commit(` or `.commit_chain(` whose receiver is not `self`,
+/// and any path call `::commit(` or `::commit_chain(`. `self.commit(..)`
+/// is the App's helper, or a store's own method inside its impl. Line
+/// comments are skipped. A text scan, so a store reached under another
+/// method name would pass it; none has one (L1, #268).
 fn journal_commits(text: &str) -> Vec<usize> {
-    text.match_indices("self.journal")
-        .filter(|(at, m)| text[at + m.len()..].trim_start().starts_with(".commit"))
-        .map(|(at, _)| at)
-        .collect()
+    let mut found = Vec::new();
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let code = line.find("//").map_or(line, |c| &line[..c]);
+        for name in ["commit(", "commit_chain("] {
+            for (at, _) in code.match_indices(name) {
+                let before = &code[..at];
+                if before.ends_with("::") {
+                    found.push(offset + at);
+                } else if before.ends_with('.') {
+                    // The receiver, which may end a previous line.
+                    let head = text[..offset + at - 1].trim_end();
+                    let receiver = head
+                        .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .next()
+                        .unwrap_or_default();
+                    if receiver != "self" {
+                        found.push(offset + at);
+                    }
+                }
+            }
+        }
+        offset += line.len();
+    }
+    found
+}
+
+/// Every `.rs` file under `dir`, at any depth.
+fn sources(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).expect("a source directory") {
+        let path = entry.expect("an entry").path();
+        if path.is_dir() {
+            out.extend(sources(&path));
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+    out
 }
 
 #[test]
@@ -21,22 +60,19 @@ fn every_use_case_commits_through_the_helper_that_drops_widen_signals() {
     let app = std::fs::read_to_string(src.join("app.rs")).expect("app.rs");
     let start = app.find("async fn commit_requests(").expect("the helper");
     let end = start + app[start..].find("\n    }\n").expect("its end");
-    let mut outside = Vec::new();
-    for at in journal_commits(&app) {
-        if !(start..end).contains(&at) {
-            outside.push(format!("app.rs at byte {at}"));
-        }
-    }
     assert_eq!(
         journal_commits(&app[start..end]).len(),
         2,
         "the helper commits one request or a chain"
     );
-    for entry in std::fs::read_dir(src.join("app")).expect("src/app") {
-        let path = entry.expect("an entry").path();
+    let mut outside = Vec::new();
+    for path in sources(&src) {
         let text = std::fs::read_to_string(&path).expect("a source file");
         for at in journal_commits(&text) {
-            outside.push(format!("{} at byte {at}", path.display()));
+            let in_helper = path.ends_with("src/app.rs") && (start..end).contains(&at);
+            if !in_helper {
+                outside.push(format!("{} at byte {at}", path.display()));
+            }
         }
     }
     assert!(

@@ -146,8 +146,8 @@ async fn a_stopped_build_marks_its_own_signal_and_the_builds_behind_it_go_on() {
 
 /// The refresh a recall spawns runs each build under its timeout: a build
 /// whose read never returns is stopped, counted as failed and marked, and
-/// the builds behind it go on. This is the loop the transport spawns, not
-/// its steps run by hand (#268).
+/// the builds behind it go on. This is the call the transport spawns, with
+/// its timer, not the loop's steps run by hand (#268).
 #[tokio::test]
 async fn the_refresh_stops_a_build_past_its_timeout_and_builds_the_ones_behind_it() {
     use std::time::Duration;
@@ -168,7 +168,8 @@ async fn the_refresh_stops_a_build_past_its_timeout_and_builds_the_ones_behind_i
         assert!(answer.widen.is_none());
     }
     store.hang_next_vocabulary_read();
-    let built = tokio::time::timeout(Duration::from_secs(10), w.app.refresh_widen_signals())
+    let refresh = w.app.refresh_widen_signals_with(tokio::time::sleep);
+    let built = tokio::time::timeout(Duration::from_secs(10), refresh)
         .await
         .expect("the refresh never stopped the build whose read hung");
     assert_eq!(built, 2, "the builds behind the stopped one went on");

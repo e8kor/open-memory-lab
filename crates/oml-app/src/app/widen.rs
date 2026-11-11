@@ -9,8 +9,11 @@
 //! carries no hint, and the recall asks for one to be built.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::future::{Future, poll_fn};
+use std::pin::pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::time::Duration;
 
 use uuid::Uuid;
@@ -46,9 +49,11 @@ pub const WIDEN_SIGNAL_TENANT_PAIRS: usize = 2_000_000;
 /// and marked; the builds behind it go on.
 pub const WIDEN_SIGNAL_BUILD_SECS: u64 = 30;
 
-/// The store cancels a signal's read after this long, before the
-/// transport's [`WIDEN_SIGNAL_BUILD_SECS`], so a stopped build leaves no
-/// aggregate running on the database.
+/// The store cancels each statement of a signal's read after this long.
+/// The limit is per statement, so a build stopped at
+/// [`WIDEN_SIGNAL_BUILD_SECS`] can leave the statement it was in running
+/// on the database for up to this long; builds are stopped at least 30 s
+/// apart, so at most one such statement runs at a time (#268).
 pub const WIDEN_SIGNAL_STATEMENT_SECS: u64 = 25;
 
 /// The widen signal's bounds, the constants above unless a test sets them.
@@ -158,9 +163,12 @@ pub(super) struct WidenSignals {
     pub marked: Mutex<BTreeMap<SignalKey, i64>>,
     /// Whether a refresh is running: one runs at a time in the process.
     pub refreshing: AtomicBool,
-    /// The signals asked for, in the order they were asked: each refresh
-    /// takes the oldest first, so no tenant waits behind another's.
+    /// The signals asked for, in the order they were asked.
     pub wanted: Mutex<VecDeque<SignalKey>>,
+    /// When each tenant's last build began, as a count of builds: the
+    /// queue serves the tenant whose turn is oldest, so no tenant waits
+    /// behind another's whole demand. One entry per tenant ever built.
+    pub turns: Mutex<BTreeMap<Uuid, u64>>,
     /// The signal a build is working on; a recall does not ask for it.
     pub building: Mutex<Option<SignalKey>>,
     /// Each tenant's drop generation, raised by every drop.
@@ -259,14 +267,20 @@ impl WidenSignals {
         let mut evicted = Vec::new();
         loop {
             let over_share = |t: &Uuid| totals.get(t).is_some_and(|n| *n > share);
-            let victim = if over_share(&tenant) {
-                Self::oldest(&held, &key, |k| k.tenant_id == tenant)
-            } else if total > self.limits.held_pairs {
-                Self::oldest(&held, &key, |k| over_share(&k.tenant_id))
-                    .or_else(|| Self::oldest(&held, &key, |_| true))
-            } else {
-                None
-            };
+            // A tenant over its share with no older signal of its own
+            // falls through to the lead's bound, so the lead stays within
+            // it whatever one signal weighs (L4, #268).
+            let own = over_share(&tenant)
+                .then(|| Self::oldest(&held, &key, |k| k.tenant_id == tenant))
+                .flatten();
+            let victim = own.or_else(|| {
+                (total > self.limits.held_pairs)
+                    .then(|| {
+                        Self::oldest(&held, &key, |k| over_share(&k.tenant_id))
+                            .or_else(|| Self::oldest(&held, &key, |_| true))
+                    })
+                    .flatten()
+            });
             let Some(victim) = victim else {
                 break;
             };
@@ -299,9 +313,21 @@ impl WidenSignals {
     }
 
     /// The next signal to build, taken off the queue and recorded as the
-    /// one building.
+    /// one building: the oldest asked for by the tenant whose last build
+    /// began longest ago, a tenant never built first. Each tenant waiting
+    /// gets one build before any gets another (L3, #268).
     fn take_next(&self) -> Option<SignalKey> {
-        let key = self.wanted.lock().ok()?.pop_front()?;
+        let mut wanted = self.wanted.lock().ok()?;
+        let mut turns = self.turns.lock().ok()?;
+        let at = wanted
+            .iter()
+            .enumerate()
+            .min_by_key(|(i, k)| (turns.get(&k.tenant_id).copied().unwrap_or(0), *i))
+            .map(|(i, _)| i)?;
+        let key = wanted.remove(at)?;
+        let turn = turns.values().max().copied().unwrap_or(0) + 1;
+        turns.insert(key.tenant_id, turn);
+        drop((wanted, turns));
         if let Ok(mut b) = self.building.lock() {
             *b = Some(key.clone());
         }
@@ -421,11 +447,6 @@ where
         self.widen.any_wanted()
     }
 
-    /// How long the transport lets one build run before it stops it.
-    pub fn widen_build_timeout(&self) -> Duration {
-        self.widen.limits.build_timeout
-    }
-
     /// Sets the widen signal's bounds (#244): tests make them small.
     #[must_use]
     pub fn with_widen_limits(mut self, limits: WidenLimits) -> Self {
@@ -442,9 +463,10 @@ where
             .then(|| WidenRefresh(&self.widen))
     }
 
-    /// The signal asked for longest ago, taken off the queue: one build at
-    /// a time, in the order recalls asked, so a tenant behind another waits
-    /// one build each, never for a tenant's whole demand.
+    /// The next signal to build, taken off the queue: one build at a time,
+    /// the tenants waiting in turn and each tenant's in the order its
+    /// recalls asked, so a tenant waits at most one build for each other
+    /// tenant waiting, never for a tenant's whole demand.
     pub fn next_widen_build(&self, _refresh: &WidenRefresh<'_>) -> Option<WidenBuild> {
         self.widen.take_next().map(WidenBuild)
     }
@@ -510,16 +532,39 @@ where
     }
 
     /// Builds every signal asked for, one at a time and with no timeout,
-    /// unless a refresh is running; how many it held. Tests run it; the
-    /// transport runs the same steps with a timeout on each build.
+    /// unless a refresh is running; how many it held.
     pub async fn refresh_widen_signals(&self) -> usize {
+        self.refresh_widen_signals_with(|_| std::future::pending())
+            .await
+    }
+
+    /// [`Self::refresh_widen_signals`] with each build raced against
+    /// `timer(`[`WidenLimits::build_timeout`]`)`: a build the timer beats
+    /// is stopped, counted as failed and marked, and the next goes on. The
+    /// transport spawns it with its runtime's sleep after a recall that
+    /// asked for a signal; the core names no runtime.
+    pub async fn refresh_widen_signals_with<T>(&self, timer: impl Fn(Duration) -> T) -> usize
+    where
+        T: Future<Output = ()>,
+    {
         let Some(refresh) = self.begin_widen_refresh() else {
             return 0;
         };
         let mut built = 0;
         while let Some(build) = self.next_widen_build(&refresh) {
-            if self.run_widen_build(&build).await {
-                built += 1;
+            let mut run = pin!(self.run_widen_build(&build));
+            let mut stop = pin!(timer(self.widen.limits.build_timeout));
+            let held = poll_fn(|cx| {
+                if let Poll::Ready(held) = run.as_mut().poll(cx) {
+                    return Poll::Ready(Some(held));
+                }
+                stop.as_mut().poll(cx).map(|()| None)
+            })
+            .await;
+            match held {
+                Some(true) => built += 1,
+                Some(false) => {}
+                None => self.widen_build_stopped(&build),
             }
         }
         built
