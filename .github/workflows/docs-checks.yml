@@ -70,7 +70,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --retry 5 --timeout 30 -r requirements.txt
+      - run: pip install --retries 5 --timeout 30 -r requirements.txt
       - run: mkdocs build --strict
         env:
           NO_MKDOCS_2_WARNING: "1"
@@ -101,7 +101,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --retry 5 --timeout 30 pyyaml==6.0.3
+      - run: pip install --retries 5 --timeout 30 pyyaml==6.0.3
       - run: python scripts/check_contract_sync.py
 
   openapi-valid:
@@ -115,7 +115,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --retry 5 --timeout 30 openapi-spec-validator==0.9.0
+      - run: pip install --retries 5 --timeout 30 openapi-spec-validator==0.9.0
       - run: openapi-spec-validator docs/api/openapi.yaml docs/api/openapi-designed.yaml
 
   remember-eval-data:
@@ -143,7 +143,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install --retry 5 --timeout 30 pyyaml==6.0.3
+      - run: pip install --retries 5 --timeout 30 pyyaml==6.0.3
       # openapi.yaml, mcp-tools.json, the KEY_* constants and the design records.
       - run: python scripts/gen_http_api_reference.py --check
       - run: python scripts/gen_mcp_reference.py --check

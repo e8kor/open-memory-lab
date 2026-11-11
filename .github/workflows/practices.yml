@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: "3.12"
       # check_release.py and check_contract_sync.py read YAML; their tests do too.
-      - run: pip install --retry 5 --timeout 30 pyyaml==6.0.3
+      - run: pip install --retries 5 --timeout 30 pyyaml==6.0.3
       - run: python -m unittest discover -s scripts/tests
 
   numbers:

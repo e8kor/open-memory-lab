@@ -345,7 +345,7 @@ jobs:
       - name: release.yml builds, merges and signs both platforms
         if: matrix.platform == 'linux/amd64'
         run: |
-          pip install --retry 5 --timeout 30 pyyaml==6.0.3
+          pip install --retries 5 --timeout 30 pyyaml==6.0.3
           python scripts/check_release.py
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
@@ -624,7 +624,7 @@ jobs:
           version: v3.22.1
       - name: The chart renders the lead ADR-0033 decides
         run: |
-          pip install --retry 5 --timeout 30 pyyaml==6.0.3
+          pip install --retries 5 --timeout 30 pyyaml==6.0.3
           python scripts/check_chart.py
       - name: Build the image from the checkout
         run: |
