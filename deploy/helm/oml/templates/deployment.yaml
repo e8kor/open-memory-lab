@@ -76,6 +76,20 @@ spec:
                 secretKeyRef:
                   name: {{ include "oml.webClientSecret" . | quote }}
                   key: {{ .Values.web.clientSecret.key | quote }}
+            # During a rotation, the old secret and when it stops being
+            # accepted; absent otherwise (ADR-0070 d2, #230).
+            - name: OML_WEB__CLIENT_SECRET_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "oml.webClientSecret" . | quote }}
+                  key: {{ .Values.web.clientSecret.previousKey | quote }}
+                  optional: true
+            - name: OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "oml.webClientSecret" . | quote }}
+                  key: {{ .Values.web.clientSecret.previousUntilKey | quote }}
+                  optional: true
           ports:
             - name: http
               containerPort: 8080

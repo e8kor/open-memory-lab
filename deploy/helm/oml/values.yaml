@@ -49,8 +49,10 @@ web:
   # The browser's origin, which a form's Origin must equal (web.public_url).
   # Empty: https:// and the first Ingress host below.
   publicUrl: ""
-  # oml-web's identity to the lead, web.client_secret, at least 32
-  # characters, set on both Deployments from this Secret's key (ADR-0070 d2).
+  # oml-web's identity to the lead, web.client_secret: at least 32 visible
+  # ASCII characters, 8 of them distinct, set on both Deployments from this
+  # Secret's key (ADR-0070 d2). This file names the Secret and its keys and
+  # never holds a value.
   #
   # Recommended: create the Secret yourself and name it here, so the value
   # never depends on a render:
@@ -64,9 +66,19 @@ web:
   # Empty existingSecret, with helm install and helm upgrade only: the chart
   # creates <release>-web-client once with a random value, reads it back on
   # every upgrade, and keeps it on uninstall (helm.sh/resource-policy: keep).
+  #
+  # Rotation without a refused page (#230): the lead alone also reads the
+  # previous secret and the instant it stops being accepted, at most 7 days
+  # after the lead's start, from the same Secret; both keys are optional.
+  # Put the new value under `key`, the old one under `previousKey` and the
+  # instant under `previousUntilKey`, restart the lead, then oml-web, then
+  # remove the two keys and restart the lead
+  # (docs/operations/web-console.md, "Rotating the client secret").
   clientSecret:
     existingSecret: ""
     key: OML_WEB__CLIENT_SECRET
+    previousKey: OML_WEB__CLIENT_SECRET_PREVIOUS
+    previousUntilKey: OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL
   # The hop to the lead's Service carries session credentials in plain http
   # inside the cluster network; oml-web refuses plain http to a non-loopback
   # host unless this allows it (web.allow_plain_http_api). Set false only
