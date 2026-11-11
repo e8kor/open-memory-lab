@@ -71,6 +71,14 @@ pub(crate) fn admin_memory_json(m: &AdminMemory, full: bool) -> Value {
         "principal": m.memory.author_principal,
         "user": m.author_user.as_ref().map(|n| n.as_str()),
         "created_at": m.memory.created_at.as_str(),
+        // The authoring key's holder, the version's served date, its valid
+        // time and admission's finding, as the console's list shows them
+        // (ADR-0045 d32; ADR-0070 d5).
+        "held_by": m.author.as_ref().map(|k| k.held_by.as_str()),
+        "promoted_at": m.memory.promoted_at.as_ref().map(|at| at.as_str()),
+        "valid_from": m.memory.valid.from.as_ref().map(|v| v.as_str()),
+        "valid_until": m.memory.valid.until.as_ref().map(|v| v.as_str()),
+        "scan_finding": m.memory.scan_finding,
         // The reviewer judges the anchor beside the text (ADR-0057 d2).
         "anchor": m
             .memory
@@ -166,8 +174,8 @@ where
             })
             .transpose()?;
         let limit = req.limit.unwrap_or(50);
-        if !(1..=100).contains(&limit) {
-            return Err(ApiError::validation("limit is between 1 and 100")
+        if !(1..=200).contains(&limit) {
+            return Err(ApiError::validation("limit is between 1 and 200")
                 .with_details(json!({ "field": "/limit" })));
         }
         let after = req.cursor.as_deref().map(parse_cursor).transpose()?;

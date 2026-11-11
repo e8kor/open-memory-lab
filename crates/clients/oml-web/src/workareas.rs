@@ -41,17 +41,22 @@ use crate::{Api, Capacity, Web, outcome};
 pub const FAN_OUT: usize = 8;
 
 /// The form actions of the view, each the act of one documented operation.
-pub const ACTIONS: &[&str] = &["workarea_transition", "workarea_ratify", "workarea_mode"];
+pub const ACTIONS: &[&str] = &[
+    "workarea_transition",
+    "workarea_ratify",
+    "workarea_mode",
+    "create_workarea",
+];
 
 /// Which page the view is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Side {
+pub(crate) enum Side {
     User,
     Admin,
 }
 
 impl Side {
-    fn path(self) -> &'static str {
+    pub(crate) fn path(self) -> &'static str {
         match self {
             Self::User => USER_WORKAREAS_PATH,
             Self::Admin => ADMIN_WORKAREAS_PATH,
@@ -79,14 +84,14 @@ impl Side {
 /// the transitions capacity's offers name them, the mode and the commit as
 /// the person's reviewer key's.
 #[derive(Clone)]
-struct NodeOffers {
+pub(crate) struct NodeOffers {
     transitions: WorkareaOffers,
     mode: Result<WorkareaOffers, oml_sdk::Error>,
 }
 
 /// An act of the dropdown.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Act {
+pub(crate) enum Act {
     Propose(String),
     Ratify {
         transition_id: String,
@@ -98,7 +103,7 @@ enum Act {
 }
 
 impl Act {
-    fn value(&self) -> String {
+    pub(crate) fn value(&self) -> String {
         match self {
             Self::Propose(to) => format!("propose:{to}"),
             Self::Ratify { transition_id, .. } => format!("ratify:{transition_id}"),
@@ -107,7 +112,7 @@ impl Act {
         }
     }
 
-    fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         match self {
             Self::Propose(to) => format!("propose {to}"),
             Self::Ratify { from, to, .. } => format!("ratify {from} → {to}"),
@@ -217,7 +222,7 @@ fn nonce() -> String {
 impl NodeOffers {
     /// The acts offered now, in the lead's order: proposals, ratifications,
     /// then the mode change or the commit.
-    fn acts(&self) -> Vec<Act> {
+    pub(crate) fn acts(&self) -> Vec<Act> {
         let mut acts: Vec<Act> = self
             .transitions
             .transitions
@@ -248,7 +253,7 @@ impl NodeOffers {
     }
 
     /// The held rows that withhold the commit.
-    fn withheld(&self) -> Option<u64> {
+    pub(crate) fn withheld(&self) -> Option<u64> {
         self.mode.as_ref().ok().and_then(|m| m.commit.held)
     }
 
@@ -281,7 +286,7 @@ impl NodeOffers {
 
     /// The dropdown: the offered acts, a withheld commit shown disabled
     /// with its count, and Apply only where something is offered.
-    fn dropdown(&self, page: &str, node: &str) -> String {
+    pub(crate) fn dropdown(&self, page: &str, node: &str) -> String {
         let acts = self.acts();
         let withheld = self.withheld();
         if acts.is_empty() && withheld.is_none() {
@@ -317,14 +322,14 @@ impl NodeOffers {
 
 /// The page's credentials.
 #[derive(Clone)]
-struct Credentials {
+pub(crate) struct Credentials {
     transitions: String,
     mode: String,
     same: bool,
 }
 
 impl Credentials {
-    fn of(session: &Session, side: Side) -> Self {
+    pub(crate) fn of(session: &Session, side: Side) -> Self {
         Self {
             transitions: session.credential(side.transitions()),
             mode: session.credential(Capacity::Review),
@@ -336,7 +341,7 @@ impl Credentials {
 /// One workarea's offers: one call where one key takes every act, two
 /// where the admin key takes the transitions; the request id of the call
 /// that failed otherwise.
-async fn offers_of(
+pub(crate) async fn offers_of(
     api: &Api,
     credentials: &Credentials,
     calls: &PageCalls,
@@ -654,15 +659,17 @@ async fn view(
             );
             body.push_str("<details class=\"help\"><summary>?</summary>In progress: your agents recall each other's unreviewed memories inside it, and nothing leaves it until you commit, which needs every memory in it reviewed.</details>");
             body.push_str("<h2>New workarea</h2>");
-            // Creating a workarea is still the lead's act of the user page.
+            // Creating a workarea is the view's act, through `POST
+            // /v2/workareas` under the form's nonce (ADR-0070 d7 (b)).
             body.push_str(&form(
-                "/web",
+                USER_WORKAREAS_PATH,
                 "create_workarea",
                 &session.csrf(),
                 &format!(
-                    "{}{}",
+                    "{}{}{}",
                     input("name", "name", "", true),
-                    input("parent", "inside (blank: your root)", "", false)
+                    input("parent", "inside (blank: your root)", "", false),
+                    hidden("nonce", &nonce())
                 ),
                 "Create",
                 true,
@@ -731,6 +738,7 @@ pub async fn admin_page(
 /// `nonce`.
 fn defined(action: &str) -> &'static [&'static str] {
     match action {
+        "create_workarea" => &["action", "csrf_token", "nonce", "name", "parent"],
         "workarea_transition" => &["action", "csrf_token", "nonce", "workarea", "to"],
         "workarea_ratify" => &["action", "csrf_token", "nonce", "workarea", "transition"],
         _ => &["action", "csrf_token", "nonce", "workarea", "mode"],
@@ -776,6 +784,15 @@ async fn act(
         );
     };
     calls.act(action);
+    // Creating a workarea is the user page's act alone.
+    if action == "create_workarea" && side == Side::Admin {
+        return refused(
+            StatusCode::BAD_REQUEST,
+            "request.validation",
+            "action is not one of this page's actions",
+            &calls,
+        );
+    }
     if let Some(name) = fields.outside(defined(action)) {
         return refused(
             StatusCode::BAD_REQUEST,
@@ -785,6 +802,7 @@ async fn act(
         );
     }
     let required: &[&str] = match action {
+        "create_workarea" => &["name"],
         "workarea_transition" => &["workarea", "to"],
         "workarea_ratify" => &["workarea", "transition"],
         _ => &["workarea", "mode"],
@@ -799,6 +817,14 @@ async fn act(
     }
     let field = |name: &str| fields.get(name).unwrap_or_default();
     let workarea = field("workarea");
+    if action == "create_workarea" && field("name").is_empty() {
+        return refused(
+            StatusCode::BAD_REQUEST,
+            "request.validation",
+            "name is required",
+            &calls,
+        );
+    }
     // A nonce the page did not draw is refused, so a mangled form never
     // loses its replay silently; a form without one acts once under a
     // fresh key.
@@ -822,6 +848,18 @@ async fn act(
     let _in_flight = in_flight(&key).lock_owned().await;
     let ids = calls.next_ids();
     let (outcome, done) = match action {
+        "create_workarea" => {
+            // A blank parent is the person's own root.
+            let parent = fields.get("parent").filter(|p| !p.is_empty());
+            let credential = session.credential(Capacity::Web);
+            (
+                web.api
+                    .create_workarea(&call(&credential, &ids), &key, field("name"), parent)
+                    .await
+                    .map(|_| ()),
+                "created",
+            )
+        }
         "workarea_transition" => {
             let to = field("to");
             let credential = session.credential(side.transitions());

@@ -16,14 +16,11 @@
 //! `sign_out` answers the app's `not_built` refusal.
 
 pub mod admin_read;
-pub mod atlas;
 pub mod emails;
-pub mod memories;
 pub mod page;
 pub mod render;
 pub mod start;
 pub mod views;
-pub mod workareas;
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -72,8 +69,6 @@ pub const WEB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/web/start/export"),
     ("GET", "/web/admin/users"),
     ("POST", "/web/admin/users"),
-    ("GET", "/web/data/memories"),
-    ("GET", "/web/admin/data/memories"),
 ];
 
 /// The user page's closed `action` set (ADR-0045 d1, d9, d28).
@@ -427,8 +422,6 @@ where
             ("GET", "/web/start/export") => get(Self::start_export),
             ("GET", "/web/admin/users") => get(Self::users_page),
             ("POST", "/web/admin/users") => post(Self::users_act),
-            ("GET", "/web/data/memories") => get(Self::user_data),
-            ("GET", "/web/admin/data/memories") => get(Self::admin_data),
             _ => panic!("{method} {path} is in WEB_ROUTES with no handler"),
         }
     }
@@ -544,7 +537,8 @@ where
         }
         // A view oml-web serves at its own path: a 303 to that fixed path,
         // carrying nothing from the request (ADR-0070 d7 (b) as amended).
-        if let Some(path) = views::moved_view(query) {
+        if let Some(path) = views::moved_view(query).or_else(|| views::moved_memories(query, false))
+        {
             return Answer {
                 response: self.redirect(path, None),
                 error_code: None,
@@ -601,7 +595,9 @@ where
         }
         // A view oml-web serves at its own path: a 303 to that fixed path,
         // carrying nothing from the request (ADR-0070 d7 (b) as amended).
-        if let Some(path) = views::moved_view_of(views::MOVED_ADMIN_VIEWS, query) {
+        if let Some(path) = views::moved_view_of(views::MOVED_ADMIN_VIEWS, query)
+            .or_else(|| views::moved_memories(query, true))
+        {
             return Answer {
                 response: self.redirect(path, None),
                 error_code: None,
@@ -639,92 +635,6 @@ where
     /// d32), the Atlas included.
     fn view_response(&self, html: String) -> Response {
         self.page(StatusCode::OK, html)
-    }
-
-    // -- GET /web/data/memories and GET /web/admin/data/memories --------------
-
-    async fn user_data(State(st): State<Self>, rid: Rid, headers: HeaderMap, uri: Uri) -> Response {
-        let answer = st
-            .data_inner(&rid, &headers, uri.query().unwrap_or(""), false)
-            .await;
-        Self::web_finish(&rid, answer)
-    }
-
-    async fn admin_data(
-        State(st): State<Self>,
-        rid: Rid,
-        headers: HeaderMap,
-        uri: Uri,
-    ) -> Response {
-        let answer = st
-            .data_inner(&rid, &headers, uri.query().unwrap_or(""), true)
-            .await;
-        Self::web_finish(&rid, answer)
-    }
-
-    /// The Atlas view's data (ADR-0045 d25): the same page of the same
-    /// list, by the same session key, with the card's fields alone. No
-    /// `Authorization` header, a live session (an admin's on the admin
-    /// route), else `access.not_found` as JSON; the admin route's page is
-    /// one `memory.admin_read`, as the list's is.
-    async fn data_inner(
-        &self,
-        request_id: &str,
-        headers: &HeaderMap,
-        query: &str,
-        admin: bool,
-    ) -> Answer {
-        let mut line = WebLine::default();
-        let refused = |e: ApiError, line: WebLine| Answer {
-            error_code: Some(e.code),
-            response: memories::json_answer(
-                e.status,
-                &json!({ "error": e.error_object(), "request_id": request_id }),
-            ),
-            line,
-        };
-        if let Some(e) = human_only(headers) {
-            return refused(e, line);
-        }
-        let session = match self.session_of(headers).await {
-            Err(e) => return refused(e, line),
-            Ok(None) => return refused(ApiError::not_found(), line),
-            Ok(Some((_, session))) => session,
-        };
-        line.session(&session);
-        if admin && !session.admin {
-            return refused(ApiError::not_found(), line);
-        }
-        let page = async {
-            let fields = Self::query_fields(query)?;
-            let list = memories::ListQuery::parse(&fields)?;
-            let review = self
-                .caller(&session, oml_app::app::Capacity::Review)
-                .await?;
-            let mut answer = if admin {
-                self.require_writes_open()?;
-                let caller = self.caller(&session, oml_app::app::Capacity::Admin).await?;
-                let mut answer = self.admin_cards(&caller, &list).await?.json();
-                answer["workareas"] = self.regions_json(&caller, &review, &list, true).await?;
-                answer
-            } else {
-                let caller = self.caller(&session, oml_app::app::Capacity::Web).await?;
-                let mut answer = self.user_cards(&caller, &list).await?.json();
-                answer["workareas"] = self.regions_json(&caller, &review, &list, false).await?;
-                answer
-            };
-            answer["base"] = json!(if admin { "/web/admin" } else { "/web" });
-            Ok::<Value, ApiError>(answer)
-        }
-        .await;
-        match page {
-            Ok(page) => Answer {
-                response: memories::json_answer(StatusCode::OK, &page),
-                error_code: None,
-                line,
-            },
-            Err(e) => refused(e, line),
-        }
     }
 
     // -- POST /web and POST /web/admin ------------------------------------------

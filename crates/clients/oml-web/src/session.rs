@@ -198,6 +198,26 @@ pub async fn load(State(web): State<Web>, mut req: Request, next: Next) -> Respo
     let Some(token) = cookie(req.headers(), SESSION_COOKIE) else {
         return outcome::sign_in(&page);
     };
+    let session = match resolve(&web, &calls, token).await {
+        Ok(session) => session,
+        Err(e) => return outcome::page(&e, calls.page_id(), &page),
+    };
+    req.extensions_mut().insert(session);
+    next.run(req).await
+}
+
+/// The session `token` names, checked by `GET /v2/whoami` under its `web`
+/// credential, with whether its `admin` credential resolves; both in one
+/// round trip.
+///
+/// # Errors
+/// The `web` credential's whoami failed: the API's refusal, `auth.invalid`
+/// for a session that is gone, or no usable answer.
+pub async fn resolve(
+    web: &Web,
+    calls: &PageCalls,
+    token: String,
+) -> Result<Session, oml_sdk::Error> {
     let web_credential = capacity_credential(&token, Capacity::Web.as_str());
     let admin_credential = capacity_credential(&token, Capacity::Admin.as_str());
     let (web_ids, admin_ids) = (calls.next_ids(), calls.next_ids());
@@ -206,17 +226,13 @@ pub async fn load(State(web): State<Web>, mut req: Request, next: Next) -> Respo
         call(&admin_credential, &admin_ids),
     );
     let (me, admin) = tokio::join!(web.api.whoami(&web_call), web.api.whoami(&admin_call));
-    let whoami = match me {
-        Ok(whoami) => whoami,
-        Err(e) => return outcome::page(&e, calls.page_id(), &page),
-    };
+    let whoami = me?;
     calls.acting_as(whoami.name.as_deref());
-    req.extensions_mut().insert(Session {
+    Ok(Session {
         token,
         whoami,
         admin: admin.is_ok(),
-    });
-    next.run(req).await
+    })
 }
 
 #[cfg(test)]
