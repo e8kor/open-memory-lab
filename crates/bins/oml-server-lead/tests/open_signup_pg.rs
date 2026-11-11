@@ -977,7 +977,9 @@ async fn quotas_refuse_past_their_limit_with_limit_quota_and_an_admin_raises_the
     let Some(rig) = rig(Some(|mut p| {
         p.quotas.keys = 1;
         p.quotas.memories = 1;
-        p.quotas.requests_per_minute = 4;
+        // The person's web key pays the same rate per API call, and an
+        // oml-web page makes several (ADR-0070 d2 as built, seventh table).
+        p.quotas.requests_per_minute = 20;
         p
     }))
     .await
@@ -1014,10 +1016,10 @@ async fn quotas_refuse_past_their_limit_with_limit_quota_and_an_admin_raises_the
             .iter()
             .any(|(_, p)| p.to_string().contains("The second fact"))
     );
-    // Past four requests in a minute the key is refused; ten requests
+    // Past twenty requests in a minute the key is refused; fifty requests
     // cross at most one minute boundary, so one of them is refused.
     let mut refused = None;
-    for _ in 0..10 {
+    for _ in 0..50 {
         let (status, headers, body) = json(&rig, api("GET", "/v1/memories", &key, None)).await;
         if status == StatusCode::TOO_MANY_REQUESTS {
             refused = Some((headers, body));
@@ -1188,8 +1190,15 @@ async fn deletion_is_a_journalled_request_the_admin_closes_by_disabling_the_pers
         assert!(types.iter().any(|x| x == t), "{t}: {types:?}");
     }
     // The session ended, the agent is cut off, the memory is kept.
-    let (_, _, html) = send(&rig.router, page("/web/start", Some(&ada))).await;
-    assert!(html.contains("Sign in with GitHub"), "{html}");
+    let (status, headers, _) = send(&rig.router, page("/web/start", Some(&ada))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "the session ended");
+    assert!(
+        headers[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .starts_with("/web/sign-in"),
+        "the session ended"
+    );
     let (status, _, body) = json(
         &rig,
         api(
@@ -1259,8 +1268,15 @@ async fn an_admin_disables_only_a_person_who_signed_up_and_never_an_admin_or_a_s
     let ada_user = rig_user(&rig, 81).await;
     let (status, _, html) = send(&rig.router, disable(&ada_user)).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{html}");
-    let (_, _, html) = send(&rig.router, page("/web/start", Some(&ada))).await;
-    assert!(html.contains("Sign in with GitHub"), "{html}");
+    let (status, headers, _) = send(&rig.router, page("/web/start", Some(&ada))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "the session ended");
+    assert!(
+        headers[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .starts_with("/web/sign-in"),
+        "the session ended"
+    );
     drop_db(&rig.db).await;
 }
 
