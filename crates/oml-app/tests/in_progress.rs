@@ -251,6 +251,7 @@ impl World {
                     max_tokens: None,
                     search: None,
                     match_mode: oml_app::search::MatchMode::Any,
+                    as_of: None,
                 },
             )
             .await
@@ -278,6 +279,7 @@ impl World {
                     anchor: oml_app::types::AnchorFilter::default(),
                     author: None,
                     tip: None,
+                    as_of: None,
                 },
             )
             .await
@@ -374,6 +376,7 @@ async fn unreviewed_rows_are_served_inside_an_in_progress_scope_and_invisible_fr
                     max_tokens: None,
                     search: None,
                     match_mode: oml_app::search::MatchMode::Any,
+                    as_of: None,
                 },
             )
             .await
@@ -444,6 +447,7 @@ async fn a_held_row_the_scan_flagged_stays_its_authors_inside_an_in_progress_sco
                 anchor: oml_app::types::AnchorFilter::default(),
                 author: None,
                 tip: None,
+                as_of: None,
             },
         )
         .await

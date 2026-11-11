@@ -144,6 +144,7 @@ async fn a_recall_answers_the_same_when_the_event_queue_is_full() {
         match_mode: MatchMode::Any,
         include_expired: false,
         now: None,
+        as_of: None,
     };
     let full = Arc::new(Full::default());
     let without = plain.recall(writer.as_str(), &req).await.expect("recall");

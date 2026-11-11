@@ -231,6 +231,7 @@ fn recall_req(query: &str) -> RecallRequest {
         match_mode: oml_app::search::MatchMode::Any,
         include_expired: false,
         now: None,
+        as_of: None,
     }
 }
 
@@ -5814,6 +5815,7 @@ async fn an_admin_key_reading_a_workarea_sees_no_claim_content() {
                 cursor: None,
                 author: None,
                 tip: None,
+                as_of: None,
             },
         )
         .await

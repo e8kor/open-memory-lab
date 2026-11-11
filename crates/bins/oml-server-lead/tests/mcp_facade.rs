@@ -3779,7 +3779,14 @@ async fn oml_read_takes_as_of_in_every_mode() {
     )
     .await;
     assert_eq!(hit_ids(&then), [v1.as_str()], "{then}");
-    let today = call_tool(&router, &reader, 4, "oml_read", json!({"query": "aluminium price"})).await;
+    let today = call_tool(
+        &router,
+        &reader,
+        4,
+        "oml_read",
+        json!({"query": "aluminium price"}),
+    )
+    .await;
     assert_eq!(hit_ids(&today), [v2.as_str()], "{today}");
     let listed = call_tool(
         &router,

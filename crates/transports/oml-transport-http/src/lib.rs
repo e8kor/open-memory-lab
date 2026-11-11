@@ -50,6 +50,7 @@ use uuid::Uuid;
 
 use oml_app::App;
 use oml_app::app::Caller;
+use oml_app::domain::EventTime;
 use oml_app::domain::access::Covers;
 use oml_app::domain::anchor::{self as anchor_grammar, Anchor, CheckResult};
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
@@ -815,12 +816,21 @@ where
         State(st): State<Self>,
         rid: Rid,
         Path(artifact_id): Path<String>,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
         headers: HeaderMap,
     ) -> Response {
-        finish(
-            &rid,
-            Self::get_memory_inner(&st, &artifact_id, &headers, None).await,
-        )
+        let result = match query {
+            Ok(Query(params)) => match get_as_of(&params) {
+                Ok(as_of) => {
+                    Self::get_memory_inner(&st, &artifact_id, as_of.as_ref(), &headers, None).await
+                }
+                Err(e) => Err(e),
+            },
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
     }
 
     /// `GET /v1/memories/{artifact_id}` (http-api.md get). Get resolves no
@@ -846,6 +856,7 @@ where
     async fn get_memory_inner(
         st: &Self,
         artifact_id: &str,
+        as_of: Option<&EventTime>,
         headers: &HeaderMap,
         connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
@@ -860,7 +871,7 @@ where
         let id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
         let memory = st
             .app
-            .get_memory(acting.bearer(), id)
+            .get_memory_as_of(acting.bearer(), id, as_of)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &memory_json(&memory, true)))
@@ -965,6 +976,7 @@ where
                         "/",
                     )?,
                     sources,
+                    as_of: parse_as_of(req.as_of.as_deref(), "/as_of")?,
                 },
             )
             .await
@@ -3028,6 +3040,8 @@ struct RecallBody {
     /// Where to search: `scope`, `wide` or a list of workareas (ADR-0072
     /// d5); parsed by [`parse_sources`].
     sources: Option<Value>,
+    /// The transaction-time instant to read at (ADR-0059 d14).
+    as_of: Option<String>,
 }
 
 /// `sources` on recall (ADR-0072 d5): a string is a mode, `scope` or
@@ -4004,6 +4018,35 @@ fn named_ref_json(r: &oml_app::types::NamedRef) -> Value {
     json!({ "id": r.id, "name": r.name.as_str() })
 }
 
+/// `as_of`, an RFC 3339 `date-time` with an offset and at most six
+/// fractional digits, as the fixed-width instant it names; a date, a period
+/// or anything else is `request.validation` naming `field` (ADR-0059 d14).
+pub(crate) fn parse_as_of(value: Option<&str>, field: &str) -> Result<Option<EventTime>, ApiError> {
+    value
+        .map(|v| {
+            parse_date_time(v).ok_or_else(|| {
+                ApiError::validation(
+                    "as_of must be an RFC 3339 date-time with an offset and at most microsecond precision",
+                )
+                .with_details(json!({ "field": field }))
+            })
+        })
+        .transpose()
+}
+
+/// Get's query parameters: `as_of` alone, at most once (ADR-0059 d14,
+/// d19); any other is refused, never ignored.
+fn get_as_of(params: &[(String, String)]) -> Result<Option<EventTime>, ApiError> {
+    match params {
+        [] => Ok(None),
+        [(name, value)] if name == "as_of" => parse_as_of(Some(value), "as_of"),
+        [(name, _)] => Err(ApiError::validation(format!(
+            "unknown query parameter {name:?}"
+        ))),
+        _ => Err(ApiError::validation("get takes one query parameter, as_of")),
+    }
+}
+
 /// The listing's query parameters (openapi.yaml `searchMemories`): each
 /// at most once, and an unknown one refused rather than ignored, so a
 /// mistyped filter never widens a listing; v0.3.0's `workarea_id` names
@@ -4022,6 +4065,7 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
         anchor: AnchorFilter::default(),
         author: None,
         tip: None,
+        as_of: None,
     };
     let mut anchor_repo = None;
     let mut anchor_path_prefix = None;
@@ -4063,6 +4107,7 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
             "kind" => req.kind = Some(parse_kind(value)?),
             "since" => req.since = Some(date_time()?),
             "until" => req.until = Some(date_time()?),
+            "as_of" => req.as_of = parse_as_of(Some(value), "as_of")?,
             "limit" => {
                 req.limit = value
                     .parse()

@@ -1938,6 +1938,7 @@ async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
                 match_mode: oml_app::search::MatchMode::Any,
                 include_expired: false,
                 now: None,
+                as_of: None,
             },
         )
         .await

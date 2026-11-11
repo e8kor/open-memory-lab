@@ -121,7 +121,14 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
             vec![grant(root, Role::Dreamer), grant(root, Role::Reader)],
         )
         .await;
-        let reader = issue(&app, &admin, Role::Reader, HeldBy::Agent, vec![grant(home, Role::Reader)]).await;
+        let reader = issue(
+            &app,
+            &admin,
+            Role::Reader,
+            HeldBy::Agent,
+            vec![grant(home, Role::Reader)],
+        )
+        .await;
         AsOfWorld {
             app,
             clock,
@@ -156,7 +163,13 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
     }
 
     /// One claim `claim_key` of `kind` on `node` by the writer, left held.
-    pub async fn hold_kind(&self, node: Uuid, claim_key: &str, kind: MemoryKind, body: &str) -> Uuid {
+    pub async fn hold_kind(
+        &self,
+        node: Uuid,
+        claim_key: &str,
+        kind: MemoryKind,
+        body: &str,
+    ) -> Uuid {
         let n = self.idem.fetch_add(1, Ordering::Relaxed);
         self.app
             .submit_memory(
@@ -205,7 +218,13 @@ impl<S: JournalStore + Clone> AsOfWorld<S> {
 
     /// A successor of `target`, version `expected + 1`, approved; with
     /// `retirement` it retires the claim.
-    pub async fn supersede(&self, target: Uuid, expected: u32, body: &str, retirement: bool) -> Uuid {
+    pub async fn supersede(
+        &self,
+        target: Uuid,
+        expected: u32,
+        body: &str,
+        retirement: bool,
+    ) -> Uuid {
         let n = self.idem.fetch_add(1, Ordering::Relaxed);
         let id = self
             .app
@@ -395,18 +414,28 @@ pub async fn an_as_of_read_serves_the_tip_the_claim_had_then<S: JournalStore + C
         .promote(w.home, "runbook", "the deploy runbook names alpha")
         .await;
     let s1 = w
-        .hold_kind(w.home, "tone", MemoryKind::Steering, "answer in plain words")
+        .hold_kind(
+            w.home,
+            "tone",
+            MemoryKind::Steering,
+            "answer in plain words",
+        )
         .await;
     w.approve(s1).await;
     let t1 = w.instant();
     let v2 = w
         .supersede(v1, 1, "the deploy runbook names beta", false)
         .await;
-    let s2 = w.supersede(s1, 1, "answer in short plain words", false).await;
+    let s2 = w
+        .supersede(s1, 1, "answer in short plain words", false)
+        .await;
     let t2 = w.instant();
     for &search in &w.searches {
         let at = |t| w.hits(&w.reader, "deploy runbook", search, Some(t), false);
-        assert!(at(&t0).await.is_empty(), "{search}: nothing was held before t0");
+        assert!(
+            at(&t0).await.is_empty(),
+            "{search}: nothing was held before t0"
+        );
         assert_eq!(at(&t1).await, one(v1), "{search}: v1 was the tip at t1");
         assert_eq!(at(&t2).await, one(v2), "{search}: v2 is the tip at t2");
         assert_eq!(
@@ -420,7 +449,10 @@ pub async fn an_as_of_read_serves_the_tip_the_claim_had_then<S: JournalStore + C
             .recall(&w.reader, "deploy runbook", search, Some(&t1), false)
             .await
             .expect("recall");
-        assert_eq!(r.pipeline, search, "search.pipeline names the pipeline asked");
+        assert_eq!(
+            r.pipeline, search,
+            "search.pipeline names the pipeline asked"
+        );
         let steering: Vec<Uuid> = r.steering.iter().map(|m| m.memory.memory_id).collect();
         assert_eq!(steering, vec![s1], "{search}: the steering tip at t1");
     }
@@ -459,11 +491,15 @@ pub async fn an_as_of_read_applies_todays_grants_and_denials<S: JournalStore + C
 ) {
     let w = AsOfWorld::new(store, searches).await;
     let v1 = w.promote(w.home, "quota", "the export quota is ten").await;
-    let elsewhere = w.promote(w.other, "quota", "the export quota is nine").await;
+    let elsewhere = w
+        .promote(w.other, "quota", "the export quota is nine")
+        .await;
     let t1 = w.instant();
     let reader = w.reader_of(w.home).await;
     for &search in &w.searches {
-        let hits = w.hits(&reader, "export quota", search, Some(&t1), false).await;
+        let hits = w
+            .hits(&reader, "export quota", search, Some(&t1), false)
+            .await;
         assert_eq!(hits, one(v1), "{search}: never the unreadable node's row");
     }
     assert!(matches!(
@@ -471,11 +507,7 @@ pub async fn an_as_of_read_applies_todays_grants_and_denials<S: JournalStore + C
         Err(AppError::NotFound)
     ));
     w.app
-        .deny_key(
-            w.admin.as_str(),
-            reader.key_id.into(),
-            w.home.into(),
-        )
+        .deny_key(w.admin.as_str(), reader.key_id.into(), w.home.into())
         .await
         .expect("deny today");
     for &search in &w.searches {
@@ -504,9 +536,13 @@ pub async fn an_as_of_read_never_serves_a_version_erased_today<S, E, Fut>(
     Fut: core::future::Future<Output = ()>,
 {
     let w = AsOfWorld::new(store, searches).await;
-    let v1 = w.promote(w.home, "vendor", "the vendor contact is ada").await;
+    let v1 = w
+        .promote(w.home, "vendor", "the vendor contact is ada")
+        .await;
     let t1 = w.instant();
-    let v2 = w.supersede(v1, 1, "the vendor contact is grace", false).await;
+    let v2 = w
+        .supersede(v1, 1, "the vendor contact is grace", false)
+        .await;
     let t2 = w.instant();
     erase(w.tenant, v2).await;
     for &search in &w.searches {
@@ -517,7 +553,12 @@ pub async fn an_as_of_read_never_serves_a_version_erased_today<S, E, Fut>(
         );
         assert_eq!(at(&t1).await, one(v1), "{search}: v1 was the tip at t1");
     }
-    assert!(w.list(&w.reader, Some("vendor"), Some(&t2), false).await.expect("list").is_empty());
+    assert!(
+        w.list(&w.reader, Some("vendor"), Some(&t2), false)
+            .await
+            .expect("list")
+            .is_empty()
+    );
     erase(w.tenant, v1).await;
     for &search in &w.searches {
         assert!(
@@ -528,7 +569,12 @@ pub async fn an_as_of_read_never_serves_a_version_erased_today<S, E, Fut>(
         );
     }
     assert!(w.get(&w.reader, v1, Some(&t1)).await.is_err());
-    assert!(w.list(&w.reader, Some("vendor"), Some(&t1), false).await.expect("list").is_empty());
+    assert!(
+        w.list(&w.reader, Some("vendor"), Some(&t1), false)
+            .await
+            .expect("list")
+            .is_empty()
+    );
 }
 
 /// `a_retired_claim_serves_its_earlier_tip_before_the_retirement_and_nothing_after`.
@@ -539,16 +585,24 @@ pub async fn a_retired_claim_serves_its_earlier_tip_before_the_retirement<
     searches: &[&str],
 ) {
     let w = AsOfWorld::new(store, searches).await;
-    let v1 = w.promote(w.home, "pager", "the pager rota starts monday").await;
+    let v1 = w
+        .promote(w.home, "pager", "the pager rota starts monday")
+        .await;
     let t1 = w.instant();
-    w.supersede(v1, 1, "the rota moved to the calendar", true).await;
+    w.supersede(v1, 1, "the rota moved to the calendar", true)
+        .await;
     let t2 = w.instant();
     for &search in &w.searches {
         let at = |t| w.hits(&w.reader, "pager rota", search, t, false);
-        assert_eq!(at(Some(&t1)).await, one(v1), "{search}: the tip before the retirement");
+        assert_eq!(
+            at(Some(&t1)).await,
+            one(v1),
+            "{search}: the tip before the retirement"
+        );
         assert!(at(Some(&t2)).await.is_empty(), "{search}: retired by t2");
         assert!(at(None).await.is_empty(), "{search}: retired today");
-        w.assert_gettable_today(&w.reader, &at(Some(&t1)).await).await;
+        w.assert_gettable_today(&w.reader, &at(Some(&t1)).await)
+            .await;
     }
 }
 
@@ -562,18 +616,35 @@ pub async fn held_rows_at_an_instant_follow_todays_rules<S: JournalStore + Clone
 ) {
     let w = AsOfWorld::new(store, searches).await;
     let early = w
-        .hold_kind(w.home, "draft-a", MemoryKind::Memory, "a draft about the ledger")
+        .hold_kind(
+            w.home,
+            "draft-a",
+            MemoryKind::Memory,
+            "a draft about the ledger",
+        )
         .await;
     let since = w
-        .hold_kind(w.home, "draft-b", MemoryKind::Memory, "a second ledger draft")
+        .hold_kind(
+            w.home,
+            "draft-b",
+            MemoryKind::Memory,
+            "a second ledger draft",
+        )
         .await;
     let t1 = w.instant();
     w.approve(since).await;
     let late = w
-        .hold_kind(w.home, "draft-c", MemoryKind::Memory, "a third ledger draft")
+        .hold_kind(
+            w.home,
+            "draft-c",
+            MemoryKind::Memory,
+            "a third ledger draft",
+        )
         .await;
     for &search in &w.searches {
-        let mine = w.hits(&w.writer, "ledger draft", search, Some(&t1), true).await;
+        let mine = w
+            .hits(&w.writer, "ledger draft", search, Some(&t1), true)
+            .await;
         assert!(mine.contains(&early), "{search}: own held, recorded by t1");
         assert!(!mine.contains(&late), "{search}: recorded after t1");
         assert!(
@@ -581,8 +652,13 @@ pub async fn held_rows_at_an_instant_follow_todays_rules<S: JournalStore + Clone
             "{search}: held at t1 and promoted since, so neither the tip then nor held now"
         );
         w.assert_gettable_today(&w.writer, &mine).await;
-        let theirs = w.hits(&w.reader, "ledger draft", search, Some(&t1), true).await;
-        assert!(theirs.is_empty(), "{search}: another key's held rows: {theirs:?}");
+        let theirs = w
+            .hits(&w.reader, "ledger draft", search, Some(&t1), true)
+            .await;
+        assert!(
+            theirs.is_empty(),
+            "{search}: another key's held rows: {theirs:?}"
+        );
     }
 }
 
@@ -606,10 +682,21 @@ pub async fn an_as_of_after_the_leads_clock_is_refused<S: JournalStore + Clone>(
             .map(|_| ()),
         "/as_of",
     );
-    refused(w.list(&w.reader, None, Some(&future), false).await.map(|_| ()), "as_of");
-    refused(w.get(&w.reader, v1, Some(&future)).await.map(|_| ()), "as_of");
+    refused(
+        w.list(&w.reader, None, Some(&future), false)
+            .await
+            .map(|_| ()),
+        "as_of",
+    );
+    refused(
+        w.get(&w.reader, v1, Some(&future)).await.map(|_| ()),
+        "as_of",
+    );
     let now = w.instant();
-    refused(w.list(&w.writer, None, Some(&now), true).await.map(|_| ()), "as_of");
+    refused(
+        w.list(&w.writer, None, Some(&now), true).await.map(|_| ()),
+        "as_of",
+    );
     let wide = w
         .app
         .recall(

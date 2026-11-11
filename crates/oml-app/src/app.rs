@@ -1064,6 +1064,11 @@ fn recall_query_digest(
         if let Some(now) = &req.now {
             members.insert("now".to_owned(), Value::from(now.as_str()));
         }
+        // `as_of` only when sent, so a recall of today digests as before
+        // (ADR-0059 d18).
+        if let Some(at) = &req.as_of {
+            members.insert("as_of".to_owned(), Value::from(at.as_str()));
+        }
         // `sources` only when it searched wider than the scope, `wide` or
         // the list's workarea ids, so a `scope` recall digests as it did
         // before (ADR-0072 d9).
@@ -1781,6 +1786,18 @@ where
     /// within its reader effective access (roles-and-keys.md#own; ADR-0025
     /// d3). Own is the authoring key for a bearer caller, and every key in the
     /// session caller's own-key set for the user page (ADR-0045 d16).
+    /// An `as_of` after the lead's clock names an instant that has not
+    /// happened: refused naming `field` (ADR-0059 d17).
+    fn refuse_future(&self, at: &EventTime, field: &'static str) -> Result<(), AppError> {
+        if at.as_str() > self.clock.now().as_str() {
+            return Err(AppError::AsOfInvalid {
+                field,
+                reason: "as_of is after the lead's clock: the instant has not happened",
+            });
+        }
+        Ok(())
+    }
+
     async fn readable(&self, caller: &Caller, memory: &MemoryRecord) -> Result<bool, AppError> {
         let ancestry = self
             .ancestry(caller.key.tenant_id, memory.workarea_id)
@@ -4521,6 +4538,17 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let key = &caller.key;
         let tenant_id = key.tenant_id;
+        // `as_of` reads the scoped listing at an instant that has happened
+        // (ADR-0059 d17, d19).
+        if let Some(at) = &req.as_of {
+            if req.own || req.author.is_some() || req.tip.is_some() {
+                return Err(AppError::AsOfInvalid {
+                    field: "as_of",
+                    reason: "as_of reads the scoped listing: it does not combine with own, with_own, author or tip",
+                });
+            }
+            self.refuse_future(at, "as_of")?;
+        }
         let subtree_ids = |node: Uuid| async move {
             Ok::<BTreeSet<Uuid>, AppError>(
                 self.journal
@@ -4600,6 +4628,7 @@ where
             anchor: req.anchor.clone(),
             author: req.author,
             tip: req.tip,
+            as_of: req.as_of.clone(),
         };
         // One row past the page says whether another page exists.
         let mut rows = self
@@ -4624,6 +4653,19 @@ where
             }
             .encode()
         });
+        // The re-check at an instant: which rows were their claim's tip then
+        // (ADR-0059 d15, d16).
+        let tips_then: BTreeSet<Uuid> = match &filter.as_of {
+            None => BTreeSet::new(),
+            Some(at) => {
+                let ids: Vec<Uuid> = rows.iter().map(|m| m.memory_id).collect();
+                self.journal
+                    .tips_as_of(tenant_id, &ids, at)
+                    .await?
+                    .into_iter()
+                    .collect()
+            }
+        };
         let mut items = Vec::with_capacity(rows.len());
         for m in rows {
             // R3 defense in depth: nothing outside the scope's predicate
@@ -4634,9 +4676,18 @@ where
                 }
                 ListingScope::Tips { nodes, held, .. } => {
                     nodes.contains(&m.workarea_id)
-                        && ((m.status == MemoryStatus::Promoted && m.is_tip)
-                            || (held.contains(&m.workarea_id)
-                                && served_unreviewed(&m, self.scanner.version())))
+                        && (match &filter.as_of {
+                            None => m.status == MemoryStatus::Promoted && m.is_tip,
+                            Some(_) => {
+                                m.status == MemoryStatus::Promoted
+                                    && tips_then.contains(&m.memory_id)
+                            }
+                        } || (held.contains(&m.workarea_id)
+                            && filter
+                                .as_of
+                                .as_ref()
+                                .is_none_or(|at| m.created_at.as_str() <= at.as_str())
+                            && served_unreviewed(&m, self.scanner.version())))
                 }
             };
             if admitted {
@@ -4729,6 +4780,7 @@ where
             // The check reads every origin: a copy is a copy wherever it
             // came from (ADR-0050 d1).
             anchor: Default::default(),
+            as_of: None,
         };
         let ids = self
             .journal
@@ -5960,6 +6012,21 @@ where
             None => self.clock.now().unix_micros(),
         };
         let window = parse_window(&query, now_us);
+        // An as-of recall reads an instant that has happened, in its scope
+        // alone (ADR-0059 d17, d18).
+        if let Some(at) = &req.as_of {
+            self.refuse_future(at, "/as_of")?;
+            if req
+                .sources
+                .as_ref()
+                .is_some_and(|s| *s != crate::federation::Sources::Scope)
+            {
+                return Err(AppError::AsOfInvalid {
+                    field: "/sources",
+                    reason: "an as-of recall reads its scope alone: sources is scope with as_of",
+                });
+            }
+        }
 
         // The scope's ancestry runs node to root, so each ancestor's own
         // ancestry is its suffix; the store is handed the readable ones root
@@ -5977,15 +6044,41 @@ where
             .collect();
         // R3 defense in depth, as for the hits below: only a readable served
         // tip in force, never a retirement version (ADR-0025 d8, d11).
-        let steering: Vec<MemoryRecord> = self
-            .journal
-            .steering_in_force(key.tenant_id, &applicable)
-            .await?
+        // At an instant, the steering tips then, promoted today (ADR-0059
+        // d15, d18).
+        let steering_rows = match &req.as_of {
+            None => {
+                self.journal
+                    .steering_in_force(key.tenant_id, &applicable)
+                    .await?
+            }
+            Some(at) => {
+                self.journal
+                    .steering_as_of(key.tenant_id, &applicable, at)
+                    .await?
+            }
+        };
+        let steering_tips: BTreeSet<Uuid> = match &req.as_of {
+            None => BTreeSet::new(),
+            Some(at) => {
+                let ids: Vec<Uuid> = steering_rows.iter().map(|m| m.memory_id).collect();
+                self.journal
+                    .tips_as_of(key.tenant_id, &ids, at)
+                    .await?
+                    .into_iter()
+                    .collect()
+            }
+        };
+        let steering: Vec<MemoryRecord> = steering_rows
             .into_iter()
             .filter(|m| {
                 m.kind == MemoryKind::Steering
                     && m.status == MemoryStatus::Promoted
-                    && m.is_tip
+                    && (if req.as_of.is_some() {
+                        steering_tips.contains(&m.memory_id)
+                    } else {
+                        m.is_tip
+                    })
                     && !m.retirement
                     && applicable.contains(&m.workarea_id)
             })
@@ -6024,7 +6117,9 @@ where
             let (tenant_default, policy) = self.journal.recall_defaults(key.tenant_id).await?;
             (
                 self.pipeline_from(req.search.as_deref(), tenant_default)?,
-                Some(policy),
+                // An as-of recall reads its scope, whatever the tenant's
+                // default sources (ADR-0059 d18).
+                req.as_of.is_none().then_some(policy),
             )
         } else {
             (
@@ -6084,6 +6179,7 @@ where
             // visibility rule, never a weight (proposed ADR-0059 d3).
             expired_at,
             anchor: req.anchor.clone(),
+            as_of: req.as_of.clone(),
         };
         timings.lap(Stage::Scope, lap);
         // A fused pipeline ranks by position, so under a reference set its
@@ -6112,6 +6208,24 @@ where
             .await?;
         let mut lap = std::time::Instant::now();
         let (mut candidates, terms, fallback) = (ran.fused, ran.terms, ran.fallback);
+        // The core's re-check at an instant: which candidates were their
+        // claim's tip then, read once for the list (ADR-0059 d15, d16).
+        let tips_then: BTreeSet<Uuid> = match &req.as_of {
+            None => BTreeSet::new(),
+            Some(at) => {
+                let ids: Vec<Uuid> = candidates.iter().map(|c| c.memory_id).collect();
+                self.journal
+                    .tips_as_of(key.tenant_id, &ids, at)
+                    .await?
+                    .into_iter()
+                    .collect()
+            }
+        };
+        let recorded = |m: &MemoryRecord| {
+            req.as_of
+                .as_ref()
+                .is_none_or(|at| m.created_at.as_str() <= at.as_str())
+        };
         self.observer
             .search(pipeline.as_str(), fallback, ran.access.as_str());
         // R3 defense in depth: the gate changed visibility. Nothing
@@ -6123,9 +6237,16 @@ where
         let own = caller.own_key_ids();
         let admits = |m: &MemoryRecord| {
             let admitted = match m.status {
-                MemoryStatus::Promoted => m.is_tip && promoted.contains(&m.workarea_id),
+                MemoryStatus::Promoted => {
+                    (if req.as_of.is_some() {
+                        tips_then.contains(&m.memory_id)
+                    } else {
+                        m.is_tip
+                    }) && promoted.contains(&m.workarea_id)
+                }
                 MemoryStatus::Held => {
                     include_unreviewed
+                        && recorded(m)
                         && ((own.contains(&m.author_key_id) && readable.contains(&m.workarea_id))
                             || (any_author
                                 && served_unreviewed(m, self.scanner.version())
@@ -6771,12 +6892,29 @@ where
         bearer: impl Into<Bearer<'_>>,
         memory_id: Uuid,
     ) -> Result<ServedMemory, AppError> {
+        self.get_memory_as_of(bearer, memory_id, None).await
+    }
+
+    /// [`Self::get_memory`] at an instant (ADR-0059 d15, d19): a version
+    /// recorded after `as_of` does not exist then, `access.not_found`, and
+    /// any other answers exactly as get answers today; an instant after the
+    /// lead's clock is refused (d17).
+    pub async fn get_memory_as_of(
+        &self,
+        bearer: impl Into<Bearer<'_>>,
+        memory_id: Uuid,
+        as_of: Option<&EventTime>,
+    ) -> Result<ServedMemory, AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         require_admissible(&caller.key, Role::Reader, "get")?;
+        if let Some(at) = as_of {
+            self.refuse_future(at, "as_of")?;
+        }
         let memory = self
             .journal
             .memory(caller.key.tenant_id, memory_id)
             .await?
+            .filter(|m| as_of.is_none_or(|at| m.created_at.as_str() <= at.as_str()))
             .ok_or(AppError::NotFound)?;
         if self.readable(&caller, &memory).await? {
             // A get by id labels the key's recall that served the version

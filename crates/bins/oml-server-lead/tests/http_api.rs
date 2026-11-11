@@ -10450,7 +10450,13 @@ async fn as_of_reads_the_tip_at_an_instant_over_http() {
     )
     .await;
     let v1 = v1.as_str().expect("an id").to_owned();
-    let (status, _, got) = send(router, "GET", &format!("/v1/memories/{v1}"), Call::auth(&reader)).await;
+    let (status, _, got) = send(
+        router,
+        "GET",
+        &format!("/v1/memories/{v1}"),
+        Call::auth(&reader),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{got}");
     let promoted_at = got["promoted_at"].as_str().expect("promoted_at").to_owned();
     let (status, _, accepted) = send(
@@ -10492,7 +10498,10 @@ async fn as_of_reads_the_tip_at_an_instant_over_http() {
     .await;
     assert_eq!(status, StatusCode::OK, "{then}");
     assert_eq!(hit_ids(&then), vec![json!(v1)], "{then}");
-    assert!(then.get("as_of").is_none(), "no echo of the instant: {then}");
+    assert!(
+        then.get("as_of").is_none(),
+        "no echo of the instant: {then}"
+    );
     let (_, today) =
         recall_over_http(router, &reader, None, json!({"query": "deploy runbook"})).await;
     assert_eq!(hit_ids(&today), vec![json!(v2)], "{today}");
@@ -10533,7 +10542,10 @@ async fn as_of_reads_the_tip_at_an_instant_over_http() {
 
     for (path, field) in [
         (format!("/v1/memories/{v1}?as_of=2026-10-10"), "as_of"),
-        (format!("/v1/memories?as_of=2099-01-01T00%3A00%3A00Z"), "as_of"),
+        (
+            "/v1/memories?as_of=2099-01-01T00%3A00%3A00Z".to_owned(),
+            "as_of",
+        ),
         (format!("/v1/memories?own=true&as_of={at}"), "as_of"),
     ] {
         let (status, _, body) = send(router, "GET", &path, Call::auth(&reader)).await;
@@ -10548,7 +10560,11 @@ async fn as_of_reads_the_tip_at_an_instant_over_http() {
         Call::auth(&reader),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "an unknown get parameter: {body}");
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "an unknown get parameter: {body}"
+    );
     let (status, body) = recall_over_http(
         router,
         &reader,

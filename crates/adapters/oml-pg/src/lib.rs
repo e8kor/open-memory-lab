@@ -846,6 +846,73 @@ fn with_now(sql: &str, n: usize) -> String {
     sql.replace("$NOW", &format!("${n}"))
 }
 
+/// The promoted part of [`SEARCH_SCOPE`] today: the served tips on the
+/// readable nodes.
+const TIPS_TODAY: &str = "(m.status = 'promoted' AND m.is_tip AND m.workarea_id = ANY($2::uuid[]))";
+
+/// The held part of [`SEARCH_SCOPE`], up to its author predicate.
+const HELD_TODAY: &str = "OR (m.status = 'held' AND m.workarea_id = ANY($5::uuid[])";
+
+/// Whether `m` was its claim's tip at the instant `at`, an SQL
+/// `timestamptz` expression (ADR-0059 d15, d16, d20): promoted at or before
+/// it, and the greatest version of its `workarea_id` and `claim_key`, in any
+/// state today, promoted at or before it. Today's tip promoted by then was
+/// the tip then, since a tip moves only forward (ADR-0059 d16), so the
+/// probe runs only for a replaced version: correlated, once per such row,
+/// it reads `memories_tip_moves` by an index condition on the claim, never
+/// a join the planner could unparameterize. Exported so the suite plans
+/// the probe the adapter runs.
+#[must_use]
+pub fn tip_at_sql(at: &str) -> String {
+    format!(
+        "m.status = 'promoted' AND m.promoted_at <= {at} \
+         AND (m.is_tip OR m.version = (SELECT max(s.version) FROM memories s \
+           WHERE s.tenant_id = m.tenant_id AND s.workarea_id = m.workarea_id \
+             AND s.claim_key = m.claim_key AND s.promoted_at <= {at}))"
+    )
+}
+
+/// An instant as an SQL literal. An [`EventTime`] is validated to the
+/// fixed-width form of digits, `-`, `:`, `T`, `.` and `Z`, so it is inlined
+/// where binding it would renumber every search statement's parameters.
+fn instant_literal(at: &EventTime) -> String {
+    let t = at.as_str();
+    assert!(
+        t.bytes()
+            .all(|b| b.is_ascii_digit() || b"-:T.Z".contains(&b)),
+        "an EventTime is fixed-width digits and separators"
+    );
+    format!("'{t}'::timestamptz")
+}
+
+/// `sql`, a statement that reads [`SEARCH_SCOPE`], read at the instant `at`
+/// (ADR-0059 d15, d18): its promoted part is the tips at `at` on the
+/// readable nodes and its held part the rows recorded by `at`. `None` keeps
+/// today's statement.
+fn scope_at(sql: &str, at: Option<&EventTime>) -> String {
+    let Some(at) = at else {
+        return sql.to_owned();
+    };
+    assert!(
+        sql.contains(TIPS_TODAY),
+        "the statement reads the search scope"
+    );
+    sql.replace(
+        TIPS_TODAY,
+        &format!(
+            "({} AND m.workarea_id = ANY($2::uuid[]))",
+            tip_at_sql(&instant_literal(at))
+        ),
+    )
+    .replace(
+        HELD_TODAY,
+        &format!(
+            "OR (m.status = 'held' AND m.created_at <= {} AND m.workarea_id = ANY($5::uuid[])",
+            instant_literal(at)
+        ),
+    )
+}
+
 /// The versions of the tenant `$1` whose valid time ended at or before the
 /// request's now, `$NOW`, read by the `memories_valid_until` index's
 /// condition; the postings statements leave them out (proposed ADR-0059 d3).
@@ -4492,10 +4559,12 @@ impl PgStore {
             ),
             6,
         );
+        let sql = scope_at(&sql, scope.as_of.as_ref());
         let limit = i64::try_from(self.anchor_first_max.saturating_add(1)).unwrap_or(i64::MAX);
         let ids: Vec<Uuid> = columns
             .bind(
                 sqlx::query(&sql)
+                    .persistent(scope.as_of.is_none())
                     .bind(tenant_id)
                     .bind(&scope.promoted_nodes)
                     .bind(kinds)
@@ -4850,6 +4919,17 @@ impl Retriever for PgStore {
                 kind.as_str()
             )));
         }
+        // At an instant the postings lists, whose counts and states are
+        // today's served versions, are read by bm25's scan over the scope at
+        // the instant, and keyword-all's v0.5.0 statements by keyword-any's
+        // with every word (ADR-0059 d18).
+        let as_of = scope.as_of.as_ref();
+        let every_word = as_of.is_some() && kind == RetrieverKind::KeywordAll;
+        let kind = match (as_of, kind) {
+            (Some(_), RetrieverKind::Bm25Postings | RetrieverKind::Sparse) => RetrieverKind::Bm25,
+            (Some(_), RetrieverKind::KeywordAll) => RetrieverKind::KeywordAny,
+            (_, kind) => kind,
+        };
         let kinds = hit_kinds(&scope.kinds);
         let (authors, held_nodes): (Option<Vec<Uuid>>, Vec<Uuid>) = scope
             .own_held
@@ -4858,7 +4938,7 @@ impl Retriever for PgStore {
                 (Some(held_authors(own)), own.nodes.clone())
             });
         let k = i64::try_from(query.k).unwrap_or(i64::MAX);
-        let all = query.match_mode == MatchMode::All;
+        let all = every_word || query.match_mode == MatchMode::All;
         let mut tx = self.pool.begin().await.map_err(backend)?;
         // One snapshot for every statement of the list, so counts and
         // postings read together; nothing here writes (review F6).
@@ -4929,7 +5009,8 @@ impl Retriever for PgStore {
             // no list (proposed ADR-0059 d7).
             RetrieverKind::Time => match query.window {
                 None => Vec::new(),
-                Some(window) => sqlx::query(&time_sql())
+                Some(window) => sqlx::query(&scope_at(&time_sql(), as_of))
+                    .persistent(as_of.is_none())
                     .bind(tenant_id)
                     .bind(&scope.promoted_nodes)
                     .bind(&kinds)
@@ -4974,12 +5055,18 @@ impl Retriever for PgStore {
                         .await
                         .map_err(backend)?;
                 }
-                let sql = match kind {
-                    RetrieverKind::KeywordAny => keyword_any_sql(&anchor.row("m", 10)),
-                    RetrieverKind::Bm25 => bm25_sql_within(&anchor.row("m", 10)),
-                    _ => trigram_sql(&anchor.row("m", 9)),
-                };
+                let sql = scope_at(
+                    &match kind {
+                        RetrieverKind::KeywordAny => keyword_any_sql(&anchor.row("m", 10)),
+                        RetrieverKind::Bm25 => bm25_sql_within(&anchor.row("m", 10)),
+                        _ => trigram_sql(&anchor.row("m", 9)),
+                    },
+                    as_of,
+                );
+                // A statement at an instant is planned once: its literal
+                // instant would fill the statement cache (ADR-0059 d20).
                 let mut statement = sqlx::query(&sql)
+                    .persistent(as_of.is_none())
                     .bind(tenant_id)
                     .bind(&scope.promoted_nodes)
                     .bind(&kinds)
@@ -6122,6 +6209,62 @@ impl JournalStore for PgStore {
         rows.iter().map(memory_from_row).collect()
     }
 
+    async fn steering_as_of(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        as_of: &EventTime,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // The steering tips at the instant on the named nodes, promoted
+        // today, never a retirement version, in steering_in_force's order
+        // (ADR-0059 d15, d18).
+        let sql = format!(
+            "SELECT {MEMORY_COLUMNS} FROM memories m \
+             WHERE m.tenant_id = $1 AND {} \
+               AND NOT m.retirement AND m.kind = 'steering' \
+               AND m.workarea_id = ANY($2::uuid[]) \
+             ORDER BY array_position($2::uuid[], m.workarea_id) ASC, \
+                      m.promoted_at ASC, m.id ASC",
+            tip_at_sql("($3)::timestamptz")
+        );
+        let rows = sqlx::query(&sql)
+            .bind(tenant_id)
+            .bind(nodes)
+            .bind(as_of.as_str())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter().map(memory_from_row).collect()
+    }
+
+    async fn tips_as_of(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+        as_of: &EventTime,
+    ) -> Result<Vec<Uuid>, StoreError> {
+        if memory_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let ids: Vec<Uuid> = sqlx::query_scalar(&format!(
+            "SELECT m.id FROM memories m WHERE m.tenant_id = $1 AND m.id = ANY($2::uuid[]) AND {}",
+            tip_at_sql("($3)::timestamptz")
+        ))
+        .bind(tenant_id)
+        .bind(memory_ids)
+        .bind(as_of.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        Ok(ids)
+    }
+
     async fn guardrail_rows(
         &self,
         tenant_id: Uuid,
@@ -6183,12 +6326,23 @@ impl JournalStore for PgStore {
             } => {
                 // Inside an in-progress scope the held versions of every
                 // author on the nodes join the tips (ADR-0030 d3).
-                sql.push(" AND ((m.status = 'promoted' AND m.is_tip)");
+                // At an instant, the tips then and the held rows recorded
+                // by it (ADR-0059 d15, d19).
+                match &filter.as_of {
+                    None => sql.push(" AND ((m.status = 'promoted' AND m.is_tip)"),
+                    Some(at) => sql.push(format!(" AND (({})", tip_at_sql(&instant_literal(at)))),
+                };
                 if !held.is_empty() {
                     // A version the scan held stays its author's (ADR-0065
                     // d5, amended 2026-11-10).
+                    sql.push(" OR (");
+                    if let Some(at) = &filter.as_of {
+                        sql.push("m.created_at <= (")
+                            .push_bind(at.as_str().to_owned())
+                            .push(")::timestamptz AND ");
+                    }
                     sql.push(
-                        " OR (m.status = 'held' AND NOT m.retirement \
+                        "m.status = 'held' AND NOT m.retirement \
                          AND m.scan_finding IS NULL \
                          AND m.kind IN ('memory', 'derived_fact') AND m.workarea_id = ANY(",
                     )

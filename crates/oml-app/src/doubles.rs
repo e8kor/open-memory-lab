@@ -67,6 +67,32 @@ fn served_tip(m: &MemoryRecord) -> bool {
     m.status == MemoryStatus::Promoted && m.is_tip && !m.retirement
 }
 
+/// Whether `m` was its claim's tip at `as_of` and is promoted today
+/// (ADR-0059 d15, d16): promoted at or before the instant, with no later
+/// version of its `workarea_id` and `claim_key`, in any state today,
+/// promoted at or before it.
+fn tip_at(state: &TenantState, m: &MemoryRecord, as_of: &EventTime) -> bool {
+    let promoted_by = |r: &MemoryRecord| {
+        r.promoted_at
+            .as_ref()
+            .is_some_and(|at| at.as_str() <= as_of.as_str())
+    };
+    m.status == MemoryStatus::Promoted
+        && promoted_by(m)
+        && !state
+            .by_workarea
+            .get(&m.workarea_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| state.memories.get(id))
+            .any(|r| r.claim_key == m.claim_key && r.version > m.version && promoted_by(r))
+}
+
+/// Whether `m` existed at `as_of`: its submission was recorded by then.
+fn recorded_by(m: &MemoryRecord, as_of: &EventTime) -> bool {
+    m.created_at.as_str() <= as_of.as_str()
+}
+
 /// The distinct lower-cased alphanumeric words of `text`: this store's
 /// stand-in for the `simple` text-search configuration, which stems
 /// nothing (retrieval.md, text handling).
@@ -2143,8 +2169,17 @@ impl Retriever for MemStore {
             if !scope.anchor.admits_row(m.anchor.as_deref(), m.origin_kind) {
                 return false;
             }
-            if served_tip(m) && scope.promoted_nodes.contains(&m.workarea_id) {
+            // At an instant, the tips then, promoted today, and the held
+            // rows recorded by then (ADR-0059 d15, d18).
+            let tip = match &scope.as_of {
+                None => served_tip(m),
+                Some(at) => tip_at(&state, m, at),
+            };
+            if tip && scope.promoted_nodes.contains(&m.workarea_id) {
                 return true;
+            }
+            if scope.as_of.as_ref().is_some_and(|at| !recorded_by(m, at)) {
+                return false;
             }
             scope.own_held.as_ref().is_some_and(|own| {
                 m.status == MemoryStatus::Held
@@ -2711,6 +2746,57 @@ impl JournalStore for MemStore {
         Ok(rows.into_iter().map(|(_, _, m)| m).collect())
     }
 
+    async fn steering_as_of(
+        &self,
+        tenant_id: Uuid,
+        nodes: &[Uuid],
+        as_of: &EventTime,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = nodes
+            .iter()
+            .filter_map(|n| state.by_workarea.get(n))
+            .flatten()
+            .filter_map(|id| state.memories.get(id))
+            .filter(|m| m.kind == MemoryKind::Steering && !m.retirement && tip_at(&state, m, as_of))
+            .filter_map(|m| {
+                let depth = nodes.iter().position(|n| *n == m.workarea_id)?;
+                Some((
+                    u32::try_from(depth).unwrap_or(u32::MAX),
+                    m.promoted_at.clone()?,
+                    m.clone(),
+                ))
+            })
+            .collect();
+        steering_order(&mut rows, |(depth, at, m)| (*depth, at, m.memory_id));
+        Ok(rows.into_iter().map(|(_, _, m)| m).collect())
+    }
+
+    async fn tips_as_of(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+        as_of: &EventTime,
+    ) -> Result<Vec<Uuid>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(memory_ids
+            .iter()
+            .filter(|id| {
+                state
+                    .memories
+                    .get(id)
+                    .is_some_and(|m| tip_at(&state, m, as_of))
+            })
+            .copied()
+            .collect())
+    }
+
     async fn guardrail_rows(
         &self,
         tenant_id: Uuid,
@@ -2754,13 +2840,16 @@ impl JournalStore for MemStore {
                 current_scanner,
             } => {
                 nodes.contains(&m.workarea_id)
-                    && ((m.status == MemoryStatus::Promoted && m.is_tip)
-                        || (held.contains(&m.workarea_id)
-                            && m.status == MemoryStatus::Held
-                            && !m.retirement
-                            && m.scan_finding.is_none()
-                            && &m.scanned_under == current_scanner
-                            && HIT_KINDS.contains(&m.kind)))
+                    && (match &filter.as_of {
+                        None => m.status == MemoryStatus::Promoted && m.is_tip,
+                        Some(at) => tip_at(&state, m, at),
+                    } || (held.contains(&m.workarea_id)
+                        && filter.as_of.as_ref().is_none_or(|at| recorded_by(m, at))
+                        && m.status == MemoryStatus::Held
+                        && !m.retirement
+                        && m.scan_finding.is_none()
+                        && &m.scanned_under == current_scanner
+                        && HIT_KINDS.contains(&m.kind)))
             }
         };
         let position = |m: &MemoryRecord| (m.created_at.as_str().to_owned(), m.memory_id);

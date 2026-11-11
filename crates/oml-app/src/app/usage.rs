@@ -331,6 +331,7 @@ where
                     include_expired: false,
                     now: None,
                     anchor: AnchorFilter::default(),
+                    as_of: None,
                 };
                 // A scope the key no longer reads answers nothing, which
                 // the replay scores as a miss.

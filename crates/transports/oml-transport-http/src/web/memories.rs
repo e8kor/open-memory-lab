@@ -515,6 +515,7 @@ where
                         path_prefix: None,
                         origin_kinds: q.origin.into_iter().collect(),
                     },
+                    as_of: None,
                 },
             )
             .await

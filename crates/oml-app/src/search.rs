@@ -681,6 +681,10 @@ pub struct CandidateScope {
     /// searched rows, so no row's score depends on which sources were
     /// searched. `None` keeps the scope's own statistics.
     pub reference: Option<Vec<Uuid>>,
+    /// An as-of read's instant: the promoted part is the claims' tips at
+    /// it and the held part the rows recorded by it, instead of today's
+    /// tips (ADR-0059 d15, d18). `None` reads today.
+    pub as_of: Option<oml_domain::EventTime>,
 }
 
 /// The own held part of a candidate scope (ADR-0025 d4, d5).

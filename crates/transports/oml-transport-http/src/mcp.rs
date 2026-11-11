@@ -218,11 +218,14 @@ struct ReadArgs {
     /// Where a recall searches: `scope`, `wide` or a list of workareas
     /// (ADR-0072 d5).
     sources: Option<Value>,
+    /// The transaction-time instant every mode reads at (ADR-0059 d14).
+    as_of: Option<String>,
 }
 
 /// `oml_read`'s modes and the arguments each takes (ADR-0039 d4).
-const READ_GET: [&str; 1] = ["artifact_id"];
-const READ_RECALL: [&str; 14] = [
+const READ_GET: [&str; 2] = ["artifact_id", "as_of"];
+const READ_RECALL: [&str; 15] = [
+    "as_of",
     "sources",
     "origin_kinds",
     "query",
@@ -238,7 +241,8 @@ const READ_RECALL: [&str; 14] = [
     "anchor_repo",
     "anchor_path_prefix",
 ];
-const READ_LISTING: [&str; 12] = [
+const READ_LISTING: [&str; 13] = [
+    "as_of",
     "origin_kinds",
     "anchor_repo",
     "anchor_path_prefix",
@@ -714,6 +718,7 @@ where
             ("anchor_path_prefix", args.anchor_path_prefix.is_some()),
             ("origin_kinds", args.origin_kinds.is_some()),
             ("sources", args.sources.is_some()),
+            ("as_of", args.as_of.is_some()),
         ];
         if let Some((field, _)) = sent
             .iter()
@@ -737,10 +742,12 @@ where
             .await?;
         }
         let mut out = if let Some(artifact_id) = args.artifact_id {
+            let as_of = crate::parse_as_of(args.as_of.as_deref(), "/as_of").map_err(refusal)?;
             let memory = ring_outcome(
                 Self::get_memory_inner(
                     st,
                     &artifact_id,
+                    as_of.as_ref(),
                     &ring_headers(presented),
                     presented.connection,
                 )
@@ -771,6 +778,7 @@ where
                 ),
                 ("origin_kinds", args.origin_kinds.clone().map(Value::from)),
                 ("sources", args.sources.clone()),
+                ("as_of", args.as_of.clone().map(Value::from)),
             ] {
                 if let Some(value) = value {
                     body.insert(name.to_owned(), value);
@@ -788,7 +796,9 @@ where
             .await?;
             recall_output(&result)
         } else {
-            let own = args.own.unwrap_or(true);
+            // With as_of and no own, the scoped listing at the instant
+            // (ADR-0059 d19).
+            let own = args.own.unwrap_or(args.as_of.is_none());
             let mut params = vec![("own".to_owned(), own.to_string())];
             for (name, value) in [
                 ("workarea", args.workarea),
@@ -802,6 +812,7 @@ where
                 ("anchor_repo", args.anchor_repo),
                 ("anchor_path_prefix", args.anchor_path_prefix),
                 ("origin_kinds", args.origin_kinds.map(|k| k.join(","))),
+                ("as_of", args.as_of),
             ] {
                 if let Some(value) = value {
                     params.push((name.to_owned(), value));
