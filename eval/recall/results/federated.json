@@ -2,102 +2,183 @@
  "method": "federated",
  "pipeline": "bm25-postings",
  "k": 10,
- "description": "ADR-0072 d11: sources scope, wide and the union on the scoped, cross and unanswerable splits, the widen hint, and the skew split; eval/recall/federated.sh on a release build, 2026-11-10",
+ "description": "ADR-0072 d11: sources scope, wide and the union on the scoped, cross and unanswerable splits, the widen hint, and the skew split, with success@5 per category; eval/recall/federated.sh on a release build, 2026-11-11",
  "report": {
   "scoped": {
    "scope": {
+    "success@5_by_category": {
+     "exact": "11/11",
+     "paraphrase": "9/11",
+     "inflection": "11/11",
+     "partial": "11/11",
+     "typo": "9/11",
+     "identifier": "11/11",
+     "question": "11/11",
+     "long": "11/11",
+     "negation": "11/11",
+     "temporal": "10/11",
+     "multihop": "10/11"
+    },
     "n": 121,
     "success@5": 0.95,
     "ndcg@10": 0.839,
     "selection_precision": null,
     "selection_recall": null,
     "unanswerable_false_hits": null,
-    "p50_ms": 24.0,
-    "p95_ms": 31.3
+    "p50_ms": 13.9,
+    "p95_ms": 34.2
    },
    "wide@8": {
+    "success@5_by_category": {
+     "exact": "11/11",
+     "paraphrase": "8/11",
+     "inflection": "11/11",
+     "partial": "11/11",
+     "typo": "9/11",
+     "identifier": "11/11",
+     "question": "11/11",
+     "long": "11/11",
+     "negation": "11/11",
+     "temporal": "9/11",
+     "multihop": "10/11"
+    },
     "n": 121,
     "success@5": 0.934,
     "ndcg@10": 0.876,
     "selection_precision": 0.122,
     "selection_recall": 1.0,
     "unanswerable_false_hits": null,
-    "p50_ms": 17.3,
-    "p95_ms": 36.9
+    "p50_ms": 15.0,
+    "p95_ms": 32.4
    },
    "union": {
+    "success@5_by_category": {
+     "exact": "11/11",
+     "paraphrase": "8/11",
+     "inflection": "11/11",
+     "partial": "11/11",
+     "typo": "9/11",
+     "identifier": "11/11",
+     "question": "11/11",
+     "long": "11/11",
+     "negation": "11/11",
+     "temporal": "9/11",
+     "multihop": "10/11"
+    },
     "n": 121,
     "success@5": 0.934,
     "ndcg@10": 0.876,
     "selection_precision": 0.1,
     "selection_recall": 1.0,
     "unanswerable_false_hits": null,
-    "p50_ms": 15.1,
-    "p95_ms": 30.7
+    "p50_ms": 13.8,
+    "p95_ms": 25.3
    }
   },
   "cross": {
    "scope": {
+    "success@5_by_category": {
+     "exact": "0/11",
+     "paraphrase": "0/11",
+     "inflection": "0/11",
+     "partial": "0/11",
+     "typo": "0/11",
+     "identifier": "0/11",
+     "question": "0/11",
+     "long": "0/11",
+     "negation": "0/11",
+     "temporal": "0/11",
+     "multihop": "0/11"
+    },
     "n": 121,
     "success@5": 0.0,
     "ndcg@10": 0.0,
     "selection_precision": null,
     "selection_recall": null,
     "unanswerable_false_hits": null,
-    "p50_ms": 11.8,
-    "p95_ms": 21.3
+    "p50_ms": 13.2,
+    "p95_ms": 34.7
    },
    "wide@8": {
+    "success@5_by_category": {
+     "exact": "11/11",
+     "paraphrase": "8/11",
+     "inflection": "11/11",
+     "partial": "11/11",
+     "typo": "9/11",
+     "identifier": "11/11",
+     "question": "11/11",
+     "long": "11/11",
+     "negation": "11/11",
+     "temporal": "9/11",
+     "multihop": "10/11"
+    },
     "n": 121,
     "success@5": 0.934,
     "ndcg@10": 0.876,
     "selection_precision": 0.121,
     "selection_recall": 0.992,
     "unanswerable_false_hits": null,
-    "p50_ms": 15.0,
-    "p95_ms": 24.9
+    "p50_ms": 14.4,
+    "p95_ms": 24.4
    },
    "union": {
+    "success@5_by_category": {
+     "exact": "11/11",
+     "paraphrase": "8/11",
+     "inflection": "11/11",
+     "partial": "11/11",
+     "typo": "9/11",
+     "identifier": "11/11",
+     "question": "11/11",
+     "long": "11/11",
+     "negation": "11/11",
+     "temporal": "9/11",
+     "multihop": "10/11"
+    },
     "n": 121,
     "success@5": 0.934,
     "ndcg@10": 0.876,
     "selection_precision": 0.1,
     "selection_recall": 1.0,
     "unanswerable_false_hits": null,
-    "p50_ms": 19.3,
-    "p95_ms": 43.0
+    "p50_ms": 15.8,
+    "p95_ms": 25.6
    }
   },
   "unanswerable": {
    "scope": {
+    "success@5_by_category": {},
     "n": 0,
     "success@5": null,
     "ndcg@10": null,
     "selection_precision": null,
     "selection_recall": null,
     "unanswerable_false_hits": 0.682,
-    "p50_ms": 13.3,
-    "p95_ms": 18.9
+    "p50_ms": 11.9,
+    "p95_ms": 17.7
    },
    "wide@8": {
+    "success@5_by_category": {},
     "n": 0,
     "success@5": null,
     "ndcg@10": null,
     "selection_precision": null,
     "selection_recall": null,
     "unanswerable_false_hits": 1.0,
-    "p50_ms": 37.9,
-    "p95_ms": 45.1
+    "p50_ms": 12.6,
+    "p95_ms": 26.9
    },
    "union": {
+    "success@5_by_category": {},
     "n": 0,
     "success@5": null,
     "ndcg@10": null,
     "selection_precision": null,
     "selection_recall": null,
     "unanswerable_false_hits": 1.0,
-    "p50_ms": 36.5,
-    "p95_ms": 41.8
+    "p50_ms": 18.3,
+    "p95_ms": 28.6
    }
   },
   "widen_hint": {
@@ -121,34 +202,73 @@
    "padded_rows": 2400,
    "max_sources": 4,
    "scope": {
+    "success@5_by_category": {
+     "exact": "0/11",
+     "paraphrase": "0/11",
+     "inflection": "0/11",
+     "partial": "0/11",
+     "typo": "0/11",
+     "identifier": "0/11",
+     "question": "0/11",
+     "long": "0/11",
+     "negation": "0/11",
+     "temporal": "0/11",
+     "multihop": "0/11"
+    },
     "n": 121,
     "success@5": 0.0,
     "ndcg@10": 0.0,
     "selection_precision": null,
     "selection_recall": null,
     "unanswerable_false_hits": null,
-    "p50_ms": 23.9,
-    "p95_ms": 34.3
+    "p50_ms": 15.9,
+    "p95_ms": 87.2
    },
    "wide@4": {
+    "success@5_by_category": {
+     "exact": "11/11",
+     "paraphrase": "7/11",
+     "inflection": "11/11",
+     "partial": "11/11",
+     "typo": "9/11",
+     "identifier": "10/11",
+     "question": "11/11",
+     "long": "11/11",
+     "negation": "11/11",
+     "temporal": "9/11",
+     "multihop": "11/11"
+    },
     "n": 121,
     "success@5": 0.926,
     "ndcg@10": 0.844,
     "selection_precision": 0.215,
     "selection_recall": 0.975,
     "unanswerable_false_hits": null,
-    "p50_ms": 21.7,
-    "p95_ms": 41.3
+    "p50_ms": 23.3,
+    "p95_ms": 47.1
    },
    "union": {
+    "success@5_by_category": {
+     "exact": "11/11",
+     "paraphrase": "6/11",
+     "inflection": "11/11",
+     "partial": "11/11",
+     "typo": "9/11",
+     "identifier": "11/11",
+     "question": "11/11",
+     "long": "11/11",
+     "negation": "11/11",
+     "temporal": "9/11",
+     "multihop": "11/11"
+    },
     "n": 121,
     "success@5": 0.926,
-    "ndcg@10": 0.853,
+    "ndcg@10": 0.852,
     "selection_precision": 0.1,
     "selection_recall": 1.0,
     "unanswerable_false_hits": null,
-    "p50_ms": 21.9,
-    "p95_ms": 46.3
+    "p50_ms": 15.4,
+    "p95_ms": 25.2
    },
    "agreement_with_redde_analogue": 0.882
   }
