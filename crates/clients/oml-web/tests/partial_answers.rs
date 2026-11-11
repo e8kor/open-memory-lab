@@ -186,6 +186,16 @@ async fn the_atlas_json_serves_the_regions_and_marks_the_offers_unavailable_when
     assert!(scope.get("offers").is_none(), "{value}");
 }
 
+/// The memories JSON names no `base`: the lead page it named is gone and
+/// nothing read it (#281).
+#[tokio::test]
+async fn the_memories_json_names_no_base_page() {
+    let answer = send(offers_fail(), get("/web/data/memories")).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    let value: Value = serde_json::from_str(&answer.body).unwrap();
+    assert!(value.get("base").is_none(), "{value}");
+}
+
 #[tokio::test]
 async fn the_json_route_answers_the_apis_refusal_as_json_when_the_listing_fails() {
     let script: Script = Arc::new(|_, path| {
@@ -243,8 +253,12 @@ async fn the_memories_list_refuses_by_name_past_ten_pages_of_keys_and_never_show
     assert_eq!(keys, oml_web::memories::KEY_PAGES_MAX, "{:?}", page.calls);
 }
 
+/// A cursor the API repeats is the API's fault, not the person's: the
+/// list is refused as `unavailable` with 502, never as
+/// `limit.list_too_long`, which tells them they hold too many keys
+/// (#281).
 #[tokio::test]
-async fn a_key_cursor_the_api_repeats_refuses_the_list_instead_of_cutting_it() {
+async fn a_key_cursor_the_api_repeats_is_refused_as_an_api_fault_instead_of_cutting_the_list() {
     let script: Script = Arc::new(|_, path| {
         if path.starts_with("/v2/keys") {
             (200, json!({"items": [], "next_cursor": "same"}), Vec::new())
@@ -253,13 +267,10 @@ async fn a_key_cursor_the_api_repeats_refuses_the_list_instead_of_cutting_it() {
         }
     });
     let page = send(script, get("/web/memories")).await;
-    assert_eq!(
-        page.status,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "{}",
-        page.body
-    );
-    assert!(page.body.contains("limit.list_too_long"), "{}", page.body);
+    assert_eq!(page.status, StatusCode::BAD_GATEWAY, "{}", page.body);
+    assert!(page.body.contains("unavailable"), "{}", page.body);
+    assert!(page.body.contains("repeated"), "{}", page.body);
+    assert!(!page.body.contains("limit.list_too_long"), "{}", page.body);
 }
 
 #[tokio::test]

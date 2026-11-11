@@ -72,6 +72,57 @@ fn lead() -> Router {
         .into_router()
 }
 
+/// A path with each parameter's name dropped, `{}` in its place, so the
+/// router's names and openapi.yaml's compare.
+fn shape(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    let mut in_param = false;
+    for c in path.chars() {
+        match c {
+            '{' => {
+                in_param = true;
+                out.push_str("{}");
+            }
+            '}' => in_param = false,
+            _ if in_param => {}
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Each operation docs/api/openapi.yaml serves, as `(METHOD, shape)`: a
+/// path is a two-space-indented key, its methods four-space-indented keys
+/// under it.
+fn served_operations() -> std::collections::BTreeSet<(String, String)> {
+    let file = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../docs/api/openapi.yaml"
+    );
+    let text = std::fs::read_to_string(file).expect("openapi.yaml reads");
+    let mut out = std::collections::BTreeSet::new();
+    let mut current: Option<String> = None;
+    for line in text.lines() {
+        if let Some(path) = line
+            .strip_prefix("  /")
+            .and_then(|rest| rest.strip_suffix(':'))
+        {
+            current = Some(shape(&format!("/{path}")));
+        } else if !line.starts_with("  ") && !line.is_empty() {
+            current = None;
+        } else if let Some(path) = &current
+            && let Some(method) = line
+                .strip_prefix("    ")
+                .and_then(|rest| rest.strip_suffix(':'))
+                .filter(|m| ["get", "post", "put", "patch", "delete"].contains(m))
+        {
+            out.insert((method.to_uppercase(), path.clone()));
+        }
+    }
+    assert!(out.len() > 50, "openapi.yaml's paths were read: {out:?}");
+    out
+}
+
 async fn answer(router: &Router, method: &str, path: &str) -> (StatusCode, Vec<u8>) {
     let request = Request::builder()
         .method(method)
@@ -94,7 +145,10 @@ async fn the_lead_serves_no_page_route_outside_oml_web_and_auth() {
     );
 
     // Its other tables hold no page: the API, the probes, and the OAuth
-    // endpoints with the connect page, which are the auth context's.
+    // endpoints with the connect page, which are the auth context's. An
+    // API route is an operation openapi.yaml serves, so a page mounted
+    // under `/v1/` or `/v2/`, `/v2/web/` included, fails here (#281).
+    let operations = served_operations();
     for &(method, path) in ROUTES {
         assert!(
             path.starts_with("/v1/")
@@ -102,6 +156,12 @@ async fn the_lead_serves_no_page_route_outside_oml_web_and_auth() {
                 || ["/healthz", "/readyz"].contains(&path),
             "{method} {path}: the lead's API table holds a route outside the API"
         );
+        if path.starts_with("/v1/") || path.starts_with("/v2/") {
+            assert!(
+                operations.contains(&(method.to_owned(), shape(path))),
+                "{method} {path}: the lead's API table holds a route openapi.yaml does not serve, such as a page"
+            );
+        }
     }
     for &(method, path) in OAUTH_ROUTES {
         assert!(
