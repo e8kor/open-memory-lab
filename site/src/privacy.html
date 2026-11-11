@@ -82,6 +82,7 @@ footer { border-top:1px solid var(--soft); margin-top:64px; padding:28px 0 44px;
 
 <h2>Keep secrets out</h2>
 <p>Memories are meant for findings, decisions and rules. Do not store passwords, keys, or other people's personal data in them.</p>
+<p>Each memory is scanned by a fixed set of rules when it is written. A private key, a known provider's API token, a <code>user:password</code> pair in a URL or after <code>curl -u</code>, or a password set in config (<code>DB_PASSWORD=…</code>) refuses the write, so it is never stored. Prompt-injection phrases, hidden Unicode and long base64 blobs are recorded as findings on the held memory. The rules match known shapes; a secret in another shape can pass, so keeping secrets out stays your part.</p>
 
 <h2>Changes</h2>
 <p>If this notice changes, the new version is published here with its date. The source of this page is public in the <a href="https://github.com/e8kor/open-memory-lab">Open Memory Lab repository</a>.</p>
