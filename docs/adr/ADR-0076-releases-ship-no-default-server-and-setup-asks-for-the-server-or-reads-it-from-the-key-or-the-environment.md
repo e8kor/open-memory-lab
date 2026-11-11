@@ -12,9 +12,11 @@ answers: why OML's releases stop naming a default server; where a client gets it
 **Release:** not assigned; the operator assigns it at acceptance
 
 **Amends:** ADR-0043 (d1, d2, d3, d4, d6, d8 replaced; d7 narrowed; its Consequences' "a move of
-the maintainer's server is a release"), ADR-0040 (d1 and d3 step 1 restored as accepted on
-2026-11-04, before ADR-0043), ADR-0041 (d7 step 1), ADR-0057 (d6's public-server clause, d17's
-public-server doctor line)
+the maintainer's server is a release"), ADR-0039 (d15: the setup exception and the kit clause
+ADR-0043 added are withdrawn, so the pair rule holds with no exception and the kit reads
+`OML_URL` where a tool expands it; the no-pair refusal's message gains the `no_server` name),
+ADR-0040 (d1 and d3 step 1 restored as accepted on 2026-11-04, before ADR-0043), ADR-0041 (d7
+step 1), ADR-0057 (d6's public-server clause, d17's public-server doctor line)
 
 ## Context
 
@@ -88,21 +90,34 @@ an option with no default and no saved value reaches neither. Decided, not built
        `OML_URL` with `OML_API_KEY`; the credentials file's `url` with its `api_key`. This is
        "from the environment", and, for a key that `oml keys issue-agent` or a web page issued,
        "from the key": the line those print carries `--url` (d6).
-    2. **The prompt.** A key named without a URL (`--key-file` or `--api-key` without `--url`,
-       `OML_API_KEY` without `OML_URL`) on a terminal: the verb prints `OML server URL (without
-       /mcp):` to stderr and reads one line from the terminal. It shows no suggested value. A
-       non-empty answer is the URL, used exactly as `--url` would be; `whoami` then checks the pair
-       before anything is installed (ADR-0041 d7 step 2).
-    3. **The refusal.** Not on a terminal, or an empty answer: refused as `setup.no_server` (d8),
-       exit 2, nothing sent and nothing installed.
+    2. **The prompt.** A key named without a URL: `--key-file` or `--api-key` without `--url`,
+       `OML_API_KEY` without `OML_URL`, or a credentials file holding `api_key` and no `url`.
+       "On a terminal" means stdin and stderr are both terminals, the test `oml login` already
+       uses for its key (`read_secret`, `IsTerminal`). The verb prints `OML server URL (without
+       /mcp):` to stderr and reads one line from stdin, with echo, since a URL is not a secret.
+       It shows no suggested value. A non-empty answer is the URL, used exactly as `--url` would
+       be; `whoami` then checks the pair before anything is installed or printed (ADR-0041 d7
+       step 2).
+    3. **The refusal.** Off a terminal, or an empty answer: refused as `setup.no_server` (d8),
+       exit 2, nothing sent and nothing installed. A script or CI job passes both values without
+       a prompt: `--url <server> --key-file <file>`, or `OML_URL` and `OML_API_KEY` exported
+       together.
+
+    `--print` takes the same three steps and then prints the commands instead of running them, so
+    a printed configure line always carries a URL someone named, never a placeholder.
 
     A `--key-file` key is never paired with `OML_URL` or the credentials file's `url`: each is
-    another source, and ADR-0039 d15 sends a key only to a URL named beside it. A URL named
-    without a key is still refused. The configure line the verb runs or prints carries the URL it
-    used, as before.
+    another source, and ADR-0039 d15 sends a key only to a URL named beside it. When `OML_URL` is
+    set and a `--key-file` key came without `--url`, the prompt and the refusal both add `OML_URL
+    is set but is never paired with --key-file; pass it as --url`, so the question is not a
+    surprise. A URL named without a key is still refused. The configure line the verb runs or
+    prints carries the URL it used, as before.
 
-- **d5 — Every other CLI verb is unchanged (ADR-0043 d5 stands).** `oml login <url>` keeps its
-  positional; flags, environment and the credentials file each give both values or are refused.
+- **d5 — Every other CLI verb behaves as before (ADR-0043 d5 stands); only its refusal's message
+  changes.** `oml login <url>` keeps its positional; flags, environment and the credentials file
+  each give both values or are refused. The refusal is ADR-0039 d15's, unchanged in when it fires
+  and in its exit code; its text gains the shared reason name `no_server` and `oml login <server>`
+  (d8), so every surface names the same cause.
   `oml quickstart` keeps writing the local server's own URL into the credentials file it creates
   (ADR-0041 d9): a server the user started is a server they named.
 
@@ -118,8 +133,20 @@ an option with no default and no saved value reaches neither. Decided, not built
       this repository (#194).
 
 - **d7 — The agent kit names no reachable server (replaces ADR-0043 d6).** Cursor and Gemini CLI,
-  which expand a variable inside a URL, read `${OML_URL}/mcp` again, as ADR-0039 d15's kit clause
-  had it; an unset variable leaves `/mcp`, which names no server, so nothing is sent. OpenAI Codex
+  which expand a variable inside a URL, read `OML_URL` again, each in its own syntax, as the kit
+  did before ADR-0043 (`scripts/package_agent_artifacts.py` at `48a9ec15`, lines 125–126):
+    - **Cursor:** `${env:OML_URL}/mcp`. Cursor resolves `${env:NAME}` in `url` and `headers`
+      ([Cursor MCP documentation](https://cursor.com/docs/context/mcp), fetched 2026-11-04, as
+      `kit/README.md` cites it); the kit's Cursor header is already `Bearer ${env:OML_API_KEY}`.
+    - **Gemini CLI:** `${OML_URL}/mcp`. Gemini CLI resolves `$VAR` or `${VAR}` in string values of
+      `settings.json`
+      ([configuration reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/reference/configuration.md),
+      fetched 2026-11-04, as `kit/README.md` cites it); the kit's Gemini header is already
+      `Bearer ${OML_API_KEY}`.
+
+  With `OML_URL` unset, the URL is `/mcp` or the unexpanded text, depending on how each tool
+  treats an unset variable. Neither names a host, so nothing can be sent. Which of the two each
+  tool produces is **unverified**, and the build records one run of each. OpenAI Codex
   CLI, VS Code and Claude Desktop, which document no variable inside a URL, carry
   `https://oml-server.invalid/mcp`. `.invalid` is reserved and never resolves (RFC 6761 §6.4), so
   a configuration copied without its one edit fails at name resolution and the key never leaves
@@ -141,8 +168,9 @@ an option with no default and no saved value reaches neither. Decided, not built
     | `oml doctor` with an admin key against a lead with no `oauth.issuer` | `warn server_origin: the server names no public origin (oauth.issuer unset), so its pages cannot show the URL agents set beside their keys` | exit 0 |
     | the plugin's MCP tools with no saved `url` | whatever Claude Code shows for an unresolved `${user_config.url}`; **unverified** for Claude Code 2.1.312 and later, no run has recorded it. The hook line above and `oml doctor` name the cause | no tools served |
 
-    Each line is a stable string the tests in d10 match, and each is in `oml doctor`'s reference
-    page in the same change.
+    Each line is a stable string a test in d10 matches (tests 4, 6, 9, 10 and 17 to 22), and each
+    is in `oml doctor`'s reference page in the same change. The MCP-tool row is the exception:
+    what it shows is Claude Code's, so it is recorded by a run rather than tested.
 
 - **d9 — `oml sync` asks consent of a server that declares itself shared, not of one host
   (amends ADR-0057 d6 and d17).** ADR-0057 d6's disclosure stays: on a server whose admins are not
@@ -152,7 +180,11 @@ an option with no default and no saved value reaches neither. Decided, not built
       new setting `server.shared` is `true` or `signup.mode` is `open`
       ([ADR-0068](ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md)),
       else `false`. `server.shared` defaults to `false`; a hosted service sets it in its own
-      configuration.
+      configuration, before it upgrades past this change (see Consequences, "Rollout order").
+      `shared` is the server's own statement about itself: it makes the disclosure reach the
+      people who need it, and it is not a security control. A server whose admins mean harm can
+      answer `false`; the user named that server, and the host check it replaces protected one
+      host only.
     - **A server that does not say counts as shared.** A `whoami` answer without `shared` comes
       from a server older than this change, and the run asks consent of it, so an old hosted
       server is never synced to unasked. Upgrading the server ends the question for a self-hoster.
@@ -173,28 +205,38 @@ an option with no default and no saved value reaches neither. Decided, not built
   inferred from an exit code.
 
     **Absence, through the real surfaces**
-    1. `scripts/check_no_default_server.py` (new, in the practices workflow): no file under
-       `crates/` (fixtures excluded), `plugins/`, `kit/`, `scripts/` or `.claude-plugin/` declares a
-       `default` for a `url` option or a constant named `DEFAULT_URL`, `DEFAULT_SERVER` or
-       `PUBLIC_SERVER`; and no URL in those trees names a host outside `example.com`, `.invalid`,
-       `localhost`, `127.0.0.1`, the repository's GitHub hosts, and the cited documentation hosts
-       the script lists.
+    1. `scripts/check_no_default_server.py` (new, in the practices workflow) scans every tracked
+       file except `docs/adr/`, `docs/changelog.md`, `changes/`, `docs/legal/`, `site/`,
+       `scripts/tests/test_site_build.py` and `crates/bins/oml-cli/tests/fixtures/`. It fails on:
+       the hosted service's names (the pattern `doublegate\.io`, and the phrases "maintainer's
+       public server" and "the public server", case-insensitive); a constant named
+       `DEFAULT_URL`, `DEFAULT_SERVER` or `PUBLIC_SERVER`; and a `default` on the plugin's `url`
+       option. Docs and `README.md` are in scope, so a page cannot bring the default back. The
+       pattern is narrow on purpose: an allowlist of hosts over `crates/` would trip on scan-rule
+       fixtures and cited references.
     2. `scripts/check_plugin.py`: the `url` option is `required` and declares no `default`;
        `api_key` is unchanged.
-    3. `scripts/check_agent_kit.py`: Cursor and Gemini CLI read `${OML_URL}/mcp`; Codex CLI, VS
-       Code and Claude Desktop carry `https://oml-server.invalid/mcp`; the kit README names the
-       edit for each.
+    3. `scripts/check_agent_kit.py`: Cursor reads `${env:OML_URL}/mcp`; Gemini CLI reads
+       `${OML_URL}/mcp`; Codex CLI, VS Code and Claude Desktop carry
+       `https://oml-server.invalid/mcp`; the kit README names the edit for each, before the copy
+       step.
 
     **CLI (`crates/bins/oml-cli/tests/setup_claude_code.rs`, `hook.rs` unit tests)**
 
     4. `setup_with_a_key_and_no_url_off_a_terminal_is_refused_as_no_server_and_sends_nothing`
-    5. `setup_with_a_key_and_no_url_on_a_terminal_sends_the_key_only_to_the_url_typed`
+    5. `setup_with_a_key_and_no_url_on_a_terminal_sends_the_key_only_to_the_url_typed`, run on a
+       pseudo-terminal from the `expectrl` crate, a new dev-dependency that `cargo deny` checks;
+       the test is `#[cfg(unix)]`
     6. `setup_with_an_empty_answer_at_the_prompt_is_refused_as_no_server_and_sends_nothing`
     7. `setup_never_pairs_a_key_file_with_oml_url_from_the_environment`
     8. `the_configure_line_carries_the_url_the_user_named`
     9. `a_hook_with_the_key_option_alone_names_the_url_option_and_sends_nothing` (replaces the
        ADR-0043 d3 test at `hook.rs` 1403–1430)
     10. `doctor_with_no_pair_prints_fail_no_server_and_probes_nothing`
+    19. `a_verb_with_no_pair_is_refused_with_the_no_server_name_and_oml_login`
+    20. `doctor_with_the_plugin_key_option_alone_warns_plugin_no_server`
+    21. `setup_with_oml_url_set_and_a_key_file_names_why_it_is_not_paired`
+    22. `a_credentials_file_with_a_key_and_no_url_prompts_on_a_terminal_and_is_refused_off_one`
 
     **`oml sync` (`crates/bins/oml-cli/tests/sync_git.rs`)**
 
@@ -202,7 +244,8 @@ an option with no default and no saved value reaches neither. Decided, not built
     12. `sync_to_a_server_whose_whoami_omits_shared_is_refused_without_consent`
     13. `sync_to_a_server_that_declares_itself_not_shared_asks_nothing`
     14. `consent_recorded_for_one_origin_does_not_cover_another`
-    15. `a_recorded_true_is_not_consent_and_doctor_names_it`
+    15. `a_recorded_true_is_not_consent_and_doctor_names_it` (the `sync_consent_unbound` line)
+    23. `doctor_names_sync_shared_server_when_consent_for_that_origin_is_missing`
 
     **Server and pages**
 
@@ -212,18 +255,29 @@ an option with no default and no saved value reaches neither. Decided, not built
         (`oml-transport-http`)
     18. `a_new_key_is_shown_beside_the_apis_issuer_and_with_none_beside_a_named_no_server_line`
         (`oml-web`)
+    24. `doctor_with_an_admin_key_warns_server_origin_when_oauth_issuer_is_unset`
+        (`crates/bins/oml-cli/tests/cli_e2e.rs`)
+
+    Numbers 19 to 24 were added in review and sit with their group; the numbering is a handle,
+    not an order.
 
 ## Consequences
 
 - **ADR-0043 is amended in almost every decision.** Its Status line gains `· amended by ADR-0076
-  (proposed)`, which drops `(proposed)` at acceptance; its text stays as history. ADR-0040, ADR-0041
-  and ADR-0057 gain the same back-pointer. The D14 row of the [D-register](index.md) names this
+  (proposed)`, which drops `(proposed)` at acceptance; its text stays as history. ADR-0039,
+  ADR-0040, ADR-0041 and ADR-0057 gain the same back-pointer. The D14 row of the [D-register](index.md) names this
   record beside ADR-0043.
 - **Who keeps the old name alive.** ADR-0043's Consequences made a move of the maintainer's server
   a release. Without a default, a move is the hosted service's own concern: installs that saved
   its URL, and released plugins that default to it, keep sending there, and its operator keeps the
   name answering or redirects it for as long as they are in use. That obligation belongs to the
   hosted service's runbooks, outside this repository.
+- **Rollout order.** A hosted service that is not open for sign-up sets `server.shared = true`
+  before, or in the same deploy as, its upgrade past this change. Until it upgrades it omits
+  `shared` and new CLIs ask consent (d9); the day it upgrades without the setting it answers
+  `shared: false`, and new CLIs sync to it with no disclosure, which ADR-0057 d6 exists to
+  prevent. The release notes of the release that builds this name the setting first, and the
+  hosted service's own runbook carries the step.
 - **Released plugins and kits, v0.4.1 to v0.6.3 and whatever ships before this is built**, keep the
   default they shipped; no release can change it. Given an explicit `url` they reach any server,
   as they always did. Their hooks run the `oml` on `PATH`, so a user who upgrades the CLI and keeps
@@ -232,10 +286,14 @@ an option with no default and no saved value reaches neither. Decided, not built
   step 4), so upgrading the plugin through setup also asks for the URL (d4).
 - **Migration for an existing user.** One command, run once:
   `oml setup claude-code --url <server> --key-file <file>`, or `claude plugin configure
-  oml@open-memory-lab` and set `url`. A kit user replaces the URL in the copied file. A sync user
+  oml@open-memory-lab` and set `url`. A script or CI job that ran `oml setup claude-code` with a
+  key alone is now refused off a terminal; it passes `--url` beside `--key-file`, or exports
+  `OML_URL` with `OML_API_KEY`. A kit user replaces the URL in the copied file. A sync user
   repeats `--allow-public-server` once per server they consented to before. The credentials file
-  is unchanged. The release notes of the release that builds this carry these lines; the hosted
-  service tells its own users.
+  is unchanged. The Python and TypeScript SDKs are regenerated for `Whoami.shared`; a caller that
+  builds `Whoami` by hand adds the field. A hosted operator sets `server.shared` first (Rollout
+  order). The release notes of the release that builds this carry these lines; the hosted service
+  tells its own users.
 - **Pages that change with the build** (the D-register's owners): the repository README's quick
   start, which leads with `oml quickstart` and a server you run, and says a hosted server's sign-up
   gives you its URL; `docs/start/install.md` and `docs/start/index.md`; the Claude Code,
@@ -265,11 +323,11 @@ Read on `origin/main` at `694a35d2` (2026-11-11). Frozen ADR copies under
 | `crates/bins/oml-cli/src/main.rs:235, 242` | `oml setup claude-code` help naming the default | d4's sources and prompt |
 | `crates/bins/oml-cli/src/main.rs:824-828` | `--allow-public-server` help, "the maintainer's public server" | "a server that declares itself shared" |
 | `crates/bins/oml-cli/src/main.rs:1155` | `NO_PAIR` | d8's `no_server` prefix and `oml login <server>` |
-| `crates/bins/oml-cli/src/main.rs:2157-2177, 2179` | `authorize_public_sync` | d9's `whoami.shared` and per-origin consent |
+| `crates/bins/oml-cli/src/main.rs:2157-2177, 2179, 2218, 2265` | `authorize_public_sync` and its two callers | d9's `whoami.shared` and per-origin consent |
 | `crates/bins/oml-cli/src/main.rs:4335-4395` | `setup_pair` defaulting | d4 |
 | `crates/bins/oml-cli/src/main.rs:4664-`, `4912, 4923, 4989, 5028, 5345` | doctor with no URL | d8's `fail no_server`, `warn plugin_no_server`, `warn server_origin` |
-| `crates/bins/oml-cli/src/hook.rs:208, 240-245` | key option alone takes `DEFAULT_URL` | d3 |
-| `crates/bins/oml-cli/src/hook.rs:1403-1430` | test of ADR-0043 d3 | d10 test 9 |
+| `crates/bins/oml-cli/src/hook.rs:200-213, 240-245` | `resolve_pair`'s doc comment naming ADR-0043 d3; key option alone takes `DEFAULT_URL` | d3 |
+| `crates/bins/oml-cli/src/hook.rs:1403-1431` | test of ADR-0043 d3 | d10 test 9 |
 | `crates/bins/oml-cli/src/sync/source.rs:358-442` | `PUBLIC_SERVER`, `is_public_server`, `ALLOW_PUBLIC_CONFIG = true` | d9 |
 | `crates/bins/oml-cli/src/sync/doctor.rs:2-3, 26-34` | `sync_public_server` | d9's two doctor lines |
 | `crates/bins/oml-cli/tests/setup_claude_code.rs:330` | asserts the host's absence in one path | d10 tests 4–8 |
@@ -277,21 +335,23 @@ Read on `origin/main` at `694a35d2` (2026-11-11). Frozen ADR copies under
 | `crates/clients/oml-web/src/keys.rs:36-39, 397-405` | `DEFAULT_SERVER` fallback | d6, d8 |
 | `crates/transports/oml-transport-http/src/web/views.rs:30-32, 318-327` | `DEFAULT_SERVER` and "the plugins' default" line | d6, d8 |
 | `crates/oml-app` and `oml-server-lead` whoami; `docs/api/openapi.yaml:4788-4793` | no `shared` | d9; d10 test 16 |
+| `sdks/python/src/oml_sdk/generated/models/whoami.py`, `sdks/typescript/src/generated/schema.ts` | generated from `openapi.yaml` | regenerate (CI: "generated SDK code is current with openapi.yaml") |
 | `plugins/oml/.claude-plugin/plugin.json:13-18` | `url` default | d2 |
-| `scripts/package_agent_artifacts.py:44-54` | `DEFAULT_URL`, `ENDPOINT` | d7 |
-| `scripts/check_plugin.py:149` | `DEFAULT_URL` | d10 test 2 |
-| `scripts/check_agent_kit.py:23, 58` | `LITERAL_URL` | d10 test 3 |
+| `scripts/package_agent_artifacts.py:44-54, 127-128` | `DEFAULT_URL`, `ENDPOINT`; the Codex comment naming the public server | d7 |
+| `scripts/check_plugin.py:13-14, 146-156, 202, 252-273` | docstring, `DEFAULT_URL`, the expected `url` option, `the_default_url_is_the_clis` | d10 test 2 |
+| `scripts/check_agent_kit.py:2, 22-24, 54-65, 97, 215, 245-255` | docstring, `LITERAL_URL` per configuration, the default-server checks | d10 test 3 |
 | `scripts/check_contract_sync.py:31, 120` | the host as an allowed literal | drop the exemption |
 | `kit/README.md:37-48, 64, 117` | the public server as every configuration's URL | d7 |
 | `plugins/oml/README.md:15, 27, 43, 57-58, 326` | the default and how to leave it | d2, d4 |
 | `README.md:34-41, 53, 61` | quick start and table on the hosted service | Consequences, "Pages" |
 | `docs/start/install.md:32`, `docs/start/index.md:21-23` | "The default server is …", sign-up on the public server | same |
 | `docs/guides/claude-code.md:15, 31, 45, 49, 123, 126` | the public-server path as default | same |
-| `docs/guides/other-harnesses.md:39, 72` | "every file names the public server" | d7 |
+| `docs/guides/other-harnesses.md:4, 39, 72`, `docs/llms.txt:15` | front matter and `llms.txt` line ("the public server by default"); "every file names the public server" | d7; `check_contract_sync.py` holds the two equal |
 | `docs/guides/get-an-agent-key.md:13, 19`, `docs/guides/claude-ai-and-mobile.md:30-32` | the public server | same |
 | `docs/help/troubleshooting-client.md:55` | "a `url` left unset is the public server" | d8 |
 | `docs/use/sync.md:22`, `docs/use/chat-memory.md:32` | public-server consent | d9 |
 | `docs/faq.md:21-23, 109`, `docs/reference/limits.md:28, 49`, `docs/engineering/sdks.md:17` | the public server by name | reword without it |
+| `docs/product/evaluate.md:18`, `docs/product/is-oml-for-you.md:31` | "The public server removes that work" | reword without it here; the hosted pitch moves with the landing (#194) |
 | `docs/cli/reference.md:838, 996, 1004` | generated from clap | regenerate |
 
 `site/**`, `docs/legal/**` and `scripts/tests/test_site_build.py` also name the hosted service; they
