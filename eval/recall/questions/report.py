@@ -37,9 +37,20 @@ def main():
     r = json.loads((d / "results.json").read_text())
     g, P, c = r["gate"], r["pipelines"], r["cost"]
     gen = r["generator"]
+    grown = json.loads((Path(__file__).resolve().parents[1] / "queries-grown.json").read_text())
+    pc = grown["person_check"]
+    if pc["status"] == "done":
+        fixed = ", ".join(sorted(pc.get("corrections", {})))
+        checked = (f"**Labels checked.** {pc['checked_by'].capitalize()} checked a seeded tenth of the "
+                   f"grown set's labels on {pc['date']}: {pc['bad_labels']} of {pc['checked']} wrong "
+                   f"({fixed}, corrected in version {grown['version']}, which this run uses).")
+        caveat = ""
+    else:
+        checked = "**Provisional: pending the 10% label check** of the grown set."
+        caveat = "Provisional until the label check passes."
     out = ["# ADR-0075 phase 0: generated questions against `bm25-sparse`\n",
-           "**Provisional: pending the 10% label check** of the grown set (`person_check` in "
-           "`eval/recall/queries-grown.json`). Offline: no server was built or run; the lexemes are "
+           checked + " (`person_check` in "
+           "`eval/recall/queries-grown.json`.) Offline: no server was built or run; the lexemes are "
            "migration 0020's, computed in a throwaway PostgreSQL, and the gate is ADR-0075 d12 "
            "(the operator's decision of 2026-11-11).\n",
            f"Generator: `{gen['model']}` at `{gen['revision'][:12]}` (weights SHA-256 "
@@ -91,7 +102,7 @@ def main():
             f"**Verdict: {'go' if g['go'] else 'no go'}.** "
             + ("" if g["go"] else "Neither comparison passes, so by d12 v0.7.1 recommends `bm25-sparse` "
                "for question-style use and #236 to #238 are parked with this evidence. ")
-            + "Provisional until the label check passes.", "",
+            + caveat, "",
             "## What the filters dropped (of 1,000 questions, five per memory)\n",
             "| variant | " + " | ".join(["shape", "generic", "grounding", "near_duplicate",
                                          "novel_cap", "scan"]) + " |",
