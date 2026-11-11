@@ -376,6 +376,33 @@ pub struct Memory {
     /// Absent from an API before v0.7.0.
     #[serde(default)]
     pub scan_finding: Option<String>,
+    /// Every finding stored on the version, on the review serve, the held
+    /// listing and the named read; `None` elsewhere and from an API that
+    /// predates the findings list (ADR-0074 d17, d23).
+    #[serde(default)]
+    pub scan_findings: Option<Vec<ScanFinding>>,
+}
+
+/// One finding of a version's findings list (openapi.yaml `ScanFinding`;
+/// ADR-0074 d23): where the scan fired and why, never the matched text.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ScanFinding {
+    pub class: String,
+    pub rule: String,
+    /// `refuse`, `hold` or `annotate`.
+    pub verdict: String,
+    #[serde(default)]
+    pub rule_set: Option<String>,
+    #[serde(default)]
+    pub field: Option<String>,
+    #[serde(default)]
+    pub line: Option<u32>,
+    #[serde(default)]
+    pub via: Option<String>,
+    /// `admission` or `rescan`.
+    pub found_by: String,
+    #[serde(default)]
+    pub migrated_from: Option<String>,
 }
 
 /// `GET /v1/memories`: one page of memories.

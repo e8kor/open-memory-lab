@@ -47,7 +47,9 @@ use oml_app::ports::{
     Retriever, StoreError,
 };
 use oml_app::search::{CandidateScope, MatchMode, OwnHeldScope, RetrievalQuery, RetrieverKind};
-use oml_app::types::{AppError, BootstrapRequest, ClaimEdgeRecord, KeyRecord, PROVIDER_TENANT};
+use oml_app::types::{
+    AppError, BootstrapRequest, ClaimEdgeRecord, KeyRecord, MemoryRecord, PROVIDER_TENANT,
+};
 use oml_pg::{
     ForkCheckError, MIGRATOR, PgStore, RoleSplitCheckError, RoleSplitError, RoleSplitReason,
     role_split_postflight, role_split_preflight,
@@ -832,6 +834,7 @@ async fn the_serving_role_sees_nothing_of_another_tenant_in_a_tenant_tables_pg_s
                 MetadataFold::MemoryHeld {
                     memory,
                     enqueue: false,
+                    findings: Box::default(),
                 },
                 None,
             )
@@ -2214,6 +2217,7 @@ async fn the_served_tip_index_refuses_a_second_tip() {
             MetadataFold::MemoryHeld {
                 memory,
                 enqueue: false,
+                findings: Box::default(),
             },
             None,
         )
@@ -3416,6 +3420,7 @@ async fn hold(
         MetadataFold::MemoryHeld {
             memory: held_memory(rig.tenant_id, workarea, memory, "wanda", author, "held"),
             enqueue,
+            findings: Box::default(),
         },
         None,
     )
@@ -4171,6 +4176,7 @@ async fn the_widening_statement_names_its_tenant_and_touches_no_other_tenants_ro
                 MetadataFold::MemoryHeld {
                     memory: memory.clone(),
                     enqueue: false,
+                    findings: Box::default(),
                 },
                 None,
             )
@@ -5899,10 +5905,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 42,
-        "every migration through 0042_idempotency_claims"
-    );
+    assert_eq!(applied, 43, "every migration through 0043_scan_findings");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7349,10 +7352,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 42,
-        "every migration through 0042_idempotency_claims"
-    );
+    assert_eq!(applied, 43, "every migration through 0043_scan_findings");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8228,10 +8228,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(
-        applied, 42,
-        "every migration through 0042_idempotency_claims"
-    );
+    assert_eq!(applied, 43, "every migration through 0043_scan_findings");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -9792,12 +9789,14 @@ async fn migration_0042_applies_beside_an_open_write_and_read_of_idempotency_wit
     .await
     .expect("0042 waits on neither the write nor the read")
     .expect("0042 applies");
-    let applied: i64 =
-        sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
-            .fetch_one(&mut conn)
-            .await
-            .expect("versions");
-    assert_eq!(applied, 42, "0042 applied while both were open");
+    // 0042 and every later migration apply; 0042 is the one asserted.
+    let applied: bool = sqlx::query_scalar(
+        "SELECT coalesce(bool_or(version = 42), false) FROM _sqlx_migrations WHERE success",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .expect("versions");
+    assert!(applied, "0042 applied while both were open");
     write.commit().await.expect("the write commits");
     read.commit().await.expect("the read ends");
     let privileges: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
@@ -9977,4 +9976,661 @@ async fn tip_moves_state(conn: &mut PgConnection) -> (Vec<(String, bool)>, i64, 
     .await
     .expect("parent");
     (attached, copies, parent_valid)
+}
+
+// ---------------------------------------------------------------------------
+// The scan's rule set and findings list (migrations 0038, 0043; ADR-0074)
+// ---------------------------------------------------------------------------
+
+/// A held version a database at 0037 stored, before the rule set was
+/// stamped, reads `oml-scan/1` once 0038 runs, so it stays its author's in
+/// an in-progress scope until the recording rescan reads it (ADR-0074 d18
+/// phase 1, d28).
+#[tokio::test]
+async fn the_migration_marks_every_existing_version_scanned_under_oml_scan_1() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, conn) = schema_through(&created, 37).await;
+    drop(conn);
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(380);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0x380A);
+    let key = Uuid::from_u128(0x380B);
+    let ids = [Uuid::from_u128(0x380C), Uuid::from_u128(0x380D)];
+    for (n, id) in ids.iter().enumerate() {
+        rig.commit(
+            &store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: MemoryRecord {
+                    scan_finding: (n == 0).then(|| {
+                        "injection.override: ignore-instructions at /body line 1".to_owned()
+                    }),
+                    ..held_memory(rig.tenant_id, wa, *id, "wanda", key, "stored at 0037")
+                },
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("a version stored at 0037");
+    }
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0038 and later apply");
+    for id in ids {
+        let row = store
+            .memory(rig.tenant_id, id)
+            .await
+            .expect("read")
+            .expect("the row");
+        assert_eq!(row.scanned_under.as_deref(), Some("oml-scan/1"), "{id}");
+    }
+    drop_dbs(&created).await;
+}
+
+/// 0043 lists each finding a `scan_finding` stored at 0041 names as one
+/// finding recorded by admission, under the rule set the version was
+/// scanned under and the seq of the event that admitted it, its field and
+/// line read from the stored text, which is kept, and adds none for a
+/// version with no finding; doctor's unlisted count is then zero
+/// (ADR-0074 d23).
+#[tokio::test]
+async fn migration_0043_lists_each_finding_a_stored_scan_finding_names_as_an_admission_finding() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, conn) = schema_through(&created, 41).await;
+    drop(conn);
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(430);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0x430A);
+    let key = Uuid::from_u128(0x430B);
+    let flagged = Uuid::from_u128(0x430C);
+    let clean = Uuid::from_u128(0x430D);
+    let stored = "injection.override: ignore-instructions at /body line 3; unicode.bidi: bidi-control at /body line 1";
+    let receipt = rig
+        .commit(
+            &store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": flagged.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: MemoryRecord {
+                    scan_finding: Some(stored.to_owned()),
+                    scanned_under: Some("oml-scan/1.1".to_owned()),
+                    ..held_memory(rig.tenant_id, wa, flagged, "wanda", key, "flagged")
+                },
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("a flagged version stored at 0041");
+    rig.commit(
+        &store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": clean.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory: MemoryRecord {
+                claim_key: "clean".to_owned(),
+                scanned_under: Some("oml-scan/1.1".to_owned()),
+                ..held_memory(rig.tenant_id, wa, clean, "wanda", key, "clean")
+            },
+            enqueue: true,
+            findings: Box::default(),
+        },
+        None,
+    )
+    .await
+    .expect("a clean version stored at 0041");
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0043 applies over a database at 0041");
+    assert_eq!(
+        store
+            .scan_findings(rig.tenant_id, &[flagged, clean])
+            .await
+            .expect("scan_findings"),
+        vec![
+            (
+                flagged,
+                oml_app::types::VersionFinding {
+                    class: "injection.override".to_owned(),
+                    rule: "ignore-instructions".to_owned(),
+                    verdict: oml_app::types::FindingVerdict::Hold,
+                    rule_set: Some("oml-scan/1.1".to_owned()),
+                    field: Some("/body".to_owned()),
+                    line: Some(3),
+                    via: None,
+                    span: None,
+                    found_by: oml_app::types::FoundBy::Admission,
+                    event_seq: Some(receipt.seq),
+                    migrated_from: Some(stored.to_owned()),
+                },
+            ),
+            (
+                flagged,
+                oml_app::types::VersionFinding {
+                    class: "unicode.bidi".to_owned(),
+                    rule: "bidi-control".to_owned(),
+                    verdict: oml_app::types::FindingVerdict::Hold,
+                    rule_set: Some("oml-scan/1.1".to_owned()),
+                    field: Some("/body".to_owned()),
+                    line: Some(1),
+                    via: None,
+                    span: None,
+                    found_by: oml_app::types::FoundBy::Admission,
+                    event_seq: Some(receipt.seq),
+                    migrated_from: Some(stored.to_owned()),
+                },
+            )
+        ]
+    );
+    assert_eq!(
+        store
+            .scan_backlog(rig.tenant_id, Some("oml-scan/1.1"))
+            .await
+            .expect("backlog")
+            .findings_unlisted,
+        0
+    );
+    drop_dbs(&created).await;
+}
+
+/// What 0043 migrates, a later `oml admin rescan --record-held` does not
+/// list again: each class and rule appears once per version, whether the
+/// stored text named its field (`/body line 3`, `/body line 1 at title`) or
+/// not, and a stored refuse-class finding keeps the refuse verdict
+/// (ADR-0074 d14, d23).
+#[tokio::test]
+async fn a_recording_rescan_after_migration_0043_lists_each_migrated_finding_once() {
+    use oml_app::ports::RecordedVersion;
+    use oml_app::types::{FindingVerdict, FoundBy, VersionFinding};
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, conn) = schema_through(&created, 41).await;
+    drop(conn);
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(431);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0x431A);
+    let key = Uuid::from_u128(0x431B);
+    let stored = [
+        (
+            Uuid::from_u128(0x431C),
+            "injection.override: ignore-instructions at /body line 3",
+        ),
+        (
+            Uuid::from_u128(0x431D),
+            "injection.role: persona-switch at /body line 1 at title",
+        ),
+        (
+            Uuid::from_u128(0x431E),
+            "secret.api_token: github-token at /body line 2",
+        ),
+        (Uuid::from_u128(0x431F), "marker finding: body matches it"),
+    ];
+    for (id, text) in stored {
+        rig.commit(
+            &store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: MemoryRecord {
+                    claim_key: format!("c-{}", id.simple()),
+                    scan_finding: Some(text.to_owned()),
+                    scanned_under: Some("oml-scan/1.1".to_owned()),
+                    ..held_memory(rig.tenant_id, wa, id, "wanda", key, "stored at 0041")
+                },
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("a version stored at 0041");
+    }
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0043 applies over a database at 0041");
+    let found = |class: &str, rule: &str, field: &str, line: u32, veto: bool| VersionFinding {
+        class: class.to_owned(),
+        rule: rule.to_owned(),
+        verdict: if veto {
+            FindingVerdict::Refuse
+        } else {
+            FindingVerdict::Hold
+        },
+        rule_set: Some("oml-scan/1.1".to_owned()),
+        field: Some(field.to_owned()),
+        line: Some(line),
+        via: Some("raw".to_owned()),
+        span: Some((0, 4)),
+        found_by: FoundBy::Rescan,
+        event_seq: None,
+        migrated_from: None,
+    };
+    rig.commit(
+        &store,
+        event_types::SCAN_FINDINGS_RECORDED,
+        json!({}),
+        MetadataFold::FindingsRecorded {
+            scanned_under: Some("oml-scan/1.1".to_owned()),
+            versions: vec![
+                RecordedVersion {
+                    memory_id: stored[0].0,
+                    summary: None,
+                    findings: vec![found(
+                        "injection.override",
+                        "ignore-instructions",
+                        "/body",
+                        3,
+                        false,
+                    )],
+                },
+                RecordedVersion {
+                    memory_id: stored[1].0,
+                    summary: None,
+                    findings: vec![found(
+                        "injection.role",
+                        "persona-switch",
+                        "/title",
+                        1,
+                        false,
+                    )],
+                },
+                RecordedVersion {
+                    memory_id: stored[2].0,
+                    summary: None,
+                    findings: vec![found("secret.api_token", "github-token", "/body", 2, true)],
+                },
+                RecordedVersion {
+                    memory_id: stored[3].0,
+                    summary: None,
+                    findings: vec![found(
+                        "marker finding",
+                        "body matches it",
+                        "/body",
+                        1,
+                        false,
+                    )],
+                },
+            ],
+        },
+        None,
+    )
+    .await
+    .expect("the recording rescan");
+    let ids: Vec<Uuid> = stored.iter().map(|(id, _)| *id).collect();
+    let list = store
+        .scan_findings(rig.tenant_id, &ids)
+        .await
+        .expect("scan_findings");
+    type Seen<'a> = (
+        Uuid,
+        &'a str,
+        &'a str,
+        Option<&'a str>,
+        FindingVerdict,
+        FoundBy,
+    );
+    let seen: Vec<Seen<'_>> = list
+        .iter()
+        .map(|(id, f)| {
+            (
+                *id,
+                f.class.as_str(),
+                f.rule.as_str(),
+                f.field.as_deref(),
+                f.verdict,
+                f.found_by,
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            (
+                ids[0],
+                "injection.override",
+                "ignore-instructions",
+                Some("/body"),
+                FindingVerdict::Hold,
+                FoundBy::Admission
+            ),
+            (
+                ids[1],
+                "injection.role",
+                "persona-switch",
+                Some("/title"),
+                FindingVerdict::Hold,
+                FoundBy::Admission
+            ),
+            (
+                ids[2],
+                "secret.api_token",
+                "github-token",
+                Some("/body"),
+                FindingVerdict::Refuse,
+                FoundBy::Admission
+            ),
+            (
+                ids[3],
+                "marker finding",
+                "body matches it",
+                None,
+                FindingVerdict::Hold,
+                FoundBy::Admission
+            ),
+        ],
+        "one finding per class and rule; the migrated one stays"
+    );
+    drop_dbs(&created).await;
+}
+
+/// 0043 lists every finding a stored text names, not its first alone, and
+/// places each where the text says: a body reason of several findings is
+/// all `/body`; a rescan's text carries a view after each finding it found
+/// in one; admission's derived scan wrote the view after the last finding
+/// only (the `and N more` tail included), so one view suffix on the last
+/// of several, or on the tail, places none of them; nor does a text a
+/// document key holding `; ` split, whose stray part names nothing. A
+/// later recording rescan then lists no finding twice, and a placeless
+/// finding stands for one place only: the rescan's second place of the same
+/// rule is listed (ADR-0074 d23).
+#[tokio::test]
+async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_rescan_lists_none_twice()
+ {
+    use oml_app::ports::RecordedVersion;
+    use oml_app::types::{FindingVerdict, FoundBy, VersionFinding};
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, conn) = schema_through(&created, 41).await;
+    drop(conn);
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(432);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0x432A);
+    let key = Uuid::from_u128(0x432B);
+    let body = Uuid::from_u128(0x432C);
+    let title = Uuid::from_u128(0x432D);
+    let rescanned = Uuid::from_u128(0x432E);
+    let placeless = Uuid::from_u128(0x432F);
+    let many = Uuid::from_u128(0x4330);
+    let split_key = Uuid::from_u128(0x4331);
+    let five: Vec<String> = (1..=5)
+        .map(|n| format!("injection.override: rule-{n} at /body line {n}"))
+        .collect();
+    let many_text = format!("{}; and 2 more at title", five.join("; "));
+    let stored = [
+        (many, many_text.as_str()),
+        (
+            split_key,
+            "injection.override: ignore-instructions at /body line 1 at a; b",
+        ),
+        (
+            body,
+            "injection.override: ignore-instructions at /body line 1; \
+             unicode.bidi: bidi-control at /body line 4; and 2 more",
+        ),
+        (
+            title,
+            "injection.override: ignore-instructions at /body line 1; \
+             injection.role: persona-switch at /body line 1 at title",
+        ),
+        (
+            rescanned,
+            "injection.override: ignore-instructions at /body line 2; \
+             injection.role: chat-template at /body line 1 at spec.note; \
+             unicode.bidi: bidi-control at /body line 1 at title",
+        ),
+        (placeless, "marker finding: body matches it"),
+    ];
+    for (id, text) in stored {
+        rig.commit(
+            &store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: MemoryRecord {
+                    claim_key: format!("c-{}", id.simple()),
+                    scan_finding: Some(text.to_owned()),
+                    scanned_under: Some("oml-scan/1.1".to_owned()),
+                    ..held_memory(rig.tenant_id, wa, id, "wanda", key, "stored at 0041")
+                },
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("a version stored at 0041");
+    }
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0043 applies over a database at 0041");
+    type Row = (Uuid, String, Option<String>, Option<u32>, FoundBy);
+    let read = |list: Vec<(Uuid, VersionFinding)>| -> Vec<Row> {
+        list.into_iter()
+            .map(|(id, f)| (id, f.rule, f.field, f.line, f.found_by))
+            .collect()
+    };
+    let s = |v: &str| Some(v.to_owned());
+    let migrated: Vec<Row> = vec![
+        (
+            body,
+            "ignore-instructions".into(),
+            s("/body"),
+            Some(1),
+            FoundBy::Admission,
+        ),
+        (
+            body,
+            "bidi-control".into(),
+            s("/body"),
+            Some(4),
+            FoundBy::Admission,
+        ),
+        (
+            title,
+            "ignore-instructions".into(),
+            None,
+            None,
+            FoundBy::Admission,
+        ),
+        (
+            title,
+            "persona-switch".into(),
+            None,
+            None,
+            FoundBy::Admission,
+        ),
+        (
+            rescanned,
+            "ignore-instructions".into(),
+            s("/body"),
+            Some(2),
+            FoundBy::Admission,
+        ),
+        (
+            rescanned,
+            "chat-template".into(),
+            s("/body/spec/note"),
+            Some(1),
+            FoundBy::Admission,
+        ),
+        (
+            rescanned,
+            "bidi-control".into(),
+            s("/title"),
+            Some(1),
+            FoundBy::Admission,
+        ),
+        (
+            placeless,
+            "body matches it".into(),
+            None,
+            None,
+            FoundBy::Admission,
+        ),
+        (
+            split_key,
+            "ignore-instructions".into(),
+            None,
+            None,
+            FoundBy::Admission,
+        ),
+    ];
+    let mut migrated = migrated;
+    for n in 1..=5 {
+        migrated.push((many, format!("rule-{n}"), None, None, FoundBy::Admission));
+    }
+    let ids = [body, title, rescanned, placeless, many, split_key];
+    let mut before = read(
+        store
+            .scan_findings(rig.tenant_id, &ids)
+            .await
+            .expect("read"),
+    );
+    let mut want = migrated.clone();
+    before.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    want.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    assert_eq!(
+        before, want,
+        "every finding of each stored text, placed as its text says"
+    );
+
+    let found = |class: &str, rule: &str, field: &str| VersionFinding {
+        class: class.to_owned(),
+        rule: rule.to_owned(),
+        verdict: FindingVerdict::Hold,
+        rule_set: Some("oml-scan/1.1".to_owned()),
+        field: Some(field.to_owned()),
+        line: Some(1),
+        via: Some("raw".to_owned()),
+        span: Some((0, 4)),
+        found_by: FoundBy::Rescan,
+        event_seq: None,
+        migrated_from: None,
+    };
+    let recorded = |memory_id: Uuid, findings: Vec<VersionFinding>| RecordedVersion {
+        memory_id,
+        summary: None,
+        findings,
+    };
+    rig.commit(
+        &store,
+        event_types::SCAN_FINDINGS_RECORDED,
+        json!({}),
+        MetadataFold::FindingsRecorded {
+            scanned_under: Some("oml-scan/1.1".to_owned()),
+            versions: vec![
+                recorded(
+                    body,
+                    vec![
+                        found("injection.override", "ignore-instructions", "/body"),
+                        found("unicode.bidi", "bidi-control", "/body"),
+                    ],
+                ),
+                recorded(
+                    title,
+                    vec![
+                        found("injection.override", "ignore-instructions", "/title"),
+                        found("injection.role", "persona-switch", "/title"),
+                    ],
+                ),
+                recorded(
+                    rescanned,
+                    vec![
+                        found("injection.override", "ignore-instructions", "/body"),
+                        found("injection.role", "chat-template", "/body/spec/note"),
+                        found("unicode.bidi", "bidi-control", "/title"),
+                    ],
+                ),
+                recorded(
+                    many,
+                    (1..=7)
+                        .map(|n| found("injection.override", &format!("rule-{n}"), "/title"))
+                        .collect(),
+                ),
+                recorded(
+                    split_key,
+                    vec![found(
+                        "injection.override",
+                        "ignore-instructions",
+                        "/body/a; b",
+                    )],
+                ),
+                recorded(
+                    placeless,
+                    vec![
+                        found("marker finding", "body matches it", "/body"),
+                        found("marker finding", "body matches it", "/title"),
+                    ],
+                ),
+            ],
+        },
+        None,
+    )
+    .await
+    .expect("the recording rescan");
+    let mut after = read(
+        store
+            .scan_findings(rig.tenant_id, &ids)
+            .await
+            .expect("read"),
+    );
+    let mut want = migrated;
+    want.push((
+        placeless,
+        "body matches it".into(),
+        s("/title"),
+        Some(1),
+        FoundBy::Rescan,
+    ));
+    // The two findings the stored text counted but did not name.
+    for n in 6..=7 {
+        want.push((
+            many,
+            format!("rule-{n}"),
+            s("/title"),
+            Some(1),
+            FoundBy::Rescan,
+        ));
+    }
+    after.sort_by(|a, b| (a.0, &a.1, &a.2).cmp(&(b.0, &b.1, &b.2)));
+    want.sort_by(|a, b| (a.0, &a.1, &a.2).cmp(&(b.0, &b.1, &b.2)));
+    assert_eq!(
+        after, want,
+        "no finding twice; the placeless one stands for one place, and the second is listed"
+    );
+    drop_dbs(&created).await;
 }

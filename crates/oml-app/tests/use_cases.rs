@@ -13924,6 +13924,101 @@ async fn a_rescan_reports_a_stored_version_by_rule_and_changes_nothing() {
     assert!(matches!(err, AppError::VerbCeiling { .. }), "{err:?}");
 }
 
+/// ADR-0074 d18, phase 1; d23, d28: the recording rescan gives each held
+/// version the findings the server's rule set makes, in its findings list
+/// under the rescan's event, and leaves a promoted version as it was: no
+/// list, no stored finding, still promoted.
+#[tokio::test]
+async fn rescan_record_held_records_findings_on_held_versions_and_touches_no_promoted_one() {
+    let store = MemStore::new();
+    let before = App::new(
+        store.clone(),
+        MemSigner::new(TEST_SEED),
+        FixedClock::new(),
+        SeqIdGen::new(),
+        MarkerScanner {
+            veto_marker: "[never-matches]".to_owned(),
+            hold_marker: "[never-matches]".to_owned(),
+        },
+    );
+    let (boot, crew) = tenant(&before).await;
+    let admin = boot.admin_key.value.clone();
+    let writer = issue(&before, &admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&before, &admin, Role::Dreamer, "dana", crew).await;
+    let held = before
+        .submit_memory(&writer.value, &submit_req("held", "[needs-human] held"))
+        .await
+        .expect("held")
+        .receipt
+        .memory_id;
+    let promoted = before
+        .submit_memory(
+            &writer.value,
+            &SubmitRequest {
+                claim_key: Some("promoted".to_owned()),
+                ..submit_req("promoted", "[needs-human] promoted")
+            },
+        )
+        .await
+        .expect("promoted")
+        .receipt
+        .memory_id;
+    before
+        .post_verdict(&dreamer.value, promoted, Verdict::Approve, None)
+        .await
+        .expect("approve");
+    assert!(
+        store
+            .scan_findings(boot.tenant_id, &[held, promoted])
+            .await
+            .expect("findings")
+            .is_empty(),
+        "nothing found before the rule"
+    );
+
+    let now = app_over(store.clone());
+    let report = now
+        .rescan_record_held(&admin, 0, 1000)
+        .await
+        .expect("record");
+    assert_eq!(report.recorded, 1, "the held version alone is recorded");
+    assert_eq!(
+        report
+            .hits
+            .iter()
+            .filter(|h| h.artifact_id == promoted)
+            .count(),
+        1,
+        "the promoted version is reported"
+    );
+    let head = journal(&store, boot.tenant_id).await;
+    let event = head.last().expect("the rescan's event");
+    assert_eq!(
+        event.envelope.event_type,
+        event_types::SCAN_FINDINGS_RECORDED
+    );
+    let list = store
+        .scan_findings(boot.tenant_id, &[held, promoted])
+        .await
+        .expect("findings");
+    assert_eq!(list.len(), 1, "{list:?}");
+    let (id, f) = &list[0];
+    assert_eq!(*id, held);
+    assert_eq!(f.found_by, oml_app::types::FoundBy::Rescan);
+    assert_eq!(f.field.as_deref(), Some("/body"));
+    assert_eq!(f.event_seq, Some(event.envelope.seq));
+    let row = store
+        .memory(boot.tenant_id, promoted)
+        .await
+        .expect("read")
+        .expect("the promoted row");
+    assert_eq!(row.status, MemoryStatus::Promoted);
+    assert_eq!(
+        row.scan_finding, None,
+        "a promoted version keeps no finding"
+    );
+}
+
 #[tokio::test]
 async fn a_claim_key_or_a_verdict_reason_carrying_a_finding_is_refused() {
     // Both reach the journal as plaintext, so the scan reads them, and only

@@ -96,7 +96,7 @@ use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
     DocumentFetchFailure, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord, IdempotencyScope,
     JournalStore, MetadataFold, NoObserver, OutboxRow, Parsed, RequestObserver, Reranker,
-    ScanOutcome, Scanner, Signer, SparseEncoder, StoreError, SubjectRow, TailEvent,
+    ScanFinding, ScanOutcome, Scanner, Signer, SparseEncoder, StoreError, SubjectRow, TailEvent,
 };
 use crate::telemetry::{HITS_STORED, Label, RecallEvent, Remembered, Telemetry, TelemetryItem};
 use crate::types::{
@@ -122,8 +122,8 @@ use crate::types::{
     WorkareaInfo, WorkareaRecord, WorkareaStatusView,
 };
 use crate::types::{
-    BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, HELD_PAGE_MAX, HeldFilter, HeldItem,
-    HeldListingRequest, HeldPage,
+    BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
+    HeldFilter, HeldItem, HeldListingRequest, HeldPage, VersionFinding,
 };
 
 use crate::search::{
@@ -365,6 +365,45 @@ pub(crate) fn scan_targets<'a>(
         at: Some(&view.path),
     }));
     out
+}
+
+impl ScanTarget<'_> {
+    /// The field a finding on this text is stored under (ADR-0074 d23):
+    /// `/body`, `/title`, or `/body/` and a decoded view's path, its dots
+    /// as slashes.
+    pub(crate) fn field(&self) -> String {
+        match self.at {
+            None => "/body".to_owned(),
+            Some("title") => "/title".to_owned(),
+            Some(path) => format!("/body/{}", path.replace('.', "/")),
+        }
+    }
+}
+
+/// A scanner's finding as the findings list stores it (ADR-0074 d23).
+pub(crate) fn version_finding(
+    f: &ScanFinding,
+    field: String,
+    rule_set: Option<&str>,
+    found_by: FoundBy,
+) -> VersionFinding {
+    VersionFinding {
+        class: f.class.clone(),
+        rule: f.rule.clone(),
+        verdict: if f.veto {
+            FindingVerdict::Refuse
+        } else {
+            FindingVerdict::Hold
+        },
+        rule_set: rule_set.map(str::to_owned),
+        field: Some(field),
+        line: f.place.as_ref().map(|p| p.line),
+        via: f.place.as_ref().map(|p| p.via.clone()),
+        span: f.place.as_ref().map(|p| p.span),
+        found_by,
+        event_seq: None,
+        migrated_from: None,
+    }
 }
 
 /// Whether a held version may be served unreviewed inside an in-progress
@@ -1949,6 +1988,7 @@ where
             workarea_path,
             anonymous,
             load_warning,
+            scan_findings: None,
         })
     }
 
@@ -5033,17 +5073,28 @@ where
         // Deterministic scan: same call, before the commit transaction. A
         // veto is a refusal like any other: it journals nothing and stores
         // no row (admission.md; errors.md submission.scan_veto).
-        let scan_finding = match self.scanner.scan(&AdmissionEnvelope {
+        let (outcome, found) = self.scanner.assess(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
             kind: req.kind.as_str(),
             body: &body,
-        }) {
+        });
+        let scan_finding = match outcome {
             ScanOutcome::Pass => None,
             ScanOutcome::Hold(reason) => Some(reason),
             ScanOutcome::Veto(reason) => return Err(AppError::ScanVeto(reason)),
         };
         let mut scan_finding = scan_finding;
-        self.scan_derived(key.tenant_id, req.kind, &format, &parsed, &mut scan_finding)?;
+        // Every finding behind the verdict, in the order scanned: the
+        // body's, then the title's and each decoded view's (ADR-0074 d23).
+        let mut findings = self.admitted(&found, "/body".to_owned());
+        self.scan_derived(
+            key.tenant_id,
+            req.kind,
+            &format,
+            &parsed,
+            &mut scan_finding,
+            &mut findings,
+        )?;
 
         // The lineage closure: the author plus every declared ancestor's
         // closure — R2 runs over the whole of it (roles-and-keys.md). An
@@ -5207,6 +5258,7 @@ where
             MetadataFold::MemoryHeld {
                 memory,
                 enqueue: true,
+                findings: findings.into(),
             },
             idempotency,
         )
@@ -5252,7 +5304,12 @@ where
             .await?
         {
             None => Ok(None),
-            Some(memory) => Ok(Some(self.served(&caller, memory).await?)),
+            Some(memory) => {
+                let mut served = self.served(&caller, memory).await?;
+                self.with_findings(key.tenant_id, &mut [&mut served])
+                    .await?;
+                Ok(Some(served))
+            }
         }
     }
 
@@ -5448,6 +5505,8 @@ where
                 served: self.served_in(&caller, row.memory, &mut ancestries).await?,
             });
         }
+        let mut served: Vec<&mut ServedMemory> = items.iter_mut().map(|i| &mut i.served).collect();
+        self.with_findings(tenant_id, &mut served).await?;
         Ok(HeldPage { items, next_cursor })
     }
 
@@ -5486,6 +5545,9 @@ where
             };
             named.push((*id, served));
         }
+        let mut served: Vec<&mut ServedMemory> =
+            named.iter_mut().filter_map(|(_, s)| s.as_mut()).collect();
+        self.with_findings(key.tenant_id, &mut served).await?;
         Ok(named)
     }
 
@@ -7089,30 +7151,61 @@ where
         fields: &FormatFields,
         parsed: &Parsed,
         hold: &mut Option<String>,
+        findings: &mut Vec<VersionFinding>,
     ) -> Result<(), AppError> {
-        let mut note = |outcome: ScanOutcome, at: &str| -> Result<(), AppError> {
-            match outcome {
-                ScanOutcome::Pass => Ok(()),
-                ScanOutcome::Hold(reason) => {
-                    hold.get_or_insert(format!("{reason} at {at}"));
-                    Ok(())
-                }
-                ScanOutcome::Veto(reason) => Err(AppError::ScanVeto(format!("{reason} at {at}"))),
-            }
-        };
         if let Some(finding) = &parsed.veto {
             return Err(AppError::ScanVeto(finding.clone()));
         }
         // The body is scanned by the caller; the rest of the one list.
         for target in scan_targets(kind, "", fields, parsed).into_iter().skip(1) {
-            note(
-                self.scanner.scan(&AdmissionEnvelope {
-                    tenant_id,
-                    kind: target.kind,
-                    body: target.text,
-                }),
-                target.at.unwrap_or("/body"),
-            )?;
+            let at = target.at.unwrap_or("/body");
+            let (outcome, found) = self.scanner.assess(&AdmissionEnvelope {
+                tenant_id,
+                kind: target.kind,
+                body: target.text,
+            });
+            match outcome {
+                ScanOutcome::Pass => {}
+                ScanOutcome::Hold(reason) => {
+                    hold.get_or_insert(format!("{reason} at {at}"));
+                    findings.extend(self.admitted(&found, target.field()));
+                }
+                ScanOutcome::Veto(reason) => {
+                    return Err(AppError::ScanVeto(format!("{reason} at {at}")));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Admission's findings on one scanned text, as the findings list stores
+    /// them (ADR-0074 d23): each hold finding, under `field`. A veto refuses
+    /// the write before anything is stored, so none is kept.
+    fn admitted(&self, found: &[ScanFinding], field: String) -> Vec<VersionFinding> {
+        found
+            .iter()
+            .filter(|f| !f.veto)
+            .map(|f| version_finding(f, field.clone(), self.scanner.version(), FoundBy::Admission))
+            .collect()
+    }
+
+    /// The findings lists of `served`, read in one call and set on each, for
+    /// the surfaces a reviewer judges from (ADR-0074 d17, d23).
+    async fn with_findings(
+        &self,
+        tenant_id: Uuid,
+        served: &mut [&mut ServedMemory],
+    ) -> Result<(), AppError> {
+        let ids: Vec<Uuid> = served.iter().map(|s| s.memory.memory_id).collect();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let mut lists: BTreeMap<Uuid, Vec<VersionFinding>> = BTreeMap::new();
+        for (id, f) in self.journal.scan_findings(tenant_id, &ids).await? {
+            lists.entry(id).or_default().push(f);
+        }
+        for s in served.iter_mut() {
+            s.scan_findings = Some(lists.remove(&s.memory.memory_id).unwrap_or_default());
         }
         Ok(())
     }
@@ -7528,17 +7621,26 @@ where
         )?;
         self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
         let origin = recorded_origin(req.origin, req.anchor.as_ref())?;
-        let scan_finding = match self.scanner.scan(&AdmissionEnvelope {
+        let (outcome, found) = self.scanner.assess(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
             kind: kind.as_str(),
             body: &body,
-        }) {
+        });
+        let scan_finding = match outcome {
             ScanOutcome::Pass => None,
             ScanOutcome::Hold(reason) => Some(reason),
             ScanOutcome::Veto(reason) => return Err(AppError::ScanVeto(reason)),
         };
         let mut scan_finding = scan_finding;
-        self.scan_derived(key.tenant_id, kind, &format, &parsed, &mut scan_finding)?;
+        let mut findings = self.admitted(&found, "/body".to_owned());
+        self.scan_derived(
+            key.tenant_id,
+            kind,
+            &format,
+            &parsed,
+            &mut scan_finding,
+            &mut findings,
+        )?;
         // derives_from ⊇ {target}; the lineage closure is the proposer plus
         // every ancestor's closure, the target's included (roles-and-keys.md).
         let mut derives_from = vec![target.memory_id];
@@ -7705,6 +7807,7 @@ where
                 MetadataFold::MemoryHeld {
                     memory: successor,
                     enqueue: true,
+                    findings: findings.into(),
                 },
                 idempotency,
             )

@@ -26,7 +26,7 @@ use crate::types::{
     HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord,
     OAuthClientRecord, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts,
     RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
-    UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
+    UnnamedRows, VersionFinding, WebEntry, WebSessionRecord, WorkareaRecord,
 };
 use oml_domain::web::Provider;
 
@@ -306,9 +306,14 @@ pub enum MetadataFold {
     /// waits in the review queue. The store refuses a second held, promoted
     /// or demoted version of one ordinal under one `claim_key` in one
     /// workarea (postgres-schema.md `memories_claim_version`).
+    ///
+    /// `findings` is the version's findings list (ADR-0074 d23), stored in
+    /// the same commit under this commit's seq, in order; a boxed slice, so
+    /// the variant stays within a pointer of the record it carries.
     MemoryHeld {
         memory: MemoryRecord,
         enqueue: bool,
+        findings: Box<[VersionFinding]>,
     },
     /// A verdict that does not yet satisfy the policy's `k`: journalled,
     /// status unchanged.
@@ -335,11 +340,13 @@ pub enum MetadataFold {
     },
     /// `scan.findings_recorded`: each held version named takes
     /// `scanned_under` as the rule set it was last scanned under, and keeps
-    /// any finding it had, else takes the one the rescan found; a version no
-    /// longer held is left as it is (ADR-0065 d13, d15; ADR-0074 d28).
+    /// any finding it had, else takes the one the rescan found; its findings
+    /// list gains each finding the rescan made that it does not hold, by
+    /// class, rule and field, under this commit's seq; a version no longer
+    /// held is left as it is (ADR-0065 d13, d15; ADR-0074 d23, d28).
     FindingsRecorded {
         scanned_under: Option<String>,
-        versions: Vec<(Uuid, Option<String>)>,
+        versions: Vec<RecordedVersion>,
     },
     /// `lifecycle.supersede`: the ratified successor takes the tip from the
     /// version it replaces, which stays promoted. The store compare-and-sets
@@ -1054,14 +1061,24 @@ pub trait JournalStore: Retriever + Send + Sync {
     ) -> impl Future<Output = Result<ClaimKeyState, StoreError>> + Send;
 
     /// How many of the tenant's versions, erased ones aside, were last
-    /// scanned under a rule set other than `current`: the held ones, then
-    /// every one. Doctor's `scan_held_unrescanned` and `scan_rescan_due`
-    /// (ADR-0074 d28).
+    /// scanned under a rule set other than `current`, the held ones and
+    /// every one, and how many held versions carry a `scan_finding` with
+    /// no row in the findings list. Doctor's `scan_held_unrescanned`,
+    /// `scan_rescan_due` and `scan_findings_unlisted` (ADR-0074 d23, d28).
     fn scan_backlog(
         &self,
         tenant_id: Uuid,
         current: Option<&str>,
-    ) -> impl Future<Output = Result<(u64, u64), StoreError>> + Send;
+    ) -> impl Future<Output = Result<ScanBacklog, StoreError>> + Send;
+
+    /// The findings lists of the named versions (ADR-0074 d23), each in the
+    /// order recorded: by the recording event's seq, then the order that
+    /// event gave. A version with no finding, or not the tenant's, is absent.
+    fn scan_findings(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+    ) -> impl Future<Output = Result<Vec<(Uuid, VersionFinding)>, StoreError>> + Send;
 
     /// How many versions on `nodes` are in state `held`, dead-lettered ones
     /// included: the commit's precondition and doctor's count (ADR-0030 d6,
@@ -1912,7 +1929,7 @@ pub enum ScanOutcome {
     Veto(String),
 }
 
-/// One finding as the rescan reports it (ADR-0065 d13): the class, the
+/// One finding as the scanner reports it (ADR-0065 d13): the class, the
 /// rule, whether it vetoes, and where in the scanned text it fired — never
 /// what it matched.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1922,6 +1939,40 @@ pub struct ScanFinding {
     pub veto: bool,
     /// The field and line inside the scanned text, `/body line 3`.
     pub at: String,
+    /// Where in the scanned text, for a scanner that says (ADR-0074 d23);
+    /// `None` for one that reports only its outcome.
+    pub place: Option<FindingPlace>,
+}
+
+/// Where a finding fired inside the text the scanner was handed: the line,
+/// the view its rule read and the match's byte range in that view
+/// (ADR-0074 d6, d23).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FindingPlace {
+    pub line: u32,
+    pub via: String,
+    pub span: (u64, u64),
+}
+
+/// One held version a recording rescan read (ADR-0074 d28): the summary
+/// its `scan_finding` takes when it has none, and every finding the rescan
+/// made, for its findings list (d23).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedVersion {
+    pub memory_id: Uuid,
+    pub summary: Option<String>,
+    pub findings: Vec<VersionFinding>,
+}
+
+/// The tenant's rescan backlog (ADR-0074 d23, d28): held versions scanned
+/// under another rule set, every version so scanned, and held versions
+/// whose stored `scan_finding` has no row in the findings list, which an
+/// older server wrote while migration 0043 ran.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScanBacklog {
+    pub held_unrescanned: u64,
+    pub rescan_due: u64,
+    pub findings_unlisted: u64,
 }
 
 /// What a scanner says about itself, for `/readyz` and doctor's scan line
@@ -1949,21 +2000,18 @@ pub trait Scanner: Send + Sync {
     /// d13). A scanner that reports only its outcome answers one finding
     /// whose class and rule are its reason.
     fn findings(&self, envelope: &AdmissionEnvelope<'_>) -> Vec<ScanFinding> {
-        match self.scan(envelope) {
-            ScanOutcome::Pass => Vec::new(),
-            ScanOutcome::Hold(reason) => vec![ScanFinding {
-                class: reason.clone(),
-                rule: reason,
-                veto: false,
-                at: String::new(),
-            }],
-            ScanOutcome::Veto(reason) => vec![ScanFinding {
-                class: reason.clone(),
-                rule: reason,
-                veto: true,
-                at: String::new(),
-            }],
-        }
+        outcome_findings(&self.scan(envelope))
+    }
+
+    /// Admission's scan (ADR-0074 d23): the verdict, counted as
+    /// [`Scanner::scan`] counts it, and every finding behind it, so the
+    /// version stores each one rather than the reason's first. A scanner
+    /// that reports only its outcome answers one finding whose class and
+    /// rule are its reason.
+    fn assess(&self, envelope: &AdmissionEnvelope<'_>) -> (ScanOutcome, Vec<ScanFinding>) {
+        let outcome = self.scan(envelope);
+        let findings = outcome_findings(&outcome);
+        (outcome, findings)
     }
 
     /// The scanner's version, rule count and personal-data setting, or
@@ -1971,6 +2019,22 @@ pub trait Scanner: Send + Sync {
     fn info(&self) -> Option<ScannerInfo> {
         None
     }
+}
+
+/// The one finding a scanner that reports only its outcome makes.
+fn outcome_findings(outcome: &ScanOutcome) -> Vec<ScanFinding> {
+    let (reason, veto) = match outcome {
+        ScanOutcome::Pass => return Vec::new(),
+        ScanOutcome::Hold(reason) => (reason, false),
+        ScanOutcome::Veto(reason) => (reason, true),
+    };
+    vec![ScanFinding {
+        class: reason.clone(),
+        rule: reason.clone(),
+        veto,
+        at: String::new(),
+        place: None,
+    }]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

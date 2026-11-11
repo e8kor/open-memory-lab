@@ -5,9 +5,12 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.rescan_report_by_rule_item import RescanReportByRuleItem
     from ..models.rescan_report_findings_item import RescanReportFindingsItem
+    from ..models.rescan_report_scanned_by_origin import RescanReportScannedByOrigin
 
 
 T = TypeVar("T", bound="RescanReport")
@@ -30,6 +33,10 @@ class RescanReport:
             d28).
         rescan_due (int): After this call, every stored version, erased ones aside, last scanned under another rule set:
             doctor's scan_rescan_due (ADR-0074 d28).
+        scanned_by_origin (RescanReportScannedByOrigin | Unset): The versions scanned, counted by origin kind, none for
+            a version stored without one: the denominators of the dry run's rates (ADR-0074 d18).
+        findings_unlisted (int | Unset): After this call, held versions whose stored scan finding has no row in the
+            findings list, written by a server older than migration 0043: doctor's scan_findings_unlisted (ADR-0074 d23).
     """
 
     scanner_version: None | str
@@ -40,6 +47,8 @@ class RescanReport:
     recorded: int
     held_unrescanned: int
     rescan_due: int
+    scanned_by_origin: RescanReportScannedByOrigin | Unset = UNSET
+    findings_unlisted: int | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         scanner_version: None | str
@@ -66,6 +75,12 @@ class RescanReport:
 
         rescan_due = self.rescan_due
 
+        scanned_by_origin: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.scanned_by_origin, Unset):
+            scanned_by_origin = self.scanned_by_origin.to_dict()
+
+        findings_unlisted = self.findings_unlisted
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -80,6 +95,10 @@ class RescanReport:
                 "rescan_due": rescan_due,
             }
         )
+        if scanned_by_origin is not UNSET:
+            field_dict["scanned_by_origin"] = scanned_by_origin
+        if findings_unlisted is not UNSET:
+            field_dict["findings_unlisted"] = findings_unlisted
 
         return field_dict
 
@@ -87,6 +106,7 @@ class RescanReport:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.rescan_report_by_rule_item import RescanReportByRuleItem
         from ..models.rescan_report_findings_item import RescanReportFindingsItem
+        from ..models.rescan_report_scanned_by_origin import RescanReportScannedByOrigin
 
         d = dict(src_dict)
 
@@ -126,6 +146,17 @@ class RescanReport:
 
         rescan_due = d.pop("rescan_due")
 
+        _scanned_by_origin = d.pop("scanned_by_origin", UNSET)
+        scanned_by_origin: RescanReportScannedByOrigin | Unset
+        if isinstance(_scanned_by_origin, Unset):
+            scanned_by_origin = UNSET
+        else:
+            scanned_by_origin = RescanReportScannedByOrigin.from_dict(
+                _scanned_by_origin
+            )
+
+        findings_unlisted = d.pop("findings_unlisted", UNSET)
+
         rescan_report = cls(
             scanner_version=scanner_version,
             scanned=scanned,
@@ -135,6 +166,8 @@ class RescanReport:
             recorded=recorded,
             held_unrescanned=held_unrescanned,
             rescan_due=rescan_due,
+            scanned_by_origin=scanned_by_origin,
+            findings_unlisted=findings_unlisted,
         )
 
         return rescan_report
