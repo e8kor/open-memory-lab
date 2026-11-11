@@ -150,10 +150,11 @@ where
 {
     // -- the admin's users page ---------------------------------------------
 
-    /// The sign-up tenant's people, as `<admin>-admin` reads them: each user
-    /// with an entry, whether they signed up themselves, whether disabled,
-    /// what they hold and their limits (ADR-0068 d5).
-    pub async fn web_users(&self, admin: &Caller) -> Result<Vec<UserRow>, AppError> {
+    /// `GET /v2/web/users`'s people (ADR-0070 d5): the sign-up tenant's people,
+    /// as `<admin>-admin` reads them: each user with an entry, whether they
+    /// signed up themselves, whether disabled, what they hold and their limits
+    /// (ADR-0068 d5).
+    pub async fn list_web_users(&self, admin: &Caller) -> Result<Vec<UserRow>, AppError> {
         require_role(&admin.key, Role::Admin, "web_users")?;
         let tenant_id = admin.key.tenant_id;
         let mut by_user: BTreeMap<Name, (bool, bool)> = BTreeMap::new();
@@ -200,9 +201,10 @@ where
         Ok(out)
     }
 
-    /// `set_quota` (ADR-0068 d5): one person's override of one quota, or
-    /// with `None` the default again, journalled as `web.quota_set`.
-    pub async fn web_set_quota(
+    /// `POST /v2/web/users/{user}/quota` (ADR-0070 d5 #8; ADR-0068 d5): one
+    /// person's override of one quota, or with `None` the default again,
+    /// journalled as `web.quota_set`.
+    pub async fn set_web_user_quota(
         &self,
         admin: &Caller,
         user: &Name,
@@ -251,15 +253,14 @@ where
         Ok(())
     }
 
-    /// `disable_user` (ADR-0068 d8): for a non-admin person the tenant
-    /// holds, `web.user_disabled`, which disables
-    /// every entry of the user and ends their sessions, then one
-    /// `key.denied` on `universe` for each live bearer and connector key of
-    /// the root. Session keys are reached only from sessions, which ended.
-    /// Each `key.denied` retries alone on a chain-head conflict
-    /// (`later_step`), so a conflict never journals `web.user_disabled`
-    /// twice in one call (#266).
-    pub async fn web_disable_user(
+    /// `POST /v2/web/users/{user}/disable` (ADR-0070 d5 #9; ADR-0068 d8): for a
+    /// non-admin person the tenant holds, `web.user_disabled`, which disables
+    /// every entry of the user and ends their sessions, then one `key.denied`
+    /// on `universe` for each live bearer and connector key of the root.
+    /// Session keys are reached only from sessions, which ended. Each
+    /// `key.denied` retries alone on a chain-head conflict (`later_step`), so a
+    /// conflict never journals `web.user_disabled` twice in one call (#266).
+    pub async fn disable_web_user(
         &self,
         admin: &Caller,
         user: &Name,
@@ -347,10 +348,10 @@ where
         })
     }
 
-    /// `request_deletion` (ADR-0068 d6), as `<user>-web`: the pending
-    /// request, journalled as `web.deletion_requested`. It ends nothing and
-    /// changes no access.
-    pub async fn web_request_deletion(&self, web: &Caller) -> Result<u64, AppError> {
+    /// `POST /v2/web/deletion-requests` (ADR-0070 d5 #7; ADR-0068 d6), as
+    /// `<user>-web`: the pending request, journalled as
+    /// `web.deletion_requested`. It ends nothing and changes no access.
+    pub async fn request_web_deletion(&self, web: &Caller) -> Result<u64, AppError> {
         let user = web
             .key
             .session_user
@@ -386,7 +387,7 @@ where
     }
 
     /// The tenant's pending deletion requests, oldest first (ADR-0068 d6).
-    pub async fn web_deletions(&self, admin: &Caller) -> Result<Vec<DeletionRequest>, AppError> {
+    async fn pending_deletions(&self, admin: &Caller) -> Result<Vec<DeletionRequest>, AppError> {
         require_role(&admin.key, Role::Admin, "web_users")?;
         Ok(self
             .journal
@@ -394,11 +395,12 @@ where
             .await?)
     }
 
-    /// `close_deletion` (ADR-0068 d6): the person disabled (d8), then the
-    /// request closed, journalled as `web.deletion_closed`. The bytes wait
-    /// for erasure. The closing commit retries alone on a chain-head
-    /// conflict, as the disable's denials do (#266).
-    pub async fn web_close_deletion(&self, admin: &Caller, user: &Name) -> Result<u64, AppError> {
+    /// `POST /v2/web/users/{user}/deletion/close` (ADR-0070 d5 #10; ADR-0068
+    /// d6): the person disabled (d8), then the request closed, journalled as
+    /// `web.deletion_closed`. The bytes wait for erasure. The closing commit
+    /// retries alone on a chain-head conflict, as the disable's denials do
+    /// (#266).
+    pub async fn close_web_deletion(&self, admin: &Caller, user: &Name) -> Result<u64, AppError> {
         require_role(&admin.key, Role::Admin, "web_users")?;
         let tenant_id = admin.key.tenant_id;
         if !self
@@ -410,7 +412,7 @@ where
         {
             return Err(AppError::NotFound);
         }
-        self.web_disable_user(admin, user).await?;
+        self.disable_web_user(admin, user).await?;
         later_step(|| async {
             let prev = self.head_event(tenant_id).await?;
             let event = self.seal(
@@ -442,18 +444,18 @@ where
     ) -> Result<(Vec<UserRow>, Vec<DeletionRequest>), AppError> {
         let caller = self.authenticate_bearer(bearer.into()).await?;
         Ok((
-            self.web_users(&caller).await?,
-            self.web_deletions(&caller).await?,
+            self.list_web_users(&caller).await?,
+            self.pending_deletions(&caller).await?,
         ))
     }
 
     // -- the onboarding page ---------------------------------------------------
 
-    /// The onboarding page's state for `<user>-web` (ADR-0068 d10):
-    /// connected once any of the person's keys authenticated since the
-    /// process started or a connector key has an open connection; the
-    /// newest memory's state.
-    pub async fn web_start_status(&self, web: &Caller) -> Result<StartStatus, AppError> {
+    /// `GET /v2/whoami?start=true`'s `person.start` (ADR-0070 d5), the
+    /// onboarding page's state for `<user>-web` (ADR-0068 d10): connected once
+    /// any of the person's keys authenticated since the process started or a
+    /// connector key has an open connection; the newest memory's state.
+    pub async fn whoami_start(&self, web: &Caller) -> Result<StartStatus, AppError> {
         let tenant_id = web.key.tenant_id;
         let Some(root) = web.key.user else {
             return Ok(StartStatus {
@@ -478,12 +480,9 @@ where
         })
     }
 
-    /// The person's usage and limits, for the onboarding page; `None`
-    /// where they are under no quota (ADR-0068 d5).
-    pub async fn web_own_limits(
-        &self,
-        web: &Caller,
-    ) -> Result<Option<(UserUsage, Quotas)>, AppError> {
+    /// `GET /v2/whoami`'s `person` usage and limits (ADR-0070 d5); `None` where
+    /// they are under no quota (ADR-0068 d5).
+    async fn whoami_limits(&self, web: &Caller) -> Result<Option<(UserUsage, Quotas)>, AppError> {
         let Some(root) = self.quota_root(&web.key) else {
             return Ok(None);
         };
@@ -518,7 +517,7 @@ where
         else {
             return Ok(None);
         };
-        let limits = self.web_own_limits(&caller).await?;
+        let limits = self.whoami_limits(&caller).await?;
         let deletion_requested_at = self
             .journal
             .web_deletion_requests(tenant_id)
@@ -527,7 +526,7 @@ where
             .find(|r| r.user == user)
             .map(|r| r.requested_at);
         let start = if start {
-            Some(self.web_start_status(&caller).await?)
+            Some(self.whoami_start(&caller).await?)
         } else {
             None
         };
@@ -539,10 +538,11 @@ where
         }))
     }
 
-    /// The person's export (ADR-0068 d6), as `<user>-web`: every memory in
-    /// their root and below, every state, their keys and their entry's
-    /// terms version. Nothing a second person wrote lies in the root.
-    pub async fn web_export(&self, web: &Caller) -> Result<Value, AppError> {
+    /// `GET /v2/web/export` (ADR-0070 d5 #6; ADR-0068 d6), as `<user>-web`: the
+    /// person's export, every memory in their root and below, every state,
+    /// their keys and their entry's terms version. Nothing a second person
+    /// wrote lies in the root.
+    pub async fn export_web_person(&self, web: &Caller) -> Result<Value, AppError> {
         let tenant_id = web.key.tenant_id;
         let root = web
             .key

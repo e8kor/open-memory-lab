@@ -815,7 +815,7 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let page = st
             .app
-            .web_memories(&caller, &req)
+            .list_memories_with_own(&caller, &req)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
@@ -2390,7 +2390,7 @@ where
         let regions = if caller.key().role == Role::Admin {
             st.app.admin_regions(&caller, Some(node)).await
         } else {
-            st.app.web_regions(&caller, Some(node)).await
+            st.app.user_regions(&caller, Some(node)).await
         }
         .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let items: Vec<Value> = regions

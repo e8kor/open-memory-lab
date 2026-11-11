@@ -170,7 +170,7 @@ where
     /// `GET /v2/web/emails`, admin by key role: the tenant's entries in the
     /// order of their email's digest after the digest `after`, at most
     /// `limit` (ADR-0045 d2).
-    pub async fn web_emails(
+    pub async fn list_web_emails(
         &self,
         bearer: impl Into<Bearer<'_>>,
         after: Option<&Sha256Hash>,

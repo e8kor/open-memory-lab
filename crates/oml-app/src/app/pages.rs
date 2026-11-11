@@ -397,9 +397,10 @@ where
 
     // -- the user page's keys ---------------------------------------------
 
-    /// The person's keys (ADR-0045 d9): every key naming their user, with
-    /// its grants and whether a denial on `universe` cuts it off.
-    pub async fn web_own_keys(&self, web: &Caller) -> Result<Vec<OwnKey>, AppError> {
+    /// `GET /v2/keys` for a session user key (ADR-0070 d5 #1; ADR-0045 d9):
+    /// every key naming the person's user, with its grants and whether a denial
+    /// on `universe` cuts it off.
+    pub async fn list_own_keys(&self, web: &Caller) -> Result<Vec<OwnKey>, AppError> {
         let tenant_id = web.key.tenant_id;
         let Some(root) = web.key.user else {
             return Ok(Vec::new());
@@ -430,13 +431,14 @@ where
         Ok(out)
     }
 
-    /// `issue_key` and `connect_key` (ADR-0045 d9, d16): a reader or writer
-    /// key naming the person's user, granted on their root and nothing
-    /// else, named `<user>-<name>` with the session suffixes reserved,
-    /// issued by `<user>-web`; with `connector`, a connector key and its
-    /// connect code. Issuance never amplifies authority: `<user>-web` holds
-    /// writer there, and the key it issues holds no more.
-    pub async fn web_issue_key(
+    /// `POST /v2/keys` as `<user>-web` (ADR-0070 d5; ADR-0045 d9, d16), the
+    /// console's `issue_key` and `connect_key`: a reader or writer key naming
+    /// the person's user, granted on their root and nothing else, named
+    /// `<user>-<name>` with the session suffixes reserved, issued by
+    /// `<user>-web`; with `connector`, a connector key and its connect code.
+    /// Issuance never amplifies authority: `<user>-web` holds writer there, and
+    /// the key it issues holds no more.
+    pub async fn issue_own_key(
         &self,
         web: &Caller,
         suffix: &str,
@@ -491,9 +493,10 @@ where
             .await
     }
 
-    /// `connect_code` (ADR-0045 d9): a fresh code for one of the person's
-    /// connector keys, minted by `<user>-web`.
-    pub async fn web_connect_code(
+    /// `POST /v2/keys/{key}/connect-codes` as `<user>-web` (ADR-0070 d5;
+    /// ADR-0045 d9): a fresh code for one of the person's connector keys,
+    /// minted by `<user>-web`.
+    pub async fn mint_own_connect_code(
         &self,
         web: &Caller,
         key: &Name,
@@ -503,11 +506,12 @@ where
             .await
     }
 
-    /// `cut_off` (ADR-0045 d9, d13): one of the person's keys denied on
-    /// `universe`, journalled as `key.denied`, by `<user>-web` on the user
-    /// page or `<user>-admin` on the admin page; the only cut-off while
-    /// revocation is not built. A session key is never cut off here.
-    pub async fn web_cut_off(&self, acting: &Caller, key: &Name) -> Result<DenialRecord, AppError> {
+    /// `POST /v2/keys/{key}/denials` as `<user>-web` or `<user>-admin`
+    /// (ADR-0070 d5; ADR-0045 d9, d13): one of the person's keys denied on
+    /// `universe`, journalled as `key.denied`, by `<user>-web` on the user page
+    /// or `<user>-admin` on the admin page; the only cut-off while revocation
+    /// is not built. A session key is never cut off here.
+    pub async fn cut_off_key(&self, acting: &Caller, key: &Name) -> Result<DenialRecord, AppError> {
         let target = match acting.key.role {
             Role::Admin => self.named_key(acting.key.tenant_id, key).await?,
             _ => self.own_key(acting, key).await?,
@@ -577,9 +581,10 @@ where
 
     // -- the admin page's capacities ----------------------------------------
 
-    /// A user's keys, for the removal confirmation (ADR-0045 d13): the keys
-    /// naming that user, session keys aside.
-    pub async fn web_keys_of_user(
+    /// `GET /v2/keys?user=` for the admin role (ADR-0070 d5 #1; ADR-0045 d13),
+    /// the removal confirmation's list: the keys naming that user, session keys
+    /// aside.
+    pub async fn list_keys_of_user(
         &self,
         admin: &Caller,
         user: &Name,
@@ -612,10 +617,11 @@ where
         Ok(out)
     }
 
-    /// `grant_review` (ADR-0045 d10): the user's `<user>-review` gains
-    /// dreamer and reader on `workarea`, journalled as `grant.issued` by
-    /// `<user>-admin`. The key exists from the user's first sign-in.
-    pub async fn web_grant_review(
+    /// `POST /v2/web/users/{user}/capacities` with `capacity: review` (ADR-0070
+    /// d5 #3; ADR-0045 d10): the user's `<user>-review` gains dreamer and
+    /// reader on `workarea`, journalled as `grant.issued` by `<user>-admin`.
+    /// The key exists from the user's first sign-in.
+    pub async fn grant_review_capacity(
         &self,
         admin: &Caller,
         user: &Name,
@@ -639,11 +645,12 @@ where
         })
     }
 
-    /// `grant_curation` (ADR-0045 d10, ADR-0044 d7): the user's
-    /// `<user>-curate`, a tenant writer key with writer on the `universe`
-    /// node alone and reader on `workarea`, created by `<user>-admin` at the
-    /// first designation and extended by a reader grant after it.
-    pub async fn web_grant_curation(
+    /// `POST /v2/web/users/{user}/capacities` with `capacity: curate` (ADR-0070
+    /// d5 #3; ADR-0045 d10, ADR-0044 d7): the user's `<user>-curate`, a tenant
+    /// writer key with writer on the `universe` node alone and reader on
+    /// `workarea`, created by `<user>-admin` at the first designation and
+    /// extended by a reader grant after it.
+    pub async fn grant_curation_capacity(
         &self,
         admin: &Caller,
         user: &Name,
@@ -768,9 +775,10 @@ where
         Ok(added)
     }
 
-    /// The review queue's depth and age per workarea, tenant-wide, no
-    /// content (ADR-0045 d10, amending ADR-0026 d15).
-    pub async fn web_queue(&self, admin: &Caller) -> Result<Vec<QueueRow>, AppError> {
+    /// `GET /v2/review/queue` (ADR-0070 d5 #2): the review queue's depth and
+    /// age per workarea, tenant-wide, no content (ADR-0045 d10, amending
+    /// ADR-0026 d15).
+    pub async fn review_queue(&self, admin: &Caller) -> Result<Vec<QueueRow>, AppError> {
         require_role(&admin.key, Role::Admin, "review_queue")?;
         let tenant_id = admin.key.tenant_id;
         let mut out = Vec::new();
@@ -782,8 +790,8 @@ where
         Ok(out)
     }
 
-    /// A workarea's path, for a page to name a grant's node by.
-    pub async fn web_path(&self, caller: &Caller, node: Uuid) -> Result<String, AppError> {
+    /// A workarea's path, by which `GET /v2/keys` names a grant's node.
+    pub async fn workarea_path(&self, caller: &Caller, node: Uuid) -> Result<String, AppError> {
         self.path_of(caller.key.tenant_id, node).await
     }
 
@@ -846,13 +854,14 @@ where
 
     // -- the Memories list and the workarea dropdowns ------------------------
 
-    /// The user page's Memories list (ADR-0045 d22, d23): the scoped
-    /// listing `<user>-web` is served at `universe` (or at the filter's
-    /// workarea) and the own-work listing of every key naming the user,
-    /// each read after the same position and merged newest first, a row in
-    /// both shown once. `author` narrows to one of the person's keys and
-    /// drops the scoped listing; a key that is not theirs is not found.
-    pub async fn web_memories(
+    /// `GET /v1/memories?with_own=true` (ADR-0070 d5; ADR-0045 d22, d23), the
+    /// Memories list: the scoped listing `<user>-web` is served at `universe`
+    /// (or at the filter's workarea) and the own-work listing of every key
+    /// naming the user, each read after the same position and merged newest
+    /// first, a row in both shown once. `author` narrows to one of the person's
+    /// keys and drops the scoped listing; a key that is not theirs is not
+    /// found.
+    pub async fn list_memories_with_own(
         &self,
         web: &Caller,
         req: &WebListRequest,
@@ -936,14 +945,14 @@ where
         })
     }
 
-    /// The user page's Atlas workareas (ADR-0045 d30): the nodes the
-    /// tree read serves `<user>-web` under `workarea` (by default
-    /// `universe`, which a user key reads as its root and the `universe`
-    /// node), each with the rows of [`Self::web_memories`] on it counted by
-    /// state, so a region and a count exist only where the list would show
-    /// the row; a held row outside an in-progress scope counts only for its
-    /// author's person.
-    pub async fn web_regions(
+    /// `GET /v2/workareas/{workarea}/tree?counts=true` for a user key (ADR-0070
+    /// d5; ADR-0045 d30), the Atlas's workareas: the nodes the tree read serves
+    /// `<user>-web` under `workarea` (by default `universe`, which a user key
+    /// reads as its root and the `universe` node), each with the rows of
+    /// [`Self::list_memories_with_own`] on it counted by state, so a region and
+    /// a count exist only where the list would show the row; a held row outside
+    /// an in-progress scope counts only for its author's person.
+    pub async fn user_regions(
         &self,
         web: &Caller,
         workarea: Option<Reference>,
@@ -1017,8 +1026,8 @@ where
             .collect())
     }
 
-    /// Counts the rows [`Self::web_memories`] lists under `workarea` onto
-    /// `regions`, skipping rows on `skip`; whether it stopped at
+    /// Counts the rows [`Self::list_memories_with_own`] lists under `workarea`
+    /// onto `regions`, skipping rows on `skip`; whether it stopped at
     /// [`REGION_COUNT_MAX`].
     async fn count_listing(
         &self,
@@ -1031,7 +1040,7 @@ where
         let mut counted = 0;
         loop {
             let page = self
-                .web_memories(
+                .list_memories_with_own(
                     web,
                     &WebListRequest {
                         workarea: workarea.clone(),

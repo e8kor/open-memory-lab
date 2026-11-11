@@ -160,7 +160,7 @@ where
             .transpose()?;
         let entries = st
             .app
-            .web_emails(acting.bearer(), after.as_ref(), limit)
+            .list_web_emails(acting.bearer(), after.as_ref(), limit)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let next_cursor = (entries.len() == limit)
