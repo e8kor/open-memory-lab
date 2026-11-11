@@ -71,3 +71,5 @@ Every number went through the served path. An agent key wrote the memories over 
     | BEIR NFCorpus | 2026-11-05 | `2123e90`, `66979b4`, `a1ad0c9`, `d3fdb72`, `f86c31c` | host 8 vCPU / 15 GB, load average 3.6 to 14 from other lanes, postgres 18.6, build release<br>host 8 vCPU / 15 GB, postgres 17.9, build release<br>host 8 vCPU / 15 GB, postgres 18.6, build release<br>host 8 vCPU / 15 GB, shared, load 8-12, postgres 18, build release |
     | LoCoMo | 2026-11-05 | `2123e90`, `66979b4`, `a1ad0c9`, `d3fdb72`, `f86c31c` | host 8 vCPU / 15 GB, load average 3.6 to 14 from other lanes, postgres 18.6, build release<br>host 8 vCPU / 15 GB, postgres 17.9, build release<br>host 8 vCPU / 15 GB, postgres 18.6, build release<br>host 8 vCPU / 15 GB, shared, load 8-12, postgres 18, build release |
     | SciFact ×10 (latency at 50k rows) | 2026-11-05 | `d3fdb72` | host 8 vCPU / 15 GB, postgres 17.9, build release |
+
+The web console's time per page, in process and over the API, is on its own page: [Web console overhead](web.md).

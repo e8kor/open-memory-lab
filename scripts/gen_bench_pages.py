@@ -26,6 +26,9 @@ import docgen  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES = [ROOT / "eval" / "bench" / "results", ROOT / "bench" / "scale" / "results"]
+WEB_SOURCE = ROOT / "bench" / "web" / "results"
+WEB_SCHEMA = "oml-web-bench/1"
+WEB_BUDGET_MS = 5
 OUT = ROOT / "docs" / "benchmarks"
 DEFAULT_SOURCE = ROOT / "crates" / "bins" / "oml-server-lead" / "src" / "lib.rs"
 SCHEMA = "oml-bench/1"
@@ -300,6 +303,9 @@ def index_page(current, earlier, has_scale):
                     + (", ".join(f"`{c}`" for c in commits) or "not recorded")
                     + " | " + "<br>".join(envs) + " |")
     lines.append(fold("Run details: dates, commits and environments", rows))
+    if WEB_SOURCE.exists() and any(WEB_SOURCE.glob("*.json")):
+        lines.append("The web console's time per page, in process and over the API, is on its own "
+                     "page: [Web console overhead](web.md).\n")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -418,6 +424,90 @@ def scale_page(current):
     return "\n".join(lines).rstrip() + "\n"
 
 
+def load_web():
+    """{workareas: {shape: doc}} from bench/web/results/ (bench/web/run.py)."""
+    runs = {}
+    if WEB_SOURCE.exists():
+        for p in sorted(WEB_SOURCE.glob("*.json")):
+            doc = json.loads(p.read_text())
+            if doc.get("schema") == WEB_SCHEMA:
+                doc["_path"] = p.relative_to(ROOT).as_posix()
+                runs.setdefault(doc["workareas"], {})[doc["shape"]] = doc
+    return runs
+
+
+def web_page(runs):
+    """Each page's time in process (before phase (b)) and through oml-web."""
+    lines = [header("benchmarks/web", "how much time the web console's hop over the API adds "
+                    "to each page against ADR-0070's 5 ms p95 budget, how many API calls and "
+                    "sequential rounds each page makes, and where the added time goes"),
+             "# Web console overhead\n",
+             "*These are measurements by the OML maintainers on their own hardware, not "
+             "independent results. Generated from the committed `oml-web-bench/1` results.*\n",
+             "[All suites](index.md)\n",
+             "Each page a signed-in admin can load, timed twice on the same data: served in "
+             "process by the lead from before the pages moved, and served by `oml-web` over the "
+             "public API on loopback. The budget is the second's p95 no more than "
+             f"{WEB_BUDGET_MS} ms above the first's (ADR-0070 d8). The time is the client's, "
+             "request sent to answer read over a keep-alive loopback connection; the health "
+             "probe's time, given under each table, is the floor of that exchange.\n",
+             "*API calls* and *rounds* are read from the lead's request lines: the calls the page "
+             "made and the longest chain of them that did not overlap, which is the round trips "
+             "a LAN adds. *Outside the lead* is the page's time less the time at least one of "
+             "its calls was in the lead's handler: `oml-web`'s own work, the hop's serialization "
+             "and the loopback exchanges.\n"]
+    for workareas in sorted(runs):
+        shapes = runs[workareas]
+        inp, web = shapes.get("in-process"), shapes.get("oml-web")
+        any_doc = web or inp
+        seeded = any_doc["seeded"]
+        lines.append(f"## {workareas} workareas, {seeded['memories']} memories\n")
+        lines.append("| page | in process p50 | p95 | oml-web p50 | p95 | p95 added | within budget "
+                     "| API calls | rounds | outside the lead p95 |")
+        lines.append("|---|---:|---:|---:|---:|---:|---|---:|---:|---:|")
+        labels = list(dict.fromkeys(list((web or {}).get("pages", {}))
+                                    + list((inp or {}).get("pages", {}))))
+        for label in labels:
+            a = (inp or {}).get("pages", {}).get(label)
+            b = (web or {}).get("pages", {}).get(label)
+            cells = [ms(a["page_ms"]["p50"]) if a else "–", ms(a["page_ms"]["p95"]) if a else "–",
+                     ms(b["page_ms"]["p50"]) if b else "–", ms(b["page_ms"]["p95"]) if b else "–"]
+            if a and b:
+                added = b["page_ms"]["p95"] - a["page_ms"]["p95"]
+                cells += [f"{added:+.1f}", "yes" if added <= WEB_BUDGET_MS else "no"]
+            else:
+                cells += ["–", "–"]
+            if b:
+                c, r = b["api_calls"], b["sequential_rounds"]
+                cells += [str(c["max"]) if c["min"] == c["max"] else f"{c['min']}–{c['max']}",
+                          str(r["max"]) if r["min"] == r["max"] else f"{r['min']}–{r['max']}",
+                          ms(b["outside_lead_ms"]["p95"])]
+            else:
+                cells += ["–", "–", "–"]
+            lines.append(f"| `{label}` | " + " | ".join(cells) + " |")
+        lines.append("")
+        floors = [f"{shape} {ms(d['healthz_ms']['p50'])} ms p50, {ms(d['healthz_ms']['p95'])} ms p95"
+                  for shape, d in sorted(shapes.items())]
+        lines.append("Health probe: " + "; ".join(floors) + ".\n")
+    lines.append("## Runs\n")
+    lines.append("| run | date | commit | iterations | one-minute load, before and after | host |")
+    lines.append("|---|---|---|---:|---|---|")
+    for workareas in sorted(runs):
+        for shape, d in sorted(runs[workareas].items()):
+            env = d["environment"]
+            lines.append(f"| `{d['_path']}` | {d['date']} | `{d['commit']}` | "
+                         f"{d['method']['iterations']} after {d['method']['warmup']} | "
+                         f"{env['loadavg_before'][0]}, {env['loadavg_after'][0]} | "
+                         f"{env['cpus']} CPUs, {env['postgres']} |")
+    lines.append("")
+    lines.append("Both shapes ran on one shared host, so a latency is an upper bound. The in-process "
+                 "lead is commit `4dedf532`, the last before phase (b), with the sign-in double of "
+                 "`bench/web/before-e2e-sign-in.patch`; the admin Review view was then two pages, the "
+                 "queue and the held list, and the admin Keys view did not exist. How to run it: "
+                 "`bench/web/README.md`.")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def pages():
     current, earlier = load_results()
     scale_suites = {s for s, docs in current.items()
@@ -430,6 +520,9 @@ def pages():
         out[f"{suite}.md"] = suite_page(suite, current[suite], earlier.get(suite, []))
     if has_scale:
         out["scale.md"] = scale_page(current)
+    web = load_web()
+    if web:
+        out["web.md"] = web_page(web)
     return out
 
 

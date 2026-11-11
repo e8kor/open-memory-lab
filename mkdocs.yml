@@ -162,6 +162,7 @@ nav:
       - BEIR NFCorpus: benchmarks/beir-nfcorpus.md
       - LoCoMo: benchmarks/locomo.md
       - Latency at scale: benchmarks/scale.md
+      - Web console overhead: benchmarks/web.md
   - Help:
       - FAQ: faq.md
       - Troubleshoot the client: help/troubleshooting-client.md
