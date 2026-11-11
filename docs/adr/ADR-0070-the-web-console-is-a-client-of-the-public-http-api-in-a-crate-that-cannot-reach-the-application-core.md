@@ -38,7 +38,9 @@ second half of the sixth change (6b), Start, setup, the admin overview and the u
 `oml-web` (d3, d5, d6 and d7 (b) revised): see the seventh table of Phase (b) as built. Amended by
 phase (c), the `web_*` use cases out of `oml-app`'s core (d7 (b) and (c) revised): see
 [Phase (c) as built](#phase-c-as-built-2026-11-11). Amended by phase (d), the walls as required checks (d7 (d)
-revised): see [Phase (d) as built](#phase-d-as-built-2026-11-11).
+revised): see [Phase (d) as built](#phase-d-as-built-2026-11-11). Amended on 2026-11-11 by the
+operator's decision to delete the old URLs' `303`s in v0.7.1 (d7 (b) and (d) revised): see
+[The old URLs deleted](#the-old-urls-deleted-2026-11-11).
 
 ## Context
 
@@ -760,7 +762,7 @@ Where it reads a decision differently:
 | d7 (c) | the logic behind a new operation is renamed to that operation's use case | a use case behind a `/v2/web/*` operation takes the operation's id in snake case (`listWebEmails` is `list_web_emails`); one behind `/v2/keys*`, the queue, the capacities or a changed read names what it serves (`issue_own_key`, `review_queue`, `grant_review_capacity`, `list_memories_with_own`), since `issue_key`, `mint_connect_code`, `list_memories` and `workarea_tree` already name the bearer key's path, which the session key's does not share | an operation id is unique on the wire but not in `oml-app`, where the bearer use case already holds it |
 | d7 (c) | the sign-in ones move to the auth module | they move under their `web_` names, and the exit check reads every module but `auth.rs` | the auth context owns them and no page calls them; a rename would touch every sign-in test and the oml-web parity rig for no reader |
 | d7 (c) | (silent on names on the wire and in metrics) | the refusal's verb names (`access.verb_ceiling` naming `web_emails` and `web_users`), the store port's methods (`web_queue`, `web_session_open`, `web_session` and the rest) and the `store_port` span names the lead's traces carry from them keep their names | a verb name is on the wire and a span name is in trace queries; changing either is a behaviour change, which this phase is not |
-| d7 (b), d7 (d) | (silent on when the old URLs stop answering) | the lead's `303`s to `oml-web`'s paths stay through v0.7.0: `views.rs` (`MOVED_VIEWS`, `MOVED_ADMIN_VIEWS`, `moved_action`, `moved_memories`), the moved acts in the two page `action` sets and `GET`/`POST /web/admin`, so a bookmark or a form cached under v0.6 lands on its new path. They are deleted in v0.7.1, leaving the lead `GET /web` without a session (the sign-in page) and the sign-out act; until then phase (d)'s `the_lead_serves_no_page_route_outside_oml_web_and_auth` names them as the lead's redirects | v0.7.0 is the release that moves the pages, so its upgrade is the one that meets old URLs; a redirect runs nothing and costs one route, and one release of it is chosen, not measured |
+| d7 (b), d7 (d) | (silent on when the old URLs stop answering) | the lead's `303`s to `oml-web`'s paths stay through v0.7.0: `views.rs` (`MOVED_VIEWS`, `MOVED_ADMIN_VIEWS`, `moved_action`, `moved_memories`), the moved acts in the two page `action` sets and `GET`/`POST /web/admin`, so a bookmark or a form cached under v0.6 lands on its new path. They are deleted in v0.7.1, leaving the lead `GET /web` without a session (the sign-in page) and the sign-out act; until then phase (d)'s `the_lead_serves_no_page_route_outside_oml_web_and_auth` names them as the lead's redirects. The operator decided on 2026-11-11 that v0.7.1 deletes them: see [The old URLs deleted](#the-old-urls-deleted-2026-11-11) | v0.7.0 is the release that moves the pages, so its upgrade is the one that meets old URLs; a redirect runs nothing and costs one route, and one release of it is chosen, not measured |
 
 ## Phase (d) as built (2026-11-11)
 
@@ -807,7 +809,33 @@ Where it reads a decision differently:
 | Decision | Was | Is | Why |
 |---|---|---|---|
 | d7 (d) | both tests required on `main` | the tests run in one job, `crate walls (oml-web)`, and that job's name is the required check; the route wall lives in `oml-web`'s tests, beside the dependency wall | the lead's router is built by `oml-transport-http`, which `oml-web`'s tests already start for the parity rig, so the route wall reads `oml_web::PAGES` without a new dependency; one job builds both test targets once, without Postgres |
-| d7 (d) | (silent on the old URLs' `303`s) | the test names `GET`/`POST /web/admin` as redirects, and `GET`/`POST /web` keep their `?view=` and moved-act `303`s beside the sign-in page and sign-out, until the operator decides whether v0.7.1 deletes them as Phase (c) as built records | deleting a route there deletes its row in the test, in the same change |
+| d7 (d) | (silent on the old URLs' `303`s) | the test names `GET`/`POST /web/admin` as redirects, and `GET`/`POST /web` keep their `?view=` and moved-act `303`s beside the sign-in page and sign-out, until the operator decides whether v0.7.1 deletes them as Phase (c) as built records. The operator decided to delete them: see [The old URLs deleted](#the-old-urls-deleted-2026-11-11) | deleting a route there deletes its row in the test, in the same change |
+
+## The old URLs deleted (2026-11-11)
+
+The operator decided on 2026-11-11 that v0.7.1 deletes the lead's `303`s from the page URLs and
+acts of v0.6, and does not keep them longer: "its not important to keep them" (#283). Phase (c)
+as built had kept them through v0.7.0 and left the deletion to this decision.
+
+**Deleted.** `crates/transports/oml-transport-http/src/web/views.rs` (`MOVED_VIEWS`,
+`MOVED_ADMIN_VIEWS`, `moved_action`, `moved_memories`, `moved_view`), `GET` and `POST /web/admin`
+with their handlers, the admin page's `action` set, and every moved act of the user page's set,
+which is now `sign_out` alone. `docs/api/openapi.yaml` loses `/web/admin`, and the generated SDKs
+lose `admin_page` and `admin_page_act` with their models.
+
+**What the lead's web routes are now.** Six, all the auth context's (d6): `GET /web` (the sign-in
+page without a session), `POST /web` (sign-out), `GET` and `POST /web/sign-in`,
+`GET /web/callback/{provider}` and `POST /web/sign-up`. Every proxy copy routes `/web` and
+`/web/admin` to the lead already, by falling through to it, so no router changes.
+
+Where it reads a decision differently:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d7 (b) | the lead answers an old `?view=` URL, an old act and every `GET /web/admin` with a `303` to the moved page, running nothing (Phase (c) as built) | an old `?view=` URL with a session is `access.not_found`, as a view the page never had was; without one it is the sign-in page, whose `next` is `/web`; an old act of `POST /web` is `request.validation` naming `action`, journalling nothing; `GET` and `POST /web/admin` are unknown paths, `404` before a session is read | the operator's decision; a bookmark or a cached form from v0.6 now ends on a not-found or a refusal instead of the moved page. The redirect target no longer needs to be checked against a smuggled path, and the lead holds no table of `oml-web`'s paths |
+| d7 (b) | (Phase (b)'s fifth table) the lead answers a signed-in `GET /web` naming no view with a `303` to the Keys view | kept: `GET /web` is the console's address, where the callback, the sign-in page and sign-out send a person, so a signed-in browser still goes on to `/web/keys` | it is the landing of the auth flow, not an old URL; deleting it would leave a person who has just signed in on a not-found |
+| d7 (d) | `the_lead_serves_no_page_route_outside_oml_web_and_auth` names eight routes, two of them `OldUrlRedirect`s (Phase (d) as built) | it names the six above and asserts that `GET` and `POST /web/admin` answer as an unknown path does; `the_old_page_urls_and_acts_answer_not_found_or_refused_and_run_nothing` in `oml-transport-http` and the renamed `the_old_*_urls_are_not_found_*` cases in `oml-web` replace the redirect cases | deleting a route deletes its row in the test, in the same change |
+| (none) | the user page's Administration tab links `/web/admin`, which the lead sent to the overview | it links `/web/admin/people`, the overview's own path | the tab otherwise leads to a not-found |
 
 ## Consequences
 
