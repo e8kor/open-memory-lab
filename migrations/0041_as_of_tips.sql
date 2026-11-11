@@ -16,8 +16,14 @@
 -- partition's build reads its tenant's rows under a SHARE lock that makes
 -- that tenant's writes wait until the build ends. The file is one DO
 -- statement run outside a migration transaction, `-- no-transaction`, and
--- it commits after each partition's build and attach, so a write waits only
--- for its own tenant's partition, never for the others'. CREATE INDEX
+-- it builds the partitions in name order, committing after each build and
+-- attach, so no lock is held past its own partition's build. An INSERT,
+-- which locks its tenant's partition alone, waits only for that build. A
+-- statement planned against the parent with the tenant as a parameter,
+-- such as a cached generic plan of an UPDATE through memories, can lock
+-- every partition as it starts, and then waits behind whichever tenant's
+-- build is running, for at most that one build. Reads never wait: SHARE
+-- does not conflict with them. CREATE INDEX
 -- CONCURRENTLY would let writes run, but it cannot run inside a DO block or
 -- a multi-statement string, and the partitions are known only at run time.
 -- Each transaction waits at most 5 s for its lock, then the migration fails
@@ -39,6 +45,7 @@ BEGIN
     COMMIT;
     FOR part IN SELECT inhrelid::regclass FROM pg_inherits
                  WHERE inhparent = 'memories'::regclass
+                 ORDER BY inhrelid::regclass::text
     LOOP
         SET LOCAL lock_timeout = '5s';
         -- A partition created after the parent index exists has its copy

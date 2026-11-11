@@ -663,8 +663,7 @@ pub async fn held_rows_at_an_instant_follow_todays_rules<S: JournalStore + Clone
     }
 }
 
-/// `inside_an_in_progress_scope_another_authors_held_row_is_served_at_an_instant_only_if_recorded_by_it`:
-/// inside an in-progress scope (ADR-0030 d3) a reader meets every author's
+/// Inside an in-progress scope (ADR-0030 d3) a reader meets every author's
 /// held rows today; at an instant, only those recorded by it, and a row held
 /// then and approved since is absent, in recall and the scoped listing.
 pub async fn inside_an_in_progress_scope_held_rows_at_an_instant_follow_todays_rules<

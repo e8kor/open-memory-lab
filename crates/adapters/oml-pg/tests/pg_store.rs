@@ -9539,12 +9539,13 @@ async fn the_tip_probe_is_an_index_condition_for_the_serving_role_under_row_secu
 }
 
 /// Migration 0041 runs outside a migration transaction and commits after
-/// each partition's build, so a write waits only for its own tenant's
-/// partition; run again after it has applied, as a retry would, it changes
+/// each partition's build, so no lock outlives its own partition's build;
+/// run again after it has applied, as a retry would, it changes
 /// nothing and leaves the probe's index attached on every partition and
 /// valid (ADR-0059 d20).
 #[tokio::test]
-async fn migration_0041_builds_each_partitions_index_in_its_own_transaction_and_a_retry_resumes() {
+async fn migration_0041_builds_each_partitions_index_in_its_own_transaction_and_a_second_run_changes_nothing()
+ {
     let sql = MIGRATOR
         .iter()
         .find(|m| m.version == 41)

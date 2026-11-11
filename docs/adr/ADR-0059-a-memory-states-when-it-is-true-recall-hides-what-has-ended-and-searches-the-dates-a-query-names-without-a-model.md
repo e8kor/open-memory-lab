@@ -456,8 +456,13 @@ the reading is recorded here before the code.
       creation, this one holds every promoted version, so each partition's build reads its
       tenant's promoted rows under a SHARE lock that makes that tenant's writes wait until it
       ends. 0041 is a `-- no-transaction` migration of one `DO` statement that creates the
-      parent's index `ON ONLY`, then builds, attaches and commits each partition's in turn, so a
-      write waits only for its own tenant's build, never for the others'. `CREATE INDEX
+      parent's index `ON ONLY`, then builds, attaches and commits each partition's in name
+      order, so no lock outlives its own partition's build. An `INSERT`, which locks its
+      tenant's partition alone, waits only for that tenant's build. A statement planned against
+      the parent with the tenant as a parameter, such as a cached generic plan of an `UPDATE`
+      through `memories`, can lock every partition as it starts, and then waits behind
+      whichever tenant's build is running, for at most that one build. Reads never wait, since
+      SHARE does not conflict with them. `CREATE INDEX
       CONCURRENTLY`, which would let writes run, cannot run inside a `DO` block or a
       multi-statement string, and the partitions are known only at run time. Each transaction
       waits at most 5 s for its lock, then the migration fails; every step is skipped when done,
@@ -491,7 +496,8 @@ the reading is recorded here before the code.
   `an_as_of_after_the_leads_clock_is_refused`; each recall law also checks that every row served
   at an instant is one today's get serves the caller. On PostgreSQL:
   `the_tip_probe_is_an_index_condition_for_the_serving_role_under_row_security`,
-  `migration_0041_builds_each_partitions_index_in_its_own_transaction_and_a_retry_resumes`,
+  `migration_0041_builds_each_partitions_index_in_its_own_transaction_and_a_second_run_changes_nothing`,
+  `migration_0041_fails_on_a_locked_partition_keeping_the_ones_it_committed_and_a_rerun_completes`,
   `a_promoted_version_without_promoted_at_is_counted_for_doctor_and_served_at_no_instant`, and
   the timing gate `an_as_of_recall_costs_at_most_three_times_todays_over_two_version_chains`,
   with the measurements `the_as_of_recall_cost_at_100k_rows` and
