@@ -54,8 +54,11 @@ paths to the server shows not found.
 ## What you need
 
 - The server with `oauth.issuer` set and the pages on, as for the [user and admin pages](deployment.md).
-- One secret of at least 32 characters, set as `web.client_secret` on the server and on `oml-web`.
-  The server accepts a person's capacity credential (`omls_`) only from a request that carries it.
+- One secret, set as `web.client_secret` on the server and on `oml-web`: at least 32 visible
+  ASCII characters, at least 8 of them distinct, as `openssl rand -hex 32` writes. Both processes
+  refuse to start with a shorter or repetitive one, naming the setting. The server accepts a
+  person's capacity credential (`omls_`) only from a request that carries it
+  ([Store the client secret](#store-the-client-secret)).
 - A reverse proxy in front of both processes on one public origin. The session cookie is a
   `__Host-` cookie, so the browser sends it only to that one host.
 
@@ -63,7 +66,7 @@ paths to the server shows not found.
 
 ```sh
 export OML_WEB__API_URL=http://127.0.0.1:8090        # the server's listener, not the public proxy
-export OML_WEB__CLIENT_SECRET="$(cat <secret-file>)" # the server's web.client_secret
+export OML_WEB__CLIENT_SECRET_FILE=<secret-file>     # owner-only; the server's web.client_secret
 export OML_WEB__LISTEN=127.0.0.1:8091                # the default
 oml-web
 ```
@@ -71,7 +74,8 @@ oml-web
 | Setting | Environment variable | Default | What it does |
 |---|---|---|---|
 | `web.api_url` | `OML_WEB__API_URL` | required | The server's base URL, `http://` or `https://`, a host and no path. Plain `http://` is accepted only to a loopback host. |
-| `web.client_secret` | `OML_WEB__CLIENT_SECRET` | required | Sent as `OML-Web-Client` on every API call. Never logged. |
+| `web.client_secret` | `OML_WEB__CLIENT_SECRET` | required, or the file below | Sent as `OML-Web-Client` on every API call. Never logged. |
+| `web.client_secret_file` | `OML_WEB__CLIENT_SECRET_FILE` | unset | A file holding the secret, read at start, one trailing line ending dropped. On Unix a file its group or others can read stops the start, naming its mode. Setting both stops the start. |
 | `web.listen` | `OML_WEB__LISTEN` | `127.0.0.1:8091` | Where the pages listen. |
 | `web.public_url` | `OML_WEB__PUBLIC_URL` | the server's `oauth.issuer` | The origin a form's `Origin` must equal. Unset, `oml-web` reads it from the server's `/.well-known/oauth-authorization-server` at start, for up to 30 seconds, and refuses to start without it. |
 | `web.allow_plain_http_api` | `OML_WEB__ALLOW_PLAIN_HTTP_API` | `false` | `true` accepts a plain `http://` `web.api_url` to a host that is not loopback, for a private network. `oml-web` warns at every start. |
@@ -100,6 +104,52 @@ Run it with `oml-web`'s environment. It prints one line per check and exits 1 on
 
 The server's `oml doctor` cannot read `oml-web`'s settings; it warns when the server itself has
 no `web.client_secret`.
+
+## Store the client secret
+
+The secret is the one credential that lets a process present a person's session to the API, so
+it lives where the process's other secrets live and nowhere else:
+
+| Shape | Where it lives |
+|---|---|
+| A host under systemd | An owner-only file each unit reads: `LoadCredential=web-client:/etc/oml/web-client` and `OML_WEB__CLIENT_SECRET_FILE=%d/web-client` on `oml-web`, the same with `OML_WEB__CLIENT_SECRET_FILE` on the server. systemd hands the unit a copy readable by the unit alone. |
+| `oml quickstart` | `OML_WEB_CLIENT_SECRET` in the stack's owner-only `.env`, which compose hands to both services. |
+| `docker-compose.yml` | A fixed development value unless `OML_WEB_CLIENT_SECRET` is set; for development only. |
+| The Helm chart | A Secret: the one `web.clientSecret.existingSecret` names, the recommended path and the only one for GitOps or `helm template`, or one the chart generates once and keeps ([Kubernetes](../guides/kubernetes.md)). `values.yaml` never holds the value. |
+
+Neither process logs the secret, prints it in `--doctor`, or puts it in a debug form; a refusal
+names the setting and, for a file, its path and mode, never the value.
+
+### Rotating the client secret
+
+The server accepts the old secret beside the new one for a window you bound, so `oml-web` keeps
+working while it restarts onto the new value:
+
+1. On the server, set the new value as `web.client_secret`, the old one as
+   `web.client_secret_previous` (or `_previous_file`), and `web.client_secret_previous_until` to an
+   RFC 3339 instant at most 7 days ahead, such as `2026-11-12T09:00:00Z`. Restart the server. Each
+   start logs `web_client_previous_accepted` with the instant.
+2. Set the new value on `oml-web` and restart it. Until it has, it still sends the old secret,
+   which the server accepts.
+3. Unset `web.client_secret_previous` and `web.client_secret_previous_until` on the server and
+   restart it.
+
+At the instant, the server stops accepting the old secret on its own, without a restart. A start
+with a closed window logs `web_client_previous_closed` until step 3 is done. A window more than 7
+days after the start, a previous secret without its instant, or one equal to the current secret
+stops the server at start, naming the setting. `oml-web` sends one secret and never reads the
+previous one. On Kubernetes the same three steps edit the Secret's keys and restart the two
+Deployments ([Kubernetes](../guides/kubernetes.md)).
+
+### Mutual TLS instead of the secret
+
+ADR-0070 d2 names mutual TLS as the alternative for a hop that leaves the host: the server
+terminates TLS on the listener `oml-web` reaches and accepts the client certificate whose subject
+is `web.client_subject`, issued under `web.client_ca`. This build does not terminate TLS, so it
+cannot verify a certificate, and setting `web.client_ca` or `web.client_subject` stops the server
+at start. A client certificate a gateway forwards in a header is never accepted: a request that
+carries one is refused as outside `oml-web`. Across a network the hop uses `https://` to a TLS
+proxy in front of the server, with the secret.
 
 ## Route the pages
 
@@ -150,3 +200,4 @@ the page renders without it and names that call's request id.
 
 - The cap on API calls one session has in flight.
 - `oml doctor` reading `oml-web`'s environment. Run `oml-web --doctor` instead.
+- Mutual TLS between `oml-web` and the server ([Mutual TLS instead of the secret](#mutual-tls-instead-of-the-secret)).

@@ -44,7 +44,19 @@ server:
     note: The matching secret. Set both or neither. The web pages need `oauth.issuer` and at least one provider.
   web.client_secret:
     default: unset (no capacity credential accepted)
-    note: "The secret `oml-web` sends as `OML-Web-Client` to present a person's capacity credential (`omls_`), at least 32 characters, set to the same value on the server and on `oml-web` (ADR-0070 d2). Unset, every capacity credential is refused as `auth.invalid` `session_outside_web` and `oml doctor` warns. The server never logs it."
+    note: "The secret `oml-web` sends as `OML-Web-Client` to present a person's capacity credential (`omls_`), set to the same value on the server and on `oml-web` (ADR-0070 d2): at least 32 visible ASCII characters, at least 8 of them distinct, as `openssl rand -hex 32` writes. A shorter or repetitive one, or one with a space, stops the server at start, naming the setting. Unset, every capacity credential is refused as `auth.invalid` `session_outside_web` and `oml doctor` warns. The server never logs it."
+  web.client_secret_file:
+    default: unset
+    note: "A file holding `web.client_secret`, instead of setting it: one trailing line ending is dropped, and on Unix a file its group or others can read stops the server at start, naming the setting and the mode (chmod 600). It suits systemd's `LoadCredential=`. Setting both stops the start."
+  web.client_secret_previous:
+    default: unset
+    note: "During a rotation of `web.client_secret`, the old secret, accepted beside the new one until `web.client_secret_previous_until` so an `oml-web` still sending it keeps working while it restarts. It needs `web.client_secret` and `web.client_secret_previous_until`, must differ from the current secret, and passes the same rule. `web.client_secret_previous_file` reads it from an owner-only file instead. Each start logs a warning naming it until it is unset (operations/web-console.md, Rotating the client secret)."
+  web.client_secret_previous_file:
+    default: unset
+    note: "A file holding `web.client_secret_previous`, read as `web.client_secret_file` is."
+  web.client_secret_previous_until:
+    default: unset
+    note: "The RFC 3339 instant, such as `2026-11-12T09:00:00Z`, from which `web.client_secret_previous` is refused, checked on every request. Required with it, and at most 7 days after the server's start, or the start stops naming the setting. An instant already past at start is accepted and proves nothing."
   web.client_ca:
     default: unset
     note: "Mutual TLS for `oml-web` (ADR-0070 d2) needs the server to terminate TLS on the listener `oml-web` reaches, which this build does not: setting it stops the server at start, naming the setting. Use `web.client_secret`."
