@@ -292,17 +292,33 @@ fn security_headers(h: &mut HeaderMap) {
     }
 }
 
+/// The mark of an answer whose own policy, cache rule and referrer policy
+/// layer 5 keeps: set only by [`crate::render`], on the frame, its bundle
+/// and a page that holds a drawing (ADR-0056 d9). Every other answer gets
+/// the pages' headers whatever its handler set, so no handler weakens them
+/// by setting a header.
+#[derive(Debug, Clone, Copy)]
+pub struct OwnHeaders;
+
 /// Layer 5: the headers on every answer that reaches it, a page or the
-/// health probe. A policy or a cache rule a handler set stands: a page that
-/// holds a drawing names its frame source, the frame answers under its own
-/// policy and the pinned bundle is immutable (ADR-0056 d9).
+/// health probe; on an answer marked [`OwnHeaders`], the policy, cache
+/// rule and referrer policy its handler set stand.
 pub async fn headers(req: Request, next: Next) -> Response {
     let mut response = next.run(req).await;
+    let own = response.extensions().get::<OwnHeaders>().is_some();
     let h = response.headers_mut();
-    let kept: Vec<_> = [header::CONTENT_SECURITY_POLICY, header::CACHE_CONTROL]
+    let kept: Vec<_> = if own {
+        [
+            header::CONTENT_SECURITY_POLICY,
+            header::CACHE_CONTROL,
+            header::REFERRER_POLICY,
+        ]
         .into_iter()
         .filter_map(|name| h.get(&name).cloned().map(|value| (name, value)))
-        .collect();
+        .collect()
+    } else {
+        Vec::new()
+    };
     security_headers(h);
     for (name, value) in kept {
         h.insert(name, value);

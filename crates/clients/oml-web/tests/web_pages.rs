@@ -1749,7 +1749,11 @@ async fn an_expired_render_token_does_not_open_through_the_route() {
         .as_secs();
     let id = memory.to_string();
     let live = oml_web::render::mint(&csrf, &id, DIAGRAM, now);
-    let (status, _, _) = send(&rig.router, get(&format!("/web/render/{live}"), Some(&cookie))).await;
+    let (status, _, _) = send(
+        &rig.router,
+        get(&format!("/web/render/{live}"), Some(&cookie)),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "a token minted now opens");
     let expired = oml_web::render::mint(
         &csrf,
@@ -1757,8 +1761,11 @@ async fn an_expired_render_token_does_not_open_through_the_route() {
         DIAGRAM,
         now - oml_web::render::RENDER_TTL_SECS - 1,
     );
-    let (status, _, body) =
-        send(&rig.router, get(&format!("/web/render/{expired}"), Some(&cookie))).await;
+    let (status, _, body) = send(
+        &rig.router,
+        get(&format!("/web/render/{expired}"), Some(&cookie)),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert!(!body.contains("flowchart"), "{body}");
 }
@@ -1769,8 +1776,11 @@ async fn a_memory_whose_text_names_the_render_route_frames_nothing() {
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let value = laptop_key(&rig, &cookie).await;
     let id = agent_writes(&rig, &value, "the frame lives at /web/render/ on oml-web").await;
-    let (status, headers, page) =
-        send(&rig.router, get(&format!("/web/memory?id={id}"), Some(&cookie))).await;
+    let (status, headers, page) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={id}"), Some(&cookie)),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(!page.contains("<iframe"), "{page}");
     let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
@@ -1899,12 +1909,15 @@ async fn a_supersession_runs_as_the_curator_on_its_own_claim_and_as_the_reviewer
         assert_eq!(author, writer, "{text}");
         assert_ne!(author, admin_key, "never the admin key");
     }
-    assert_ne!(author_of(&rig, "the release train leaves on thursdays").await, curate);
+    assert_ne!(
+        author_of(&rig, "the release train leaves on thursdays").await,
+        curate
+    );
 }
 
 #[tokio::test]
-async fn an_admin_without_a_curator_key_on_the_session_is_told_to_sign_in_again_and_nothing_is_written(
-) {
+async fn an_admin_without_a_curator_key_on_the_session_is_told_to_sign_in_again_and_nothing_is_written()
+ {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let value = laptop_key(&rig, &cookie).await;
@@ -1930,7 +1943,11 @@ async fn an_admin_without_a_curator_key_on_the_session_is_told_to_sign_in_again_
         .events_range(rig.boot.tenant_id, head + 1, 500)
         .await
         .unwrap();
-    assert!(events.iter().all(|e| !e.envelope.event_type.starts_with("submission.")));
+    assert!(
+        events
+            .iter()
+            .all(|e| !e.envelope.event_type.starts_with("submission."))
+    );
 }
 
 #[tokio::test]
@@ -1968,7 +1985,11 @@ async fn a_person_who_is_not_an_admin_posts_to_neither_admin_act() {
         .events_range(rig.boot.tenant_id, head + 1, 500)
         .await
         .unwrap();
-    assert!(events.iter().all(|e| !e.envelope.event_type.starts_with("submission.")));
+    assert!(
+        events
+            .iter()
+            .all(|e| !e.envelope.event_type.starts_with("submission."))
+    );
 }
 
 #[tokio::test]
@@ -1977,7 +1998,18 @@ async fn a_person_reaches_nothing_of_another_persons_root_on_oml_webs_pages() {
     let rig = rig().await;
     rig.allow("bob@example.com", "bob", false).await;
     let (ada, memory) = person_with_a_diagram(&rig).await;
-    let value = laptop_key(&rig, &ada).await;
+    let (_, _, issued) = act_and_follow(
+        &rig,
+        &ada,
+        "/web/keys",
+        &[
+            ("action", "issue_key"),
+            ("name", "desk"),
+            ("role", "writer"),
+        ],
+    )
+    .await;
+    let value = value_of(&issued);
     let held = agent_writes(&rig, &value, "Kilimanjaro budget held for review").await;
     let promoted = agent_writes(&rig, &value, "Tanganyika vendor shortlist").await;
     let (status, _, _) = act_and_follow(
@@ -1992,7 +2024,11 @@ async fn a_person_reaches_nothing_of_another_persons_root_on_oml_webs_pages() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (_, _, page) = send(&rig.router, get(&format!("/web/memory?id={memory}"), Some(&ada))).await;
+    let (_, _, page) = send(
+        &rig.router,
+        get(&format!("/web/memory?id={memory}"), Some(&ada)),
+    )
+    .await;
     let token = frame_token(&page);
     let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
     for path in ["/web/memories", "/web/atlas"] {
@@ -2003,8 +2039,11 @@ async fn a_person_reaches_nothing_of_another_persons_root_on_oml_webs_pages() {
         }
     }
     for id in [held, promoted, memory] {
-        let (status, _, html) =
-            send(&rig.router, get(&format!("/web/memory?id={id}"), Some(&bob))).await;
+        let (status, _, html) = send(
+            &rig.router,
+            get(&format!("/web/memory?id={id}"), Some(&bob)),
+        )
+        .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
         assert!(!html.contains("Kilimanjaro") && !html.contains("Tanganyika"));
     }
@@ -2013,7 +2052,11 @@ async fn a_person_reaches_nothing_of_another_persons_root_on_oml_webs_pages() {
     for secret in ["Kilimanjaro", "Tanganyika", "flowchart"] {
         assert!(!review.contains(secret), "{review}");
     }
-    let (status, _, frame) = send(&rig.router, get(&format!("/web/render/{token}"), Some(&bob))).await;
+    let (status, _, frame) = send(
+        &rig.router,
+        get(&format!("/web/render/{token}"), Some(&bob)),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(!frame.contains("flowchart"));
 }

@@ -61,6 +61,10 @@ pub const RENDER_TTL_SECS: u64 = 300;
 /// measured (#159).
 pub const RENDER_SOURCES_MAX: usize = 256;
 
+/// How many sources one session holds at once, so one session opening
+/// many diagrams evicts only its own (#159; chosen, not measured).
+pub const RENDER_SOURCES_PER_SESSION: usize = 32;
+
 /// A held source's key (session, memory) and its value (expiry, source).
 type Held = HashMap<(String, String), (u64, Arc<str>)>;
 
@@ -76,6 +80,19 @@ impl Sources {
     fn put(&self, session: &str, memory_id: &str, source: &str, expires: u64, now: u64) {
         let mut held = self.held.lock().expect("render sources lock");
         held.retain(|_, (e, _)| *e > now);
+        held.remove(&(session.to_owned(), memory_id.to_owned()));
+        // A session past its share gives up its own oldest first.
+        while held.keys().filter(|(s, _)| s == session).count() >= RENDER_SOURCES_PER_SESSION {
+            let Some(oldest) = held
+                .iter()
+                .filter(|((s, _), _)| s == session)
+                .min_by_key(|(_, (e, _))| *e)
+                .map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            held.remove(&oldest);
+        }
         while held.len() >= RENDER_SOURCES_MAX {
             let Some(oldest) = held
                 .iter()
@@ -300,6 +317,9 @@ pub fn frame_response(issuer: &str, source: &str) -> Response {
         HeaderValue::from_static("nosniff"),
     );
     response
+        .extensions_mut()
+        .insert(crate::middleware::OwnHeaders);
+    response
 }
 
 /// The bundle's answer, immutable: its digest is in its name.
@@ -320,6 +340,9 @@ pub fn bundle_response() -> Response {
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
+    response
+        .extensions_mut()
+        .insert(crate::middleware::OwnHeaders);
     response
 }
 
@@ -356,16 +379,21 @@ pub fn drawing(
     source: &str,
 ) -> Option<String> {
     public_origin?;
-    (format == Some(MERMAID)).then(|| {
-        iframe(&token(
-            &FRAMES.sealer,
-            &FRAMES.sources,
-            csrf,
-            memory_id,
-            source,
-            unix_now(),
-        ))
-    })
+    (format == Some(MERMAID)).then(|| iframe(&mint(csrf, memory_id, source, unix_now())))
+}
+
+/// A token for `source` minted at `now` under this process's key and held
+/// sources, bound to the session's CSRF token.
+#[must_use]
+pub fn mint(csrf: &str, memory_id: &str, source: &str, now: u64) -> String {
+    token(
+        &FRAMES.sealer,
+        &FRAMES.sources,
+        csrf,
+        memory_id,
+        source,
+        now,
+    )
 }
 
 /// The pages' policy with the one frame source a drawing needs: the render
@@ -383,6 +411,7 @@ pub fn allow_frames(page: &mut Response, public_origin: Option<&str>) {
     {
         page.headers_mut()
             .insert(header::CONTENT_SECURITY_POLICY, value);
+        page.extensions_mut().insert(crate::middleware::OwnHeaders);
     }
 }
 
@@ -480,19 +509,20 @@ mod tests {
     fn the_held_sources_are_bounded_and_the_oldest_expiry_goes_first() {
         let sealer = Sealer::default();
         let sources = Sources::default();
+        // Sixteen sessions, each under its share, fill the whole pool.
         for i in 0..RENDER_SOURCES_MAX + 10 {
             let _ = token(
                 &sealer,
                 &sources,
-                "s",
+                &format!("s{}", i % 16),
                 &format!("m{i}"),
                 "flowchart LR",
                 1_000 + i as u64,
             );
         }
         assert_eq!(sources.len(), RENDER_SOURCES_MAX);
-        let first = token(&sealer, &sources, "s", "m0", "flowchart LR", 5_000);
-        assert!(open(&sealer, &sources, &first, "s", 5_001).is_some());
+        let first = token(&sealer, &sources, "s0", "m0", "flowchart LR", 5_000);
+        assert!(open(&sealer, &sources, &first, "s0", 5_001).is_some());
     }
 
     #[test]

@@ -142,7 +142,7 @@ async fn served(
     view: &ViewCtx<'_>,
     serve_id: &str,
     memory: Option<&str>,
-) -> Result<String, Refusal> {
+) -> Result<(String, bool), Refusal> {
     let Some(memory_id) = memory.filter(|m| is_id(m)) else {
         return Err(Box::new(acts::invalid(
             "memory is the served memory's id",
@@ -158,10 +158,11 @@ async fn served(
         .await
         .map_err(|e| Box::new(outcome::page(&e, view.calls.page_id(), view.side.path())))?;
     let Some(item) = named.items.into_iter().find_map(|n| n.item) else {
-        return Ok(
+        return Ok((
             r#"<p class="desc">That memory is no longer held, or not yours to judge.</p>"#
                 .to_owned(),
-        );
+            false,
+        ));
     };
     // A held diagram is drawn for the reviewer from the source the API
     // served them here, bound to their session (ADR-0056 d9; #189).
@@ -191,7 +192,7 @@ async fn served(
         "Record verdict",
         true,
     ));
-    Ok(out)
+    Ok((out, drawing.is_some()))
 }
 
 /// The tenant's queue, as the admin key reads it.
@@ -356,9 +357,13 @@ async fn view(
             Err(response) => return *response,
         }
     }
+    let mut framed = false;
     if let Some(serve_id) = fields.given("serve") {
         match served(&ctx, serve_id, fields.given("memory")).await {
-            Ok(card) => body.push_str(&card),
+            Ok((card, drawn)) => {
+                body.push_str(&card);
+                framed = drawn;
+            }
             Err(response) => return *response,
         }
     }
@@ -387,7 +392,7 @@ async fn view(
             &body,
         ),
     );
-    if body.contains(crate::render::RENDER_PREFIX) {
+    if framed {
         crate::render::allow_frames(&mut response, web.layers.public_origin.as_deref());
     }
     response

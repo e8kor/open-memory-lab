@@ -68,9 +68,9 @@ fn id_in<'a>(fields: &'a Fields, field: &str, calls: &PageCalls) -> Result<&'a s
         .ok_or_else(|| Box::new(acts::invalid(&format!("{field} is a memory's id"), calls)))
 }
 
-/// A page's answer, with its frame source allowed where it holds a drawing.
-fn page(web: &Web, html: String) -> Response {
-    let framed = html.contains(render::RENDER_PREFIX);
+/// A page's answer, with its frame source allowed where it holds a drawing:
+/// decided by whether one was drawn, never by the page's text.
+fn page(web: &Web, html: String, framed: bool) -> Response {
     let mut response = outcome::html(StatusCode::OK, html);
     if framed {
         render::allow_frames(&mut response, web.layers.public_origin.as_deref());
@@ -133,6 +133,7 @@ pub async fn user_page(
             None,
             &body,
         ),
+        drawing.is_some(),
     )
 }
 
@@ -334,7 +335,15 @@ pub async fn admin_page(
             notice(&fields),
             &body,
         ),
+        drawing.is_some(),
     )
+}
+
+/// Whether the page refuses to supersede a version of `kind`: a guardrail,
+/// and a version whose kind the admin read does not name (an API before
+/// v0.7.0), so the refusal fails closed (ADR-0037 d17).
+fn refuses_supersession(kind: Option<&str>) -> bool {
+    !matches!(kind, Some(k) if k != "guardrail")
 }
 
 /// The page for a call made as the curator key that has no usable answer:
@@ -399,9 +408,9 @@ pub async fn admin_act(
     };
     // No page supersedes or retires a guardrail: it is written with its
     // severity and rule on the API or the command line (ADR-0037 d17).
-    if read.kind.as_deref() == Some("guardrail") {
+    if refuses_supersession(read.kind.as_deref()) {
         return acts::invalid(
-            "a guardrail is superseded and retired on the API or the command line, with its severity and rule, never on this page",
+            "a guardrail, or a version whose kind the server does not name, is superseded and retired on the API or the command line, never on this page",
             &calls,
         );
     }
@@ -409,9 +418,13 @@ pub async fn admin_act(
     // any other is the reviewer key's (ADR-0045 d12).
     let curate = session.credential(Capacity::Curate);
     let ids = calls.next_ids();
+    // Only a credential the API does not resolve means no curator key on
+    // this session; any other failure fails the act, so the acting key
+    // never changes because a call failed.
     let own = match web.api.whoami(&call(&curate, &ids)).await {
         Ok(curator) => curator.name.is_some() && curator.name == read.key,
-        Err(_) => false,
+        Err(Error::Api(e)) if e.code == "auth.invalid" => false,
+        Err(e) => return outcome::page(&e, calls.page_id(), ADMIN_MEMORY_PATH),
     };
     let credential = if own {
         curate
@@ -491,6 +504,7 @@ pub async fn curate_page(
             notice(&fields),
             &body,
         ),
+        false,
     )
 }
 

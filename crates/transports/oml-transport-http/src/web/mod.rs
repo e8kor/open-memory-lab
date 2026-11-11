@@ -439,7 +439,8 @@ where
             return self.refused(&refused, line);
         }
         // A view oml-web serves at its own path: a 303 to that fixed path,
-        // carrying nothing from the request (ADR-0070 d7 (b) as amended).
+        // carrying nothing from the request but, for one memory, its id,
+        // parsed and written anew (ADR-0070 d7 (b) as amended).
         if let Some(path) = views::moved_view(query)
             .map(ToOwned::to_owned)
             .or_else(|| views::moved_memories(query, false))
@@ -511,7 +512,8 @@ where
             return self.refused(&refused, line);
         }
         // A view oml-web serves at its own path: a 303 to that fixed path,
-        // carrying nothing from the request (ADR-0070 d7 (b) as amended).
+        // carrying nothing from the request but, for one memory, its id,
+        // parsed and written anew (ADR-0070 d7 (b) as amended).
         if let Some(path) = views::moved_view_of(views::MOVED_ADMIN_VIEWS, query)
             .map(ToOwned::to_owned)
             .or_else(|| views::moved_memories(query, true))
