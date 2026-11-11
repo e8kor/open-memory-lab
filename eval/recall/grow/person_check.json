@@ -8,7 +8,7 @@
   "g0642": "unsure", "g0650": "unsure", "g0651": "unsure", "g0654": "unsure"
  },
  "corrected_labels": 1,
- "finding": "The three wrong marks (g0413, g0422, g0456) and five of the six unsure ones (g0354, g0642, g0650, g0651, g0654) object to the fictional Tallyline stack the corpus describes (its cloud provider, Kotlin, Gradle), not to whether the labelled memory answers the query. The sixth unsure mark, g0113, found the query vague and asked to add m037 and m038 as relevant or drop the query; the operator chose on 2026-11-11 to add them and keep m033. Notes on answer spans do not change memory-level scoring. No pass threshold was set before the check; the operator accepted the set with this one correction.",
+ "finding": "The three wrong marks (g0413, g0422, g0456) and five of the six unsure ones (g0354, g0642, g0650, g0651, g0654) object to the fictional Tallyline stack the corpus describes (its cloud provider, Kotlin, Gradle), not to whether the labelled memory answers the query. The sixth unsure mark, g0113, found the query vague and asked to add m037 and m038 as relevant or drop the query; the operator chose on 2026-11-11 to add them and keep m033. Notes on answer spans do not change memory-level scoring. The operator reviewed the 67 sampled labels; one (g0113) was corrected at their decision; no pass threshold was set in advance.",
  "corrections": {
   "g0113": {
    "was": {"m033": 2},

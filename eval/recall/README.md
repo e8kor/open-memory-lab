@@ -88,7 +88,8 @@ memory's text. At most four drafts are kept per memory. `provenance` records the
 weights' and tokenizer's SHA-256, the prompt's version and digest, the decoding parameters and
 seeds, and how many drafts each check dropped.
 
-Each query labels one memory, grade 2, the one it was drafted from. Its `fold` is that memory's,
+Each query labels one memory, grade 2, the one it was drafted from (except g0113, relabelled by
+the operator's check, below). Its `fold` is that memory's,
 so five-fold cross-validation, how phase 0 tunes `w_q`, never tunes on one query of a memory and
 scores on its sibling, and the near-duplicate check keeps the synthetic set's 121 queries out.
 `person_check.sample` is a seeded tenth of the ids (67, seed 20261111); a person checks those
@@ -102,8 +103,9 @@ mark is g0113, "What database table contains financial records for the team?", l
 (the invoices table). The operator's note: the query is vague, ledger_entries (m037, m038) and
 payments (m043) are financial records too, so add m037 and m038 as relevant or drop the query. The
 operator chose to add them and keep m033, so version 2 labels m033, m037 and m038 grade 2: one
-label of 67 corrected. Notes on answer spans do not change memory-level scoring. No pass threshold
-was set before the check; the operator accepted the set with this one correction. `grow.py build`
+label of 67 corrected. Notes on answer spans do not change memory-level scoring. The operator
+reviewed the 67 sampled labels; one (g0113) was corrected at their decision; no pass threshold was
+set in advance. `grow.py build`
 applies the correction by query id; the query keeps fold 3, the fold of m033, which it was drafted
 from, so m038 (fold 0) is the one memory a query of another fold also labels. The served
 baselines on the benchmark pages were measured on version 1; rescored from their stored top 10 on

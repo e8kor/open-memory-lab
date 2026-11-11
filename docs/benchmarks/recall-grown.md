@@ -90,7 +90,7 @@ Client wall time per recall, in milliseconds, nearest-rank percentiles.
 
 ## What this result does not show
 
-Phi-3-mini drafted the queries. Which model wrote the corpus is unknown, so whether the two are of different families, as ADR-0075 d8 asks, is unverified. Each query labels only the memory it was drafted from, so a second memory that also answers is not credited. The set exists to give ADR-0075's phase 0 a baseline with 90% power; compare pipelines with each other on it, not with BEIR or LoCoMo.
+Phi-3-mini drafted the queries. Which model wrote the corpus is unknown, so whether the two are of different families, as ADR-0075 d8 asks, is unverified. Each query labels only the memory it was drafted from (except g0113, relabelled by the operator's check), so a second memory that also answers is not credited. The set exists to give ADR-0075's phase 0 a baseline with 90% power; compare pipelines with each other on it, not with BEIR or LoCoMo.
 
 ## Limits of this run
 
