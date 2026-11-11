@@ -1921,8 +1921,8 @@ pub struct RecordedVersion {
 
 /// The tenant's rescan backlog (ADR-0074 d23, d28): held versions scanned
 /// under another rule set, every version so scanned, and held versions
-/// whose stored `scan_finding` has no row in the findings list, which a
-/// binary older than migration 0043 wrote after it ran.
+/// whose stored `scan_finding` has no row in the findings list, which an
+/// older server wrote while migration 0043 ran.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScanBacklog {
     pub held_unrescanned: u64,

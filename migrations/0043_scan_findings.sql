@@ -14,16 +14,28 @@
 -- the phase that first writes them (#214).
 --
 -- `memories.scan_finding` stays, written as before, for one release: the
--- in-progress served-set predicates read it (ADR-0074 d20, d28), and a
--- binary rolled back past this migration still keeps a flagged held version
--- its author's. A held version that binary writes has no row here; doctor's
--- `scan_findings_unlisted` counts them, and `oml admin rescan --record-held`
--- lists their findings.
+-- in-progress served-set predicates read it (ADR-0074 d20, d28); a later
+-- migration drops it. An older binary refuses to start once this migration
+-- has run (sqlx finds a migration it does not know), and the way back after
+-- a migration is a restore (docs/operations/upgrades.md), so no older binary
+-- writes after it. The one window is a held version an older server wrote
+-- while this migration ran: it has no row here, doctor's
+-- `scan_findings_unlisted` counts it, and `oml admin rescan --record-held`
+-- lists its findings.
 --
 -- Each stored `scan_finding` becomes one row (d23), found by `admission`
 -- under the rule set the version was scanned under, at the seq of the event
--- that admitted it, with the stored text kept in `migrated_from`; its field,
--- line, view and span were never stored, so they are NULL.
+-- that admitted it, with the stored text kept in `migrated_from`. Its first
+-- finding, `class: rule at /body line N` and an optional ` at <view>`,
+-- gives the class, the rule, the field (`/body`, `/title`, or `/body/` and
+-- the decoded view's path with its dots as slashes) and the line, so a
+-- recording rescan that finds it again matches it by class, rule and field
+-- and adds no second row. A text that does not parse keeps its field NULL,
+-- and the recording rescan then matches by class and rule alone. Its view
+-- and span were never stored, so they are NULL. Its verdict is `refuse` for
+-- a refuse class (`secret.*`, `format.scan_bound`, `anchor.secret_path`),
+-- which a recording rescan of v0.6.3 could store on a held version, and
+-- `hold` otherwise.
 --
 -- No foreign key to memories: a version is never deleted (ADR-0001 R4), and
 -- one would take a SHARE ROW EXCLUSIVE lock on every memories partition,
@@ -93,15 +105,31 @@ BEGIN
     FOR t IN SELECT id FROM tenants ORDER BY id LOOP
         PERFORM set_config('oml.tenant_id', t::text, true);
         INSERT INTO scan_findings (tenant_id, memory_id, event_seq, ord, class, rule, verdict,
-                                   rule_set, found_by, migrated_from)
-        SELECT m.tenant_id, m.id, j.seq, 0,
-               split_part(m.scan_finding, ': ', 1),
-               COALESCE(NULLIF(split_part(split_part(m.scan_finding, ': ', 2), ' at ', 1), ''),
-                        split_part(m.scan_finding, ': ', 1)),
-               'hold', m.scanned_under, 'admission', m.scan_finding
-          FROM memories m
-          JOIN journal j ON j.tenant_id = m.tenant_id AND j.event_id = m.created_event_id
-         WHERE m.tenant_id = t AND m.scan_finding IS NOT NULL
+                                   rule_set, field, line, found_by, migrated_from)
+        SELECT p.tenant_id, p.id, p.seq, 0, p.class, p.rule,
+               CASE WHEN p.class LIKE 'secret.%'
+                         OR p.class IN ('format.scan_bound', 'anchor.secret_path')
+                    THEN 'refuse' ELSE 'hold' END,
+               p.scanned_under, p.field, p.line, 'admission', p.scan_finding
+          FROM (
+            SELECT m.tenant_id, m.id, j.seq, m.scanned_under, m.scan_finding,
+                   COALESCE(r[1], split_part(m.scan_finding, ': ', 1)) AS class,
+                   COALESCE(r[2],
+                            NULLIF(split_part(split_part(m.scan_finding, ': ', 2), ' at ', 1), ''),
+                            split_part(m.scan_finding, ': ', 1)) AS rule,
+                   CASE WHEN r IS NULL THEN NULL
+                        WHEN r[5] IS NULL THEN r[3]
+                        WHEN r[5] = 'title' THEN '/title'
+                        ELSE '/body/' || replace(r[5], '.', '/') END AS field,
+                   (r[4])::integer AS line
+              FROM memories m
+              JOIN journal j ON j.tenant_id = m.tenant_id AND j.event_id = m.created_event_id
+              LEFT JOIN LATERAL regexp_match(
+                    split_part(m.scan_finding, '; ', 1),
+                    '^([a-z_]+\.[a-z_]+): (\S+) at (/[a-z_/]+) line ([0-9]+)(?: at (\S+))?$') AS r
+                ON true
+             WHERE m.tenant_id = t AND m.scan_finding IS NOT NULL
+          ) p
         ON CONFLICT DO NOTHING;
     END LOOP;
     PERFORM set_config('oml.tenant_id', '', true);

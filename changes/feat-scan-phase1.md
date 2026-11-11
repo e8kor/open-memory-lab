@@ -2,8 +2,8 @@
   - **The findings list.** A version used to store only the first hold finding. It now stores every finding behind its verdict, one row each in `scan_findings` (migration 0043): class, rule, rule set, field, line, the view the rule read, the byte range in that view, and who recorded it. Each existing `scan_finding` becomes one row.
   - **Where reviewers see it.** The review card lists every finding, and the admin page's bulk table counts them per row. `POST /v2/review/next` and `GET /v2/review/held` serve them as `scan_findings`.
   - **The recording rescan.** `oml admin rescan --record-held` adds the findings a held version's list lacks.
-  - **New doctor line.** `scan_findings_unlisted` counts held versions written without a list, by a server older than the migration, during an upgrade or after a rollback.
-  - **Rates without ids.** `oml admin rescan --rates` prints only aggregates, per class and per origin kind, for a dry run over a store.
+  - **New doctor line.** `scan_findings_unlisted` counts held versions written without a list, by an older server while the migration ran (an older binary refuses to start once it has run).
+  - **Rates without ids.** `oml admin rescan --rates` prints only aggregates, per class, per origin kind and per class within an origin, for a dry run over a store; any count under 5 prints as `<5` with no rate.
   - **The red-team corpus.** `crates/oml-scan/tests/corpus/` holds 802 samples: malicious ones with benign twins, a frozen held-out set from deepset/prompt-injections, written translations, and Markdown-hidden samples. `cargo run --release -p oml-scan --example redteam` reports precision, recall and the twins' false positives per family, plus recall per mutation.
-  - **The baseline under `oml-scan/1.1`.** Secrets 100 % recall, injection 43 %, hidden Unicode 83 %, encodings 40 %, no twin flagged, and 1 of 60 held-out injections caught. The committed report fails the build when a rule change moves any sample's verdict.
+  - **The baseline under `oml-scan/1.1`.** Secrets 100 % recall (16 distinct shapes), injection 43 %, hidden Unicode 83 %, encodings 40 %, no twin flagged, and 1 of 60 held-out injections caught. The committed report fails the build when a rule change moves any sample's verdict.
   - **Renamed tests.** The tests ADR-0074 d18 lists for the fixes shipped in #222 now carry its names.

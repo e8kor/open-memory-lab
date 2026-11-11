@@ -1745,13 +1745,14 @@ fn apply_fold(
                         memory.scan_finding = v.summary;
                     }
                     // A finding the list holds by class, rule and field
-                    // stays as first recorded (scan_findings_one).
+                    // stays as first recorded (scan_findings_one), and so
+                    // does a migrated one with no field, by class and rule.
                     for mut f in v.findings {
                         let held = state.findings.iter().any(|(id, g)| {
                             *id == v.memory_id
                                 && g.class == f.class
                                 && g.rule == f.rule
-                                && g.field == f.field
+                                && (g.field == f.field || g.field.is_none())
                         });
                         if !held {
                             f.event_seq = Some(seq);

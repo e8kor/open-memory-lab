@@ -3525,12 +3525,32 @@ fn run_rescan(
     })
 }
 
-/// The dry run's aggregates (ADR-0074 d18): for each class and each origin
-/// kind, the versions with a finding the scan would refuse or hold and
-/// their share of the versions scanned (of that origin, for an origin).
-/// A version counts once per class and verdict however many findings it
-/// carries. Counts only: no artifact id, claim key or text leaves this
-/// function, so the report can be published from a live tenant's copy.
+/// The smallest count the rates print: a cell below it prints `<5` and no
+/// rate, since a count of one names a version to anyone who knows where
+/// that version came from (ADR-0074 d18).
+const RATES_FLOOR: usize = 5;
+
+/// A count as the rates print it: the number at or above the floor, `<5`
+/// below it, and its share of `of` only when printed.
+fn floored(n: usize, of: u64) -> (Value, Value) {
+    if n == 0 || n >= RATES_FLOOR {
+        #[allow(clippy::cast_precision_loss)]
+        let rate = if of == 0 { 0.0 } else { n as f64 / of as f64 };
+        (json!(n), json!(rate))
+    } else {
+        (json!(format!("<{RATES_FLOOR}")), Value::Null)
+    }
+}
+
+/// The dry run's aggregates (ADR-0074 d18): for each class, each origin
+/// kind and each class within an origin, the versions with a finding the
+/// scan would refuse or hold, and their share of the versions scanned (of
+/// that origin, for an origin). A version counts once per cell however
+/// many findings it carries. Every count from 1 to 4 prints as `<5` with
+/// no rate, so only this floored output is fit to publish from a live
+/// tenant's copy. The rescan answer the CLI reads carries artifact ids, as
+/// the plain rescan does for the admin key that asks; no id, claim key or
+/// text leaves this function.
 fn rescan_rates(
     version: Option<&str>,
     scanned: u64,
@@ -3547,53 +3567,73 @@ fn rescan_rates(
     };
     let mut by_class: BTreeMap<(String, &str), BTreeSet<String>> = BTreeMap::new();
     let mut origin_hits: BTreeMap<(String, &str), BTreeSet<String>> = BTreeMap::new();
+    let mut cells: BTreeMap<(String, String, &str), BTreeSet<String>> = BTreeMap::new();
     for f in findings {
         let id = format!("{}#{}", field(f, "artifact_id"), f["version"]);
+        let class = field(f, "class").to_owned();
+        let origin = f["origin"].as_str().unwrap_or("none").to_owned();
         by_class
-            .entry((field(f, "class").to_owned(), verdict(f)))
+            .entry((class.clone(), verdict(f)))
             .or_default()
             .insert(id.clone());
-        let origin = f["origin"].as_str().unwrap_or("none").to_owned();
         origin_hits
-            .entry((origin, verdict(f)))
+            .entry((origin.clone(), verdict(f)))
+            .or_default()
+            .insert(id.clone());
+        cells
+            .entry((class, origin, verdict(f)))
             .or_default()
             .insert(id);
     }
-    #[allow(clippy::cast_precision_loss)]
-    let rate = |n: usize, of: u64| if of == 0 { 0.0 } else { n as f64 / of as f64 };
     json!({
         "scanner_version": version,
         "scanned": scanned,
-        "classes": by_class.iter().map(|((class, v), ids)| json!({
-            "class": class, "verdict": v, "versions": ids.len(), "rate": rate(ids.len(), scanned),
-        })).collect::<Vec<_>>(),
+        "floor": RATES_FLOOR,
+        "classes": by_class.iter().map(|((class, v), ids)| {
+            let (n, rate) = floored(ids.len(), scanned);
+            json!({ "class": class, "verdict": v, "versions": n, "rate": rate })
+        }).collect::<Vec<_>>(),
         "origins": by_origin.iter().map(|(origin, n)| {
             let count = |v: &str| origin_hits.get(&(origin.clone(), v)).map_or(0, BTreeSet::len);
+            let (refuse, refuse_rate) = floored(count("refuse"), *n);
+            let (hold, hold_rate) = floored(count("hold"), *n);
             json!({
                 "origin": origin, "scanned": n,
-                "refuse": count("refuse"), "refuse_rate": rate(count("refuse"), *n),
-                "hold": count("hold"), "hold_rate": rate(count("hold"), *n),
+                "refuse": refuse, "refuse_rate": refuse_rate,
+                "hold": hold, "hold_rate": hold_rate,
             })
+        }).collect::<Vec<_>>(),
+        "cells": cells.iter().map(|((class, origin, v), ids)| {
+            let of = by_origin.get(origin).copied().unwrap_or(0);
+            let (n, rate) = floored(ids.len(), of);
+            json!({ "class": class, "origin": origin, "verdict": v, "versions": n, "rate": rate })
         }).collect::<Vec<_>>(),
     })
 }
 
-/// The text form of [`rescan_rates`]: percentages to two places.
+/// The text form of [`rescan_rates`]: percentages to two places, a dash
+/// for a cell under the floor.
 fn rates_lines(report: &Value) -> Vec<String> {
-    let pct = |v: &Value| format!("{:.2}%", 100.0 * v.as_f64().unwrap_or(0.0));
+    let pct = |v: &Value| {
+        v.as_f64()
+            .map_or_else(|| "-".to_owned(), |r| format!("{:.2}%", 100.0 * r))
+    };
+    let count = |v: &Value| v.as_str().map_or_else(|| v.to_string(), str::to_owned);
     let mut out = vec![format!(
-        "rates       : {} stored version(s) under {}; aggregates only",
+        "rates       : {} stored version(s) under {}; aggregates only, counts under {} print as <{}",
         report["scanned"],
         report["scanner_version"]
             .as_str()
-            .unwrap_or("no pinned rule set")
+            .unwrap_or("no pinned rule set"),
+        RATES_FLOOR,
+        RATES_FLOOR
     )];
     for c in report["classes"].as_array().into_iter().flatten() {
         out.push(format!(
             "  class  {:<28} {:<6} {:>6} version(s)  {}",
             field(c, "class"),
             field(c, "verdict"),
-            c["versions"],
+            count(&c["versions"]),
             pct(&c["rate"])
         ));
     }
@@ -3602,10 +3642,20 @@ fn rates_lines(report: &Value) -> Vec<String> {
             "  origin {:<8} {:>6} scanned  refuse {} ({})  hold {} ({})",
             field(o, "origin"),
             o["scanned"],
-            o["refuse"],
+            count(&o["refuse"]),
             pct(&o["refuse_rate"]),
-            o["hold"],
+            count(&o["hold"]),
             pct(&o["hold_rate"])
+        ));
+    }
+    for c in report["cells"].as_array().into_iter().flatten() {
+        out.push(format!(
+            "  cell   {:<28} {:<8} {:<6} {:>6} version(s)  {}",
+            field(c, "class"),
+            field(c, "origin"),
+            field(c, "verdict"),
+            count(&c["versions"]),
+            pct(&c["rate"])
         ));
     }
     out
@@ -6279,36 +6329,56 @@ mod tests {
         );
     }
 
-    /// ADR-0074 d18: the dry run publishes per-class and per-origin rates
-    /// as aggregates only; a version counts once per class and verdict.
+    /// ADR-0074 d18: the dry run's rates are aggregates per class, per
+    /// origin and per class within an origin, a version counts once per
+    /// cell, and a count under the floor prints as `<5` with no rate, so a
+    /// cell of one never names a version; no id or text is printed.
     #[test]
-    fn the_rescan_rates_are_aggregates_per_class_and_origin_with_no_id_or_text() {
-        let a = "11111111-1111-1111-1111-111111111111";
-        let b = "22222222-2222-2222-2222-222222222222";
-        let findings = vec![
-            json!({"artifact_id": a, "version": 1, "class": "injection.override", "rule": "ignore-instructions", "action": "hold", "origin": "chat", "at": "/body line 1"}),
-            json!({"artifact_id": a, "version": 1, "class": "injection.override", "rule": "new-instructions", "action": "hold", "origin": "chat", "at": "/body line 2"}),
-            json!({"artifact_id": b, "version": 2, "class": "secret.api_token", "rule": "github-token", "action": "veto", "origin": null, "at": "/body line 1"}),
-        ];
+    fn the_rescan_rates_floor_every_count_under_five_and_print_no_id_or_text() {
+        let id = |n: u128| format!("{:032x}", n);
+        let mut findings = Vec::new();
+        // Six chat versions held for one rule, one of them twice.
+        for n in 0..6 {
+            findings.push(json!({"artifact_id": id(n), "version": 1, "class": "injection.override", "rule": "ignore-instructions", "action": "hold", "origin": "chat", "at": "/body line 1"}));
+        }
+        findings.push(json!({"artifact_id": id(0), "version": 1, "class": "injection.override", "rule": "new-instructions", "action": "hold", "origin": "chat", "at": "/body line 2"}));
+        // One web version holding a secret: a cell of one.
+        findings.push(json!({"artifact_id": id(99), "version": 2, "class": "secret.api_token", "rule": "github-token", "action": "veto", "origin": "web", "at": "/body line 1"}));
         let by_origin =
-            std::collections::BTreeMap::from([("chat".to_owned(), 4_u64), ("none".to_owned(), 6)]);
-        let report = rescan_rates(Some("oml-scan/1.1"), 10, &by_origin, &findings);
+            std::collections::BTreeMap::from([("chat".to_owned(), 10_u64), ("web".to_owned(), 1)]);
+        let report = rescan_rates(Some("oml-scan/1.1"), 11, &by_origin, &findings);
         assert_eq!(
             report["classes"],
             json!([
-                {"class": "injection.override", "verdict": "hold", "versions": 1, "rate": 0.1},
-                {"class": "secret.api_token", "verdict": "refuse", "versions": 1, "rate": 0.1},
+                {"class": "injection.override", "verdict": "hold", "versions": 6, "rate": 6.0 / 11.0},
+                {"class": "secret.api_token", "verdict": "refuse", "versions": "<5", "rate": null},
             ])
         );
         assert_eq!(
             report["origins"],
             json!([
-                {"origin": "chat", "scanned": 4, "refuse": 0, "refuse_rate": 0.0, "hold": 1, "hold_rate": 0.25},
-                {"origin": "none", "scanned": 6, "refuse": 1, "refuse_rate": 1.0 / 6.0, "hold": 0, "hold_rate": 0.0},
+                {"origin": "chat", "scanned": 10, "refuse": 0, "refuse_rate": 0.0, "hold": 6, "hold_rate": 0.6},
+                {"origin": "web", "scanned": 1, "refuse": "<5", "refuse_rate": null, "hold": 0, "hold_rate": 0.0},
             ])
         );
-        let text = format!("{report}\n{}", rates_lines(&report).join("\n"));
-        assert!(!text.contains(a) && !text.contains(b), "{text}");
+        assert_eq!(
+            report["cells"][1],
+            json!({"class": "secret.api_token", "origin": "web", "verdict": "refuse", "versions": "<5", "rate": null})
+        );
+        let lines = rates_lines(&report);
+        assert!(lines[0].contains("counts under 5 print as <5"), "{lines:?}");
+        let text = format!("{report}\n{}", lines.join("\n"));
+        assert!(
+            !text.contains("refuse 1 ") && !text.contains("\"refuse\":1"),
+            "{text}"
+        );
+        assert!(
+            lines.iter().all(|l| !l.contains(" 1 version(s)")),
+            "a count of one is never printed: {lines:?}"
+        );
+        for n in [0_u128, 5, 99] {
+            assert!(!text.contains(&id(n)), "{text}");
+        }
         assert!(!text.contains("/body"), "{text}");
     }
 

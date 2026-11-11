@@ -2594,7 +2594,9 @@ fn signed_envelope_from_row(row: &PgRow) -> Result<SignedEnvelope, StoreError> {
 
 /// The findings lists of `lists` under the commit's `seq`, each in its
 /// order (ADR-0074 d23). A finding the version's list already holds by
-/// class, rule and field is kept as first recorded (`scan_findings_one`).
+/// class, rule and field is kept as first recorded (`scan_findings_one`),
+/// and so is one migration 0043 could not place, with no field, by class
+/// and rule alone: a recording rescan never lists a finding twice.
 async fn insert_findings(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
@@ -2647,6 +2649,9 @@ async fn insert_findings(
                      $15::text[]) \
            AS u(id, ord, class, rule, verdict, rule_set, field, line, via, span_start, span_end, \
                 found_by, migrated_from) \
+         WHERE NOT EXISTS (SELECT 1 FROM scan_findings f \
+                            WHERE f.tenant_id = $1 AND f.memory_id = u.id \
+                              AND f.class = u.class AND f.rule = u.rule AND f.field IS NULL) \
          ON CONFLICT ON CONSTRAINT scan_findings_one DO NOTHING",
     )
     .bind(tenant_id)
