@@ -59,7 +59,12 @@ class RustSdk(unittest.TestCase):
         problems = C.rust_sdk_problems(spec)
         self.assertEqual(
             problems,
-            ["whoami: the schema Whoami reads declares no fields, so its shape cannot be checked"],
+            # Both entries that read whoami's answer, the plain one and the
+            # one with start=true, report it.
+            [
+                "whoami: the schema Whoami reads declares no fields, so its shape cannot be checked",
+                "whoami: the schema Onboarding reads declares no fields, so its shape cannot be checked",
+            ],
         )
 
     def test_a_resp_type_that_is_no_struct_fails(self):

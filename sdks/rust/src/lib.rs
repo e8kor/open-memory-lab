@@ -62,7 +62,7 @@ pub const OPERATIONS: [&str; 40] = [
     "adminReadMemory GET /v2/admin/memories/{artifact_id} resp:AdminRead",
     "submitMemory POST /v1/memories body:verb,claim_key,body,workarea,derives_from resp:Accepted",
     "supersedeMemory POST /v1/memories/{artifact_id}/supersede body:body,expected_version,retirement resp:Accepted",
-    "whoami GET /v2/whoami query:start resp:WhoamiStart",
+    "whoami GET /v2/whoami query:start resp:Onboarding",
     "listWebEmails GET /v2/web/emails query:limit,cursor resp:WebEmailPage",
     "allowWebEmail POST /v2/web/emails body:email,user,admin,keep_an_admin resp:WebEmail",
     "removeWebEmail POST /v2/web/emails/remove body:email,keep_an_admin resp:Removed",
@@ -537,7 +537,7 @@ pub struct Person {
 /// `GET /v2/whoami?start=true`: the key's person with its onboarding
 /// status.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct WhoamiStart {
+pub struct Onboarding {
     pub person: Option<Person>,
 }
 
@@ -1645,7 +1645,7 @@ impl<T: Transport> Client<T> {
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
-    pub async fn whoami_start(&self, call: &Call<'_>) -> Result<WhoamiStart, Error> {
+    pub async fn whoami_start(&self, call: &Call<'_>) -> Result<Onboarding, Error> {
         self.get(Some(call), "/v2/whoami?start=true".to_owned())
             .await
     }
