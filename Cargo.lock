@@ -4104,6 +4104,7 @@ dependencies = [
  "oml-transport-http",
  "oml-web-credential",
  "reqwest 0.13.5",
+ "ring",
  "serde",
  "serde_json",
  "tokio",

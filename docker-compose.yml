@@ -119,7 +119,7 @@ configs:
       	auto_https off
       }
       :8080 {
-      	@oml_web path /web/guardrails /web/workareas /web/admin/workareas /web/memories /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories
+      	@oml_web path /web/guardrails /web/workareas /web/admin/workareas /web/memories /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/keys /web/admin/keys
       	reverse_proxy @oml_web oml-web:8091
       	reverse_proxy oml-server:8080
       }

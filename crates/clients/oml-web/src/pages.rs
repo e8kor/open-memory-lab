@@ -52,6 +52,22 @@ impl Fields {
             .map(|(_, v)| v.as_str())
     }
 
+    /// Every field, `(name, value)`, in the order sent.
+    pub(crate) fn pairs(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0.iter().map(|(n, v)| (n.as_str(), v.as_str()))
+    }
+
+    /// Every field's name, in the order sent.
+    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|(n, _)| n.as_str())
+    }
+
+    /// The field's value where it is sent and not empty, as the lead reads
+    /// a form.
+    pub(crate) fn given(&self, name: &str) -> Option<&str> {
+        self.get(name).filter(|v| !v.is_empty())
+    }
+
     /// The first field not in `allowed`, which an act refuses (ADR-0045
     /// d6).
     pub(crate) fn outside(&self, allowed: &[&str]) -> Option<&str> {

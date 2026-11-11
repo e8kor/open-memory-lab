@@ -14,17 +14,26 @@ that has not moved yet.
 The pages move one at a time, and each moved page gets its own path under `/web/`. In this build
 `oml-web` serves four views: the Guardrails view of the user page at `GET /web/guardrails`; the
 Workareas view at `/web/workareas` on the user page and `/web/admin/workareas` on the admin page;
-the Memories list at `GET /web/memories` and `GET /web/admin/memories`; and the Atlas at
+the Memories list at `GET /web/memories` and `GET /web/admin/memories`; the Atlas at
 `GET /web/atlas` and `GET /web/admin/atlas`, with the list's JSON at `GET /web/data/memories` and
-`GET /web/admin/data/memories`. The Workareas view acts: creating a workarea, putting one in
-progress, committing it, and proposing or ratifying a status change run through the API as the
-person's session keys, and a form sent twice runs once. Every page of the admin list is one
-journalled admin read, as before. The server answers the old addresses, `GET /web?view=guardrails`,
-`GET /web?view=workarea`, `GET /web?view=memories` (with `display=atlas`, the Atlas) and their
-admin forms, with a redirect to the new paths, so bookmarks keep working; one memory opened by its
-id, `GET /web?view=memories&memory=<id>`, is still the server's. A form from an old page that posts
-a workarea act or a creation to the server runs nothing and lands on the Workareas view. Run `oml-web` behind the same proxy as the server before you upgrade: a
-deployment that sends these paths to the server shows not found.
+`GET /web/admin/data/memories`; the Review view at `/web/review` and `/web/admin/review`; and the
+Keys view at `/web/keys` and `/web/admin/keys`. Every act on them runs through the API as the
+person's session keys, and a form sent twice runs once. Putting a workarea in progress, committing
+it, proposing or ratifying a status change, and a bulk verdict are confirmed first. Every page of
+the admin list is one journalled admin read, as before. The Review view holds review next, and on
+the admin page the queue of held memories per workarea and bulk review; the reviewer is never the
+author, and a verdict the API refuses is shown with its code. On the Keys view a key's value or a
+connect code is shown once, on the page the act lands on: it travels there sealed in a cookie that
+page clears, never in an address or a log line, and `oml-web` keeps no copy. The admin's Keys view
+lists one person's keys, named by `user`, with a cut-off beside each. The server answers the old
+addresses, `GET /web` (signed in), `GET /web?view=guardrails`, `?view=workarea`,
+`?view=memories` (with `display=atlas`, the Atlas), `?view=review`, `?view=keys`, and
+`GET /web/admin?view=workarea`, `?view=memories`, `?view=review`, `?view=held` and `?view=queue`,
+with a redirect to the new paths, so bookmarks keep working; one memory opened by its id,
+`GET /web?view=memories&memory=<id>`, is still the server's. A form from an old page that posts one
+of these views' acts, or a creation, to the server runs nothing and lands on the view. Run
+`oml-web` behind the same proxy as the server before you upgrade: a deployment that sends these
+paths to the server shows not found.
 
 `oml-web` ships everywhere the server does:
 
@@ -92,7 +101,7 @@ included. For Caddy (`deploy/caddy/Caddyfile` adds the landing pages):
 
 ```caddyfile
 memory.example.com {
-	@oml_web path /web/guardrails /web/workareas /web/admin/workareas /web/memories /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories
+	@oml_web path /web/guardrails /web/workareas /web/admin/workareas /web/memories /web/atlas /web/admin/memories /web/admin/atlas /web/data/memories /web/admin/data/memories /web/review /web/admin/review /web/keys /web/admin/keys
 	reverse_proxy @oml_web 127.0.0.1:8091
 	reverse_proxy 127.0.0.1:8090
 }

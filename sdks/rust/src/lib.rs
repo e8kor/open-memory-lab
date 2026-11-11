@@ -32,7 +32,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 16] = [
+pub const OPERATIONS: [&str; 25] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workarea resp:GuardrailSet",
@@ -47,8 +47,17 @@ pub const OPERATIONS: [&str; 16] = [
     "recallMemories POST /v1/memories/recall body:query,k,workarea,kinds,include_text,include_unreviewed,origin_kinds resp:RecallResponse",
     "adminSearchMemories POST /v2/admin/memories/search body:query,workarea,state,origin_kind,author,limit,cursor resp:AdminMemoryPage",
     "getWorkareaTree GET /v2/workareas/{workarea}/tree query:counts resp:WorkareaCounts",
-    "listKeys GET /v2/keys query:limit,cursor resp:KeyPage",
+    "listKeys GET /v2/keys query:user,limit,cursor resp:KeyPage",
     "createWorkarea POST /v2/workareas body:name,parent resp:Workarea",
+    "reviewNext POST /v2/review/next resp:Serve",
+    "postVerdict POST /v2/review/verdicts body:serve_id,verdict,reason resp:VerdictResult",
+    "reviewHeld GET /v2/review/held query:workarea,author_key,claim_key_prefix,limit,cursor resp:HeldPage",
+    "reviewHeld GET /v2/review/held query:ids resp:HeldNamed",
+    "postBulkVerdict POST /v2/review/verdicts/bulk body:verdict,artifact_ids,reason resp:BulkVerdictResult",
+    "reviewQueue GET /v2/review/queue resp:ReviewQueue",
+    "issueKey POST /v2/keys body:name,role,connect_code resp:KeyIssued",
+    "mintConnectCode POST /v2/keys/{key}/connect-codes resp:ConnectCode",
+    "addDenial POST /v2/keys/{key}/denials body:workarea resp:Denial",
 ];
 
 /// The request id header (ADR-0042 d4).
@@ -301,6 +310,13 @@ pub struct Anchor {
     pub fragment: Option<String>,
 }
 
+/// The version a supersession replaces, as a memory names it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Replaced {
+    pub artifact_id: String,
+    pub version: i64,
+}
+
 /// A memory as the listings and recall serve it (openapi.yaml `Memory`),
 /// the fields the Memories list reads.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -321,6 +337,9 @@ pub struct Memory {
     pub format: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
+    /// What a derived format's claim will be found by (ADR-0056 d9).
+    #[serde(default)]
+    pub search_text: Option<String>,
     #[serde(default)]
     pub text: Option<String>,
     #[serde(default)]
@@ -329,6 +348,13 @@ pub struct Memory {
     pub valid_from: Option<String>,
     #[serde(default)]
     pub valid_until: Option<String>,
+    #[serde(default)]
+    pub replaces: Option<Replaced>,
+    #[serde(default)]
+    pub replaces_valid_until: Option<String>,
+    /// On a held guardrail, what approving it does (ADR-0037 d10).
+    #[serde(default)]
+    pub load_warning: Option<String>,
     /// Absent from an API before v0.7.0.
     #[serde(default)]
     pub scan_finding: Option<String>,
@@ -422,19 +448,187 @@ pub struct WorkareaCounts {
     pub truncated: bool,
 }
 
-/// One key of `GET /v2/keys`, the fields read here.
+/// `POST /v2/review/next`: one served item, claimed by the reviewer key.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Serve {
+    pub serve_id: String,
+    pub expires_at: String,
+    pub item: Memory,
+}
+
+/// `POST /v2/review/verdicts`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct VerdictResult {
+    pub artifact_id: String,
+    pub version: i64,
+    pub verdict: String,
+    pub state: String,
+}
+
+/// One row of the held listing: the memory, when it entered the queue, and
+/// whether its author names the reviewer's user (ADR-0055 d7).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HeldItem {
+    // Not `pub`, so the contract check reads `Memory` once, through
+    // `reviewNext`, where the schema names it.
+    #[serde(flatten)]
+    memory: Memory,
+    pub held_since: String,
+    pub same_user: bool,
+}
+
+impl HeldItem {
+    /// The row itself.
+    #[must_use]
+    pub fn memory(&self) -> &Memory {
+        &self.memory
+    }
+}
+
+/// `GET /v2/review/held`: one page of the rows the key may judge.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HeldPage {
+    pub items: Vec<HeldItem>,
+    pub next_cursor: Option<String>,
+}
+
+/// One id named to `GET /v2/review/held?ids=`, with its row, or `None` when
+/// it is no longer held or no longer the key's to judge.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NamedHeld {
+    pub id: String,
+    pub item: Option<Memory>,
+}
+
+/// `GET /v2/review/held?ids=` (openapi.yaml `HeldNamed`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HeldNamed {
+    pub items: Vec<NamedHeld>,
+}
+
+/// One item of a bulk verdict's answer.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BulkItem {
+    pub artifact_id: String,
+    /// `approved`, `rejected` or `skipped`.
+    pub outcome: String,
+    #[serde(default)]
+    pub same_user: Option<bool>,
+    #[serde(default)]
+    pub replayed: Option<bool>,
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
+/// The bulk verdict's counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct BulkSummary {
+    pub approved: u64,
+    pub rejected: u64,
+    pub skipped: u64,
+}
+
+/// `POST /v2/review/verdicts/bulk` (openapi.yaml `BulkVerdictResult`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BulkVerdictResult {
+    pub items: Vec<BulkItem>,
+    pub summary: BulkSummary,
+}
+
+/// One workarea holding held rows, as the admin's queue names it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct QueueItem {
+    pub workarea_id: String,
+    pub path: String,
+    pub held: u64,
+    pub oldest_at: String,
+}
+
+/// `GET /v2/review/queue`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ReviewQueue {
+    pub items: Vec<QueueItem>,
+}
+
+/// A grant as a listed key carries it: the role and the workarea's path.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ListedGrant {
+    pub role: String,
+    pub workarea_id: String,
+    pub path: String,
+}
+
+/// One key of `GET /v2/keys` (openapi.yaml `ListedKey`).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ListedKey {
     pub id: String,
     pub name: Option<String>,
+    pub role: String,
     pub held_by: String,
+    pub credential: String,
+    pub revoked: bool,
+    pub cut_off: bool,
+    pub grants: Vec<ListedGrant>,
 }
 
-/// `GET /v2/keys`: one page of keys.
+/// `GET /v2/keys`: one page of keys, in name order.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct KeyPage {
     pub items: Vec<ListedKey>,
     pub next_cursor: Option<String>,
+}
+
+/// A connect code, shown once (openapi.yaml `ConnectCode`).
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+pub struct ConnectCode {
+    pub code_id: String,
+    #[serde(default)]
+    pub code: Option<String>,
+    pub expires_at: String,
+    pub connector_url: String,
+}
+
+/// No debug output prints the code.
+impl std::fmt::Debug for ConnectCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectCode")
+            .field("code_id", &self.code_id)
+            .field("code", &self.code.as_ref().map(|_| "<redacted>"))
+            .field("expires_at", &self.expires_at)
+            .field("connector_url", &self.connector_url)
+            .finish()
+    }
+}
+
+/// `POST /v2/keys` (openapi.yaml `KeyIssued`): the key, and exactly one of
+/// its value and its connect code, each shown once.
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+pub struct KeyIssued {
+    pub key_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub connect_code: Option<ConnectCode>,
+}
+
+/// No debug output prints the value or the code.
+impl std::fmt::Debug for KeyIssued {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyIssued")
+            .field("key_id", &self.key_id)
+            .field("name", &self.name)
+            .field("value", &self.value.as_ref().map(|_| "<redacted>"))
+            .field("connect_code", &self.connect_code)
+            .finish()
+    }
+}
+
+/// `POST /v2/keys/{key}/denials`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Denial {
+    pub denial_id: String,
+    pub epoch: i64,
 }
 
 /// `POST /v2/workareas`: the new node, the fields read here.
@@ -634,7 +828,14 @@ impl<T: Transport> Client<T> {
         if !response.status().is_success() {
             return Err(api_error(status, response.headers(), response.body()));
         }
-        serde_json::from_slice(response.body()).map_err(|e| Error::Decode {
+        // `204 No Content` decodes as JSON `null`, so an `Option` answer
+        // reads it as `None` and any other type refuses it.
+        let body: &[u8] = if status == 204 {
+            b"null"
+        } else {
+            response.body()
+        };
+        serde_json::from_slice(body).map_err(|e| Error::Decode {
             status,
             why: e.to_string(),
         })
@@ -918,17 +1119,141 @@ impl<T: Transport> Client<T> {
         .await
     }
 
-    /// `GET /v2/keys`: one page of the caller's own keys.
+    /// `POST /v2/review/next`: the next held item, claimed by the key, or
+    /// `None` when nothing in scope waits (`204`).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn review_next(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+    ) -> Result<Option<Serve>, Error> {
+        self.send(
+            Method::POST,
+            Some(call),
+            "/v2/review/next".to_owned(),
+            Some(idempotency_key),
+            None,
+        )
+        .await
+    }
+
+    /// `POST /v2/review/verdicts`: `verdict` (`approve` or `reject`) on the
+    /// item `serve_id` served, with `reason`, required to reject.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn post_verdict(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        serve_id: &str,
+        verdict: &str,
+        reason: Option<&str>,
+    ) -> Result<VerdictResult, Error> {
+        let mut body = serde_json::json!({ "serve_id": serve_id, "verdict": verdict });
+        if let Some(reason) = reason {
+            body["reason"] = Value::from(reason);
+        }
+        self.post(
+            call,
+            "/v2/review/verdicts".to_owned(),
+            idempotency_key,
+            &body,
+        )
+        .await
+    }
+
+    /// `GET /v2/review/held`: one page of `limit` rows the key may judge,
+    /// narrowed by each filter given, after `cursor`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn review_held(
+        &self,
+        call: &Call<'_>,
+        filters: &[(&str, &str)],
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<HeldPage, Error> {
+        let mut path = format!("/v2/review/held?limit={limit}");
+        for (name, value) in filters
+            .iter()
+            .filter(|(n, _)| matches!(*n, "workarea" | "author_key" | "claim_key_prefix"))
+        {
+            path.push_str(&format!("&{name}={}", encode(value)));
+        }
+        if let Some(cursor) = cursor {
+            path.push_str("&cursor=");
+            path.push_str(&encode(cursor));
+        }
+        self.get(Some(call), path).await
+    }
+
+    /// `GET /v2/review/held?ids=`: each id named, with its row while it is
+    /// still held and the key's to judge. Claims nothing.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn review_named(&self, call: &Call<'_>, ids: &[&str]) -> Result<HeldNamed, Error> {
+        let ids: Vec<String> = ids.iter().map(|id| encode(id)).collect();
+        self.get(Some(call), format!("/v2/review/held?ids={}", ids.join(",")))
+            .await
+    }
+
+    /// `POST /v2/review/verdicts/bulk`: one `verdict` on each of
+    /// `artifact_ids`, with `reason`, required to reject.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn post_bulk_verdict(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        verdict: &str,
+        artifact_ids: &[&str],
+        reason: Option<&str>,
+    ) -> Result<BulkVerdictResult, Error> {
+        let mut body = serde_json::json!({ "verdict": verdict, "artifact_ids": artifact_ids });
+        if let Some(reason) = reason {
+            body["reason"] = Value::from(reason);
+        }
+        self.post(
+            call,
+            "/v2/review/verdicts/bulk".to_owned(),
+            idempotency_key,
+            &body,
+        )
+        .await
+    }
+
+    /// `GET /v2/review/queue`: each workarea holding held rows, with its
+    /// count and its oldest row's time. An admin key's.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn review_queue(&self, call: &Call<'_>) -> Result<ReviewQueue, Error> {
+        self.get(Some(call), "/v2/review/queue".to_owned()).await
+    }
+
+    /// `GET /v2/keys`: one page of `limit` keys after `cursor`; `user`
+    /// names the person, which an admin key must.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
     pub async fn list_keys(
         &self,
         call: &Call<'_>,
+        user: Option<&str>,
         limit: u32,
         cursor: Option<&str>,
     ) -> Result<KeyPage, Error> {
         let mut path = format!("/v2/keys?limit={limit}");
+        if let Some(user) = user {
+            path.push_str("&user=");
+            path.push_str(&encode(user));
+        }
         if let Some(cursor) = cursor {
             path.push_str("&cursor=");
             path.push_str(&encode(cursor));
@@ -954,6 +1279,70 @@ impl<T: Transport> Client<T> {
         }
         self.post(call, "/v2/workareas".to_owned(), idempotency_key, &body)
             .await
+    }
+
+    /// `POST /v2/keys` as a person's web session key: their own key `name`
+    /// with `role`, a connector key where `connect_code` is set.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn issue_key(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        name: &str,
+        role: &str,
+        connect_code: bool,
+    ) -> Result<KeyIssued, Error> {
+        self.post(
+            call,
+            "/v2/keys".to_owned(),
+            idempotency_key,
+            &serde_json::json!({ "name": name, "role": role, "connect_code": connect_code }),
+        )
+        .await
+    }
+
+    /// `POST /v2/keys/{key}/connect-codes`: a new code for a connector key,
+    /// voiding its earlier ones.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn mint_connect_code(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        key: &str,
+    ) -> Result<ConnectCode, Error> {
+        self.send(
+            Method::POST,
+            Some(call),
+            format!("/v2/keys/{}/connect-codes", encode(key)),
+            Some(idempotency_key),
+            None,
+        )
+        .await
+    }
+
+    /// `POST /v2/keys/{key}/denials` on `workarea`: on `universe`, the key
+    /// is cut off.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn add_denial(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        key: &str,
+        workarea: &str,
+    ) -> Result<Denial, Error> {
+        self.post(
+            call,
+            format!("/v2/keys/{}/denials", encode(key)),
+            idempotency_key,
+            &serde_json::json!({ "workarea": workarea }),
+        )
+        .await
     }
 }
 
@@ -1101,10 +1490,47 @@ mod tests {
                     .await,
             ),
             decodes(&client.workarea_counts(&CALL, "alice").await),
-            decodes(&client.list_keys(&CALL, 200, None).await),
+            decodes(&client.list_keys(&CALL, Some("alice"), 200, None).await),
             decodes(
                 &client
                     .create_workarea(&CALL, "idem-4", "proj", Some("alice"))
+                    .await,
+            ),
+            {
+                // An `Option`: `None` is the `204` of nothing waiting.
+                let _ = client.review_next(&CALL, "idem-0").await;
+                "Serve"
+            },
+            decodes(
+                &client
+                    .post_verdict(&CALL, "idem-5", "srv_1", "approve", None)
+                    .await,
+            ),
+            decodes(
+                &client
+                    .review_held(&CALL, &[("workarea", "alice")], 50, None)
+                    .await,
+            ),
+            decodes(&client.review_named(&CALL, &["a", "b"]).await),
+            decodes(
+                &client
+                    .post_bulk_verdict(&CALL, "idem-6", "approve", &["a"], None)
+                    .await,
+            ),
+            decodes(&client.review_queue(&CALL).await),
+            decodes(
+                &client
+                    .issue_key(&CALL, "idem-7", "alice-laptop", "writer", false)
+                    .await,
+            ),
+            decodes(
+                &client
+                    .mint_connect_code(&CALL, "idem-8", "alice-phone")
+                    .await,
+            ),
+            decodes(
+                &client
+                    .add_denial(&CALL, "idem-9", "alice-phone", "universe")
                     .await,
             ),
         ];
@@ -1159,6 +1585,37 @@ mod tests {
             std::str::from_utf8(seen[15].body()).unwrap(),
             r#"{"name":"proj","parent":"alice"}"#
         );
+        assert_eq!(seen[14].uri(), "/v2/keys?limit=200&user=alice");
+        assert_eq!(seen[18].uri(), "/v2/review/held?limit=50&workarea=alice");
+        assert_eq!(seen[19].uri(), "/v2/review/held?ids=a,b");
+        assert_eq!(
+            std::str::from_utf8(seen[22].body()).unwrap(),
+            r#"{"connect_code":false,"name":"alice-laptop","role":"writer"}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn nothing_waiting_for_review_is_none() {
+        let (client, _) = recording(204, "");
+        assert_eq!(client.review_next(&CALL, "idem").await, Ok(None));
+    }
+
+    #[test]
+    fn no_debug_output_prints_a_shown_once_secret() {
+        let issued = KeyIssued {
+            key_id: "k".to_owned(),
+            name: "alice-laptop".to_owned(),
+            value: Some("oml_the-secret-value".to_owned()),
+            connect_code: Some(ConnectCode {
+                code_id: "c".to_owned(),
+                code: Some("ABCD-EFGH-JKMN".to_owned()),
+                expires_at: "2026-11-11T00:00:00Z".to_owned(),
+                connector_url: "https://oml.example.com/mcp".to_owned(),
+            }),
+        };
+        let shown = format!("{issued:?}");
+        assert!(!shown.contains("oml_the-secret-value"), "{shown}");
+        assert!(!shown.contains("ABCD-EFGH-JKMN"), "{shown}");
     }
 
     #[tokio::test]

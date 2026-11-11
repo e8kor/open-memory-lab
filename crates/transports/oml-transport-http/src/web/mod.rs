@@ -554,6 +554,18 @@ where
             },
             Ok(Some((token, session))) => {
                 line.session(&session);
+                // The page's default view, Keys, is oml-web's: a signed-in
+                // `GET /web` naming no view is a 303 to its fixed path,
+                // carrying nothing from the request (ADR-0070 d7 (b)).
+                let names_view = form_pairs(query.as_bytes())
+                    .map_or(true, |pairs| pairs.iter().any(|(n, _)| n == "view"));
+                if !names_view {
+                    return Answer {
+                        response: self.redirect(oml_page::web::USER_KEYS_PATH, None),
+                        error_code: None,
+                        line,
+                    };
+                }
                 let fields = Self::query_fields(query);
                 let html = match fields {
                     Ok(q) => self.user_view(&token, &session, &q).await,
@@ -761,7 +773,7 @@ where
         let outcome = if admin_page {
             self.admin_page_act(&token, &session, action, &fields).await
         } else {
-            self.user_page_act(&token, &session, action, &fields).await
+            Self::user_page_act(action)
         };
         match outcome {
             Ok(views::Outcome::Redirect(location)) => Answer {

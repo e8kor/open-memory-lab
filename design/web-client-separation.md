@@ -284,7 +284,11 @@ API returns the same JSON as today, but with no page syntax
      changes, each through its documented operation under the confirmation's
      idempotency key; the lead answers the old acts with a `303` to the view
      and runs none of them.
-   - Then memories, review and users.
+   - Then review, now `/web/review` and `/web/admin/review` with the queue and
+     bulk review, and keys, now `/web/keys` and `/web/admin/keys`: a key's
+     value and a connect code are shown once on the redirect target, sealed in
+     a cookie that page clears, never in a URL or a line.
+   - Then memories and users.
    - Each page gets a parity marker before its old handler is deleted.
    - Each moved page gets its own path under `/web/`, and the lead answers
      the old `?view=` form with a `303` to that fixed path, so every proxy,

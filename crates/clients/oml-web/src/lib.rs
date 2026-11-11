@@ -7,14 +7,18 @@
 //! reverse proxy sends each moved page's URL here and every other to the
 //! lead. [`PAGES`] is that routing table, and [`serves`] its reading.
 
+mod acts;
 pub mod atlas;
 pub mod config;
 pub mod doctor;
 pub mod frame;
+pub mod keys;
 pub mod memories;
 pub mod middleware;
+pub mod once;
 pub mod outcome;
 pub mod pages;
+pub mod review;
 pub mod session;
 pub mod workareas;
 
@@ -64,6 +68,14 @@ pub const PAGES: &[(&str, &str)] = &[
     ("GET", ADMIN_ATLAS_PATH),
     ("GET", memories::USER_DATA_PATH),
     ("GET", memories::ADMIN_DATA_PATH),
+    ("GET", USER_REVIEW_PATH),
+    ("POST", USER_REVIEW_PATH),
+    ("GET", ADMIN_REVIEW_PATH),
+    ("POST", ADMIN_REVIEW_PATH),
+    ("GET", USER_KEYS_PATH),
+    ("POST", USER_KEYS_PATH),
+    ("GET", ADMIN_KEYS_PATH),
+    ("POST", ADMIN_KEYS_PATH),
 ];
 
 /// The Memories list and the Atlas of each page (ADR-0045 d22-d32), moved
@@ -72,6 +84,22 @@ pub const PAGES: &[(&str, &str)] = &[
 pub use oml_page::web::{
     ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, USER_ATLAS_PATH, USER_MEMORIES_PATH,
 };
+
+/// The user page's Review view and its acts (ADR-0045 d11; ADR-0055 d10),
+/// moved from `GET /web?view=review` and the review acts of `POST /web`.
+pub use oml_page::web::USER_REVIEW_PATH;
+
+/// The admin page's Review view, with the queue and bulk review, moved from
+/// `GET /web/admin?view=review`, `?view=held` and `?view=queue`.
+pub use oml_page::web::ADMIN_REVIEW_PATH;
+
+/// The user page's Keys view and its acts (ADR-0045 d9), moved from
+/// `GET /web` and the key acts of `POST /web`.
+pub use oml_page::web::USER_KEYS_PATH;
+
+/// The admin page's Keys view, one person's keys and the cut-off, moved
+/// from the admin page's `cut_off` act (ADR-0045 d13).
+pub use oml_page::web::ADMIN_KEYS_PATH;
 
 /// The user page's Workareas view and its acts (ADR-0045 d28), moved from
 /// `GET /web?view=workarea` and the user page's workarea actions.
@@ -226,6 +254,16 @@ pub fn router(web: Web) -> Router {
         .route(ADMIN_MEMORIES_PATH, get(memories::admin_list))
         .route(USER_ATLAS_PATH, get(memories::user_atlas))
         .route(ADMIN_ATLAS_PATH, get(memories::admin_atlas))
+        .route(
+            USER_REVIEW_PATH,
+            get(review::user_page).post(review::user_act),
+        )
+        .route(
+            ADMIN_REVIEW_PATH,
+            get(review::admin_page).post(review::admin_act),
+        )
+        .route(USER_KEYS_PATH, get(keys::user_page).post(keys::user_act))
+        .route(ADMIN_KEYS_PATH, get(keys::admin_page).post(keys::admin_act))
         .route_layer(axum::middleware::from_fn_with_state(
             web.clone(),
             session::load,
@@ -270,6 +308,14 @@ mod tests {
         assert!(serves("POST", "/web/workareas"));
         assert!(serves("GET", "/web/admin/workareas"));
         assert!(serves("POST", "/web/admin/workareas"));
+        for path in [
+            "/web/review",
+            "/web/admin/review",
+            "/web/keys",
+            "/web/admin/keys",
+        ] {
+            assert!(serves("GET", path) && serves("POST", path), "{path}");
+        }
         for path in [
             "/web/memories",
             "/web/atlas",

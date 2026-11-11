@@ -1696,6 +1696,8 @@ export interface components {
             format?: string;
             /** @description The title signed with the version, or null (ADR-0056 d10). */
             title?: string | null;
+            /** @description For a format whose text is not prose, what the claim will be found by, derived from its source; absent for prose, so a reviewer sees it on the card before the verdict (ADR-0056 d9; ADR-0070 d5). Since v0.6.4. */
+            search_text?: string;
             /** @description On a held successor alone: the instant approving it ends the version it replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when approving ends nothing (proposed ADR-0059 d4). */
             replaces_valid_until?: string;
         };
