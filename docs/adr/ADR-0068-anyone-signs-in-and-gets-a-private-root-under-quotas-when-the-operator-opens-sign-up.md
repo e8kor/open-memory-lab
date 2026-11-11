@@ -221,15 +221,14 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     "disabled" is a cut-off and not a revocation. Revocation is designed and not built.
 
     Each `key.denied`, and the closing commit of `close_deletion` (d6), retries alone on a
-    chain-head conflict. One request therefore journals each of its events at most once, and a
-    conflict that outlasts the retries answers `system.unavailable` without re-running the act
-    ([#266](https://github.com/e8kor/open-memory-lab/issues/266)). A refusal can still follow a
-    landed commit. A key deleted between the listing and its denial answers
-    `access.not_found` after `web.user_disabled` landed, and an admin key under the root
-    answers `request.validation`. Such a 4xx means the act stopped, not that it journalled
-    nothing. The person stays disabled and the keys not yet denied stay live. A resubmission
-    journals a second `web.user_disabled` and denies the rest. An idempotency layer reads a
-    4xx from `disable_user` or `close_deletion` as possibly committed.
+    chain-head conflict, so one request journals each of its events at most once
+    ([#266](https://github.com/e8kor/open-memory-lab/issues/266)). No refusal follows the first
+    commit. A key the denial cannot cut off, one deleted since the listing or an admin key
+    under the root, is skipped and the rest are denied; the answer's `keys_cut_off` leaves it
+    out. A conflict that outlasts the retries answers `system.unavailable`. The disable it
+    journalled stands, and the act's claim on its `Idempotency-Key` is kept, so the same key
+    answers `idempotency.in_progress` and a new key finishes the cut-off. So a 4xx from
+    `disable_user` or `close_deletion` always means nothing was journalled.
 
 - **d9 — Sign-ups are limited per client address, at the terms page's `POST`.** The address is
   the request line's `client_ip` under `server.trusted_proxies` (ADR-0042 d7). ADR-0045 d15

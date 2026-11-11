@@ -42,8 +42,9 @@ const STEP_CHAIN_RETRIES: usize = 16;
 /// alone on a chain-head conflict, so a retry never re-runs, and so never
 /// journals twice, a commit that already landed (#266). A conflict that
 /// outlasts the retries is answered as the store unavailable, which the
-/// transport does not retry: what landed stands, and a resubmission
-/// finishes the act.
+/// transport does not retry: what landed stands, the claim on its
+/// `Idempotency-Key` is kept, and the act finishes when sent again under a
+/// new key.
 async fn later_step<T, F, Fut>(mut step: F) -> Result<T, AppError>
 where
     F: FnMut() -> Fut,
@@ -58,7 +59,7 @@ where
                 attempt += 1;
                 if attempt >= STEP_CHAIN_RETRIES {
                     return Err(AppError::Store(StoreError::Backend(
-                        "chain head contention after the act's first commit; what it journalled stands, and a resubmission finishes it"
+                        "chain head contention after the act's first commit; what it journalled stands, and the act finishes when sent again under a new Idempotency-Key"
                             .to_owned(),
                     )));
                 }
@@ -90,10 +91,13 @@ impl SignupState {
 }
 
 /// What disabling a person did (ADR-0068 d8): the bearer and connector
-/// keys cut off on `universe`, and the seq of `web.user_disabled`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// keys cut off on `universe`, the keys of the root no denial can cut off
+/// (gone since the listing, or an admin key), and the seq of
+/// `web.user_disabled`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserDisabled {
     pub keys_cut_off: usize,
+    pub keys_skipped: Vec<Uuid>,
     pub journal_seq: u64,
 }
 
@@ -439,6 +443,7 @@ where
             )
             .await?;
         let mut cut = 0;
+        let mut skipped = Vec::new();
         if let Some(root) = self.signup_root(tenant_id, user).await? {
             let universe_id = self.universe(tenant_id).await?;
             let universe = Reference::Name(Name::parse(UNIVERSE).expect("universe is a name"));
@@ -454,15 +459,26 @@ where
                 if denied {
                     continue;
                 }
-                later_step(|| {
+                // A key no denial can cut off (gone since the listing, or an
+                // admin key, which carries no grant to attenuate) is skipped
+                // and named in the answer: after the first commit no refusal
+                // may end the act, so its claim is never released (#266).
+                match later_step(|| {
                     self.deny_key_by(&admin.key, Reference::Id(key.key_id), universe.clone())
                 })
-                .await?;
-                cut += 1;
+                .await
+                {
+                    Ok(_) => cut += 1,
+                    Err(AppError::NotFound | AppError::DenialOnAdminKey) => {
+                        skipped.push(key.key_id);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
         }
         Ok(UserDisabled {
             keys_cut_off: cut,
+            keys_skipped: skipped,
             journal_seq: receipt.seq,
         })
     }
