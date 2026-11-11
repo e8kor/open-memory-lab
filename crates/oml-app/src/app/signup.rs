@@ -16,7 +16,9 @@ use oml_domain::web::{ProviderIdentity, session_key_names};
 use oml_domain::{Role, event_types};
 
 use super::{App, Caller, require_role};
-use crate::ports::{Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, WebStore};
+use crate::ports::{
+    Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, StoreError, WebStore,
+};
 use crate::types::{
     AdminSearch, AppError, Bearer, Credential, DeletionRequest, KeyRecord, SignupPolicy, UserUsage,
     WebEntry,
@@ -30,6 +32,41 @@ pub const DRAWS_MAX: usize = 3;
 /// The most memories the export and the status read (ADR-0068 d6); a
 /// person's quota is below it unless an admin raised it past.
 pub const EXPORT_MAX: usize = 100_000;
+
+/// How many times one commit of a multi-commit act that follows the act's
+/// first commit retries after a chain-head conflict: the transport's own
+/// retry count (#266).
+const STEP_CHAIN_RETRIES: usize = 16;
+
+/// One commit of a multi-commit act after the act's first commit, retried
+/// alone on a chain-head conflict, so a retry never re-runs, and so never
+/// journals twice, a commit that already landed (#266). A conflict that
+/// outlasts the retries is answered as the store unavailable, which the
+/// transport does not retry: what landed stands, and a resubmission
+/// finishes the act.
+async fn later_step<T, F, Fut>(mut step: F) -> Result<T, AppError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, AppError>>,
+{
+    let mut attempt = 0;
+    loop {
+        match step().await {
+            Err(AppError::Store(
+                StoreError::SeqConflict { .. } | StoreError::PrevHashConflict { .. },
+            )) => {
+                attempt += 1;
+                if attempt >= STEP_CHAIN_RETRIES {
+                    return Err(AppError::Store(StoreError::Backend(
+                        "chain head contention after the act's first commit; what it journalled stands, and a resubmission finishes it"
+                            .to_owned(),
+                    )));
+                }
+            }
+            other => return other,
+        }
+    }
+}
 
 /// Open sign-up's configuration and the process's counters: each key's
 /// requests in its current minute, and the keys of the sign-up tenant
@@ -351,6 +388,9 @@ where
     /// every entry of the user and ends their sessions, then one
     /// `key.denied` on `universe` for each live bearer and connector key of
     /// the root. Session keys are reached only from sessions, which ended.
+    /// Each `key.denied` retries alone on a chain-head conflict
+    /// ([`later_step`]), so a conflict never journals `web.user_disabled`
+    /// twice in one call (#266).
     pub async fn web_disable_user(
         &self,
         admin: &Caller,
@@ -414,8 +454,10 @@ where
                 if denied {
                     continue;
                 }
-                self.deny_key_by(&admin.key, Reference::Id(key.key_id), universe.clone())
-                    .await?;
+                later_step(|| {
+                    self.deny_key_by(&admin.key, Reference::Id(key.key_id), universe.clone())
+                })
+                .await?;
                 cut += 1;
             }
         }
@@ -474,7 +516,8 @@ where
 
     /// `close_deletion` (ADR-0068 d6): the person disabled (d8), then the
     /// request closed, journalled as `web.deletion_closed`. The bytes wait
-    /// for erasure.
+    /// for erasure. The closing commit retries alone on a chain-head
+    /// conflict, as the disable's denials do (#266).
     pub async fn web_close_deletion(&self, admin: &Caller, user: &Name) -> Result<u64, AppError> {
         require_role(&admin.key, Role::Admin, "web_users")?;
         let tenant_id = admin.key.tenant_id;
@@ -488,23 +531,26 @@ where
             return Err(AppError::NotFound);
         }
         self.web_disable_user(admin, user).await?;
-        let prev = self.head_event(tenant_id).await?;
-        let event = self.seal(
-            prev.as_ref(),
-            tenant_id,
-            event_types::WEB_DELETION_CLOSED,
-            &admin.key.principal,
-            Some(admin.key.key_id),
-            json!({ "user": user.as_str(), "by_key_id": admin.key.key_id.to_string() }),
-        )?;
-        Ok(self
-            .commit(
-                event,
-                MetadataFold::DeletionClosed { user: user.clone() },
-                None,
-            )
-            .await?
-            .seq)
+        later_step(|| async {
+            let prev = self.head_event(tenant_id).await?;
+            let event = self.seal(
+                prev.as_ref(),
+                tenant_id,
+                event_types::WEB_DELETION_CLOSED,
+                &admin.key.principal,
+                Some(admin.key.key_id),
+                json!({ "user": user.as_str(), "by_key_id": admin.key.key_id.to_string() }),
+            )?;
+            Ok(self
+                .commit(
+                    event,
+                    MetadataFold::DeletionClosed { user: user.clone() },
+                    None,
+                )
+                .await?
+                .seq)
+        })
+        .await
     }
 
     /// `GET /v2/web/users`, admin by key role (ADR-0068 d5, d6, d11): the
