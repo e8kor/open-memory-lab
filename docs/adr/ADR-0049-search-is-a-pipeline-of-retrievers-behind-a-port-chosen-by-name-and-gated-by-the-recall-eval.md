@@ -433,10 +433,13 @@ reorders results, and steering rows, which precede hits, are never ranked"
     2. **The settings, the start and doctor name it.** `GET /v2/search` keeps `effective` the
        pipeline a recall naming none runs (here the deployment's) and gains
        `tenant_default_served`, `false` in this state; `oml search show` prints the effective
-       pipeline with "the tenant's default is not served here". The lead's start logs one
+       pipeline with "the tenant's default is not served here"; the field is optional to a
+       client, since an older server does not send it. The lead's start logs one
        `search_tenant_default_unserved` warning per such tenant, naming the tenant, its
-       pipeline and the deployment's default, so the operator, who alone can serve the pipeline
-       again, is told without an admin key of that tenant. `oml doctor`, read by an admin key,
+       pipeline and the deployment's default, and one `search_tenant_default_unread` per tenant
+       whose default it could not read, and starts either way, since the read only warns. So the
+       operator, who alone can serve the pipeline again, is told without an admin key of that
+       tenant. `oml doctor`, read by an admin key,
        warns `search_tenant_default: this tenant's default <p> is not served here, so a recall
        naming no pipeline runs <effective>, marked search.fallback tenant_default_unserved; oml
        search set-default <pipeline>, or serve <p>`.
@@ -444,9 +447,9 @@ reorders results, and steering rows, which precede hits, are never ranked"
        low thousands of memories; `bm25-postings` stays the shipped default.** On the recall
        eval as served, `bm25-sparse` measured success@5 0.983 against `bm25-postings`' 0.934 on
        the 121 queries (`eval/recall/results/served_*.json`), and nDCG@10 0.730 against 0.685
-       on BEIR SciFact ([benchmarks](../benchmarks/index.md)); #245 and #252, open when this was
-       written, measured 0.956 against 0.913 on 665 grown queries and 0.963 against 0.916 on
-       786. It costs a model: `doc-v3-distill`, 67M parameters, Apache-2.0, its
+       on BEIR SciFact ([benchmarks](../benchmarks/index.md)), and 0.956 against 0.913 on the 665
+       grown queries of #245 ([recall-grown](../benchmarks/recall-grown.md)); #252, open when this
+       was written, measured 0.963 against 0.916 on the 786 together. It costs a model: `doc-v3-distill`, 67M parameters, Apache-2.0, its
        `model.safetensors` 267,954,768 bytes at the pinned revision, run on the lead's CPU by
        the encoder off the commit path for each written version (ADR-0052 d14, d15); a query
        runs only its tokenizer and `idf.json`. Client p95 per recall: 65.9 ms against 54.8 ms
@@ -469,8 +472,12 @@ reorders results, and steering rows, which precede hits, are never ranked"
        `search_settings_name_the_pipeline_that_runs_and_flag_a_tenant_default_not_served`; in the
        lead's HTTP suite,
        `http_and_mcp_run_the_deployments_default_marked_under_an_unserved_tenant_default`
-       (HTTP and MCP answer the same pipeline and fallback, and the start names the tenant); in
-       the CLI,
+       (HTTP and MCP answer the same pipeline and fallback, and the start names the tenant),
+       `when_match_all_and_an_unserved_tenant_default_both_fall_back_the_answer_names_tenant_default_unserved`,
+       `the_start_scan_of_tenant_defaults_names_a_read_failure_and_does_not_stop`; in the
+       transport's,
+       `a_recall_under_an_unserved_tenant_default_counts_as_a_fallback_on_the_request_line_and_the_metric`;
+       in the CLI,
        `the_search_doctor_warns_that_a_recall_naming_no_pipeline_runs_the_deployments_default_while_the_tenant_default_is_not_served`.
     5. **Rejected.** *Fail closed: refuse a recall naming no pipeline* (this decision's first
        draft, with `settings.invalid`). No agent surface names a pipeline (the plugin's skill,
