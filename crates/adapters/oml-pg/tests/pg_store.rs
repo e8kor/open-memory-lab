@@ -9950,9 +9950,9 @@ async fn the_migration_marks_every_existing_version_scanned_under_oml_scan_1() {
 
 /// 0043 lists each `scan_finding` a database at 0041 stored as one finding
 /// recorded by admission, under the rule set the version was scanned under
-/// and the seq of the event that admitted it, the stored text kept, and
-/// adds none for a version with no finding; doctor's unlisted count is then
-/// zero (ADR-0074 d23).
+/// and the seq of the event that admitted it, its field and line read from
+/// the stored text, which is kept, and adds none for a version with no
+/// finding; doctor's unlisted count is then zero (ADR-0074 d23).
 #[tokio::test]
 async fn migration_0043_lists_each_stored_scan_finding_as_one_admission_finding() {
     if !splits().await {
@@ -10023,8 +10023,8 @@ async fn migration_0043_lists_each_stored_scan_finding_as_one_admission_finding(
                 rule: "ignore-instructions".to_owned(),
                 verdict: oml_app::types::FindingVerdict::Hold,
                 rule_set: Some("oml-scan/1.1".to_owned()),
-                field: None,
-                line: None,
+                field: Some("/body".to_owned()),
+                line: Some(3),
                 via: None,
                 span: None,
                 found_by: oml_app::types::FoundBy::Admission,
@@ -10040,6 +10040,203 @@ async fn migration_0043_lists_each_stored_scan_finding_as_one_admission_finding(
             .expect("backlog")
             .findings_unlisted,
         0
+    );
+    drop_dbs(&created).await;
+}
+
+/// What 0043 migrates, a later `oml admin rescan --record-held` does not
+/// list again: each class and rule appears once per version, whether the
+/// stored text named its field (`/body line 3`, `/body line 1 at title`) or
+/// not, and a stored refuse-class finding keeps the refuse verdict
+/// (ADR-0074 d14, d23).
+#[tokio::test]
+async fn a_recording_rescan_after_migration_0043_lists_each_migrated_finding_once() {
+    use oml_app::ports::RecordedVersion;
+    use oml_app::types::{FindingVerdict, FoundBy, VersionFinding};
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, conn) = schema_through(&created, 41).await;
+    drop(conn);
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(431);
+    rig.seed_chain(&store, 0).await;
+    let wa = Uuid::from_u128(0x431A);
+    let key = Uuid::from_u128(0x431B);
+    let stored = [
+        (
+            Uuid::from_u128(0x431C),
+            "injection.override: ignore-instructions at /body line 3",
+        ),
+        (
+            Uuid::from_u128(0x431D),
+            "injection.role: persona-switch at /body line 1 at title",
+        ),
+        (
+            Uuid::from_u128(0x431E),
+            "secret.api_token: github-token at /body line 2",
+        ),
+        (Uuid::from_u128(0x431F), "marker finding: body matches it"),
+    ];
+    for (id, text) in stored {
+        rig.commit(
+            &store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: MemoryRecord {
+                    claim_key: format!("c-{}", id.simple()),
+                    scan_finding: Some(text.to_owned()),
+                    scanned_under: Some("oml-scan/1.1".to_owned()),
+                    ..held_memory(rig.tenant_id, wa, id, "wanda", key, "stored at 0041")
+                },
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+        )
+        .await
+        .expect("a version stored at 0041");
+    }
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0043 applies over a database at 0041");
+    let found = |class: &str, rule: &str, field: &str, line: u32, veto: bool| VersionFinding {
+        class: class.to_owned(),
+        rule: rule.to_owned(),
+        verdict: if veto {
+            FindingVerdict::Refuse
+        } else {
+            FindingVerdict::Hold
+        },
+        rule_set: Some("oml-scan/1.1".to_owned()),
+        field: Some(field.to_owned()),
+        line: Some(line),
+        via: Some("raw".to_owned()),
+        span: Some((0, 4)),
+        found_by: FoundBy::Rescan,
+        event_seq: None,
+        migrated_from: None,
+    };
+    rig.commit(
+        &store,
+        event_types::SCAN_FINDINGS_RECORDED,
+        json!({}),
+        MetadataFold::FindingsRecorded {
+            scanned_under: Some("oml-scan/1.1".to_owned()),
+            versions: vec![
+                RecordedVersion {
+                    memory_id: stored[0].0,
+                    summary: None,
+                    findings: vec![found(
+                        "injection.override",
+                        "ignore-instructions",
+                        "/body",
+                        3,
+                        false,
+                    )],
+                },
+                RecordedVersion {
+                    memory_id: stored[1].0,
+                    summary: None,
+                    findings: vec![found(
+                        "injection.role",
+                        "persona-switch",
+                        "/title",
+                        1,
+                        false,
+                    )],
+                },
+                RecordedVersion {
+                    memory_id: stored[2].0,
+                    summary: None,
+                    findings: vec![found("secret.api_token", "github-token", "/body", 2, true)],
+                },
+                RecordedVersion {
+                    memory_id: stored[3].0,
+                    summary: None,
+                    findings: vec![found(
+                        "marker finding",
+                        "body matches it",
+                        "/body",
+                        1,
+                        false,
+                    )],
+                },
+            ],
+        },
+        None,
+    )
+    .await
+    .expect("the recording rescan");
+    let ids: Vec<Uuid> = stored.iter().map(|(id, _)| *id).collect();
+    let list = store
+        .scan_findings(rig.tenant_id, &ids)
+        .await
+        .expect("scan_findings");
+    type Seen<'a> = (
+        Uuid,
+        &'a str,
+        &'a str,
+        Option<&'a str>,
+        FindingVerdict,
+        FoundBy,
+    );
+    let seen: Vec<Seen<'_>> = list
+        .iter()
+        .map(|(id, f)| {
+            (
+                *id,
+                f.class.as_str(),
+                f.rule.as_str(),
+                f.field.as_deref(),
+                f.verdict,
+                f.found_by,
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            (
+                ids[0],
+                "injection.override",
+                "ignore-instructions",
+                Some("/body"),
+                FindingVerdict::Hold,
+                FoundBy::Admission
+            ),
+            (
+                ids[1],
+                "injection.role",
+                "persona-switch",
+                Some("/title"),
+                FindingVerdict::Hold,
+                FoundBy::Admission
+            ),
+            (
+                ids[2],
+                "secret.api_token",
+                "github-token",
+                Some("/body"),
+                FindingVerdict::Refuse,
+                FoundBy::Admission
+            ),
+            (
+                ids[3],
+                "marker finding",
+                "body matches it",
+                None,
+                FindingVerdict::Hold,
+                FoundBy::Admission
+            ),
+        ],
+        "one finding per class and rule; the migrated one stays"
     );
     drop_dbs(&created).await;
 }
