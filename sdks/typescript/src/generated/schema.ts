@@ -1741,7 +1741,7 @@ export interface components {
              */
             max_tokens?: number;
             /**
-             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-sparse-rrf, the same two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13; bm25-postings-time, bm25-postings fused with the memories whose valid time overlaps a date the query names, ADR-0059 d7). A name the deployment does not serve is request.validation with details.field /search and details.served.
+             * @description The search pipeline, among those the deployment serves (search.enabled); omitted, the tenant's default, else the deployment's (ADR-0049 d4; bm25-postings, ADR-0052 d9; sparse and bm25-sparse, learned sparse weights alone or fused with bm25-postings, ADR-0052 d16; bm25-sparse-rrf, the same two lists fused by reciprocal rank, the opt-in baseline of ADR-0052 d13; bm25-postings-time, bm25-postings fused with the memories whose valid time overlaps a date the query names, ADR-0059 d7). A name the deployment does not serve is request.validation with details.field /search and details.served. Omitted under a tenant default the deployment does not serve, the deployment's default runs and search.fallback is tenant_default_unserved (ADR-0049 d15).
              * @enum {string}
              */
             search?: "keyword-all" | "keyword-any" | "bm25" | "bm25-trigram" | "bm25-postings" | "bm25-rerank" | "sparse" | "bm25-sparse" | "bm25-sparse-rrf" | "bm25-postings-time";
@@ -1930,8 +1930,8 @@ export interface components {
             tenant_default: string | null;
             /** @description The pipeline a recall naming none runs now. */
             effective: string;
-            /** @description false while tenant_default names a pipeline the deployment does not serve, so effective is the deployment's default and each such recall answers search.fallback tenant_default_unserved (ADR-0049 d15); true otherwise. Since v0.7.1. */
-            tenant_default_served: boolean;
+            /** @description false while tenant_default names a pipeline the deployment does not serve, so effective is the deployment's default and each such recall answers search.fallback tenant_default_unserved (ADR-0049 d15); true otherwise. Since v0.7.1; absent from an older server, so a client reads it as optional. */
+            tenant_default_served?: boolean;
             postings?: components["schemas"]["PostingsHealth"];
             /** @description The tenant's served memories that declare valid_from, and those whose valid_until has passed, which recall hides by default (ADR-0059 d12). */
             valid_time?: {

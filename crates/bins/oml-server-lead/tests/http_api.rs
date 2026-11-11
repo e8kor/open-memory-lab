@@ -9177,8 +9177,7 @@ async fn when_match_all_and_an_unserved_tenant_default_both_fall_back_the_answer
     let Some((rig, admin, _crew, agent, dreamer, reader)) = own_held_rig().await else {
         return;
     };
-    let memory =
-        promoted_over_http(&rig.router, &agent, &dreamer, "q1", "deploys nightly").await;
+    let memory = promoted_over_http(&rig.router, &agent, &dreamer, "q1", "deploys nightly").await;
     let (status, _, set) = send(
         &rig.router,
         "POST",

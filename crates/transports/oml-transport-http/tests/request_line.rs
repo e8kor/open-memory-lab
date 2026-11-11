@@ -441,8 +441,16 @@ async fn a_recall_under_an_unserved_tenant_default_counts_as_a_fallback_on_the_r
     )
     .await;
     drop(guard);
-    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&answer));
-    assert_eq!(json_of(&answer)["search"]["fallback"], "tenant_default_unserved");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&answer)
+    );
+    assert_eq!(
+        json_of(&answer)["search"]["fallback"],
+        "tenant_default_unserved"
+    );
 
     let lines = captured.events("http_request");
     assert_eq!(lines.len(), 1, "{lines:?}");
@@ -451,12 +459,16 @@ async fn a_recall_under_an_unserved_tenant_default_counts_as_a_fallback_on_the_r
 
     let (_, _, text) = send(
         &scrape,
-        Request::get("/metrics").body(Body::empty()).expect("a request"),
+        Request::get("/metrics")
+            .body(Body::empty())
+            .expect("a request"),
     )
     .await;
     let text = String::from_utf8(text).expect("UTF-8");
     assert!(
-        text.contains(r#"oml_recalls_total{pipeline="keyword-any",fallback="true",access="scan"} 1"#),
+        text.contains(
+            r#"oml_recalls_total{pipeline="keyword-any",fallback="true",access="scan"} 1"#
+        ),
         "{text}"
     );
 }

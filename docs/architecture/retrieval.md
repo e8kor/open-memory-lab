@@ -83,6 +83,7 @@ The tenant's default can name a pipeline the server no longer offers, for exampl
 |---|---:|---:|---|
 | Recall eval, 121 queries, success@5 | 0.934 | 0.983 | `eval/recall/results/served_*.json` |
 | Recall eval, 121 queries, nDCG@10 | 0.873 | 0.910 | `eval/recall/results/served_*.json` |
+| Grown recall set, 665 questions, success@5 | 0.913 | 0.956 | [benchmarks](../benchmarks/recall-grown.md) |
 | BEIR SciFact, 5,183 memories, nDCG@10 | 0.685 | 0.730 | [benchmarks](../benchmarks/beir-scifact.md) |
 
 What it costs:
@@ -159,7 +160,7 @@ The benchmarks run every pipeline through the same served path as an agent. The 
 | `bm25-postings` (default) | 0.685 | 65.6 ms |
 | `bm25-sparse` | 0.730 | 83.7 ms |
 
-`bm25-postings` ranks the same as `bm25` and answers faster because an index serves it under row security. `bm25-sparse` ranks higher and is the one to choose where the server loads its model; it is not the default because it needs that model, and its latency at larger scope misses the 50 ms bar. See [which one to use](#which-one-to-use). See [benchmarks](../benchmarks/index.md) for the scale runs.
+`bm25-postings` ranks the same as `bm25` and answers faster because an index serves it under row security. `bm25-sparse` ranks higher and is the one to choose where the server loads its model; it is not the default because it needs that model, and at larger scope its p95 is higher than the default's. See [which one to use](#which-one-to-use). See [benchmarks](../benchmarks/index.md) for the scale runs.
 
 ## Searching beyond the scope
 

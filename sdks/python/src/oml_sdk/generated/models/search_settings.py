@@ -24,9 +24,9 @@ class SearchSettings:
         tenant_default (None | str): The tenant's journalled default; a name the deployment no longer serves stays here,
             and tenant_default_served is then false.
         effective (str): The pipeline a recall naming none runs now.
-        tenant_default_served (bool): false while tenant_default names a pipeline the deployment does not serve, so
-            effective is the deployment's default and each such recall answers search.fallback tenant_default_unserved
-            (ADR-0049 d15); true otherwise. Since v0.7.1.
+        tenant_default_served (bool | Unset): false while tenant_default names a pipeline the deployment does not serve,
+            so effective is the deployment's default and each such recall answers search.fallback tenant_default_unserved
+            (ADR-0049 d15); true otherwise. Since v0.7.1; absent from an older server, so a client reads it as optional.
         postings (PostingsHealth | Unset): The tenant's integer postings, as doctor reads them (ADR-0052 d12). Present
             on GET /v2/search where the deployment serves bm25-postings or a sparse pipeline; absent from the answer to POST
             /v2/search/default.
@@ -38,7 +38,7 @@ class SearchSettings:
     deployment_default: str
     tenant_default: None | str
     effective: str
-    tenant_default_served: bool
+    tenant_default_served: bool | Unset = UNSET
     postings: PostingsHealth | Unset = UNSET
     valid_time: SearchSettingsValidTime | Unset = UNSET
 
@@ -70,9 +70,10 @@ class SearchSettings:
                 "deployment_default": deployment_default,
                 "tenant_default": tenant_default,
                 "effective": effective,
-                "tenant_default_served": tenant_default_served,
             }
         )
+        if tenant_default_served is not UNSET:
+            field_dict["tenant_default_served"] = tenant_default_served
         if postings is not UNSET:
             field_dict["postings"] = postings
         if valid_time is not UNSET:
@@ -99,7 +100,7 @@ class SearchSettings:
 
         effective = d.pop("effective")
 
-        tenant_default_served = d.pop("tenant_default_served")
+        tenant_default_served = d.pop("tenant_default_served", UNSET)
 
         _postings = d.pop("postings", UNSET)
         postings: PostingsHealth | Unset
