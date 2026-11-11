@@ -1662,7 +1662,7 @@ where
         // A session key issues only as the person's own issuance, bounded
         // to their root (ADR-0070 d2, d5; ADR-0045 d9, d16).
         if let Some(caller) = session::session_caller() {
-            return Self::issue_key_as_session(st, &caller, &req, &name, &idem, body).await;
+            return Self::issue_key_as_session(st, caller, &req, &name, &idem, body).await;
         }
         // Issued keys do not expire yet: a requested expiry is refused by
         // name, since minting the key without it would leave the key its
@@ -1780,7 +1780,7 @@ where
         // A session key cuts off one key on universe, as the pages do
         // (ADR-0070 d5; ADR-0045 d9, d13).
         if let Some(caller) = session::session_caller() {
-            return Self::cut_off_as_session(st, &caller, &key, &node, &idem, key_id, body).await;
+            return Self::cut_off_as_session(st, caller, &key, &node, &idem, key_id, body).await;
         }
         let denial = retry_chain(|| st.app.deny_key(acting.bearer(), key.clone(), node.clone()))
             .await
@@ -1806,7 +1806,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        let acting: Acting<'static> = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let req: WorkareaCreateBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("parent_id", "parent")])
@@ -1828,20 +1828,26 @@ where
         let name = creation_name("/name", &req.name)?;
         // A crew record's id or name (ADR-0026 d8).
         let crew = optional_reference("/crew", req.crew.as_deref())?;
-        let created = retry_chain(|| {
-            st.app
-                .create_workarea(acting.bearer(), &name, parent.clone(), crew.clone())
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        // The path derived from the parent names and the crew record as
-        // stored, as the workarea read serves them (ADR-0025 d14; ADR-0026
-        // d8).
-        let mut response = workarea_json(&created.workarea, &created.path, created.crew.as_ref());
-        if let Some(obj) = response.as_object_mut() {
-            obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
-        }
-        Ok(claim.record_outcome(StatusCode::CREATED, &response).await)
+        let st = st.clone();
+        claim
+            .run(async move {
+                let created = retry_chain(|| {
+                    st.app
+                        .create_workarea(acting.bearer(), &name, parent.clone(), crew.clone())
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                // The path derived from the parent names and the crew record
+                // as stored, as the workarea read serves them (ADR-0025 d14;
+                // ADR-0026 d8).
+                let mut response =
+                    workarea_json(&created.workarea, &created.path, created.crew.as_ref());
+                if let Some(obj) = response.as_object_mut() {
+                    obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
+                }
+                Ok(console::Acted::new(StatusCode::CREATED, response))
+            })
+            .await
     }
 
     async fn get_workarea(
@@ -1903,7 +1909,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        let acting: Acting<'static> = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let node = reference("workarea", workarea)?;
         let req: TransitionBody = parse_json(headers, body)?;
@@ -1928,23 +1934,29 @@ where
                 .with_details(json!({ "field": "/to" })));
             }
         };
-        let proposal = retry_chain(|| st.app.propose_transition(acting.bearer(), node.clone(), to))
+        let st = st.clone();
+        claim
+            .run(async move {
+                let proposal =
+                    retry_chain(|| st.app.propose_transition(acting.bearer(), node.clone(), to))
+                        .await
+                        .map_err(|e| {
+                            console::ActFailure::first(map_app_error(e, ErrorContext::Write))
+                        })?;
+                Ok(console::Acted::new(
+                    StatusCode::ACCEPTED,
+                    json!({
+                        "transition_id": proposal.transition_id,
+                        "workarea_id": proposal.workarea_id,
+                        "from": proposal.from.as_str(),
+                        "to": proposal.to.as_str(),
+                        "state": proposal.state.as_str(),
+                        "proposed_by_key_id": proposal.proposer_key_id,
+                        "ratified_by_key_id": Value::Null,
+                    }),
+                ))
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(claim
-            .record_outcome(
-                StatusCode::ACCEPTED,
-                &json!({
-                    "transition_id": proposal.transition_id,
-                    "workarea_id": proposal.workarea_id,
-                    "from": proposal.from.as_str(),
-                    "to": proposal.to.as_str(),
-                    "state": proposal.state.as_str(),
-                    "proposed_by_key_id": proposal.proposer_key_id,
-                    "ratified_by_key_id": Value::Null,
-                }),
-            )
-            .await)
     }
 
     async fn ratify_transition(
@@ -1969,7 +1981,7 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        let acting: Acting<'static> = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let node = reference("workarea", workarea)?;
         let transition_id = Uuid::parse_str(transition_id).map_err(|_| {
@@ -1982,30 +1994,33 @@ where
             console::Claimed::Replayed(replayed) => return Ok(replayed),
             console::Claimed::Act(claim) => claim,
         };
-        let ratified = retry_chain(|| {
-            st.app
-                .ratify_transition(acting.bearer(), node.clone(), transition_id)
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Review))?;
-        let from = match ratified.status {
-            WorkareaStatus::Validated => WorkareaStatus::Committed,
-            _ => WorkareaStatus::Development,
-        };
-        Ok(claim
-            .record_outcome(
-                StatusCode::OK,
-                &json!({
-                    "transition_id": transition_id,
-                    "workarea_id": ratified.workarea_id,
-                    "from": from.as_str(),
-                    "to": ratified.status.as_str(),
-                    "state": "ratified",
-                    "proposed_by_key_id": Value::Null,
-                    "ratified_by_key_id": Value::Null,
-                }),
-            )
-            .await)
+        let st = st.clone();
+        claim
+            .run(async move {
+                let ratified = retry_chain(|| {
+                    st.app
+                        .ratify_transition(acting.bearer(), node.clone(), transition_id)
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Review)))?;
+                let from = match ratified.status {
+                    WorkareaStatus::Validated => WorkareaStatus::Committed,
+                    _ => WorkareaStatus::Development,
+                };
+                Ok(console::Acted::new(
+                    StatusCode::OK,
+                    json!({
+                        "transition_id": transition_id,
+                        "workarea_id": ratified.workarea_id,
+                        "from": from.as_str(),
+                        "to": ratified.status.as_str(),
+                        "state": "ratified",
+                        "proposed_by_key_id": Value::Null,
+                        "ratified_by_key_id": Value::Null,
+                    }),
+                ))
+            })
+            .await
     }
 
     async fn list_edges(
@@ -2560,7 +2575,7 @@ where
         if let Some(caller) = session::session_caller() {
             return Self::connect_code_as_session(
                 st,
-                &caller,
+                caller,
                 &key,
                 req.ttl_seconds,
                 &idem,
@@ -2818,7 +2833,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        let acting: Acting<'static> = acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let workarea = reference("workarea", workarea_id)?;
         let req: WorkareaModeBody = parse_json(headers, body)?;
@@ -2835,20 +2850,28 @@ where
             console::Claimed::Replayed(replayed) => return Ok(replayed),
             console::Claimed::Act(claim) => claim,
         };
-        let updated = retry_chain(|| {
-            st.app
-                .set_workarea_mode(acting.bearer(), workarea.clone(), mode)
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let info = st
-            .app
-            .workarea_info(acting.bearer(), Some(Reference::Id(updated.workarea_id)))
+        let st = st.clone();
+        claim
+            .run(async move {
+                let updated = retry_chain(|| {
+                    st.app
+                        .set_workarea_mode(acting.bearer(), workarea.clone(), mode)
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                let info = st
+                    .app
+                    .workarea_info(acting.bearer(), Some(Reference::Id(updated.workarea_id)))
+                    .await
+                    .map_err(|e| {
+                        console::ActFailure::after(map_app_error(e, ErrorContext::Write))
+                    })?;
+                Ok(console::Acted::new(
+                    StatusCode::OK,
+                    workarea_view_json(&info),
+                ))
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(claim
-            .record_outcome(StatusCode::OK, &workarea_view_json(&info))
-            .await)
     }
 
     async fn set_workarea_crew(

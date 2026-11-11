@@ -311,9 +311,9 @@ struct TenantState {
     outbox: Vec<OutboxRow>,
     idempotency: BTreeMap<(Uuid, Uuid, String), IdempotencyRecord>,
     /// The scopes an act claimed and has not settled or released, each with
-    /// its request digest: the `idempotency` rows whose `committed_at` is
-    /// null (ADR-0070 d5; #233).
-    idempotency_claims: BTreeMap<(Uuid, Uuid, String), String>,
+    /// its request digest and claim id: the `idempotency` rows whose
+    /// `committed_at` is null (ADR-0070 d5; #233).
+    idempotency_claims: BTreeMap<(Uuid, Uuid, String), (String, Uuid)>,
     /// The web allowlist by the email's digest (postgres-schema.md
     /// `web_emails`; ADR-0045 d2).
     web_entries: BTreeMap<[u8; 32], WebEntry>,
@@ -3614,6 +3614,7 @@ impl JournalStore for MemStore {
         &self,
         scope: &IdempotencyScope,
         request_digest: &str,
+        claim_id: Uuid,
     ) -> Result<IdempotencyClaim, StoreError> {
         let state = self.tenant(scope.tenant_id);
         let mut state = state.lock().expect("tenant lock");
@@ -3621,18 +3622,22 @@ impl JournalStore for MemStore {
         if let Some(record) = state.idempotency.get(&key) {
             return Ok(IdempotencyClaim::Recorded(record.clone()));
         }
-        if let Some(digest) = state.idempotency_claims.get(&key) {
+        if let Some((digest, _)) = state.idempotency_claims.get(&key) {
             return Ok(IdempotencyClaim::InProgress {
                 request_digest: digest.clone(),
             });
         }
         state
             .idempotency_claims
-            .insert(key, request_digest.to_owned());
+            .insert(key, (request_digest.to_owned(), claim_id));
         Ok(IdempotencyClaim::Claimed)
     }
 
-    async fn idempotency_settle(&self, put: IdempotencyPut) -> Result<bool, StoreError> {
+    async fn idempotency_settle(
+        &self,
+        put: IdempotencyPut,
+        claim_id: Uuid,
+    ) -> Result<bool, StoreError> {
         if self.fail_next_settle.swap(false, Ordering::SeqCst) {
             return Err(StoreError::Backend(
                 "the connection was lost before the record was written".to_owned(),
@@ -3641,7 +3646,9 @@ impl JournalStore for MemStore {
         let state = self.tenant(put.scope.tenant_id);
         let mut state = state.lock().expect("tenant lock");
         let key = (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key);
-        if state.idempotency_claims.get(&key) != Some(&put.record.request_digest) {
+        if state.idempotency_claims.get(&key)
+            != Some(&(put.record.request_digest.clone(), claim_id))
+        {
             return Ok(false);
         }
         state.idempotency_claims.remove(&key);
@@ -3649,12 +3656,21 @@ impl JournalStore for MemStore {
         Ok(true)
     }
 
-    async fn idempotency_release(&self, scope: &IdempotencyScope) -> Result<(), StoreError> {
+    async fn idempotency_release(
+        &self,
+        scope: &IdempotencyScope,
+        claim_id: Uuid,
+    ) -> Result<(), StoreError> {
         let state = self.tenant(scope.tenant_id);
         let mut state = state.lock().expect("tenant lock");
-        state
+        let key = (scope.key_id, scope.workarea_id, scope.idem_key.clone());
+        if state
             .idempotency_claims
-            .remove(&(scope.key_id, scope.workarea_id, scope.idem_key.clone()));
+            .get(&key)
+            .is_some_and(|(_, held)| *held == claim_id)
+        {
+            state.idempotency_claims.remove(&key);
+        }
         Ok(())
     }
 

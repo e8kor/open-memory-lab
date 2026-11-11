@@ -181,6 +181,21 @@ pub enum ActClaim {
 pub struct ActTicket {
     scope: crate::ports::IdempotencyScope,
     request_digest: String,
+    claim_id: Uuid,
+}
+
+impl ActTicket {
+    /// The claim's id, which the lead's log names for an operator.
+    #[must_use]
+    pub fn claim_id(&self) -> Uuid {
+        self.claim_id
+    }
+
+    /// The acting key whose claim this is.
+    #[must_use]
+    pub fn key_id(&self) -> Uuid {
+        self.scope.key_id
+    }
 }
 
 /// One workarea of the Atlas (ADR-0045 d30): the node, its path, and its
@@ -467,23 +482,26 @@ where
     /// with the outcome recorded under the key, or [`ActClaim::InProgress`]
     /// while another attempt holds the claim, which the caller waits on and
     /// claims again. A key held by another request is
-    /// [`AppError::IdempotencyDigestMismatch`].
+    /// [`AppError::IdempotencyDigestMismatch`]. `claim_id` names this
+    /// attempt's claim; the caller draws a fresh one per attempt.
     pub async fn claim_act(
         &self,
         caller: &Caller,
         act: &str,
         idem_key: &str,
         request_digest: &str,
+        claim_id: Uuid,
     ) -> Result<ActClaim, AppError> {
         let scope = Self::act_scope(caller, act, idem_key);
         match self
             .journal
-            .idempotency_claim(&scope, request_digest)
+            .idempotency_claim(&scope, request_digest, claim_id)
             .await?
         {
             crate::ports::IdempotencyClaim::Claimed => Ok(ActClaim::Act(ActTicket {
                 scope,
                 request_digest: request_digest.to_owned(),
+                claim_id,
             })),
             crate::ports::IdempotencyClaim::Recorded(record) => {
                 if record.request_digest != request_digest {
@@ -512,20 +530,28 @@ where
     ) -> Result<bool, AppError> {
         Ok(self
             .journal
-            .idempotency_settle(crate::ports::IdempotencyPut {
-                scope: ticket.scope,
-                record: crate::ports::IdempotencyRecord {
-                    request_digest: ticket.request_digest,
-                    response,
+            .idempotency_settle(
+                crate::ports::IdempotencyPut {
+                    scope: ticket.scope,
+                    record: crate::ports::IdempotencyRecord {
+                        request_digest: ticket.request_digest,
+                        response,
+                    },
                 },
-            })
+                ticket.claim_id,
+            )
             .await?)
     }
 
-    /// Drops the claim of an act that was refused, so a resubmission acts
-    /// again: a refused request records nothing (http-api.md idempotency).
+    /// Drops the claim of an act that was refused before anything
+    /// committed, so a resubmission acts again: a refused request records
+    /// nothing (http-api.md idempotency). Never called once the act may
+    /// have committed (#233).
     pub async fn release_act(&self, ticket: ActTicket) -> Result<(), AppError> {
-        Ok(self.journal.idempotency_release(&ticket.scope).await?)
+        Ok(self
+            .journal
+            .idempotency_release(&ticket.scope, ticket.claim_id)
+            .await?)
     }
 
     // -- the user page's keys ---------------------------------------------

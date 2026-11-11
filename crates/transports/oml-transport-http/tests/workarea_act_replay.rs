@@ -377,7 +377,10 @@ async fn a_send_whose_key_another_attempt_holds_waits_and_answers_that_attempts_
     let body = json!({"name": "held", "parent": "universe"});
     let (scope, digest) = create_claim(&w, "c-3", &body).await;
     assert_eq!(
-        w.store.idempotency_claim(&scope, &digest).await.unwrap(),
+        w.store
+            .idempotency_claim(&scope, &digest, Uuid::from_u128(0xC3))
+            .await
+            .unwrap(),
         IdempotencyClaim::Claimed,
         "another attempt, in another process, holds the key"
     );
@@ -386,13 +389,16 @@ async fn a_send_whose_key_another_attempt_holds_waits_and_answers_that_attempts_
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             store
-                .idempotency_settle(IdempotencyPut {
-                    scope,
-                    record: IdempotencyRecord {
-                        request_digest: digest,
-                        response: json!({"status": 201, "body": {"answered": "first"}}),
+                .idempotency_settle(
+                    IdempotencyPut {
+                        scope,
+                        record: IdempotencyRecord {
+                            request_digest: digest,
+                            response: json!({"status": 201, "body": {"answered": "first"}}),
+                        },
                     },
-                })
+                    Uuid::from_u128(0xC3),
+                )
                 .await
                 .unwrap()
         })
@@ -415,7 +421,10 @@ async fn a_send_whose_key_a_stopped_attempt_holds_answers_in_progress_and_acts_n
     let w = world().await;
     let body = json!({"name": "stuck", "parent": "universe"});
     let (scope, digest) = create_claim(&w, "c-4", &body).await;
-    w.store.idempotency_claim(&scope, &digest).await.unwrap();
+    w.store
+        .idempotency_claim(&scope, &digest, Uuid::from_u128(0xC4))
+        .await
+        .unwrap();
     let (status, headers, refused) =
         send(&w.router, "/v2/workareas", &w.admin, "c-4", Some(body)).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");

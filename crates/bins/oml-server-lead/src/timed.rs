@@ -656,25 +656,35 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         &self,
         scope: &IdempotencyScope,
         request_digest: &str,
+        claim_id: Uuid,
     ) -> impl Future<Output = Result<IdempotencyClaim, StoreError>> + Send {
         timed(
             "idempotency_claim",
-            self.inner.idempotency_claim(scope, request_digest),
+            self.inner
+                .idempotency_claim(scope, request_digest, claim_id),
         )
     }
 
     fn idempotency_settle(
         &self,
         put: IdempotencyPut,
+        claim_id: Uuid,
     ) -> impl Future<Output = Result<bool, StoreError>> + Send {
-        timed("idempotency_settle", self.inner.idempotency_settle(put))
+        timed(
+            "idempotency_settle",
+            self.inner.idempotency_settle(put, claim_id),
+        )
     }
 
     fn idempotency_release(
         &self,
         scope: &IdempotencyScope,
+        claim_id: Uuid,
     ) -> impl Future<Output = Result<(), StoreError>> + Send {
-        timed("idempotency_release", self.inner.idempotency_release(scope))
+        timed(
+            "idempotency_release",
+            self.inner.idempotency_release(scope, claim_id),
+        )
     }
 }
 

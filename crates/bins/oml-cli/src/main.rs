@@ -5243,7 +5243,7 @@ fn handlers_doctor(scrape: Option<&Scrape>) -> Vec<String> {
     // idempotency.in_progress instead of acting again (#233).
     if let n @ 1.. = scrape.sum("oml_idempotency_unsettled_total", &[]) {
         lines.push(format!(
-            "warn idempotency_unsettled: {n} web console act(s) since start left their Idempotency-Key claimed and unrecorded (the lead's log names each under event idempotency_unsettled with the act); a resubmission of that form answers 409 idempotency.in_progress and acts nothing, so nothing is repeated, and a fresh form acts under a fresh key. Look for Postgres errors at those times"
+            "warn idempotency_unsettled: {n} web console act(s) since start left their Idempotency-Key claimed and unrecorded (the lead's log names each under event idempotency_unsettled with the act); a resubmission of that form answers 409 idempotency.in_progress and acts nothing, so nothing is repeated, and a fresh form acts under a fresh key. Look for Postgres errors at those times; operations/runbooks.md (a form answers idempotency.in_progress) lists the claims held and how old each is"
         ));
     }
     lines

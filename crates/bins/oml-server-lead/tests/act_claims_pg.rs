@@ -364,6 +364,7 @@ async fn a_send_whose_key_a_stopped_attempt_holds_answers_in_progress_and_acts_n
                 idem_key: "workarea.create:c-2".to_owned(),
             },
             &Sha256Hash::digest(&bytes).to_prefixed(),
+            Uuid::from_u128(0xC5),
         )
         .await
         .expect("claim");

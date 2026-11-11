@@ -1291,27 +1291,36 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// is `Claimed`
     /// (http-api.md idempotency; ADR-0070 d3 layer 4, d5, the web
     /// console's acts; #233).
+    ///
+    /// `claim_id` names this attempt's claim, so only the attempt that took
+    /// it settles or releases it: a late release of an attempt whose claim
+    /// an operator removed never drops a later attempt's claim.
     fn idempotency_claim(
         &self,
         scope: &IdempotencyScope,
         request_digest: &str,
+        claim_id: Uuid,
     ) -> impl Future<Output = Result<IdempotencyClaim, StoreError>> + Send;
 
-    /// Records the act's outcome into the claim [`Self::idempotency_claim`]
-    /// took under `put.scope` and the same digest: `false`, writing nothing,
-    /// when no such claim is held (ADR-0070 d5; #233).
+    /// Records the act's outcome into the claim `claim_id` that
+    /// [`Self::idempotency_claim`] took under `put.scope` and the same
+    /// digest: `false`, writing nothing, when that claim is not held
+    /// (ADR-0070 d5; #233).
     fn idempotency_settle(
         &self,
         put: IdempotencyPut,
+        claim_id: Uuid,
     ) -> impl Future<Output = Result<bool, StoreError>> + Send;
 
-    /// Drops the claim under `scope` of an act that was refused, so a
+    /// Drops the claim `claim_id` under `scope` of an act that was refused
+    /// before anything committed, so a
     /// resubmission acts again, as a refused request records nothing
     /// (http-api.md idempotency); a recorded outcome is never dropped
     /// (ADR-0070 d5; #233).
     fn idempotency_release(
         &self,
         scope: &IdempotencyScope,
+        claim_id: Uuid,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
 
     /// One claim edge of the tenant, pending or ratified; `None` for an edge

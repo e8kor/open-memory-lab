@@ -9621,8 +9621,9 @@ async fn migration_0041_builds_each_partitions_index_in_its_own_transaction_and_
 }
 
 /// Migration 0042 applies beside an open write and an open read of
-/// `idempotency`, waiting on neither, and gives the serving role the
-/// claim's UPDATE and DELETE on it, and nothing more (ADR-0070 d5; #233).
+/// `idempotency`, waiting on neither, and gives the serving role UPDATE of a
+/// claim's outcome and time and DELETE, and nothing more (ADR-0070 d5;
+/// #233).
 #[tokio::test]
 async fn migration_0042_applies_beside_an_open_write_and_read_of_idempotency_without_waiting() {
     let sql = MIGRATOR
@@ -9686,8 +9687,11 @@ async fn migration_0042_applies_beside_an_open_write_and_read_of_idempotency_wit
     assert_eq!(applied, 42, "0042 applied while both were open");
     write.commit().await.expect("the write commits");
     read.commit().await.expect("the read ends");
-    let (update, delete, truncate): (bool, bool, bool) = sqlx::query_as(
-        "SELECT has_table_privilege($1, 'idempotency', 'UPDATE'), \
+    let privileges: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+        "SELECT has_column_privilege($1, 'idempotency', 'response', 'UPDATE'), \
+                has_column_privilege($1, 'idempotency', 'committed_at', 'UPDATE'), \
+                has_column_privilege($1, 'idempotency', 'request_digest', 'UPDATE'), \
+                has_column_privilege($1, 'idempotency', 'key', 'UPDATE'), \
                 has_table_privilege($1, 'idempotency', 'DELETE'), \
                 has_table_privilege($1, 'idempotency', 'TRUNCATE')",
     )
@@ -9695,7 +9699,11 @@ async fn migration_0042_applies_beside_an_open_write_and_read_of_idempotency_wit
     .fetch_one(&mut conn)
     .await
     .expect("privileges");
-    assert_eq!((update, delete, truncate), (true, true, false));
+    assert_eq!(
+        privileges,
+        (true, true, false, false, true, false),
+        "a claim's outcome and time are written, never its key or digest"
+    );
     drop(conn);
     drop_dbs(&created).await;
 }
