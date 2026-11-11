@@ -1,0 +1,191 @@
+{
+ "grown": {
+  "bm25-postings": {
+   "n": 665,
+   "success@5": 0.9128,
+   "hits": 607,
+   "ci95": [
+    0.8889,
+    0.9319
+   ],
+   "ndcg@10": 0.8686,
+   "wins": 0,
+   "losses": 0,
+   "mcnemar_p": 1.0,
+   "per_category": {
+    "paraphrase": {
+     "n": 303,
+     "success@5": 0.8284,
+     "ci95": [
+      0.7819,
+      0.8667
+     ]
+    },
+    "question": {
+     "n": 362,
+     "success@5": 0.9834,
+     "ci95": [
+      0.9643,
+      0.9924
+     ]
+    }
+   }
+  },
+  "bm25-rerank": {
+   "n": 665,
+   "success@5": 0.9414,
+   "hits": 626,
+   "ci95": [
+    0.9208,
+    0.9568
+   ],
+   "ndcg@10": 0.9157,
+   "wins": 19,
+   "losses": 0,
+   "mcnemar_p": 0.0,
+   "per_category": {
+    "paraphrase": {
+     "n": 303,
+     "success@5": 0.8878,
+     "ci95": [
+      0.8473,
+      0.9186
+     ]
+    },
+    "question": {
+     "n": 362,
+     "success@5": 0.9862,
+     "ci95": [
+      0.9681,
+      0.9941
+     ]
+    }
+   }
+  },
+  "bm25-sparse": {
+   "n": 665,
+   "success@5": 0.9564,
+   "hits": 636,
+   "ci95": [
+    0.9381,
+    0.9695
+   ],
+   "ndcg@10": 0.918,
+   "wins": 31,
+   "losses": 2,
+   "mcnemar_p": 0.0,
+   "per_category": {
+    "paraphrase": {
+     "n": 303,
+     "success@5": 0.9142,
+     "ci95": [
+      0.8772,
+      0.9408
+     ]
+    },
+    "question": {
+     "n": 362,
+     "success@5": 0.9917,
+     "ci95": [
+      0.9759,
+      0.9972
+     ]
+    }
+   }
+  },
+  "bm25-sparse-rrf": {
+   "n": 665,
+   "success@5": 0.9474,
+   "hits": 630,
+   "ci95": [
+    0.9277,
+    0.9619
+   ],
+   "ndcg@10": 0.8971,
+   "wins": 24,
+   "losses": 1,
+   "mcnemar_p": 0.0,
+   "per_category": {
+    "paraphrase": {
+     "n": 303,
+     "success@5": 0.8977,
+     "ci95": [
+      0.8584,
+      0.927
+     ]
+    },
+    "question": {
+     "n": 362,
+     "success@5": 0.989,
+     "ci95": [
+      0.9719,
+      0.9957
+     ]
+    }
+   }
+  }
+ },
+ "superiority": [
+  {
+   "effect": "d8's planning effect",
+   "p10": 0.05,
+   "p01": 0.017,
+   "power": 0.9466,
+   "n80": 412,
+   "n90": 547,
+   "connor80": 378,
+   "connor90": 523
+  },
+  {
+   "effect": "`bm25-sparse` vs `bm25-postings`, measured here",
+   "p10": 0.0466,
+   "p01": 0.003,
+   "power": 0.9999,
+   "n80": 176,
+   "n90": 219,
+   "connor80": 159,
+   "connor90": 220
+  }
+ ],
+ "margins": {
+  "scifact": {
+   "n": 300,
+   "sigma": 0.1945,
+   "m_uncapped": 0.0481,
+   "m": 0.02,
+   "capped": true,
+   "power": 0.4288,
+   "mean_difference": 0.045
+  },
+  "nfcorpus": {
+   "n": 323,
+   "sigma": 0.1074,
+   "m_uncapped": 0.0256,
+   "m": 0.02,
+   "capped": true,
+   "power": 0.9173,
+   "mean_difference": 0.0279
+  },
+  "locomo": {
+   "conversations": 10,
+   "queries": 1535,
+   "sigma": 0.0235,
+   "m_uncapped": 0.0378,
+   "m": 0.02,
+   "capped": true,
+   "power": 0.6643,
+   "mean_difference": 0.0476
+  }
+ },
+ "joint": {
+  "beta_superiority": 0.0534,
+  "beta_non_inferiority": [
+   0.5712,
+   0.0827,
+   0.3357
+  ],
+  "beta_displacement": 0.033,
+  "power": -0.076,
+  "arms_measured": 4
+ }
+}

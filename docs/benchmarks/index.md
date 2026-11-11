@@ -22,6 +22,7 @@ The default search pipeline, `bm25-postings`, on each suite. nDCG@10 and S@5 mea
 | suite | memories | queries | nDCG@10 | BEIR BM25 | S@5 | p95 ms | run |
 |---|---:|---:|---:|---:|---:|---:|---|
 | [Synthetic recall set](recall-synthetic.md) | 200 | 121 | 0.873 | – | 0.934 | 48.0 | 2026-11-05 |
+| [Grown recall set](recall-grown.md) | 200 | 665 | 0.869 | – | 0.913 | 32.5 | 2026-11-11 |
 | [BEIR SciFact](beir-scifact.md) | 5,183 | 300 | 0.685 | 0.665 | 0.783 | 65.6 | 2026-11-05 |
 | [BEIR NFCorpus](beir-nfcorpus.md) | 3,633 | 323 | 0.321 | 0.325 | 0.656 | 54.8 | 2026-11-05 |
 | [LoCoMo](locomo.md) | 5,882 | 1,535 | 0.503 | – | 0.628 | 37.0 | 2026-11-05 |
@@ -54,6 +55,7 @@ Every number went through the served path. An agent key wrote the memories over 
 ## Suites
 
 - [Synthetic recall set](recall-synthetic.md): 200 memories, 121 queries, 8 pipelines.
+- [Grown recall set](recall-grown.md): 200 memories, 665 queries, 4 pipelines.
 - [BEIR SciFact](beir-scifact.md): 5,183 memories, 300 queries, 15 pipelines.
 - [BEIR NFCorpus](beir-nfcorpus.md): 3,633 memories, 323 queries, 12 pipelines.
 - [LoCoMo](locomo.md): 5,882 memories, 1,535 queries, 12 pipelines.
@@ -64,6 +66,7 @@ Every number went through the served path. An agent key wrote the memories over 
     | suite | date | commits | environment |
     |---|---|---|---|
     | Synthetic recall set | 2026-11-05 (some files carry no date) | `3c70c71`, `71b7b69`, `c257083` | host 8 vCPU / 15 GB, load average 3.6 to 14 from other lanes, postgres 18.6, build release<br>host 8 vCPU / 15 GB, postgres 17.9, build release<br>host 8 vCPU / 15 GB, postgres 18.6, build release |
+    | Grown recall set | 2026-11-11 | `08892ff1` | host 8 vCPU / 15 GB, postgres 18.6, build release |
     | BEIR SciFact | 2026-11-05 | `2123e90`, `66979b4`, `a1ad0c9`, `d3fdb72`, `f86c31c` | host 8 vCPU / 15 GB, load average 3.6 to 14 from other lanes, postgres 18.6, build release<br>host 8 vCPU / 15 GB, postgres 17.9, build release<br>host 8 vCPU / 15 GB, postgres 18.6, build release<br>host 8 vCPU / 15 GB, shared, load 8-12, postgres 18, build release |
     | BEIR NFCorpus | 2026-11-05 | `2123e90`, `66979b4`, `a1ad0c9`, `d3fdb72`, `f86c31c` | host 8 vCPU / 15 GB, load average 3.6 to 14 from other lanes, postgres 18.6, build release<br>host 8 vCPU / 15 GB, postgres 17.9, build release<br>host 8 vCPU / 15 GB, postgres 18.6, build release<br>host 8 vCPU / 15 GB, shared, load 8-12, postgres 18, build release |
     | LoCoMo | 2026-11-05 | `2123e90`, `66979b4`, `a1ad0c9`, `d3fdb72`, `f86c31c` | host 8 vCPU / 15 GB, load average 3.6 to 14 from other lanes, postgres 18.6, build release<br>host 8 vCPU / 15 GB, postgres 17.9, build release<br>host 8 vCPU / 15 GB, postgres 18.6, build release<br>host 8 vCPU / 15 GB, shared, load 8-12, postgres 18, build release |

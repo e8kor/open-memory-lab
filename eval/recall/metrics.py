@@ -30,6 +30,11 @@ def load():
     return corpus["memories"], queries["queries"]
 
 
+def load_grown():
+    """The grown set's queries (ADR-0075 d8, phase 0a), over the same corpus."""
+    return json.loads((HERE / "queries-grown.json").read_text())["queries"]
+
+
 def success_at(ranked, rel, n):
     return 1.0 if any(rel.get(m) == 2 for m in ranked[:n]) else 0.0
 

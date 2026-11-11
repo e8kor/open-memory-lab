@@ -13,8 +13,10 @@ Sources:
   suite `recall-synthetic` with its own metric definitions (grade-2 success,
   gain 2^g - 1, k 10 and a 2,000-token budget, so recall@100 is null).
 
-Numbers are kept as measured, rounded to 4 decimals at most. The schema is
-documented in README.md (Results schema).
+Beside each bench.py run's file, a slim per-query file goes to
+<out>/per-query/<suite>/<method>.json (schema `oml-bench-per-query/1`, not
+rendered). Numbers are kept as measured, rounded to 4 decimals at most. The
+schema is documented in README.md (Results schema).
 """
 
 import argparse
@@ -30,7 +32,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from adapters import ADAPTERS, PUBLISHED_BM25  # noqa: E402
 
-SUITES = {"scifact": "beir-scifact", "nfcorpus": "beir-nfcorpus", "arguana": "beir-arguana",
+SUITES = {"grown": "recall-grown", "scifact": "beir-scifact", "nfcorpus": "beir-nfcorpus", "arguana": "beir-arguana",
           "locomo": "locomo", "scifact-x10": "beir-scifact-x10"}
 METHOD_NAMES = {"ref_bm25_anserini": "reference-bm25s-k1-0.9-b-0.4",
                 "ref_bm25_oml_params": "reference-bm25s-k1-1.2-b-0.75"}
@@ -60,6 +62,9 @@ def latency(per_query, offline=False):
 
 
 def suite_version(dataset, cache):
+    if dataset == "grown":
+        g = json.loads((HERE.parent / "recall" / "queries-grown.json").read_text())
+        return f"eval/recall grown set version {g['version']}, corpus version {g['corpus_version']}"
     if dataset == "locomo":
         p = Path(cache) / "locomo" / "locomo10.json"
         digest = hashlib.sha256(p.read_bytes()).hexdigest()[:16] if p.exists() else "unknown"
@@ -91,10 +96,18 @@ def from_bench(r, a):
         per_category["all-categories"] = ({METRICS[k]: r4(s["all"][k]) for k in METRICS}
                                           | {"n_queries": s["all"]["n"]})
     pub = PUBLISHED_BM25.get(ds)
+    if ds == "grown":
+        per_category["all-categories"] = ({METRICS[k]: r4(s["all"][k]) for k in METRICS}
+                                          | {"n_queries": s["all"]["n"]})
     reference = ({"source": "BEIR BM25 (Anserini, k1 0.9, b 0.4, title and text fields)",
                   "metric": "ndcg@10", "value": pub["nDCG@10"], "url": BEIR_URL}
                  if pub else None)
-    if ds == "scifact-x10":
+    if ds == "grown":
+        note = ("The synthetic corpus's 200 memories with the grown set's question-shaped and "
+                "paraphrased queries (ADR-0075 d8, phase 0a), drafted by a model of another family "
+                "than the corpus's writer and labelled with the memory each was drafted from; "
+                "success counts grade 2; k 100, no token budget; English only.")
+    elif ds == "scifact-x10":
         note = ("SciFact's abstracts and nine copies with 10% of words replaced, 51,830 memories "
                 "written to one workarea, for latency at scale; qrels name the original copy only, "
                 "so quality is not comparable to beir-scifact. k 100, no token budget.")
@@ -203,7 +216,7 @@ def main():
     ap.add_argument("--out", default=str(HERE / "results"))
     a = ap.parse_args()
     out = Path(a.out)
-    written = []
+    written, per_query = [], []
     # A run asked with --limit is a seeded subset; its fraction is of the
     # queries the unlimited runs of the same dataset asked.
     a.full_queries = {}
@@ -217,6 +230,7 @@ def main():
             continue
         suite, method, doc = from_bench(r, a)
         written.append((suite, method, doc))
+        per_query.append((suite, method, doc, r))
     recall = Path(a.recall)
     version = json.loads((recall.parent / "queries.json").read_text())["version"]
     for p in sorted(recall.glob("served_*.json")):
@@ -231,6 +245,23 @@ def main():
         d.mkdir(parents=True, exist_ok=True)
         (d / f"{method}.json").write_text(json.dumps(doc, indent=1) + "\n")
         print(f"{suite}/{method}.json")
+    # Per-query results (ADR-0075 d8: every run's per-query results are
+    # committed), slim: each query's category, its first 10 served ids, its
+    # scores and its latency, in a schema the page generator does not render.
+    for suite, method, doc, r in per_query:
+        d = out / "per-query" / suite
+        d.mkdir(parents=True, exist_ok=True)
+        rows = {q: {"category": row.get("category"),
+                    "ranked": row["ranked"][:10],
+                    "scores": {METRICS[k]: r4(v) for k, v in row["scores"].items()},
+                    "latency_ms": row.get("latency_ms")}
+                for q, row in r["per_query"].items()}
+        slim = {"schema": "oml-bench-per-query/1", "suite": suite, "method": method,
+                "suite_version": doc["suite_version"], "date": doc["date"],
+                "commit": doc["commit"], "queries": rows}
+        (d / f"{method}.json").write_text(json.dumps(slim, separators=(",", ":"), sort_keys=True)
+                                          + "\n")
+        print(f"per-query/{suite}/{method}.json")
 
 
 if __name__ == "__main__":
