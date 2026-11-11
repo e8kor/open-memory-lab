@@ -5435,12 +5435,21 @@ fn handlers_doctor(scrape: Option<&Scrape>) -> Vec<String> {
     let Some(scrape) = scrape else {
         return vec!["not read: set OML_METRICS_URL to the lead's metrics listener".to_owned()];
     };
-    match scrape.sum("oml_handler_panics_total", &[]) {
+    let mut lines = match scrape.sum("oml_handler_panics_total", &[]) {
         0 => vec!["no handler panicked since start".to_owned()],
         n => vec![format!(
             "warn handler_panic: {n} request(s) hit a handler panic since start and were answered 500 system.internal (details.reason handler_panic); the lead's log names each under event handler_panic with its request id, and every one is a defect to report"
         )],
+    };
+    // A web console act claims its Idempotency-Key before it acts; one
+    // whose claim was left unsettled answers its resubmissions
+    // idempotency.in_progress instead of acting again (#233).
+    if let n @ 1.. = scrape.sum("oml_idempotency_unsettled_total", &[]) {
+        lines.push(format!(
+            "warn idempotency_unsettled: {n} claimed act(s) (web console acts and key issues) since start left their Idempotency-Key claimed and unrecorded (the lead's log names each under event idempotency_unsettled with the act); a resubmission of that form answers 409 idempotency.in_progress and acts nothing, so nothing is repeated, and a fresh form acts under a fresh key. Look for Postgres errors at those times; operations/runbooks.md (a form answers idempotency.in_progress) lists the claims held and how old each is"
+        ));
     }
+    lines
 }
 
 /// The recall telemetry's doctor lines, from the metrics listener alone
@@ -6238,6 +6247,25 @@ mod tests {
             vec!["no handler panicked since start".to_owned()]
         );
         assert!(handlers_doctor(None)[0].contains("OML_METRICS_URL"));
+    }
+
+    #[test]
+    fn the_handlers_doctor_warns_on_an_act_whose_idempotency_claim_was_left_unsettled() {
+        let lines = handlers_doctor(Some(&Scrape(
+            "oml_handler_panics_total 0\noml_idempotency_unsettled_total 3\n".to_owned(),
+        )));
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines[1].starts_with("warn idempotency_unsettled: 3 claimed act(s)"),
+            "{lines:?}"
+        );
+        assert_eq!(
+            handlers_doctor(Some(&Scrape(
+                "oml_handler_panics_total 0\noml_idempotency_unsettled_total 0\n".to_owned()
+            ))),
+            vec!["no handler panicked since start".to_owned()],
+            "no unsettled claim, no line"
+        );
     }
 
     #[test]

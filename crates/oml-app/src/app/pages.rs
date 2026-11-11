@@ -160,6 +160,44 @@ pub struct WebListRequest {
 /// (ADR-0045 d30): ten pages of the largest list page, chosen, not measured.
 pub const REGION_COUNT_MAX: usize = 2_000;
 
+/// What claiming a web console act's `Idempotency-Key` found
+/// ([`App::claim_act`]).
+#[derive(Debug)]
+pub enum ActClaim {
+    /// No outcome is recorded and the claim is this attempt's: act, then
+    /// [`App::settle_act`] or, on a refusal, [`App::release_act`].
+    Act(ActTicket),
+    /// The outcome recorded under the key, `{status, body}` as the act
+    /// recorded it.
+    Replay(serde_json::Value),
+    /// Another attempt holds the claim and has recorded nothing yet: it is
+    /// still acting, or it stopped between its act and its record.
+    InProgress,
+}
+
+/// The claim an attempt holds on its act's `Idempotency-Key` until it
+/// settles or releases it.
+#[derive(Debug)]
+pub struct ActTicket {
+    scope: crate::ports::IdempotencyScope,
+    request_digest: String,
+    claim_id: Uuid,
+}
+
+impl ActTicket {
+    /// The claim's id, which the lead's log names for an operator.
+    #[must_use]
+    pub fn claim_id(&self) -> Uuid {
+        self.claim_id
+    }
+
+    /// The acting key whose claim this is.
+    #[must_use]
+    pub fn key_id(&self) -> Uuid {
+        self.scope.key_id
+    }
+}
+
 /// One workarea of the Atlas (ADR-0045 d30): the node, its path, and its
 /// rows the viewer may read by state: approved (promoted tips), held,
 /// unreviewed inside an in-progress scope, and every other state.
@@ -438,41 +476,82 @@ where
         }
     }
 
-    /// The outcome recorded for this act under the caller's
-    /// `Idempotency-Key`, if any; a record of another request is
-    /// `idempotency.digest_mismatch` (http-api.md idempotency).
-    pub async fn recorded_act(
+    /// Claims this act's `Idempotency-Key` for the caller before the act
+    /// runs (http-api.md idempotency; ADR-0070 d3 layer 4, d5; #233):
+    /// [`ActClaim::Act`] to act, holding the claim, [`ActClaim::Replay`]
+    /// with the outcome recorded under the key, or [`ActClaim::InProgress`]
+    /// while another attempt holds the claim, which the caller waits on and
+    /// claims again. A key held by another request is
+    /// [`AppError::IdempotencyDigestMismatch`]. `claim_id` names this
+    /// attempt's claim; the caller draws a fresh one per attempt.
+    pub async fn claim_act(
         &self,
         caller: &Caller,
         act: &str,
         idem_key: &str,
         request_digest: &str,
-    ) -> Result<Option<serde_json::Value>, AppError> {
-        self.recorded(&Self::act_scope(caller, act, idem_key), request_digest)
-            .await
+        claim_id: Uuid,
+    ) -> Result<ActClaim, AppError> {
+        let scope = Self::act_scope(caller, act, idem_key);
+        match self
+            .journal
+            .idempotency_claim(&scope, request_digest, claim_id)
+            .await?
+        {
+            crate::ports::IdempotencyClaim::Claimed => Ok(ActClaim::Act(ActTicket {
+                scope,
+                request_digest: request_digest.to_owned(),
+                claim_id,
+            })),
+            crate::ports::IdempotencyClaim::Recorded(record) => {
+                if record.request_digest != request_digest {
+                    return Err(AppError::IdempotencyDigestMismatch);
+                }
+                Ok(ActClaim::Replay(record.response))
+            }
+            crate::ports::IdempotencyClaim::InProgress {
+                request_digest: held,
+            } => {
+                if held != request_digest {
+                    return Err(AppError::IdempotencyDigestMismatch);
+                }
+                Ok(ActClaim::InProgress)
+            }
+        }
     }
 
-    /// Records an act's outcome after its last commit, so a resubmission
-    /// with the same key answers it instead of acting again. A scope a
-    /// concurrent resubmission recorded first is left as it is.
-    pub async fn record_act(
+    /// Records the act's outcome into its claim, so a resubmission under
+    /// the same key answers it instead of acting again. `false` when the
+    /// claim was no longer held, which records nothing.
+    pub async fn settle_act(
         &self,
-        caller: &Caller,
-        act: &str,
-        idem_key: &str,
-        request_digest: &str,
+        ticket: ActTicket,
         response: serde_json::Value,
-    ) -> Result<(), AppError> {
-        self.journal
-            .idempotency_put(crate::ports::IdempotencyPut {
-                scope: Self::act_scope(caller, act, idem_key),
-                record: crate::ports::IdempotencyRecord {
-                    request_digest: request_digest.to_owned(),
-                    response,
+    ) -> Result<bool, AppError> {
+        Ok(self
+            .journal
+            .idempotency_settle(
+                crate::ports::IdempotencyPut {
+                    scope: ticket.scope,
+                    record: crate::ports::IdempotencyRecord {
+                        request_digest: ticket.request_digest,
+                        response,
+                    },
                 },
-            })
-            .await?;
-        Ok(())
+                ticket.claim_id,
+            )
+            .await?)
+    }
+
+    /// Drops the claim of an act that was refused before anything
+    /// committed, so a resubmission acts again: a refused request records
+    /// nothing (http-api.md idempotency). Never called once the act may
+    /// have committed (#233).
+    pub async fn release_act(&self, ticket: ActTicket) -> Result<(), AppError> {
+        Ok(self
+            .journal
+            .idempotency_release(&ticket.scope, ticket.claim_id)
+            .await?)
     }
 
     // -- the user page's keys ---------------------------------------------

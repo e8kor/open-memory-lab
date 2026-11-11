@@ -16,8 +16,9 @@ mod web;
 mod widen;
 pub use federation::WideKey;
 pub use pages::{
-    AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted, OwnKey, QueueRow,
-    REGION_COUNT_MAX, Region, Regions, VerdictTrail, WebListRequest, WorkareaOffer, WorkareaOffers,
+    ActClaim, ActTicket, AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted,
+    OwnKey, QueueRow, REGION_COUNT_MAX, Region, Regions, VerdictTrail, WebListRequest,
+    WorkareaOffer, WorkareaOffers,
 };
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;

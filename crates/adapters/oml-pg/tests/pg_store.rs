@@ -9730,6 +9730,94 @@ async fn migration_0041_builds_each_partitions_index_in_its_own_transaction_and_
     drop_dbs(&created).await;
 }
 
+/// Migration 0042 applies beside an open write and an open read of
+/// `idempotency`, waiting on neither, and gives the serving role UPDATE of a
+/// claim's outcome and time and DELETE, and nothing more (ADR-0070 d5;
+/// #233).
+#[tokio::test]
+async fn migration_0042_applies_beside_an_open_write_and_read_of_idempotency_without_waiting() {
+    let sql = MIGRATOR
+        .iter()
+        .find(|m| m.version == 42)
+        .expect("migration 0042")
+        .sql
+        .to_string();
+    assert!(
+        sql.contains("SET LOCAL lock_timeout = '5s'"),
+        "0042 bounds its wait"
+    );
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, mut conn) = schema_through(&created, 41).await;
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut rig = ChainRig::new(595);
+    rig.seed_chain(&store, 0).await;
+    let mut writer = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("connect");
+    let mut write = writer.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
+        .bind(rig.tenant_id.to_string())
+        .execute(&mut *write)
+        .await
+        .expect("tenant");
+    sqlx::query(
+        "INSERT INTO idempotency (tenant_id, key, request_digest, response, committed_at) \
+         VALUES ($1, 'open-write', 'd', '{}', now())",
+    )
+    .bind(rig.tenant_id)
+    .execute(&mut *write)
+    .await
+    .expect("an open write");
+    let mut reader = PgConnection::connect(&owner_url(&db))
+        .await
+        .expect("connect");
+    let mut read = reader.begin().await.expect("begin");
+    sqlx::query("SELECT count(*) FROM idempotency")
+        .execute(&mut *read)
+        .await
+        .expect("an open read");
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        store.migrate(&owner_url(&db)),
+    )
+    .await
+    .expect("0042 waits on neither the write nor the read")
+    .expect("0042 applies");
+    let applied: i64 =
+        sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success")
+            .fetch_one(&mut conn)
+            .await
+            .expect("versions");
+    assert_eq!(applied, 42, "0042 applied while both were open");
+    write.commit().await.expect("the write commits");
+    read.commit().await.expect("the read ends");
+    let privileges: (bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+        "SELECT has_column_privilege($1, 'idempotency', 'response', 'UPDATE'), \
+                has_column_privilege($1, 'idempotency', 'committed_at', 'UPDATE'), \
+                has_column_privilege($1, 'idempotency', 'request_digest', 'UPDATE'), \
+                has_column_privilege($1, 'idempotency', 'key', 'UPDATE'), \
+                has_table_privilege($1, 'idempotency', 'DELETE'), \
+                has_table_privilege($1, 'idempotency', 'TRUNCATE')",
+    )
+    .bind(format!("{db}_serving"))
+    .fetch_one(&mut conn)
+    .await
+    .expect("privileges");
+    assert_eq!(
+        privileges,
+        (true, true, false, false, true, false),
+        "a claim's outcome and time are written, never its key or digest"
+    );
+    drop(conn);
+    drop_dbs(&created).await;
+}
+
 /// A promoted version with no `promoted_at`, as a row folded before 0005
 /// can be, is counted for doctor and served at no instant (ADR-0059 d16).
 #[tokio::test]

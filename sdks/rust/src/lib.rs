@@ -32,7 +32,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 29] = [
+pub const OPERATIONS: [&str; 40] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workarea resp:GuardrailSet",
@@ -62,6 +62,17 @@ pub const OPERATIONS: [&str; 29] = [
     "adminReadMemory GET /v2/admin/memories/{artifact_id} resp:AdminRead",
     "submitMemory POST /v1/memories body:verb,claim_key,body,workarea,derives_from resp:Accepted",
     "supersedeMemory POST /v1/memories/{artifact_id}/supersede body:body,expected_version,retirement resp:Accepted",
+    "whoami GET /v2/whoami query:start resp:Onboarding",
+    "listWebEmails GET /v2/web/emails query:limit,cursor resp:WebEmailPage",
+    "allowWebEmail POST /v2/web/emails body:email,user,admin,keep_an_admin resp:WebEmail",
+    "removeWebEmail POST /v2/web/emails/remove body:email,keep_an_admin resp:Removed",
+    "grantWebCapacities POST /v2/web/users/{user}/capacities body:capacity,workareas resp:CapacityGranted",
+    "listWebUsers GET /v2/web/users resp:WebUsers",
+    "setWebUserQuota POST /v2/web/users/{user}/quota body:memories,keys,connections,requests_per_minute resp:WebUser",
+    "disableWebUser POST /v2/web/users/{user}/disable resp:Disabled",
+    "closeWebDeletion POST /v2/web/users/{user}/deletion/close body:outcome resp:Closed",
+    "exportWebPerson GET /v2/web/export resp:Export",
+    "requestWebDeletion POST /v2/web/deletion-requests resp:DeletionRequested",
 ];
 
 /// The request id header (ADR-0042 d4).
@@ -511,6 +522,141 @@ pub struct Learn<'a> {
     pub workarea: &'a str,
     pub derives_from: &'a [&'a str],
     pub claim_key: Option<&'a str>,
+}
+
+/// A person's usage, as `GET /v2/whoami` and `GET /v2/web/users` serve it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct Usage {
+    pub memories: u64,
+    pub keys: u64,
+    pub connections: u64,
+}
+
+/// A person's limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct Limits {
+    pub memories: u64,
+    pub keys: u64,
+    pub connections: u64,
+    pub requests_per_minute: u64,
+}
+
+/// What the onboarding page waits for (ADR-0068 d10): whether an agent
+/// key connected, and the state of the newest memory of the person's root.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct StartStatus {
+    pub connected: bool,
+    pub first_memory: Option<String>,
+}
+
+/// The person a session key names, with the onboarding status.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Person {
+    pub user: String,
+    pub under_quotas: bool,
+    pub usage: Option<Usage>,
+    pub quotas: Option<Limits>,
+    pub deletion_requested_at: Option<String>,
+    #[serde(default)]
+    pub start: Option<StartStatus>,
+}
+
+/// `GET /v2/whoami?start=true`: the key's person with its onboarding
+/// status.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Onboarding {
+    pub person: Option<Person>,
+}
+
+/// One allowlist entry (ADR-0045 d2).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WebEmail {
+    pub email: String,
+    pub user: String,
+    pub admin: bool,
+}
+
+/// `GET /v2/web/emails`: one page of the allowlist.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WebEmailPage {
+    pub items: Vec<WebEmail>,
+    pub next_cursor: Option<String>,
+}
+
+/// `POST /v2/web/emails/remove`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Removed {
+    pub journal_seq: i64,
+}
+
+/// The key a capacity grant reached.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GrantedKey {
+    pub id: String,
+    pub name: Option<String>,
+}
+
+/// `POST /v2/web/users/{user}/capacities`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CapacityGranted {
+    pub key: GrantedKey,
+    pub journal_seq: Option<i64>,
+}
+
+/// One person as `GET /v2/web/users` lists them (openapi.yaml `WebUser`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WebUser {
+    pub user: String,
+    pub signed_up: bool,
+    pub disabled: bool,
+    pub under_quotas: bool,
+    pub usage: Usage,
+    pub quotas: Limits,
+}
+
+/// A pending deletion request.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DeletionRequest {
+    pub user: String,
+    pub requested_at: String,
+}
+
+/// `GET /v2/web/users`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WebUsers {
+    pub users: Vec<WebUser>,
+    pub deletions: Vec<DeletionRequest>,
+}
+
+/// `POST /v2/web/users/{user}/disable`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Disabled {
+    pub keys_cut_off: u64,
+    pub journal_seq: i64,
+}
+
+/// `POST /v2/web/users/{user}/deletion/close`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Closed {
+    pub journal_seq: i64,
+}
+
+/// `GET /v2/web/export`: everything the person holds; the memories and
+/// keys as the API wrote them.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, Deserialize)]
+pub struct Export {
+    pub format: String,
+    pub user: Option<String>,
+    pub exported_at: String,
+    pub memories: Vec<Value>,
+    pub keys: Vec<Value>,
+}
+
+/// `POST /v2/web/deletion-requests`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DeletionRequested {
+    pub requested_at: Option<String>,
+    pub journal_seq: i64,
 }
 
 /// `POST /v2/admin/memories/search`: one page.
@@ -1520,6 +1666,196 @@ impl<T: Transport> Client<T> {
         )
         .await
     }
+
+    /// `GET /v2/whoami?start=true`: the key's person with its onboarding
+    /// status.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn whoami_start(&self, call: &Call<'_>) -> Result<Onboarding, Error> {
+        self.get(Some(call), "/v2/whoami?start=true".to_owned())
+            .await
+    }
+
+    /// `GET /v2/web/emails`: one page of the allowlist.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn list_web_emails(
+        &self,
+        call: &Call<'_>,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<WebEmailPage, Error> {
+        let mut path = format!("/v2/web/emails?limit={limit}");
+        if let Some(cursor) = cursor {
+            path.push_str("&cursor=");
+            path.push_str(&encode(cursor));
+        }
+        self.get(Some(call), path).await
+    }
+
+    /// `POST /v2/web/emails`: adds an entry or changes one; with
+    /// `keep_an_admin` un-flagging the last admin is refused.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn allow_web_email(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        email: &str,
+        user: &str,
+        admin: bool,
+    ) -> Result<WebEmail, Error> {
+        self.post(
+            call,
+            "/v2/web/emails".to_owned(),
+            idempotency_key,
+            &serde_json::json!({
+                "email": email, "user": user, "admin": admin, "keep_an_admin": true,
+            }),
+        )
+        .await
+    }
+
+    /// `POST /v2/web/emails/remove`, refusing the last admin entry.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn remove_web_email(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        email: &str,
+    ) -> Result<Removed, Error> {
+        self.post(
+            call,
+            "/v2/web/emails/remove".to_owned(),
+            idempotency_key,
+            &serde_json::json!({ "email": email, "keep_an_admin": true }),
+        )
+        .await
+    }
+
+    /// `POST /v2/web/users/{user}/capacities`: review or curation on
+    /// `workarea`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn grant_web_capacity(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        user: &str,
+        capacity: &str,
+        workarea: &str,
+    ) -> Result<CapacityGranted, Error> {
+        self.post(
+            call,
+            format!("/v2/web/users/{}/capacities", encode(user)),
+            idempotency_key,
+            &serde_json::json!({ "capacity": capacity, "workareas": [workarea] }),
+        )
+        .await
+    }
+
+    /// `GET /v2/web/users`: the people with their quotas, and the pending
+    /// deletion requests.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn list_web_users(&self, call: &Call<'_>) -> Result<WebUsers, Error> {
+        self.get(Some(call), "/v2/web/users".to_owned()).await
+    }
+
+    /// `POST /v2/web/users/{user}/quota`: one quota, `None` its default.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn set_web_user_quota(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        user: &str,
+        quota: &str,
+        limit: Option<u64>,
+    ) -> Result<WebUser, Error> {
+        let mut body = serde_json::Map::new();
+        body.insert(quota.to_owned(), limit.map_or(Value::Null, Value::from));
+        self.post(
+            call,
+            format!("/v2/web/users/{}/quota", encode(user)),
+            idempotency_key,
+            &Value::Object(body),
+        )
+        .await
+    }
+
+    /// `POST /v2/web/users/{user}/disable`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn disable_web_user(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        user: &str,
+    ) -> Result<Disabled, Error> {
+        self.post(
+            call,
+            format!("/v2/web/users/{}/disable", encode(user)),
+            idempotency_key,
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// `POST /v2/web/users/{user}/deletion/close` with outcome `deleted`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn close_web_deletion(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        user: &str,
+    ) -> Result<Closed, Error> {
+        self.post(
+            call,
+            format!("/v2/web/users/{}/deletion/close", encode(user)),
+            idempotency_key,
+            &serde_json::json!({ "outcome": "deleted" }),
+        )
+        .await
+    }
+
+    /// `GET /v2/web/export`: everything the person holds.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn export_web_person(&self, call: &Call<'_>) -> Result<Export, Error> {
+        self.get(Some(call), "/v2/web/export".to_owned()).await
+    }
+
+    /// `POST /v2/web/deletion-requests`: the person asks for deletion.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn request_web_deletion(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+    ) -> Result<DeletionRequested, Error> {
+        self.send(
+            Method::POST,
+            Some(call),
+            "/v2/web/deletion-requests".to_owned(),
+            Some(idempotency_key),
+            None,
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -1730,6 +2066,33 @@ mod tests {
                     .supersede(&CALL, "idem-11", "m-1", "new text", 1, false)
                     .await,
             ),
+            decodes(&client.whoami_start(&CALL).await),
+            decodes(&client.list_web_emails(&CALL, 200, None).await),
+            decodes(
+                &client
+                    .allow_web_email(&CALL, "idem-12", "a@example.com", "alice", false)
+                    .await,
+            ),
+            decodes(
+                &client
+                    .remove_web_email(&CALL, "idem-13", "a@example.com")
+                    .await,
+            ),
+            decodes(
+                &client
+                    .grant_web_capacity(&CALL, "idem-14", "alice", "review", "alice")
+                    .await,
+            ),
+            decodes(&client.list_web_users(&CALL).await),
+            decodes(
+                &client
+                    .set_web_user_quota(&CALL, "idem-15", "alice", "keys", Some(5))
+                    .await,
+            ),
+            decodes(&client.disable_web_user(&CALL, "idem-16", "alice").await),
+            decodes(&client.close_web_deletion(&CALL, "idem-17", "alice").await),
+            decodes(&client.export_web_person(&CALL).await),
+            decodes(&client.request_web_deletion(&CALL, "idem-18").await),
         ];
         let seen = seen.lock().unwrap();
         let table = table();

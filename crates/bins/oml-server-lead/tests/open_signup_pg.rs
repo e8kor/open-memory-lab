@@ -133,6 +133,69 @@ struct Rig {
     router: Router,
 }
 
+/// `router` served on a loopback listener on an ephemeral port.
+async fn serve(router: Router) -> std::net::SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a loopback port");
+    let address = listener.local_addr().expect("an address");
+    tokio::spawn(async move { axum::serve(listener, router).await });
+    address
+}
+
+/// The lead and `oml-web` each on a loopback listener, behind a path
+/// router that sends each request to `oml-web` when [`oml_web::serves`]
+/// names it and to the lead otherwise, as the production proxy does
+/// (ADR-0070 d4, d7).
+async fn with_web(lead: Router) -> Router {
+    let lead = serve(lead).await;
+    let transport = oml_sdk::HttpTransport::new(
+        &format!("http://{lead}"),
+        std::time::Duration::from_secs(10),
+    )
+    .expect("a transport");
+    let web = serve(oml_web::router(oml_web::Web {
+        layers: oml_web::Layers {
+            public_origin: Some(ISSUER.to_owned()),
+            log: std::sync::Arc::new(|_| {}),
+        },
+        api: oml_web::api(std::sync::Arc::new(transport), WEB_CLIENT_SECRET)
+            .expect("an API client"),
+    }))
+    .await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("a client");
+    Router::new().fallback(move |request: axum::extract::Request| {
+        let client = client.clone();
+        async move {
+            let target = if oml_web::serves(request.method().as_str(), request.uri().path()) {
+                web
+            } else {
+                lead
+            };
+            let (parts, body) = request.into_parts();
+            let body = to_bytes(body, usize::MAX).await.expect("a body");
+            let path = parts.uri.path_and_query().map_or("/", |p| p.as_str());
+            let mut outbound = client
+                .request(parts.method, format!("http://{target}{path}"))
+                .body(body.to_vec());
+            for (name, value) in &parts.headers {
+                outbound = outbound.header(name, value);
+            }
+            let answer = outbound.send().await.expect("the upstream answers");
+            let mut response = axum::response::Response::builder().status(answer.status());
+            for (name, value) in answer.headers() {
+                response = response.header(name, value);
+            }
+            response
+                .body(Body::from(answer.bytes().await.expect("a body").to_vec()))
+                .expect("a response")
+        }
+    })
+}
+
 /// A migrated store, the tenant `oml`, and the lead with GitHub sign-in
 /// and, unless `open` is `None`, open sign-up into that tenant under the
 /// policy `open` makes of the default one.
@@ -169,6 +232,7 @@ async fn rig(open: Option<fn(SignupPolicy) -> SignupPolicy>) -> Option<Rig> {
     .await
     .expect("the lead starts")
     .router;
+    let router = with_web(router).await;
     Some(Rig {
         db,
         store,
@@ -296,8 +360,9 @@ fn pre(html: &str, id: &str) -> String {
 
 /// Issues the Claude Code key from `/web/start`: its value.
 async fn claude_code_key(rig: &Rig, cookie: &str) -> String {
-    let (status, _, html) = send(
-        &rig.router,
+    let (status, _, html) = follow(
+        rig,
+        cookie,
         form(
             "/web/start",
             Some(cookie),
@@ -307,6 +372,33 @@ async fn claude_code_key(rig: &Rig, cookie: &str) -> String {
     .await;
     assert_eq!(status, StatusCode::OK, "{html}");
     pre(&html, "cred-key")
+}
+
+/// `request` sent, and where it answers `303` within the pages, the page
+/// it lands on loaded with the sealed shown-once cookie it set, as a
+/// browser does (ADR-0070 d3 layer 4).
+async fn follow(
+    rig: &Rig,
+    cookie: &str,
+    request: Request<Body>,
+) -> (StatusCode, HeaderMap, String) {
+    let (status, headers, body) = send(&rig.router, request).await;
+    if status != StatusCode::SEE_OTHER {
+        return (status, headers, body);
+    }
+    let location = headers[header::LOCATION]
+        .to_str()
+        .expect("ASCII")
+        .to_owned();
+    let once = headers
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .find(|v| v.starts_with("__Host-oml_once="))
+        .and_then(|v| v.split(';').next())
+        .map(ToOwned::to_owned);
+    let cookies = once.map_or_else(|| cookie.to_owned(), |o| format!("{cookie}; {o}"));
+    send(&rig.router, page(&location, Some(&cookies))).await
 }
 
 async fn json(rig: &Rig, request: Request<Body>) -> (StatusCode, HeaderMap, Value) {
@@ -885,6 +977,9 @@ async fn quotas_refuse_past_their_limit_with_limit_quota_and_an_admin_raises_the
     let Some(rig) = rig(Some(|mut p| {
         p.quotas.keys = 1;
         p.quotas.memories = 1;
+        // The agent key is held to four a minute; the person's own pages,
+        // which spend several of their web key's requests per view, keep
+        // the session keys' floor (ADR-0070, the seventh table).
         p.quotas.requests_per_minute = 4;
         p
     }))
@@ -970,7 +1065,7 @@ async fn quotas_refuse_past_their_limit_with_limit_quota_and_an_admin_raises_the
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{html}");
-    assert_eq!(headers[header::LOCATION], "/web/admin/users");
+    assert_eq!(headers[header::LOCATION], "/web/admin/users?done=set");
     let (_, set) = events(&rig)
         .await
         .into_iter()
@@ -978,8 +1073,9 @@ async fn quotas_refuse_past_their_limit_with_limit_quota_and_an_admin_raises_the
         .expect("web.quota_set");
     assert_eq!(set["quota"], "keys");
     assert_eq!(set["limit"], 2);
-    let (status, _, html) = send(
-        &rig.router,
+    let (status, _, html) = follow(
+        &rig,
+        &ada,
         form(
             "/web/start",
             Some(&ada),
@@ -1082,7 +1178,10 @@ async fn deletion_is_a_journalled_request_the_admin_closes_by_disabling_the_pers
         form(
             "/web/admin/users",
             Some(&op),
-            &format!("action=close_deletion&csrf_token={}&user={user}", csrf(&op)),
+            &format!(
+                "action=close_deletion&csrf_token={}&user={user}&confirm=yes",
+                csrf(&op)
+            ),
         ),
     )
     .await;
@@ -1092,8 +1191,15 @@ async fn deletion_is_a_journalled_request_the_admin_closes_by_disabling_the_pers
         assert!(types.iter().any(|x| x == t), "{t}: {types:?}");
     }
     // The session ended, the agent is cut off, the memory is kept.
-    let (_, _, html) = send(&rig.router, page("/web/start", Some(&ada))).await;
-    assert!(html.contains("Sign in with GitHub"), "{html}");
+    let (status, headers, _) = send(&rig.router, page("/web/start", Some(&ada))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "the session ended");
+    assert!(
+        headers[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .starts_with("/web/sign-in"),
+        "the session ended"
+    );
     let (status, _, body) = json(
         &rig,
         api(
@@ -1141,7 +1247,10 @@ async fn an_admin_disables_only_a_person_who_signed_up_and_never_an_admin_or_a_s
         form(
             "/web/admin/users",
             Some(&op),
-            &format!("action=disable_user&csrf_token={}&user={user}", csrf(&op)),
+            &format!(
+                "action=disable_user&csrf_token={}&user={user}&confirm=yes",
+                csrf(&op)
+            ),
         )
     };
     // A name no entry holds, and the admin's own entry, are refused and journal nothing.
@@ -1160,8 +1269,15 @@ async fn an_admin_disables_only_a_person_who_signed_up_and_never_an_admin_or_a_s
     let ada_user = rig_user(&rig, 81).await;
     let (status, _, html) = send(&rig.router, disable(&ada_user)).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{html}");
-    let (_, _, html) = send(&rig.router, page("/web/start", Some(&ada))).await;
-    assert!(html.contains("Sign in with GitHub"), "{html}");
+    let (status, headers, _) = send(&rig.router, page("/web/start", Some(&ada))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "the session ended");
+    assert!(
+        headers[header::LOCATION]
+            .to_str()
+            .unwrap()
+            .starts_with("/web/sign-in"),
+        "the session ended"
+    );
     drop_db(&rig.db).await;
 }
 
@@ -1210,10 +1326,20 @@ async fn the_start_pages_answer_nothing_without_a_session() {
     let Some(rig) = rig(Some(|p| p)).await else {
         return;
     };
-    let (status, _, html) = send(&rig.router, page("/web/start", None)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("Sign in with GitHub"), "{html}");
-    for path in ["/web/start/status", "/web/start/export", "/web/admin/users"] {
+    // The pages are oml-web's (ADR-0070 d7 (b)): one with no session goes
+    // to the lead's sign-in carrying the page; the data answers not found.
+    for path in ["/web/start", "/web/admin/users"] {
+        let (status, headers, body) = send(&rig.router, page(path, None)).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{path}: {body}");
+        assert!(
+            headers[header::LOCATION]
+                .to_str()
+                .unwrap()
+                .starts_with("/web/sign-in?next="),
+            "{path}"
+        );
+    }
+    for path in ["/web/start/status", "/web/start/export"] {
         let (status, _, body) = send(&rig.router, page(path, None)).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
     }
@@ -1239,7 +1365,7 @@ async fn the_start_pages_answer_nothing_without_a_session() {
         "{csp}"
     );
     assert!(html.contains("<script>"));
-    let (_, headers, _) = send(&rig.router, page("/web?view=setup", Some(&ada))).await;
+    let (_, headers, _) = send(&rig.router, page("/web/setup", Some(&ada))).await;
     assert!(
         !headers[header::CONTENT_SECURITY_POLICY]
             .to_str()

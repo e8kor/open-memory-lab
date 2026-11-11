@@ -46,7 +46,7 @@
 -- one would take a SHARE ROW EXCLUSIVE lock on every memories partition,
 -- blocking the tenant's writes until this migration commits.
 --
--- Numbered 0043, after the as-of tips (0041); 0042 is another branch's.
+-- Numbered 0043, after the idempotency claims (0042).
 --
 -- What it costs a live database: a new table, its policies and its two
 -- indexes, built while it is empty; then one INSERT … SELECT per tenant,

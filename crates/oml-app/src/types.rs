@@ -2933,6 +2933,14 @@ pub enum AppError {
         "idempotency key reused with a different request (http-api.md idempotency.digest_mismatch)"
     )]
     IdempotencyDigestMismatch,
+    /// Another attempt under the same `Idempotency-Key` claimed the act and
+    /// recorded no outcome within the wait: it is still acting, or it died
+    /// between its act and its record. Nothing was acted
+    /// (errors.md `idempotency.in_progress`; ADR-0070 d5; #233).
+    #[error(
+        "another attempt under this idempotency key is acting or stopped before it recorded (idempotency.in_progress)"
+    )]
+    IdempotencyInProgress,
     #[error("stored idempotent response is unreadable: {0}")]
     StoredResponse(String),
     /// A verdict sent without `serve_id` while the reviewer key holds no

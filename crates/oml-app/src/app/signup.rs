@@ -16,7 +16,9 @@ use oml_domain::web::{ProviderIdentity, session_key_names};
 use oml_domain::{Role, event_types};
 
 use super::{App, Caller, require_role};
-use crate::ports::{Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, WebStore};
+use crate::ports::{
+    Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, StoreError, WebStore,
+};
 use crate::types::{
     AdminSearch, AppError, Bearer, Credential, DeletionRequest, KeyRecord, SignupPolicy, UserUsage,
     WebEntry,
@@ -30,6 +32,42 @@ pub const DRAWS_MAX: usize = 3;
 /// The most memories the export and the status read (ADR-0068 d6); a
 /// person's quota is below it unless an admin raised it past.
 pub const EXPORT_MAX: usize = 100_000;
+
+/// How many times one commit of a multi-commit act that follows the act's
+/// first commit retries after a chain-head conflict: the transport's own
+/// retry count (#266).
+const STEP_CHAIN_RETRIES: usize = 16;
+
+/// One commit of a multi-commit act after the act's first commit, retried
+/// alone on a chain-head conflict, so a retry never re-runs, and so never
+/// journals twice, a commit that already landed (#266). A conflict that
+/// outlasts the retries is answered as the store unavailable, which the
+/// transport does not retry: what landed stands, the claim on its
+/// `Idempotency-Key` is kept, and the act finishes when sent again under a
+/// new key.
+async fn later_step<T, F, Fut>(mut step: F) -> Result<T, AppError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, AppError>>,
+{
+    let mut attempt = 0;
+    loop {
+        match step().await {
+            Err(AppError::Store(
+                StoreError::SeqConflict { .. } | StoreError::PrevHashConflict { .. },
+            )) => {
+                attempt += 1;
+                if attempt >= STEP_CHAIN_RETRIES {
+                    return Err(AppError::Store(StoreError::Backend(
+                        "chain head contention after the act's first commit; what it journalled stands, and the act finishes when sent again under a new Idempotency-Key"
+                            .to_owned(),
+                    )));
+                }
+            }
+            other => return other,
+        }
+    }
+}
 
 /// Open sign-up's configuration and the process's counters: each key's
 /// requests in its current minute, and the keys of the sign-up tenant
@@ -53,10 +91,13 @@ impl SignupState {
 }
 
 /// What disabling a person did (ADR-0068 d8): the bearer and connector
-/// keys cut off on `universe`, and the seq of `web.user_disabled`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// keys cut off on `universe`, the keys of the root no denial can cut off
+/// (gone since the listing, or an admin key), and the seq of
+/// `web.user_disabled`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserDisabled {
     pub keys_cut_off: usize,
+    pub keys_skipped: Vec<Uuid>,
     pub journal_seq: u64,
 }
 
@@ -68,7 +109,15 @@ pub struct Person {
     pub user: Name,
     pub limits: Option<(UserUsage, Quotas)>,
     pub deletion_requested_at: Option<oml_domain::EventTime>,
+    /// The onboarding status, read only when asked (ADR-0070 d5).
+    pub start: Option<StartStatus>,
 }
+
+/// The least per-minute request rate a person's session keys get, whatever
+/// their quota says: a page view of the console spends two to four
+/// requests, so sixty keep a person on their own pages (ADR-0070, the
+/// seventh table of phase (b); chosen, not measured, #170).
+pub const SESSION_REQUESTS_PER_MINUTE_MIN: u64 = 60;
 
 /// One person of the sign-up tenant as the admin's users page lists them
 /// (ADR-0068 d5, d6, d8).
@@ -351,6 +400,9 @@ where
     /// every entry of the user and ends their sessions, then one
     /// `key.denied` on `universe` for each live bearer and connector key of
     /// the root. Session keys are reached only from sessions, which ended.
+    /// Each `key.denied` retries alone on a chain-head conflict
+    /// (`later_step`), so a conflict never journals `web.user_disabled`
+    /// twice in one call (#266).
     pub async fn web_disable_user(
         &self,
         admin: &Caller,
@@ -399,6 +451,7 @@ where
             )
             .await?;
         let mut cut = 0;
+        let mut skipped = Vec::new();
         if let Some(root) = self.signup_root(tenant_id, user).await? {
             let universe_id = self.universe(tenant_id).await?;
             let universe = Reference::Name(Name::parse(UNIVERSE).expect("universe is a name"));
@@ -414,13 +467,26 @@ where
                 if denied {
                     continue;
                 }
-                self.deny_key_by(&admin.key, Reference::Id(key.key_id), universe.clone())
-                    .await?;
-                cut += 1;
+                // A key no denial can cut off (gone since the listing, or an
+                // admin key, which carries no grant to attenuate) is skipped
+                // and named in the answer: after the first commit no refusal
+                // may end the act, so its claim is never released (#266).
+                match later_step(|| {
+                    self.deny_key_by(&admin.key, Reference::Id(key.key_id), universe.clone())
+                })
+                .await
+                {
+                    Ok(_) => cut += 1,
+                    Err(AppError::NotFound | AppError::DenialOnAdminKey) => {
+                        skipped.push(key.key_id);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
         }
         Ok(UserDisabled {
             keys_cut_off: cut,
+            keys_skipped: skipped,
             journal_seq: receipt.seq,
         })
     }
@@ -474,7 +540,8 @@ where
 
     /// `close_deletion` (ADR-0068 d6): the person disabled (d8), then the
     /// request closed, journalled as `web.deletion_closed`. The bytes wait
-    /// for erasure.
+    /// for erasure. The closing commit retries alone on a chain-head
+    /// conflict, as the disable's denials do (#266).
     pub async fn web_close_deletion(&self, admin: &Caller, user: &Name) -> Result<u64, AppError> {
         require_role(&admin.key, Role::Admin, "web_users")?;
         let tenant_id = admin.key.tenant_id;
@@ -488,23 +555,26 @@ where
             return Err(AppError::NotFound);
         }
         self.web_disable_user(admin, user).await?;
-        let prev = self.head_event(tenant_id).await?;
-        let event = self.seal(
-            prev.as_ref(),
-            tenant_id,
-            event_types::WEB_DELETION_CLOSED,
-            &admin.key.principal,
-            Some(admin.key.key_id),
-            json!({ "user": user.as_str(), "by_key_id": admin.key.key_id.to_string() }),
-        )?;
-        Ok(self
-            .commit(
-                event,
-                MetadataFold::DeletionClosed { user: user.clone() },
-                None,
-            )
-            .await?
-            .seq)
+        later_step(|| async {
+            let prev = self.head_event(tenant_id).await?;
+            let event = self.seal(
+                prev.as_ref(),
+                tenant_id,
+                event_types::WEB_DELETION_CLOSED,
+                &admin.key.principal,
+                Some(admin.key.key_id),
+                json!({ "user": user.as_str(), "by_key_id": admin.key.key_id.to_string() }),
+            )?;
+            Ok(self
+                .commit(
+                    event,
+                    MetadataFold::DeletionClosed { user: user.clone() },
+                    None,
+                )
+                .await?
+                .seq)
+        })
+        .await
     }
 
     /// `GET /v2/web/users`, admin by key role (ADR-0068 d5, d6, d11): the
@@ -572,7 +642,13 @@ where
     /// d5; ADR-0068 d5, d6, d10): the user of its root, whether it is
     /// under the sign-up quotas, its usage and limits there, and when the
     /// person asked for deletion. `None` for a key that names no user.
-    pub async fn whoami_person(&self, bearer: Bearer<'_>) -> Result<Option<Person>, AppError> {
+    pub async fn whoami_person(
+        &self,
+        bearer: Bearer<'_>,
+        start: bool,
+    ) -> Result<Option<Person>, AppError> {
+        // One authentication, so one request of the key's rate, however
+        // much the answer names (ADR-0068 d5; ADR-0070 d5).
         let caller = self.authenticate_bearer(bearer).await?;
         let tenant_id = caller.key.tenant_id;
         let Some(root) = caller.key.user else {
@@ -594,10 +670,16 @@ where
             .into_iter()
             .find(|r| r.user == user)
             .map(|r| r.requested_at);
+        let start = if start {
+            Some(self.web_start_status(&caller).await?)
+        } else {
+            None
+        };
         Ok(Some(Person {
             user,
             limits,
             deletion_requested_at,
+            start,
         }))
     }
 
@@ -783,9 +865,19 @@ where
         let limit = match current {
             Some((m, _, limit)) if m == minute => limit,
             _ => {
-                self.quotas_of(key.tenant_id, root)
+                let limit = self
+                    .quotas_of(key.tenant_id, root)
                     .await?
-                    .requests_per_minute
+                    .requests_per_minute;
+                // A person's own console keeps a floor of its own: a limit
+                // set below it binds their agent keys alone, so no quota
+                // locks a person out of the page that shows it (ADR-0070,
+                // the seventh table of phase (b)).
+                if key.credential == Credential::Session {
+                    limit.max(SESSION_REQUESTS_PER_MINUTE_MIN)
+                } else {
+                    limit
+                }
             }
         };
         let mut windows = state.windows.lock().expect("rate lock");

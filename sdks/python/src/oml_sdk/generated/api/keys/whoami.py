@@ -11,6 +11,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
+    start: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -25,9 +26,16 @@ def _get_kwargs(
     if not isinstance(traceparent, Unset):
         headers["traceparent"] = traceparent
 
+    params: dict[str, Any] = {}
+
+    params["start"] = start
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v2/whoami",
+        "params": params,
     }
 
     _kwargs["headers"] = headers
@@ -66,6 +74,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
+    start: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -81,6 +90,7 @@ def sync_detailed(
     auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
 
     Args:
+        start (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -94,6 +104,7 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
+        start=start,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -109,6 +120,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
+    start: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -124,6 +136,7 @@ def sync(
     auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
 
     Args:
+        start (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -138,6 +151,7 @@ def sync(
 
     return sync_detailed(
         client=client,
+        start=start,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -147,6 +161,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
+    start: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -162,6 +177,7 @@ async def asyncio_detailed(
     auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
 
     Args:
+        start (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -175,6 +191,7 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
+        start=start,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -188,6 +205,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
+    start: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -203,6 +221,7 @@ async def asyncio(
     auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
 
     Args:
+        start (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -218,6 +237,7 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
+            start=start,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,
             traceparent=traceparent,

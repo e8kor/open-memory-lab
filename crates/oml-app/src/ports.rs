@@ -547,7 +547,9 @@ pub struct IdempotencyRecord {
 /// its own before any side effect (http-api.md idempotency): no use-case has
 /// a side effect before its commit, and a second record under one scope
 /// refuses the whole commit ([`StoreError::IdempotencyRecorded`]), so a
-/// request still commits once. `idempotency.in_progress` is never answered.
+/// request still commits once; these use-cases never answer
+/// `idempotency.in_progress`. The web console's acts, which commit in more
+/// than one transaction, claim instead ([`JournalStore::idempotency_claim`]).
 /// A supersede that lost the race to another under the same key answers the
 /// winner's response as a replay: directly when its commit finds the record,
 /// or through the transport's retry when its commit was sealed on the head
@@ -558,6 +560,18 @@ pub struct IdempotencyRecord {
 pub struct IdempotencyPut {
     pub scope: IdempotencyScope,
     pub record: IdempotencyRecord,
+}
+
+/// What [`JournalStore::idempotency_claim`] found under a scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IdempotencyClaim {
+    /// No record and no claim held the scope; this call holds it now.
+    Claimed,
+    /// An act's outcome is recorded under the scope.
+    Recorded(IdempotencyRecord),
+    /// Another attempt claimed the scope and has recorded nothing yet: it
+    /// is still acting, or it died between its act and its record.
+    InProgress { request_digest: String },
 }
 
 /// One commit, one transaction: the signed event, the metadata fold, the
@@ -1310,14 +1324,45 @@ pub trait JournalStore: Retriever + Send + Sync {
         scope: &IdempotencyScope,
     ) -> impl Future<Output = Result<Option<IdempotencyRecord>, StoreError>> + Send;
 
-    /// Records the outcome of an act that committed in more than one
-    /// transaction, after its last one, under `scope`: `false` when the
-    /// scope already holds a record, which is then left as it is
-    /// (ADR-0070 d5, the web console's acts).
-    fn idempotency_put(
+    /// Claims `scope` for an act that commits in more than one transaction,
+    /// before its first, in a transaction of its own:
+    /// [`IdempotencyClaim::Claimed`] when no record or claim held it, which
+    /// this call now holds; otherwise the record or the claim that holds it,
+    /// left as it is. Of two concurrent claims under one scope exactly one
+    /// is `Claimed`
+    /// (http-api.md idempotency; ADR-0070 d3 layer 4, d5, the web
+    /// console's acts; #233).
+    ///
+    /// `claim_id` names this attempt's claim, so only the attempt that took
+    /// it settles or releases it: a late release of an attempt whose claim
+    /// an operator removed never drops a later attempt's claim.
+    fn idempotency_claim(
+        &self,
+        scope: &IdempotencyScope,
+        request_digest: &str,
+        claim_id: Uuid,
+    ) -> impl Future<Output = Result<IdempotencyClaim, StoreError>> + Send;
+
+    /// Records the act's outcome into the claim `claim_id` that
+    /// [`Self::idempotency_claim`] took under `put.scope` and the same
+    /// digest: `false`, writing nothing, when that claim is not held
+    /// (ADR-0070 d5; #233).
+    fn idempotency_settle(
         &self,
         put: IdempotencyPut,
+        claim_id: Uuid,
     ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    /// Drops the claim `claim_id` under `scope` of an act that was refused
+    /// before anything committed, so a
+    /// resubmission acts again, as a refused request records nothing
+    /// (http-api.md idempotency); a recorded outcome is never dropped
+    /// (ADR-0070 d5; #233).
+    fn idempotency_release(
+        &self,
+        scope: &IdempotencyScope,
+        claim_id: Uuid,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
 
     /// One claim edge of the tenant, pending or ratified; `None` for an edge
     /// it does not hold (postgres-schema.md `claim_edges`).
