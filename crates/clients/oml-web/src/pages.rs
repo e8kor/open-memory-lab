@@ -1,10 +1,11 @@
 //! The pages `oml-web` serves (ADR-0070 d7 (b)), each moved from the lead
-//! behind the same URL, with its assertions unchanged
-//! (`tests/web_pages.rs`). A page is drawn from the wire's fields only.
+//! to a path of its own under `/web/`, with its assertions unchanged but
+//! for the path (`tests/web_pages.rs`). A page is drawn from the wire's
+//! fields only.
 //!
-//! Moved so far: the user page's Guardrails view, `GET /web?view=guardrails`
-//! (ADR-0037 d17), first because it only reads and maps onto
-//! `GET /v1/guardrails` (design/web-client-separation.md).
+//! Moved so far: the user page's Guardrails view, `GET /web/guardrails`,
+//! formerly `GET /web?view=guardrails` (ADR-0037 d17), first because it only
+//! reads and maps onto `GET /v1/guardrails` (design/web-client-separation.md).
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -53,9 +54,8 @@ fn refused(status: StatusCode, code: &str, message: &str, calls: &PageCalls) -> 
     )
 }
 
-/// `GET /web`: the user page's views that have moved here. A view still
-/// served by the lead is not this process's, and the proxy never sends it.
-pub async fn user_page(
+/// `GET /web/guardrails`: the user page's Guardrails view.
+pub async fn guardrails_page(
     State(web): State<Web>,
     Extension(session): Extension<Session>,
     Extension(calls): Extension<Arc<PageCalls>>,
@@ -72,18 +72,10 @@ pub async fn user_page(
             );
         }
     };
-    match fields.get("view") {
-        Some("guardrails") => {
-            let next = uri.path_and_query().map_or("/web", |pq| pq.as_str());
-            guardrails(&web, &session, &calls, &fields, next).await
-        }
-        _ => refused(
-            StatusCode::NOT_FOUND,
-            "access.not_found",
-            "no such page here",
-            &calls,
-        ),
-    }
+    let next = uri
+        .path_and_query()
+        .map_or(crate::GUARDRAILS_PATH, |pq| pq.as_str());
+    guardrails(&web, &session, &calls, &fields, next).await
 }
 
 /// The most tree pages the selector reads: 50 pages of 200, so 10,000
@@ -164,7 +156,7 @@ async fn guardrails(
     );
     match tree {
         Ok(workareas) => {
-            body.push_str(r#"<form class="row" method="get" action="/web"><input type="hidden" name="view" value="guardrails"><label>Workarea<select name="workarea">"#);
+            body.push_str(r#"<form class="row" method="get" action="/web/guardrails"><label>Workarea<select name="workarea">"#);
             for node in &workareas {
                 let _ = write!(
                     body,
@@ -199,7 +191,7 @@ async fn guardrails(
             "Your page",
             &session.who(),
             &user_tabs(session.admin),
-            "/web?view=guardrails",
+            crate::GUARDRAILS_PATH,
             fields.get("done"),
             &body,
         ),

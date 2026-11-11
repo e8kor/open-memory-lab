@@ -542,6 +542,15 @@ where
         if let Some(refused) = human_only(headers) {
             return self.refused(&refused, line);
         }
+        // A view oml-web serves at its own path: a 303 to that fixed path,
+        // carrying nothing from the request (ADR-0070 d7 (b) as amended).
+        if let Some(path) = views::moved_view(query) {
+            return Answer {
+                response: self.redirect(path, None),
+                error_code: None,
+                line,
+            };
+        }
         match self.session_of(headers).await {
             Err(e) => self.refused(&e, line),
             Ok(None) => Answer {

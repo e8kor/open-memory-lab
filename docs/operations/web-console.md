@@ -11,10 +11,11 @@ serves pages and calls the server's public HTTP API for everything it shows, as 
 SDKs do. It holds no store and writes no journal. The server keeps the API, sign-in and every page
 that has not moved yet.
 
-The pages move one at a time. In this build `oml-web` serves one page, the Guardrails view of the
-user page (`GET /web?view=guardrails`). The server answers that URL as not found, so a deployment
-that routes it to the server shows no Guardrails tab content. Run `oml-web` behind the same proxy
-as the server before you upgrade.
+The pages move one at a time, and each moved page gets its own path under `/web/`. In this build
+`oml-web` serves one page, the Guardrails view of the user page, at `GET /web/guardrails`. The
+server answers the view's old address, `GET /web?view=guardrails`, with a redirect to
+`/web/guardrails`, so bookmarks keep working. Run `oml-web` behind the same proxy as the server
+before you upgrade: a deployment that sends `/web/guardrails` to the server shows not found.
 
 `oml-web` ships everywhere the server does:
 
@@ -82,11 +83,7 @@ included. For Caddy (`deploy/caddy/Caddyfile` adds the landing pages):
 
 ```caddyfile
 memory.example.com {
-	@oml_web {
-		method GET
-		path /web
-		query view=guardrails
-	}
+	@oml_web path /web/guardrails
 	reverse_proxy @oml_web 127.0.0.1:8091
 	reverse_proxy 127.0.0.1:8090
 }
@@ -94,8 +91,8 @@ memory.example.com {
 
 The list of pages `oml-web` serves is `PAGES` in `crates/clients/oml-web/src/lib.rs`. It grows
 with each page that moves, and this route grows with it; a test holds the Caddyfile, the
-compose file and `oml quickstart`'s compose file to it. An Ingress routes by path alone and
-cannot match this query, so the Helm chart routes no path to `oml-web` by default
+compose file, `oml quickstart`'s compose file and the Helm chart's `web.ingressPaths` to it.
+Every route is a path, so any proxy or Ingress controller can express it
 ([Kubernetes](../guides/kubernetes.md)).
 
 ## What crosses the hop
@@ -128,4 +125,3 @@ the page renders without it and names that call's request id.
 
 - The cap on API calls one session has in flight.
 - `oml doctor` reading `oml-web`'s environment. Run `oml-web --doctor` instead.
-- Ingress routes for the pages `oml-web` serves today, which a path-only Ingress cannot match.

@@ -89,11 +89,7 @@ configs:
       	auto_https off
       }
       :8080 {
-      	@oml_web {
-      		method GET
-      		path /web
-      		query view=guardrails
-      	}
+      	@oml_web path /web/guardrails
       	reverse_proxy @oml_web oml-web:8091
       	reverse_proxy oml-server:8080
       }

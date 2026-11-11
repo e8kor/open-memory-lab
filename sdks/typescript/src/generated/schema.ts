@@ -6492,6 +6492,13 @@ export interface operations {
                     "text/html": string;
                 };
             };
+            /** @description A view oml-web now serves at its own path, view=guardrails: to the fixed /web/guardrails, carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4. */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     userPageAct: {

@@ -526,7 +526,10 @@ jobs:
           cat > notes.md <<EOF
           ## Install
 
-          Docker (Postgres, oml-server, oml-web and a Caddy router on 127.0.0.1:8080):
+          Docker (Postgres, oml-server, oml-web and a Caddy router on 127.0.0.1:8080), for
+          development: the file's passwords and web client secret are fixed dev-only values
+          (set OML_WEB_CLIENT_SECRET to replace the secret). For a stack with generated
+          secrets, use \`oml quickstart\` from the CLI below:
 
               curl -fsSLO https://raw.githubusercontent.com/${{ github.repository }}/v${VERSION}/docker-compose.yml
               OML_VERSION=${VERSION} docker compose up -d

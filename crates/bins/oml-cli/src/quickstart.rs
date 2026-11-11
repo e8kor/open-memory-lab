@@ -160,7 +160,7 @@ mod tests {
             "the lead and oml-web read the one secret: {text}"
         );
         assert!(text.contains("image: caddy:"), "{text}");
-        assert!(text.contains("query view=guardrails"), "{text}");
+        assert!(text.contains("@oml_web path /web/guardrails"), "{text}");
         assert!(
             text.contains("reverse_proxy @oml_web oml-web:8091"),
             "{text}"

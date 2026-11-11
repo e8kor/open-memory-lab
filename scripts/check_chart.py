@@ -16,7 +16,9 @@ Run by .github/workflows/ci.yml (job chart). Renders deploy/helm/oml with
   through OML_WEB__API_URL, with startup and liveness on GET /web/healthz
   and readiness on GET /readyz on its http port, a ClusterIP Service of its
   own, and OML_WEB__CLIENT_SECRET from the same Secret and key as the lead's
-  (ADR-0070 d2); with the NetworkPolicy on, oml-web's pods admit their http
+  (ADR-0070 d2), a Secret the chart generates being kept on uninstall; the
+  Ingress routes each of web.ingressPaths, none empty, Exact to oml-web's
+  Service and every other path to the lead's; with the NetworkPolicy on, oml-web's pods admit their http
   port alone and reach DNS and the lead's pods alone, and the lead admits
   them;
 - the pod sets runAsNonRoot, a numeric non-root runAsUser and runAsGroup,
@@ -167,6 +169,8 @@ def main() -> int:
         if ingress is not None and not paths:
             errors.append("the notes' host override: the Ingress rule has no paths and routes nothing")
 
+    if not values_web_paths():
+        errors.append("values.yaml web.ingressPaths is empty, so the Ingress routes no page to oml-web (ADR-0070 d4)")
     check_notes(errors)
     return report(errors)
 
@@ -353,8 +357,22 @@ def check_options(errors: list[str], docs: list[dict], app_version: str) -> None
             for rule in ingress.get("spec", {}).get("rules", [])
             for p in rule.get("http", {}).get("paths", [])
         ]
-        if not backends or any(b.get("name") != service_name or b.get("port") != {"name": "http"} for b in backends):
-            errors.append(f"{label}: the Ingress does not route every path to {service_name}'s http port: {backends!r}")
+        web_paths = {p.get("path") for p in (values_web_paths())}
+        web_service = service_name.removesuffix("-server") + "-web"
+        routes = [
+            (p.get("path"), p.get("pathType"), p.get("backend", {}).get("service", {}))
+            for rule in ingress.get("spec", {}).get("rules", [])
+            for p in rule.get("http", {}).get("paths", [])
+        ]
+        for path, kind, backend in routes:
+            want = web_service if path in web_paths else service_name
+            if backend.get("name") != want or backend.get("port") != {"name": "http"}:
+                errors.append(f"{label}: the Ingress routes {path} to {backend!r}, not {want}'s http port")
+        for path in web_paths:
+            if not any(p == path and k == "Exact" and b.get("name") == web_service for p, k, b in routes):
+                errors.append(f"{label}: the Ingress has no Exact route for {path} to {web_service} (ADR-0070 d4)")
+        if not backends:
+            errors.append(f"{label}: the Ingress routes nothing")
 
     policies = [
         p for p in of_kind(docs, "NetworkPolicy")
@@ -384,6 +402,12 @@ def check_options(errors: list[str], docs: list[dict], app_version: str) -> None
     out_ports = sorted({p.get("port") for rule in pspec.get("egress", []) for p in rule.get("ports", [])}, key=str)
     if not pspec.get("egress") or any(not r.get("ports") for r in pspec["egress"]) or out_ports != sorted({53, 5432}, key=str):
         errors.append(f"{label}: the NetworkPolicy's egress is {pspec.get('egress')!r}, not DNS and the Postgres port alone")
+
+
+def values_web_paths() -> list[dict]:
+    """web.ingressPaths of values.yaml: each page oml-web serves, by path (ADR-0070 d4)."""
+    values = yaml.safe_load((CHART / "values.yaml").read_text()) or {}
+    return list((values.get("web") or {}).get("ingressPaths") or [])
 
 
 def lead_deployment(errors: list[str], label: str, docs: list[dict]) -> dict | None:
@@ -491,6 +515,8 @@ def check_web(errors: list[str], label: str, docs: list[dict], image_user: str |
         rendered = secrets.get(refs[0].get("name"))
         if rendered is not None and refs[0].get("key") not in (rendered.get("data") or {}):
             errors.append(f"{label}: Secret {refs[0].get('name')!r} has no key {refs[0].get('key')!r}")
+        if rendered is not None and (rendered["metadata"].get("annotations") or {}).get("helm.sh/resource-policy") != "keep":
+            errors.append(f"{label}: the generated web client Secret is not kept on uninstall, so a reinstall would rotate it")
     services = [
         s for s in of_kind(docs, "Service")
         if s.get("spec", {}).get("selector", {}).get(WEB_COMPONENT[0]) == WEB_COMPONENT[1]

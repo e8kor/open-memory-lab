@@ -39,12 +39,19 @@ async fn doctor() -> ExitCode {
                         ),
                     )
                 }
+                Ok(ready) if ready.status == "ok" && ready.web_client.is_none() => (
+                    Level::Fail,
+                    format!(
+                        "api: {} is ready but names no web client identity; it is a lead from before ADR-0070, which accepts no capacity credential",
+                        config.api_url
+                    ),
+                ),
                 Ok(ready) if ready.status == "ok" => (
                     Level::Ok,
                     format!(
                         "api: {} is ready (web client identity: {})",
                         config.api_url,
-                        ready.web_client.as_deref().unwrap_or("unknown")
+                        ready.web_client.as_deref().unwrap_or_default()
                     ),
                 ),
                 Ok(ready) => (

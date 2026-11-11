@@ -222,20 +222,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      # The docker profile with CI's sign-in double layered on
+      # (testing/e2e/compose.e2e.yaml): the image carries the e2e-sign-in
+      # feature, and the lead answers GitHub sign-ins itself.
       - name: Build and start
+        env:
+          COMPOSE_FILE: docker-compose.yml:testing/e2e/compose.e2e.yaml
         run: docker compose up -d --build
       - name: Quickstart inside the container
+        env:
+          COMPOSE_FILE: docker-compose.yml:testing/e2e/compose.e2e.yaml
         run: bash scripts/quickstart.sh
       # ADR-0070 d4: the router sends the moved page to oml-web, which sends
       # a signed-out browser to the lead's sign-in carrying the page, and
-      # every other path to the lead; oml-web's doctor reaches the lead.
-      - name: oml-web behind the router, and its doctor
-        run: bash scripts/check_web_hop.sh http://127.0.0.1:8080 docker compose exec -T oml-web /usr/local/bin/oml-web --doctor
+      # every other path to the lead; oml-web's doctor reaches the lead. Then
+      # a person signs in and loads the page through the router.
+      - name: oml-web behind the router, its doctor, and a signed-in page
+        env:
+          COMPOSE_FILE: docker-compose.yml:testing/e2e/compose.e2e.yaml
+        run: |
+          bash scripts/check_web_hop.sh http://127.0.0.1:8080 docker compose exec -T oml-web /usr/local/bin/oml-web --doctor
+          docker compose exec -T oml-server oml web allow e2e@example.com --user e2e
+          bash scripts/check_web_signed_in.sh http://127.0.0.1:8080 https://localhost:8080
       - name: Logs on failure
         if: failure()
+        env:
+          COMPOSE_FILE: docker-compose.yml:testing/e2e/compose.e2e.yaml
         run: docker compose logs
       - name: Stop
         if: always()
+        env:
+          COMPOSE_FILE: docker-compose.yml:testing/e2e/compose.e2e.yaml
         run: docker compose down -v
       - name: Build the CLI and tag the image with its version
         run: |
@@ -258,6 +275,17 @@ jobs:
           grep -q quickstart.exists "$RUNNER_TEMP/again"
           bash scripts/check_web_hop.sh http://127.0.0.1:8080 \
             docker compose --project-directory "$RUNNER_TEMP/oml" exec -T oml-web /usr/local/bin/oml-web --doctor
+      # The quickstart's stack with the sign-in double turned on (the image
+      # above carries it): a person signs in and loads the moved page
+      # through the quickstart's router.
+      - name: oml quickstart's router serves a signed-in page from oml-web
+        run: |
+          cp testing/e2e/quickstart.override.yaml "$RUNNER_TEMP/oml/compose.override.yaml"
+          docker compose --project-directory "$RUNNER_TEMP/oml" up --detach --wait
+          bash scripts/check_web_hop.sh http://127.0.0.1:8080 \
+            docker compose --project-directory "$RUNNER_TEMP/oml" exec -T oml-web /usr/local/bin/oml-web --doctor
+          OML_CLI_CREDENTIALS="$RUNNER_TEMP/oml/credentials" ./target/release/oml web allow e2e@example.com --user e2e
+          bash scripts/check_web_signed_in.sh http://127.0.0.1:8080 https://localhost:8080
       - name: Docker quickstart timing, first held write and first recall
         run: |
           export OML_URL=http://127.0.0.1:8080
@@ -591,7 +619,9 @@ jobs:
         run: |
           version="$(python3 -c 'import tomllib;print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["package"]["version"])')"
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          docker build --tag "$IMAGE:$version" .
+          # With CI's sign-in double (crates/bins/oml-server-lead/src/e2e.rs),
+          # off in every release build.
+          docker build --tag "$IMAGE:$version" --build-arg OML_CARGO_FEATURES=oml-server-lead/e2e-sign-in .
       - name: The pod runs as the image's own user
         run: |
           user="$(docker run --rm --entrypoint id "$IMAGE:$VERSION" -u):$(docker run --rm --entrypoint id "$IMAGE:$VERSION" -g)"
@@ -665,31 +695,33 @@ jobs:
           kubectl --namespace oml create secret generic oml-postgres \
             --from-literal=OML_POSTGRES__URL=postgres://oml_server:oml_dev_only@postgres:5432/oml \
             --from-literal=OML_POSTGRES__OWNER_URL=postgres://oml_owner:oml_dev_only@postgres:5432/oml
+          # The web client Secret, made outside the chart (the recommended
+          # path; values.yaml web.clientSecret).
+          kubectl --namespace oml create secret generic oml-web-client \
+            --from-literal=OML_WEB__CLIENT_SECRET="$(openssl rand -hex 32)"
+      # An Ingress controller, so the chart's own Ingress routes by path:
+      # /web/guardrails to oml-web, everything else to the lead (ADR-0070
+      # d4). In the release's namespace, which the NetworkPolicy admits.
+      - name: Traefik as the Ingress controller
+        run: |
+          helm repo add traefik https://traefik.github.io/charts
+          helm install traefik traefik/traefik --version 42.1.3 --namespace oml \
+            --set service.type=ClusterIP --wait --timeout 5m
+          echo "127.0.0.1 oml.test" | sudo tee -a /etc/hosts
       - name: helm install, then wait for readiness
         run: |
           helm install oml deploy/helm/oml --namespace oml \
             --values deploy/helm/oml/ci/kind-values.yaml --wait --timeout 5m
           kubectl --namespace oml rollout status deployment/oml-server-lead --timeout=300s
           kubectl --namespace oml rollout status deployment/oml-web --timeout=300s
-      # oml-web beside the lead (ADR-0070 d4): ready only once the lead
-      # answers ready and accepts its identity; its doctor agrees; a moved
-      # page without a session goes to the lead's sign-in carrying the page.
-      - name: oml-web is ready over the hop and sends a signed-out page to sign in
+      # CI's sign-in double on the lead, before the claim: oauth.issuer, a
+      # GitHub client and the address every GitHub sign-in admits.
+      - name: The lead's sign-in double
         run: |
-          kubectl --namespace oml exec deployment/oml-web -- /usr/local/bin/oml-web --doctor
-          kubectl --namespace oml port-forward service/oml-web 8091:8091 >"$RUNNER_TEMP/port-forward-web.log" 2>&1 &
-          forward=$!
-          for _ in $(seq 1 60); do
-            curl -fsS http://127.0.0.1:8091/readyz >/dev/null 2>&1 && break
-            sleep 1
-          done
-          curl -fsS http://127.0.0.1:8091/readyz | tee "$RUNNER_TEMP/web-ready.json"
-          jq -e '.checks.api == "ok" and .checks.web_client == "secret"' "$RUNNER_TEMP/web-ready.json"
-          location="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' 'http://127.0.0.1:8091/web?view=guardrails')"
-          kill "$forward"
-          echo "$location"
-          [ "$location" = "303 http://127.0.0.1:8091/web/sign-in?next=%2Fweb%3Fview%3Dguardrails" ] \
-            || { echo "expected a 303 to /web/sign-in carrying next" >&2; exit 1; }
+          kubectl --namespace oml set env deployment/oml-server-lead \
+            OML_OAUTH__ISSUER=https://oml.test:8088 OML_WEB__GITHUB__CLIENT_ID=e2e \
+            OML_WEB__GITHUB__CLIENT_SECRET=e2e-double-not-a-secret OML_E2E_SIGN_IN_EMAIL=e2e@example.com
+          kubectl --namespace oml rollout status deployment/oml-server-lead --timeout=300s
       - name: Claim the enrollment token through port-forward, then the quickstart
         run: |
           docker create --name oml-cli "$IMAGE:$VERSION" >/dev/null
@@ -706,7 +738,27 @@ jobs:
           OML_URL=http://127.0.0.1:8080 OML_CLI="$RUNNER_TEMP/oml" \
           OML_CLI_CREDENTIALS="$RUNNER_TEMP/credentials" OML_ENROLLMENT_TOKEN="$token" \
             bash scripts/quickstart.sh
+          OML_CLI_CREDENTIALS="$RUNNER_TEMP/credentials" "$RUNNER_TEMP/oml" web allow e2e@example.com --user e2e
           kill "$forward"
+      # Through the chart's Ingress (ADR-0070 d4): oml-web is ready over the
+      # hop and its doctor agrees; the moved page sends a signed-out browser
+      # to the lead's sign-in; a signed-in person gets the page from oml-web;
+      # the old ?view= URL redirects to it.
+      - name: The chart's Ingress routes /web/guardrails to oml-web, signed out and signed in
+        run: |
+          kubectl --namespace oml port-forward service/traefik 8088:80 >"$RUNNER_TEMP/port-forward-ingress.log" 2>&1 &
+          forward=$!
+          kubectl --namespace oml port-forward service/oml-web 8091:8091 >"$RUNNER_TEMP/port-forward-web.log" 2>&1 &
+          web=$!
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8091/readyz >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8091/readyz | jq -e '.checks.api == "ok" and .checks.web_client == "secret"'
+          bash scripts/check_web_hop.sh http://oml.test:8088 \
+            kubectl --namespace oml exec deployment/oml-web -- /usr/local/bin/oml-web --doctor
+          bash scripts/check_web_signed_in.sh http://oml.test:8088 https://oml.test:8088
+          kill "$forward" "$web"
       - name: A restarted lead keeps its signing key and prints no new token
         run: |
           public_key() {

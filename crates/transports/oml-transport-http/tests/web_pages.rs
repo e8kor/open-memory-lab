@@ -2083,6 +2083,13 @@ async fn a_sign_in_form_that_repeats_a_field_is_refused() {
     }
 }
 
+/// The `next` field the sign-in page's provider forms carry.
+fn next_field(page: &str) -> Option<String> {
+    let marker = r#"name="next" value=""#;
+    let start = page.find(marker)? + marker.len();
+    Some(page[start..start + page[start..].find('"')?].replace("&amp;", "&"))
+}
+
 #[tokio::test]
 async fn a_next_outside_web_or_naming_another_origin_returns_to_web() {
     // ADR-0070 d4: a same-origin relative path under /web, with no `//`,

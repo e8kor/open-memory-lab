@@ -59,11 +59,7 @@ memory.doublegate.io {
 		file_server
 	}
 	# The pages oml-web serves (oml_web::PAGES); the list grows as pages move.
-	@oml_web {
-		method GET
-		path /web
-		query view=guardrails
-	}
+	@oml_web path /web/guardrails
 	reverse_proxy @oml_web 127.0.0.1:8091
 	reverse_proxy 127.0.0.1:8090
 }

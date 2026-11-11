@@ -133,8 +133,8 @@ private network.
 - Terminate TLS at the proxy. Send each page `oml-web` serves to `oml-web`, and every other path to
   the server, unchanged: the API, `/mcp`, `/oauth/*`, `/.well-known/*`, `/readyz` and sign-in
   (`/web/sign-in`, `/web/callback/*`, `/web/sign-up`). Do not rewrite paths or cache responses.
-  The pages `oml-web` serves are `PAGES` in `crates/clients/oml-web/src/lib.rs`, today
-  `GET /web?view=guardrails`, which a proxy matches by method, path and query.
+  The pages `oml-web` serves are `PAGES` in `crates/clients/oml-web/src/lib.rs`, each at a path
+  of its own, today `/web/guardrails`; the server redirects the old `/web?view=guardrails` there.
   `deploy/caddy/Caddyfile` is a Caddy configuration that routes them; a page that moves in a
   later release adds a route there.
 - Keep the server's and `oml-web`'s own security headers. The proxy adds none.

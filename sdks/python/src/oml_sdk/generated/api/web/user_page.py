@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -41,10 +41,14 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> str | None:
+) -> Any | str | None:
     if response.status_code == 200:
         response_200 = response.text
         return response_200
+
+    if response.status_code == 303:
+        response_303 = cast(Any, None)
+        return response_303
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -54,7 +58,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[str]:
+) -> Response[Any | str]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -69,7 +73,7 @@ def sync_detailed(
     view: UserPageView | Unset = UNSET,
     q: str | Unset = UNSET,
     memory: str | Unset = UNSET,
-) -> Response[str]:
+) -> Response[Any | str]:
     """The sign-in page without a session; the user page with one.
 
      Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with
@@ -88,7 +92,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[str]
+        Response[Any | str]
     """
 
     kwargs = _get_kwargs(
@@ -110,7 +114,7 @@ def sync(
     view: UserPageView | Unset = UNSET,
     q: str | Unset = UNSET,
     memory: str | Unset = UNSET,
-) -> str | None:
+) -> Any | str | None:
     """The sign-in page without a session; the user page with one.
 
      Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with
@@ -129,7 +133,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        str
+        Any | str
     """
 
     return sync_detailed(
@@ -146,7 +150,7 @@ async def asyncio_detailed(
     view: UserPageView | Unset = UNSET,
     q: str | Unset = UNSET,
     memory: str | Unset = UNSET,
-) -> Response[str]:
+) -> Response[Any | str]:
     """The sign-in page without a session; the user page with one.
 
      Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with
@@ -165,7 +169,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[str]
+        Response[Any | str]
     """
 
     kwargs = _get_kwargs(
@@ -185,7 +189,7 @@ async def asyncio(
     view: UserPageView | Unset = UNSET,
     q: str | Unset = UNSET,
     memory: str | Unset = UNSET,
-) -> str | None:
+) -> Any | str | None:
     """The sign-in page without a session; the user page with one.
 
      Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with
@@ -204,7 +208,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        str
+        Any | str
     """
 
     return (

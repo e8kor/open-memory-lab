@@ -66,7 +66,7 @@ services:
       OML_SERVER__LISTEN: 0.0.0.0:8080
       OML_KMS__KEYRING_PATH: /var/lib/oml/keyring/signing.key
       # oml-web's client identity (ADR-0070 d2): the same value on both.
-      OML_WEB__CLIENT_SECRET: oml_dev_only_web_client_secret_0000
+      OML_WEB__CLIENT_SECRET: ${OML_WEB_CLIENT_SECRET:-oml_dev_only_web_client_secret_0000}
     volumes:
       # kms-file software keyring: oml-server is the only service that mounts it
       # (deployment.md — custody separation between containers).
@@ -91,7 +91,7 @@ services:
       OML_WEB__API_URL: http://oml-server:8080
       OML_WEB__ALLOW_PLAIN_HTTP_API: "true"
       OML_WEB__LISTEN: 0.0.0.0:8091
-      OML_WEB__CLIENT_SECRET: oml_dev_only_web_client_secret_0000
+      OML_WEB__CLIENT_SECRET: ${OML_WEB_CLIENT_SECRET:-oml_dev_only_web_client_secret_0000}
       # The browser's one origin, the router's published address.
       OML_WEB__PUBLIC_URL: http://127.0.0.1:8080
 
@@ -119,11 +119,7 @@ configs:
       	auto_https off
       }
       :8080 {
-      	@oml_web {
-      		method GET
-      		path /web
-      		query view=guardrails
-      	}
+      	@oml_web path /web/guardrails
       	reverse_proxy @oml_web oml-web:8091
       	reverse_proxy oml-server:8080
       }

@@ -30,7 +30,12 @@ ARG SOURCE_DATE_EPOCH
 WORKDIR /build
 COPY . .
 # Cargo.lock is committed (the workspace ships binaries), so build --locked.
-RUN cargo build --release --locked --bin oml-server-lead --bin oml --bin oml-web
+# Empty in every release build. CI's signed-in page check alone passes
+# oml-server-lead/e2e-sign-in (crates/bins/oml-server-lead/src/e2e.rs);
+# scripts/check_release.py fails a release workflow that passes it.
+ARG OML_CARGO_FEATURES=""
+RUN cargo build --release --locked --bin oml-server-lead --bin oml --bin oml-web \
+        ${OML_CARGO_FEATURES:+--features "$OML_CARGO_FEATURES"}
 
 FROM debian:bookworm-slim
 RUN apt-get update \

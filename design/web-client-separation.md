@@ -88,9 +88,9 @@ local development (oml quickstart starts all three)
   services; `oml quickstart` and `docker-compose.yml` start all three, and the
   router routes exactly as production does, so the browser sees one origin and
   there is no `web.page_url` setting (ADR-0070 d4).
-- Kubernetes: two Deployments. An Ingress routes by path alone, so the chart
-  routes `web.ingressPaths` to `oml-web`, none by default while the moved pages
-  are queries of `/web` (ADR-0070, phase (b) as built).
+- Kubernetes: two Deployments; the Ingress routes each path in
+  `web.ingressPaths` (`/web/guardrails` today) to `oml-web` and every other
+  path to the lead.
 - `deploy/caddy/Caddyfile` is the production route table; a test in `oml-web`
   holds it and both compose files to `oml_web::PAGES`.
 - The landing is static files from the `oml-site-<version>.tar.gz` release
@@ -277,9 +277,13 @@ API returns the same JSON as today, but with no page syntax
    - Acceptance: build passes with web parity test; `oml_web_reaches_no_application_crate` fails if wall broken.
 
 5. **Pages move one at a time**
-   - Start route with no state: `/web?view=guardrails`.
+   - Start route with no state: the Guardrails view, now `/web/guardrails`.
    - Then workareas, memories, review and users.
    - Each page gets a parity marker before its old handler is deleted.
+   - Each moved page gets its own path under `/web/`, and the lead answers
+     the old `?view=` form with a `303` to that fixed path, so every proxy,
+     compose router and Ingress routes by path alone (ADR-0070, amended
+     2026-11-11).
    - Acceptance: unchanged web_pages assertions over the loopback hop to a
      separate `oml-web` process.
 

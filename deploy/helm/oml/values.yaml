@@ -51,8 +51,19 @@ web:
   publicUrl: ""
   # oml-web's identity to the lead, web.client_secret, at least 32
   # characters, set on both Deployments from this Secret's key (ADR-0070 d2).
-  # Empty existingSecret: the chart creates <release>-web-client with a random
-  # value, read back on every upgrade so it does not change.
+  #
+  # Recommended: create the Secret yourself and name it here, so the value
+  # never depends on a render:
+  #   kubectl create secret generic oml-web-client \
+  #     --from-literal=OML_WEB__CLIENT_SECRET="$(openssl rand -hex 32)"
+  # A GitOps controller (Argo CD, Flux) or `helm template` renders without a
+  # cluster to read back from, so it must use existingSecret: the fallback
+  # below would write a new value on every sync, and the lead and oml-web
+  # would disagree until both restart.
+  #
+  # Empty existingSecret, with helm install and helm upgrade only: the chart
+  # creates <release>-web-client once with a random value, reads it back on
+  # every upgrade, and keeps it on uninstall (helm.sh/resource-policy: keep).
   clientSecret:
     existingSecret: ""
     key: OML_WEB__CLIENT_SECRET
@@ -61,12 +72,13 @@ web:
   # host unless this allows it (web.allow_plain_http_api). Set false only
   # with a TLS hop in front of the lead.
   allowPlainHttpApi: true
-  # Ingress paths routed to oml-web, ahead of the lead's, per host. An Ingress
-  # routes by path alone, and the pages oml-web serves today are a query of
-  # /web (GET /web?view=guardrails, oml_web::PAGES), so the default is none:
-  # route those with a controller that matches on the query, or a proxy in
-  # front (deploy/caddy/Caddyfile). Each entry: {path, pathType}.
-  ingressPaths: []
+  # Ingress paths routed to oml-web, ahead of the lead's, per host: each page
+  # oml-web serves has its own path under /web/ (oml_web::PAGES; ADR-0070
+  # d7 (b)), and every other path goes to the lead. A page that moves in a
+  # later release adds a row here.
+  ingressPaths:
+    - path: /web/guardrails
+      pathType: Exact
   # Hints, never claims (docs/operations/capacity.md).
   resources: {}
 

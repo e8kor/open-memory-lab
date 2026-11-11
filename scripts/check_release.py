@@ -69,6 +69,10 @@ disagreement found:
   the installer at that tag, `oml login` and `oml setup claude-code`
   (ADR-0041 d4, d6, d7; docs/engineering/docs-upgrade-v0.4.0.md).
 
+- no release build turns on oml-server-lead's e2e-sign-in feature, CI's
+  sign-in double: release.yml names it nowhere, and the Dockerfile's
+  OML_CARGO_FEATURES defaults to empty (ADR-0070, phase (b) as built).
+
 Dependencies: stdlib (Python 3.11 or later, for tomllib) + PyYAML.
 """
 
@@ -212,7 +216,20 @@ def main() -> int:
     check_cli_matrix(errors, jobs)
     check_installers(errors, jobs)
     check_installer_lines(errors)
+    check_no_test_double(errors)
     return report(errors)
+
+
+def check_no_test_double(errors: list[str]) -> None:
+    """The sign-in double CI's signed-in page check builds never reaches a release."""
+    if "e2e-sign-in" in WORKFLOW.read_text():
+        errors.append("release.yml names the e2e-sign-in feature, CI's sign-in double; no release carries it")
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    default = re.search(r'^ARG OML_CARGO_FEATURES(?:=("?)([^"\n]*)\1)?\s*$', dockerfile, re.M)
+    if default is None:
+        errors.append("the Dockerfile declares no ARG OML_CARGO_FEATURES; the image's features must default to none")
+    elif default.group(2):
+        errors.append(f"the Dockerfile's OML_CARGO_FEATURES defaults to {default.group(2)!r}, not empty")
 
 
 def check_release_hold(errors: list[str], jobs: dict) -> None:
@@ -605,7 +622,7 @@ def report(errors: list[str]) -> int:
     if not errors:
         print(
             "release check: release.yml builds, merges and signs one index for linux/amd64 and linux/arm64,"
-            " attaches the signed chart, builds, sums and signs the CLI and server archives of every"
+            " attaches the signed chart, builds, sums and signs the CLI, server and oml-web archives of every"
             " target, which ci.yml's cli-matrix builds and tests first, and sums and signs the Claude Code"
             " plugin archive, the pinned marketplace, the agent kit and the landing site; the installers fetch only the"
             " signed CLI archive, SHA256SUMS and its bundle, and ci.yml's install-smoke runs them"

@@ -80,6 +80,12 @@ You get a server, a workarea `crew`, an agent key, a second agent key called `co
 
     The key files are `oml/keys/agent`, `oml/keys/reviewer` and `oml/keys/colleague`.
 
+    A directory an earlier `oml quickstart` wrote has no `oml-web` service and no router, so
+    raising its image tag alone leaves the Guardrails view answering not found. A second run in
+    that directory is refused, so start a new stack in another directory, or add the `oml-web`
+    and `router` services and `OML_WEB_CLIENT_SECRET` from a new quickstart's `compose.yaml` and
+    `.env` to the old one.
+
 Both paths end the same way. Name the keys in your shell and point the CLI at the server:
 
 ```sh

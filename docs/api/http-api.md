@@ -1088,7 +1088,7 @@ The sign-in page without a session; the user page with one.
 | `q` | query | string | no |  |
 | `memory` | query | string | no |  |
 
-**Responses.** `200` The page.
+**Responses.** `200` The page.; `303` A view oml-web now serves at its own path, view=guardrails: to the fixed /web/guardrails, carrying nothing from the request, signed in or not ((b)).
 
 
 ### `POST /web`

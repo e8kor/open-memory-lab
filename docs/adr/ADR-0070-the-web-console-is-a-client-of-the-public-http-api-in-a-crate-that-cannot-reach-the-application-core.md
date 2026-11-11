@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core
 tier: engineering
-status: accepted design · 2026-11-07, amended 2026-11-10
+status: accepted design · 2026-11-07, amended 2026-11-10 and 2026-11-11
 answers: why the web pages stop calling oml-app's use cases and call the public HTTP API instead; which crate serves the pages and what it may depend on; how a signed-in person's session becomes an API credential without a key value at rest or in the browser; which middleware layer owns the request id, the session, CSRF, CSP, rate limits, audit and error mapping; how oml-web, always its own process, reaches the API; which existing operation serves each web call and which operations are new; what stays in the auth context; the bounded contexts; the migration phases and the test that proves parity; the overhead budget; what it amends in ADR-0042 and ADR-0045
 -->
 
 # ADR-0070 — The web console is a client of the public HTTP API, in a crate that cannot reach the application core
 
-**Status:** accepted design · 2026-11-07, amended 2026-11-10
+**Status:** accepted design · 2026-11-07, amended 2026-11-10 and 2026-11-11
 
 **Amends:** ADR-0045 (d1: the page routes move to `oml-web` and the sign-in routes to the auth
 context; d6: a session key gains a per-session credential; d7: that credential, never the
@@ -21,6 +21,9 @@ process (d1, d2, d3, d4, d7, d8, d9 and d10 revised; d11 and d12 new). What chan
 Amended again on 2026-11-10 by phase (a) as built (d2, d3, d5 and d7 revised): see
 [Phase (a) as built](#phase-a-as-built-2026-11-10). Amended by the first change of phase (b)
 (d1, d3, d4, d8 and d9 revised): see [Phase (b) as built](#phase-b-as-built-2026-11-10).
+Amended on 2026-11-11 by the operator's decision to route by path (d4 and d7 (b) revised):
+each moved page gets its own path under `/web/`, and the lead answers the old `?view=` form with
+a `303` to it; see the second table of Phase (b) as built.
 
 ## Context
 
@@ -203,7 +206,11 @@ Decided, not built. The build follows #163, #166 and #167.
     |---|---|---|
     | Production | Caddy (or another proxy) on the public origin: `/web` and `/web/*` to `oml-web`, except the auth routes of d6 (`/web/sign-in`, `/web/callback/*`, `/web/sign-up` and the sign-up terms page); those, `/v1/*`, `/v2/*`, `/mcp`, `/oauth/*` and `/.well-known/*` to the lead; the landing paths to static files (d12) | the lead's listener on loopback or the LAN, not back through the public proxy |
     | Local development | three services started by `oml quickstart` (its compose file gains `oml-web` and the router): the lead, `oml-web`, and a path router (Caddy, as a third compose service) in front of both, routing exactly as production does, so the browser sees one origin, `web.public_url` keeps its default and there is no `web.page_url` setting | the lead's address on the host or on the compose network |
-    | Kubernetes | the chart's Ingress routes as production does, to two Deployments | the lead's Service |
+    | Kubernetes | the chart's Ingress routes as production does, to two Deployments: each path in `web.ingressPaths` (`Exact`) to `oml-web`, every other path to the lead | the lead's Service |
+
+    Routing is by path alone in every shape (amended 2026-11-11): each moved page has its own
+    path under `/web/`, `oml_web::PAGES` lists them, and the proxy, the compose router and the
+    Ingress each name exactly those paths. No shape routes on a query.
 
     `__Host-` cookies bind one host, so production puts both behind the same public origin.
     A person with no live session who opens a page is sent with a `303` to the lead's
@@ -364,7 +371,7 @@ Decided, not built. The build follows #163, #166 and #167.
     | Phase | Builds | Check that closes it |
     |---|---|---|
     | (a) | `omls_` credentials and `oml-web`'s client identity, the secret (d2; mutual TLS is not built and stops the start); the ten new operations and six changes (d5), each with its use case, its contract entries and its tests | `check_contract_sync.py`, `generate_sdks.py --check`, and per operation a test named after its sentence, among them `an_omls_credential_without_the_web_client_is_auth_invalid`, `an_omls_credential_on_mcp_is_refused`, `a_capacity_credential_ends_with_its_session`, `the_admin_capacity_ends_when_the_entry_loses_admin`, `a_bearer_user_key_cannot_export_or_request_deletion` |
-    | (b) | `oml-sdk` (d9), whose one consumer is `oml-web`; `oml-page`, the `oml-web` binary with the layers of d3; the proxy routes of d4 send each moved page's URL to it; pages move one at a time behind the same URLs, the old handler deleted in the commit that moves its page | the page suites, unchanged (below), green after each page moves; `oml_web_reaches_no_application_crate` |
+    | (b) | `oml-sdk` (d9), whose one consumer is `oml-web`; `oml-page`, the `oml-web` binary with the layers of d3; the proxy routes of d4 send each moved page's path to it; pages move one at a time, each moved page gets its own path under `/web/` and the lead answers the old `?view=` form with a `303` to that fixed path, the old handler deleted in the commit that moves its page (amended 2026-11-11) | the page suites, unchanged (below), green after each page moves; `oml_web_reaches_no_application_crate` |
     | (c) | the `web_*` use cases deleted: the logic behind a new operation is renamed to that operation's use case, the sign-in ones move to `oml-app`'s auth module, the rest go | `grep -rn 'pub async fn web_' crates/oml-app --include='*.rs' | grep -v 'crates/oml-app/src/app/auth.rs'` is empty; the workspace builds and every suite passes |
     | (d) | the walls: the dependency test is a required CI check, and `the_lead_serves_no_page_route_outside_oml_web_and_auth` asserts the route table | both tests required on `main` |
 
@@ -530,8 +537,10 @@ reads a decision differently:
 | d4 | `next` dropped to `/web` unless admitted | admitted by `oml_page::admitted_next` on `GET /web/sign-in` and again on `POST /web/sign-in`, sealed with the sign-in state, admitted a third time at the callback; a browser already signed in is sent on at once; onboarding (`/web/start`) still takes the landing of a person with no agent key | the provider round trip is the one place `next` leaves the lead's hands; one shared rule, in `oml-page`, is the one `oml-web` encodes against |
 | d4 | the redirect target built from the configured public origin | built from `oauth.issuer` when `next` is not `/web`; `/web` stays the relative redirect it was | the issuer is the lead's configured origin; the relative `/web` is unchanged behaviour |
 | d4 | `oml-web --doctor` and `oml doctor` with `oml-web`'s environment give the `web.api_url` line | `oml-web --doctor` alone, adding a `fail` for any other refused setting and an `api` line for the lead's readiness and web client identity; `oml doctor` does not read `oml-web`'s environment | `oml-cli` cannot link `oml-web`'s configuration without the HTTP stack its dependency test refuses; one reading, the start's own, is kept |
-| d4 | (silent) | `oml-web` answers `GET /readyz` on its own listener: one unauthenticated call to the lead's `/readyz`, `200` only while the lead is ready and names a `web_client` other than `none` | a probe of the process alone cannot see the hop; the public `/readyz` stays the lead's |
-| d4 Kubernetes | the Ingress routes as production does | the chart routes `web.ingressPaths`, empty by default, to `oml-web`; the in-cluster hop is plain http under `web.allowPlainHttpApi`, on by default | an Ingress matches paths alone, and the one moved page is a query of `/web`, which the lead also serves; a path-only route would take the lead's pages with it |
+| d4 | (silent) | `oml-web` answers `GET /readyz` on its own listener: one unauthenticated call to the lead's `/readyz`, `200` only while the lead is ready and names a `web_client` other than `none`; a lead that names none (`unknown`) is not ready, and the doctor fails it | a probe of the process alone cannot see the hop; the public `/readyz` stays the lead's; a lead that proves no identity fails closed |
+| d7 (b), d4 | pages move behind the same URLs; the proxy matches `GET /web?view=guardrails` by its query | each moved page has its own path under `/web/` (the Guardrails view at `GET /web/guardrails`), and the lead answers the old `GET /web?view=guardrails` with a `303` to the fixed `/web/guardrails`, carrying nothing from the request; Caddy, both compose routers and the chart's `web.ingressPaths` route by path alone | an Ingress, a Gateway `HTTPRoute` and most proxies match paths, not queries; a query route left the chart's Ingress unable to reach the moved page at all, so a release would have served a Guardrails tab that answers not found; a `303`, not a `301` or `308`, because browsers cache those and pages are still moving |
+| d4 Kubernetes | (silent) | the in-cluster hop is plain http under `web.allowPlainHttpApi`, on by default; the web client secret comes from `web.clientSecret.existingSecret`, the recommended path, or a Secret the chart generates once with `lookup` and keeps on uninstall | a render without a cluster (GitOps, `helm template`) cannot read a generated value back and would rotate it; a Secret the operator owns never does |
+| (none) | (none) | CI signs a person in through the real routes with a build of the lead carrying the `e2e-sign-in` feature, which answers every GitHub exchange with one address (`OML_E2E_SIGN_IN_EMAIL`), and loads `/web/guardrails` through the router in the docker profile, `oml quickstart` and the chart's Ingress | the provider endpoints are constants (ADR-0045 d17) no runner can answer; the feature is off in every release build, and `check_release.py` fails a release workflow or Dockerfile default that turns it on |
 
 ## Consequences
 
