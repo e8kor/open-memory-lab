@@ -14,7 +14,12 @@
 #   6. one act end to end: the lead creates <user>.proj, oml-web confirms
 #      putting it in progress, and the confirmation's form, sent twice,
 #      runs the act once through the API and lands back on the view;
-#   7. GET /web?view=workarea: the lead's 303 to /web/workareas.
+#   7. GET /web?view=workarea: the lead's 303 to /web/workareas;
+#   8. GET /web: the lead's 303 to /web/keys; GET /web/keys from oml-web, and
+#      one act: issuing a reader key, whose value is shown once on the
+#      redirect target, carried there in a sealed cookie and never in the URL;
+#   9. GET /web?view=review: the lead's 303 to /web/review; GET /web/review
+#      from oml-web, and one act: review next, which lands back on the view.
 #
 # Usage: scripts/check_web_signed_in.sh <origin the router answers> <oauth.issuer>
 set -euo pipefail
@@ -106,4 +111,45 @@ code="$(curl -s -o /dev/null -D "$work/old-workareas" -w '%{http_code}' -H "$jar
 location="$(header "$work/old-workareas" location)"
 [ "$code $location" = "303 /web/workareas" ] || fail "GET /web?view=workarea answered '$code $location'"
 
-echo "signed-in page: $origin served /web/guardrails and /web/workareas to a signed-in session through oml-web, ran one act through the API, and the old URLs redirect there"
+code="$(curl -s -o /dev/null -D "$work/landing" -w '%{http_code}' -H "$jar" "$origin/web")"
+location="$(header "$work/landing" location)"
+[ "$code $location" = "303 /web/keys" ] || fail "GET /web answered '$code $location'"
+code="$(curl -s -o "$work/keys.html" -w '%{http_code}' -H "$jar" "$origin/web/keys")"
+[ "$code" = 200 ] || fail "GET /web/keys answered $code: $(head -c 400 "$work/keys.html")"
+grep -q '<h1>Keys</h1>' "$work/keys.html" || fail "GET /web/keys did not draw the Keys view"
+grep -q '<a href="/web/keys" class="on"' "$work/keys.html" || fail "the Keys tab is not the current one"
+nonce="$(field "$work/keys.html" nonce)"
+[ -n "$nonce" ] || fail "the Keys view's form carries no nonce"
+code="$(curl -s -o "$work/issue.html" -D "$work/issue" -w '%{http_code}' -X POST -H "$jar" \
+    -H "Origin: $issuer" -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "action=issue_key&name=ci&role=reader&csrf_token=$csrf&nonce=$nonce" "$origin/web/keys")"
+location="$(header "$work/issue" location)"
+[ "$code $location" = "303 /web/keys" ] || fail "POST /web/keys issue_key answered '$code $location': $(head -c 400 "$work/issue.html")"
+once="$(cookie "$work/issue" __Host-oml_once)"
+[ -n "$once" ] || fail "the issue carried no sealed secret to its page"
+code="$(curl -s -o "$work/shown.html" -D "$work/shown" -w '%{http_code}' \
+    -H "Cookie: __Host-oml_session=$session; __Host-oml_once=$once" "$origin/web/keys")"
+[ "$code" = 200 ] || fail "the redirect target answered $code"
+grep -q "OML_API_KEY=oml_" "$work/shown.html" || fail "the redirect target did not show the key's value once"
+grep -qi '^set-cookie: __Host-oml_once=;' "$work/shown" || fail "the redirect target did not clear the sealed secret"
+
+code="$(curl -s -o /dev/null -D "$work/old-review" -w '%{http_code}' -H "$jar" "$origin/web?view=review")"
+location="$(header "$work/old-review" location)"
+[ "$code $location" = "303 /web/review" ] || fail "GET /web?view=review answered '$code $location'"
+code="$(curl -s -o "$work/review.html" -w '%{http_code}' -H "$jar" "$origin/web/review")"
+[ "$code" = 200 ] || fail "GET /web/review answered $code: $(head -c 400 "$work/review.html")"
+grep -q '<a href="/web/review" class="on"' "$work/review.html" || fail "the Review tab is not the current one"
+nonce="$(field "$work/review.html" nonce)"
+[ -n "$nonce" ] || fail "the Review view's form carries no nonce"
+code="$(curl -s -o "$work/next.html" -D "$work/next" -w '%{http_code}' -X POST -H "$jar" \
+    -H "Origin: $issuer" -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data "action=review_next&csrf_token=$csrf&nonce=$nonce" "$origin/web/review")"
+location="$(header "$work/next" location)"
+case "$code $location" in
+    "303 /web/review?done=empty" | "303 /web/review?serve=srv_"*) ;;
+    *) fail "POST /web/review review_next answered '$code $location': $(head -c 400 "$work/next.html")" ;;
+esac
+code="$(curl -s -o /dev/null -w '%{http_code}' -H "$jar" "$origin$location")"
+[ "$code" = 200 ] || fail "GET $location answered $code"
+
+echo "signed-in page: $origin served /web/guardrails, /web/workareas, /web/keys and /web/review to a signed-in session through oml-web, ran one act on each of the last three through the API, and the old URLs redirect there"

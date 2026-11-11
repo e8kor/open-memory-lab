@@ -23,7 +23,7 @@ memory.example.com {
 		file_server
 	}
 
-	@oml_web path /web/guardrails /web/workareas /web/admin/workareas
+	@oml_web path /web/guardrails /web/workareas /web/admin/workareas /web/review /web/admin/review /web/keys /web/admin/keys
 	reverse_proxy @oml_web 127.0.0.1:8091
 
 	reverse_proxy 127.0.0.1:8090

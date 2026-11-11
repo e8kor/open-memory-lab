@@ -145,6 +145,12 @@ impl Session {
         capacity_credential(&self.token, capacity.as_str())
     }
 
+    /// The session token, which seals a shown-once secret to this session
+    /// ([`crate::once`]); never shown or logged.
+    pub(crate) fn token(&self) -> &str {
+        &self.token
+    }
+
     /// The session's CSRF token, which every form of its pages carries
     /// (ADR-0045 d8).
     #[must_use]

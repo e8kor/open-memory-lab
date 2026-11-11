@@ -180,13 +180,13 @@ impl Act {
 }
 
 /// Whether `sent` is a nonce as [`nonce`] draws it.
-fn is_nonce(sent: &str) -> bool {
+pub(crate) fn is_nonce(sent: &str) -> bool {
     sent.len() == 32 && sent.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// The lock of one act's idempotency key in this process, kept while a send
 /// under it is in flight and dropped from the table once none holds it.
-fn in_flight(key: &str) -> Arc<tokio::sync::Mutex<()>> {
+pub(crate) fn in_flight(key: &str) -> Arc<tokio::sync::Mutex<()>> {
     static TABLE: std::sync::LazyLock<
         std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     > = std::sync::LazyLock::new(Default::default);
@@ -208,7 +208,7 @@ fn notice(done: Option<&str>) -> Option<&'static str> {
 }
 
 /// A form's nonce: 16 random bytes as hex.
-fn nonce() -> String {
+pub(crate) fn nonce() -> String {
     let mut bytes = [0u8; 16];
     getrandom::getrandom(&mut bytes).expect("the OS random source answers");
     bytes.iter().map(|b| format!("{b:02x}")).collect()

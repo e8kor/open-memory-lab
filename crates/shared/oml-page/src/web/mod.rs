@@ -72,16 +72,30 @@ pub const USER_WORKAREAS_PATH: &str = "/web/workareas";
 /// The admin page's Workareas view, which `oml-web` serves (ADR-0070 d7 (b)).
 pub const ADMIN_WORKAREAS_PATH: &str = "/web/admin/workareas";
 
+/// The user page's Review view: the queue, review next and bulk review,
+/// which `oml-web` serves (ADR-0070 d7 (b)).
+pub const USER_REVIEW_PATH: &str = "/web/review";
+
+/// The admin page's Review view, with the tenant's queue above it, which
+/// `oml-web` serves (ADR-0070 d7 (b)).
+pub const ADMIN_REVIEW_PATH: &str = "/web/admin/review";
+
+/// The user page's Keys view, which `oml-web` serves (ADR-0070 d7 (b)).
+pub const USER_KEYS_PATH: &str = "/web/keys";
+
+/// The admin page's Keys view, one person's keys with a cut-off beside
+/// each, which `oml-web` serves (ADR-0070 d7 (b)).
+pub const ADMIN_KEYS_PATH: &str = "/web/admin/keys";
+
 /// The admin page's tabs, `(href, text)`; the lead's admin views and
 /// `oml-web`'s draw the same nav.
-pub const ADMIN_TABS: [(&str, &str); 9] = [
+pub const ADMIN_TABS: [(&str, &str); 8] = [
     ("/web/admin", "People"),
     ("/web/admin/users", "Quotas"),
-    ("/web/admin?view=queue", "Queue"),
     ("/web/admin?view=memories", "Memories"),
     (ADMIN_WORKAREAS_PATH, "Workareas"),
-    ("/web/admin?view=review", "Review"),
-    ("/web/admin?view=held", "Bulk review"),
+    (ADMIN_REVIEW_PATH, "Review"),
+    (ADMIN_KEYS_PATH, "Keys"),
     ("/web/admin?view=curate", "Curate"),
     ("/web", "Your page"),
 ];
@@ -95,9 +109,9 @@ pub fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
     let mut tabs = vec![
         ("/web/start", "Start"),
         ("/web?view=memories", "Memories"),
-        ("/web?view=review", "Review"),
+        (USER_REVIEW_PATH, "Review"),
         (ATLAS_TAB, "Atlas"),
-        ("/web", "Keys"),
+        (USER_KEYS_PATH, "Keys"),
         (USER_WORKAREAS_PATH, "Workareas"),
         ("/web/guardrails", "Guardrails"),
     ];

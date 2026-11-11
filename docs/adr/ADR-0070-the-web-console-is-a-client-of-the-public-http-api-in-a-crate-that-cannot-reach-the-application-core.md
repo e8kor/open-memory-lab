@@ -25,7 +25,9 @@ Amended on 2026-11-11 by the operator's decision to route by path (d4 and d7 (b)
 each moved page gets its own path under `/web/`, and the lead answers the old `?view=` form with
 a `303` to it; see the second table of Phase (b) as built. Amended by the third change of phase
 (b), the Workareas view and the first acts through `oml-web` (d3, d5 and d8 revised): see the
-third table of Phase (b) as built.
+third table of Phase (b) as built. Amended by the fifth change of phase (b), the Review and Keys
+views and their acts through `oml-web` (d3, d5, d7 (b) and d8 revised): see the fourth table of
+Phase (b) as built.
 
 ## Context
 
@@ -557,6 +559,21 @@ ratifications and mode changes (ADR-0045 d28). Where it reads a decision differe
 | d3 layer 1 | `web_action` joins with the first act | the page line names `web_action`, the form's action | as decided |
 | d3 layer 6, d8 | the per-session cap on calls in flight; two sequential calls | not built; the view bounds its own fan-out to eight calls in flight (`oml_web::workareas::FAN_OUT`, unmeasured, #170) after the tree, each row's offers and live proposals a secondary read that marks only its row unavailable when it fails | a page of N workareas makes N to 3N calls, where the lead made the same reads in process, and each offers call now runs up to four more verb checks for `refused`; both belong in #170's measurement; the cap across a session's pages lands with the memories view, which fans out further |
 | (none) | (none) | creating a workarea stays the lead's act of the user page: the view's form posts it to `POST /web`, which answers `303 /web/workareas?done=created` | `POST /v2/workareas` serves it, but the act is not one of the dropdown's; it moves with the keys view, whose other acts it shares |
+
+The fifth change of phase (b) moves the Review view and the Keys view of the user page and of the
+admin page, with their acts: review next, the verdict, the bulk confirmation and bulk verdict; issuing
+a key or a connector key, a new connect code and the cut-off (ADR-0045 d9, d11, d13; ADR-0055 d10).
+Where it reads a decision differently:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d7 (b), d4 | the Review view at `GET /web?view=review` and `/web/admin?view=review`, bulk review at `/web/admin?view=held`, the queue at `/web/admin?view=queue`, the Keys view at `GET /web` | the Review view at `/web/review` and `/web/admin/review`, the admin's holding the queue and bulk review above and below review next; the Keys view at `/web/keys` and `/web/admin/keys`, the admin's one person's keys named by `user`; `GET` and `POST` each. The lead answers the old views, and a signed-in `GET /web` naming no view, with a `303` there, carrying nothing from the request; the old acts of `POST /web` and `POST /web/admin` get a `303` to their view and run nothing. The admin tabs lose Queue and Bulk review and gain Keys | the queue and bulk review are reads and acts of the same reviewer key on the same rows; one admin path keeps the Ingress list short, and the removal confirmation's cut-offs post to the admin Keys view |
+| d3 layer 4 | Post/Redirect/Get for every act | a key's value or a connect code is shown once on the redirect target: the act seals it, ChaCha20-Poly1305 under a key derived from the session token, into a `__Host-oml_once` cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, five minutes) that the target opens, shows under `no-store` and clears in the same answer; it is never in a URL, a line or `oml-web`'s memory past the request | the API shows the secret exactly once, so the target cannot read it again; the session-derived key lets any replica open it and no other session; the cookie, not a server-side store, keeps `oml-web` stateless (rejected: a short-lived store in `oml-web`, which replicas would have to share; the value in the redirect's query, which proxies log) |
+| d3 layer 4 | the bulk verdict's page shows each item's outcome | the bulk verdict redirects to the view with its counts, approved, rejected, skipped, by the same user and replayed, as numbers only; the confirmation, which records nothing, is answered as a page, not a redirect | per-item outcomes do not fit a URL and are not stored; the items left are still listed on the view; a crafted link can put only numbers on the page |
+| d3 layer 4, d5 | the verdict's idempotency key minted from the serve | from the form's nonce, as every act's; review next is a `POST` under its own key that redirects to the view with the serve id, and the view draws the served card by id from `GET /v2/review/held?ids=`, which claims nothing | a `GET` that served the next item would claim one on every reload |
+| d5 | `Memory` names the format and title | it also names `search_text`, what a derived format's claim will be found by, absent for prose | the reviewer's card shows it before the verdict (ADR-0056 d9) and `oml-web` cannot derive it |
+| d5 | (silent) | the moved card does not draw a Mermaid claim: it shows the whole source, the format and the title, and links the memory's own page on the lead, which frames the drawing | the frame's token is sealed by the lead's per-process key over a source it caches (ADR-0056 d9); an API to mint one has no other use case. Left for the change that moves the memory's own page |
+| (none) | the person lane (ADR-0074 d19) on the Review view | not built: it is not on `main` | it moves with the view when it lands |
 
 ## Consequences
 

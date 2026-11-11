@@ -4414,6 +4414,11 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
     if let (Some(warning), Some(obj)) = (served.load_warning, value.as_object_mut()) {
         obj.insert("load_warning".to_owned(), json!(warning));
     }
+    // What a derived format's claim will be found by, which a reviewer's
+    // card shows before the verdict (ADR-0056 d9; ADR-0070 d5).
+    if let (Some(found), Some(obj)) = (&m.format.search_text, value.as_object_mut()) {
+        obj.insert("search_text".to_owned(), json!(found));
+    }
     value
 }
 

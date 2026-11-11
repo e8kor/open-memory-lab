@@ -83,6 +83,14 @@ web:
       pathType: Exact
     - path: /web/admin/workareas
       pathType: Exact
+    - path: /web/review
+      pathType: Exact
+    - path: /web/admin/review
+      pathType: Exact
+    - path: /web/keys
+      pathType: Exact
+    - path: /web/admin/keys
+      pathType: Exact
   # Hints, never claims (docs/operations/capacity.md).
   resources: {}
 
