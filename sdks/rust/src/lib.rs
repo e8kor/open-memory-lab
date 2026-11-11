@@ -32,7 +32,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 10] = [
+pub const OPERATIONS: [&str; 29] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workarea resp:GuardrailSet",
@@ -43,6 +43,25 @@ pub const OPERATIONS: [&str; 10] = [
     "proposeTransition POST /v2/workareas/{workarea}/transitions body:to resp:Transition",
     "ratifyTransition POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify resp:Transition",
     "setWorkareaMode POST /v2/workareas/{workarea}/mode body:mode resp:WorkareaView",
+    "listMemories GET /v1/memories query:with_own,include_text,author,workarea,state,origin_kinds,limit,cursor resp:MemoryPage",
+    "recallMemories POST /v1/memories/recall body:query,k,workarea,kinds,include_text,include_unreviewed,origin_kinds resp:RecallResponse",
+    "adminSearchMemories POST /v2/admin/memories/search body:query,workarea,state,origin_kind,author,limit,cursor resp:AdminMemoryPage",
+    "getWorkareaTree GET /v2/workareas/{workarea}/tree query:counts resp:WorkareaCounts",
+    "listKeys GET /v2/keys query:user,limit,cursor resp:KeyPage",
+    "createWorkarea POST /v2/workareas body:name,parent resp:Workarea",
+    "reviewNext POST /v2/review/next resp:Serve",
+    "postVerdict POST /v2/review/verdicts body:serve_id,verdict,reason resp:VerdictResult",
+    "reviewHeld GET /v2/review/held query:workarea,author_key,claim_key_prefix,limit,cursor resp:HeldPage",
+    "reviewHeld GET /v2/review/held query:ids resp:HeldNamed",
+    "postBulkVerdict POST /v2/review/verdicts/bulk body:verdict,artifact_ids,reason resp:BulkVerdictResult",
+    "reviewQueue GET /v2/review/queue resp:ReviewQueue",
+    "issueKey POST /v2/keys body:name,role,connect_code resp:KeyIssued",
+    "mintConnectCode POST /v2/keys/{key}/connect-codes resp:ConnectCode",
+    "addDenial POST /v2/keys/{key}/denials body:workarea resp:Denial",
+    "getMemory GET /v1/memories/{artifact_id} resp:Memory",
+    "adminReadMemory GET /v2/admin/memories/{artifact_id} resp:AdminRead",
+    "submitMemory POST /v1/memories body:verb,claim_key,body,workarea,derives_from resp:Accepted",
+    "supersedeMemory POST /v1/memories/{artifact_id}/supersede body:body,expected_version,retirement resp:Accepted",
 ];
 
 /// The request id header (ADR-0042 d4).
@@ -279,6 +298,454 @@ pub struct WorkareaOffers {
     pub refused: Vec<RefusedAct>,
 }
 
+/// An anchor as the API serves it (openapi.yaml `Anchor`): a repository
+/// with its commit and path, or a URI; each with an optional fragment.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Anchor {
+    #[serde(default)]
+    pub repo: Option<String>,
+    #[serde(default)]
+    pub uri: Option<String>,
+    #[serde(default)]
+    pub rev: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub fragment: Option<String>,
+}
+
+/// The version a supersession replaces, as a memory names it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Replaced {
+    pub artifact_id: String,
+    pub version: i64,
+}
+
+/// A memory as the listings and recall serve it (openapi.yaml `Memory`),
+/// the fields the Memories list reads.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Memory {
+    pub artifact_id: String,
+    pub claim_key: String,
+    pub version: u32,
+    pub tip: bool,
+    pub workarea_path: Option<String>,
+    pub state: String,
+    pub principal: Option<String>,
+    /// Absent from an API before v0.7.0.
+    #[serde(default)]
+    pub author_key_id: Option<String>,
+    pub created_at: String,
+    pub promoted_at: Option<String>,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    /// What a derived format's claim will be found by (ADR-0056 d9).
+    #[serde(default)]
+    pub search_text: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub anchor: Option<Anchor>,
+    #[serde(default)]
+    pub valid_from: Option<String>,
+    #[serde(default)]
+    pub valid_until: Option<String>,
+    #[serde(default)]
+    pub replaces: Option<Replaced>,
+    #[serde(default)]
+    pub replaces_valid_until: Option<String>,
+    /// On a held guardrail, what approving it does (ADR-0037 d10).
+    #[serde(default)]
+    pub load_warning: Option<String>,
+    /// Absent from an API before v0.7.0.
+    #[serde(default)]
+    pub scan_finding: Option<String>,
+}
+
+/// `GET /v1/memories`: one page of memories.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct MemoryPage {
+    pub items: Vec<Memory>,
+    pub next_cursor: Option<String>,
+}
+
+/// One ranked hit of a recall.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RecallHit {
+    pub memory: Memory,
+}
+
+/// `POST /v1/memories/recall`: steering first, then the ranked hits.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RecallResponse {
+    pub steering: Vec<Memory>,
+    pub hits: Vec<RecallHit>,
+}
+
+/// A memory as the admin read serves it (openapi.yaml `AdminMemory`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AdminMemory {
+    pub artifact_id: String,
+    pub claim_key: String,
+    pub version: u32,
+    pub state: String,
+    pub workarea_path: String,
+    pub text: String,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    pub key: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    pub created_at: String,
+    #[serde(default)]
+    pub anchor: Option<Anchor>,
+    /// Absent, with the four fields after it, from an API before v0.7.0.
+    #[serde(default)]
+    pub held_by: Option<String>,
+    #[serde(default)]
+    pub promoted_at: Option<String>,
+    #[serde(default)]
+    pub valid_from: Option<String>,
+    #[serde(default)]
+    pub valid_until: Option<String>,
+    #[serde(default)]
+    pub scan_finding: Option<String>,
+}
+
+/// One verdict on a memory, as the admin read lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AdminVerdict {
+    pub verdict: String,
+    pub key: Option<String>,
+    pub principal: Option<String>,
+    pub reason: Option<String>,
+    pub at: String,
+}
+
+/// `GET /v2/admin/memories/{artifact_id}`: one memory with its full
+/// attribution (ADR-0045 d21).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AdminRead {
+    pub artifact_id: String,
+    pub claim_key: String,
+    pub version: u32,
+    pub state: String,
+    pub workarea_path: String,
+    pub text: String,
+    /// The kind the version was written as; absent from an API before
+    /// v0.7.0.
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    pub key: Option<String>,
+    #[serde(default)]
+    pub principal: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    pub created_at: String,
+    #[serde(default)]
+    pub anchor: Option<Anchor>,
+    #[serde(default)]
+    pub valid_from: Option<String>,
+    #[serde(default)]
+    pub valid_until: Option<String>,
+    #[serde(default)]
+    pub derives_from: Vec<String>,
+    #[serde(default)]
+    pub replaces: Option<String>,
+    #[serde(default)]
+    pub plaintext_digest: Option<String>,
+    #[serde(default)]
+    pub verdicts: Vec<AdminVerdict>,
+}
+
+/// `POST /v1/memories` and `POST /v1/memories/{artifact_id}/supersede`:
+/// the version written, held.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Accepted {
+    pub artifact_id: String,
+    pub claim_key: String,
+    pub version: u32,
+    pub state: String,
+}
+
+/// What [`Client::learn`] submits: the text, the workarea, the memories
+/// it derives from and an optional claim key.
+#[derive(Debug, Clone, Copy)]
+pub struct Learn<'a> {
+    pub body: &'a str,
+    pub workarea: &'a str,
+    pub derives_from: &'a [&'a str],
+    pub claim_key: Option<&'a str>,
+}
+
+/// `POST /v2/admin/memories/search`: one page.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AdminMemoryPage {
+    pub items: Vec<AdminMemory>,
+    pub next_cursor: Option<String>,
+}
+
+/// One node's rows by state, as the caller's merged listing shows them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct NodeCounts {
+    pub promoted: u64,
+    pub held: u64,
+    pub in_progress: u64,
+    pub other: u64,
+}
+
+/// One node of a counted subtree.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CountedNode {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub path: String,
+    pub status: String,
+    pub mode: String,
+    pub counts: NodeCounts,
+}
+
+/// `GET /v2/workareas/{workarea}/tree?counts=true`: the subtree, a parent
+/// before its children, with each node's counts.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WorkareaCounts {
+    pub items: Vec<CountedNode>,
+    pub truncated: bool,
+}
+
+/// `POST /v2/review/next`: one served item, claimed by the reviewer key.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Serve {
+    pub serve_id: String,
+    pub expires_at: String,
+    pub item: Memory,
+}
+
+/// `POST /v2/review/verdicts`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct VerdictResult {
+    pub artifact_id: String,
+    pub version: i64,
+    pub verdict: String,
+    pub state: String,
+}
+
+/// One row of the held listing: the memory, when it entered the queue, and
+/// whether its author names the reviewer's user (ADR-0055 d7).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HeldItem {
+    // Not `pub`, so the contract check reads `Memory` once, through
+    // `reviewNext`, where the schema names it.
+    #[serde(flatten)]
+    memory: Memory,
+    pub held_since: String,
+    pub same_user: bool,
+}
+
+impl HeldItem {
+    /// The row itself.
+    #[must_use]
+    pub fn memory(&self) -> &Memory {
+        &self.memory
+    }
+}
+
+/// `GET /v2/review/held`: one page of the rows the key may judge.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HeldPage {
+    pub items: Vec<HeldItem>,
+    pub next_cursor: Option<String>,
+}
+
+/// One id named to `GET /v2/review/held?ids=`, with its row, or `None` when
+/// it is no longer held or no longer the key's to judge.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NamedHeld {
+    pub id: String,
+    pub item: Option<Memory>,
+}
+
+/// `GET /v2/review/held?ids=` (openapi.yaml `HeldNamed`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HeldNamed {
+    pub items: Vec<NamedHeld>,
+}
+
+/// One item of a bulk verdict's answer.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BulkItem {
+    pub artifact_id: String,
+    /// `approved`, `rejected` or `skipped`.
+    pub outcome: String,
+    #[serde(default)]
+    pub same_user: Option<bool>,
+    #[serde(default)]
+    pub replayed: Option<bool>,
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
+/// The bulk verdict's counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct BulkSummary {
+    pub approved: u64,
+    pub rejected: u64,
+    pub skipped: u64,
+}
+
+/// `POST /v2/review/verdicts/bulk` (openapi.yaml `BulkVerdictResult`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BulkVerdictResult {
+    pub items: Vec<BulkItem>,
+    pub summary: BulkSummary,
+}
+
+/// One workarea holding held rows, as the admin's queue names it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct QueueItem {
+    pub workarea_id: String,
+    pub path: String,
+    pub held: u64,
+    pub oldest_at: String,
+}
+
+/// `GET /v2/review/queue`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ReviewQueue {
+    pub items: Vec<QueueItem>,
+}
+
+/// A grant as a listed key carries it: the role and the workarea's path.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ListedGrant {
+    pub role: String,
+    pub workarea_id: String,
+    pub path: String,
+}
+
+/// One key of `GET /v2/keys` (openapi.yaml `ListedKey`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ListedKey {
+    pub id: String,
+    pub name: Option<String>,
+    pub role: String,
+    pub held_by: String,
+    pub credential: String,
+    pub revoked: bool,
+    pub cut_off: bool,
+    pub grants: Vec<ListedGrant>,
+}
+
+/// `GET /v2/keys`: one page of keys, in name order.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct KeyPage {
+    pub items: Vec<ListedKey>,
+    pub next_cursor: Option<String>,
+}
+
+/// A connect code, shown once (openapi.yaml `ConnectCode`).
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+pub struct ConnectCode {
+    pub code_id: String,
+    #[serde(default)]
+    pub code: Option<String>,
+    pub expires_at: String,
+    pub connector_url: String,
+}
+
+/// No debug output prints the code.
+impl std::fmt::Debug for ConnectCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectCode")
+            .field("code_id", &self.code_id)
+            .field("code", &self.code.as_ref().map(|_| "<redacted>"))
+            .field("expires_at", &self.expires_at)
+            .field("connector_url", &self.connector_url)
+            .finish()
+    }
+}
+
+/// `POST /v2/keys` (openapi.yaml `KeyIssued`): the key, and exactly one of
+/// its value and its connect code, each shown once.
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+pub struct KeyIssued {
+    pub key_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub connect_code: Option<ConnectCode>,
+}
+
+/// No debug output prints the value or the code.
+impl std::fmt::Debug for KeyIssued {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyIssued")
+            .field("key_id", &self.key_id)
+            .field("name", &self.name)
+            .field("value", &self.value.as_ref().map(|_| "<redacted>"))
+            .field("connect_code", &self.connect_code)
+            .finish()
+    }
+}
+
+/// `POST /v2/keys/{key}/denials`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Denial {
+    pub denial_id: String,
+    pub epoch: i64,
+}
+
+/// `POST /v2/workareas`: the new node, the fields read here.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Workarea {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+}
+
+/// The Memories list's filters for `GET /v1/memories` with `with_own`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MemoryQuery<'a> {
+    pub workarea: Option<&'a str>,
+    pub state: Option<&'a str>,
+    pub origin: Option<&'a str>,
+    pub author: Option<&'a str>,
+    pub limit: u32,
+    pub cursor: Option<&'a str>,
+}
+
+/// A text search of the caller's readable memories, its own held ones
+/// among them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecallQuery<'a> {
+    pub query: &'a str,
+    pub k: u32,
+    pub workarea: Option<&'a str>,
+    pub origin: Option<&'a str>,
+}
+
+/// The admin read's filters.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AdminSearch<'a> {
+    pub query: Option<&'a str>,
+    pub workarea: Option<&'a str>,
+    pub state: Option<&'a str>,
+    pub origin_kind: Option<&'a str>,
+    pub author: Option<&'a str>,
+    pub limit: u32,
+    pub cursor: Option<&'a str>,
+}
+
 /// The typed client over a [`Transport`], with the headers every call
 /// carries (for `oml-web`, its client identity).
 pub struct Client<T> {
@@ -435,7 +902,14 @@ impl<T: Transport> Client<T> {
         if !response.status().is_success() {
             return Err(api_error(status, response.headers(), response.body()));
         }
-        serde_json::from_slice(response.body()).map_err(|e| Error::Decode {
+        // `204 No Content` decodes as JSON `null`, so an `Option` answer
+        // reads it as `None` and any other type refuses it.
+        let body: &[u8] = if status == 204 {
+            b"null"
+        } else {
+            response.body()
+        };
+        serde_json::from_slice(body).map_err(|e| Error::Decode {
             status,
             why: e.to_string(),
         })
@@ -606,6 +1080,419 @@ impl<T: Transport> Client<T> {
         )
         .await
     }
+
+    /// `GET /v1/memories` with `with_own=true` and `include_text=true`: the
+    /// caller's merged listing with each item's text.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn list_memories(
+        &self,
+        call: &Call<'_>,
+        query: &MemoryQuery<'_>,
+    ) -> Result<MemoryPage, Error> {
+        let mut path = format!(
+            "/v1/memories?with_own=true&include_text=true&limit={}",
+            query.limit
+        );
+        for (name, value) in [
+            ("author", query.author),
+            ("workarea", query.workarea),
+            ("state", query.state),
+            ("origin_kinds", query.origin),
+            ("cursor", query.cursor),
+        ] {
+            if let Some(value) = value {
+                path.push_str(&format!("&{name}={}", encode(value)));
+            }
+        }
+        self.get(Some(call), path).await
+    }
+
+    /// `POST /v1/memories/recall`: memories and derived facts with their
+    /// text, the caller's own held ones among them. Read-shaped: no
+    /// idempotency key.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn recall(
+        &self,
+        call: &Call<'_>,
+        query: &RecallQuery<'_>,
+    ) -> Result<RecallResponse, Error> {
+        let mut body = serde_json::json!({
+            "query": query.query,
+            "k": query.k,
+            "kinds": ["memory", "derived_fact"],
+            "include_text": true,
+            "include_unreviewed": true,
+        });
+        if let Some(workarea) = query.workarea {
+            body["workarea"] = serde_json::json!(workarea);
+        }
+        if let Some(origin) = query.origin {
+            body["origin_kinds"] = serde_json::json!([origin]);
+        }
+        self.send(
+            Method::POST,
+            Some(call),
+            "/v1/memories/recall".to_owned(),
+            None,
+            Some(&body),
+        )
+        .await
+    }
+
+    /// `POST /v2/admin/memories/search`: one page of the tenant's memories,
+    /// journalled as one admin read. Read-shaped: no idempotency key.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn admin_search(
+        &self,
+        call: &Call<'_>,
+        search: &AdminSearch<'_>,
+    ) -> Result<AdminMemoryPage, Error> {
+        let mut body = serde_json::json!({ "limit": search.limit });
+        for (name, value) in [
+            ("query", search.query),
+            ("workarea", search.workarea),
+            ("state", search.state),
+            ("origin_kind", search.origin_kind),
+            ("author", search.author),
+            ("cursor", search.cursor),
+        ] {
+            if let Some(value) = value {
+                body[name] = serde_json::json!(value);
+            }
+        }
+        self.send(
+            Method::POST,
+            Some(call),
+            "/v2/admin/memories/search".to_owned(),
+            None,
+            Some(&body),
+        )
+        .await
+    }
+
+    /// `GET /v2/workareas/{workarea}/tree?counts=true`: the subtree with
+    /// each node's rows counted by state.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn workarea_counts(
+        &self,
+        call: &Call<'_>,
+        workarea: &str,
+    ) -> Result<WorkareaCounts, Error> {
+        self.get(
+            Some(call),
+            format!("/v2/workareas/{}/tree?counts=true", encode(workarea)),
+        )
+        .await
+    }
+
+    /// `POST /v2/review/next`: the next held item, claimed by the key, or
+    /// `None` when nothing in scope waits (`204`).
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn review_next(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+    ) -> Result<Option<Serve>, Error> {
+        self.send(
+            Method::POST,
+            Some(call),
+            "/v2/review/next".to_owned(),
+            Some(idempotency_key),
+            None,
+        )
+        .await
+    }
+
+    /// `POST /v2/review/verdicts`: `verdict` (`approve` or `reject`) on the
+    /// item `serve_id` served, with `reason`, required to reject.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn post_verdict(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        serve_id: &str,
+        verdict: &str,
+        reason: Option<&str>,
+    ) -> Result<VerdictResult, Error> {
+        let mut body = serde_json::json!({ "serve_id": serve_id, "verdict": verdict });
+        if let Some(reason) = reason {
+            body["reason"] = Value::from(reason);
+        }
+        self.post(
+            call,
+            "/v2/review/verdicts".to_owned(),
+            idempotency_key,
+            &body,
+        )
+        .await
+    }
+
+    /// `GET /v2/review/held`: one page of `limit` rows the key may judge,
+    /// narrowed by each filter given, after `cursor`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn review_held(
+        &self,
+        call: &Call<'_>,
+        filters: &[(&str, &str)],
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<HeldPage, Error> {
+        let mut path = format!("/v2/review/held?limit={limit}");
+        for (name, value) in filters
+            .iter()
+            .filter(|(n, _)| matches!(*n, "workarea" | "author_key" | "claim_key_prefix"))
+        {
+            path.push_str(&format!("&{name}={}", encode(value)));
+        }
+        if let Some(cursor) = cursor {
+            path.push_str("&cursor=");
+            path.push_str(&encode(cursor));
+        }
+        self.get(Some(call), path).await
+    }
+
+    /// `GET /v2/review/held?ids=`: each id named, with its row while it is
+    /// still held and the key's to judge. Claims nothing.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn review_named(&self, call: &Call<'_>, ids: &[&str]) -> Result<HeldNamed, Error> {
+        let ids: Vec<String> = ids.iter().map(|id| encode(id)).collect();
+        self.get(Some(call), format!("/v2/review/held?ids={}", ids.join(",")))
+            .await
+    }
+
+    /// `POST /v2/review/verdicts/bulk`: one `verdict` on each of
+    /// `artifact_ids`, with `reason`, required to reject.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn post_bulk_verdict(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        verdict: &str,
+        artifact_ids: &[&str],
+        reason: Option<&str>,
+    ) -> Result<BulkVerdictResult, Error> {
+        let mut body = serde_json::json!({ "verdict": verdict, "artifact_ids": artifact_ids });
+        if let Some(reason) = reason {
+            body["reason"] = Value::from(reason);
+        }
+        self.post(
+            call,
+            "/v2/review/verdicts/bulk".to_owned(),
+            idempotency_key,
+            &body,
+        )
+        .await
+    }
+
+    /// `GET /v2/review/queue`: each workarea holding held rows, with its
+    /// count and its oldest row's time. An admin key's.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn review_queue(&self, call: &Call<'_>) -> Result<ReviewQueue, Error> {
+        self.get(Some(call), "/v2/review/queue".to_owned()).await
+    }
+
+    /// `GET /v2/keys`: one page of `limit` keys after `cursor`; `user`
+    /// names the person, which an admin key must.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn list_keys(
+        &self,
+        call: &Call<'_>,
+        user: Option<&str>,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<KeyPage, Error> {
+        let mut path = format!("/v2/keys?limit={limit}");
+        if let Some(user) = user {
+            path.push_str("&user=");
+            path.push_str(&encode(user));
+        }
+        if let Some(cursor) = cursor {
+            path.push_str("&cursor=");
+            path.push_str(&encode(cursor));
+        }
+        self.get(Some(call), path).await
+    }
+
+    /// `POST /v2/workareas`: creates `name` under `parent`, or under the
+    /// caller's own root when `parent` is `None`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn create_workarea(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        name: &str,
+        parent: Option<&str>,
+    ) -> Result<Workarea, Error> {
+        let mut body = serde_json::json!({ "name": name });
+        if let Some(parent) = parent {
+            body["parent"] = serde_json::json!(parent);
+        }
+        self.post(call, "/v2/workareas".to_owned(), idempotency_key, &body)
+            .await
+    }
+
+    /// `POST /v2/keys` as a person's web session key: their own key `name`
+    /// with `role`, a connector key where `connect_code` is set.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn issue_key(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        name: &str,
+        role: &str,
+        connect_code: bool,
+    ) -> Result<KeyIssued, Error> {
+        self.post(
+            call,
+            "/v2/keys".to_owned(),
+            idempotency_key,
+            &serde_json::json!({ "name": name, "role": role, "connect_code": connect_code }),
+        )
+        .await
+    }
+
+    /// `POST /v2/keys/{key}/connect-codes`: a new code for a connector key,
+    /// voiding its earlier ones.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn mint_connect_code(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        key: &str,
+    ) -> Result<ConnectCode, Error> {
+        self.send(
+            Method::POST,
+            Some(call),
+            format!("/v2/keys/{}/connect-codes", encode(key)),
+            Some(idempotency_key),
+            None,
+        )
+        .await
+    }
+
+    /// `POST /v2/keys/{key}/denials` on `workarea`: on `universe`, the key
+    /// is cut off.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn add_denial(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        key: &str,
+        workarea: &str,
+    ) -> Result<Denial, Error> {
+        self.post(
+            call,
+            format!("/v2/keys/{}/denials", encode(key)),
+            idempotency_key,
+            &serde_json::json!({ "workarea": workarea }),
+        )
+        .await
+    }
+
+    /// `GET /v1/memories/{artifact_id}`: one memory with its text, as the
+    /// caller may read it.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn get_memory(&self, call: &Call<'_>, artifact_id: &str) -> Result<Memory, Error> {
+        self.get(Some(call), format!("/v1/memories/{}", encode(artifact_id)))
+            .await
+    }
+
+    /// `GET /v2/admin/memories/{artifact_id}`: one memory of the tenant
+    /// with its attribution, as the admin key reads it; journalled by the
+    /// API as an admin read.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn admin_read(&self, call: &Call<'_>, artifact_id: &str) -> Result<AdminRead, Error> {
+        self.get(
+            Some(call),
+            format!("/v2/admin/memories/{}", encode(artifact_id)),
+        )
+        .await
+    }
+
+    /// `POST /v1/memories` with `verb: learn`: a new claim deriving from
+    /// `derives_from`, in `workarea`, held until reviewed.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn learn(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        submission: &Learn<'_>,
+    ) -> Result<Accepted, Error> {
+        let mut body = serde_json::json!({
+            "verb": "learn",
+            "body": submission.body,
+            "workarea": submission.workarea,
+            "derives_from": submission.derives_from,
+        });
+        if let Some(claim_key) = submission.claim_key {
+            body["claim_key"] = Value::from(claim_key);
+        }
+        self.post(call, "/v1/memories".to_owned(), idempotency_key, &body)
+            .await
+    }
+
+    /// `POST /v1/memories/{artifact_id}/supersede`: a new version of the
+    /// claim, or with `retirement` its retirement, held until reviewed.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn supersede(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        artifact_id: &str,
+        body: &str,
+        expected_version: u32,
+        retirement: bool,
+    ) -> Result<Accepted, Error> {
+        self.post(
+            call,
+            format!("/v1/memories/{}/supersede", encode(artifact_id)),
+            idempotency_key,
+            &serde_json::json!({
+                "body": body,
+                "expected_version": expected_version,
+                "retirement": retirement,
+            }),
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -715,6 +1602,107 @@ mod tests {
                     .set_workarea_mode(&CALL, "idem-3", "alice.proj", "in_progress")
                     .await,
             ),
+            decodes(
+                &client
+                    .list_memories(
+                        &CALL,
+                        &MemoryQuery {
+                            state: Some("held"),
+                            limit: 50,
+                            ..MemoryQuery::default()
+                        },
+                    )
+                    .await,
+            ),
+            decodes(
+                &client
+                    .recall(
+                        &CALL,
+                        &RecallQuery {
+                            query: "kestrel",
+                            k: 50,
+                            ..RecallQuery::default()
+                        },
+                    )
+                    .await,
+            ),
+            decodes(
+                &client
+                    .admin_search(
+                        &CALL,
+                        &AdminSearch {
+                            author: Some("alice-phone"),
+                            limit: 50,
+                            ..AdminSearch::default()
+                        },
+                    )
+                    .await,
+            ),
+            decodes(&client.workarea_counts(&CALL, "alice").await),
+            decodes(&client.list_keys(&CALL, Some("alice"), 200, None).await),
+            decodes(
+                &client
+                    .create_workarea(&CALL, "idem-4", "proj", Some("alice"))
+                    .await,
+            ),
+            {
+                // An `Option`: `None` is the `204` of nothing waiting.
+                let _ = client.review_next(&CALL, "idem-0").await;
+                "Serve"
+            },
+            decodes(
+                &client
+                    .post_verdict(&CALL, "idem-5", "srv_1", "approve", None)
+                    .await,
+            ),
+            decodes(
+                &client
+                    .review_held(&CALL, &[("workarea", "alice")], 50, None)
+                    .await,
+            ),
+            decodes(&client.review_named(&CALL, &["a", "b"]).await),
+            decodes(
+                &client
+                    .post_bulk_verdict(&CALL, "idem-6", "approve", &["a"], None)
+                    .await,
+            ),
+            decodes(&client.review_queue(&CALL).await),
+            decodes(
+                &client
+                    .issue_key(&CALL, "idem-7", "alice-laptop", "writer", false)
+                    .await,
+            ),
+            decodes(
+                &client
+                    .mint_connect_code(&CALL, "idem-8", "alice-phone")
+                    .await,
+            ),
+            decodes(
+                &client
+                    .add_denial(&CALL, "idem-9", "alice-phone", "universe")
+                    .await,
+            ),
+            decodes(&client.get_memory(&CALL, "m-1").await),
+            decodes(&client.admin_read(&CALL, "m-1").await),
+            decodes(
+                &client
+                    .learn(
+                        &CALL,
+                        "idem-10",
+                        &Learn {
+                            body: "Keys rotate quarterly.",
+                            workarea: "universe",
+                            derives_from: &["m-1"],
+                            claim_key: None,
+                        },
+                    )
+                    .await,
+            ),
+            decodes(
+                &client
+                    .supersede(&CALL, "idem-11", "m-1", "new text", 1, false)
+                    .await,
+            ),
         ];
         let seen = seen.lock().unwrap();
         let table = table();
@@ -753,6 +1741,51 @@ mod tests {
             );
         }
         assert!(!seen[6].headers().contains_key(IDEMPOTENCY_KEY));
+        assert_eq!(
+            seen[10].uri(),
+            "/v1/memories?with_own=true&include_text=true&limit=50&state=held"
+        );
+        // The reads that travel in a body carry no idempotency key.
+        for i in [11, 12] {
+            assert!(!seen[i].headers().contains_key(IDEMPOTENCY_KEY), "{i}");
+        }
+        assert_eq!(seen[13].uri(), "/v2/workareas/alice/tree?counts=true");
+        assert_eq!(seen[15].headers()[IDEMPOTENCY_KEY], "idem-4");
+        assert_eq!(
+            std::str::from_utf8(seen[15].body()).unwrap(),
+            r#"{"name":"proj","parent":"alice"}"#
+        );
+        assert_eq!(seen[14].uri(), "/v2/keys?limit=200&user=alice");
+        assert_eq!(seen[18].uri(), "/v2/review/held?limit=50&workarea=alice");
+        assert_eq!(seen[19].uri(), "/v2/review/held?ids=a,b");
+        assert_eq!(
+            std::str::from_utf8(seen[22].body()).unwrap(),
+            r#"{"connect_code":false,"name":"alice-laptop","role":"writer"}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn nothing_waiting_for_review_is_none() {
+        let (client, _) = recording(204, "");
+        assert_eq!(client.review_next(&CALL, "idem").await, Ok(None));
+    }
+
+    #[test]
+    fn no_debug_output_prints_a_shown_once_secret() {
+        let issued = KeyIssued {
+            key_id: "k".to_owned(),
+            name: "alice-laptop".to_owned(),
+            value: Some("oml_the-secret-value".to_owned()),
+            connect_code: Some(ConnectCode {
+                code_id: "c".to_owned(),
+                code: Some("ABCD-EFGH-JKMN".to_owned()),
+                expires_at: "2026-11-11T00:00:00Z".to_owned(),
+                connector_url: "https://oml.example.com/mcp".to_owned(),
+            }),
+        };
+        let shown = format!("{issued:?}");
+        assert!(!shown.contains("oml_the-secret-value"), "{shown}");
+        assert!(!shown.contains("ABCD-EFGH-JKMN"), "{shown}");
     }
 
     #[tokio::test]

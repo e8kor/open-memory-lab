@@ -64,14 +64,14 @@ def sync_detailed(
 
      Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation
     with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off,
-    create_workarea, review_next, verdict, sign_out; review_next and verdict run as the session's
-    <user>-review key, which holds dreamer and reader on the person's own root from the first sign-in,
-    R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field
-    names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9).
-    create_workarea answers 303 /web/workareas?done=created. workarea_mode, workarea_transition and
-    workarea_ratify are the Workareas view's acts, which oml-web runs at /web/workareas over the API:
-    the lead runs none of them and answers 303 /web/workareas (ADR-0070 d7 (b); since v0.6.4). An issued
-    key's value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.
+    review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key,
+    which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that
+    key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a
+    field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea,
+    workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web
+    runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas
+    (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the
+    answering page, never in a redirect. Since v0.5.0.
 
     Args:
         body (UserPageActBody):
@@ -104,14 +104,14 @@ def sync(
 
      Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation
     with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off,
-    create_workarea, review_next, verdict, sign_out; review_next and verdict run as the session's
-    <user>-review key, which holds dreamer and reader on the person's own root from the first sign-in,
-    R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field
-    names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9).
-    create_workarea answers 303 /web/workareas?done=created. workarea_mode, workarea_transition and
-    workarea_ratify are the Workareas view's acts, which oml-web runs at /web/workareas over the API:
-    the lead runs none of them and answers 303 /web/workareas (ADR-0070 d7 (b); since v0.6.4). An issued
-    key's value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.
+    review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key,
+    which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that
+    key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a
+    field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea,
+    workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web
+    runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas
+    (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the
+    answering page, never in a redirect. Since v0.5.0.
 
     Args:
         body (UserPageActBody):
@@ -139,14 +139,14 @@ async def asyncio_detailed(
 
      Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation
     with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off,
-    create_workarea, review_next, verdict, sign_out; review_next and verdict run as the session's
-    <user>-review key, which holds dreamer and reader on the person's own root from the first sign-in,
-    R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field
-    names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9).
-    create_workarea answers 303 /web/workareas?done=created. workarea_mode, workarea_transition and
-    workarea_ratify are the Workareas view's acts, which oml-web runs at /web/workareas over the API:
-    the lead runs none of them and answers 303 /web/workareas (ADR-0070 d7 (b); since v0.6.4). An issued
-    key's value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.
+    review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key,
+    which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that
+    key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a
+    field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea,
+    workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web
+    runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas
+    (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the
+    answering page, never in a redirect. Since v0.5.0.
 
     Args:
         body (UserPageActBody):
@@ -177,14 +177,14 @@ async def asyncio(
 
      Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation
     with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off,
-    create_workarea, review_next, verdict, sign_out; review_next and verdict run as the session's
-    <user>-review key, which holds dreamer and reader on the person's own root from the first sign-in,
-    R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field
-    names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9).
-    create_workarea answers 303 /web/workareas?done=created. workarea_mode, workarea_transition and
-    workarea_ratify are the Workareas view's acts, which oml-web runs at /web/workareas over the API:
-    the lead runs none of them and answers 303 /web/workareas (ADR-0070 d7 (b); since v0.6.4). An issued
-    key's value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.
+    review_next, verdict, sign_out; review_next and verdict run as the session's <user>-review key,
+    which holds dreamer and reader on the person's own root from the first sign-in, R2 checked on that
+    key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a
+    field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea,
+    workarea_mode, workarea_transition and workarea_ratify are the Workareas view's acts, which oml-web
+    runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas
+    (ADR-0070 d7 (b); since v0.6.4). An issued key's value or connect code is shown once on the
+    answering page, never in a redirect. Since v0.5.0.
 
     Args:
         body (UserPageActBody):

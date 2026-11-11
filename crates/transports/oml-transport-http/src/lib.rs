@@ -50,6 +50,7 @@ use uuid::Uuid;
 
 use oml_app::App;
 use oml_app::app::Caller;
+use oml_app::domain::EventTime;
 use oml_app::domain::access::Covers;
 use oml_app::domain::anchor::{self as anchor_grammar, Anchor, CheckResult};
 use oml_app::domain::budget::{Budget, COUNTER_ID, budget_tokens};
@@ -711,6 +712,13 @@ where
             .iter()
             .any(|(n, v)| (n == "with_own" && v == "true") || n == "author")
         {
+            // as_of reads the scoped listing alone (ADR-0059 d19).
+            if params.iter().any(|(n, _)| n == "as_of") {
+                return Err(ApiError::validation(
+                    "as_of reads the scoped listing: it does not combine with own, with_own, author or tip",
+                )
+                .with_details(json!({ "field": "as_of" })));
+            }
             return Self::list_with_own_inner(st, params, &acting, include_text).await;
         }
         let req = list_request(params)?;
@@ -738,7 +746,7 @@ where
         st: &Self,
         params: &[(String, String)],
         acting: &Acting<'_>,
-        include_text: bool,
+        mut include_text: bool,
     ) -> Result<Response, ApiError> {
         let mut req = oml_app::app::WebListRequest {
             limit: PAGE_LIMIT_DEFAULT,
@@ -754,6 +762,14 @@ where
             match name.as_str() {
                 "with_own" if value == "true" || value == "false" => {}
                 "with_own" => return Err(ApiError::validation("with_own must be true or false")),
+                // Each item with its text, as the console's list shows it
+                // (ADR-0070 d5).
+                "include_text" if value == "true" => include_text = true,
+                "include_text" if value == "false" => {}
+                "include_text" => {
+                    return Err(ApiError::validation("include_text must be true or false")
+                        .with_details(json!({ "field": "include_text" })));
+                }
                 "author" => {
                     req.author = Some(Name::parse(value).map_err(|e| {
                         ApiError::validation(format!("author {value:?} is not a key's name: {e}"))
@@ -815,12 +831,21 @@ where
         State(st): State<Self>,
         rid: Rid,
         Path(artifact_id): Path<String>,
+        query: Result<Query<Vec<(String, String)>>, QueryRejection>,
         headers: HeaderMap,
     ) -> Response {
-        finish(
-            &rid,
-            Self::get_memory_inner(&st, &artifact_id, &headers, None).await,
-        )
+        let result = match query {
+            Ok(Query(params)) => match get_as_of(&params) {
+                Ok(as_of) => {
+                    Self::get_memory_inner(&st, &artifact_id, as_of.as_ref(), &headers, None).await
+                }
+                Err(e) => Err(e),
+            },
+            Err(e) => Err(ApiError::validation(format!(
+                "the query string is not this operation's shape: {e}"
+            ))),
+        };
+        finish(&rid, result)
     }
 
     /// `GET /v1/memories/{artifact_id}` (http-api.md get). Get resolves no
@@ -846,6 +871,7 @@ where
     async fn get_memory_inner(
         st: &Self,
         artifact_id: &str,
+        as_of: Option<&EventTime>,
         headers: &HeaderMap,
         connection: Option<&Caller>,
     ) -> Result<Response, ApiError> {
@@ -860,7 +886,7 @@ where
         let id = Uuid::parse_str(artifact_id).map_err(|_| ApiError::not_found())?;
         let memory = st
             .app
-            .get_memory(acting.bearer(), id)
+            .get_memory_as_of(acting.bearer(), id, as_of)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::OK, &memory_json(&memory, true)))
@@ -965,6 +991,7 @@ where
                         "/",
                     )?,
                     sources,
+                    as_of: parse_as_of(req.as_of.as_deref(), "/as_of")?,
                 },
             )
             .await
@@ -1624,7 +1651,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         // The body is closed, nested objects included: a field the server
         // does not serve is refused, never dropped (ADR-0025 d16).
         let req: KeyIssueBody = parse_json_renamed(headers, body, key_issue_renamed)?;
@@ -1635,7 +1662,7 @@ where
         // A session key issues only as the person's own issuance, bounded
         // to their root (ADR-0070 d2, d5; ADR-0045 d9, d16).
         if let Some(caller) = session::session_caller() {
-            return Self::issue_key_as_session(st, &caller, &req, &name).await;
+            return Self::issue_key_as_session(st, &caller, &req, &name, &idem, body).await;
         }
         // Issued keys do not expire yet: a requested expiry is refused by
         // name, since minting the key without it would leave the key its
@@ -1744,30 +1771,21 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
         let req: DenialBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("workarea_node_id", "workarea")])
         })?;
         let node = reference("/workarea", &req.workarea)?;
-        let denial = match session::session_caller() {
-            // A session key cuts off one key on universe, as the pages do
-            // (ADR-0070 d5; ADR-0045 d9, d13).
-            Some(caller) => Self::cut_off_as_session(st, &caller, &key, &node).await?,
-            None => retry_chain(|| st.app.deny_key(acting.bearer(), key.clone(), node.clone()))
-                .await
-                .map_err(|e| map_app_error(e, ErrorContext::Write))?,
-        };
-        Ok(json_response(
-            StatusCode::CREATED,
-            &json!({
-                "denial_id": denial.denial.denial_id,
-                "workarea_node_id": denial.denial.node,
-                "epoch": denial.epoch,
-                // Lifting is not built (ADR-0025 d2).
-                "lifted": false,
-            }),
-        ))
+        // A session key cuts off one key on universe, as the pages do
+        // (ADR-0070 d5; ADR-0045 d9, d13).
+        if let Some(caller) = session::session_caller() {
+            return Self::cut_off_as_session(st, &caller, &key, &node, &idem, key_id, body).await;
+        }
+        let denial = retry_chain(|| st.app.deny_key(acting.bearer(), key.clone(), node.clone()))
+            .await
+            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(StatusCode::CREATED, &denial_json(&denial)))
     }
 
     async fn create_workarea(
@@ -1789,10 +1807,20 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         let req: WorkareaCreateBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("parent_id", "parent")])
         })?;
+        // A resubmission under the same key answers the recorded creation
+        // and creates nothing again (ADR-0070 d3 layer 4).
+        let caller = st.console_caller(headers).await?;
+        let digest = console::act_digest("", body);
+        if let Some(replayed) = st
+            .replayed(&caller, "workarea.create", &idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
+        }
         if req.prefix.is_some() {
             return Err(ApiError::validation(
                 "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
@@ -1815,7 +1843,15 @@ where
         if let Some(obj) = response.as_object_mut() {
             obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
         }
-        Ok(json_response(StatusCode::CREATED, &response))
+        st.record_outcome(
+            &caller,
+            "workarea.create",
+            &idem,
+            &digest,
+            StatusCode::CREATED,
+            &response,
+        )
+        .await
     }
 
     async fn get_workarea(
@@ -2529,7 +2565,7 @@ where
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
         let token = bearer(headers)?;
-        let _idem = idempotency_key(headers)?;
+        let idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
         let req: ConnectCodeBody = if body.is_empty() {
             ConnectCodeBody::default()
@@ -2539,7 +2575,16 @@ where
         // A person's web session key mints a code for one of their own
         // connector keys (ADR-0070 d5; ADR-0045 d9).
         if let Some(caller) = session::session_caller() {
-            return Self::connect_code_as_session(st, &caller, &key, req.ttl_seconds).await;
+            return Self::connect_code_as_session(
+                st,
+                &caller,
+                &key,
+                req.ttl_seconds,
+                &idem,
+                key_id,
+                body,
+            )
+            .await;
         }
         let code = retry_chain(|| {
             st.app
@@ -3028,6 +3073,8 @@ struct RecallBody {
     /// Where to search: `scope`, `wide` or a list of workareas (ADR-0072
     /// d5); parsed by [`parse_sources`].
     sources: Option<Value>,
+    /// The transaction-time instant to read at (ADR-0059 d14).
+    as_of: Option<String>,
 }
 
 /// `sources` on recall (ADR-0072 d5): a string is a mode, `scope` or
@@ -3837,6 +3884,17 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
     body
 }
 
+/// openapi.yaml `Denial`: the denial `POST /v2/keys/{key}/denials` adds.
+fn denial_json(denial: &oml_app::types::DenialRecord) -> Value {
+    json!({
+        "denial_id": denial.denial.denial_id,
+        "workarea_node_id": denial.denial.node,
+        "epoch": denial.epoch,
+        // Lifting is not built (ADR-0025 d2).
+        "lifted": false,
+    })
+}
+
 /// openapi.yaml `ConnectCode`: the code shown once, its expiry and the URL
 /// to enter as the custom connector (ADR-0031 d7, d8).
 fn connect_code_json(code: &ConnectCodeIssued) -> Value {
@@ -4004,6 +4062,35 @@ fn named_ref_json(r: &oml_app::types::NamedRef) -> Value {
     json!({ "id": r.id, "name": r.name.as_str() })
 }
 
+/// `as_of`, an RFC 3339 `date-time` with an offset and at most six
+/// fractional digits, as the fixed-width instant it names; a date, a period
+/// or anything else is `request.validation` naming `field` (ADR-0059 d14).
+pub(crate) fn parse_as_of(value: Option<&str>, field: &str) -> Result<Option<EventTime>, ApiError> {
+    value
+        .map(|v| {
+            parse_date_time(v).ok_or_else(|| {
+                ApiError::validation(
+                    "as_of must be an RFC 3339 date-time with an offset and at most microsecond precision",
+                )
+                .with_details(json!({ "field": field }))
+            })
+        })
+        .transpose()
+}
+
+/// Get's query parameters: `as_of` alone, at most once (ADR-0059 d14,
+/// d19); any other is refused, never ignored.
+fn get_as_of(params: &[(String, String)]) -> Result<Option<EventTime>, ApiError> {
+    match params {
+        [] => Ok(None),
+        [(name, value)] if name == "as_of" => parse_as_of(Some(value), "as_of"),
+        [(name, _)] => Err(ApiError::validation(format!(
+            "unknown query parameter {name:?}"
+        ))),
+        _ => Err(ApiError::validation("get takes one query parameter, as_of")),
+    }
+}
+
 /// The listing's query parameters (openapi.yaml `searchMemories`): each
 /// at most once, and an unknown one refused rather than ignored, so a
 /// mistyped filter never widens a listing; v0.3.0's `workarea_id` names
@@ -4022,6 +4109,7 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
         anchor: AnchorFilter::default(),
         author: None,
         tip: None,
+        as_of: None,
     };
     let mut anchor_repo = None;
     let mut anchor_path_prefix = None;
@@ -4063,6 +4151,7 @@ fn list_request(params: &[(String, String)]) -> Result<ListRequest, ApiError> {
             "kind" => req.kind = Some(parse_kind(value)?),
             "since" => req.since = Some(date_time()?),
             "until" => req.until = Some(date_time()?),
+            "as_of" => req.as_of = parse_as_of(Some(value), "as_of")?,
             "limit" => {
                 req.limit = value
                     .parse()
@@ -4358,6 +4447,17 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         } else {
             Value::from(m.author_principal.clone())
         },
+        // The authoring key's id, null wherever principal is (ADR-0044 d9;
+        // ADR-0070 d5): the user page names the kind of its person's own
+        // keys and filters a search by one of them.
+        "author_key_id": if served.anonymous {
+            Value::Null
+        } else {
+            Value::from(m.author_key_id.to_string())
+        },
+        // Admission's scan finding, `class: rule at place`, never the text
+        // (ADR-0065 d8; ADR-0070 d5).
+        "scan_finding": m.scan_finding,
         "provenance": "agent",
         "simulation_id": Value::Null,
         "self_signed": false,
@@ -4413,6 +4513,11 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
     }
     if let (Some(warning), Some(obj)) = (served.load_warning, value.as_object_mut()) {
         obj.insert("load_warning".to_owned(), json!(warning));
+    }
+    // What a derived format's claim will be found by, which a reviewer's
+    // card shows before the verdict (ADR-0056 d9; ADR-0070 d5).
+    if let (Some(found), Some(obj)) = (&m.format.search_text, value.as_object_mut()) {
+        obj.insert("search_text".to_owned(), json!(found));
     }
     value
 }

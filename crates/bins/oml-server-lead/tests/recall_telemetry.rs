@@ -1110,6 +1110,7 @@ async fn the_event_writes_cost_on_a_recalls_p95() {
         match_mode: oml_app::search::MatchMode::Any,
         include_expired: false,
         now: None,
+        as_of: None,
     };
     // The router's app holds the writer; the side app holds none. Both
     // run the same recall against the same store, interleaved.

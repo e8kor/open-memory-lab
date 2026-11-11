@@ -68,6 +68,11 @@ class MemorySummary:
         principal (None | str | Unset): The authoring principal; null on a version in universe served to a key outside
             its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its
             source (ADR-0044 d9).
+        author_key_id (None | str | Unset): The authoring key's id; null wherever principal is (ADR-0044 d9). The web
+            console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since
+            v0.7.0.
+        scan_finding (None | str | Unset): Admission's scan finding on the version, class: rule at place, never the
+            matched text; null when the scan found nothing (ADR-0065 d8; ADR-0070 d5). Since v0.7.0.
         provenance (MemorySummaryProvenance | Unset):
         simulation_id (None | str | Unset):
         self_signed (bool | Unset): Marked rows under the bounded development exception; never promote beyond their
@@ -80,15 +85,18 @@ class MemorySummary:
         origin (None | Origin | Unset): What kind of source the version's text came from, as signed; null on versions
             written before ADR-0063 (d1-d3).
         valid_from (None | str | Unset): When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM,
-            YYYY-MM-DD) or an instant; null when it declares none (proposed ADR-0059 d2).
+            YYYY-MM-DD) or an instant; null when it declares none (ADR-0059 d2).
         valid_until (None | str | Unset): When it stops holding, as signed, or the instant a ratified supersession ended
-            it at; null when open (proposed ADR-0059 d2, d4).
+            it at; null when open (ADR-0059 d2, d4).
         format_ (str | Unset): The media type signed with the version; text/plain for every version written before
             formats (ADR-0056 d1, d12).
         title (None | str | Unset): The title signed with the version, or null (ADR-0056 d10).
+        search_text (str | Unset): For a format whose text is not prose, what the claim will be found by, derived from
+            its source; absent for prose, so a reviewer sees it on the card before the verdict (ADR-0056 d9; ADR-0070 d5).
+            Since v0.6.4.
         replaces_valid_until (str | Unset): On a held successor alone: the instant approving it ends the version it
             replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when
-            approving ends nothing (proposed ADR-0059 d4).
+            approving ends nothing (ADR-0059 d4).
     """
 
     artifact_id: str
@@ -113,6 +121,8 @@ class MemorySummary:
     rule: Any | Unset = UNSET
     load_warning: str | Unset = UNSET
     principal: None | str | Unset = UNSET
+    author_key_id: None | str | Unset = UNSET
+    scan_finding: None | str | Unset = UNSET
     provenance: MemorySummaryProvenance | Unset = UNSET
     simulation_id: None | str | Unset = UNSET
     self_signed: bool | Unset = UNSET
@@ -124,6 +134,7 @@ class MemorySummary:
     valid_until: None | str | Unset = UNSET
     format_: str | Unset = UNSET
     title: None | str | Unset = UNSET
+    search_text: str | Unset = UNSET
     replaces_valid_until: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -209,6 +220,18 @@ class MemorySummary:
         else:
             principal = self.principal
 
+        author_key_id: None | str | Unset
+        if isinstance(self.author_key_id, Unset):
+            author_key_id = UNSET
+        else:
+            author_key_id = self.author_key_id
+
+        scan_finding: None | str | Unset
+        if isinstance(self.scan_finding, Unset):
+            scan_finding = UNSET
+        else:
+            scan_finding = self.scan_finding
+
         provenance: str | Unset = UNSET
         if not isinstance(self.provenance, Unset):
             provenance = self.provenance.value
@@ -262,6 +285,8 @@ class MemorySummary:
         else:
             title = self.title
 
+        search_text = self.search_text
+
         replaces_valid_until = self.replaces_valid_until
 
         field_dict: dict[str, Any] = {}
@@ -296,6 +321,10 @@ class MemorySummary:
             field_dict["load_warning"] = load_warning
         if principal is not UNSET:
             field_dict["principal"] = principal
+        if author_key_id is not UNSET:
+            field_dict["author_key_id"] = author_key_id
+        if scan_finding is not UNSET:
+            field_dict["scan_finding"] = scan_finding
         if provenance is not UNSET:
             field_dict["provenance"] = provenance
         if simulation_id is not UNSET:
@@ -318,6 +347,8 @@ class MemorySummary:
             field_dict["format"] = format_
         if title is not UNSET:
             field_dict["title"] = title
+        if search_text is not UNSET:
+            field_dict["search_text"] = search_text
         if replaces_valid_until is not UNSET:
             field_dict["replaces_valid_until"] = replaces_valid_until
 
@@ -476,6 +507,24 @@ class MemorySummary:
 
         principal = _parse_principal(d.pop("principal", UNSET))
 
+        def _parse_author_key_id(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        author_key_id = _parse_author_key_id(d.pop("author_key_id", UNSET))
+
+        def _parse_scan_finding(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        scan_finding = _parse_scan_finding(d.pop("scan_finding", UNSET))
+
         _provenance = d.pop("provenance", UNSET)
         provenance: MemorySummaryProvenance | Unset
         if isinstance(_provenance, Unset):
@@ -553,6 +602,8 @@ class MemorySummary:
 
         title = _parse_title(d.pop("title", UNSET))
 
+        search_text = d.pop("search_text", UNSET)
+
         replaces_valid_until = d.pop("replaces_valid_until", UNSET)
 
         memory_summary = cls(
@@ -578,6 +629,8 @@ class MemorySummary:
             rule=rule,
             load_warning=load_warning,
             principal=principal,
+            author_key_id=author_key_id,
+            scan_finding=scan_finding,
             provenance=provenance,
             simulation_id=simulation_id,
             self_signed=self_signed,
@@ -589,6 +642,7 @@ class MemorySummary:
             valid_until=valid_until,
             format_=format_,
             title=title,
+            search_text=search_text,
             replaces_valid_until=replaces_valid_until,
         )
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
@@ -72,9 +73,15 @@ class RecallRequest:
                 request.validation, details.field /timings, unless the deployment sets search.timings (ADR-0049 d14). Since
                 v0.5.9.
             include_expired (bool | Unset): true also serves memories whose valid_until has passed, which recall hides by
-                default; get and the listings always serve them (proposed ADR-0059 d3). Default: False.
+                default; get and the listings always serve them (ADR-0059 d3). Default: False.
             now (str | Unset): YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 date-time with an offset and at most six fractional
-                digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (proposed ADR-0059 d2).
+                digits. A period is read in UTC: 2026-11-05 runs from 00:00 to 24:00 UTC (ADR-0059 d2).
+            as_of (datetime.datetime | Unset): Recall memory as it was at this past instant, under today's grants: each
+                claim's tip then, the caller's held rows recorded by then, and the steering in force then; scores are today's. A
+                pipeline that reads postings is answered by bm25's scan over the scope at the instant, keyword-all by keyword-
+                any with every word, and search.pipeline names the one asked. Only sources scope combines with it. An RFC 3339
+                date-time; a date or an instant after the server's clock is request.validation naming /as_of. Digested with the
+                request when sent (ADR-0059 d14, d15, d17, d18).
             sources (list[str] | RecallRequestSourcesType0 | Unset): Where to search (ADR-0072 d5). scope, the default, is
                 the workarea's subtree as always. wide adds the committed and validated workareas the key already reads outside
                 it that accept federated reads: all of them up to the tenant's max_sources, above it those holding the largest
@@ -106,6 +113,7 @@ class RecallRequest:
     timings: bool | Unset = UNSET
     include_expired: bool | Unset = False
     now: str | Unset = UNSET
+    as_of: datetime.datetime | Unset = UNSET
     sources: list[str] | RecallRequestSourcesType0 | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -163,6 +171,10 @@ class RecallRequest:
 
         now = self.now
 
+        as_of: str | Unset = UNSET
+        if not isinstance(self.as_of, Unset):
+            as_of = self.as_of.isoformat()
+
         sources: list[str] | str | Unset
         if isinstance(self.sources, Unset):
             sources = UNSET
@@ -208,6 +220,8 @@ class RecallRequest:
             field_dict["include_expired"] = include_expired
         if now is not UNSET:
             field_dict["now"] = now
+        if as_of is not UNSET:
+            field_dict["as_of"] = as_of
         if sources is not UNSET:
             field_dict["sources"] = sources
 
@@ -286,6 +300,13 @@ class RecallRequest:
 
         now = d.pop("now", UNSET)
 
+        _as_of = d.pop("as_of", UNSET)
+        as_of: datetime.datetime | Unset
+        if isinstance(_as_of, Unset):
+            as_of = UNSET
+        else:
+            as_of = datetime.datetime.fromisoformat(_as_of)
+
         def _parse_sources(
             data: object,
         ) -> list[str] | RecallRequestSourcesType0 | Unset:
@@ -324,6 +345,7 @@ class RecallRequest:
             timings=timings,
             include_expired=include_expired,
             now=now,
+            as_of=as_of,
             sources=sources,
         )
 

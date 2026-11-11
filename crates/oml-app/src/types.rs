@@ -1699,6 +1699,9 @@ pub struct RecallRequest {
     /// `sources`: where to search (ADR-0072 d5); `None` is the tenant's
     /// `federation.default_sources`, `scope` unless an admin set `wide`.
     pub sources: Option<crate::federation::Sources>,
+    /// `as_of`: the transaction-time instant the recall reads memory at,
+    /// under today's access (ADR-0059 d14, d15, d18); `None` reads today.
+    pub as_of: Option<EventTime>,
 }
 
 /// One recall hit: the row as the calling key is served it, and the store's
@@ -1961,6 +1964,9 @@ pub struct ListingFilter {
     /// Only tips, or only replaced versions; `None` narrows nothing
     /// (ADR-0045 d22).
     pub tip: Option<bool>,
+    /// On the tips scope: the tips at this instant and the held rows
+    /// recorded by it, instead of today's tips (ADR-0059 d15, d19).
+    pub as_of: Option<EventTime>,
 }
 
 /// Where a listing page resumes: the `created_at` and id of the last row
@@ -2102,6 +2108,9 @@ pub struct ListRequest {
     /// the web pages' `promoted` and `superseded` (ADR-0045 d22). The API
     /// sets none.
     pub tip: Option<bool>,
+    /// `as_of`: the scoped listing at a past instant under today's access;
+    /// refused with `own`, `author` and `tip` (ADR-0059 d14, d19).
+    pub as_of: Option<EventTime>,
 }
 
 /// One listing page: summaries as the calling key is served them, and the
@@ -2803,6 +2812,14 @@ pub enum AppError {
         "now must be YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time with an offset (proposed ADR-0059 d5, request.validation)"
     )]
     NowUnparsable,
+    /// An `as_of` the read cannot take: after the lead's clock, or beside
+    /// an argument it does not combine with (ADR-0059 d17, d18, d19;
+    /// request.validation naming `field`).
+    #[error("{reason} (request.validation)")]
+    AsOfInvalid {
+        field: &'static str,
+        reason: &'static str,
+    },
     #[error(
         "oml_write does not supersede a guardrail: a guardrail is written and superseded on the HTTP API only (proposed ADR-0037 d10, request.validation)"
     )]

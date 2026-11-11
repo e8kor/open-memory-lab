@@ -89,8 +89,8 @@ local development (oml quickstart starts all three)
   router routes exactly as production does, so the browser sees one origin and
   there is no `web.page_url` setting (ADR-0070 d4).
 - Kubernetes: two Deployments; the Ingress routes each path in
-  `web.ingressPaths` (`/web/guardrails`, `/web/workareas` and
-  `/web/admin/workareas` today) to `oml-web` and every other
+  `web.ingressPaths` (each page of `oml_web::PAGES`, Exact, and the diagram
+  frame's prefixes of `oml_web::PREFIXES`, Prefix) to `oml-web` and every other
   path to the lead.
 - `deploy/caddy/Caddyfile` is the production route table; a test in `oml-web`
   holds it and both compose files to `oml_web::PAGES`.
@@ -284,7 +284,11 @@ API returns the same JSON as today, but with no page syntax
      changes, each through its documented operation under the confirmation's
      idempotency key; the lead answers the old acts with a `303` to the view
      and runs none of them.
-   - Then memories, review and users.
+   - Then review, now `/web/review` and `/web/admin/review` with the queue and
+     bulk review, and keys, now `/web/keys` and `/web/admin/keys`: a key's
+     value and a connect code are shown once on the redirect target, sealed in
+     a cookie that page clears, never in a URL or a line.
+   - Then memories and users.
    - Each page gets a parity marker before its old handler is deleted.
    - Each moved page gets its own path under `/web/`, and the lead answers
      the old `?view=` form with a `303` to that fixed path, so every proxy,

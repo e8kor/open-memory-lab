@@ -12,7 +12,7 @@ T = TypeVar("T", bound="RecallSearchWindowType0")
 @_attrs_define
 class RecallSearchWindowType0:
     """The date window read from the query by rule oml-when/1, anchored to the recall's now; null when the query names no
-    date (proposed ADR-0059 d6).
+    date (ADR-0059 d6).
 
         Attributes:
             from_ (datetime.datetime | None): The window's first instant; null when open.

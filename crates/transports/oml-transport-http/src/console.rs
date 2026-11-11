@@ -26,9 +26,9 @@ use oml_app::types::{AppError, Bearer, Credential, GrantRecord};
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
 use crate::{
-    ApiState, KeyIssueBody, PAGE_LIMIT_DEFAULT, acting, connect_code_json, finish, idempotency_key,
-    json_response, key_issued_json, page_limit, parse_json, parse_role, reference, retry_chain,
-    session,
+    ApiState, KeyIssueBody, PAGE_LIMIT_DEFAULT, acting, connect_code_json, denial_json, finish,
+    idempotency_key, json_response, key_issued_json, page_limit, parse_json, parse_role, reference,
+    retry_chain, session,
 };
 
 /// The most workareas one capacities request names.
@@ -210,6 +210,21 @@ where
         status: StatusCode,
         body: &Value,
     ) -> Result<Response, ApiError> {
+        self.record(caller, act, idem, digest, status, body).await?;
+        Ok(json_response(status, body))
+    }
+
+    /// Records `body` as the act's answer under its `Idempotency-Key`, the
+    /// answer a resubmission replays.
+    async fn record(
+        &self,
+        caller: &Caller,
+        act: &str,
+        idem: &str,
+        digest: &str,
+        status: StatusCode,
+        body: &Value,
+    ) -> Result<(), ApiError> {
         self.app
             .record_act(
                 caller,
@@ -219,8 +234,7 @@ where
                 json!({ "status": status.as_u16(), "body": body }),
             )
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(status, body))
+            .map_err(|e| map_app_error(e, ErrorContext::Write))
     }
 
     // -- #1 GET /v2/keys ------------------------------------------------------
@@ -862,14 +876,24 @@ where
     /// use case's, never the body's; every other field is refused naming
     /// it. Any other session capacity is `session_capacity` (ADR-0070 d2,
     /// d5; ADR-0045 d9, d16).
+    ///
+    /// A resubmission under the same `Idempotency-Key` and body replays the
+    /// answer without the value or the connect code, which are shown once
+    /// (ADR-0070 d3 layer 4, as built).
     pub(crate) async fn issue_key_as_session(
         st: &Self,
         caller: &Caller,
         req: &KeyIssueBody,
         name: &Name,
+        idem: &str,
+        body: &Bytes,
     ) -> Result<Response, ApiError> {
         if !is_web_session_key(caller) {
             return Err(session_capacity(caller, "issue_key"));
+        }
+        let digest = act_digest("", body);
+        if let Some(replayed) = st.replayed(caller, "keys.issue", idem, &digest).await? {
+            return Ok(replayed);
         }
         let set: [(&str, bool); 9] = [
             ("/grants", !req.grants.is_empty()),
@@ -917,25 +941,49 @@ where
             }
             e => map_app_error(e, ErrorContext::Write),
         })?;
-        Ok(json_response(
+        let answer = key_issued_json(&issued, None);
+        let mut kept = answer.clone();
+        if let Some(kept) = kept.as_object_mut() {
+            kept.remove("value");
+            if let Some(code) = kept.get_mut("connect_code").and_then(Value::as_object_mut) {
+                code.remove("code");
+            }
+        }
+        st.record(
+            caller,
+            "keys.issue",
+            idem,
+            &digest,
             StatusCode::CREATED,
-            &key_issued_json(&issued, None),
-        ))
+            &kept,
+        )
+        .await?;
+        Ok(json_response(StatusCode::CREATED, &answer))
     }
 
     /// `POST /v2/keys/{key}/denials` as a session key: `<user>-web` cuts
     /// off one of the person's own keys, `<user>-admin` one of the
     /// tenant's, each only on `universe` and never a session key, as the
     /// pages' `cut_off` does (ADR-0070 d5; ADR-0045 d9, d13).
+    ///
+    /// A resubmission under the same `Idempotency-Key` and body replays the
+    /// answer and cuts nothing off again (ADR-0070 d3 layer 4, as built).
     pub(crate) async fn cut_off_as_session(
         st: &Self,
         caller: &Caller,
         key: &Reference,
         node: &Reference,
-    ) -> Result<oml_app::types::DenialRecord, ApiError> {
+        idem: &str,
+        key_id: &str,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
         let capacity_web = is_web_session_key(caller);
         if !capacity_web && caller.key().role != Role::Admin {
             return Err(session_capacity(caller, "deny_key"));
+        }
+        let digest = act_digest(key_id, body);
+        if let Some(replayed) = st.replayed(caller, "keys.deny", idem, &digest).await? {
+            return Ok(replayed);
         }
         if !matches!(node, Reference::Name(n) if n.as_str() == "universe") {
             return Err(
@@ -949,28 +997,51 @@ where
                     .with_details(json!({ "field": "key" })),
             );
         };
-        retry_chain(|| st.app.web_cut_off(caller, key))
+        let denial = retry_chain(|| st.app.web_cut_off(caller, key))
             .await
             .map_err(|e| match e {
                 AppError::WebField { field, message } => {
                     ApiError::validation(message).with_details(json!({ "field": field }))
                 }
                 e => map_app_error(e, ErrorContext::Write),
-            })
+            })?;
+        st.record_outcome(
+            caller,
+            "keys.deny",
+            idem,
+            &digest,
+            StatusCode::CREATED,
+            &denial_json(&denial),
+        )
+        .await
     }
 
     /// `POST /v2/keys/{key}/connect-codes` as `<user>-web`: a fresh code
     /// for one of the person's own connector keys, at the default lifetime;
     /// another person's key is `access.not_found` (ADR-0070 d5; ADR-0045
     /// d9).
+    ///
+    /// A resubmission under the same `Idempotency-Key` and body replays the
+    /// answer without the code, which is shown once, and mints none (ADR-0070
+    /// d3 layer 4, as built).
     pub(crate) async fn connect_code_as_session(
         st: &Self,
         caller: &Caller,
         key: &Reference,
         ttl_seconds: Option<i64>,
+        idem: &str,
+        key_id: &str,
+        body: &Bytes,
     ) -> Result<Response, ApiError> {
         if !is_web_session_key(caller) {
             return Err(session_capacity(caller, "mint_connect_code"));
+        }
+        let digest = act_digest(key_id, body);
+        if let Some(replayed) = st
+            .replayed(caller, "keys.connect_code", idem, &digest)
+            .await?
+        {
+            return Ok(replayed);
         }
         if ttl_seconds.is_some() {
             return Err(
@@ -987,9 +1058,20 @@ where
         let code = retry_chain(|| st.app.web_connect_code(caller, key))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
+        let answer = connect_code_json(&code);
+        let mut kept = answer.clone();
+        if let Some(kept) = kept.as_object_mut() {
+            kept.remove("code");
+        }
+        st.record(
+            caller,
+            "keys.connect_code",
+            idem,
+            &digest,
             StatusCode::CREATED,
-            &connect_code_json(&code),
-        ))
+            &kept,
+        )
+        .await?;
+        Ok(json_response(StatusCode::CREATED, &answer))
     }
 }

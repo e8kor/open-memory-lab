@@ -83,6 +83,38 @@ web:
       pathType: Exact
     - path: /web/admin/workareas
       pathType: Exact
+    - path: /web/memories
+      pathType: Exact
+    - path: /web/atlas
+      pathType: Exact
+    - path: /web/admin/memories
+      pathType: Exact
+    - path: /web/admin/atlas
+      pathType: Exact
+    - path: /web/data/memories
+      pathType: Exact
+    - path: /web/admin/data/memories
+      pathType: Exact
+    - path: /web/review
+      pathType: Exact
+    - path: /web/admin/review
+      pathType: Exact
+    - path: /web/keys
+      pathType: Exact
+    - path: /web/admin/keys
+      pathType: Exact
+    - path: /web/memory
+      pathType: Exact
+    - path: /web/admin/memory
+      pathType: Exact
+    - path: /web/admin/curate
+      pathType: Exact
+    # The Mermaid frame's document and its pinned bundle, one segment below
+    # each (ADR-0056 d9).
+    - path: /web/render
+      pathType: Prefix
+    - path: /web/assets
+      pathType: Prefix
   # Hints, never claims (docs/operations/capacity.md).
   resources: {}
 

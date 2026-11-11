@@ -1472,7 +1472,9 @@ def apply_migrations(owner_ci: str, serving_role: str, migrations: Path, a: Tena
                      b: Tenant) -> tuple[list[tuple[str, bool, str]], list[tuple[bool, str]]]:
     """Apply the files as PgStore::migrate does (ADR-0034 d2, d9): oml.serving_role set on the
     owner's connection, _sqlx_migrations created with sqlx's DDL, each file in one transaction
-    with its row recorded the way sqlx's migrator records it (version, description, SHA-384)."""
+    with its row recorded the way sqlx's migrator records it (version, description, SHA-384),
+    except a file that starts `-- no-transaction`, which sqlx runs outside one, so it may commit
+    as it goes (0041, ADR-0059 d20)."""
     log: list[tuple[str, bool, str]] = []
     backfill: list[tuple[bool, str]] = []
     files = sorted(migrations.glob("*.sql"))
@@ -1485,12 +1487,17 @@ def apply_migrations(owner_ci: str, serving_role: str, migrations: Path, a: Tena
                     seed_before_0004(conn, t)
             version, _, description = path.stem.partition("_")
             body = path.read_bytes()
+            record = ("INSERT INTO _sqlx_migrations (version, description, success, checksum, "
+                      "execution_time) VALUES (%s, %s, TRUE, %s, -1)",
+                      [int(version), description.replace("_", " "), hashlib.sha384(body).digest()])
             try:
-                with conn.transaction():
+                if body.startswith(b"-- no-transaction"):
                     conn.execute(body.decode("utf-8"))
-                    conn.execute("INSERT INTO _sqlx_migrations (version, description, success, checksum, "
-                                 "execution_time) VALUES (%s, %s, TRUE, %s, -1)",
-                                 [int(version), description.replace("_", " "), hashlib.sha384(body).digest()])
+                    conn.execute(*record)
+                else:
+                    with conn.transaction():
+                        conn.execute(body.decode("utf-8"))
+                        conn.execute(*record)
                 log.append((path.stem, True, ""))
             except psycopg.Error as e:
                 log.append((path.stem, False, f"{e.sqlstate} {e.diag.message_primary}"))

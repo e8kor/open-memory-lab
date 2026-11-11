@@ -3733,3 +3733,175 @@ async fn an_omls_credential_on_mcp_is_refused() {
     assert_eq!(response.status(), StatusCode::OK, "the credential is live");
     drop_db(&db_name).await;
 }
+
+/// `oml_read` takes `as_of` in its three modes (ADR-0059 d14, d19): recall
+/// and the listing serve the tip at the instant, the listing reading the
+/// scoped listing when `own` is not sent, get answers not found for a
+/// version recorded after it, and a date is refused naming `/as_of`.
+#[tokio::test]
+async fn oml_read_takes_as_of_in_every_mode_and_answers_as_http_does() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (writer, dreamer, reader, _) = crew(&router).await;
+    let v1 = ratified(&router, &writer, &dreamer).await;
+    let got = call_tool(&router, &reader, 1, "oml_read", json!({"artifact_id": v1})).await;
+    let at = got["structuredContent"]["items"][0]["promoted_at"]
+        .as_str()
+        .expect("promoted_at")
+        .to_owned();
+    let proposed = call_tool(
+        &router,
+        &writer,
+        2,
+        "oml_write",
+        json!({
+            "expected_version": 1,
+            "replaces": v1,
+            "text": REVISED,
+            "idempotency_key": "crew-procure/asof/1",
+        }),
+    )
+    .await;
+    assert_eq!(proposed["isError"], false, "{proposed}");
+    let v2 = proposed["structuredContent"]["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned();
+    approve_as(&router, &dreamer, "v2").await;
+
+    let then = call_tool(
+        &router,
+        &reader,
+        3,
+        "oml_read",
+        json!({"query": "aluminium price", "as_of": at}),
+    )
+    .await;
+    assert_eq!(hit_ids(&then), [v1.as_str()], "{then}");
+    let today = call_tool(
+        &router,
+        &reader,
+        4,
+        "oml_read",
+        json!({"query": "aluminium price"}),
+    )
+    .await;
+    assert_eq!(hit_ids(&today), [v2.as_str()], "{today}");
+    let listed = call_tool(
+        &router,
+        &reader,
+        5,
+        "oml_read",
+        json!({"claim_key": CLAIM, "as_of": at}),
+    )
+    .await;
+    let items = listed["structuredContent"]["items"]
+        .as_array()
+        .expect("items");
+    assert_eq!(items.len(), 1, "{listed}");
+    assert_eq!(items[0]["artifact_id"], json!(v1), "{listed}");
+    let absent = call_tool(
+        &router,
+        &reader,
+        6,
+        "oml_read",
+        json!({"artifact_id": v2, "as_of": at}),
+    )
+    .await;
+    assert_eq!(absent["isError"], true, "{absent}");
+    assert_eq!(
+        absent["structuredContent"]["error"]["code"], "access.not_found",
+        "{absent}"
+    );
+    let dated = call_tool(
+        &router,
+        &reader,
+        7,
+        "oml_read",
+        json!({"query": "aluminium", "as_of": "2026-10-10"}),
+    )
+    .await;
+    refused_naming(&dated, "/as_of");
+    // A future instant names the argument the same way in every mode.
+    for (id, args) in [
+        (
+            8,
+            json!({"artifact_id": v1, "as_of": "2099-01-01T00:00:00Z"}),
+        ),
+        (
+            9,
+            json!({"claim_key": CLAIM, "as_of": "2099-01-01T00:00:00Z"}),
+        ),
+        (
+            10,
+            json!({"query": "aluminium", "as_of": "2099-01-01T00:00:00Z"}),
+        ),
+    ] {
+        refused_naming(
+            &call_tool(&router, &reader, id, "oml_read", args).await,
+            "/as_of",
+        );
+    }
+
+    // The same reads over HTTP serve the same versions as oml_read.
+    let (status, http_recall) = send(
+        &router,
+        "POST",
+        "/v1/memories/recall",
+        Some(&reader),
+        None,
+        Some(&json!({"query": "aluminium price", "as_of": at})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{http_recall}");
+    let http_hits: Vec<&str> = http_recall["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .filter_map(|h| h["memory"]["artifact_id"].as_str())
+        .collect();
+    assert_eq!(http_hits, hit_ids(&then), "recall: HTTP and oml_read agree");
+    let encoded: String = at
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                char::from(b).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect();
+    let (status, http_page) = send(
+        &router,
+        "GET",
+        &format!("/v1/memories?claim_key={CLAIM}&as_of={encoded}"),
+        Some(&reader),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{http_page}");
+    let http_listed: Vec<&Value> = http_page["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|m| &m["artifact_id"])
+        .collect();
+    let mcp_listed: Vec<&Value> = items.iter().map(|m| &m["artifact_id"]).collect();
+    assert_eq!(http_listed, mcp_listed, "listing: HTTP and oml_read agree");
+    let (status, http_get) = send(
+        &router,
+        "GET",
+        &format!("/v1/memories/{v2}?as_of={encoded}"),
+        Some(&reader),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{http_get}");
+    assert_eq!(
+        http_get["error"]["code"], absent["structuredContent"]["error"]["code"],
+        "get: HTTP and oml_read agree"
+    );
+    drop_db(&db).await;
+}
