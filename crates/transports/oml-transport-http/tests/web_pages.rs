@@ -24,6 +24,7 @@ use oml_app::types::{
     ProviderFailure, WebEmailRequest,
 };
 use oml_transport_http::ROUTES;
+use oml_transport_http::session::WebClient;
 use oml_transport_http::traffic::{ScopeObserver, Traffic};
 use oml_transport_http::web::{
     ADMIN_ACTIONS, SESSION_COOKIE, SIGN_IN_COOKIE, USER_ACTIONS, WEB_ROUTES, WebPages,
@@ -69,6 +70,7 @@ async fn rig() -> Rig {
     let traffic = Traffic::default();
     let router = state(&store, test_app(&store))
         .with_traffic(traffic.clone())
+        .with_web_client(WebClient::new(Some(WEB_CLIENT_SECRET.to_owned()), None))
         .with_web(WebPages::new(
             vec![
                 (Provider::Google, CLIENT_GOOGLE.to_owned()),
@@ -318,10 +320,10 @@ async fn sign_in_google(
     )
 }
 
-fn csrf_of(page: &str) -> String {
-    let marker = r#"name="csrf_token" value=""#;
-    let start = page.find(marker).expect("a csrf field") + marker.len();
-    page[start..start + page[start..].find('"').expect("a quote")].to_owned()
+/// The CSRF token of the session `cookie` names, as its pages carry it.
+fn csrf_for(cookie: &str) -> String {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    oml_app::domain::web::csrf_token(token)
 }
 
 #[tokio::test]
@@ -520,7 +522,10 @@ async fn a_listed_verified_google_email_signs_in_and_sees_who_it_is() {
     assert_eq!(redirect, "https://oml.example.com/web/callback/google");
     let (status, _, page) = send(
         &rig.router,
-        get("/web", Some(&format!("{SESSION_COOKIE}={token}"))),
+        get(
+            "/web?view=setup",
+            Some(&format!("{SESSION_COOKIE}={token}")),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -528,11 +533,16 @@ async fn a_listed_verified_google_email_signs_in_and_sees_who_it_is() {
         page.contains("alice · oml"),
         "who and the organisation: {page}"
     );
-    assert!(
-        page.contains("alice-web") && page.contains("alice-review"),
-        "{page}"
-    );
     assert!(!page.contains(EMAIL), "the page never echoes the email");
+    // The landing is the Keys view, which oml-web serves (ADR-0070 d7 (b)):
+    // `oml-web/tests/web_pages.rs` holds that it lists the session keys.
+    let (status, headers, _) = send(
+        &rig.router,
+        get("/web", Some(&format!("{SESSION_COOKIE}={token}"))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/web/keys");
     // The first sign-in journals the session keys and the root, nothing
     // more; a second sign-in journals nothing.
     let after_first = rig.head().await;
@@ -761,7 +771,7 @@ async fn a_post_without_the_csrf_token_journals_nothing() {
         );
     }
     assert_eq!(rig.head().await, before);
-    let (_, _, page) = send(&rig.router, get("/web", Some(&cookie))).await;
+    let (_, _, page) = send(&rig.router, get("/web?view=setup", Some(&cookie))).await;
     assert!(page.contains("alice · oml"), "the session stands");
 }
 
@@ -790,8 +800,7 @@ async fn sign_out_ends_the_session_and_clears_the_cookie() {
     let rig = rig().await;
     let (_, token, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
     let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
-    let (_, _, page) = send(&rig.router, get("/web", Some(&cookie))).await;
-    let csrf = csrf_of(&page);
+    let csrf = csrf_for(&cookie);
     let (status, headers, _) = send(
         &rig.router,
         post(
@@ -819,57 +828,6 @@ async fn sign_out_ends_the_session_and_clears_the_cookie() {
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(body.contains("session has ended"), "{body}");
-}
-
-#[tokio::test]
-async fn a_field_the_action_does_not_define_is_refused() {
-    let rig = rig().await;
-    let (_, token, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
-    let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
-    let (_, _, page) = send(&rig.router, get("/web", Some(&cookie))).await;
-    let csrf = csrf_of(&page);
-    let (status, _, body) = send(
-        &rig.router,
-        post(
-            "/web",
-            &[
-                ("action", "sign_out"),
-                ("csrf_token", &csrf),
-                ("user", "bob"),
-            ],
-            Some(&cookie),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body.contains("request.validation"), "{body}");
-    let (status, _, body) = send(
-        &rig.router,
-        post(
-            "/web",
-            &[("action", "an_unknown_action"), ("csrf_token", &csrf)],
-            Some(&cookie),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body.contains("not one of this page"), "{body}");
-    let (status, _, body) = send(
-        &rig.router,
-        post(
-            "/web",
-            &[
-                ("action", "issue_key"),
-                ("csrf_token", &csrf),
-                ("name", "laptop"),
-                ("user", "bob"),
-            ],
-            Some(&cookie),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(body.contains("takes no field user"), "{body}");
 }
 
 #[tokio::test]
@@ -1028,8 +986,7 @@ async fn no_log_line_holds_a_code_state_cookie_or_email() {
     assert_eq!(status, StatusCode::SEE_OTHER);
     let (token, _) = set_cookie(&headers, SESSION_COOKIE).expect("a session");
     let cookie = format!("{SESSION_COOKIE}={token}");
-    let (_, _, page) = send(&rig.router, get("/web", Some(&cookie))).await;
-    let csrf = csrf_of(&page);
+    let csrf = csrf_for(&cookie);
     let _ = sign_in_google(&rig, "sub-other", "mallory@example.com").await;
     let (status, _, _) = send(
         &rig.router,
@@ -1278,8 +1235,7 @@ async fn act(
     path: &str,
     fields: &[(&str, &str)],
 ) -> (StatusCode, HeaderMap, String) {
-    let (_, _, page) = send(&rig.router, get("/web", Some(cookie))).await;
-    let csrf = csrf_of(&page);
+    let csrf = csrf_for(cookie);
     let mut all: Vec<(&str, &str)> = vec![("csrf_token", &csrf)];
     all.extend_from_slice(fields);
     send(&rig.router, post(path, &all, Some(cookie))).await
@@ -1301,6 +1257,84 @@ async fn key_named(rig: &Rig, name: &str) -> oml_app::types::KeyRecord {
         .await
         .expect("a read")
         .expect("the key")
+}
+
+/// The web client secret the lead is configured with, which `oml-web`
+/// presents beside a session's capacity credential (ADR-0070 d2).
+const WEB_CLIENT_SECRET: &str = "lead-web-client-secret-0123456789";
+
+/// A call to the API as `oml-web` makes it for the session `cookie` names:
+/// the capacity's credential, the web client's identity, a fresh key.
+async fn as_web(
+    rig: &Rig,
+    cookie: &str,
+    capacity: &str,
+    path: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let credential = oml_app::domain::web::capacity_credential(token, capacity);
+    let request = Request::post(path)
+        .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+        .header("oml-web-client", WEB_CLIENT_SECRET)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("idempotency-key", format!("k-{path}-{body}"))
+        .body(Body::from(body.to_string()))
+        .expect("a request");
+    let (status, _, answer) = send(&rig.router, request).await;
+    (status, serde_json::from_str(&answer).unwrap_or(Value::Null))
+}
+
+/// The person's own `<user>-<name>` writer key, issued through the API as
+/// the Keys page, which `oml-web` serves, issues it: the card it shows,
+/// `OML_API_KEY=<value>`.
+async fn issued(rig: &Rig, cookie: &str, name: &str) -> String {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let credential = oml_app::domain::web::capacity_credential(token, "web");
+    let whoami = Request::get("/v2/whoami")
+        .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+        .header("oml-web-client", WEB_CLIENT_SECRET)
+        .body(Body::empty())
+        .expect("a request");
+    let (_, _, me) = send(&rig.router, whoami).await;
+    let me: Value = serde_json::from_str(&me).expect("JSON");
+    let user = me["user"]["name"].as_str().expect("a person").to_owned();
+    let (status, key) = as_web(
+        rig,
+        cookie,
+        "web",
+        "/v2/keys",
+        json!({"name": format!("{user}-{name}"), "role": "writer", "connect_code": false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{key}");
+    format!("OML_API_KEY={}\n", key["value"].as_str().expect("a value"))
+}
+
+/// Review next as the person's reviewer key, as the Review page does.
+async fn review_next(rig: &Rig, cookie: &str) {
+    let (status, _) = as_web(rig, cookie, "review", "/v2/review/next", json!({})).await;
+    assert!(status.is_success(), "{status}");
+}
+
+/// A verdict as the person's reviewer key: the state it leaves.
+async fn verdict(
+    rig: &Rig,
+    cookie: &str,
+    serve: &str,
+    verdict: &str,
+    reason: Option<&str>,
+) -> String {
+    let (status, answer) = as_web(
+        rig,
+        cookie,
+        "review",
+        "/v2/review/verdicts",
+        json!({"serve_id": serve, "verdict": verdict, "reason": reason}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    answer["state"].as_str().unwrap_or_default().to_owned()
 }
 
 fn value_of(page: &str) -> String {
@@ -1414,234 +1448,6 @@ async fn a_session_key_has_no_value_and_no_connect_code() {
 }
 
 #[tokio::test]
-async fn a_user_issues_a_key_only_inside_its_root() {
-    let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (status, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "issue_key"),
-            ("name", "laptop"),
-            ("role", "writer"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    let value = value_of(&page);
-    assert!(value.starts_with("oml_"), "shown once: {value}");
-    let laptop = key_named(&rig, "alice-laptop").await;
-    let root = key_named(&rig, "alice-web").await;
-    assert_eq!(laptop.user, root.user, "a key naming the person's user");
-    assert_eq!(laptop.issued_by, Some(root.key_id), "issued by alice-web");
-    // Its every grant lies in the root, and the universe node read.
-    let access = rig
-        .store
-        .key_access(rig.boot.tenant_id, laptop.key_id)
-        .await
-        .unwrap()
-        .unwrap();
-    for g in &access.grants {
-        assert!(
-            g.grant.node == root.user.unwrap() || g.grant.role == Role::Reader,
-            "{g:?}"
-        );
-    }
-    for (name, role) in [("review", "writer"), ("phone", "dreamer")] {
-        let (status, _, body) = act(
-            &rig,
-            &cookie,
-            "/web",
-            &[("action", "issue_key"), ("name", name), ("role", role)],
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{name}: {body}");
-    }
-    // The keys page lists it; a cut-off denies it on universe.
-    let (status, _, _) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[("action", "cut_off"), ("key", "alice-laptop")],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    let (_, _, page) = send(&rig.router, get("/web", Some(&cookie))).await;
-    assert!(page.contains("cut off"), "{page}");
-    // Another user's key is not the person's to cut off.
-    let (status, _, _) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[("action", "cut_off"), ("key", "root-admin")],
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn a_connector_key_shows_its_connect_code_once() {
-    let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (status, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "connect_key"),
-            ("name", "phone"),
-            ("role", "writer"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(page.contains("https://oml.example.com/mcp"), "{page}");
-    let phone = key_named(&rig, "alice-phone").await;
-    assert_eq!(phone.credential.as_str(), "connection");
-    let (status, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[("action", "connect_code"), ("key", "alice-phone")],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(page.contains("Connect code"), "{page}");
-}
-
-#[tokio::test]
-async fn the_user_page_opens_its_agents_held_rows_and_a_person_approves_their_own_agents_write() {
-    let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (_, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "issue_key"),
-            ("name", "laptop"),
-            ("role", "writer"),
-        ],
-    )
-    .await;
-    let value = value_of(&page);
-    let memory = agent_writes(&rig, &value, "the deploy window is tuesday").await;
-    let (_, _, page) = send(&rig.router, get("/web?view=memories", Some(&cookie))).await;
-    assert!(page.contains("the deploy window is tuesday"), "{page}");
-    assert!(page.contains(">held<"), "{page}");
-    let (status, _, opened) = send(
-        &rig.router,
-        get(
-            &format!("/web?view=memories&memory={memory}"),
-            Some(&cookie),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{opened}");
-    assert!(opened.contains("the deploy window is tuesday"), "{opened}");
-    rig.allow("bob@example.com", "bob", false).await;
-    let bob = signed_in(&rig, "sub-bob", "bob@example.com").await;
-    let (status, _, hidden) = send(
-        &rig.router,
-        get(&format!("/web?view=memories&memory={memory}"), Some(&bob)),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{hidden}");
-    assert!(!hidden.contains("the deploy window is tuesday"), "{hidden}");
-    // Review on the user page acts as alice-review, which is not the author.
-    let (status, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(page.contains("the deploy window is tuesday"), "{page}");
-    let serve_id = format!("srv_{}", memory.simple());
-    let (status, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "verdict"),
-            ("serve_id", &serve_id),
-            ("verdict", "approve"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(page.contains("is now promoted"), "{page}");
-    let promoted = rig
-        .store
-        .memory(rig.boot.tenant_id, memory)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(promoted.status.as_str(), "promoted");
-    let events = rig
-        .store
-        .events_range(rig.boot.tenant_id, 1, 500)
-        .await
-        .unwrap();
-    let verdict = events
-        .iter()
-        .find(|e| e.envelope.event_type == "review.approve")
-        .expect("the verdict");
-    assert_eq!(
-        verdict.envelope.api_key_id,
-        Some(key_named(&rig, "alice-review").await.key_id)
-    );
-}
-
-#[tokio::test]
-async fn removing_the_last_email_leaves_the_agents_keys_working() {
-    let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (_, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "issue_key"),
-            ("name", "laptop"),
-            ("role", "writer"),
-        ],
-    )
-    .await;
-    let value = value_of(&page);
-    rig.allow("boss@example.com", "boss", true).await;
-    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    // The confirmation lists alice's agent keys with a cut-off beside each.
-    let (status, _, page) = act(
-        &rig,
-        &admin,
-        "/web/admin",
-        &[("action", "remove_email"), ("email", EMAIL)],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(
-        page.contains("alice-laptop") && page.contains("Cut off"),
-        "{page}"
-    );
-    assert!(!page.contains("alice-web"), "session keys are not listed");
-    let (status, _, _) = act(
-        &rig,
-        &admin,
-        "/web/admin",
-        &[
-            ("action", "remove_email"),
-            ("email", EMAIL),
-            ("confirm", "yes"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    let (_, _, page) = send(&rig.router, get("/web", Some(&cookie))).await;
-    assert!(page.contains("Sign in with Google"), "her session ended");
-    rig.app
-        .whoami(&value)
-        .await
-        .expect("the agent's key still works");
-}
-
-#[tokio::test]
 async fn the_last_admin_address_is_never_removed_or_unflagged_from_the_page() {
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
@@ -1690,173 +1496,10 @@ async fn the_last_admin_address_is_never_removed_or_unflagged_from_the_page() {
 }
 
 #[tokio::test]
-async fn review_on_the_admin_page_acts_as_the_persons_reviewer_key_and_the_admin_key_is_never_offered_a_verdict()
- {
-    let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (_, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "issue_key"),
-            ("name", "laptop"),
-            ("role", "writer"),
-        ],
-    )
-    .await;
-    let value = value_of(&page);
-    agent_writes(&rig, &value, "boss reviews this").await;
-    rig.allow("boss@example.com", "boss", true).await;
-    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    let (status, _, _) = act(
-        &rig,
-        &admin,
-        "/web/admin",
-        &[
-            ("action", "grant_review"),
-            ("user", "boss"),
-            ("workarea", "alice"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    let (status, _, page) = act(&rig, &admin, "/web/admin", &[("action", "review_next")]).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(page.contains("boss reviews this"), "{page}");
-    let refused = rig
-        .app
-        .review_next(rig.boot.admin_key.value.as_str())
-        .await
-        .expect_err("the admin key never reviews");
-    assert!(
-        format!("{refused:?}").contains("VerbCeiling"),
-        "{refused:?}"
-    );
-    let boss_admin = key_named(&rig, "boss-admin").await;
-    assert_eq!(boss_admin.role, Role::Admin);
-}
-
-#[tokio::test]
-async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_the_admin_read_shows_its_source()
- {
-    let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (_, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "issue_key"),
-            ("name", "laptop"),
-            ("role", "writer"),
-        ],
-    )
-    .await;
-    let value = value_of(&page);
-    let source = agent_writes(&rig, &value, "rotate keys every ninety days").await;
-    // Only an approved memory is readable beyond its author: alice approves
-    // her agent's write first.
-    let serve = format!("srv_{}", source.simple());
-    let (status, _, _) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "verdict"),
-            ("serve_id", &serve),
-            ("verdict", "approve"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    rig.allow("boss@example.com", "boss", true).await;
-    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    for (action, workarea) in [("grant_curation", "alice"), ("grant_review", "universe")] {
-        let (status, _, body) = act(
-            &rig,
-            &admin,
-            "/web/admin",
-            &[("action", action), ("user", "boss"), ("workarea", workarea)],
-        )
-        .await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{action}: {body}");
-    }
-    let (status, _, body) = act(
-        &rig,
-        &admin,
-        "/web/admin",
-        &[
-            ("action", "curate"),
-            ("source", &source.to_string()),
-            ("text", "Keys rotate quarterly."),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
-    let curate = key_named(&rig, "boss-curate").await;
-    let page = rig
-        .app
-        .admin_search(
-            rig.boot.admin_key.value.as_str(),
-            Some("quarterly"),
-            None,
-            None,
-            None,
-            10,
-        )
-        .await
-        .expect("the admin reads");
-    let curated = &page.items[0];
-    assert_eq!(curated.state.as_str(), "held", "held until reviewed");
-    assert_eq!(curated.workarea_path, "universe");
-    assert_eq!(curated.memory.author_key_id, curate.key_id);
-    // boss-review is outside the curated claim's lineage, so it is served.
-    let (_, _, page) = act(&rig, &admin, "/web/admin", &[("action", "review_next")]).await;
-    assert!(page.contains("Keys rotate quarterly."), "{page}");
-    let serve_id = format!("srv_{}", curated.memory.memory_id.simple());
-    let (status, _, page) = act(
-        &rig,
-        &admin,
-        "/web/admin",
-        &[
-            ("action", "verdict"),
-            ("serve_id", &serve_id),
-            ("verdict", "approve"),
-        ],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    // The admin read shows its source and author; alice sees it anonymous.
-    let read = rig
-        .app
-        .admin_read(rig.boot.admin_key.value.as_str(), curated.memory.memory_id)
-        .await
-        .expect("the admin reads one");
-    assert_eq!(read.memory.derives_from, vec![source]);
-    assert_eq!(read.verdicts.len(), 1);
-    let (_, _, mine) = send(&rig.router, get("/web?view=memories", Some(&cookie))).await;
-    assert!(
-        mine.contains("Keys rotate quarterly.") && mine.contains("the shared area"),
-        "{mine}"
-    );
-}
-
-#[tokio::test]
 async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (_, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "issue_key"),
-            ("name", "laptop"),
-            ("role", "writer"),
-        ],
-    )
-    .await;
+    let page = issued(&rig, &cookie, "laptop").await;
     let value = value_of(&page);
     let memory = agent_writes(&rig, &value, "zebra crossing secret").await;
     let admin = format!("Bearer {}", rig.boot.admin_key.value);
@@ -1997,50 +1640,8 @@ async fn agent_guardrail(rig: &Rig, value: &str, body: &str) -> uuid::Uuid {
 }
 
 async fn laptop_key(rig: &Rig, cookie: &str) -> String {
-    let (_, _, page) = act(
-        rig,
-        cookie,
-        "/web",
-        &[
-            ("action", "issue_key"),
-            ("name", "laptop"),
-            ("role", "writer"),
-        ],
-    )
-    .await;
+    let page = issued(rig, cookie, "laptop").await;
     value_of(&page)
-}
-
-#[tokio::test]
-async fn a_key_issued_on_the_user_page_takes_the_default_guardrail_scope_and_the_page_offers_none()
-{
-    let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (_, _, page) = send(&rig.router, get("/web", Some(&cookie))).await;
-    assert!(!page.contains("guardrail_scope"), "no scope field: {page}");
-    laptop_key(&rig, &cookie).await;
-    let laptop = key_named(&rig, "alice-laptop").await;
-    assert_eq!(
-        laptop.guardrail_scope,
-        oml_app::domain::guardrail::GuardrailScope::Ancestors
-    );
-    let (status, _, body) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "issue_key"),
-            ("name", "narrow"),
-            ("role", "writer"),
-            ("guardrail_scope", "workarea"),
-        ],
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::BAD_REQUEST,
-        "a field the action does not define: {body}"
-    );
 }
 
 #[tokio::test]
@@ -2360,24 +1961,6 @@ async fn a_sign_in_returns_to_its_next_on_the_public_origin() {
 }
 
 #[tokio::test]
-async fn the_review_page_shows_a_held_guardrails_load_warning() {
-    let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let value = laptop_key(&rig, &cookie).await;
-    agent_guardrail(&rig, &value, "Run the tests before every commit.").await;
-    let (status, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(
-        page.contains("Run the tests before every commit."),
-        "{page}"
-    );
-    assert!(
-        page.contains("every key that reads this workarea will load this rule"),
-        "{page}"
-    );
-}
-
-#[tokio::test]
 async fn the_admin_page_supersedes_and_retires_no_guardrail() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
@@ -2414,114 +1997,6 @@ async fn the_admin_page_supersedes_and_retires_no_guardrail() {
             .iter()
             .map(|e| &e.envelope.event_type)
             .collect::<Vec<_>>()
-    );
-}
-
-/// A reviewer sees what a verdict makes true: the held version's own valid
-/// time and, on a supersession, the end approving it gives the version it
-/// replaces, on the review card and in the bulk table (ADR-0059
-/// d2, d4).
-#[tokio::test]
-async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_card_and_the_bulk_table()
- {
-    let rig = rig().await;
-    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let value = laptop_key(&rig, &cookie).await;
-    let v1 = rig
-        .app
-        .submit_memory(
-            value.as_str(),
-            &oml_app::types::SubmitRequest {
-                origin: None,
-                anchor: None,
-                idempotency_key: "k-api-v3".to_owned(),
-                claim_key: Some("api-version".to_owned()),
-                verb: Some(oml_app::types::SubmitVerb::Remember),
-                kind: oml_app::domain::MemoryKind::Memory,
-                body: "the api is at version 3".to_owned(),
-                workarea: None,
-                derives_from: Vec::new(),
-                severity: None,
-                rule: None,
-                valid_from: Some("2025".to_owned()),
-                valid_until: None,
-                format: None,
-                title: None,
-                on_similar: Default::default(),
-            },
-        )
-        .await
-        .expect("the agent writes")
-        .receipt
-        .memory_id;
-    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
-    assert!(page.contains("valid from 2025, open"), "{page}");
-    act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "verdict"),
-            ("serve_id", &format!("srv_{}", v1.simple())),
-            ("verdict", "approve"),
-        ],
-    )
-    .await;
-    rig.app
-        .supersede(
-            value.as_str(),
-            &oml_app::types::SupersedeRequest {
-                origin: None,
-                idempotency_key: "k-api-v4".to_owned(),
-                target_id: v1,
-                body: "the api is at version 4".to_owned(),
-                kind: None,
-                retirement: false,
-                derives_from: Vec::new(),
-                reason: None,
-                workarea: None,
-                refuse_vocabulary_target: false,
-                severity: None,
-                rule: None,
-                valid_from: Some("2026-06-01".to_owned()),
-                valid_until: None,
-                on_similar: Default::default(),
-                anchor: None,
-                expected_version: 1,
-                format: None,
-                title: None,
-            },
-        )
-        .await
-        .expect("the agent supersedes");
-    rig.allow("boss@example.com", "boss", true).await;
-    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
-    act(
-        &rig,
-        &admin,
-        "/web/admin",
-        &[
-            ("action", "grant_review"),
-            ("user", "boss"),
-            ("workarea", "alice"),
-        ],
-    )
-    .await;
-    let (_, _, page) = send(&rig.router, get("/web/admin?view=held", Some(&admin))).await;
-    assert!(page.contains("the api is at version 4"), "{page}");
-    assert!(page.contains("<th>Valid</th>"), "{page}");
-    assert!(
-        page.contains(
-            "from 2026-06-01, open; approving ends version 1 at 2026-06-01T00:00:00.000000Z"
-        ),
-        "{page}"
-    );
-    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
-    assert!(page.contains("the api is at version 4"), "{page}");
-    assert!(page.contains("valid from 2026-06-01, open"), "{page}");
-    assert!(
-        page.contains("approving ends version 1 at 2026-06-01T00:00:00.000000Z"),
-        "{page}"
     );
 }
 
@@ -2567,17 +2042,7 @@ async fn agent_writes_diagram_of(rig: &Rig, value: &str, body: &str) -> uuid::Uu
 /// A signed-in person whose agent wrote a diagram: the cookie and the id.
 async fn person_with_a_diagram(rig: &Rig) -> (String, uuid::Uuid) {
     let cookie = signed_in(rig, "sub-1", EMAIL).await;
-    let (_, _, page) = act(
-        rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "issue_key"),
-            ("name", "laptop"),
-            ("role", "writer"),
-        ],
-    )
-    .await;
+    let page = issued(rig, &cookie, "laptop").await;
     let memory = agent_writes_diagram(rig, &value_of(&page)).await;
     (cookie, memory)
 }
@@ -2592,7 +2057,14 @@ async fn the_parent_pages_carry_no_script_and_frame_only_the_render_route() {
     let rig = rig().await;
     let (cookie, memory) = person_with_a_diagram(&rig).await;
     let _ = memory;
-    let (status, headers, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    let (status, headers, page) = send(
+        &rig.router,
+        get(
+            &format!("/web?view=memories&memory={memory}"),
+            Some(&cookie),
+        ),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(!page.contains("<script"), "the parent page has no script");
     assert!(
@@ -2624,7 +2096,14 @@ async fn the_render_frame_answers_under_its_own_policy_with_the_source_escaped()
     let rig = rig().await;
     let (cookie, memory) = person_with_a_diagram(&rig).await;
     let _ = memory;
-    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    let (_, _, page) = send(
+        &rig.router,
+        get(
+            &format!("/web?view=memories&memory={memory}"),
+            Some(&cookie),
+        ),
+    )
+    .await;
     let token = frame_token(&page);
     let (status, headers, body) = send(
         &rig.router,
@@ -2668,7 +2147,14 @@ async fn a_render_token_is_bound_to_its_session_and_expires() {
     rig.allow("bob@example.com", "bob", false).await;
     let (cookie, memory) = person_with_a_diagram(&rig).await;
     let _ = memory;
-    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    let (_, _, page) = send(
+        &rig.router,
+        get(
+            &format!("/web?view=memories&memory={memory}"),
+            Some(&cookie),
+        ),
+    )
+    .await;
     let token = frame_token(&page);
     let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
     for (who, path) in [
@@ -2703,36 +2189,10 @@ async fn a_render_token_is_bound_to_its_session_and_expires() {
 }
 
 #[tokio::test]
-async fn the_review_card_shows_the_source_the_format_and_what_it_will_be_found_by() {
-    let rig = rig().await;
-    let (cookie, memory) = person_with_a_diagram(&rig).await;
-    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
-    let _ = memory;
-    assert!(page.contains("flowchart LR"), "the complete source: {page}");
-    assert!(page.contains("text/vnd.oml.mermaid"), "{page}");
-    assert!(page.contains("The payment flow"), "the title: {page}");
-    assert!(
-        page.contains("Checkout (A) calls Payments (B)."),
-        "what it will be found by: {page}"
-    );
-    assert!(page.contains("<iframe sandbox=\"allow-scripts\""), "{page}");
-}
-
-#[tokio::test]
 async fn a_render_token_names_the_diagram_and_carries_no_source_so_a_large_one_draws() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
-    let (_, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "issue_key"),
-            ("name", "laptop"),
-            ("role", "writer"),
-        ],
-    )
-    .await;
+    let page = issued(&rig, &cookie, "laptop").await;
     // About 56 KiB of source: under the 64 KiB cap, and a URL path of that
     // size, once sealed and encoded, is more than a server will accept.
     let mut big = String::from("flowchart LR\n");
@@ -2741,8 +2201,15 @@ async fn a_render_token_names_the_diagram_and_carries_no_source_so_a_large_one_d
     }
     big.push_str("  N100[\"the last node\"]\n");
     assert!(big.len() > 55_000 && big.len() < 64 * 1024, "{}", big.len());
-    agent_writes_diagram_of(&rig, &value_of(&page), &big).await;
-    let (_, _, page) = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    let memory = agent_writes_diagram_of(&rig, &value_of(&page), &big).await;
+    let (_, _, page) = send(
+        &rig.router,
+        get(
+            &format!("/web?view=memories&memory={memory}"),
+            Some(&cookie),
+        ),
+    )
+    .await;
     let token = frame_token(&page);
     assert!(
         token.len() < 1024,
@@ -2787,17 +2254,7 @@ fn next_link(page: &str) -> Option<String> {
 /// A signed-in person with a writer agent key; the cookie and the value.
 async fn person_with_agent(rig: &Rig, subject: &str, email: &str) -> (String, String) {
     let cookie = signed_in(rig, subject, email).await;
-    let (_, _, page) = act(
-        rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "issue_key"),
-            ("name", "laptop"),
-            ("role", "writer"),
-        ],
-    )
-    .await;
+    let page = issued(rig, &cookie, "laptop").await;
     (cookie, value_of(&page))
 }
 
@@ -3296,48 +2753,17 @@ async fn the_filters_narrow_the_list() {
     let (cookie, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
     let held = agent_writes(&rig, &agent, "a held kestrel").await;
     let approved = agent_writes(&rig, &agent, "an approved kestrel").await;
-    let _ = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
     // Review serves the oldest first; approve the second by serving both.
+    review_next(&rig, &cookie).await;
     let serve_held = format!("srv_{}", held.simple());
-    let _ = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "verdict"),
-            ("serve_id", &serve_held),
-            ("verdict", "reject"),
-            ("reason", "not this one"),
-        ],
-    )
-    .await;
-    let _ = act(&rig, &cookie, "/web", &[("action", "review_next")]).await;
+    verdict(&rig, &cookie, &serve_held, "reject", Some("not this one")).await;
+    review_next(&rig, &cookie).await;
     let serve_approved = format!("srv_{}", approved.simple());
-    let (_, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "verdict"),
-            ("serve_id", &serve_approved),
-            ("verdict", "approve"),
-        ],
-    )
-    .await;
-    assert!(page.contains("is now promoted"), "{page}");
+    let state = verdict(&rig, &cookie, &serve_approved, "approve", None).await;
+    assert_eq!(state, "promoted");
     let third = agent_writes(&rig, &agent, "still held kestrel").await;
     // A second agent of alice's, to filter by author.
-    let (_, _, page) = act(
-        &rig,
-        &cookie,
-        "/web",
-        &[
-            ("action", "issue_key"),
-            ("name", "phone"),
-            ("role", "writer"),
-        ],
-    )
-    .await;
+    let page = issued(&rig, &cookie, "phone").await;
     let phone = value_of(&page);
     let by_phone = agent_writes(&rig, &phone, "written on the phone").await;
     let ids = |page: &str| {
@@ -3624,4 +3050,75 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
     let (_, _, admin) = json_of(&rig, "/web/admin/data/memories?view=memories", &boss).await;
     let bob = region(&admin, "universe.bob").expect("the admin reads every root");
     assert_eq!(bob["counts"]["held"], 1);
+}
+
+#[tokio::test]
+async fn the_lead_answers_the_review_and_keys_views_and_their_acts_with_a_redirect_to_their_own_paths()
+ {
+    // oml-web serves the Review and Keys views and runs their acts at
+    // /web/review, /web/keys and their admin paths (ADR-0070 d7 (b) as
+    // amended): the lead sends the old forms there, carrying nothing from
+    // the request, and runs none of the acts.
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let cookie = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for (old, new) in [
+        ("/web", "/web/keys"),
+        ("/web?done=cut+off", "/web/keys"),
+        ("/web?view=keys", "/web/keys"),
+        ("/web?view=review", "/web/review"),
+        ("/web/admin?view=review", "/web/admin/review"),
+        (
+            "/web/admin?view=held&cursor=%2F%2Fevil",
+            "/web/admin/review",
+        ),
+        ("/web/admin?view=queue", "/web/admin/review"),
+    ] {
+        let (status, headers, page) = send(&rig.router, get(old, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{old}: {page}");
+        assert_eq!(headers[header::LOCATION], new, "{old}");
+    }
+    let before = rig.head().await;
+    for (page, action, new) in [
+        ("/web", "issue_key", "/web/keys"),
+        ("/web", "connect_key", "/web/keys"),
+        ("/web", "connect_code", "/web/keys"),
+        ("/web", "cut_off", "/web/keys"),
+        ("/web", "review_next", "/web/review"),
+        ("/web", "verdict", "/web/review"),
+        ("/web/admin", "review_next", "/web/admin/review"),
+        ("/web/admin", "verdict", "/web/admin/review"),
+        ("/web/admin", "bulk_confirm", "/web/admin/review"),
+        ("/web/admin", "bulk_verdict", "/web/admin/review"),
+        ("/web/admin", "cut_off", "/web/admin/keys"),
+    ] {
+        let (status, headers, body) = act(
+            &rig,
+            &cookie,
+            page,
+            &[
+                ("action", action),
+                ("name", "laptop"),
+                ("key", "root-admin"),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{page} {action}: {body}");
+        assert_eq!(headers[header::LOCATION], new, "{page} {action}");
+    }
+    assert_eq!(
+        rig.head().await,
+        before,
+        "the lead ran none of the old acts"
+    );
+    // The lead serves no page at the moved paths.
+    for path in [
+        "/web/review",
+        "/web/keys",
+        "/web/admin/review",
+        "/web/admin/keys",
+    ] {
+        let (status, _, _) = send(&rig.router, get(path, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
 }
