@@ -35,8 +35,7 @@ use oml_page::web::{
     ADMIN_REVIEW_PATH, ADMIN_TABS, USER_REVIEW_PATH, attr, form, hidden, input, select, shell,
     short, state_tag, text, user_tabs,
 };
-use oml_sdk::{Memory, encode};
-use serde_json::Value;
+use oml_sdk::{Anchor, Memory, encode};
 
 use crate::acts::Refusal;
 use crate::pages::{Fields, refused};
@@ -130,20 +129,21 @@ fn notice(fields: &Fields) -> Option<String> {
 /// An anchor as one line for a reviewer (ADR-0057 d2): the repository, the
 /// commit's first 12 digits, the path and the fragment, or the page; a
 /// dash for none.
-fn anchor_line(anchor: Option<&Value>) -> String {
-    let Some(a) = anchor.filter(|a| a.is_object()) else {
+fn anchor_line(anchor: Option<&Anchor>) -> String {
+    let Some(a) = anchor else {
         return "—".to_owned();
     };
-    let fragment = a["fragment"]
-        .as_str()
+    let fragment = a
+        .fragment
+        .as_deref()
         .map_or_else(String::new, |f| format!("#{f}"));
-    let line = match (a["repo"].as_str(), a["uri"].as_str()) {
+    let line = match (a.repo.as_deref(), a.uri.as_deref()) {
         (Some(repo), _) => {
-            let rev = a["rev"].as_str().unwrap_or_default();
+            let rev = a.rev.as_deref().unwrap_or_default();
             format!(
                 "{repo} @ {} {}{fragment}",
                 &rev[..rev.len().min(12)],
-                a["path"].as_str().unwrap_or_default()
+                a.path.as_deref().unwrap_or_default()
             )
         }
         (None, Some(uri)) => format!("{uri}{fragment}"),

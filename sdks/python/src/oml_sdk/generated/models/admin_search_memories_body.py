@@ -24,7 +24,7 @@ class AdminSearchMemoriesBody:
         origin_kind (AdminSearchMemoriesBodyOriginKind | Unset): One origin.kind (ADR-0045 d22, d24; ADR-0070 d5). Since
             v0.6.4.
         author (str | Unset): The authoring key of the tenant, by name or id (ADR-0045 d24; ADR-0070 d5). Since v0.6.4.
-        limit (int | Unset):
+        limit (int | Unset): At most 200, the console list's largest page (ADR-0045 d22; raised from 100 in v0.7.0).
         cursor (str | Unset):
     """
 

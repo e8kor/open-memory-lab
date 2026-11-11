@@ -32,7 +32,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 20] = [
+pub const OPERATIONS: [&str; 25] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workarea resp:GuardrailSet",
@@ -43,13 +43,18 @@ pub const OPERATIONS: [&str; 20] = [
     "proposeTransition POST /v2/workareas/{workarea}/transitions body:to resp:Transition",
     "ratifyTransition POST /v2/workareas/{workarea}/transitions/{transition_id}/ratify resp:Transition",
     "setWorkareaMode POST /v2/workareas/{workarea}/mode body:mode resp:WorkareaView",
+    "listMemories GET /v1/memories query:with_own,include_text,author,workarea,state,origin_kinds,limit,cursor resp:MemoryPage",
+    "recallMemories POST /v1/memories/recall body:query,k,workarea,kinds,include_text,include_unreviewed,origin_kinds resp:RecallResponse",
+    "adminSearchMemories POST /v2/admin/memories/search body:query,workarea,state,origin_kind,author,limit,cursor resp:AdminMemoryPage",
+    "getWorkareaTree GET /v2/workareas/{workarea}/tree query:counts resp:WorkareaCounts",
+    "listKeys GET /v2/keys query:user,limit,cursor resp:KeyPage",
+    "createWorkarea POST /v2/workareas body:name,parent resp:Workarea",
     "reviewNext POST /v2/review/next resp:Serve",
     "postVerdict POST /v2/review/verdicts body:serve_id,verdict,reason resp:VerdictResult",
     "reviewHeld GET /v2/review/held query:workarea,author_key,claim_key_prefix,limit,cursor resp:HeldPage",
     "reviewHeld GET /v2/review/held query:ids resp:HeldNamed",
     "postBulkVerdict POST /v2/review/verdicts/bulk body:verdict,artifact_ids,reason resp:BulkVerdictResult",
     "reviewQueue GET /v2/review/queue resp:ReviewQueue",
-    "listKeys GET /v2/keys query:user,limit,cursor resp:KeyPage",
     "issueKey POST /v2/keys body:name,role,connect_code resp:KeyIssued",
     "mintConnectCode POST /v2/keys/{key}/connect-codes resp:ConnectCode",
     "addDenial POST /v2/keys/{key}/denials body:workarea resp:Denial",
@@ -289,6 +294,22 @@ pub struct WorkareaOffers {
     pub refused: Vec<RefusedAct>,
 }
 
+/// An anchor as the API serves it (openapi.yaml `Anchor`): a repository
+/// with its commit and path, or a URI; each with an optional fragment.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Anchor {
+    #[serde(default)]
+    pub repo: Option<String>,
+    #[serde(default)]
+    pub uri: Option<String>,
+    #[serde(default)]
+    pub rev: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub fragment: Option<String>,
+}
+
 /// The version a supersession replaces, as a memory names it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Replaced {
@@ -296,22 +317,22 @@ pub struct Replaced {
     pub version: i64,
 }
 
-/// One memory as the API serves it (openapi.yaml `Memory`), the fields a
-/// reviewer's card reads.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+/// A memory as the listings and recall serve it (openapi.yaml `Memory`),
+/// the fields the Memories list reads.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Memory {
     pub artifact_id: String,
     pub claim_key: String,
-    pub version: i64,
+    pub version: u32,
     pub tip: bool,
-    #[serde(default)]
     pub workarea_path: Option<String>,
     pub state: String,
-    /// `None` for a universe claim, which names no author (ADR-0044 d9).
-    #[serde(default)]
     pub principal: Option<String>,
+    /// Absent from an API before v0.7.0.
     #[serde(default)]
-    pub text: Option<String>,
+    pub author_key_id: Option<String>,
+    pub created_at: String,
+    pub promoted_at: Option<String>,
     #[serde(default)]
     pub format: Option<String>,
     #[serde(default)]
@@ -320,7 +341,9 @@ pub struct Memory {
     #[serde(default)]
     pub search_text: Option<String>,
     #[serde(default)]
-    pub anchor: Option<Value>,
+    pub text: Option<String>,
+    #[serde(default)]
+    pub anchor: Option<Anchor>,
     #[serde(default)]
     pub valid_from: Option<String>,
     #[serde(default)]
@@ -332,6 +355,97 @@ pub struct Memory {
     /// On a held guardrail, what approving it does (ADR-0037 d10).
     #[serde(default)]
     pub load_warning: Option<String>,
+    /// Absent from an API before v0.7.0.
+    #[serde(default)]
+    pub scan_finding: Option<String>,
+}
+
+/// `GET /v1/memories`: one page of memories.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct MemoryPage {
+    pub items: Vec<Memory>,
+    pub next_cursor: Option<String>,
+}
+
+/// One ranked hit of a recall.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RecallHit {
+    pub memory: Memory,
+}
+
+/// `POST /v1/memories/recall`: steering first, then the ranked hits.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RecallResponse {
+    pub steering: Vec<Memory>,
+    pub hits: Vec<RecallHit>,
+}
+
+/// A memory as the admin read serves it (openapi.yaml `AdminMemory`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AdminMemory {
+    pub artifact_id: String,
+    pub claim_key: String,
+    pub version: u32,
+    pub state: String,
+    pub workarea_path: String,
+    pub text: String,
+    #[serde(default)]
+    pub format: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    pub key: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
+    pub created_at: String,
+    #[serde(default)]
+    pub anchor: Option<Anchor>,
+    /// Absent, with the four fields after it, from an API before v0.7.0.
+    #[serde(default)]
+    pub held_by: Option<String>,
+    #[serde(default)]
+    pub promoted_at: Option<String>,
+    #[serde(default)]
+    pub valid_from: Option<String>,
+    #[serde(default)]
+    pub valid_until: Option<String>,
+    #[serde(default)]
+    pub scan_finding: Option<String>,
+}
+
+/// `POST /v2/admin/memories/search`: one page.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AdminMemoryPage {
+    pub items: Vec<AdminMemory>,
+    pub next_cursor: Option<String>,
+}
+
+/// One node's rows by state, as the caller's merged listing shows them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct NodeCounts {
+    pub promoted: u64,
+    pub held: u64,
+    pub in_progress: u64,
+    pub other: u64,
+}
+
+/// One node of a counted subtree.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CountedNode {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub path: String,
+    pub status: String,
+    pub mode: String,
+    pub counts: NodeCounts,
+}
+
+/// `GET /v2/workareas/{workarea}/tree?counts=true`: the subtree, a parent
+/// before its children, with each node's counts.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WorkareaCounts {
+    pub items: Vec<CountedNode>,
+    pub truncated: bool,
 }
 
 /// `POST /v2/review/next`: one served item, claimed by the reviewer key.
@@ -515,6 +629,47 @@ impl std::fmt::Debug for KeyIssued {
 pub struct Denial {
     pub denial_id: String,
     pub epoch: i64,
+}
+
+/// `POST /v2/workareas`: the new node, the fields read here.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Workarea {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+}
+
+/// The Memories list's filters for `GET /v1/memories` with `with_own`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MemoryQuery<'a> {
+    pub workarea: Option<&'a str>,
+    pub state: Option<&'a str>,
+    pub origin: Option<&'a str>,
+    pub author: Option<&'a str>,
+    pub limit: u32,
+    pub cursor: Option<&'a str>,
+}
+
+/// A text search of the caller's readable memories, its own held ones
+/// among them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecallQuery<'a> {
+    pub query: &'a str,
+    pub k: u32,
+    pub workarea: Option<&'a str>,
+    pub origin: Option<&'a str>,
+}
+
+/// The admin read's filters.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AdminSearch<'a> {
+    pub query: Option<&'a str>,
+    pub workarea: Option<&'a str>,
+    pub state: Option<&'a str>,
+    pub origin_kind: Option<&'a str>,
+    pub author: Option<&'a str>,
+    pub limit: u32,
+    pub cursor: Option<&'a str>,
 }
 
 /// The typed client over a [`Transport`], with the headers every call
@@ -852,6 +1007,118 @@ impl<T: Transport> Client<T> {
         .await
     }
 
+    /// `GET /v1/memories` with `with_own=true` and `include_text=true`: the
+    /// caller's merged listing with each item's text.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn list_memories(
+        &self,
+        call: &Call<'_>,
+        query: &MemoryQuery<'_>,
+    ) -> Result<MemoryPage, Error> {
+        let mut path = format!(
+            "/v1/memories?with_own=true&include_text=true&limit={}",
+            query.limit
+        );
+        for (name, value) in [
+            ("author", query.author),
+            ("workarea", query.workarea),
+            ("state", query.state),
+            ("origin_kinds", query.origin),
+            ("cursor", query.cursor),
+        ] {
+            if let Some(value) = value {
+                path.push_str(&format!("&{name}={}", encode(value)));
+            }
+        }
+        self.get(Some(call), path).await
+    }
+
+    /// `POST /v1/memories/recall`: memories and derived facts with their
+    /// text, the caller's own held ones among them. Read-shaped: no
+    /// idempotency key.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn recall(
+        &self,
+        call: &Call<'_>,
+        query: &RecallQuery<'_>,
+    ) -> Result<RecallResponse, Error> {
+        let mut body = serde_json::json!({
+            "query": query.query,
+            "k": query.k,
+            "kinds": ["memory", "derived_fact"],
+            "include_text": true,
+            "include_unreviewed": true,
+        });
+        if let Some(workarea) = query.workarea {
+            body["workarea"] = serde_json::json!(workarea);
+        }
+        if let Some(origin) = query.origin {
+            body["origin_kinds"] = serde_json::json!([origin]);
+        }
+        self.send(
+            Method::POST,
+            Some(call),
+            "/v1/memories/recall".to_owned(),
+            None,
+            Some(&body),
+        )
+        .await
+    }
+
+    /// `POST /v2/admin/memories/search`: one page of the tenant's memories,
+    /// journalled as one admin read. Read-shaped: no idempotency key.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn admin_search(
+        &self,
+        call: &Call<'_>,
+        search: &AdminSearch<'_>,
+    ) -> Result<AdminMemoryPage, Error> {
+        let mut body = serde_json::json!({ "limit": search.limit });
+        for (name, value) in [
+            ("query", search.query),
+            ("workarea", search.workarea),
+            ("state", search.state),
+            ("origin_kind", search.origin_kind),
+            ("author", search.author),
+            ("cursor", search.cursor),
+        ] {
+            if let Some(value) = value {
+                body[name] = serde_json::json!(value);
+            }
+        }
+        self.send(
+            Method::POST,
+            Some(call),
+            "/v2/admin/memories/search".to_owned(),
+            None,
+            Some(&body),
+        )
+        .await
+    }
+
+    /// `GET /v2/workareas/{workarea}/tree?counts=true`: the subtree with
+    /// each node's rows counted by state.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn workarea_counts(
+        &self,
+        call: &Call<'_>,
+        workarea: &str,
+    ) -> Result<WorkareaCounts, Error> {
+        self.get(
+            Some(call),
+            format!("/v2/workareas/{}/tree?counts=true", encode(workarea)),
+        )
+        .await
+    }
+
     /// `POST /v2/review/next`: the next held item, claimed by the key, or
     /// `None` when nothing in scope waits (`204`).
     ///
@@ -992,6 +1259,26 @@ impl<T: Transport> Client<T> {
             path.push_str(&encode(cursor));
         }
         self.get(Some(call), path).await
+    }
+
+    /// `POST /v2/workareas`: creates `name` under `parent`, or under the
+    /// caller's own root when `parent` is `None`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn create_workarea(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        name: &str,
+        parent: Option<&str>,
+    ) -> Result<Workarea, Error> {
+        let mut body = serde_json::json!({ "name": name });
+        if let Some(parent) = parent {
+            body["parent"] = serde_json::json!(parent);
+        }
+        self.post(call, "/v2/workareas".to_owned(), idempotency_key, &body)
+            .await
     }
 
     /// `POST /v2/keys` as a person's web session key: their own key `name`
@@ -1166,6 +1453,49 @@ mod tests {
                     .set_workarea_mode(&CALL, "idem-3", "alice.proj", "in_progress")
                     .await,
             ),
+            decodes(
+                &client
+                    .list_memories(
+                        &CALL,
+                        &MemoryQuery {
+                            state: Some("held"),
+                            limit: 50,
+                            ..MemoryQuery::default()
+                        },
+                    )
+                    .await,
+            ),
+            decodes(
+                &client
+                    .recall(
+                        &CALL,
+                        &RecallQuery {
+                            query: "kestrel",
+                            k: 50,
+                            ..RecallQuery::default()
+                        },
+                    )
+                    .await,
+            ),
+            decodes(
+                &client
+                    .admin_search(
+                        &CALL,
+                        &AdminSearch {
+                            author: Some("alice-phone"),
+                            limit: 50,
+                            ..AdminSearch::default()
+                        },
+                    )
+                    .await,
+            ),
+            decodes(&client.workarea_counts(&CALL, "alice").await),
+            decodes(&client.list_keys(&CALL, Some("alice"), 200, None).await),
+            decodes(
+                &client
+                    .create_workarea(&CALL, "idem-4", "proj", Some("alice"))
+                    .await,
+            ),
             {
                 // An `Option`: `None` is the `204` of nothing waiting.
                 let _ = client.review_next(&CALL, "idem-0").await;
@@ -1173,7 +1503,7 @@ mod tests {
             },
             decodes(
                 &client
-                    .post_verdict(&CALL, "idem-4", "srv_1", "approve", None)
+                    .post_verdict(&CALL, "idem-5", "srv_1", "approve", None)
                     .await,
             ),
             decodes(
@@ -1184,24 +1514,23 @@ mod tests {
             decodes(&client.review_named(&CALL, &["a", "b"]).await),
             decodes(
                 &client
-                    .post_bulk_verdict(&CALL, "idem-5", "approve", &["a"], None)
+                    .post_bulk_verdict(&CALL, "idem-6", "approve", &["a"], None)
                     .await,
             ),
             decodes(&client.review_queue(&CALL).await),
-            decodes(&client.list_keys(&CALL, Some("alice"), 200, None).await),
             decodes(
                 &client
-                    .issue_key(&CALL, "idem-6", "alice-laptop", "writer", false)
+                    .issue_key(&CALL, "idem-7", "alice-laptop", "writer", false)
                     .await,
             ),
             decodes(
                 &client
-                    .mint_connect_code(&CALL, "idem-7", "alice-phone")
+                    .mint_connect_code(&CALL, "idem-8", "alice-phone")
                     .await,
             ),
             decodes(
                 &client
-                    .add_denial(&CALL, "idem-8", "alice-phone", "universe")
+                    .add_denial(&CALL, "idem-9", "alice-phone", "universe")
                     .await,
             ),
         ];
@@ -1242,11 +1571,25 @@ mod tests {
             );
         }
         assert!(!seen[6].headers().contains_key(IDEMPOTENCY_KEY));
-        assert_eq!(seen[12].uri(), "/v2/review/held?limit=50&workarea=alice");
-        assert_eq!(seen[13].uri(), "/v2/review/held?ids=a,b");
-        assert_eq!(seen[16].uri(), "/v2/keys?limit=200&user=alice");
         assert_eq!(
-            std::str::from_utf8(seen[17].body()).unwrap(),
+            seen[10].uri(),
+            "/v1/memories?with_own=true&include_text=true&limit=50&state=held"
+        );
+        // The reads that travel in a body carry no idempotency key.
+        for i in [11, 12] {
+            assert!(!seen[i].headers().contains_key(IDEMPOTENCY_KEY), "{i}");
+        }
+        assert_eq!(seen[13].uri(), "/v2/workareas/alice/tree?counts=true");
+        assert_eq!(seen[15].headers()[IDEMPOTENCY_KEY], "idem-4");
+        assert_eq!(
+            std::str::from_utf8(seen[15].body()).unwrap(),
+            r#"{"name":"proj","parent":"alice"}"#
+        );
+        assert_eq!(seen[14].uri(), "/v2/keys?limit=200&user=alice");
+        assert_eq!(seen[18].uri(), "/v2/review/held?limit=50&workarea=alice");
+        assert_eq!(seen[19].uri(), "/v2/review/held?ids=a,b");
+        assert_eq!(
+            std::str::from_utf8(seen[22].body()).unwrap(),
             r#"{"connect_code":false,"name":"alice-laptop","role":"writer"}"#
         );
     }

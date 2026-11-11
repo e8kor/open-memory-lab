@@ -11,14 +11,17 @@
 #   3. GET /web/guardrails with that session: 200 and the view's content;
 #   4. GET /web?view=guardrails: the lead's 303 to /web/guardrails;
 #   5. GET /web/workareas: 200 and the Workareas view, from oml-web;
-#   6. one act end to end: the lead creates <user>.proj, oml-web confirms
-#      putting it in progress, and the confirmation's form, sent twice,
-#      runs the act once through the API and lands back on the view;
+#   6. two acts end to end: oml-web creates <user>.proj through the API,
+#      its form sent twice creating it once, then confirms putting it in
+#      progress, and the confirmation's form, sent twice, runs the act once
+#      and lands back on the view;
 #   7. GET /web?view=workarea: the lead's 303 to /web/workareas;
-#   8. GET /web: the lead's 303 to /web/keys; GET /web/keys from oml-web, and
+#   8. GET /web/memories and GET /web/atlas: 200, the list and the Atlas,
+#      from oml-web; GET /web?view=memories: the lead's 303 to /web/memories.
+#   9. GET /web: the lead's 303 to /web/keys; GET /web/keys from oml-web, and
 #      one act: issuing a reader key, whose value is shown once on the
 #      redirect target, carried there in a sealed cookie and never in the URL;
-#   9. GET /web?view=review: the lead's 303 to /web/review; GET /web/review
+#  10. GET /web?view=review: the lead's 303 to /web/review; GET /web/review
 #      from oml-web, and one act: review next, which lands back on the view.
 #
 # Usage: scripts/check_web_signed_in.sh <origin the router answers> <oauth.issuer>
@@ -80,12 +83,17 @@ user="$(sed -n 's/.*Under <code>universe\.\([^<]*\)<\/code>.*/\1/p' "$work/worka
 [ -n "$user" ] || fail "the Workareas view names no user root"
 csrf="$(field "$work/workareas.html" csrf_token)"
 [ -n "$csrf" ] || fail "the Workareas view carries no csrf_token"
+create_nonce="$(field "$work/workareas.html" nonce)"
+[ -n "$create_nonce" ] || fail "the create form carries no nonce"
 
-code="$(curl -s -o /dev/null -D "$work/create" -w '%{http_code}' -X POST -H "$jar" \
-    -H "Origin: $issuer" -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data "action=create_workarea&name=proj&csrf_token=$csrf" "$origin/web")"
-location="$(header "$work/create" location)"
-[ "$code $location" = "303 /web/workareas?done=created" ] || fail "POST /web create_workarea answered '$code $location'"
+for attempt in first resubmitted; do
+    code="$(curl -s -o "$work/create.html" -D "$work/create" -w '%{http_code}' -X POST -H "$jar" \
+        -H "Origin: $issuer" -H 'Content-Type: application/x-www-form-urlencoded' \
+        --data "action=create_workarea&name=proj&csrf_token=$csrf&nonce=$create_nonce" "$origin/web/workareas")"
+    location="$(header "$work/create" location)"
+    [ "$code $location" = "303 /web/workareas?done=created" ] \
+        || fail "the $attempt create answered '$code $location': $(head -c 400 "$work/create.html")"
+done
 
 code="$(curl -s -o "$work/confirm.html" -w '%{http_code}' -H "$jar" \
     "$origin/web/workareas?workarea=$user.proj&op=mode:in_progress")"
@@ -110,6 +118,19 @@ grep -q "universe\.$user\.proj</td><td class=\"mono\">$user\.proj</td><td>develo
 code="$(curl -s -o /dev/null -D "$work/old-workareas" -w '%{http_code}' -H "$jar" "$origin/web?view=workarea")"
 location="$(header "$work/old-workareas" location)"
 [ "$code $location" = "303 /web/workareas" ] || fail "GET /web?view=workarea answered '$code $location'"
+
+code="$(curl -s -o "$work/memories.html" -w '%{http_code}' -H "$jar" "$origin/web/memories")"
+[ "$code" = 200 ] || fail "GET /web/memories answered $code: $(head -c 400 "$work/memories.html")"
+grep -q '<h1>Memories</h1>' "$work/memories.html" || fail "GET /web/memories did not draw the list"
+grep -q '<a href="/web/memories" class="on"' "$work/memories.html" || fail "the Memories tab is not the current one"
+code="$(curl -s -o "$work/atlas.html" -w '%{http_code}' -H "$jar" "$origin/web/atlas")"
+[ "$code" = 200 ] || fail "GET /web/atlas answered $code: $(head -c 400 "$work/atlas.html")"
+grep -q 'id="atlas-table"' "$work/atlas.html" || fail "GET /web/atlas did not draw the Atlas"
+grep -q '<a href="/web/atlas" class="on"' "$work/atlas.html" || fail "the Atlas tab is not the current one"
+code="$(curl -s -o /dev/null -D "$work/old-memories" -w '%{http_code}' -H "$jar" "$origin/web?view=memories")"
+location="$(header "$work/old-memories" location)"
+[ "$code $location" = "303 /web/memories" ] || fail "GET /web?view=memories answered '$code $location'"
+
 
 code="$(curl -s -o /dev/null -D "$work/landing" -w '%{http_code}' -H "$jar" "$origin/web")"
 location="$(header "$work/landing" location)"
@@ -146,10 +167,10 @@ code="$(curl -s -o "$work/next.html" -D "$work/next" -w '%{http_code}' -X POST -
     --data "action=review_next&csrf_token=$csrf&nonce=$nonce" "$origin/web/review")"
 location="$(header "$work/next" location)"
 case "$code $location" in
-    "303 /web/review?done=empty" | "303 /web/review?serve=srv_"*) ;;
+    "303 /web/review?done=empty" | "303 /web/review?serve="*) ;;
     *) fail "POST /web/review review_next answered '$code $location': $(head -c 400 "$work/next.html")" ;;
 esac
 code="$(curl -s -o /dev/null -w '%{http_code}' -H "$jar" "$origin$location")"
 [ "$code" = 200 ] || fail "GET $location answered $code"
 
-echo "signed-in page: $origin served /web/guardrails, /web/workareas, /web/keys and /web/review to a signed-in session through oml-web, ran one act on each of the last three through the API, and the old URLs redirect there"
+echo "signed-in page: $origin served /web/guardrails, /web/workareas, /web/memories, /web/atlas, /web/keys and /web/review to a signed-in session through oml-web, ran acts on the Workareas, Keys and Review views through the API, and the old URLs redirect there"

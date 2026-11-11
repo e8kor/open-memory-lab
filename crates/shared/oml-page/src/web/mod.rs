@@ -63,8 +63,20 @@ pub fn content_security_policy(form_origins: &[&str], frame_src: Option<&str>) -
     )
 }
 
+/// The user page's Memories list, which `oml-web` serves (ADR-0070 d7 (b)).
+pub const USER_MEMORIES_PATH: &str = "/web/memories";
+
+/// The user page's Atlas, which `oml-web` serves (ADR-0070 d7 (b)).
+pub const USER_ATLAS_PATH: &str = "/web/atlas";
+
+/// The admin page's Memories list, which `oml-web` serves.
+pub const ADMIN_MEMORIES_PATH: &str = "/web/admin/memories";
+
+/// The admin page's Atlas, which `oml-web` serves.
+pub const ADMIN_ATLAS_PATH: &str = "/web/admin/atlas";
+
 /// The Atlas tab's link, which is also its active marker.
-pub const ATLAS_TAB: &str = "/web?view=memories&amp;display=atlas";
+pub const ATLAS_TAB: &str = USER_ATLAS_PATH;
 
 /// The user page's Workareas view, which `oml-web` serves (ADR-0070 d7 (b)).
 pub const USER_WORKAREAS_PATH: &str = "/web/workareas";
@@ -92,7 +104,7 @@ pub const ADMIN_KEYS_PATH: &str = "/web/admin/keys";
 pub const ADMIN_TABS: [(&str, &str); 8] = [
     ("/web/admin", "People"),
     ("/web/admin/users", "Quotas"),
-    ("/web/admin?view=memories", "Memories"),
+    (ADMIN_MEMORIES_PATH, "Memories"),
     (ADMIN_WORKAREAS_PATH, "Workareas"),
     (ADMIN_REVIEW_PATH, "Review"),
     (ADMIN_KEYS_PATH, "Keys"),
@@ -108,7 +120,7 @@ pub fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
     // Review, Atlas, Keys; then this page's Workareas and Guardrails.
     let mut tabs = vec![
         ("/web/start", "Start"),
-        ("/web?view=memories", "Memories"),
+        (USER_MEMORIES_PATH, "Memories"),
         (USER_REVIEW_PATH, "Review"),
         (ATLAS_TAB, "Atlas"),
         (USER_KEYS_PATH, "Keys"),

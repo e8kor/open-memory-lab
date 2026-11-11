@@ -68,6 +68,11 @@ class Memory:
         principal (None | str | Unset): The authoring principal; null on a version in universe served to a key outside
             its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its
             source (ADR-0044 d9).
+        author_key_id (None | str | Unset): The authoring key's id; null wherever principal is (ADR-0044 d9). The web
+            console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since
+            v0.7.0.
+        scan_finding (None | str | Unset): Admission's scan finding on the version, class: rule at place, never the
+            matched text; null when the scan found nothing (ADR-0065 d8; ADR-0070 d5). Since v0.7.0.
         provenance (MemorySummaryProvenance | Unset):
         simulation_id (None | str | Unset):
         self_signed (bool | Unset): Marked rows under the bounded development exception; never promote beyond their
@@ -93,7 +98,8 @@ class Memory:
             replaces at, the successor's declared valid_from, so a reviewer sees it before the verdict; absent when
             approving ends nothing (proposed ADR-0059 d4).
         text (str | Unset): The claim's text, decrypted on the serving path only; v0.3.0 named it body (ADR-0039 d7).
-            Absent from a recall item sent with include_text false.
+            Absent from a recall item sent with include_text false, and from a listing item unless include_text is true
+            (ADR-0070 d5).
     """
 
     artifact_id: str
@@ -118,6 +124,8 @@ class Memory:
     rule: Any | Unset = UNSET
     load_warning: str | Unset = UNSET
     principal: None | str | Unset = UNSET
+    author_key_id: None | str | Unset = UNSET
+    scan_finding: None | str | Unset = UNSET
     provenance: MemorySummaryProvenance | Unset = UNSET
     simulation_id: None | str | Unset = UNSET
     self_signed: bool | Unset = UNSET
@@ -216,6 +224,18 @@ class Memory:
         else:
             principal = self.principal
 
+        author_key_id: None | str | Unset
+        if isinstance(self.author_key_id, Unset):
+            author_key_id = UNSET
+        else:
+            author_key_id = self.author_key_id
+
+        scan_finding: None | str | Unset
+        if isinstance(self.scan_finding, Unset):
+            scan_finding = UNSET
+        else:
+            scan_finding = self.scan_finding
+
         provenance: str | Unset = UNSET
         if not isinstance(self.provenance, Unset):
             provenance = self.provenance.value
@@ -307,6 +327,10 @@ class Memory:
             field_dict["load_warning"] = load_warning
         if principal is not UNSET:
             field_dict["principal"] = principal
+        if author_key_id is not UNSET:
+            field_dict["author_key_id"] = author_key_id
+        if scan_finding is not UNSET:
+            field_dict["scan_finding"] = scan_finding
         if provenance is not UNSET:
             field_dict["provenance"] = provenance
         if simulation_id is not UNSET:
@@ -491,6 +515,24 @@ class Memory:
 
         principal = _parse_principal(d.pop("principal", UNSET))
 
+        def _parse_author_key_id(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        author_key_id = _parse_author_key_id(d.pop("author_key_id", UNSET))
+
+        def _parse_scan_finding(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        scan_finding = _parse_scan_finding(d.pop("scan_finding", UNSET))
+
         _provenance = d.pop("provenance", UNSET)
         provenance: MemorySummaryProvenance | Unset
         if isinstance(_provenance, Unset):
@@ -597,6 +639,8 @@ class Memory:
             rule=rule,
             load_warning=load_warning,
             principal=principal,
+            author_key_id=author_key_id,
+            scan_finding=scan_finding,
             provenance=provenance,
             simulation_id=simulation_id,
             self_signed=self_signed,

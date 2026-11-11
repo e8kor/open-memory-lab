@@ -2,8 +2,8 @@
 # The web hop of a running stack (ADR-0070 d4), through its one origin:
 #   - the public /readyz is the lead's, and the lead accepts oml-web's
 #     client identity (web_client is not none);
-#   - the moved pages, GET /web/guardrails, /web/workareas, /web/review and
-#     /web/keys, reach
+#   - the moved pages, GET /web/guardrails, /web/workareas, /web/memories,
+#     /web/atlas, /web/review and /web/keys, reach
 #     oml-web, which sends a browser with no session to the lead's
 #     /web/sign-in carrying the page as next;
 #   - the rest of the command line, oml-web --doctor run where oml-web runs,
@@ -44,7 +44,7 @@ done
 got="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$origin/web/workareas")"
 want="303 $origin/web/sign-in?next=%2Fweb%2Fworkareas"
 [ "$got" = "$want" ] || fail "GET /web/workareas answered '$got', not '$want'"
-for page in review keys; do
+for page in memories atlas review keys; do
     got="$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$origin/web/$page")"
     want="303 $origin/web/sign-in?next=%2Fweb%2F$page"
     [ "$got" = "$want" ] || fail "GET /web/$page answered '$got', not '$want'"

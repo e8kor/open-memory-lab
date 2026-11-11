@@ -32,6 +32,16 @@ class AdminMemory:
         created_at (datetime.datetime):
         principal (None | str | Unset):
         user (None | str | Unset):
+        format_ (str | Unset): The media type signed with the version (ADR-0056 d1).
+        title (None | str | Unset): The title signed with the version, or null (ADR-0056 d10).
+        held_by (None | str | Unset): The authoring key's holder, agent, human or service (ADR-0045 d32; ADR-0070 d5).
+            Since v0.7.0.
+        promoted_at (datetime.datetime | None | Unset): When the version was promoted, or null. Since v0.7.0.
+        valid_from (None | str | Unset): When the version says it begins to hold, as signed, or null (ADR-0059 d2).
+            Since v0.7.0.
+        valid_until (None | str | Unset): When it stops holding, or null when open (ADR-0059 d2). Since v0.7.0.
+        scan_finding (None | str | Unset): Admission's scan finding, class: rule at place, never the matched text, or
+            null (ADR-0065 d8). Since v0.7.0.
         anchor (Anchor | None | Unset): The version's anchor, which the reviewer judges beside the text, or null
             (ADR-0057 d2).
     """
@@ -46,6 +56,13 @@ class AdminMemory:
     created_at: datetime.datetime
     principal: None | str | Unset = UNSET
     user: None | str | Unset = UNSET
+    format_: str | Unset = UNSET
+    title: None | str | Unset = UNSET
+    held_by: None | str | Unset = UNSET
+    promoted_at: datetime.datetime | None | Unset = UNSET
+    valid_from: None | str | Unset = UNSET
+    valid_until: None | str | Unset = UNSET
+    scan_finding: None | str | Unset = UNSET
     anchor: Anchor | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -80,6 +97,46 @@ class AdminMemory:
         else:
             user = self.user
 
+        format_ = self.format_
+
+        title: None | str | Unset
+        if isinstance(self.title, Unset):
+            title = UNSET
+        else:
+            title = self.title
+
+        held_by: None | str | Unset
+        if isinstance(self.held_by, Unset):
+            held_by = UNSET
+        else:
+            held_by = self.held_by
+
+        promoted_at: None | str | Unset
+        if isinstance(self.promoted_at, Unset):
+            promoted_at = UNSET
+        elif isinstance(self.promoted_at, datetime.datetime):
+            promoted_at = self.promoted_at.isoformat()
+        else:
+            promoted_at = self.promoted_at
+
+        valid_from: None | str | Unset
+        if isinstance(self.valid_from, Unset):
+            valid_from = UNSET
+        else:
+            valid_from = self.valid_from
+
+        valid_until: None | str | Unset
+        if isinstance(self.valid_until, Unset):
+            valid_until = UNSET
+        else:
+            valid_until = self.valid_until
+
+        scan_finding: None | str | Unset
+        if isinstance(self.scan_finding, Unset):
+            scan_finding = UNSET
+        else:
+            scan_finding = self.scan_finding
+
         anchor: dict[str, Any] | None | Unset
         if isinstance(self.anchor, Unset):
             anchor = UNSET
@@ -106,6 +163,20 @@ class AdminMemory:
             field_dict["principal"] = principal
         if user is not UNSET:
             field_dict["user"] = user
+        if format_ is not UNSET:
+            field_dict["format"] = format_
+        if title is not UNSET:
+            field_dict["title"] = title
+        if held_by is not UNSET:
+            field_dict["held_by"] = held_by
+        if promoted_at is not UNSET:
+            field_dict["promoted_at"] = promoted_at
+        if valid_from is not UNSET:
+            field_dict["valid_from"] = valid_from
+        if valid_until is not UNSET:
+            field_dict["valid_until"] = valid_until
+        if scan_finding is not UNSET:
+            field_dict["scan_finding"] = scan_finding
         if anchor is not UNSET:
             field_dict["anchor"] = anchor
 
@@ -150,6 +221,70 @@ class AdminMemory:
 
         user = _parse_user(d.pop("user", UNSET))
 
+        format_ = d.pop("format", UNSET)
+
+        def _parse_title(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        title = _parse_title(d.pop("title", UNSET))
+
+        def _parse_held_by(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        held_by = _parse_held_by(d.pop("held_by", UNSET))
+
+        def _parse_promoted_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                promoted_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return promoted_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        promoted_at = _parse_promoted_at(d.pop("promoted_at", UNSET))
+
+        def _parse_valid_from(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        valid_from = _parse_valid_from(d.pop("valid_from", UNSET))
+
+        def _parse_valid_until(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        valid_until = _parse_valid_until(d.pop("valid_until", UNSET))
+
+        def _parse_scan_finding(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        scan_finding = _parse_scan_finding(d.pop("scan_finding", UNSET))
+
         def _parse_anchor(data: object) -> Anchor | None | Unset:
             if data is None:
                 return data
@@ -178,6 +313,13 @@ class AdminMemory:
             created_at=created_at,
             principal=principal,
             user=user,
+            format_=format_,
+            title=title,
+            held_by=held_by,
+            promoted_at=promoted_at,
+            valid_from=valid_from,
+            valid_until=valid_until,
+            scan_finding=scan_finding,
             anchor=anchor,
         )
 

@@ -8,10 +8,12 @@
 //! lead. [`PAGES`] is that routing table, and [`serves`] its reading.
 
 mod acts;
+pub mod atlas;
 pub mod config;
 pub mod doctor;
 pub mod frame;
 pub mod keys;
+pub mod memories;
 pub mod middleware;
 pub mod once;
 pub mod outcome;
@@ -60,6 +62,12 @@ pub const PAGES: &[(&str, &str)] = &[
     ("POST", USER_WORKAREAS_PATH),
     ("GET", ADMIN_WORKAREAS_PATH),
     ("POST", ADMIN_WORKAREAS_PATH),
+    ("GET", USER_MEMORIES_PATH),
+    ("GET", USER_ATLAS_PATH),
+    ("GET", ADMIN_MEMORIES_PATH),
+    ("GET", ADMIN_ATLAS_PATH),
+    ("GET", memories::USER_DATA_PATH),
+    ("GET", memories::ADMIN_DATA_PATH),
     ("GET", USER_REVIEW_PATH),
     ("POST", USER_REVIEW_PATH),
     ("GET", ADMIN_REVIEW_PATH),
@@ -69,6 +77,13 @@ pub const PAGES: &[(&str, &str)] = &[
     ("GET", ADMIN_KEYS_PATH),
     ("POST", ADMIN_KEYS_PATH),
 ];
+
+/// The Memories list and the Atlas of each page (ADR-0045 d22-d32), moved
+/// from `GET /web?view=memories` and `GET /web/admin?view=memories`, the
+/// Atlas from their `display=atlas`.
+pub use oml_page::web::{
+    ADMIN_ATLAS_PATH, ADMIN_MEMORIES_PATH, USER_ATLAS_PATH, USER_MEMORIES_PATH,
+};
 
 /// The user page's Review view and its acts (ADR-0045 d11; ADR-0055 d10),
 /// moved from `GET /web?view=review` and the review acts of `POST /web`.
@@ -235,6 +250,10 @@ pub fn router(web: Web) -> Router {
             ADMIN_WORKAREAS_PATH,
             get(workareas::admin_page).post(workareas::admin_act),
         )
+        .route(USER_MEMORIES_PATH, get(memories::user_list))
+        .route(ADMIN_MEMORIES_PATH, get(memories::admin_list))
+        .route(USER_ATLAS_PATH, get(memories::user_atlas))
+        .route(ADMIN_ATLAS_PATH, get(memories::admin_atlas))
         .route(
             USER_REVIEW_PATH,
             get(review::user_page).post(review::user_act),
@@ -250,10 +269,17 @@ pub fn router(web: Web) -> Router {
             session::load,
         ))
         .with_state(web.clone());
+    // The JSON routes load their own session: no session is not found as
+    // data, never a redirect to sign in (ADR-0045 d25).
+    let data = Router::new()
+        .route(memories::USER_DATA_PATH, get(memories::user_data))
+        .route(memories::ADMIN_DATA_PATH, get(memories::admin_data))
+        .with_state(web.clone());
     Router::new()
         .route(HEALTH_PATH, get(health))
         .route(READY_PATH, get(ready).with_state(web.clone()))
         .merge(pages)
+        .merge(data)
         .fallback(not_found)
         .layer(
             ServiceBuilder::new()
@@ -289,6 +315,17 @@ mod tests {
             "/web/admin/keys",
         ] {
             assert!(serves("GET", path) && serves("POST", path), "{path}");
+        }
+        for path in [
+            "/web/memories",
+            "/web/atlas",
+            "/web/admin/memories",
+            "/web/admin/atlas",
+            "/web/data/memories",
+            "/web/admin/data/memories",
+        ] {
+            assert!(serves("GET", path), "{path}");
+            assert!(!serves("POST", path), "{path}");
         }
         assert!(serves("GET", "/web/healthz"));
         assert!(!serves("GET", "/web"));

@@ -1,5 +1,6 @@
-//! The three workarea acts the web console confirms, over the in-memory
-//! doubles: proposing a transition, ratifying one and setting the mode each
+//! The four workarea acts the web console runs, over the in-memory
+//! doubles: creating a workarea, proposing a transition, ratifying one and
+//! setting the mode each
 //! replay the recorded outcome under the same `Idempotency-Key` and request,
 //! with `Idempotency-Replay: true` and nothing acted again, and refuse the
 //! same key on another request with `idempotency.digest_mismatch`
@@ -237,4 +238,51 @@ async fn a_mode_change_replays_under_the_same_key_and_request_and_refuses_the_ke
     assert_eq!(refused["error"]["code"], "idempotency.digest_mismatch");
     let node = w.store.workarea(w.tenant, w.draft).await.unwrap().unwrap();
     assert!(node.in_progress, "the refused request committed nothing");
+}
+
+#[tokio::test]
+async fn a_creation_replays_under_the_same_key_and_request_and_refuses_the_key_on_another() {
+    let w = world().await;
+    let body = json!({"name": "fresh", "parent": "universe"});
+    let (status, headers, first) = send(
+        &w.router,
+        "/v2/workareas",
+        &w.admin,
+        "c-1",
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    assert!(!replayed(&headers));
+    // Without the replay a second creation answers name.taken; with it, the
+    // person sees the creation that already succeeded.
+    let (status, headers, again) =
+        send(&w.router, "/v2/workareas", &w.admin, "c-1", Some(body)).await;
+    assert_eq!(status, StatusCode::CREATED, "{again}");
+    assert!(replayed(&headers), "the resubmission is a replay");
+    assert_eq!(again, first);
+    let (status, _, refused) = send(
+        &w.router,
+        "/v2/workareas",
+        &w.admin,
+        "c-1",
+        Some(json!({"name": "other", "parent": "universe"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(refused["error"]["code"], "idempotency.digest_mismatch");
+    let root = w
+        .store
+        .workarea_children(
+            w.tenant,
+            first["parent_id"].as_str().unwrap().parse().unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        root.iter().filter(|n| n.name.as_str() == "fresh").count(),
+        1,
+        "created once"
+    );
+    assert!(root.iter().all(|n| n.name.as_str() != "other"), "{root:?}");
 }
