@@ -70,8 +70,9 @@ disagreement found:
   (ADR-0041 d4, d6, d7; docs/engineering/docs-upgrade-v0.4.0.md).
 
 - no release build turns on oml-server-lead's e2e-sign-in feature, CI's
-  sign-in double: release.yml names it nowhere, and the Dockerfile's
-  OML_CARGO_FEATURES defaults to empty (ADR-0070, phase (b) as built).
+  sign-in double: release.yml names neither it nor OML_CARGO_FEATURES, and
+  the Dockerfile's OML_CARGO_FEATURES defaults to empty (ADR-0070, phase (b)
+  as built; #242).
 
 Dependencies: stdlib (Python 3.11 or later, for tomllib) + PyYAML.
 """
@@ -216,15 +217,19 @@ def main() -> int:
     check_cli_matrix(errors, jobs)
     check_installers(errors, jobs)
     check_installer_lines(errors)
-    check_no_test_double(errors)
+    check_no_test_double(errors, WORKFLOW.read_text(), (ROOT / "Dockerfile").read_text())
     return report(errors)
 
 
-def check_no_test_double(errors: list[str]) -> None:
-    """The sign-in double CI's signed-in page check builds never reaches a release."""
-    if "e2e-sign-in" in WORKFLOW.read_text():
+def check_no_test_double(errors: list[str], workflow: str, dockerfile: str) -> None:
+    """The sign-in double CI's signed-in page check builds never reaches a release: release.yml
+    names neither the feature nor the image's OML_CARGO_FEATURES build argument, whose value a
+    workflow variable could carry past a check of the name (#242), and the Dockerfile defaults
+    that argument to empty."""
+    if "e2e-sign-in" in workflow:
         errors.append("release.yml names the e2e-sign-in feature, CI's sign-in double; no release carries it")
-    dockerfile = (ROOT / "Dockerfile").read_text()
+    if "OML_CARGO_FEATURES" in workflow:
+        errors.append("release.yml sets OML_CARGO_FEATURES; a release image builds with the Dockerfile's empty default")
     default = re.search(r'^ARG OML_CARGO_FEATURES(?:=("?)([^"\n]*)\1)?\s*$', dockerfile, re.M)
     if default is None:
         errors.append("the Dockerfile declares no ARG OML_CARGO_FEATURES; the image's features must default to none")
