@@ -13645,6 +13645,141 @@ async fn an_admin_sets_the_tenants_default_pipeline_journalled_and_recall_follow
     assert_eq!(cleared.effective.as_str(), "keyword-any");
 }
 
+/// A tenant whose admin chose `keyword-all` under a deployment serving it,
+/// with one memory and one steering row, and a second composition over the
+/// same store that serves `keyword-any` alone, as a lead restarted with a
+/// narrower `search.enabled` is (ADR-0049 d15). Returns the narrow app, the
+/// reader's key and the steering row.
+async fn narrowed_under_a_chosen_default() -> (TestApp, String, Uuid) {
+    let store = MemStore::new();
+    let wide = app_over(store.clone());
+    let (boot, crew) = tenant(&wide).await;
+    let admin = &boot.admin_key.value;
+    let writer = issue(&wide, admin, Role::Writer, "wanda", crew).await;
+    let dreamer = issue(&wide, admin, Role::Dreamer, "dana", crew).await;
+    let reader = issue(&wide, admin, Role::Reader, "rhea", crew).await;
+    let steer = promoted(
+        &wide,
+        &writer.value,
+        &dreamer.value,
+        &submit_kind("s1", MemoryKind::Steering, "nothing about the query", crew),
+    )
+    .await;
+    promoted(
+        &wide,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("m1", "deploy rarely"),
+    )
+    .await;
+    wide.set_search_default(admin, Some("keyword-all"))
+        .await
+        .expect("served where it was chosen");
+    (narrow_over(store), reader.value, steer)
+}
+
+/// A composition over `store` serving `keyword-any` alone.
+fn narrow_over(store: MemStore) -> TestApp {
+    app_over(store).with_search(
+        oml_app::search::SearchConfig::new(
+            &[oml_app::search::Pipeline::KeywordAny],
+            oml_app::search::Pipeline::KeywordAny,
+        )
+        .expect("a configuration"),
+    )
+}
+
+#[tokio::test]
+async fn a_recall_naming_no_pipeline_under_a_tenant_default_this_deployment_does_not_serve_runs_the_deployments_default_marked()
+ {
+    let (narrow, reader, _) = narrowed_under_a_chosen_default().await;
+    // "deploy monday": keyword-all, the tenant's choice, would find nothing;
+    // the deployment's keyword-any finds the memory by one word.
+    for all in [false, true] {
+        let recall = narrow
+            .recall(&reader, &searched("deploy monday", None, all))
+            .await
+            .expect("the deployment's default runs in the tenant's place");
+        assert_eq!(recall.pipeline.as_str(), "keyword-any", "all={all}");
+        assert_eq!(
+            recall.tenant_default_unserved.as_deref(),
+            Some("keyword-all"),
+            "marked with the tenant's default, all={all}"
+        );
+        assert_eq!(recall.hits.len(), 1, "all={all}");
+    }
+}
+
+#[tokio::test]
+async fn a_recall_naming_sources_under_an_unserved_tenant_default_runs_the_deployments_default_marked()
+ {
+    let (narrow, reader, _) = narrowed_under_a_chosen_default().await;
+    let recall = narrow
+        .recall(
+            &reader,
+            &RecallRequest {
+                sources: Some(oml_app::federation::Sources::Scope),
+                ..searched("deploy monday", None, false)
+            },
+        )
+        .await
+        .expect("the sources path falls back the same way");
+    assert_eq!(recall.pipeline.as_str(), "keyword-any");
+    assert_eq!(
+        recall.tenant_default_unserved.as_deref(),
+        Some("keyword-all")
+    );
+    assert_eq!(recall.hits.len(), 1);
+}
+
+#[tokio::test]
+async fn steering_is_served_whole_under_a_tenant_default_fallback() {
+    let (narrow, reader, steer) = narrowed_under_a_chosen_default().await;
+    let recall = narrow
+        .recall(&reader, &searched("deploy monday", None, false))
+        .await
+        .expect("recall");
+    assert!(recall.tenant_default_unserved.is_some());
+    assert_eq!(steering_ids(&recall), vec![steer]);
+}
+
+#[tokio::test]
+async fn a_request_naming_a_served_pipeline_runs_unmarked_whatever_the_tenant_default() {
+    let (narrow, reader, _) = narrowed_under_a_chosen_default().await;
+    let named = narrow
+        .recall(&reader, &searched("deploy", Some("keyword-any"), false))
+        .await
+        .expect("a request naming a served pipeline runs it");
+    assert_eq!(named.pipeline.as_str(), "keyword-any");
+    assert_eq!(named.tenant_default_unserved, None);
+    assert_eq!(named.hits.len(), 1);
+}
+
+#[tokio::test]
+async fn search_settings_name_the_pipeline_that_runs_and_flag_a_tenant_default_not_served() {
+    let store = MemStore::new();
+    let wide = app_over(store.clone());
+    let (boot, _crew) = tenant(&wide).await;
+    let admin = &boot.admin_key.value;
+    let set = wide
+        .set_search_default(admin, Some("keyword-all"))
+        .await
+        .expect("set");
+    assert!(set.tenant_default_served);
+    let narrow = narrow_over(store);
+    let settings = narrow.search_settings(admin).await.expect("settings");
+    assert_eq!(settings.tenant_default.as_deref(), Some("keyword-all"));
+    assert_eq!(
+        settings.effective.as_str(),
+        "keyword-any",
+        "what actually runs"
+    );
+    assert!(!settings.tenant_default_served);
+    let cleared = narrow.set_search_default(admin, None).await.expect("clear");
+    assert_eq!(cleared.effective.as_str(), "keyword-any");
+    assert!(cleared.tenant_default_served, "no tenant default to miss");
+}
+
 #[tokio::test]
 async fn steering_stays_first_and_unranked_under_every_pipeline() {
     let app = app();

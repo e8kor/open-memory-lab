@@ -1047,7 +1047,14 @@ where
                 "pipeline": result.pipeline.as_str(),
                 "match": if match_mode == MatchMode::All { "all" } else { "any" },
                 "terms": result.terms,
-                "fallback": result.fallback.then_some("any_term"),
+                // The tenant's default the deployment does not serve names the
+                // fallback when both apply: each hit's `matched.of` still
+                // shows an any-term match (ADR-0049 d5, d15).
+                "fallback": if result.tenant_default_unserved.is_some() {
+                    Some("tenant_default_unserved")
+                } else {
+                    result.fallback.then_some("any_term")
+                },
                 "did_you_mean": result.did_you_mean,
                 "rerank": result.rerank.as_str(),
                 "rerank_reason": result.rerank.reason(),
