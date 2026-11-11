@@ -29,7 +29,7 @@ use crate::cursor::ListingCursor;
 use crate::types::{
     AdminSearch, AdminState, AppError, Bearer, ConnectCodeIssued, Credential, DenialRecord,
     GrantRecord, GrantRequest, IssueKeyRequest, IssuedKey, KeyAccess, KeyRecord, MemoryRecord,
-    QueueDepth, WebEntry, WorkareaRecord,
+    QueueDepth, WorkareaRecord,
 };
 use crate::types::{AnchorFilter, ListRequest, ListingPosition, MemoryPage, ServedMemory};
 
@@ -802,54 +802,6 @@ where
             .await?
             .map(|a| super::derived_path(&a))
             .unwrap_or_default())
-    }
-
-    /// Whether the tenant's list keeps an admin entry beside `email_hash`:
-    /// the page never removes or un-flags the last (ADR-0045 d10).
-    pub async fn web_other_admin(
-        &self,
-        admin: &Caller,
-        email_hash: &Sha256Hash,
-    ) -> Result<bool, AppError> {
-        let tenant_id = admin.key.tenant_id;
-        let mut after: Option<Sha256Hash> = None;
-        loop {
-            let page = self
-                .journal
-                .web_entries(tenant_id, after.as_ref(), 200)
-                .await?;
-            if page
-                .iter()
-                .any(|e| e.admin && e.email.digest() != *email_hash)
-            {
-                return Ok(true);
-            }
-            match page.last() {
-                Some(last) if page.len() == 200 => after = Some(last.email.digest()),
-                _ => return Ok(false),
-            }
-        }
-    }
-
-    /// Every entry of the tenant (ADR-0045 d10), for the admin page.
-    pub async fn web_all_entries(&self, admin: &Caller) -> Result<Vec<WebEntry>, AppError> {
-        require_role(&admin.key, Role::Admin, "web_emails")?;
-        let mut entries = Vec::new();
-        let mut after: Option<Sha256Hash> = None;
-        loop {
-            let page = self
-                .journal
-                .web_entries(admin.key.tenant_id, after.as_ref(), 200)
-                .await?;
-            let more = page.len() == 200;
-            after = page.last().map(|e| e.email.digest());
-            entries.extend(page);
-            if !more {
-                break;
-            }
-        }
-        entries.sort_by(|a, b| a.email.cmp(&b.email));
-        Ok(entries)
     }
 
     // -- the Memories list and the workarea dropdowns ------------------------

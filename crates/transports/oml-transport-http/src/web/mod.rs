@@ -1,4 +1,4 @@
-//! The web pages' edge (ADR-0045): the six routes of [`WEB_ROUTES`], the
+//! The web pages' edge (ADR-0045): the routes of [`WEB_ROUTES`], the
 //! sealed sign-in cookie, the session cookie, the CSRF token and the
 //! same-origin check, and the `web_sign_in` log line. The routes exist
 //! only where the deployment sets `oauth.issuer` and at least one provider;
@@ -11,9 +11,10 @@
 //! or an email (d14): the request line names the route template, and the
 //! sign-in's own line names its provider, outcome, tenant and user.
 //!
-//! The person's session keys rest on ADR-0044's user roots, not built
-//! here: the user page shows who the person is and every action but
-//! `sign_out` answers the app's `not_built` refusal.
+//! Every view and act of the user and admin pages is `oml-web`'s
+//! (ADR-0070 d7 (b)): the lead renders only the sign-in page and the
+//! sign-up terms page, runs only `sign_out`, and answers each old page URL
+//! and act with a `303` to where it moved ([`views`]), running nothing.
 
 pub mod admin_read;
 pub mod emails;

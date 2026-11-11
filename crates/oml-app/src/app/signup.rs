@@ -373,19 +373,6 @@ where
             .seq)
     }
 
-    /// Whether the session's user has a deletion request pending.
-    pub async fn web_deletion_pending(&self, web: &Caller) -> Result<bool, AppError> {
-        let Some(user) = &web.key.session_user else {
-            return Ok(false);
-        };
-        Ok(self
-            .journal
-            .web_deletion_requests(web.key.tenant_id)
-            .await?
-            .iter()
-            .any(|r| &r.user == user))
-    }
-
     /// The tenant's pending deletion requests, oldest first (ADR-0068 d6).
     async fn pending_deletions(&self, admin: &Caller) -> Result<Vec<DeletionRequest>, AppError> {
         require_role(&admin.key, Role::Admin, "web_users")?;
