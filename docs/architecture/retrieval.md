@@ -101,7 +101,7 @@ What it costs:
 
     Both miss the 50 ms bar above a few thousand memories, and `bm25-sparse` misses it by more. At 100,000 memories, measured at the database, `bm25-sparse` reads two lists 100 deep: 272 ms p95 at universe scope and 114 ms at every scope. `bm25-postings` at `k` 10 took 29.2 and 20.4 ms (`bench/scale/REPORT.md`).
 
-**`bm25-postings`, the default, when you need any of these:** no model file and no download, or a memory ranked fully the moment it is approved. It also gives the same answer for the same query, key, memories and settings, because it reads only those ([#176](https://github.com/e8kor/open-memory-lab/issues/176)). It is the faster of the two at large scope.
+**`bm25-postings`, the default, when you need any of these:** no model file and no download, or a memory ranked fully the moment it is approved. It also gives the same answer for the same query, key, memories and settings, because it reads only those ([when a recall repeats](repeatable-recall.md)). It is the faster of the two at large scope.
 
 To switch, list `bm25-sparse` in `search.enabled` with the model in place. Then set `search.default = "bm25-sparse"` for every tenant, or a tenant's admin runs `oml search set-default bm25-sparse` for theirs. A request can also name it with `--search bm25-sparse`.
 
