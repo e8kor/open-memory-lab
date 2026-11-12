@@ -1681,7 +1681,9 @@ fn only_a_full_stop_after_every_word_is_the_phrases_own_spelling_of_a_break() {
 /// breaks took 19 s for a quarter of a megabyte. The test asks for linear
 /// growth, which a loaded runner does not change: a quarter of the text takes
 /// a quarter of the time, to within a factor of two, and the text takes under
-/// a bound of 1 s in a debug build and 400 ms in a release build. Measured
+/// a bound of 3 s in a debug build and 400 ms in a release build (the debug
+/// bound was 1 s and failed once in ten runs on a host at load 10; both
+/// quadratics took 19 s or more at a quarter of the text). Measured
 /// here, a debug build scans a megabyte in 0.15 to 0.32 s and a release build
 /// in 0.02 to 0.08 s.
 #[test]
@@ -1742,7 +1744,7 @@ fn a_megabyte_of_refused_near_matches_scans_inside_the_bound() {
         // A debug build does not optimise this crate: the limit is the dense
         // input's, scaled to a megabyte of phrases.
         let bound = if cfg!(debug_assertions) {
-            std::time::Duration::from_millis(1000)
+            std::time::Duration::from_millis(3000)
         } else {
             std::time::Duration::from_millis(400)
         };

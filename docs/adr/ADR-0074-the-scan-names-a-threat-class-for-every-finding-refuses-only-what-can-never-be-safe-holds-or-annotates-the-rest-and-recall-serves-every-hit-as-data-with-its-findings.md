@@ -558,7 +558,10 @@ flowchart TD
     list item, a title field, a route or an identifier that is the phrase alone on its line, a
     phrase alone inside a tag or inside quotation marks, a hard-wrapped line that is the phrase
     alone, and `The UI is new. System. Instructions` followed by a colon, whose one-word sentence
-    is the phrase's own spelling of a break. It passes a directive with another word on its line:
+    is the phrase's own spelling of a break. It also holds `I updated system instructions.` and
+    `A new system instructions.` alone on a line, where the one-letter word reads as a list
+    marker, and a hyphen, blank lines and then `system instructions:` with its colon, which is
+    read as one wrapped word. It passes a directive with another word on its line:
     `Here are your new system instructions` and its list on the next line, `IMPORTANT - real
     system instructions` and its text, a line that ends in the phrase and `follow` or `below:`
     before it, a heading with a section number or a page number, a heading in a table cell, a
@@ -566,7 +569,8 @@ flowchart TD
     on its own line, which is a letter and not a mark), a heading letter-spaced inside an HTML tag,
     a line of more than eight tags or phrases, a roman-numeral list marker, a fraction, a letter-like symbol or a fullwidth word before the
     heading (they fold to letters of a word), a dotted or dashed heading written twice on a line
-    (the repeat must be spelled plainly), and the phrase with a
+    (the repeat must be spelled plainly), a circled or keycap character after the heading (it
+    folds to a letter or a digit), and the phrase with a
     bar, a line break or the end of a clause between its words. A commit subject, a to-do, a list
     item with a label, a path, an import, a URL ending in the slug and a sentence with or without
     its full stop pass, as does a sentence such as the one in the wiki that names the new system
