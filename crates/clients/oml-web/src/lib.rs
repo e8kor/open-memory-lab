@@ -25,6 +25,7 @@ pub mod render;
 pub mod review;
 pub mod session;
 pub mod start;
+mod usage;
 pub mod workareas;
 
 use std::sync::Arc;

@@ -210,6 +210,57 @@ async fn the_text_search_reads_the_persons_keys_beside_the_recall() {
     assert_eq!(unknown.status, StatusCode::NOT_FOUND, "{}", unknown.body);
 }
 
+/// The Keys page reads the person's usage beside the key list, so the card
+/// adds no round: each call waits for the other, and the page answers with
+/// both after the session check (ADR-0070 d8).
+#[tokio::test]
+async fn the_keys_page_reads_the_persons_usage_beside_the_key_list() {
+    let script: Script = |record| {
+        if record == "GET /v2/whoami web" {
+            let mut person = whoami();
+            person["person"] = json!({
+                "user": "alice", "under_quotas": true,
+                "usage": {"memories": 4, "text_bytes": 100, "writes": 2, "keys": 1, "connections": 0},
+                "quotas": {
+                    "memories": 1000, "text_bytes": null, "writes_per_month": null,
+                    "keys": 5, "connections": 5, "requests_per_minute": 60,
+                },
+                "deletion_requested_at": null,
+            });
+            return (200, person, Some("GET /v2/keys"));
+        }
+        if let Some(answer) = session(record) {
+            return answer;
+        }
+        if record.starts_with("GET /v2/keys") {
+            (
+                200,
+                json!({"items": [], "next_cursor": null}),
+                Some("GET /v2/whoami web"),
+            )
+        } else {
+            (500, envelope("internal.error"), None)
+        }
+    };
+    let answered = page(script, "/web/keys").await;
+    assert_eq!(answered.status, StatusCode::OK, "{}", answered.body);
+    assert!(
+        answered.body.contains("<h2>Your usage</h2>") && answered.body.contains("4 / 1000"),
+        "{}",
+        answered.body
+    );
+    assert_eq!(
+        answered
+            .calls
+            .iter()
+            .filter(|c| !c.starts_with("GET /v2/whoami?person=false"))
+            .count(),
+        2,
+        "{:?}",
+        answered.calls
+    );
+}
+
 /// The admin Atlas reads the scope's transitions offers with its counts, in
 /// the admin key's one counted tree, beside the reviewer key's offers for
 /// the mode: two rounds where it spent three, and no offers call of the

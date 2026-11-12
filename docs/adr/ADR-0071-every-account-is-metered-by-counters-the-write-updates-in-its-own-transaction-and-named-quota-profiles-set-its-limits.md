@@ -139,8 +139,8 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
       configuration does not declare`.
     - **The two thresholds.** A meter at 80% of its limit or more is in state `warning`. At its
       limit it is in state `reached`, and the next write that would pass the limit is refused
-      `limit.quota`. The usage endpoints carry both states. No page shows them: the meters card
-      is not built (d6). The doctor line of ADR-0068 d5 moves from 90% to 80%, so there is one
+      `limit.quota`. The usage endpoints carry both states, and so do the pages for the five
+      meters a console session can read (d6, as amended 2026-11-12). The doctor line of ADR-0068 d5 moves from 90% to 80%, so there is one
       threshold.
     - **Reading never blocks.** No quota refuses a recall, a get or a list, and `recalls` has no
       limit. `requests_per_minute` stays a rate (ADR-0068 d5), not a meter.
@@ -161,10 +161,9 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
 
     The own-usage route takes no account parameter, so no request can name another account. A
     tenant key, which belongs to no account, gets `access.not_found`. The admin routes sit on
-    the lab ring with the other admin routes (ADR-0022), not on `/v1`. No page shows the meters:
-    the meters card of the start and account pages, and the profile and meter columns of the
-    users page, were built in the lead's pages before ADR-0070 and are not built in `oml-web`,
-    which owns the pages now. The note below says what the pages do show.
+    the lab ring with the other admin routes (ADR-0022), not on `/v1`. The pages are `oml-web`'s
+    since ADR-0070 and read what a console session can read, which is `person` on `GET /v2/whoami`
+    and the rows of `GET /v2/web/users`. The note below says what they show and what they do not.
 
     **The ledger's consumer is outside this repository.** `GET /v2/admin/usage?period=YYYY-MM` is the
     whole export: the closed UTC days of one month, one row per account per day, read with an admin
@@ -178,13 +177,21 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     totals a month sums the flows (`writes`, `recalls`) and reads the stocks as they stand on
     each day. (`crates/transports/oml-transport-http/src/metering.rs`, `admin_usage_route`.)
 
-    **As landed on main, after ADR-0070 (2026-11-12), for v0.7.3.** The pages are `oml-web`'s and read over
-    `/v2`, so the lead serves none of the three named above. `GET /v2/whoami`'s `person` and each
-    row of `GET /v2/web/users` carry the `text_bytes` and `writes` counts beside the ones they had.
-    They also carry the `text_bytes` and `writes_per_month` limits, null when unlimited. The
-    onboarding and users pages show memories, keys and connections as before. The meters card with
-    its two states, and the profile and meter columns of the users page, are not built in `oml-web`.
-    The five routes above take a key and no session credential (ADR-0070 d2).
+    **As landed on main, after ADR-0070 (2026-11-12), for v0.7.3, amended the same day.** The
+    pages are `oml-web`'s and read over `/v2`, so the lead serves none of the three named above.
+    `GET /v2/whoami`'s `person` and each row of `GET /v2/web/users` carry the `text_bytes` and
+    `writes` counts beside the ones they had. They also carry the `text_bytes` and
+    `writes_per_month` limits, null when unlimited. A "Your usage" card on the Start page and on
+    the Keys page, which is the person's page, draws the five meters those fields carry:
+    memories, text stored, writes this month, keys and connections, each with its count, its limit
+    where one holds, and a mark at 80% of the limit and at the limit by the rule of d5, and the
+    request rate beside them. The users page draws the same five as columns, a dash where the API
+    served no count. Three things are not on those fields and are not shown: the profile's name,
+    the month, and the `recalls` count. The five routes above take a key and no session
+    credential (ADR-0070 d2), so the pages do not read them, and a person outside the sign-up
+    tenant whom no profile limits has no `usage` on `person`, so their pages show no card.
+    Showing the three needs a route a console session may call or three fields on `person` and
+    on the users rows; neither is built.
 
 - **d7 — Meters are counts. They never hold text, a query or an address.** `account_meters`,
   `account_activity` and `usage_daily` hold ids, a profile name, dates and integers. A recall
