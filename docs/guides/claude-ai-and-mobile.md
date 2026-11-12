@@ -27,9 +27,9 @@ The server needs three things.
 Claude cannot reach a laptop on `127.0.0.1`. This path needs a server people reach over the
 internet ([run your own server](../start/run-your-own.md)).
 
-## On the public server: sign up, then follow /web/start
+## Where sign-up is open: sign up, then follow /web/start
 
-Where the operator has opened sign-up ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md), proposed), no administrator is needed. Sign up at `https://memory.doublegate.io/web` with Google or GitHub, accept the terms, and on `/web/start` choose **claude.ai, Desktop or phone**. One button issues a connector key and shows its connect code once, with the exact connector URL and copy buttons. Then in claude.ai:
+Where the operator has opened sign-up ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md), proposed), no administrator is needed. Sign up at `<server>/web` with Google or GitHub, at the address the server's operator gives you, accept the terms, and on `/web/start` choose **claude.ai, Desktop or phone**. One button issues a connector key and shows its connect code once, with the exact connector URL and copy buttons. Then in claude.ai:
 
 1. Open Customize, then Connectors.
 2. Add a custom connector and paste the URL.

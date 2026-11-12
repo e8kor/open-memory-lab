@@ -2601,7 +2601,8 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // kind, null on every row written before it and never backfilled
             // (ADR-0063 d2); 0032 adds the format, the title and the derived
             // search text, text/plain with none on every existing row
-            // (ADR-0056 d1, d4).
+            // (ADR-0056 d1, d4); 0044 adds the approval, null on every row
+            // never promoted (ADR-0077 d6).
             (true, "memories") => {
                 "to_jsonb(t) - 'severity' - 'rule' - 'search_vector' - 'search_len' \
                  - 'anchor_repo' - 'anchor_uri' - 'anchor_rev' - 'anchor_path' \
@@ -2609,7 +2610,8 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
                  - 'source_check_result' - 'source_check_hash' - 'source_check_path' \
                  - 'source_check_fragment' - 'source_check_at' \
                  - 'valid_from' - 'valid_until' - 'valid_from_us' - 'valid_until_us' \
-                 - 'origin_kind' - 'scanned_under' - 'format' - 'title' - 'search_text' - 'search_text_by'"
+                 - 'origin_kind' - 'scanned_under' - 'format' - 'title' - 'search_text' - 'search_text_by' \
+                 - 'approver_held_by' - 'approver_same_user' - 'approved_at'"
             }
             (true, "key_denials") => "to_jsonb(t) - 'lifted_epoch'",
             _ => "to_jsonb(t)",
@@ -5905,7 +5907,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 43, "every migration through 0043_scan_findings");
+    assert_eq!(applied, 44, "every migration through 0044_memory_approval");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7320,7 +7322,9 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
         .await
         .expect("connect")
         .with_owner_url(&owner_url(&db));
-    let mut rig = ChainRig::new(562);
+    // A schema before 0044 takes a promotion with no approval; the twin's
+    // full schema is sent one.
+    let mut rig = ChainRig::new(562).before_approval();
     rig.seed_chain(&upgraded, 0).await;
     let wa = Uuid::from_u128(0xE2);
     lexeme_rows(&mut rig, &upgraded, wa).await;
@@ -7352,7 +7356,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 43, "every migration through 0043_scan_findings");
+    assert_eq!(applied, 44, "every migration through 0044_memory_approval");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8200,7 +8204,9 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
         .await
         .expect("connect")
         .with_owner_url(&owner_url(&db));
-    let mut rig = ChainRig::new(575);
+    // A schema before 0044 takes a promotion with no approval; the twin's
+    // full schema is sent one.
+    let mut rig = ChainRig::new(575).before_approval();
     rig.seed_chain(&upgraded, 0).await;
     let wa = Uuid::from_u128(0xE2);
     lexeme_rows(&mut rig, &upgraded, wa).await;
@@ -8228,7 +8234,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 43, "every migration through 0043_scan_findings");
+    assert_eq!(applied, 44, "every migration through 0044_memory_approval");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;

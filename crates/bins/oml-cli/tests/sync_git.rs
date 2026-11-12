@@ -11,8 +11,8 @@ fn extracted(loaded: &Loaded) -> Extracted {
     extract(loaded, Kind::default_for(&loaded.paths()))
 }
 use oml_cli::sync::source::{
-    ALLOW_PUBLIC_CONFIG, PublicServerConsent, authorize_public_server, is_secret_shaped,
-    record_public_server_consent, repo_of_remote,
+    ALLOW_PUBLIC_CONFIG, SharedServerConsent, authorize_shared_server, is_secret_shaped, origin_of,
+    record_shared_server_consent, repo_of_remote,
 };
 
 fn scratch(test: &str) -> PathBuf {
@@ -276,103 +276,75 @@ fn oml(cwd: &Path, args: &[&str]) -> (i32, String, String) {
     )
 }
 
+/// A server's origin is its scheme and host, lowercased, and a port only
+/// when it is not the scheme's default; the path and user are not part of
+/// it (ADR-0076 d9).
 #[test]
-fn sync_refuses_the_public_server_without_allow_public_server() {
-    use oml_cli::sync::source::is_public_server;
+fn a_servers_origin_ignores_case_path_user_and_the_default_port() {
     for url in [
-        "https://memory.doublegate.io",
-        "https://MEMORY.doublegate.io/",
-        "https://memory.doublegate.io:443",
-        "http://memory.doublegate.io",
-        "https://memory.doublegate.io/mcp",
-        "memory.doublegate.io",
+        "https://oml.example.com",
+        "https://OML.example.com/",
+        "https://oml.example.com:443",
+        "https://oml.example.com/mcp",
+        "https://user@oml.example.com.",
     ] {
-        assert!(is_public_server(url), "{url}");
+        assert_eq!(origin_of(url), "https://oml.example.com", "{url}");
     }
-    assert!(!is_public_server(
-        "https://memory.doublegate.io.example.com"
-    ));
-    assert!(!is_public_server("https://oml.example.com"));
-    let dir = clone_with("public", "git@github.com:e8kor/docs.git");
-    write(&dir, "docs/a.md", "# A\n\n## B\n\nC.\n");
-    git(&dir, &["add", "."]);
-    git(&dir, &["commit", "-q", "-m", "a"]);
-    let (code, _, err) = oml(
-        &dir,
-        &[
-            "--url",
-            "https://Memory.Doublegate.io:443/",
-            "--api-key",
-            "k",
-            "sync",
-            "docs",
-            "--workarea",
-            "w",
-        ],
-    );
-    assert_eq!(code, 2, "{err}");
-    assert!(
-        err.contains("--allow-public-server")
-            && err.contains("superseding or retiring a memory does not erase"),
-        "{err}"
-    );
-    assert!(
-        Command::new("git")
-            .args(["-C"])
-            .arg(&dir)
-            .args(["config", "--local", "--get", "oml.allowPublicServer"])
-            .output()
-            .unwrap()
-            .stdout
-            .is_empty(),
-        "nothing is recorded on a refusal"
+    assert_eq!(origin_of("http://127.0.0.1:8080/"), "http://127.0.0.1:8080");
+    assert_ne!(
+        origin_of("https://oml.example.com.evil.example"),
+        "https://oml.example.com"
     );
 }
 
 #[test]
-fn public_server_consent_is_recorded_once_and_reused() {
-    let dir = clone_with("public-consent", "git@github.com:e8kor/docs.git");
-    let url = "https://memory.doublegate.io";
-    let err = authorize_public_server(url, &dir, false).unwrap_err();
+fn shared_server_consent_is_recorded_once_per_origin_and_reused() {
+    let dir = clone_with("shared-consent", "git@github.com:e8kor/docs.git");
+    let url = "https://oml.example.com";
+    assert_eq!(
+        authorize_shared_server(url, false, &dir, false).unwrap(),
+        SharedServerConsent::NotRequired,
+        "a server that is not shared asks nothing"
+    );
+    let err = authorize_shared_server(url, true, &dir, false).unwrap_err();
     assert!(err.contains("--allow-public-server"), "{err}");
     assert!(
         !err.contains("ADR-"),
         "CLI errors stay self-contained: {err}"
     );
     assert_eq!(
-        authorize_public_server(url, &dir, true).unwrap(),
-        PublicServerConsent::FirstOptIn
+        authorize_shared_server(url, true, &dir, true).unwrap(),
+        SharedServerConsent::FirstOptIn
     );
     assert!(
         !git(&dir, &["config", "--local", "--list"]).contains(ALLOW_PUBLIC_CONFIG),
         "authorization alone does not persist consent before the disclosure"
     );
-    record_public_server_consent(&dir).unwrap();
+    record_shared_server_consent(&dir, url).unwrap();
     assert_eq!(
-        git(&dir, &["config", "--local", "--get", ALLOW_PUBLIC_CONFIG]),
-        "true"
+        git(
+            &dir,
+            &["config", "--local", "--get-all", ALLOW_PUBLIC_CONFIG]
+        ),
+        "https://oml.example.com"
     );
     assert_eq!(
-        authorize_public_server(url, &dir, false).unwrap(),
-        PublicServerConsent::Recorded,
+        authorize_shared_server(url, true, &dir, false).unwrap(),
+        SharedServerConsent::Recorded,
         "recorded consent needs neither another flag nor another disclosure"
     );
-    assert_eq!(
-        authorize_public_server("https://oml.example.com", &dir, false).unwrap(),
-        PublicServerConsent::NotRequired
-    );
 
-    let outside = scratch("public-consent-outside-a-clone");
+    let outside = scratch("shared-consent-outside-a-clone");
     assert_eq!(
-        authorize_public_server(url, &outside, true).unwrap(),
-        PublicServerConsent::OneTime,
+        authorize_shared_server(url, true, &outside, true).unwrap(),
+        SharedServerConsent::OneTime,
         "an explicit opt-in outside a clone is honestly one-time"
     );
-    assert!(authorize_public_server(url, &outside, false).is_err());
+    assert!(authorize_shared_server(url, true, &outside, false).is_err());
 }
 
 #[test]
-fn public_server_consent_follows_the_source_clone_not_the_invocation_clone() {
+fn shared_server_consent_follows_the_source_clone_not_the_invocation_clone() {
     let invocation = clone_with("consent-invocation", "git@github.com:e8kor/invocation.git");
     let source = clone_with("consent-source", "git@github.com:e8kor/source.git");
     write(&source, "docs/a.md", "# A\n\n## B\n\nC.\n");
@@ -383,18 +355,18 @@ fn public_server_consent_follows_the_source_clone_not_the_invocation_clone() {
     let root = loaded.root.as_deref().expect("the source clone's root");
     assert_eq!(root, source.canonicalize().unwrap());
 
-    let url = "https://memory.doublegate.io";
+    let url = "https://oml.example.com";
     assert_eq!(
-        authorize_public_server(url, root, true).unwrap(),
-        PublicServerConsent::FirstOptIn
+        authorize_shared_server(url, true, root, true).unwrap(),
+        SharedServerConsent::FirstOptIn
     );
-    record_public_server_consent(root).unwrap();
+    record_shared_server_consent(root, url).unwrap();
     assert_eq!(
         git(
             &source,
-            &["config", "--local", "--get", ALLOW_PUBLIC_CONFIG]
+            &["config", "--local", "--get-all", ALLOW_PUBLIC_CONFIG]
         ),
-        "true"
+        "https://oml.example.com"
     );
     assert!(
         !git(&invocation, &["config", "--local", "--list"]).contains(ALLOW_PUBLIC_CONFIG),
@@ -544,4 +516,456 @@ fn a_rust_source_loads_rs_files_and_manifests_only_when_the_rust_adapter_is_name
     assert_eq!(named.files[1].1, b"//! A.\n");
     let unnamed = load(&dir, &opts("crates")).unwrap();
     assert_eq!(unnamed.paths(), ["crates/a/README.md"]);
+}
+
+// ---------------------------------------------------------------------------
+// Consent asked of a server that says it is shared (ADR-0076 d9)
+// ---------------------------------------------------------------------------
+
+/// A fixture answering `GET /v2/whoami` with `shared` as given (`None`:
+/// the field absent, as a server older than ADR-0076 answers), every other
+/// path 404; its URL. It serves until `runtime` shuts down.
+fn whoami_fixture(runtime: &tokio::runtime::Runtime, shared: Option<bool>) -> String {
+    whoami_fixture_counting(runtime, shared).0
+}
+
+/// [`whoami_fixture`], and the number of requests it has had for any path
+/// but `/v2/whoami`: what a refusal must leave at zero.
+fn whoami_fixture_counting(
+    runtime: &tokio::runtime::Runtime,
+    shared: Option<bool>,
+) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use axum::routing::get;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let others = std::sync::Arc::new(AtomicUsize::new(0));
+    let counted = others.clone();
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .expect("a listener on an ephemeral port");
+    let server = format!("http://{}", listener.local_addr().expect("its address"));
+    let mut me = serde_json::json!({
+        "key_id": "key_w", "name": "writer", "role": "writer", "principal": "p",
+        "held_by": "agent", "tenant": {"id": "t1", "name": "oml"},
+        "default_workarea": null, "crew": null, "user": null, "grants": [],
+    });
+    if let Some(shared) = shared {
+        me["shared"] = serde_json::Value::Bool(shared);
+    }
+    let router = axum::Router::new()
+        .route(
+            "/v2/whoami",
+            get(move || {
+                let me = me.clone();
+                async move { axum::Json(me) }
+            }),
+        )
+        .fallback(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            async { axum::http::StatusCode::NOT_FOUND }
+        });
+    runtime.spawn(async move {
+        axum::serve(listener, router).await.expect("serve");
+    });
+    (server, others)
+}
+
+/// A clone with one committed document under `docs/`.
+fn docs_clone(test: &str) -> PathBuf {
+    let dir = clone_with(test, "git@github.com:e8kor/docs.git");
+    write(&dir, "docs/a.md", "# A\n\n## B\n\nC.\n");
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-q", "-m", "a"]);
+    dir
+}
+
+/// `oml sync docs` against `server`, with `--allow-public-server` when
+/// `allow`.
+fn sync_to(dir: &Path, server: &str, allow: bool) -> (i32, String, String) {
+    let mut args = vec![
+        "--url",
+        server,
+        "--api-key",
+        "k",
+        "sync",
+        "docs",
+        "--workarea",
+        "w",
+    ];
+    if allow {
+        args.push("--allow-public-server");
+    }
+    oml(dir, &args)
+}
+
+/// The values of the consent the source clone recorded, one origin each.
+fn recorded(dir: &Path) -> Vec<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["config", "--local", "--get-all", "oml.allowPublicServer"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+const DISCLOSURE: &str = "superseding or retiring a memory does not erase";
+
+#[test]
+fn sync_to_a_server_that_declares_itself_shared_is_refused_without_consent() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (server, others) = whoami_fixture_counting(&runtime, Some(true));
+    let dir = docs_clone("shared-refused");
+    let (code, _, err) = sync_to(&dir, &server, false);
+    runtime.shutdown_background();
+    assert_eq!(code, 2, "{err}");
+    assert_eq!(
+        others.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a refused sync sends the server nothing but the whoami it asked"
+    );
+    assert!(
+        err.contains("--allow-public-server") && err.contains(DISCLOSURE),
+        "{err}"
+    );
+    assert!(
+        recorded(&dir).is_empty(),
+        "nothing is recorded on a refusal"
+    );
+}
+
+/// The operator's choice of 2026-11-11 (ADR-0076 d9): a server whose
+/// whoami does not say, one older than ADR-0076, counts as not shared.
+#[test]
+fn sync_to_a_server_whose_whoami_omits_shared_asks_no_consent() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, None);
+    let dir = docs_clone("shared-omitted");
+    let (_, _, err) = sync_to(&dir, &server, false);
+    runtime.shutdown_background();
+    assert!(!err.contains("--allow-public-server"), "{err}");
+    assert!(!err.contains(DISCLOSURE), "{err}");
+}
+
+#[test]
+fn sync_to_a_server_that_declares_itself_not_shared_asks_nothing() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(false));
+    let dir = docs_clone("not-shared");
+    let (_, _, err) = sync_to(&dir, &server, false);
+    runtime.shutdown_background();
+    assert!(!err.contains("--allow-public-server"), "{err}");
+    assert!(!err.contains(DISCLOSURE), "{err}");
+    assert!(recorded(&dir).is_empty());
+}
+
+#[test]
+fn consent_recorded_for_one_origin_does_not_cover_another() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let first = whoami_fixture(&runtime, Some(true));
+    let second = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("per-origin");
+    let (_, _, err) = sync_to(&dir, &first, true);
+    assert!(
+        err.contains(DISCLOSURE),
+        "the first opt-in discloses: {err}"
+    );
+    assert_eq!(
+        recorded(&dir),
+        std::slice::from_ref(&first),
+        "the origin is recorded"
+    );
+    let (_, _, err) = sync_to(&dir, &first, false);
+    assert!(
+        !err.contains("--allow-public-server"),
+        "recorded consent is reused for its origin: {err}"
+    );
+    let (code, _, err) = sync_to(&dir, &second, false);
+    runtime.shutdown_background();
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--allow-public-server"), "{err}");
+    assert_eq!(recorded(&dir), [first], "the other origin is not recorded");
+}
+
+#[test]
+fn a_recorded_true_is_not_consent_and_doctor_names_it() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("legacy-true");
+    git(
+        &dir,
+        &["config", "--local", "oml.allowPublicServer", "true"],
+    );
+    let (code, _, err) = sync_to(&dir, &server, false);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--allow-public-server"), "{err}");
+    let (_, out, _) = oml(&dir, &["--url", &server, "--api-key", "k", "doctor"]);
+    assert!(
+        out.contains(
+            "warn sync_consent_unbound: oml.allowPublicServer=true names no server and is no \
+             longer read; run oml sync --allow-public-server once against the server you mean"
+        ),
+        "{out}"
+    );
+    // The remedy the line names clears it: the opt-in records the origin and
+    // drops the legacy value, so the line is gone and the origin is consent.
+    let _ = sync_to(&dir, &server, true);
+    assert_eq!(
+        recorded(&dir),
+        std::slice::from_ref(&server),
+        "the origin replaces the legacy true"
+    );
+    let (_, out, _) = oml(&dir, &["--url", &server, "--api-key", "k", "doctor"]);
+    runtime.shutdown_background();
+    assert!(!out.contains("sync_consent_unbound"), "{out}");
+    assert!(!out.contains("sync_shared_server"), "{out}");
+}
+
+#[test]
+fn an_opt_in_beside_a_recorded_origin_and_a_legacy_true_drops_the_true() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("legacy-true-and-origin");
+    git(
+        &dir,
+        &["config", "--local", "oml.allowPublicServer", "true"],
+    );
+    git(
+        &dir,
+        &[
+            "config",
+            "--local",
+            "--add",
+            "oml.allowPublicServer",
+            &server,
+        ],
+    );
+    let _ = sync_to(&dir, &server, true);
+    runtime.shutdown_background();
+    assert_eq!(recorded(&dir), [server]);
+}
+
+/// A `git` ahead of the real one on PATH that refuses what git before 2.30
+/// does not know, with git's own words and exit status, and otherwise runs
+/// the real git: `config --fixed-value` and `rev-parse --end-of-options`
+/// arrived in 2.30. Returns the directory to put first on PATH.
+#[cfg(unix)]
+fn git_before_2_30(test: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let real = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|d| d.join("git"))
+        .find(|p| p.is_file())
+        .expect("a git on PATH");
+    let bin = scratch(&format!("{test}-bin"));
+    let script = bin.join("git");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do\n  case \"$a\" in\n    --fixed-value|--end-of-options)\n      echo \"error: unknown option \\`${{a#--}}'\" >&2\n      exit 129;;\n  esac\ndone\nexec {} \"$@\"\n",
+            real.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
+/// `oml sync docs` with `--allow-public-server` against `server`, with `bin`
+/// first on PATH.
+#[cfg(unix)]
+fn opt_in_with_path(dir: &Path, server: &str, bin: &Path) -> (i32, String, String) {
+    let path = std::env::join_paths(
+        std::iter::once(bin.to_path_buf())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_oml"))
+        .args([
+            "--url",
+            server,
+            "--api-key",
+            "k",
+            "sync",
+            "docs",
+            "--workarea",
+            "w",
+            "--allow-public-server",
+        ])
+        .current_dir(dir)
+        .env("PATH", path)
+        .env("OML_CLI_CREDENTIALS", dir.join("no-credentials.toml"))
+        .env_remove("OML_URL")
+        .env_remove("OML_API_KEY")
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// The wrapper is the honest stand-in for git 2.25: it must refuse the two
+/// options, or the tests below prove nothing.
+#[cfg(unix)]
+#[test]
+fn the_stand_in_for_an_old_git_refuses_what_git_before_2_30_does_not_know() {
+    let dir = docs_clone("old-git-stand-in");
+    let bin = git_before_2_30("old-git-stand-in");
+    for args in [
+        [
+            "config",
+            "--local",
+            "--fixed-value",
+            "--unset-all",
+            "a.b",
+            "c",
+        ],
+        [
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            "HEAD",
+            "x",
+            "y",
+        ],
+    ] {
+        let out = Command::new(bin.join("git"))
+            .arg("-C")
+            .arg(&dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(129), "{args:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_first_opt_in_on_a_git_before_2_30_records_the_origin_and_drops_only_the_literal_true() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("old-git-opt-in");
+    let bin = git_before_2_30("old-git-opt-in");
+    let kept = [
+        "https://true",
+        "TRUE",
+        "true ",
+        "https://untrue.example",
+        "truer",
+    ];
+    git(
+        &dir,
+        &["config", "--local", "oml.allowPublicServer", "true"],
+    );
+    for value in kept {
+        git(
+            &dir,
+            &["config", "--local", "--add", "oml.allowPublicServer", value],
+        );
+    }
+    let (_, _, err) = opt_in_with_path(&dir, &server, &bin);
+    runtime.shutdown_background();
+    assert!(!err.contains("could not drop"), "{err}");
+    assert!(!err.contains("could not record"), "{err}");
+    assert!(!err.contains("unknown option"), "{err}");
+    assert!(!err.contains("is not a commit"), "{err}");
+    let mut want: Vec<String> = kept.iter().map(|v| (*v).to_owned()).collect();
+    want.push(server);
+    assert_eq!(recorded(&dir), want);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_first_opt_in_on_a_git_before_2_30_with_no_legacy_value_records_the_origin_without_error() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("old-git-no-legacy");
+    let bin = git_before_2_30("old-git-no-legacy");
+    let (_, _, err) = opt_in_with_path(&dir, &server, &bin);
+    runtime.shutdown_background();
+    assert!(!err.contains("could not drop"), "{err}");
+    assert!(!err.contains("could not record"), "{err}");
+    assert!(!err.contains("is not a commit"), "{err}");
+    assert_eq!(recorded(&dir), [server]);
+}
+
+#[test]
+fn only_the_literal_true_is_removed_and_a_clone_with_none_records_the_origin() {
+    let url = "https://oml.example.com";
+    let dir = clone_with("unset-literal-true", "git@github.com:e8kor/docs.git");
+    record_shared_server_consent(&dir, url).unwrap();
+    assert_eq!(recorded(&dir), [url], "no legacy value: no error");
+
+    let kept = [
+        "https://true",
+        "TRUE",
+        "true ",
+        "https://untrue.example",
+        "truer",
+        "xtrue",
+    ];
+    let add = |value: &str| {
+        git(
+            &dir,
+            &["config", "--local", "--add", "oml.allowPublicServer", value],
+        );
+    };
+    add("true");
+    for value in kept {
+        add(value);
+    }
+    add("true");
+    record_shared_server_consent(&dir, url).unwrap();
+    let mut want = vec![url.to_owned()];
+    want.extend(kept.iter().map(|v| (*v).to_owned()));
+    assert_eq!(
+        recorded(&dir),
+        want,
+        "every literal true goes, nothing else"
+    );
+}
+
+#[test]
+fn unsetting_a_value_matches_it_literally_and_not_as_a_pattern() {
+    let dir = clone_with("unset-literal", "git@github.com:e8kor/docs.git");
+    let source = oml_cli::sync::source::Git::at(&dir).unwrap();
+    for value in ["a.b", "axb", "a.b.c", "(a|b)", "a"] {
+        source.add_config("oml.sample", value).unwrap();
+    }
+    source.unset_value("oml.sample", "a.b").unwrap();
+    source.unset_value("oml.sample", "(a|b)").unwrap();
+    source.unset_value("oml.sample", "absent").unwrap();
+    assert_eq!(source.config_all("oml.sample"), ["axb", "a.b.c", "a"]);
+}
+
+#[test]
+fn a_rev_that_looks_like_an_option_is_refused_before_git_sees_it() {
+    let dir = docs_clone("rev-option");
+    let git = oml_cli::sync::source::Git::at(&dir).unwrap();
+    assert!(git.commit("HEAD").is_ok());
+    for rev in ["--abbrev-ref", "-n1", "--output=x"] {
+        let err = git.commit(rev).unwrap_err();
+        assert!(err.contains("is not a commit"), "{rev}: {err}");
+    }
+    assert!(!dir.join("x").exists());
+}
+
+#[test]
+fn doctor_names_sync_shared_server_when_consent_for_that_origin_is_missing() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("doctor-shared");
+    let (_, out, _) = oml(&dir, &["--url", &server, "--api-key", "k", "doctor"]);
+    runtime.shutdown_background();
+    assert!(
+        out.contains(&format!(
+            "warn sync_shared_server: {server} declares itself shared, and consent is not \
+             recorded for this origin in this clone; run oml sync with --allow-public-server to \
+             opt in"
+        )),
+        "{out}"
+    );
 }

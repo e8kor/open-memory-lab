@@ -2426,9 +2426,8 @@ async fn the_session_start_hook_reads_the_plugin_options_before_oml_url_and_oml_
 
 /// The plugin's URL option set alone means the plugin is not configured:
 /// the hook sends nothing, even with a whole environment pair, and names the
-/// unset key option (ADR-0040 d3). The key option alone is the default
-/// server's pair, which the resolver's unit tests prove without reaching it
-/// (ADR-0043 d3).
+/// unset key option (ADR-0040 d3). The key option alone names the unset URL
+/// option as `no_server`, which the resolver's unit tests prove (ADR-0076 d3).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_session_start_hook_sends_nothing_when_the_plugin_url_option_is_set_alone() {
     let Some(crew) = Crew::start().await else {
@@ -3083,7 +3082,7 @@ async fn the_hook_output_never_contains_the_key_value() {
     // (ADR-0065 d13; ADR-0001 R4).
     let (code, rescan, log) = crew.lab.json(None, &["admin", "rescan"]);
     assert_eq!(code, 1, "a veto on a stored row exits 1: {log}");
-    assert_eq!(rescan["scanner_version"], "oml-scan/1.1", "{log}");
+    assert_eq!(rescan["scanner_version"], "oml-scan/1.2", "{log}");
     let hit = rescan["findings"]
         .as_array()
         .expect("findings")

@@ -28,7 +28,7 @@ OML works as a memory provider on its own. Agents write, recall, fetch and repla
 
 - **Review effort.** A memory stays held until a reviewer acts. Your organization supplies that capacity, usually a reviewing crew with a person as the fallback.
 - **A write that waits.** Other agents do not see a new memory right away. Its author reads it at once, marked unreviewed. Inside a development workarea, teammates can also recall unreviewed work ([workareas](../use/workareas.md)).
-- **Running a server.** Self-hosting needs PostgreSQL and backups; the optional lake takes a directory or an object store. The public server removes that work, at the price of trusting its operator ([install](../start/install.md)).
+- **Running a server.** Self-hosting needs PostgreSQL and backups; the optional lake takes a directory or an object store. A server someone else runs removes that work, at the price of trusting its operator ([install](../start/install.md)).
 
 ## When not to use OML
 

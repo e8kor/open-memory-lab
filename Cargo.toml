@@ -65,6 +65,7 @@ parquet = { version = "59", default-features = false, features = ["snap"] }
 # by its `rerank` feature), so no graph builds candle by inheritance.
 oml-rerank = { path = "crates/adapters/oml-rerank", default-features = false }
 axum = "0.8"
+expectrl = "0.9"  # dev: drives `oml setup claude-code` on a pseudo-terminal (ADR-0076 d10)
 # delta-rs, the whole lake interface (ADR-0006 d2), with DataFusion for
 # MERGE and the operator's named queries (ADR-0060 d11). Its 1.x core
 # hard-enables the rustls feature, which reaches aws-lc through reqwest

@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-12
 answers: "how oml sync keeps a workarea in step with a repository's documents and code, reviewed in bulk"
 ---
 
@@ -11,6 +11,10 @@ commit and extracts memories through an adapter. It diffs them against what the 
 writes the difference. Each memory is anchored to the repository, commit, path, fragment and
 fingerprint of the span it came from.
 
+Requirements: git 2.7 or later on the `PATH`, since `oml sync` runs `git remote get-url` to derive
+the repository name (the other commands it runs are older). We run it against current git, and
+against a stand-in that refuses the options git 2.30 added; we have not run it against git 2.7.
+
 1. **Pick the source and the adapter.** `adr` yields one memory per decision bullet, plus a summary
    and a rejected-alternatives memory. `headings` yields one per heading of level 2 to 4. `lines`
    yields blocks of at most 40 lines.
@@ -19,9 +23,14 @@ fingerprint of the span it came from.
 3. **Preview.** `oml sync docs/adr --workarea design --adapter adr --dry-run` lists each item as
    `new`, `changed`, `removed`, `moved` or `unchanged` and writes nothing.
 4. **Run.** Drop `--dry-run`. A run writes up to 200 items (`--max-writes`), so repeat for larger
-   sources. The public server needs one `--allow-public-server` opt-in per clone. That first run
-   explains the disclosure and records consent in local git config; later runs need no flag. A
-   source outside a git clone needs the flag each run. The server's admins can read submitted
+   sources. A server whose `whoami` says it is `shared` (its operator set `server.shared`, or
+   opened sign-up) needs one `--allow-public-server` opt-in per clone and per server. That first
+   run explains the disclosure and records the server's origin in local git config; later runs to
+   that server need no flag, and another shared server asks again. A source outside a git clone
+   needs the flag each run. A server older than this release does not say, and is not asked
+   about. A clone that recorded `oml.allowPublicServer=true` before must opt in once more:
+   `oml doctor` names it as `sync_consent_unbound`, and one `--allow-public-server` run against the
+   server you mean records its origin and removes the old value. The server's admins can read submitted
    memories. Supersession or retirement does not erase submitted text or anchors.
 5. **Review in bulk.** A person reads the batch with `oml review list --author-key <sync key>` and
    approves it with `oml review approve --ids -`.

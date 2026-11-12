@@ -30,7 +30,9 @@ on to the Keys view. One memory opened by its id is at
 `/web/memory?id=<id>`, and on the admin page, with its attribution and the form that proposes its
 next version, at `/web/admin/memory?id=<id>`; the admin page's Curate view is at
 `/web/admin/curate`. The onboarding page is at `/web/start`, with its status poll at `/web/start/status` and the
-export at `/web/start/export`; the setup view at `/web/setup`; the admin overview (the allowlist and
+export at `/web/start/export`; the setup view at `/web/setup`, which, like a new key's panel, shows the address an agent
+sets beside its key: the API's issuer, else `web.public_url`, else a `no_server` line and no address (no release
+names a server, ADR-0076 d6); the admin overview (the allowlist and
 the review and curation grants) at `/web/admin/people`; and the users and quotas page at
 `/web/admin/users`. Removing an address, disabling a person and closing a deletion request each show a
 confirmation first. The server's only web pages are now sign-in, the sign-up terms page and

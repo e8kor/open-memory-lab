@@ -18,9 +18,9 @@ OML governs who can read a write and when: a write is held until a different ide
 
 Not in the default path. The default pipeline, `bm25-postings`, is keyword scoring, and the scan is fixed rules. Two optional pipelines add a cross-encoder reranker or a learned sparse model. See [retrieval](architecture/retrieval.md).
 
-### What does it cost, and is the public server free?
+### What does it cost?
 
-The software is Apache-2.0 and you can run it yourself on PostgreSQL. Access to the public server is by invitation. See [Is OML for you?](product/is-oml-for-you.md) and [install](start/install.md).
+The software is Apache-2.0 and you can run it yourself on PostgreSQL; a server someone else runs sets its own terms. See [Is OML for you?](product/is-oml-for-you.md) and [install](start/install.md).
 
 ### How long until a write is readable by others?
 
@@ -106,4 +106,4 @@ Writes in one tenant serialize on the journal, so a lead takeover or a failed fo
 
 ### Is my data sent anywhere, and can I delete it?
 
-On the public server, its operator can read stored memories, and logs are kept 30 days. OML does not delete memories; rejected and retired ones stay as history. See [commitments](product/commitments.md).
+On any server, its operator can read stored memories, and its request logs are kept 30 days unless the operator changes that. OML does not delete memories; rejected and retired ones stay as history. See [commitments](product/commitments.md).

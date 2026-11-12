@@ -2812,6 +2812,11 @@ where
             let person = person.as_ref().map_or(Value::Null, person_json);
             obj.insert("person".to_owned(), person);
         }
+        if let Some(obj) = body.as_object_mut() {
+            // Whether the server's admins are not the caller's, which
+            // `oml sync` asks consent on (ADR-0076 d9).
+            obj.insert("shared".to_owned(), Value::Bool(st.app.shared()));
+        }
         Ok(json_response(StatusCode::OK, &body))
     }
 
@@ -4639,6 +4644,14 @@ pub fn source_checked_json(check: &SourceCheck) -> Value {
 
 pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
     let m = &served.memory;
+    // The approving verdict that ratified a promoted version: when it was
+    // given and by what kind of reviewer, never by whom; none on a version
+    // that is not promoted, and none wherever principal is null, since
+    // ADR-0044 d9's list of what an anonymous row keeps names no approval
+    // (ADR-0077 d1, d2, d4).
+    let approval = (m.status == MemoryStatus::Promoted && !served.anonymous)
+        .then_some(m.approval.as_deref())
+        .flatten();
     let mut value = json!({
         "artifact_id": m.memory_id,
         "claim_key": m.claim_key,
@@ -4692,6 +4705,14 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
         "held_expires_at": Value::Null,
         "created_at": m.created_at.as_str(),
         "promoted_at": m.promoted_at.as_ref().map(|at| at.as_str()),
+        "approved_at": approval.map(|a| a.at.as_str()),
+        // The reviewing key's attestation and whether it acts for the
+        // author's person; no key, name, principal or crew (ADR-0025 d15;
+        // ADR-0037 d5; ADR-0055 d7).
+        "approver": approval.map(|a| json!({
+            "held_by": a.held_by.as_str(),
+            "same_user": a.same_user,
+        })),
         // When the version says it holds, as signed (proposed ADR-0059 d2).
         "valid_from": m.valid.from.as_ref().map(ValidEnd::as_str),
         "valid_until": m.valid.until.as_ref().map(ValidEnd::as_str),

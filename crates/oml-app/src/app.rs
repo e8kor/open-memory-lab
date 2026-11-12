@@ -100,26 +100,27 @@ use crate::ports::{
 };
 use crate::telemetry::{HITS_STORED, Label, RecallEvent, Remembered, Telemetry, TelemetryItem};
 use crate::types::{
-    AppError, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage, AuthorizeParams,
-    Bearer, BootstrapRequest, BootstrapResult, Brief, BriefEdgePage, BriefEdgeProposalOutcome,
-    BriefEdgeRatification, BriefEdgeRecord, BriefEdgeView, ClaimEdgeFilter, ClaimEdgePage,
-    ClaimEdgePosition, ClaimEdgeProposal, ClaimEdgeProposalOutcome, ClaimEdgeQuery,
-    ClaimEdgeRatification, ClaimEdgeRecord, ClaimEdgeSelection, ClientAuthentication,
-    ClientDescription, ClientKind, CodeEntryOutcome, ConfirmAction, ConfirmOutcome,
-    ConfirmationGrant, ConfirmationView, ConnectCode, ConnectCodeIssued, ConnectCodeRecord,
-    ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkarea, Credential, CrewCreateRequest,
-    CrewPage, CrewRecord, CrewUpdate, DenialRecord, EdgeRatification, ExchangeForm, FormatFields,
-    GrantRecord, GuardrailFields, GuardrailRequest, GuardrailSet, GuardrailVerdict, HIT_KINDS,
-    IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess, KeyDetail, KeyRecord, ListRequest,
-    ListingFilter, ListingPosition, ListingScope, LiveConnectCode, MemoryPage, MemoryRecord,
-    MintedToken, NamedRef, NamingRefusal, OAuthClientRecord, OnSimilar, OwnHeldGuardrail,
-    PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge, RecallHit, RecallRequest, RecallResult,
-    RefreshFacts, RefreshForm, RegisteredClient, RerankOutcome, SIMILAR_KINDS, ServedGuardrail,
-    ServedMemory, SimilarItem, SourceCheck, SourceCheckReceipt, SourceCheckRequest, SubmitOutcome,
-    SubmitReceipt, SubmitRequest, SubmitVerb, SupersedeOutcome, SupersedeReceipt, SupersedeRequest,
-    TailPage, TailedEvent, TenantRow, TokenPair, TransitionRecord, TransitionState, TransitionView,
-    TreeNode, TreePage, UnnamedRows, Verdict, VerdictOutcome, VerdictRequest, VersionRef, Whoami,
-    WorkareaInfo, WorkareaRecord, WorkareaStatusView,
+    AppError, Approval, AssignedNames, AuthorizationRecord, AuthorizeOutcome, AuthorizePage,
+    AuthorizeParams, Bearer, BootstrapRequest, BootstrapResult, Brief, BriefEdgePage,
+    BriefEdgeProposalOutcome, BriefEdgeRatification, BriefEdgeRecord, BriefEdgeView,
+    ClaimEdgeFilter, ClaimEdgePage, ClaimEdgePosition, ClaimEdgeProposal, ClaimEdgeProposalOutcome,
+    ClaimEdgeQuery, ClaimEdgeRatification, ClaimEdgeRecord, ClaimEdgeSelection,
+    ClientAuthentication, ClientDescription, ClientKind, CodeEntryOutcome, ConfirmAction,
+    ConfirmOutcome, ConfirmationGrant, ConfirmationView, ConnectCode, ConnectCodeIssued,
+    ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, CreatedWorkarea, Credential,
+    CrewCreateRequest, CrewPage, CrewRecord, CrewUpdate, DenialRecord, EdgeRatification,
+    ExchangeForm, FormatFields, GrantRecord, GuardrailFields, GuardrailRequest, GuardrailSet,
+    GuardrailVerdict, HIT_KINDS, IssueKeyRequest, IssuedKey, IssuedTokens, KeyAccess, KeyDetail,
+    KeyRecord, ListRequest, ListingFilter, ListingPosition, ListingScope, LiveConnectCode,
+    MemoryPage, MemoryRecord, MintedToken, NamedRef, NamingRefusal, OAuthClientRecord, OnSimilar,
+    OwnHeldGuardrail, PROVIDER_TENANT, ProposeBriefEdge, ProposeClaimEdge, RecallHit,
+    RecallRequest, RecallResult, RefreshFacts, RefreshForm, RegisteredClient, RerankOutcome,
+    SIMILAR_KINDS, ServedGuardrail, ServedMemory, SimilarItem, SourceCheck, SourceCheckReceipt,
+    SourceCheckRequest, SubmitOutcome, SubmitReceipt, SubmitRequest, SubmitVerb, SupersedeOutcome,
+    SupersedeReceipt, SupersedeRequest, TailPage, TailedEvent, TenantRow, TokenPair,
+    TransitionRecord, TransitionState, TransitionView, TreeNode, TreePage, UnnamedRows, Verdict,
+    VerdictOutcome, VerdictRequest, VersionRef, Whoami, WorkareaInfo, WorkareaRecord,
+    WorkareaStatusView,
 };
 use crate::types::{
     BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
@@ -205,6 +206,10 @@ pub struct App<J, S, C, I, Sc> {
     /// `oauth.issuer`, the public origin; `None` where the deployment sets
     /// none, and then no connect code is minted (ADR-0031 d1).
     oauth_issuer: Option<Issuer>,
+    /// `server.shared`: the operator says the server's admins are not its
+    /// callers', which whoami reports so `oml sync` asks consent
+    /// (ADR-0076 d9).
+    shared: bool,
     /// Wrong connect-code entries since the process started, deployment
     /// wide and never per tenant, for doctor (ADR-0031 d8, d14).
     connect_code_failures: AtomicU64,
@@ -1430,6 +1435,7 @@ where
             ids,
             scanner,
             oauth_issuer: None,
+            shared: false,
             connect_code_failures: AtomicU64::new(0),
             observer: Arc::new(NoObserver),
             brief_max_tokens: oml_domain::brief::BRIEF_MAX_TOKENS_DEFAULT,
@@ -1551,6 +1557,23 @@ where
             oauth_issuer: Some(issuer),
             ..self
         }
+    }
+
+    /// The app for a deployment that sets `server.shared` (ADR-0076 d9).
+    #[must_use]
+    pub fn with_shared(self, shared: bool) -> Self {
+        Self { shared, ..self }
+    }
+
+    /// Whether the server's admins are not its callers': `server.shared`, or
+    /// open sign-up, which admits people who are not the operator's
+    /// (ADR-0076 d9; ADR-0068 d1). Whoami reports it as `shared`.
+    #[must_use]
+    pub fn shared(&self) -> bool {
+        self.shared
+            || self
+                .signup_policy()
+                .is_some_and(|p| p.mode == oml_domain::signup::SignupMode::Open)
     }
 
     /// The deployment's `oauth.issuer`, `None` where it is unset: the one
@@ -2002,6 +2025,10 @@ where
             memory.author_key_id = Uuid::nil();
             memory.lineage_principals.clear();
             memory.lineage_key_ids.clear();
+            // Nothing of the review either: what stays on the anonymous
+            // view is ADR-0044 d9's list, which names no approval
+            // (ADR-0077 d4).
+            memory.approval = None;
         }
         let load_warning = (memory.kind == MemoryKind::Guardrail
             && memory.status == MemoryStatus::Held)
@@ -5198,6 +5225,7 @@ where
             anchor: req.anchor.clone().map(Box::new),
             origin_kind: Some(origin),
             source_check: None,
+            approval: None,
             format: Box::new(format),
         };
 
@@ -5837,6 +5865,14 @@ where
                 // ratification_event_id names it. Nothing is self-signed in
                 // the PoC (ADR-0025 d17).
                 let policy = review_policy();
+                // What the promoted row keeps of this verdict: the reviewing
+                // key's attestation, the same-person mark and the verdict's
+                // own time, never the key (ADR-0077 d3, d6).
+                let approval = Some(Box::new(Approval {
+                    held_by: key.held_by,
+                    same_user: Some(same_user),
+                    at: verdict_event.envelope.at.clone(),
+                }));
                 let (event_type, payload, fold) = match replaced {
                     None => (
                         event_types::LIFECYCLE_PROMOTE,
@@ -5851,7 +5887,10 @@ where
                             "same_user": same_user,
                             "policy": policy,
                         }),
-                        MetadataFold::MemoryPromoted { memory_id },
+                        MetadataFold::MemoryPromoted {
+                            memory_id,
+                            approval,
+                        },
                     ),
                     Some(target) => (
                         event_types::LIFECYCLE_SUPERSEDE,
@@ -5873,6 +5912,7 @@ where
                             replaced: target.memory_id,
                             replaced_valid_until: ratified_end(&target.valid, &memory.valid)
                                 .map(Box::new),
+                            approval,
                         },
                     ),
                 };
@@ -7743,6 +7783,7 @@ where
             anchor: req.anchor.clone().map(Box::new),
             origin_kind: Some(origin),
             source_check: None,
+            approval: None,
             format: Box::new(format),
         };
 

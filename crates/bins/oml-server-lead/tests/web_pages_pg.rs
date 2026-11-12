@@ -150,6 +150,7 @@ async fn lead_traced(
         None,
         None,
         WebClient::new(Some(WEB_CLIENT_SECRET.to_owned()), None),
+        false,
     )
     .await
     .expect("the lead starts")

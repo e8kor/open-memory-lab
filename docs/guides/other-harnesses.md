@@ -1,7 +1,7 @@
 ---
 status: Stable
 verified: 2026-11-06
-answers: "how OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop reach an OML server from the agent kit with OML_API_KEY, the public server by default; the one URL edit for another server; Claude Code without the plugin; what each tool gets and what it does not; and why there is no Cursor install link"
+answers: "how OpenAI Codex CLI, Cursor, Gemini CLI, VS Code and Claude Desktop reach an OML server from the agent kit with OML_URL and OML_API_KEY; the one URL edit where a tool reads no variable; Claude Code without the plugin; what each tool gets and what it does not; and why there is no Cursor install link"
 ---
 
 # Connect Codex, Cursor, Gemini CLI, VS Code and Claude Desktop
@@ -36,17 +36,17 @@ given. None of the kit's files holds a key.
 | VS Code | `vscode/.vscode/mcp.json` to `.vscode/mcp.json`; the header's `${env:OML_API_KEY}` is unverified |
 | Claude Desktop | `claude-desktop/claude_desktop_config.json` to the app's config directory; runs the `mcp-remote` bridge, unverified on Windows |
 
-Every file names the public server's `/mcp` address ([install](../start/install.md)). With a key
-from that server, there is nothing to edit. For your own server, replace the host with its
-address and keep `/mcp`. The edit is the same in every file. A key sent to the wrong server is
-refused there with `401 auth.invalid`, and that server's operator has seen it.
-
-Gemini CLI's session-start hook reads `OML_URL` beside the key and takes no default, so for it
-also export the address of the server the file names:
+No file names a server. Cursor and Gemini CLI read `OML_URL`, so export it beside the key:
 
 ```sh
-export OML_URL=<server address>      # without /mcp; the address of the server the file names
+export OML_URL=<server address>      # without /mcp; the server that issued the key
 ```
+
+OpenAI Codex CLI, VS Code and Claude Desktop read no variable in a URL, so their files carry
+`https://oml-server.invalid/mcp`: replace `https://oml-server.invalid` with the server's address,
+keeping `/mcp`. Left unedited, the name never resolves and the key goes nowhere. A key sent to
+the wrong server is refused there with `401 auth.invalid`, and that server's operator has seen
+it. Gemini CLI's session-start hook reads the same `OML_URL`.
 
 Paste the kit's `AGENTS.md` block into the project's `AGENTS.md`. It says when to search and when
 to save.
@@ -68,8 +68,6 @@ different output field, so the kit wires none. No tool here gets the librarian o
 ```sh
 claude mcp add --transport http oml <server address>/mcp --header "Authorization: Bearer $OML_API_KEY"
 ```
-
-For the public server, use its address from [install](../start/install.md).
 
 This gives the three tools and nothing else: no skill, no hooks, no librarian. The shell expands
 the key into the command line, and Claude Code stores the header in its own configuration file,
