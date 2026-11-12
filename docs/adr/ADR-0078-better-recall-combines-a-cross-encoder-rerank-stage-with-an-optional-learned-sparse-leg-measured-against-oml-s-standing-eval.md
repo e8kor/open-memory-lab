@@ -1,11 +1,11 @@
 ---
-id: adr/ADR-0071-better-recall-combines-a-cross-encoder-rerank-stage-with-an-optional-learned-sparse-leg-measured-against-oml-s-standing-eval
+id: adr/ADR-0078-better-recall-combines-a-cross-encoder-rerank-stage-with-an-optional-learned-sparse-leg-measured-against-oml-s-standing-eval
 tier: engineering
 status: proposed · 2026-11-07
 answers: which layered retrieval improvements are safe and measurable over OML's held-out eval, how those layers fit OML's retrievers, lexical postings, valid time and review model, and which algorithmic paths are deferred
 ---
 
-# ADR-0071 — Better recall combines a cross-encoder rerank stage with an optional learned-sparse leg, measured against OML's standing eval
+# ADR-0078 — Better recall combines a cross-encoder rerank stage with an optional learned-sparse leg, measured against OML's standing eval
 
 **Status:** proposed · 2026-11-07
 **Amends:** ADR-0048 (d1–d3, d6: rerank gated by eval), ADR-0049 (d2, d8, d10),

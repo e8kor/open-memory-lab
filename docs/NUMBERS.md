@@ -16,9 +16,11 @@ git add docs/NUMBERS.md && git commit -m "chore: reserve ADR-nnnn" && git push
 ```
 
 `scripts/check_numbers.py` fails a pull request that introduces a number the registry assigns
-to another branch, or does not list. `python scripts/reserve_number.py --rebuild` rescans main
-and the unmerged remote branches and keeps the reservations. A number listed for two branches
-is a collision: the branch that reserved later renumbers.
+to another branch, or does not list. A reservation pushed on any unmerged remote branch holds its
+number, whether or not the branch has a pull request yet; delete a dead branch to release its
+numbers. `python scripts/reserve_number.py --rebuild` rescans main and the unmerged remote
+branches and keeps the reservations. A number listed for two branches is a collision: the
+branch that reserved later renumbers.
 
 | kind | number | branch | PR | title | state |
 |---|---|---|---|---|---|
@@ -84,17 +86,19 @@ is a collision: the branch that reserved later renumbers.
 | adr | 0063 | `main` |  | a chat turn becomes memory only when the agent in it writes the fact a | used |
 | adr | 0064 | `feat/implicit-capture` | #97 | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
 | adr | 0065 | `main` |  | the scan is a versioned compiled in rule set that vetoes leaked keys a | used |
-| adr | 0066 | `docs/restructure` |  | open work is tracked as github issues and the roadmap FR numbers and design draft status lines are retired | reserved |
 | adr | 0066 | `main` |  | open work is tracked as github issues and the roadmap fr numbers and d | used |
-| adr | 0067 | `feat/connector-directory` |  | a directory reviewer reaches a demo workarea through a connect code that lives longer, and the tools and instructions describe instead of command | reserved |
 | adr | 0067 | `main` |  | a directory reviewer reaches a demo workarea through a connect code th | used |
-| adr | 0068 | `feat/open-signup` |  | anyone signs in and gets a private root under quotas when the operator opens sign-up | reserved |
 | adr | 0068 | `main` |  | anyone signs in and gets a private root under quotas when the operator | used |
-| adr | 0069 | `feat/design-system` |  | OML's design system is the source of truth for every surface | reserved |
 | adr | 0069 | `main` |  | oml s design system is the source of truth for every surface | used |
-| adr | 0070 | `design/web-api-client` |  | the web console is a client of the public HTTP API in a crate that cannot reach the application core | reserved |
 | adr | 0070 | `main` |  | the web console is a client of the public http api in a crate that can | used |
-| adr | 0071 | `design/recall-improvement` |  | better recall combines cross-encoder reranking with an optional learned sparse retrieval stage measured against OML's standing eval | reserved |
+| adr | 0071 | `feat/usage-metering-main` |  | every account is metered by counter rows updated in the write's own transaction, and named quota profiles set its limits | reserved |
+| adr | 0072 | `main` |  | recall searches the trusted workareas a key already reads chosen per q | used |
+| adr | 0073 | `main` |  | a leader signs every write and nodes serve the workareas placed on the | used |
+| adr | 0074 | `main` |  | the scan names a threat class for every finding refuses only what can  | used |
+| adr | 0075 | `main` |  | each approved memory is indexed by the questions it answers generated  | used |
+| adr | 0076 | `main` |  | releases ship no default server and setup asks for the server or reads | used |
+| adr | 0077 | `main` |  | a served memory says when it was approved and by what kind of reviewer | used |
+| adr | 0078 | `design/recall-improvement` |  | better recall combines cross-encoder reranking with an optional learned sparse retrieval stage measured against OML's standing eval | reserved |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
@@ -124,12 +128,16 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0029 | `main` |  | origin kind | used |
 | migration | 0030 | `main` |  | origin kind validate | used |
 | migration | 0031 | `main` |  | lake writer | used |
-| migration | 0032 | `feat/claim-formats` | #90 | claim formats | reserved |
 | migration | 0032 | `main` |  | claim formats | used |
-| migration | 0033 | `feat/claim-formats` | #90 | claim formats validate | reserved |
 | migration | 0033 | `main` |  | claim formats validate | used |
-| migration | 0034 | `feat/claim-formats` | #90 | similar keys search text | reserved |
 | migration | 0034 | `main` |  | similar keys search text | used |
 | migration | 0036 | `feat/implicit-capture` |  | code parent | reserved |
-| migration | 0037 | `feat/open-signup` |  | open signup | reserved |
 | migration | 0037 | `main` |  | open signup | used |
+| migration | 0038 | `main` |  | scanned under | used |
+| migration | 0039 | `main` |  | web session credentials | used |
+| migration | 0040 | `main` |  | federated recall | used |
+| migration | 0041 | `main` |  | as of tips | used |
+| migration | 0042 | `main` |  | idempotency claims | used |
+| migration | 0043 | `main` |  | scan findings | used |
+| migration | 0044 | `main` |  | memory approval | used |
+| migration | 0045 | `feat/usage-metering-main` |  | usage metering | reserved |
