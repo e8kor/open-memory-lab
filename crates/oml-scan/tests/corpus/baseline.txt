@@ -1,4 +1,4 @@
-redteam: oml-scan/1.1 over the corpus of ADR-0074 d15, 802 samples
+redteam: oml-scan/1.2 over the corpus of ADR-0074 d15, 802 samples
 a rate needs 50 malicious samples and 50 twins in its family (d15); below that only counts print
 
 family     malicious  twins  caught  exact   recall   twin-fp  precision
@@ -29,11 +29,11 @@ mutations over 330 malicious samples; plain recall 55.5% (183 caught); invarianc
   fullwidth                 55.5%  +0.0 points  holds
   mixed-case                40.9%  -14.5 points  below
   homoglyph                 23.0%  -32.4 points  below
-  joined-underscore         50.9%  -4.5 points  holds
-  joined-slash              50.9%  -4.5 points  holds
-  letters-dash              19.4%  -36.1 points  below
-  letters-dot               19.4%  -36.1 points  below
-  letters-space             19.4%  -36.1 points  below
+  joined-underscore         51.5%  -3.9 points  holds
+  joined-slash              51.5%  -3.9 points  holds
+  letters-dash              20.0%  -35.5 points  below
+  letters-dot               20.0%  -35.5 points  below
+  letters-space             20.0%  -35.5 points  below
   title-body-split          53.9%  -1.5 points  holds
   base64-depth-1             7.3%  -48.2 points  below
   base64-depth-2            11.2%  -44.2 points  below

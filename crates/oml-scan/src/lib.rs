@@ -1,4 +1,4 @@
-//! The deterministic content scan, rule set `oml-scan/1.1` (ADR-0065; `/1` before the 2026-11-10 amendment).
+//! The deterministic content scan, rule set `oml-scan/1.2` (ADR-0065; `/1` before the 2026-11-10 amendment, `/1.1` before #226).
 //!
 //! Rules, not a model: the same text gives the same findings under the same
 //! rule-set version (admission.md). A finding names its class, its rule and
@@ -25,10 +25,10 @@ use regex::Regex;
 
 pub use path::secret_path;
 pub use rules::Action;
-use rules::{Check, LETTER_PHRASES, PLACEHOLDERS, RULES, Rule};
+use rules::{Check, LETTER_PHRASES, PLACEHOLDERS, RULES, Rule, Tail};
 
 /// The rule-set version every verdict is journalled under (ADR-0065 d1).
-pub const RULESET: &str = "oml-scan/1.1";
+pub const RULESET: &str = "oml-scan/1.2";
 
 /// The largest text one scan reads: 1 MiB. A longer field is vetoed as
 /// `format.scan_bound` rather than scanned in part (d9).
@@ -124,15 +124,15 @@ pub struct Options {
 static COMPILED: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     RULES
         .iter()
-        .map(|r| Regex::new(r.pattern).expect("the oml-scan/1.1 patterns compile"))
+        .map(|r| Regex::new(r.pattern).expect("the oml-scan/1.2 patterns compile"))
         .collect()
 });
 
 /// The letters-only view's phrase patterns, each with the rule it reports.
-static LETTERS: LazyLock<Vec<(&'static Rule, Regex)>> = LazyLock::new(|| {
+static LETTERS: LazyLock<Vec<(&'static Rule, Regex, Tail)>> = LazyLock::new(|| {
     LETTER_PHRASES
         .iter()
-        .map(|(id, pattern)| {
+        .map(|(id, pattern, tail)| {
             let rule = RULES
                 .iter()
                 .find(|r| r.id == *id)
@@ -140,6 +140,7 @@ static LETTERS: LazyLock<Vec<(&'static Rule, Regex)>> = LazyLock::new(|| {
             (
                 rule,
                 Regex::new(pattern).expect("the letters phrases compile"),
+                *tail,
             )
         })
         .collect()
@@ -163,7 +164,7 @@ pub fn rule_ids() -> Vec<(&'static str, &'static str, Action)> {
     out
 }
 
-/// The scanner: the compiled `oml-scan/1.1` set, the deployment's options,
+/// The scanner: the compiled `oml-scan/1.2` set, the deployment's options,
 /// and the findings counted by rule since start (d11).
 #[derive(Debug, Default)]
 pub struct RuleSet {
@@ -529,8 +530,59 @@ fn normalised(text: &str) -> Vec<(&'static str, String)> {
     views
 }
 
+/// A mark, as `NFKD` leaves it after its letter.
+fn mark(c: char) -> bool {
+    unicode_normalization::char::is_combining_mark(c)
+}
+
+/// Whether `c` continues a word as the text is written: a letter or a
+/// digit. `_` is a separator, as it is in the evasion tests of ADR-0074 d6,
+/// which ask a phrase joined by `_` to hold as the plain one does, so an
+/// identifier of words joined by `_` has its edges at each underscore
+/// (#226).
+fn word_char(c: char) -> bool {
+    c.is_alphanumeric()
+}
+
+/// Whether a word starts at byte `at` of `text`: the character before it,
+/// leaving aside the marks that belong to that one, is not a word character.
+fn word_starts(text: &str, at: usize) -> bool {
+    !text[..at]
+        .chars()
+        .rev()
+        .find(|&c| !mark(c))
+        .is_some_and(word_char)
+}
+
+/// Whether a word ends at byte `at` of `text`, the marks on the last letter
+/// aside.
+fn word_ends(text: &str, at: usize) -> bool {
+    !text[at..]
+        .chars()
+        .find(|&c| !mark(c))
+        .is_some_and(word_char)
+}
+
+/// Whether the text as written has a colon next: the first character past
+/// `at` that is a letter, a digit or a colon is the colon. The raw pattern's
+/// `\s*:` allows space alone; a phrase spelled out with `-` or `.` between
+/// its letters has that separator before the colon as well.
+fn colon_follows(text: &str, at: usize) -> bool {
+    text[at..]
+        .chars()
+        .find(|&c| c == ':' || (word_char(c) && !mark(c)))
+        == Some(':')
+}
+
 /// The injection phrases found in the letters-only view of `text`, each
-/// placed on the line of the text where its first letter stands.
+/// placed on the line of the text where its first letter stands. A match
+/// counts only when the text as written has a word edge before its first
+/// letter and after its last, so `Danish`, `DEVELOPER_MODE_ONLY` (whose
+/// `on` is the start of `ONLY`) and a phrase inside a camelCase identifier do
+/// not hold, and when the phrase's tail
+/// shows (#226). The edges are the text's own, so a phrase with its letters
+/// or words separated by punctuation, an invisible character or a mark still
+/// has them.
 fn letters_findings(field: &str, text: &str) -> Vec<(usize, Finding)> {
     use unicode_normalization::UnicodeNormalization as _;
     // The Hangul fillers are letters that show nothing; every removable
@@ -542,30 +594,48 @@ fn letters_findings(field: &str, text: &str) -> Vec<(usize, Finding)> {
         .flat_map(char::to_lowercase)
         .collect();
     let mut letters = String::with_capacity(folded.len());
-    // (offset in `letters`, offset in `folded`) at the start of each run.
-    let mut runs: Vec<(usize, usize)> = Vec::new();
+    // (offset in `letters`, offset in `folded`, length) of each run.
+    let mut runs: Vec<(usize, usize, usize)> = Vec::new();
     for m in LETTER_RUN.find_iter(&folded) {
-        runs.push((letters.len(), m.start()));
+        runs.push((letters.len(), m.start(), m.len()));
         letters.push_str(m.as_str());
     }
     let mut out = Vec::new();
-    for (rule, re) in LETTERS.iter() {
-        if let Some(m) = re.find(&letters) {
-            let i = runs.partition_point(|&(at, _)| at <= m.start()) - 1;
-            let (at, from) = runs[i];
-            let start = from + (m.start() - at);
-            out.push((
-                start,
-                Finding {
-                    class: rule.class,
-                    rule: rule.id,
-                    action: rule.action,
-                    field: field.to_owned(),
-                    line: line_of(&folded, start),
-                    via: "letters",
-                    span: (m.start(), m.end()),
-                },
-            ));
+    for (rule, re, tail) in LETTERS.iter() {
+        let mut from = 0;
+        while let Some(m) = re.find_at(&letters, from) {
+            let i = runs.partition_point(|&(at, ..)| at <= m.start()) - 1;
+            let (at, start_in_folded, _) = runs[i];
+            let start = start_in_folded + (m.start() - at);
+            let j = runs.partition_point(|&(at, ..)| at < m.end()) - 1;
+            let (end_at, end_from, end_len) = runs[j];
+            let end = end_from + (m.end() - end_at);
+            let edges = m.start() == at
+                && word_starts(&folded, start)
+                && m.end() - end_at == end_len
+                && word_ends(&folded, end);
+            if edges && (*tail == Tail::None || colon_follows(&folded, end)) {
+                out.push((
+                    start,
+                    Finding {
+                        class: rule.class,
+                        rule: rule.id,
+                        action: rule.action,
+                        field: field.to_owned(),
+                        line: line_of(&folded, start),
+                        via: "letters",
+                        span: (m.start(), m.end()),
+                    },
+                ));
+                break;
+            }
+            // Look again from the next letter: a phrase may start inside
+            // the match that was refused.
+            from = m.start()
+                + letters[m.start()..]
+                    .chars()
+                    .next()
+                    .map_or(1, char::len_utf8);
         }
     }
     out

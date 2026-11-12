@@ -81,7 +81,7 @@ Approve only what you would want another agent to act on.
   anchor ages without anyone noticing.
 - **No secrets.** No keys, passwords, tokens or personal data. A rejected memory keeps its bytes,
   so tell an admin about a secret instead of only rejecting it.
-- **Scanner findings.** The `oml-scan/1.1` rule set vetoes leaked keys before anything is stored and
+- **Scanner findings.** The `oml-scan/1.2` rule set vetoes leaked keys before anything is stored and
   holds what a reviewer should judge. The review card lists every finding on the version, one line
   each: its verdict, class and rule, and the field and line it fired on, never the matched text. The
   bulk table counts them per row. `oml admin rescan` reports what it finds in memories already

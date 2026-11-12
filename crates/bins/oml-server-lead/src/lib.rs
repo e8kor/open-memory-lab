@@ -1339,7 +1339,7 @@ impl IdGen for OsIds {
 static RULES: std::sync::LazyLock<oml_scan::RuleSet> =
     std::sync::LazyLock::new(|| oml_scan::RuleSet::new(oml_scan::Options::default()));
 
-/// The deterministic scanner the lead composes: the compiled `oml-scan/1.1`
+/// The deterministic scanner the lead composes: the compiled `oml-scan/1.2`
 /// rule set (ADR-0065), rules, not a model — same input, same verdict
 /// (admission.md). A submission's body is reported as `/body`; an anchor
 /// value as `/anchor`, its field named by the refusal itself (ADR-0057 d2).

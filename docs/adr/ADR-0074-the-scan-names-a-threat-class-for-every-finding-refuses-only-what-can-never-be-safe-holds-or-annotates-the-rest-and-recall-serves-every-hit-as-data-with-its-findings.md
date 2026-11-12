@@ -523,7 +523,14 @@ flowchart TD
     words, each literal compiled at build through the same steps (its skeleton, and its letters
     with spaces removed). Literal phrases are long enough that the letters-only view costs little
     in false positives; the corpus measures it (d15). **Regexes read raw, clean, decoded,
-    folded and collapsed.** The secret rules read raw, clean and decoded, never folded or
+    folded and collapsed.** **A letters-only match counts only at word edges of the text as
+    written** (`oml-scan/1.2`, #226): the characters before its first letter and after its last
+    are not letters or digits, a combining mark counting with the letter it follows, so `Danish`
+    and a phrase inside a camelCase identifier do not hold, while a phrase joined by `_`, `/` or
+    `-` or spelled with a separator after each letter keeps its edges, as the evasion tests below
+    require. A rule whose raw pattern ends in a colon, `new-instructions`, reads
+    `(new|updated|real)(system)?instructions` and needs a colon next in the text as written, past
+    any run of non-letters. The secret rules read raw, clean and decoded, never folded or
     skeleton, since a provider prefix such as `AKIA` is case-sensitive; the keyword and entropy
     rules read raw only, since decoded binary scores high on entropy by nature; the
     hidden-character rules read raw only, since step 2 removes what they look for. A finding
