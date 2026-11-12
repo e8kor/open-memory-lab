@@ -840,15 +840,27 @@ where
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, None)?;
         let node = reference("workarea", workarea)?;
+        let offers = st.offers_json(acting.bearer(), node).await?;
+        Ok(json_response(StatusCode::OK, &offers))
+    }
+
+    /// The body of `GET /v2/workareas/{workarea}/offers` for `bearer`, which
+    /// the counted tree also serves as its scope's `offers` to the caller it
+    /// resolved (#286): the same reads, the same checks, the same body.
+    pub(crate) async fn offers_json(
+        &self,
+        bearer: Bearer<'_>,
+        node: Reference,
+    ) -> Result<Value, ApiError> {
         // A workarea the caller cannot read is absent, as its read answers
         // it (R3); the offers name nothing of one.
-        st.app
-            .workarea_info(acting.bearer(), Some(node.clone()))
+        self.app
+            .workarea_info(bearer, Some(node.clone()))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let (offers, refusals) = st
+        let (offers, refusals) = self
             .app
-            .workarea_offers_explained_for(acting.bearer(), node)
+            .workarea_offers_explained_for(bearer, node)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         // Each act not offered, with the refusal its verb would answer, so
@@ -888,9 +900,7 @@ where
                 WorkareaOffer::Commit => commit_offered = true,
             }
         }
-        Ok(json_response(
-            StatusCode::OK,
-            &json!({
+        Ok(json!({
                 "workarea_id": offers.workarea_id,
                 "status": offers.status.as_str(),
                 "mode": if offers.in_progress { "in_progress" } else { "standard" },
@@ -901,8 +911,7 @@ where
                     "held": offers.commit_withheld,
                 },
                 "refused": refused,
-            }),
-        ))
+        }))
     }
 
     // -- #5 POST /v2/web/session/end ------------------------------------------

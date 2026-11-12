@@ -290,6 +290,7 @@ Requires: reader effective access, or the admin key role, which reads the struct
 | `limit` | query | integer | no | Page size, at most 200. |
 | `cursor` | query | string | no | Opaque, from the previous page's next_cursor. |
 | `counts` | query | boolean | no | true: the whole subtree in one answer, up to 2000 nodes, each with counts of its rows by state as the caller's with_own listing shows them, counted up to 2000 rows, and truncated when either stopped there; for the admin key role every row is counted as structure. |
+| `offers` | query | boolean | no | true, beside counts=true only: the answer carries offers, the scope's offers exactly as GET /v2/workareas/{workarea}/offers serves them to the same caller, read beside the counts in the same request, so the web console's admin Atlas needs no call of its own for them. |
 
 **Responses.** `200` One page of nodes, or with counts=true the subtree with its counts.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 
@@ -718,6 +719,7 @@ Requires: any live key; it reads only its own record.
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
 | `start` | query | boolean | no | true: person carries start, the onboarding status the web console's Start page polls. |
+| `person` | query | boolean | no | false: no person field and none of its reads, as the web console's session check asks on every page; true or absent: person as since v0.7.0; with start=true, request.validation naming the field person. |
 
 **Responses.** `200` The calling key's own record.; `401` auth.missing or auth.invalid.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 

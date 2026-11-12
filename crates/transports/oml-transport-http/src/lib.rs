@@ -49,7 +49,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_app::App;
-use oml_app::app::Caller;
+use oml_app::app::{Caller, PersonAsk};
 use oml_app::domain::EventTime;
 use oml_app::domain::access::Covers;
 use oml_app::domain::anchor::{self as anchor_grammar, Anchor, CheckResult};
@@ -2339,18 +2339,37 @@ where
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, None)?;
         let node = reference("workarea", workarea_id)?;
+        // `offers=true` serves the scope's offers beside the counts, so the
+        // Atlas reads both in one call (#286); only beside `counts=true`,
+        // whose answer has one scope and no page after it.
+        let offers = match params.iter().find(|(n, _)| n == "offers") {
+            Some((_, v)) if v == "true" => true,
+            Some((_, v)) if v == "false" => false,
+            Some(_) => {
+                return Err(ApiError::validation("offers must be true or false")
+                    .with_details(json!({ "field": "offers" })));
+            }
+            None => false,
+        };
+        let counted = |(n, _): &&(String, String)| n == "counts" || n == "offers";
         match params.iter().find(|(n, _)| n == "counts") {
             Some((_, v)) if v == "true" => {
-                if params.len() > 1 {
+                if params.iter().filter(|p| !counted(p)).count() > 0 {
                     return Err(ApiError::validation(
                         "counts=true serves the whole subtree, so it takes no limit or cursor",
                     ));
                 }
-                return Self::tree_counts(st, node, &acting).await;
+                return Self::tree_counts(st, node, &acting, offers).await;
             }
             Some((_, v)) if v == "false" => {}
             Some(_) => return Err(ApiError::validation("counts must be true or false")),
             None => {}
+        }
+        if params.iter().any(|(n, _)| n == "offers") {
+            return Err(ApiError::validation(
+                "offers serves the scope's offers beside counts=true, and only there",
+            )
+            .with_details(json!({ "field": "offers" })));
         }
         let params: Vec<(String, String)> = params
             .iter()
@@ -2380,22 +2399,43 @@ where
     /// `REGION_COUNT_MAX` rows, and `truncated` when either stopped there;
     /// for the admin key role every row is counted as structure, and no
     /// content is served (ADR-0045 d30; ADR-0070 d5).
+    /// With `offers`, the scope's offers too, as `GET
+    /// /v2/workareas/{workarea}/offers` serves them to the caller the tree
+    /// resolved, read beside the counts: the offers operation's own reads
+    /// and checks, under the request rate this request was charged once
+    /// (#286).
     async fn tree_counts(
         st: &Self,
         node: Reference,
         acting: &Acting<'_>,
+        offers: bool,
     ) -> Result<Response, ApiError> {
         let caller = st
             .app
             .caller(acting.bearer())
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let regions = if caller.key().role == Role::Admin {
-            st.app.admin_regions(&caller, Some(node)).await
-        } else {
-            st.app.user_regions(&caller, Some(node)).await
-        }
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let regions = async {
+            if caller.key().role == Role::Admin {
+                st.app.admin_regions(&caller, Some(node.clone())).await
+            } else {
+                st.app.user_regions(&caller, Some(node.clone())).await
+            }
+            .map_err(|e| map_app_error(e, ErrorContext::Write))
+        };
+        let scope_offers = async {
+            if offers {
+                st.offers_json(Bearer::Session(&caller), node.clone())
+                    .await
+                    .map(Some)
+            } else {
+                Ok(None)
+            }
+        };
+        let (regions, scope_offers) = tokio::join!(regions, scope_offers);
+        // The counts first: a scope the tree refuses names no offers.
+        let regions = regions?;
+        let scope_offers = scope_offers?;
         let items: Vec<Value> = regions
             .regions
             .iter()
@@ -2418,10 +2458,11 @@ where
                 })
             })
             .collect();
-        Ok(json_response(
-            StatusCode::OK,
-            &json!({ "items": items, "next_cursor": null, "truncated": regions.partial }),
-        ))
+        let mut body = json!({ "items": items, "next_cursor": null, "truncated": regions.partial });
+        if let (Some(offers), Some(obj)) = (scope_offers, body.as_object_mut()) {
+            obj.insert("offers".to_owned(), offers);
+        }
+        Ok(json_response(StatusCode::OK, &body))
     }
 
     async fn events_tail(
@@ -2738,35 +2779,37 @@ where
         headers: HeaderMap,
         uri: axum::http::Uri,
     ) -> Response {
-        let start = uri
+        let pairs = uri
             .query()
             .and_then(|q| crate::oauth::form_pairs(q.as_bytes()).ok())
-            .is_some_and(|pairs| pairs.iter().any(|(n, v)| n == "start" && v == "true"));
-        finish(&rid, Self::whoami_inner(&st, &headers, start).await)
+            .unwrap_or_default();
+        let result = match whoami_person_ask(&pairs) {
+            Ok(ask) => Self::whoami_inner(&st, &headers, ask).await,
+            Err(e) => Err(e),
+        };
+        finish(&rid, result)
     }
 
     /// `GET /v2/whoami`: the calling key's own record, for any live key;
     /// never its denials, and no read is journalled (http-api.md whoami;
-    /// ADR-0039 d15).
+    /// ADR-0039 d15). The credential is resolved once, and the person
+    /// block read only as asked: absent with `person=false` (#286).
     async fn whoami_inner(
         st: &Self,
         headers: &HeaderMap,
-        start: bool,
+        ask: PersonAsk,
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, None)?;
-        let whoami = st
+        let (whoami, person) = st
             .app
-            .whoami_of(acting.bearer())
+            .whoami_served(acting.bearer(), ask)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let person = st
-            .app
-            .whoami_person(acting.bearer(), start)
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let person = person.as_ref().map_or(Value::Null, person_json);
         let mut body = whoami_json(&whoami);
-        if let Some(obj) = body.as_object_mut() {
+        if ask != PersonAsk::Omit
+            && let Some(obj) = body.as_object_mut()
+        {
+            let person = person.as_ref().map_or(Value::Null, person_json);
             obj.insert("person".to_owned(), person);
         }
         Ok(json_response(StatusCode::OK, &body))
@@ -4089,6 +4132,33 @@ fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord]) -> Value {
             .collect::<Vec<_>>(),
         "epoch": detail.access.permission_epoch(),
     })
+}
+
+/// What `whoami`'s query asks of the person block: `person=false` omits
+/// it (#286), `start=true` adds the onboarding status (ADR-0070 d5), and
+/// the two together ask for a block and none, so they are refused, as is a
+/// `person` that is not a boolean. Other parameters are ignored, as they
+/// were before `person`.
+fn whoami_person_ask(pairs: &[(String, String)]) -> Result<PersonAsk, ApiError> {
+    let start = pairs.iter().any(|(n, v)| n == "start" && v == "true");
+    let omit = match pairs.iter().find(|(n, _)| n == "person") {
+        None => false,
+        Some((_, v)) if v == "true" => false,
+        Some((_, v)) if v == "false" => true,
+        Some(_) => {
+            return Err(ApiError::validation("person must be true or false")
+                .with_details(json!({ "field": "person" })));
+        }
+    };
+    match (omit, start) {
+        (true, true) => Err(ApiError::validation(
+            "start=true reads the person block, so it does not go with person=false",
+        )
+        .with_details(json!({ "field": "person" }))),
+        (true, false) => Ok(PersonAsk::Omit),
+        (false, true) => Ok(PersonAsk::WithStart),
+        (false, false) => Ok(PersonAsk::Person),
+    }
 }
 
 /// openapi.yaml `Whoami`: the calling key's own record, each reference

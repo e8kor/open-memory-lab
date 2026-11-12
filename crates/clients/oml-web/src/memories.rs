@@ -31,7 +31,9 @@ use serde_json::{Value, json};
 use crate::atlas::{Counts, Tile, legend, lifebar, svg};
 use crate::pages::{Fields, refused};
 use crate::session::{PageCalls, Session, call, cookie};
-use crate::workareas::{Credentials, NodeOffers, Side as ActSide, offers_of};
+use crate::workareas::{
+    Credentials, NodeOffers, Side as ActSide, mode_offers, offers_of, transitions_offers,
+};
 use crate::{Capacity, SESSION_COOKIE, Web, outcome};
 
 /// A page's rows when the query names no size (ADR-0045 d22).
@@ -556,8 +558,22 @@ async fn user_cards(
             next: page.next_cursor,
         });
     };
-    let kinds = own_kinds(web, &credential, calls).await?;
-    // The author, one of the person's own keys, named before the search.
+    // The person's keys beside the recall, one round for both (#286).
+    let ids = calls.next_ids();
+    let recall_call = call(&credential, &ids);
+    let recall = RecallQuery {
+        query: text_query,
+        k: q.limit.min(RECALL_MAX),
+        workarea: q.workarea.as_deref(),
+        origin: q.origin.as_deref(),
+    };
+    let (kinds, result) = tokio::join!(
+        own_kinds(web, &credential, calls),
+        web.api.recall(&recall_call, &recall),
+    );
+    let kinds = kinds?;
+    // The author, one of the person's own keys; a name none of them holds
+    // is refused whatever the recall found.
     let author = match &q.author {
         None => None,
         Some(name) => Some(
@@ -574,19 +590,7 @@ async fn user_cards(
                 })?,
         ),
     };
-    let ids = calls.next_ids();
-    let result = web
-        .api
-        .recall(
-            &call(&credential, &ids),
-            &RecallQuery {
-                query: text_query,
-                k: q.limit.min(RECALL_MAX),
-                workarea: q.workarea.as_deref(),
-                origin: q.origin.as_deref(),
-            },
-        )
-        .await?;
+    let result = result?;
     let cards = result
         .steering
         .iter()
@@ -765,10 +769,57 @@ async fn regions(
     let credentials = Credentials::of(session, side.acts());
     let ids = calls.next_ids();
     let counts_call = call(&credential, &ids);
-    tokio::join!(
-        web.api.workarea_counts(&counts_call, scope),
-        offers_of(&web.api, &credentials, calls, scope),
-    )
+    if !credentials.transitions_as(&credential) {
+        return tokio::join!(
+            web.api.workarea_counts(&counts_call, scope, false),
+            offers_of(&web.api, &credentials, calls, scope),
+        );
+    }
+    // The key that reads the counts takes the transitions: the counted tree
+    // carries the scope's offers to it, beside the reviewer key's for the
+    // mode, so the offers add no round (#286).
+    let request_id = ids.request_id.clone().unwrap_or_default();
+    let (counts, mode) = tokio::join!(
+        web.api.workarea_counts(&counts_call, scope, true),
+        mode_offers(&web.api, &credentials, calls, scope),
+    );
+    match counts {
+        Ok(oml_sdk::WorkareaCounts {
+            offers: Some(transitions),
+            items,
+            truncated,
+        }) => (
+            Ok(oml_sdk::WorkareaCounts {
+                items,
+                truncated,
+                offers: None,
+            }),
+            Ok(NodeOffers::of(transitions, mode)),
+        ),
+        // An API one release behind refuses `offers` as a parameter it does
+        // not know (ADR-0070 d4): the counts and the transitions' offers are
+        // read apart, a round more, as before #286.
+        Err(oml_sdk::Error::Api(e)) if e.code == "request.validation" => {
+            let ids = calls.next_ids();
+            let counts_call = call(&credential, &ids);
+            let (counts, transitions) = tokio::join!(
+                web.api.workarea_counts(&counts_call, scope, false),
+                transitions_offers(&web.api, &credentials, calls, scope),
+            );
+            (counts, transitions.map(|t| NodeOffers::of(t, mode)))
+        }
+        Ok(counted) => (
+            Ok(counted),
+            Err((
+                request_id,
+                oml_sdk::Error::Decode {
+                    status: 200,
+                    why: "the counted tree carried no offers".to_owned(),
+                },
+            )),
+        ),
+        Err(e) => (Err(e.clone()), Err((request_id, e))),
+    }
 }
 
 /// The Atlas of `nodes`: the map, the table twin and the scope's panel with

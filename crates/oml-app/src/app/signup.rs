@@ -20,6 +20,7 @@ use crate::ports::{
 };
 use crate::types::{
     AdminSearch, AppError, Bearer, Credential, DeletionRequest, KeyRecord, SignupPolicy, UserUsage,
+    Whoami,
 };
 use oml_domain::MemoryStatus;
 
@@ -98,6 +99,20 @@ pub struct UserDisabled {
     pub keys_cut_off: usize,
     pub keys_skipped: Vec<Uuid>,
     pub journal_seq: u64,
+}
+
+/// What `GET /v2/whoami` reads of the person beside the key's record: the
+/// session check of every console page reads none of it (#286); the
+/// default is the block; the Start page asks for its onboarding status too
+/// (ADR-0070 d5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersonAsk {
+    /// `person=false`: no person block, and none of its reads.
+    Omit,
+    /// The person block, as `whoami` has served it since v0.7.0.
+    Person,
+    /// `start=true`: the person block with `start`.
+    WithStart,
 }
 
 /// The person a key names, as `GET /v2/whoami` serves it (ADR-0070 d5):
@@ -497,9 +512,9 @@ where
     /// onboarding page's state for `<user>-web` (ADR-0068 d10): connected once
     /// any of the person's keys authenticated since the process started or a
     /// connector key has an open connection; the newest memory's state.
-    pub async fn whoami_start(&self, web: &Caller) -> Result<StartStatus, AppError> {
-        let tenant_id = web.key.tenant_id;
-        let Some(root) = web.key.user else {
+    async fn whoami_start(&self, key: &KeyRecord) -> Result<StartStatus, AppError> {
+        let tenant_id = key.tenant_id;
+        let Some(root) = key.user else {
             return Ok(StartStatus {
                 connected: false,
                 first_memory: None,
@@ -524,15 +539,52 @@ where
 
     /// `GET /v2/whoami`'s `person` usage and limits (ADR-0070 d5); `None` where
     /// they are under no quota (ADR-0068 d5).
-    async fn whoami_limits(&self, web: &Caller) -> Result<Option<(UserUsage, Quotas)>, AppError> {
-        let Some(root) = self.quota_root(&web.key) else {
+    async fn whoami_limits(
+        &self,
+        key: &KeyRecord,
+    ) -> Result<Option<(UserUsage, Quotas)>, AppError> {
+        let Some(root) = self.quota_root(key) else {
             return Ok(None);
         };
-        let tenant_id = web.key.tenant_id;
+        let tenant_id = key.tenant_id;
         Ok(Some((
             self.journal.user_usage(tenant_id, root).await?,
             self.quotas_of(tenant_id, root).await?,
         )))
+    }
+
+    /// `GET /v2/whoami` for whichever credential presented the key: a key
+    /// value, a connection's caller, or a session key's caller from a
+    /// capacity credential (ADR-0070 d5). The credential is resolved once:
+    /// a key value's lookup, then the key's access read once, which is the
+    /// read every verb makes, and one request of the key's rate for a key
+    /// value or a connection, none again for a session key the gate admitted
+    /// (#253). The person block is read only as `person` asks (#286).
+    pub async fn whoami_served(
+        &self,
+        bearer: Bearer<'_>,
+        person: PersonAsk,
+    ) -> Result<(Whoami, Option<Person>), AppError> {
+        let (key, admit) = match bearer {
+            Bearer::Key(value) => (self.key_of_value(value).await?, true),
+            Bearer::Connection(caller) => (caller.key.clone(), true),
+            Bearer::Session(caller) => (caller.key.clone(), false),
+        };
+        let access = self.access_of(&key).await?;
+        if admit {
+            // A person of the sign-up tenant's key under its request rate
+            // (ADR-0068 d5), after the access read, as `authenticate` does.
+            self.admit_request(&key).await?;
+        }
+        let whoami = self.whoami_of_key(key, access).await?;
+        let person = match (person, &whoami.user) {
+            (PersonAsk::Omit, _) | (_, None) => None,
+            (ask, Some(user)) => Some(
+                self.person_block(&whoami.key, user.name.clone(), ask == PersonAsk::WithStart)
+                    .await?,
+            ),
+        };
+        Ok((whoami, person))
     }
 
     /// The person a key names, for `GET /v2/whoami`'s `person` (ADR-0070
@@ -559,25 +611,37 @@ where
         else {
             return Ok(None);
         };
-        let limits = self.whoami_limits(&caller).await?;
+        self.person_block(&caller.key, user, start).await.map(Some)
+    }
+
+    /// The person block of `key`, whose root is named `user`: its limits,
+    /// its pending deletion request and, where `start`, its onboarding
+    /// status, each read once (ADR-0070 d5; #286).
+    pub(crate) async fn person_block(
+        &self,
+        key: &KeyRecord,
+        user: Name,
+        start: bool,
+    ) -> Result<Person, AppError> {
+        let limits = self.whoami_limits(key).await?;
         let deletion_requested_at = self
             .journal
-            .web_deletion_requests(tenant_id)
+            .web_deletion_requests(key.tenant_id)
             .await?
             .into_iter()
             .find(|r| r.user == user)
             .map(|r| r.requested_at);
         let start = if start {
-            Some(self.whoami_start(&caller).await?)
+            Some(self.whoami_start(key).await?)
         } else {
             None
         };
-        Ok(Some(Person {
+        Ok(Person {
             user,
             limits,
             deletion_requested_at,
             start,
-        }))
+        })
     }
 
     /// `GET /v2/web/export` (ADR-0070 d5 #6; ADR-0068 d6), as `<user>-web`: the

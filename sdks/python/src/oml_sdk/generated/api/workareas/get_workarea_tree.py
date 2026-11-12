@@ -17,6 +17,7 @@ def _get_kwargs(
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     counts: bool | Unset = UNSET,
+    offers: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -38,6 +39,8 @@ def _get_kwargs(
     params["cursor"] = cursor
 
     params["counts"] = counts
+
+    params["offers"] = offers
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -100,6 +103,7 @@ def sync_detailed(
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     counts: bool | Unset = UNSET,
+    offers: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -120,6 +124,7 @@ def sync_detailed(
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         counts (bool | Unset):
+        offers (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -137,6 +142,7 @@ def sync_detailed(
         limit=limit,
         cursor=cursor,
         counts=counts,
+        offers=offers,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -156,6 +162,7 @@ def sync(
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     counts: bool | Unset = UNSET,
+    offers: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -176,6 +183,7 @@ def sync(
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         counts (bool | Unset):
+        offers (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -194,6 +202,7 @@ def sync(
         limit=limit,
         cursor=cursor,
         counts=counts,
+        offers=offers,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -207,6 +216,7 @@ async def asyncio_detailed(
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     counts: bool | Unset = UNSET,
+    offers: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -227,6 +237,7 @@ async def asyncio_detailed(
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         counts (bool | Unset):
+        offers (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -244,6 +255,7 @@ async def asyncio_detailed(
         limit=limit,
         cursor=cursor,
         counts=counts,
+        offers=offers,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -261,6 +273,7 @@ async def asyncio(
     limit: int | Unset = 50,
     cursor: str | Unset = UNSET,
     counts: bool | Unset = UNSET,
+    offers: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -281,6 +294,7 @@ async def asyncio(
         limit (int | Unset):  Default: 50.
         cursor (str | Unset):
         counts (bool | Unset):
+        offers (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -300,6 +314,7 @@ async def asyncio(
             limit=limit,
             cursor=cursor,
             counts=counts,
+            offers=offers,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,
             traceparent=traceparent,
