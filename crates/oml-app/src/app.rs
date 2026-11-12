@@ -5,6 +5,8 @@
 //! denials on each request, in the one refusal order of roles-and-keys.md
 //! (ADR-0025 d1).
 
+mod auth;
+mod emails;
 mod federation;
 mod pages;
 mod rescan;
@@ -12,18 +14,24 @@ mod search;
 mod signup;
 mod sparse;
 mod usage;
-mod web;
+mod widen;
+pub use auth::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 pub use federation::WideKey;
 pub use pages::{
-    AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted, OwnKey, QueueRow,
-    REGION_COUNT_MAX, Region, Regions, VerdictTrail, WebListRequest, WorkareaOffer, WorkareaOffers,
+    ActClaim, ActTicket, AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted,
+    OwnKey, QueueRow, REGION_COUNT_MAX, Region, Regions, VerdictTrail, WebListRequest,
+    WorkareaOffer, WorkareaOffers,
 };
 pub use rescan::{RESCAN_MAX_EVENTS, RescanHit, RescanReport};
 pub use search::SearchSettings;
-pub use signup::{DRAWS_MAX, Person, SignupState, StartStatus, UserDisabled, UserRow};
+pub use signup::{DRAWS_MAX, Person, PersonAsk, SignupState, StartStatus, UserDisabled, UserRow};
 pub use sparse::{SPARSE_BACKFILL_STEP, SparsePass, encode_sparse_pass};
 pub use usage::UsageSettings;
-pub use web::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
+pub use widen::{
+    WIDEN_SIGNAL_BUILD_SECS, WIDEN_SIGNAL_MAX_AGE_SECS, WIDEN_SIGNAL_PAIRS_HELD,
+    WIDEN_SIGNAL_REFRESH_SECS, WIDEN_SIGNAL_STATEMENT_SECS, WIDEN_SIGNAL_TENANT_PAIRS, WidenBuild,
+    WidenLimits, WidenRefresh, drops_widen_signals,
+};
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -88,7 +96,7 @@ use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
     DocumentFetchFailure, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord, IdempotencyScope,
     JournalStore, MetadataFold, NoObserver, OutboxRow, Parsed, RequestObserver, Reranker,
-    ScanOutcome, Scanner, Signer, SparseEncoder, StoreError, SubjectRow, TailEvent,
+    ScanFinding, ScanOutcome, Scanner, Signer, SparseEncoder, StoreError, SubjectRow, TailEvent,
 };
 use crate::telemetry::{HITS_STORED, Label, RecallEvent, Remembered, Telemetry, TelemetryItem};
 use crate::types::{
@@ -114,8 +122,8 @@ use crate::types::{
     WorkareaInfo, WorkareaRecord, WorkareaStatusView,
 };
 use crate::types::{
-    BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, HELD_PAGE_MAX, HeldFilter, HeldItem,
-    HeldListingRequest, HeldPage,
+    BULK_VERDICT_MAX, BulkItem, BulkVerdictRequest, FindingVerdict, FoundBy, HELD_PAGE_MAX,
+    HeldFilter, HeldItem, HeldListingRequest, HeldPage, VersionFinding,
 };
 
 use crate::search::{
@@ -236,6 +244,9 @@ pub struct App<J, S, C, I, Sc> {
     /// sources since the lead started, by tenant, with the most it met: the
     /// doctor line a tenant admin reads (ADR-0072 d12). It decides nothing.
     wide_keys: std::sync::Mutex<BTreeMap<(Uuid, Uuid), usize>>,
+    /// The widen hint's signals, built off the request path, and the ones
+    /// recalls asked for (ADR-0072 d8, as built by #244).
+    widen: widen::WidenSignals,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -358,6 +369,45 @@ pub(crate) fn scan_targets<'a>(
         at: Some(&view.path),
     }));
     out
+}
+
+impl ScanTarget<'_> {
+    /// The field a finding on this text is stored under (ADR-0074 d23):
+    /// `/body`, `/title`, or `/body/` and a decoded view's path, its dots
+    /// as slashes.
+    pub(crate) fn field(&self) -> String {
+        match self.at {
+            None => "/body".to_owned(),
+            Some("title") => "/title".to_owned(),
+            Some(path) => format!("/body/{}", path.replace('.', "/")),
+        }
+    }
+}
+
+/// A scanner's finding as the findings list stores it (ADR-0074 d23).
+pub(crate) fn version_finding(
+    f: &ScanFinding,
+    field: String,
+    rule_set: Option<&str>,
+    found_by: FoundBy,
+) -> VersionFinding {
+    VersionFinding {
+        class: f.class.clone(),
+        rule: f.rule.clone(),
+        verdict: if f.veto {
+            FindingVerdict::Refuse
+        } else {
+            FindingVerdict::Hold
+        },
+        rule_set: rule_set.map(str::to_owned),
+        field: Some(field),
+        line: f.place.as_ref().map(|p| p.line),
+        via: f.place.as_ref().map(|p| p.via.clone()),
+        span: f.place.as_ref().map(|p| p.span),
+        found_by,
+        event_seq: None,
+        migrated_from: None,
+    }
 }
 
 /// Whether a held version may be served unreviewed inside an in-progress
@@ -1359,6 +1409,7 @@ where
             formats: Arc::new(crate::ports::ProseFormats),
             signup: None,
             wide_keys: std::sync::Mutex::default(),
+            widen: widen::WidenSignals::default(),
         }
     }
 
@@ -1959,6 +2010,7 @@ where
             workarea_path,
             anonymous,
             load_warning,
+            scan_findings: None,
         })
     }
 
@@ -2232,8 +2284,7 @@ where
         idempotency: Option<IdempotencyPut>,
     ) -> Result<CommitReceipt, AppError> {
         Ok(self
-            .journal
-            .commit(commit_request(event, fold, idempotency))
+            .commit_requests(vec![commit_request(event, fold, idempotency)])
             .await?)
     }
 
@@ -2244,14 +2295,40 @@ where
         links: Vec<(SignedEnvelope, MetadataFold)>,
     ) -> Result<CommitReceipt, AppError> {
         Ok(self
-            .journal
-            .commit_chain(
+            .commit_requests(
                 links
                     .into_iter()
                     .map(|(event, fold)| commit_request(event, fold, None))
                     .collect(),
             )
             .await?)
+    }
+
+    /// The one path every use case commits through: one request alone, or
+    /// several as one transaction. An erasure, a demotion, or a change to
+    /// what is trusted or federated drops its tenant's widen signals once
+    /// it commits (#244). A commit that fails after the database committed
+    /// drops nothing; the signal's 300 s bound covers it.
+    async fn commit_requests(
+        &self,
+        mut requests: Vec<CommitRequest>,
+    ) -> Result<CommitReceipt, StoreError> {
+        let drops: BTreeSet<Uuid> = requests
+            .iter()
+            .filter(|r| widen::drops_widen_signals(&r.event.envelope.event_type))
+            .map(|r| r.event.envelope.tenant_id)
+            .collect();
+        let receipt = if requests.len() == 1 {
+            self.journal
+                .commit(requests.pop().expect("one request"))
+                .await?
+        } else {
+            self.journal.commit_chain(requests).await?
+        };
+        for tenant_id in drops {
+            self.widen.drop_tenant(tenant_id);
+        }
+        Ok(receipt)
     }
 
     fn mint_key(
@@ -3702,21 +3779,6 @@ where
         self.whoami_of_key(key, access).await
     }
 
-    /// [`Self::whoami`] for whichever credential presented the key: a key
-    /// value, a connection's caller, or a session key's caller from a
-    /// capacity credential (ADR-0070 d5).
-    pub async fn whoami_of(&self, bearer: Bearer<'_>) -> Result<Whoami, AppError> {
-        let key = match bearer {
-            Bearer::Key(value) => return self.whoami(value).await,
-            Bearer::Connection(caller) | Bearer::Session(caller) => {
-                self.authenticate_bearer(bearer).await?;
-                caller.key.clone()
-            }
-        };
-        let access = self.access_of(&key).await?;
-        self.whoami_of_key(key, access).await
-    }
-
     async fn whoami_of_key(
         &self,
         key: KeyRecord,
@@ -5018,17 +5080,28 @@ where
         // Deterministic scan: same call, before the commit transaction. A
         // veto is a refusal like any other: it journals nothing and stores
         // no row (admission.md; errors.md submission.scan_veto).
-        let scan_finding = match self.scanner.scan(&AdmissionEnvelope {
+        let (outcome, found) = self.scanner.assess(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
             kind: req.kind.as_str(),
             body: &body,
-        }) {
+        });
+        let scan_finding = match outcome {
             ScanOutcome::Pass => None,
             ScanOutcome::Hold(reason) => Some(reason),
             ScanOutcome::Veto(reason) => return Err(AppError::ScanVeto(reason)),
         };
         let mut scan_finding = scan_finding;
-        self.scan_derived(key.tenant_id, req.kind, &format, &parsed, &mut scan_finding)?;
+        // Every finding behind the verdict, in the order scanned: the
+        // body's, then the title's and each decoded view's (ADR-0074 d23).
+        let mut findings = self.admitted(&found, "/body".to_owned());
+        self.scan_derived(
+            key.tenant_id,
+            req.kind,
+            &format,
+            &parsed,
+            &mut scan_finding,
+            &mut findings,
+        )?;
 
         // The lineage closure: the author plus every declared ancestor's
         // closure — R2 runs over the whole of it (roles-and-keys.md). An
@@ -5192,6 +5265,7 @@ where
             MetadataFold::MemoryHeld {
                 memory,
                 enqueue: true,
+                findings: findings.into(),
             },
             idempotency,
         )
@@ -5237,7 +5311,12 @@ where
             .await?
         {
             None => Ok(None),
-            Some(memory) => Ok(Some(self.served(&caller, memory).await?)),
+            Some(memory) => {
+                let mut served = self.served(&caller, memory).await?;
+                self.with_findings(key.tenant_id, &mut [&mut served])
+                    .await?;
+                Ok(Some(served))
+            }
         }
     }
 
@@ -5433,6 +5512,8 @@ where
                 served: self.served_in(&caller, row.memory, &mut ancestries).await?,
             });
         }
+        let mut served: Vec<&mut ServedMemory> = items.iter_mut().map(|i| &mut i.served).collect();
+        self.with_findings(tenant_id, &mut served).await?;
         Ok(HeldPage { items, next_cursor })
     }
 
@@ -5471,6 +5552,9 @@ where
             };
             named.push((*id, served));
         }
+        let mut served: Vec<&mut ServedMemory> =
+            named.iter_mut().filter_map(|(_, s)| s.as_mut()).collect();
+        self.with_findings(key.tenant_id, &mut served).await?;
         Ok(named)
     }
 
@@ -5835,7 +5919,7 @@ where
                     ),
                     commit_request(ratification, fold, None),
                 ];
-                let committed = match self.journal.commit_chain(links).await {
+                let committed = match self.commit_requests(links).await {
                     Err(StoreError::TipMoved { .. }) => {
                         return Err(AppError::TipConflict {
                             current_tip: self
@@ -6402,6 +6486,30 @@ where
             candidates.retain(|c| rows.get(&c.memory_id).is_some_and(admits));
             (candidates, below_floor) = apply_floor(candidates, floor);
         }
+        // The widen hint, on a `scope` answer at the server's now: read off
+        // the key's precomputed signal, never off the candidates or their
+        // counts, and absent where no usable signal is held (ADR-0072 d8,
+        // d12, as built by #244).
+        let widen = if plan.report.is_none()
+            && req.as_of.is_none()
+            && req.now.is_none()
+            && policy.is_none_or(|p| p.enabled)
+        {
+            let prunes = pipeline.retrievers().contains(&RetrieverKind::Bm25Postings)
+                && req.match_mode == MatchMode::Any;
+            self.widen_hint(
+                caller,
+                scope,
+                &hit_nodes,
+                &kinds,
+                req.include_expired,
+                prunes,
+                &query,
+            )
+            .await
+        } else {
+            None
+        };
         // Spellings only for an empty or thin result, fewer hits than
         // `DID_YOU_MEAN_BELOW` (or than `k` when it asks fewer) before the
         // budget cut, for the
@@ -6520,6 +6628,7 @@ where
             timings,
             window,
             sources: plan.report,
+            widen,
             federation: plan.record,
         })
     }
@@ -7049,30 +7158,61 @@ where
         fields: &FormatFields,
         parsed: &Parsed,
         hold: &mut Option<String>,
+        findings: &mut Vec<VersionFinding>,
     ) -> Result<(), AppError> {
-        let mut note = |outcome: ScanOutcome, at: &str| -> Result<(), AppError> {
-            match outcome {
-                ScanOutcome::Pass => Ok(()),
-                ScanOutcome::Hold(reason) => {
-                    hold.get_or_insert(format!("{reason} at {at}"));
-                    Ok(())
-                }
-                ScanOutcome::Veto(reason) => Err(AppError::ScanVeto(format!("{reason} at {at}"))),
-            }
-        };
         if let Some(finding) = &parsed.veto {
             return Err(AppError::ScanVeto(finding.clone()));
         }
         // The body is scanned by the caller; the rest of the one list.
         for target in scan_targets(kind, "", fields, parsed).into_iter().skip(1) {
-            note(
-                self.scanner.scan(&AdmissionEnvelope {
-                    tenant_id,
-                    kind: target.kind,
-                    body: target.text,
-                }),
-                target.at.unwrap_or("/body"),
-            )?;
+            let at = target.at.unwrap_or("/body");
+            let (outcome, found) = self.scanner.assess(&AdmissionEnvelope {
+                tenant_id,
+                kind: target.kind,
+                body: target.text,
+            });
+            match outcome {
+                ScanOutcome::Pass => {}
+                ScanOutcome::Hold(reason) => {
+                    hold.get_or_insert(format!("{reason} at {at}"));
+                    findings.extend(self.admitted(&found, target.field()));
+                }
+                ScanOutcome::Veto(reason) => {
+                    return Err(AppError::ScanVeto(format!("{reason} at {at}")));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Admission's findings on one scanned text, as the findings list stores
+    /// them (ADR-0074 d23): each hold finding, under `field`. A veto refuses
+    /// the write before anything is stored, so none is kept.
+    fn admitted(&self, found: &[ScanFinding], field: String) -> Vec<VersionFinding> {
+        found
+            .iter()
+            .filter(|f| !f.veto)
+            .map(|f| version_finding(f, field.clone(), self.scanner.version(), FoundBy::Admission))
+            .collect()
+    }
+
+    /// The findings lists of `served`, read in one call and set on each, for
+    /// the surfaces a reviewer judges from (ADR-0074 d17, d23).
+    async fn with_findings(
+        &self,
+        tenant_id: Uuid,
+        served: &mut [&mut ServedMemory],
+    ) -> Result<(), AppError> {
+        let ids: Vec<Uuid> = served.iter().map(|s| s.memory.memory_id).collect();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let mut lists: BTreeMap<Uuid, Vec<VersionFinding>> = BTreeMap::new();
+        for (id, f) in self.journal.scan_findings(tenant_id, &ids).await? {
+            lists.entry(id).or_default().push(f);
+        }
+        for s in served.iter_mut() {
+            s.scan_findings = Some(lists.remove(&s.memory.memory_id).unwrap_or_default());
         }
         Ok(())
     }
@@ -7488,17 +7628,26 @@ where
         )?;
         self.scan_anchor(key.tenant_id, req.anchor.as_ref())?;
         let origin = recorded_origin(req.origin, req.anchor.as_ref())?;
-        let scan_finding = match self.scanner.scan(&AdmissionEnvelope {
+        let (outcome, found) = self.scanner.assess(&AdmissionEnvelope {
             tenant_id: key.tenant_id,
             kind: kind.as_str(),
             body: &body,
-        }) {
+        });
+        let scan_finding = match outcome {
             ScanOutcome::Pass => None,
             ScanOutcome::Hold(reason) => Some(reason),
             ScanOutcome::Veto(reason) => return Err(AppError::ScanVeto(reason)),
         };
         let mut scan_finding = scan_finding;
-        self.scan_derived(key.tenant_id, kind, &format, &parsed, &mut scan_finding)?;
+        let mut findings = self.admitted(&found, "/body".to_owned());
+        self.scan_derived(
+            key.tenant_id,
+            kind,
+            &format,
+            &parsed,
+            &mut scan_finding,
+            &mut findings,
+        )?;
         // derives_from ⊇ {target}; the lineage closure is the proposer plus
         // every ancestor's closure, the target's included (roles-and-keys.md).
         let mut derives_from = vec![target.memory_id];
@@ -7665,6 +7814,7 @@ where
                 MetadataFold::MemoryHeld {
                     memory: successor,
                     enqueue: true,
+                    findings: findings.into(),
                 },
                 idempotency,
             )
@@ -8738,11 +8888,13 @@ where
     /// `not_confined`; ADR-0067 d3).
     pub async fn mint_connect_code_with_ttl(
         &self,
-        api_key: &str,
+        api_key: impl Into<Bearer<'_>>,
         key: Reference,
         ttl_secs: Option<i64>,
     ) -> Result<ConnectCodeIssued, AppError> {
-        let admin = self.authenticate(api_key).await?.key;
+        // A caller the request already resolved is not charged again
+        // against its rate (#253, #281).
+        let admin = self.authenticate_bearer(api_key.into()).await?.key;
         require_role(&admin, Role::Admin, "mint_connect_code")?;
         self.mint_connect_code_by_with_ttl(&admin, key, ttl_secs)
             .await

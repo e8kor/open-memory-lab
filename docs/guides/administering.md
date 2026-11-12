@@ -103,7 +103,7 @@ An admin key cannot be cut off today: keep the admin credentials file on one mac
 
 ## The admin page
 
-At `/web/admin`, an administrator's session acts through its own keys. **Memories** lists every
+At the overview, `/web/admin/people`, an administrator's session acts through its own keys. **Memories** lists every
 memory of the organisation, newest first, 50 a page, filtered by state, workarea, origin,
 author key or text; each page read is one `memory.admin_read` in the journal, the Atlas view's
 included. **Atlas** shows the workareas as a map sized by their rows, with a table twin.
@@ -113,7 +113,7 @@ Apply asks you to confirm first ([ADR-0045](../adr/ADR-0045-people-sign-in-to-a-
 
 ## The admin page
 
-At `/web/admin`, an administrator's session acts through its own keys. **Memories** lists every
+At the overview, `/web/admin/people`, an administrator's session acts through its own keys. **Memories** lists every
 memory of the organisation, newest first, 50 a page, filtered by state, workarea, origin,
 author key or text; each page read is one `memory.admin_read` in the journal, the Atlas view's
 included. **Atlas** shows the workareas as a map sized by their rows, with a table twin.

@@ -33,7 +33,14 @@ built. Amended by the sixth change of phase (b), one memory opened by its id, th
 view and the Mermaid frame through `oml-web` (d1, d3, d4, d5 and d7 (b) revised): see the sixth
 table of Phase (b) as built.
 Amended on 2026-11-11 by the web client secret's storage, rule and rotation (#230, #242; d2 and
-d4 revised): see [The client secret as built](#the-client-secret-as-built-2026-11-11).
+d4 revised): see [The client secret as built](#the-client-secret-as-built-2026-11-11). Amended by the
+second half of the sixth change (6b), Start, setup, the admin overview and the users page through
+`oml-web` (d3, d5, d6 and d7 (b) revised): see the seventh table of Phase (b) as built. Amended by
+phase (c), the `web_*` use cases out of `oml-app`'s core (d7 (b) and (c) revised): see
+[Phase (c) as built](#phase-c-as-built-2026-11-11). Amended by phase (d), the walls as required checks (d7 (d)
+revised): see [Phase (d) as built](#phase-d-as-built-2026-11-11). Amended on 2026-11-11 by the
+operator's decision to delete the old URLs' `303`s in v0.7.1 (d7 (b) and (d) revised): see
+[The old URLs deleted](#the-old-urls-deleted-2026-11-11).
 
 ## Context
 
@@ -310,8 +317,11 @@ Decided, not built. The build follows #163, #166 and #167.
     Every state-creating `POST` takes `Idempotency-Key`, and every refusal is the envelope of
     [errors](../api/errors.md). #3, #7, #8, #9 and #10 replay: a resubmission under the same
     key answers the recorded response with `Idempotency-Replay: true` and acts nothing again,
-    the outcome recorded after the act's last commit, so a process that dies between them
-    leaves an act a resubmission repeats. The three key operations of the table above serve a
+    each act claiming its key in a transaction of its own before it acts and recording its
+    outcome into the claim after its last commit, so a resubmission while the claim is held
+    waits for the outcome and replays it, and a process that dies between the act and the
+    record leaves the claim, which a resubmission answers `idempotency.in_progress` rather
+    than acting again (#233, the table of 2026-11-11 below). The three key operations of the table above serve a
     session key through the page's own use case: `POST /v2/keys` as `<user>-web` is
     `web_issue_key` (name, role and `connect_code` only), `POST /v2/keys/{key}/connect-codes`
     as `<user>-web` is `web_connect_code`, and `POST /v2/keys/{key}/denials` as `<user>-web`
@@ -561,7 +571,7 @@ ratifications and mode changes (ADR-0045 d28). Where it reads a decision differe
 | d7 (b), d4 | (silent on acts) | the view lives at `/web/workareas` and `/web/admin/workareas`, `GET` and `POST` each; the lead answers `GET /web?view=workarea` and `GET /web/admin?view=workarea` with a `303` there, carrying nothing from the request, and answers the old `workarea_mode`, `workarea_transition` and `workarea_ratify` acts of `POST /web` and `POST /web/admin` with a `303` to the view, running nothing; the Atlas panel's dropdown asks the new path directly | a cached page's form must not act twice in two processes; a `303` that runs nothing loses one click and never an act a person did not confirm |
 | d5 #4 | the offers name the acts admitted now | they also name, under `refused`, each of proposing either rung, putting the workarea in progress and committing it that is not admitted, with the code and message its verb would answer | the lead's confirmation names a refused act's refusal by code (ADR-0045 d28), and `oml-web` cannot run the verb's check; a field on the existing operation, not a dry-run operation (rejected alternatives: a GraphQL or backend-for-frontend aggregate) |
 | d3 layer 4, d5 | `Idempotency-Key` taken by the transition, ratify and mode operations | each replays a recorded outcome under the same key and body, with `Idempotency-Replay: true`, and acts nothing again | the confirmation's nonce makes the key, so a resubmitted form replays; without the replay a second proposal or ratification would be refused or repeated |
-| d3 layer 4 | every form carries a nonce | the confirmation's form does; a post without one acts once under a fresh key, and one whose nonce is not 32 lower-case hex characters is `request.validation`; a second send of the same form while the first is in flight waits for it in the process and replays | the old forms and the parity suite's acts carry none; a fresh key keeps such a post from replaying another form's act; a mangled nonce must not lose the replay silently; the API checks for a recorded outcome before it acts and records after, so two sends racing in two processes can both act, which is [#233](https://github.com/e8kor/open-memory-lab/issues/233)'s to close at the API |
+| d3 layer 4 | every form carries a nonce | the confirmation's form does; a post without one acts once under a fresh key, and one whose nonce is not 32 lower-case hex characters is `request.validation`; a second send of the same form while the first is in flight waits for it in the process and replays | the old forms and the parity suite's acts carry none; a fresh key keeps such a post from replaying another form's act; a mangled nonce must not lose the replay silently; the API claims the key before it acts, so two sends racing in two processes act once ([#233](https://github.com/e8kor/open-memory-lab/issues/233), the table of 2026-11-11 below) |
 | d3 layer 1 | `web_action` joins with the first act | the page line names `web_action`, the form's action | as decided |
 | d3 layer 6, d8 | the per-session cap on calls in flight; two sequential calls | not built; the view bounds its own fan-out to eight calls in flight (`oml_web::workareas::FAN_OUT`, unmeasured, #170) after the tree, each row's offers and live proposals a secondary read that marks only its row unavailable when it fails | a page of N workareas makes N to 3N calls, where the lead made the same reads in process, and each offers call now runs up to four more verb checks for `refused`; both belong in #170's measurement; the cap across a session's pages lands with the memories view, which fans out further |
 | (none) | (none) | creating a workarea stays the lead's act of the user page: the view's form posts it to `POST /web`, which answers `303 /web/workareas?done=created` | `POST /v2/workareas` serves it, but the act is not one of the dropdown's; it moves with the keys view, whose other acts it shares |
@@ -611,6 +621,26 @@ next change. Where it reads a decision differently:
 | d5 | `submit_memory` for `curate` and `supersede`, as the capacity the act needs | the supersession runs as `<user>-curate` when `GET /v2/whoami` as that capacity names the key the admin read says wrote the memory, else as `<user>-review`, and only `auth.invalid` from that `whoami` reads as no curator key: any other failure fails the act, so the acting key never changes because a call failed; curation runs as `<user>-curate`, and a session whose curate credential the API does not resolve gets `access.not_found` naming the next sign-in, never the sign-in redirect; both under the form's nonce as `Idempotency-Key`, so a resubmitted form replays the recorded answer (the operations' own record and replay) | the lead compared key ids in process; the key's name is what the wire serves. Capacities are fixed when the session opens (phase (a) as built), so a designation given during the session reaches the next one; the moved curation test signs in again after it |
 | d3 layer 4 | the lead's curate and supersede keys were digests of the source and the text | the act's key is the form's nonce's, as every moved act's | a person who curates the same text twice on purpose writes twice, as the API does for any client |
 
+The second half of the sixth change (6b) moves the onboarding page `/web/start` with its status
+poll and export, the setup view, the admin overview (the allowlist, its admin flag, the removal
+confirmation and the review and curation grants) and the users page (quotas, disabling, deletion
+requests). After it the lead serves no page but sign-in, the sign-up terms page and sign-out, so
+phase (b) is complete. Where it reads a decision differently:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d7 (b), d4 | (silent on the onboarding and users pages, which kept their paths) | `oml-web` serves `/web/start` (`GET`, `POST`), `/web/start/status` and `/web/start/export` (`GET`), `/web/setup`, `/web/admin/people` (`GET`, `POST`) and `/web/admin/users` (`GET`, `POST`); the lead's routes for the four old ones are deleted, so the router sends them to `oml-web`; the lead answers `GET /web?view=setup` with a `303` to `/web/setup` and every `GET /web/admin` with a `303` to the view a `view` names or to `/web/admin/people`, before reading a session and carrying nothing from the request, and the overview's old acts with a `303` there, running nothing | the admin page's default view had no path of its own; one fixed path keeps the router's list exact |
+| d6 | the sign-in page and the auth routes stay the lead's | so do the sign-up terms page and `POST /web/sign-up`, and sign-out (`POST /web`, `sign_out`), which ends the session in the auth context | they open or end a session, which `oml-web` never does |
+| d4 | a person with no session gets a `303` to sign-in | the onboarding and users pages now answer that `303` where the lead answered the sign-in page (`/web/start`) and `404` (`/web/admin/users`); the status poll and the export are data and answer `404` without a session, never a redirect | every moved page loads its session the same way; data a script fetches must not follow a redirect into a page |
+| d5 | `web_start_status` is `GET /v2/keys` and the listing with `with_own` | `GET /v2/whoami?start=true` names `person.start`: `connected` and `first_memory` | whether an agent key connected is read off the lead's request windows, which no listing serves; a query on an existing operation, read only when asked so the session check every page makes stays one lookup |
+| d3 layer 4, d5 | #3, #7, #8, #9 and #10 replay | `POST /v2/web/emails` and `/v2/web/emails/remove` replay too, claiming their key before they act as every console act does since #259, so two sends racing act once (`two_concurrent_allowlist_adds_under_one_key_add_once_and_answer_alike`, `two_concurrent_removals_under_one_key_remove_once_and_answer_alike`); the page sends `keep_an_admin: true` on both, so the last admin entry is refused by the API in the act's own transaction, not by a read before it | a resubmitted removal would otherwise answer `access.not_found` for a removal that succeeded; the page's own check could race another admin |
+| d3 layer 4 | Post/Redirect/Get for every act | the Start page's issue redirects to `/web/start?client=<slug>` and shows the value or the connect code once through the sealed cookie of the fifth change; each of the up to nine names it tries runs under its own key derived from the form's nonce, so a resubmission replays the attempt that issued | the lead answered the credential in the act's own response; the cookie keeps it out of a URL and a line |
+| d3 layer 4 | (the lead disabled a person and closed a deletion request on one post) | removing an address, disabling a person and closing a deletion request each answer a confirmation first, which records nothing; only its form, carrying `confirm=yes` and a fresh nonce, acts, and any other post acts nothing | each cuts off keys or ends sessions, which no resubmission or stray click should do unconfirmed |
+| d2 | each resolved request passes the person's request rate (phase (a) as built) | a person's session keys are held to their `requests_per_minute` or 60, whichever is more (`SESSION_REQUESTS_PER_MINUTE_MIN`); their agent keys to the quota as set. A page view spends two to four of the web key's requests (the session check, then the page's reads), so a quota set below the floor binds the agents and never locks the person out of the console that shows it | the pages issue reads and the person's own acts, never an agent's traffic; exempting the web key outright would leave it unbounded. 60 is chosen, not measured (#170) |
+| d5, d8 | `GET /v2/whoami?start=true` | it authenticates once, so it costs one request of the key's rate as a plain `whoami` does; the status poll and the export make one call each, the session checked by that call, where a page spends the session check first; a refusal keeps the API's status and code, `limit.rate` with its `Retry-After`, and only an unresolved credential is `404` | the poll runs every five seconds; a second lookup per poll doubled its cost, and a `404` for a rate refusal named the wrong cause |
+| d3 layer 4 | each name the Start page tries runs under its own key derived from the form's nonce | as built; a resubmission meets `name.taken` on the names before the one that issued and replays that one, so it issues nothing (`resubmitting_an_issue_that_landed_on_the_next_free_name_issues_nothing_new`). An issue that committed but whose outcome was never recorded holds its claim, since `POST /v2/keys` claims its key before it issues (#233, #259), so the resubmission meets `idempotency.in_progress` on that name and issues no next one (`an_issue_whose_name_a_stopped_attempt_holds_issues_no_next_name`) | the claim-first record closes the window between the commit and the record |
+| d8 | at most two sequential calls | the overview reads the allowlist 200 entries a call and refuses past 50 calls (`limit.list_too_long`) rather than show it cut short | `listWebEmails` pages by digest; a list read partly would hide an admin entry from the page that guards the last one |
+
 ## The client secret as built (2026-11-11)
 
 Issues #230 and #242 specified where `web.client_secret` lives, which values either process
@@ -620,13 +650,249 @@ call, built in the first change of phase (b). Where they read d2 and d4:
 | Decision | Was | Is | Why |
 |---|---|---|---|
 | d2 | the secret is a setting of both processes; quickstart keeps it in its owner-only `.env` | either process also reads it from `web.client_secret_file`, a file its group and others cannot read (a mode with any of `077` stops the start, naming the setting, the path and the mode), one trailing line ending dropped; setting both stops the start | systemd's `LoadCredential=` and a mounted Secret hand a process a file, not a variable; the owner-only rule is the keyring's (ADR-0023 d4), so a secret file is held as the signing key is |
-| d2 | at least 32 characters | at least 32 visible ASCII characters, at least 8 of them distinct, checked by `oml_web_credential::client_secret_refusal`, which the lead and `oml-web` both call; a refusal names the setting, never the value | a header carries visible ASCII whole, so a space or line ending would make the two processes compare different bytes; a repeated placeholder passes a length check; one rule in the leaf both link keeps them from refusing different secrets. Eight is chosen, not measured: 32 random hex digits hold fewer with a probability below one in ten million |
+| d2 | at least 32 characters | at least 32 visible ASCII characters, at least 8 of them distinct, checked by `oml_web_credential::client_secret_refusal`, which the lead and `oml-web` both call; a refusal names the setting, never the value | a header carries visible ASCII whole, so a space or line ending would make the two processes compare different bytes; a repeated placeholder passes a length check; one rule in the leaf both link keeps them from refusing different secrets. Eight is chosen, not measured: 32 random hex digits hold fewer with a probability below one in ten million, so `oml quickstart` writes 64 (#262) |
 | d2 | (silent on rotation) | the lead accepts `web.client_secret_previous` (or `_previous_file`) beside the current secret until `web.client_secret_previous_until`, an RFC 3339 instant checked on every request and at most 7 days after the lead's start; a previous secret without the current one, equal to it, or without the instant stops the start, naming the setting; an instant already past loads and proves nothing; each start logs `web_client_previous_accepted` or `web_client_previous_closed` until it is unset. `oml-web` sends one secret. `/readyz` still names `secret` | the order is the lead with both, then `oml-web` onto the new one, then the lead with one, so no page is refused while `oml-web` restarts. An absolute instant bounds an old secret's life without a restart and does not reopen when the lead restarts. Rejected: a list of accepted secrets with no bound, which a forgotten entry keeps open; a window counted from the start, which every restart reopens; `oml-web` sending both, which puts two secrets on every call. The `/readyz` enum is unchanged, so no SDK changes for a state the start's log already names. Seven days is chosen, not measured |
 | d2, Consequences | the doctor reads the lead's `web_client` from `/readyz` | `oml-web --doctor` also sends `GET /v2/whoami` with a capacity credential no session holds: `session_outside_web` is a `fail` naming `web.client_secret`, any other `auth.invalid` is `ok` | `/readyz` is unauthenticated and cannot say whether the two secrets match, which is the failure a rotation done out of order or a closed window causes; the gate's existing refusal reasons tell the cases apart, so no operation is added |
 | d2 | the secret or mutual TLS | unchanged: mutual TLS is not built and `web.client_ca` or `web.client_subject` stops the start; `operations/web-console.md` documents it as the alternative for a hop that leaves the host, and an `https://` hop to a TLS proxy with the secret as what this build offers | the lead still terminates no TLS (phase (a) as built) |
 | d4 Kubernetes | `existingSecret`, or a Secret the chart generates once with `lookup` and keeps | also: the lead alone reads `OML_WEB__CLIENT_SECRET_PREVIOUS` and `OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL` from the same Secret (`web.clientSecret.previousKey`, `previousUntilKey`), each `optional`; an upgrade keeps every key of the generated Secret, not only the current one; `values.yaml` names Secrets and keys and never a value; `check_chart.py` holds all of it, and that `existingSecret` renders no Secret of the chart's own. A rotation edits the Secret and restarts the lead, then `oml-web` | a pod reads a Secret's keys at start, so the order of the two restarts is the rotation; no `checksum/` annotation, since the chart cannot read an `existingSecret`'s value and restarting both at once is the gap the order avoids |
 | (none) | `check_release.py` refuses `e2e-sign-in` in `release.yml` | also refuses `OML_CARGO_FEATURES` there | a workflow variable passed as that build argument would carry the feature past a check of its name (#242) |
 | (none) | the remaining minors of #241's review | not built: a check of the published image for the sign-in double (it needs the pushed image, a release step of its own); the SBOM loop's repeated work (slower, not wrong); the old `?view=` URL's dropped query (deliberate); an upgrade path for a directory an older `oml quickstart` wrote, which has no `oml-web` service and no `OML_WEB_CLIENT_SECRET` | each is a follow-up, not a defect of this change; the quickstart upgrade belongs to `oml quickstart`, not to the secret |
+| d2 (#262) | a secret file's mode is read by path, then the file is read by path again | the file is opened once, and its owner and mode are read from that handle; a file owned by a user other than the process's or root stops the start, naming the owner | two opens let the file change between the check and the read; a file another user owns is that user's secret to change. Root may own it, since root can rewrite any file and systemd's `LoadCredential=` may hand one over as root's |
+| d2 (#262) | a mounted Secret hands the process a file | on Kubernetes the secret is an environment variable from the Secret (`secretKeyRef`), as the chart sets it; a Secret mounted as a volume is refused by `web.client_secret_file` | a mounted Secret is owned by root and, with `fsGroup`, group-readable; with `defaultMode: 0400` and no `fsGroup`, a non-root process cannot read it |
+| d2 (#262) | a `web.client_secret` set and empty on the lead counts as unset | it stops the start, naming the setting; empty `_previous` and `_previous_until` still count as unset | a blank value is a template that lost its secret, and before #230 it stopped the start too; a rotation's two keys are unset by blanking them as often as by removing them |
+| d2 (#262) | `web.client_secret_previous_until` read as a valid-time period's first instant | a date, month or year alone stops the start | a bare date names a day, not the instant the old secret stops; reading it as midnight UTC would close the window hours before an operator in another zone expects |
+| d2, Consequences (#262) | the doctor's fail line names a different secret | it names the three causes of `session_outside_web`: a different secret, none on the lead, or a proxy that adds a client-certificate header | the lead answers all three the same way, and only the operator can tell them apart |
+| d2, Consequences (#262) | each `oml-web --doctor` run adds a 401 request line and a histogram entry on the lead | the probe's credential, `oml_web_credential::DOCTOR_PROBE_CREDENTIAL`, proven by the secret, is answered `auth.invalid` as before and writes no line and no histogram entry, as a probe answered 200 writes none (ADR-0042 d1); an unproven probe is logged as any refusal is | a doctor run is not an unknown credential, and an alert on 401s should not fire for it; the credential is fixed and derives from no session, so a caller who sends it hides nothing that could authenticate |
+
+## Idempotency claims (2026-11-11, #233)
+
+Phase (a) recorded a console act's outcome after the act's last commit. Two sends of one form
+that reached the API at once, as a double click does through two `oml-web` replicas, both found
+no record and both acted: the second issue of a key answered `name.taken`, and its value was
+never shown. A process that stopped between the act and the record left an act a resubmission
+repeated. d3 layer 4 and d5 promised neither. Recording inside the act's own transaction, which
+the memory, supersede and verdict operations already do, cannot cover these acts: granting
+capacities, cutting off, disabling and the key operations commit in more than one transaction,
+and a key's value exists only in the answer. So each act claims its key first, as the HTTP
+contract's `Idempotency-Key` row says (claims a record before side effects):
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d3 layer 4, d5 | the outcome recorded after the act's last commit | the act claims `(key, act, Idempotency-Key)` in a transaction of its own before it acts, an `idempotency` row with `committed_at` null; it writes its outcome into that row after its last commit, and an act refused before anything committed deletes the row, so its resubmission acts again | of two concurrent claims the primary key admits one; a claim is the only shape that covers an act of several commits; the table's nullable `response` and `committed_at` (0001) already hold it, so migration 0042 only grants the serving role `UPDATE` of `response` and `committed_at`, and `DELETE` (rejected: recording in the act's last transaction, which leaves the first commits of a multi-commit act unguarded and a concurrent second send acting; an advisory lock per key, which a second process holds no knowledge of once the first commits and dies) |
+| d3 layer 4 | (silent) | a send that finds the key claimed waits up to 5 s, claiming again after pauses that double from 25 ms to 250 ms, and replays the outcome once recorded; past the wait it answers `409 idempotency.in_progress` with `Retry-After: 1`, which [errors](../api/errors.md) defines | 5 s sits under `oml-web`'s 10 s call timeout (d8), so a double click is answered the first send's outcome, never a timeout; the second answer is the replay, so a key's value or connect code is in the first answer alone and never in the record |
+| d3 layer 4 | (silent) | an act whose outcome cannot be written after it committed still answers that outcome; its claim stays, so a resubmission answers `idempotency.in_progress` and acts nothing; the lead logs `idempotency_unsettled` with the act, the key id and the claim id, counts `oml_idempotency_unsettled_total`, and `oml doctor` warns on any | the act happened and the person should see it, a key's value included; a held claim fails closed: nothing is repeated, and a fresh form acts under a fresh key. A claim whose process died is not reclaimed after a time, because whether its act committed is unknown; the operator clears one by hand after checking the journal ([runbook](../operations/runbooks.md#a-form-answers-idempotencyin_progress)), as no sweeper removes them yet |
+| d3 layer 4 | (silent) | the act and its record run in a task of their own, so a request dropped mid-act (`oml-web`'s call timeout, a closed connection, a lead shutting down gracefully) cannot stop the act between its commit and its record: the act records its outcome and the resubmission replays it. Only a refusal (`4xx`) of the act's first commit, or a refusal before the act, releases the claim; a failure that may have committed (a `5xx`, a lost connection), a failing step after the commit, a later step of a multi-commit act refused after an earlier one committed, and a panic all leave it | a release after a commit lets the resubmission act twice, which is the failure #233 names; the first review of the claims found that dropping the request, a read after the commit failing, and a panic each released it (rejected: releasing on every drop of the claim, which repeats the act in exactly those cases) |
+| d3 layer 4 | (silent) | each attempt draws a claim id, kept in the claim row's `response` beside the time it was claimed; settle and release name it, so a late release of one attempt never drops another's claim; the wait between claims backs off from 25 ms to 250 ms; the serving role may update a row's `response` and `committed_at` alone | an operator removing a stuck claim must not let an old attempt's release drop the next attempt's; about twenty-five claim transactions per five-second wait instead of two hundred; no statement of the serving role can rewrite a row's key or digest |
+| d3 layer 4 | (silent) | the act's task carries the request's traffic scope and session beside its span, so what the act observes (a mode change's count, the workarea, the store time and calls) is the request's | a spawned task sees no task-local of the request: `oml_workarea_mode_changes_total` stopped counting mode changes made over HTTP, and the request line lost the act's store time and workarea, until the second review of the claims found it |
+| d5; [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md) d7 | `POST /v2/keys` and `POST /v2/keys/{key}/connect-codes` replayed only for a person's session key | every key claims, admin and bearer keys too: a resubmission replays the first answer without the key's value or the connect code, and a request dropped after its commit never issues or mints again | the same double issue a process stopping between the commit and the record caused for the console's acts, under the next name a client chose; ADR-0031 d7 already specified a replay without the code, and no record now holds a key's value, which is what #127 asks for |
+
+## The follow-ups of phase (b) (2026-11-11, #253)
+
+The independent reviews of phase (b)'s fourth, fifth and sixth changes left follow-ups that
+blocked no merge ([#253](https://github.com/e8kor/open-memory-lab/issues/253)). Where they read a
+decision differently:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d3 layer 6, d8 | the cap across a session's pages lands with the memories view (the third change's table) | not built, and promised to no page: the Memories list and the Atlas make at most four calls after `whoami` and bound none of their own, so the cap waits for [#170](https://github.com/e8kor/open-memory-lab/issues/170) to measure the moved pages' fan-out and choose the bound | the fourth change's table was silent on it; a constant chosen before the measurement is the guess d3 layer 6 already names |
+| d8 | the list reads up to 10 pages of the person's keys | past 10 pages of 200, or at a cursor the API repeats, the list and its JSON are refused with `limit.list_too_long` (`422`), as the overview refuses a long allowlist | a list cut short silently leaves rows without their kind and answers an author search `access.not_found` for a key the person holds |
+| d8 | the Atlas's offers a secondary read whose failure marks the panel unavailable | the JSON route reads them the same way: the scope's region carries `offers_unavailable: true` and no `offers`, and the rows and regions still answer; a failed listing or count is the API's refusal as JSON | the route serves the Atlas's data, so it degrades where the Atlas does |
+| d5 | `scan_finding` on every served memory | null wherever `principal` is, on a `universe` row served to a key outside its authoring key set | an anonymous row carries its text and nothing admission recorded of its writing ([ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md) d9) |
+| d5 | the admin read names the authoring key by its name | it also serves `key_id`, and the admin memory page names a key with no name by its id | "written by key" was empty for a nameless key |
+| d3 layer 4 | the shown-once seal under SHA-256 of a purpose and the session token, kept five minutes | under HMAC-SHA256 keyed by the session token over `oml/web-once/v1` (`oml_web_credential::once_seal_key`, beside the session's other derivations), kept one minute (`Max-Age=60`) | `__Host-` forces `Path=/`, so the cookie rides every request of the site until the target clears it; a redirect is followed at once. Neither process's request line reads `Cookie`, and `oml-web` never forwards it; a proxy in front must not log it (Caddy blanks it unless `log_credentials` is set). A seal in flight across the upgrade does not open; the key is listed and the person issues another |
+| d3 layer 4 | (accepted in the fifth change's table, unstated) | a seal is cleared by the browser alone: a copy taken out of the browser opens with the session token until it expires | stated so it stays visible: the session token already reaches that session's keys, and a server-side store, which would end the window, is the alternative the fifth change rejected |
+| d3 layer 4 | (silent) | one cookie name serves every act: two acts that show a secret, sent from two tabs of one session before either target loads, leave the second seal, and the first secret is not shown; the key is listed, and the person cuts it off and issues another, or asks a new connect code | a cookie per act needs the target to name its act in the URL; a lost value costs one reissue and shows no secret twice (documented in `oml_web::once`) |
+| d3 layer 4; [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md) d13 | the cut-off acts on one post | it answers a confirmation first, which records nothing; only its form, carrying `confirm=yes` and a fresh nonce, acts, and a resubmitted confirmation replays one cut-off | parity with the lead and with the sixth change's acts that cut keys off (`a_cut_off_is_confirmed_first_and_nothing_is_cut_off_until_it_is`) |
+| d5 | `oml-web` read an answer with neither the value nor the code as a replay | it reads `Idempotency-Replay: true` (`oml_sdk::KeyIssued::replayed`, `ConnectCode::replayed`); an answer without the secret that is not a replay is refused `unavailable` (`502`), naming it, and sets no cookie | the header is the contract's replay signal; a body missing its secret is a fault, not a replay |
+| d5 | the connect code's expiry shown as its instant | "expires in N minutes (HH:MM UTC)", the minutes read on `oml-web`'s clock; an instant that is not UTC is shown as served | the person reads how long they have, not a timestamp |
+| d2 (the seventh table) | each console act resolves its caller for the claim, then acts through the request's credential, which resolves it again | the act runs as the caller it resolved for the claim (`Bearer::Session`), whose grants are read again, so creating a workarea, a transition, a ratification, a mode change, issuing a key and the two allowlist acts each cost one request of the key's rate (`a_workarea_create_by_an_agent_key_costs_one_request_of_its_rate`) | a bearer key at its rate was refused by its own act's second charge; a new connect code by a bearer key still resolves twice, since the use case takes the key's value |
+
+## Phase (c) as built (2026-11-11)
+
+Phase (c) (#190) takes the `web_*` use cases out of `oml-app`'s core. It changes no answer: the
+operations and their refusals, the lead's routes and redirects, the journal, and every metric and
+log name are as phase (b) left them, and the workspace's suites pass before and after with the
+same counts, test binary by test binary, against a throwaway PostgreSQL. The exit check,
+`grep -rn 'pub async fn web_' crates/oml-app --include='*.rs' | grep -v 'crates/oml-app/src/app/auth.rs'`,
+prints nothing.
+
+**Moved to the auth module, under their names.** `crates/oml-app/src/app/auth.rs` holds what d6
+keeps in the auth context: `web_sign_in_start`, `web_admit`, `web_sign_up` and
+`check_signup_policy`, `web_ensure_keys`, `web_session_open`, `web_session`, `web_sign_out` (which
+`POST /v2/web/session/end` and the sign-out act both call), `web_session_of_credential`,
+`web_credential_caller` (the API's resolution of an `omls_` credential), `web_caller`, and
+`web_has_agent_key`, which picks the callback's landing (ADR-0068 d10). `web.rs` keeps the
+allowlist alone and is now `emails.rs`.
+
+**Renamed to the operation they serve.**
+
+| Was | Is | Serves |
+|---|---|---|
+| `web_emails` | `list_web_emails` | `GET /v2/web/emails` |
+| `web_users` | `list_web_users` | `GET /v2/web/users` |
+| `web_deletions` | `pending_deletions`, private | `GET /v2/web/users` |
+| `web_set_quota` | `set_web_user_quota` | `POST /v2/web/users/{user}/quota` |
+| `web_disable_user` | `disable_web_user` | `POST /v2/web/users/{user}/disable` |
+| `web_close_deletion` | `close_web_deletion` | `POST /v2/web/users/{user}/deletion/close` |
+| `web_request_deletion` | `request_web_deletion` | `POST /v2/web/deletion-requests` |
+| `web_export` | `export_web_person` | `GET /v2/web/export` |
+| `web_grant_review`, `web_grant_curation` | `grant_review_capacity`, `grant_curation_capacity` | `POST /v2/web/users/{user}/capacities` |
+| `web_own_keys`, `web_keys_of_user` | `list_own_keys`, `list_keys_of_user` | `GET /v2/keys` |
+| `web_path` | `workarea_path` | `GET /v2/keys`, a grant's path |
+| `web_issue_key` | `issue_own_key` | `POST /v2/keys` as `<user>-web` |
+| `web_connect_code` | `mint_own_connect_code` | `POST /v2/keys/{key}/connect-codes` as `<user>-web` |
+| `web_cut_off` | `cut_off_key` | `POST /v2/keys/{key}/denials` as `<user>-web` or `<user>-admin` |
+| `web_queue` | `review_queue` | `GET /v2/review/queue` |
+| `web_memories` | `list_memories_with_own` | `GET /v1/memories?with_own=true` |
+| `web_regions` | `user_regions` | `GET /v2/workareas/{workarea}/tree?counts=true` for a user key |
+| `web_start_status` | `whoami_start` | `GET /v2/whoami?start=true` |
+| `web_own_limits` | `whoami_limits`, private | `GET /v2/whoami`'s `person` |
+
+**Deleted.** `web_other_admin` (the last admin entry is now the API's `keep_an_admin`, checked in
+the act's transaction), `web_all_entries` (the overview pages through `GET /v2/web/emails`) and
+`web_deletion_pending` (the onboarding page reads `GET /v2/whoami`'s `person`): none had a caller
+after phase (b). The lead's `web::page` stops re-exporting `form`, `glyph_svg`, `hidden`, `input`,
+`select`, `state_tag`, `text` and `textarea`, which only the moved pages drew; it keeps what the
+sign-in page and the terms page draw.
+
+Where it reads a decision differently:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d7 (c) | the logic behind a new operation is renamed to that operation's use case | a use case behind a `/v2/web/*` operation takes the operation's id in snake case (`listWebEmails` is `list_web_emails`); one behind `/v2/keys*`, the queue, the capacities or a changed read names what it serves (`issue_own_key`, `review_queue`, `grant_review_capacity`, `list_memories_with_own`), since `issue_key`, `mint_connect_code`, `list_memories` and `workarea_tree` already name the bearer key's path, which the session key's does not share | an operation id is unique on the wire but not in `oml-app`, where the bearer use case already holds it |
+| d7 (c) | the sign-in ones move to the auth module | they move under their `web_` names, and the exit check reads every module but `auth.rs` | the auth context owns them and no page calls them; a rename would touch every sign-in test and the oml-web parity rig for no reader |
+| d7 (c) | (silent on names on the wire and in metrics) | the refusal's verb names (`access.verb_ceiling` naming `web_emails` and `web_users`), the store port's methods (`web_queue`, `web_session_open`, `web_session` and the rest) and the `store_port` span names the lead's traces carry from them keep their names | a verb name is on the wire and a span name is in trace queries; changing either is a behaviour change, which this phase is not |
+| d7 (b), d7 (d) | (silent on when the old URLs stop answering) | the lead's `303`s to `oml-web`'s paths stay through v0.7.0: `views.rs` (`MOVED_VIEWS`, `MOVED_ADMIN_VIEWS`, `moved_action`, `moved_memories`), the moved acts in the two page `action` sets and `GET`/`POST /web/admin`, so a bookmark or a form cached under v0.6 lands on its new path. They are deleted in v0.7.1, leaving the lead `GET /web` without a session (the sign-in page) and the sign-out act; until then phase (d)'s `the_lead_serves_no_page_route_outside_oml_web_and_auth` names them as the lead's redirects. The operator decided on 2026-11-11 that v0.7.1 deletes them: see [The old URLs deleted](#the-old-urls-deleted-2026-11-11) | v0.7.0 is the release that moves the pages, so its upgrade is the one that meets old URLs; a redirect runs nothing and costs one route, and one release of it is chosen, not measured |
+
+## Phase (d) as built (2026-11-11)
+
+Phase (d) (#191) makes the walls checks a pull request cannot merge past. It changes no answer:
+the one code change renames the transport's handler of `GET /v2/web/export` from `web_export` to
+`export_web_person`, the use case it calls, which phase (c) left under its old name.
+
+**The two tests.** `oml_web_reaches_no_application_crate`, with its two companions in
+`crates/clients/oml-web/tests/dependencies.rs`, is the dependency wall of d1, unchanged.
+`the_lead_serves_no_page_route_outside_oml_web_and_auth`, in
+`crates/clients/oml-web/tests/lead_routes.rs`, is the route wall. It names each of the lead's eight
+web routes and asserts that `WEB_ROUTES` is exactly them: `GET` and `POST /web` (the sign-in page
+without a session, and the sign-out act), `GET` and `POST /web/sign-in`,
+`GET /web/callback/{provider}` (which draws the terms page for a new address), `POST /web/sign-up`,
+and `GET` and `POST /web/admin`, the old admin page URL, which answers only `303`s. It asserts that
+the API table holds only `/v1/`, `/v2/` and the probes and the OAuth table only `/oauth/` and
+`/.well-known/`, and that every path of `oml_web::PAGES` and `oml_web::PREFIXES` is, on the lead,
+answered as an unknown path is. A page route added to the lead fails it whether it is added to
+`WEB_ROUTES`, to another table, or to the router directly at one of `oml-web`'s paths.
+
+**The job.** CI's `crate walls (oml-web)` job in `ci.yml` runs both test targets,
+`cargo test --locked -p oml-web --test dependencies --test lead_routes`, without Postgres. It runs
+whenever the `cargo` category does, and `ci ok (ci)` waits for it. `cargo test (Postgres)` runs both
+again inside the workspace run.
+
+**The required checks.** Branch protection is a repository setting that only the operator can
+change. The operator marks these five checks required on `main`, by these exact names:
+
+- `ci ok (ci)`
+- `ci ok (docs)`
+- `ci ok (spikes)`
+- `ci ok (practices)`
+- `crate walls (oml-web)`
+
+The first four are #179's roll-ups. A job skipped by its path filter reports success, so each of
+the five reports on every pull request. `m0-spikes.yml` now also runs on `merge_group` like the
+other three workflows, and `scripts/tests/test_ci_paths.py` fails any workflow with a final check
+that does not. A merge queue can therefore be turned on once the checks are required, and each queued
+group then runs the same five checks. Whether to turn it on is the operator's decision; this change
+does not.
+
+Where it reads a decision differently:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d7 (d) | both tests required on `main` | the tests run in one job, `crate walls (oml-web)`, and that job's name is the required check; the route wall lives in `oml-web`'s tests, beside the dependency wall | the lead's router is built by `oml-transport-http`, which `oml-web`'s tests already start for the parity rig, so the route wall reads `oml_web::PAGES` without a new dependency; one job builds both test targets once, without Postgres |
+| d7 (d) | (silent on the old URLs' `303`s) | the test names `GET`/`POST /web/admin` as redirects, and `GET`/`POST /web` keep their `?view=` and moved-act `303`s beside the sign-in page and sign-out, until the operator decides whether v0.7.1 deletes them as Phase (c) as built records. The operator decided to delete them: see [The old URLs deleted](#the-old-urls-deleted-2026-11-11) | deleting a route there deletes its row in the test, in the same change |
+
+## The old URLs deleted (2026-11-11)
+
+The operator decided on 2026-11-11 that v0.7.1 deletes the lead's `303`s from the page URLs and
+acts of v0.6, and does not keep them longer: "its not important to keep them" (#283). Phase (c)
+as built had kept them through v0.7.0 and left the deletion to this decision.
+
+**Deleted.** `crates/transports/oml-transport-http/src/web/views.rs` (`MOVED_VIEWS`,
+`MOVED_ADMIN_VIEWS`, `moved_action`, `moved_memories`, `moved_view`), `GET` and `POST /web/admin`
+with their handlers, the admin page's `action` set, and every moved act of the user page's set,
+which is now `sign_out` alone. `docs/api/openapi.yaml` loses `/web/admin`, and the generated SDKs
+lose `admin_page` and `admin_page_act` with their models.
+
+**What the lead's web routes are now.** Six, all the auth context's (d6): `GET /web` (the sign-in
+page without a session), `POST /web` (sign-out), `GET` and `POST /web/sign-in`,
+`GET /web/callback/{provider}` and `POST /web/sign-up`. Every proxy copy routes `/web` and
+`/web/admin` to the lead already, by falling through to it, so no router changes.
+
+Where it reads a decision differently:
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d7 (b) | the lead answers an old `?view=` URL, an old act and every `GET /web/admin` with a `303` to the moved page, running nothing (Phase (c) as built) | an old `?view=` URL with a session is `access.not_found`, as a view the page never had was; without one it is the sign-in page, whose `next` is `/web`; an old act of `POST /web` is `request.validation` naming `action`, journalling nothing; `GET` and `POST /web/admin` are unknown paths, `404` before a session is read | the operator's decision; a bookmark or a cached form from v0.6 now ends on a not-found or a refusal instead of the moved page. The redirect target no longer needs to be checked against a smuggled path, and the lead holds no table of `oml-web`'s paths |
+| d7 (b) | (Phase (b)'s fifth table) the lead answers a signed-in `GET /web` naming no view with a `303` to the Keys view | kept: `GET /web` is the console's address, where the callback, the sign-in page and sign-out send a person, so a signed-in browser still goes on to `/web/keys` | it is the landing of the auth flow, not an old URL; deleting it would leave a person who has just signed in on a not-found |
+| d7 (d) | `the_lead_serves_no_page_route_outside_oml_web_and_auth` names eight routes, two of them `OldUrlRedirect`s (Phase (d) as built) | it names the six above and asserts that `GET` and `POST /web/admin` answer as an unknown path does; `the_old_page_urls_and_acts_answer_not_found_or_refused_and_run_nothing` in `oml-transport-http` and the renamed `the_old_*_urls_are_not_found_*` cases in `oml-web` replace the redirect cases | deleting a route deletes its row in the test, in the same change |
+| (none) | the user page's Administration tab links `/web/admin`, which the lead sent to the overview | it links `/web/admin/people`, the overview's own path | the tab otherwise leads to a not-found |
+
+## The measurement of 2026-11-11 (#170)
+
+[#170](https://github.com/e8kor/open-memory-lab/issues/170) measured every page a signed-in admin
+loads with a `GET`, served by `oml-web` over loopback at `f3857167` and in process by the lead at
+`4dedf532`, the last commit before phase (b), on the same seeded data: 6 workareas and 240
+memories (500 iterations), and 48 workareas (200). The harness is `bench/web/run.py`, the numbers
+are in `bench/web/results/`, the per-page tables in [Web console overhead](../benchmarks/web.md),
+and the findings in `bench/web/README.md`. One shared host, PostgreSQL 18.6, so every figure is an
+upper bound. No LAN was measured: the rounds below are the round trips a LAN would add.
+
+**The budget is missed, and v0.7.0 ships with the miss.** 16 of the 21 pages with an in-process
+counterpart miss it at 6 workareas, by +6.2 to +42.7 ms p95, and 15 of 21 at 48 workareas, by
++10.1 to +31.2 ms. The operator decided on 2026-11-11 to release v0.7.0 with the miss stated
+and to fix it in v0.7.1 under [#286](https://github.com/e8kor/open-memory-lab/issues/286), with
+fewer calls per page as d8 requires. The rows on the in-flight cap and the rate share are
+readings of the measurement, offered for the operator's acceptance; neither is a settled decision.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d8 | 5 ms p95 above the in-process page on loopback, unmeasured | missed on 16 of the 21 pages with an in-process counterpart, by +6.2 to +42.7 ms p95 (memories +6.2, admin memory +9.1), and on 15 of 21 at 48 workareas, by +10.1 to +31.2 ms; within it at 6 workareas, the user Workareas view, the Atlas, both Atlas JSON routes and the export. The budget stands; v0.7.0 ships with the miss stated, by the operator's decision of 2026-11-11, and v0.7.1 fixes it (#286) | the miss is the session check: every page opens with a round of two `GET /v2/whoami` calls, 7.8 to 17.4 ms p50 each at the lead with 8 to 19 store calls, where the in-process lead read the session once; Review, Curate and Setup, which call nothing else, add +9.5 to +11.4 ms. The hop is not the cause: a page's time outside the lead's handler is at most 4.3 ms p95 (1.0 to 1.5 ms p50 for one round), against 0.5 to 1.0 ms in process |
+| d8 | over budget, fewer calls per page through a field on an existing operation | the remedies, in the order of what they buy, none built by #170 and all three taken by [#286](https://github.com/e8kor/open-memory-lab/issues/286) for v0.7.1: a `whoami` that resolves its credential once and reads the person block only when asked (the Start page asks), taking every page's first round toward the in-process read; the text search's read of the person's keys moved beside the recall (+32.0 ms p95, a third round); the offers of a subtree as a field of `GET /v2/workareas/{workarea}/tree` | each is a field or a narrower read on an operation the pages already call; a cache of resolved sessions stays refused |
+| d8 | at most two sequential calls | 17 of the 23 pages make two rounds or fewer; the text search, the admin Atlas, its JSON and the admin Review view make three; the user Workareas view 3 + 2N calls and the admin view 3 + 3N over N nodes, at most 8 in flight, 4 and 6 rounds at 6 workareas and 14 and 21 to 22 at 48 | over loopback the bounded fan-out made the Workareas views faster than in process (377 ms p50 against 612 at 48), but a LAN adds a round trip per round, not two; the subtree's offers in one call is the fix |
+| d3 layer 6, d8 | the per-session cap on calls in flight waits for #170 | a reading for the operator's acceptance, not yet a decision: not built, and not needed. No page but the Workareas views has more than four calls in flight (the Atlas JSON's four after the session check), and those are held to `FAN_OUT` (8), which stays | a page's cost is the lead's handler time, which every call's key rate already bounds; a cap across a session's pages would bound a person loading several Workareas views at once, which nothing measured shows; it is the Workareas fan-out that needs removing, not capping |
+| d2 (the 2026-11-11 table) | 60 requests a minute for a session key, chosen, not measured; whether pages need a rate share of their own (#279) | a reading for the operator's acceptance, not yet a decision: no share of their own. Every page but the Workareas views spends at most 4 requests of any one session key per view, most 1 or 2, so the floor allows 15 views a minute; the user Workareas view spends 2N requests of the review key (96 at 48 workareas) and the admin view 2N + 2 of the admin key over N nodes, so one view passes the floor | a rate share would hide a page that does not scale; the subtree's offers in one call bring the Workareas views to a constant cost, and 60 stays |
+| d8 | `POOL_IDLE_MAX` (32) and `API_TIMEOUT` (10 s), constants of the build, unmeasured | kept: one page keeps at most 8 connections busy, and the slowest call measured, the tree with counts at 240 memories, took 355 to 398 ms p50 | neither bound was reached; both stay constants of the build |
+
+## The re-measurement of 2026-11-12 (#286)
+
+[#286](https://github.com/e8kor/open-memory-lab/issues/286) built the three remedies of the table
+above and ran `bench/web/run.py` again on the same seed, harness and host; the in-process side is
+the run of 2026-11-11. `oml-web-6` ran at `b3c7a757`, the one-minute load 1.92 at its start and 2.35
+at its end; `oml-web-48` at `cdf88fe0`, whose code differs only in the admin Atlas's fallback for an
+API one release behind, at 1.31 and 2.44. A first 48-workarea run, at `b3c7a757`, ended at a load of
+8.67 when another job on the host started, and showed the admin Workareas view at +61.9 ms p95 (532
+ms p50): that was the load. Run again on a quiet host the view takes 349 ms p50 and 414 p95, -151.5,
+with the same 150 calls and the same store calls per call, each call 25 to 30% faster at the lead.
+
+**The budget still does not hold on every page.** At 6 workareas 7 of the 21 pages with an
+in-process counterpart miss it, by +9.1 to +35.7 ms p95, where 16 did; at 48 workareas 11 of 21,
+by +5.1 to +15.0 ms, where 15 did. Six pages differ between the sizes: the admin Workareas
+view misses at 6 workareas (+35.7) and not at 48 (-151.5), its in-process counterpart growing with
+the workareas faster than its bounded fan-out; the guardrails, Curate and the Start status sit
+within 1 ms of the line at both sizes; and the admin Memories list and the admin memory page are
+within it at 6 (+1.1, +0.8) and over it at 48 (+8.9, +9.5).
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d8 | `GET /v2/whoami` resolved a session key twice and read its grants, the person's limits and their deletion request: 8 to 19 store calls, 7.8 to 17.4 ms p50 at the lead | it resolves the credential once, and `person=false`, which `oml-web`'s session check sends, reads no person block: 9 store calls for a `web` session key and 6 for an `admin` one, the session gate's included, against 15 and more before; 3.2 to 7.0 ms p50 at the lead (the Start page's `start=true` call, which reads the block and the status, 7.9 to 13.8). The default and `start=true` serve the block as before, so the contract only grows; a key value or a connection now spends one request of its rate where a connection spent two | the person block is read by the Start page alone, which asks for it; `tests/web_console_reads.rs` holds the counts and that the block is refused to every caller refused before |
+| d8 | the text search read the person's keys before the recall: three rounds, +32.0 ms p95 | both in one round: two rounds, +3.8 ms at 6 workareas and -2.3 at 48, within the budget | an author no key of the person's holds is still refused by name, after both reads |
+| d8 | the admin Atlas read the scope's offers after the tree: three rounds, +20.4 ms p95 | `GET /v2/workareas/{workarea}/tree?counts=true&offers=true` carries the scope's offers as the offers operation serves them to the same caller, beside the reviewer key's offers for the mode: two rounds and four calls, +9.1 ms at 6 workareas. A failure of that one call now fails the regions with the transitions' offers; the mode's offers still fail alone | the counted tree takes 23.0 ms p50 at the lead on its own, the in-process page's whole time; the miss left is that read and the session check's round |
+| d8 | missed on 16 of 21 pages at 6 workareas and 15 at 48 | at 6 workareas missed on 7: the admin Workareas view (+35.7), the admin Atlas (+9.1), the memory page (+9.5), Keys (+11.5), Start (+13.4), People (+10.7) and Users (+11.8); Review, Curate, Setup, the guardrails and the text search are within it. At 48 workareas missed on 11: the guardrails (+5.4), the admin Memories list (+8.9), the admin Atlas (+9.1), the memory page (+10.4), the admin memory page (+9.5), Curate (+5.8), Keys (+12.4), Start (+15.0), the Start status (+5.1), People (+11.3) and Users (+12.3); the admin Workareas view is within it (-151.5), as are Review, Setup and the text search. In both, Review, Setup, the export, the text search, both Memories JSON routes, the user Atlas and the user Workareas view are within it, and the admin Atlas, the memory page, Keys, Start, People and Users miss it | the session check is now the floor of every page: a round of two `whoami` calls whose session gate still reads the credential, the key and its access on each, where the in-process page read the session once. The five pages of three calls in two rounds pay it twice. The admin Workareas view's miss at 6 workareas is its 3 + 3N fan-out, which #286 did not change: the tree's `offers` serves the scope alone |
+
+Not decided here, and named as what the remaining miss needs: a page whose first read answers who
+its session is, so the session check is no round of its own, or a session gate that resolves a
+capacity credential in fewer reads; and the offers of every node of a subtree in one call for the
+Workareas views.
 
 ## Consequences
 
@@ -649,8 +915,16 @@ call, built in the first change of phase (b). Where they read d2 and d4:
 - `docs/api/http-api.md`, `openapi.yaml`, `errors.md` and the SDKs gain the ten operations and
   six changes in phase (a); the CLI may use them (`oml keys list`, `oml review queue`) in a
   change of its own.
-- [#170](https://github.com/e8kor/open-memory-lab/issues/170) tracks it: the web hop's overhead is unmeasured against its 5 ms p95 budget, and the
-  per-session in-flight cap of d3 is a constant chosen without measurement.
+- [#170](https://github.com/e8kor/open-memory-lab/issues/170) measured the web hop on loopback (the table of 2026-11-11): the
+  hop itself fits the 5 ms p95 budget, but the session check's `whoami` round does not, so 16 of
+  21 pages miss it by +6.2 to +42.7 ms p95. v0.7.0 ships with the miss stated, by the operator's
+  decision of 2026-11-11, and v0.7.1 fixes it with fewer calls per page
+  ([#286](https://github.com/e8kor/open-memory-lab/issues/286)). That the per-session in-flight
+  cap of d3 and a page rate share are not needed is a reading awaiting the operator's acceptance.
+- [#286](https://github.com/e8kor/open-memory-lab/issues/286) built the three remedies (the table
+  of 2026-11-12): `whoami` takes `person=false` and resolves once, the counted tree takes
+  `offers=true`, and the text search reads the keys beside the recall. The miss falls from 16 to
+  7 of 21 pages at 6 workareas and from 15 to 11 at 48; the session check's round and the Workareas fan-out remain.
 - #163, #166 and #167 land first, on the current design; this change then moves what they
   built, so none of them is rebased onto an unbuilt crate.
 

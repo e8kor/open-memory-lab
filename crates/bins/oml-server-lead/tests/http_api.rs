@@ -4570,8 +4570,10 @@ async fn the_rescan_names_an_injection_phrase_a_zero_width_space_split() {
 /// rules flag stays its author's, its finding recorded (ADR-0065 d15;
 /// ADR-0074 d28). The two rows are written, then set back to what a server
 /// before the upgrade stored: `scanned_under` `oml-scan/1` and no finding.
+/// ADR-0074 d18 names it for phase 1.
 #[tokio::test]
-async fn a_held_row_scanned_under_an_older_rule_set_stays_its_authors_until_the_recording_rescan() {
+async fn a_held_version_scanned_under_an_older_rule_set_is_author_only_in_progress_until_rescanned()
+{
     let Some(rig) = fresh_rig().await else {
         return;
     };
@@ -7812,8 +7814,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        82,
-        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the six web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b)), open sign-up's seven (ADR-0068 d10), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) and federation's three (ADR-0072 d5)"
+        74,
+        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) and federation's three (ADR-0072 d5)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -10781,5 +10783,159 @@ async fn as_of_reads_the_tip_at_an_instant_over_http() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["details"]["field"], "/as_of", "{body}");
+    drop_db(&rig.db_name).await;
+}
+
+// ---------------------------------------------------------------------------
+// The widen hint on its precomputed signal (ADR-0072 d8, d12; #244)
+// ---------------------------------------------------------------------------
+
+/// `home` and `legal` hold "kiwi" at one rate per row and `orchard` at
+/// twice it: a reader of the root is hinted to widen from `home`. A scope
+/// recall that finds no signal answers without `search.widen` and the lead
+/// builds the signal off the request; then `POST /v1/memories/recall` and
+/// MCP's `oml_read` serve the same `search.widen`, and `GET /v2/federation`
+/// counts the build and the unserved recall (ADR-0072 d8; #244).
+#[tokio::test]
+async fn the_widen_hint_is_the_same_over_http_and_mcp_once_the_lead_builds_its_signal() {
+    let Some(rig) = fresh_rig().await else {
+        return;
+    };
+    let router = &rig.router;
+    let (admin, _tenant, root) = bootstrap(router).await;
+    let writer = issue_key_with(
+        router,
+        &admin,
+        "writer",
+        "orchard/writer",
+        json!([
+            { "workarea": root, "role": "writer" },
+            { "workarea": root, "role": "reader" },
+        ]),
+    )
+    .await["value"]
+        .as_str()
+        .expect("show-once value")
+        .to_owned();
+    let dora = dreamer_on(router, &admin, "dora", root).await;
+    let dan = dreamer_on(router, &admin, "dan", root).await;
+    let mut n = 0;
+    for (name, bodies) in [
+        (
+            "home",
+            &[
+                "kiwi orchard notes",
+                "kiwi harvest dates",
+                "pear orchard notes",
+                "plum harvest dates",
+            ][..],
+        ),
+        (
+            "legal",
+            &[
+                "kiwi import rules",
+                "kiwi labelling rules",
+                "pear import rules",
+                "plum labelling rules",
+            ][..],
+        ),
+        ("orchard", &["kiwi grafting", "kiwi pruning"][..]),
+    ] {
+        let node = create_workarea(router, &admin, root, name).await;
+        for body in bodies {
+            n += 1;
+            promote_over_http(
+                router,
+                &writer,
+                &dora,
+                node,
+                (&format!("kiwi-{n}"), "memory", body),
+            )
+            .await;
+        }
+        let (status, _, proposal) = send(
+            router,
+            "POST",
+            &format!("/v2/workareas/{name}/transitions"),
+            Call::auth(&dora)
+                .idem(&format!("t-{name}"))
+                .body(json!({ "to": "committed" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
+        let transition = proposal["transition_id"].as_str().expect("id");
+        let (status, _, ratified) = send(
+            router,
+            "POST",
+            &format!("/v2/workareas/{name}/transitions/{transition}/ratify"),
+            Call::auth(&dan).idem(&format!("r-{name}")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{ratified}");
+    }
+    let (status, _, policy) = send(
+        router,
+        "POST",
+        "/v2/federation",
+        Call::auth(&admin)
+            .idem("federation-on")
+            .body(json!({ "enabled": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{policy}");
+    let reader = issue_key(router, &admin, "reader", "orchard/reader", root).await;
+    let recall = json!({ "query": "kiwi", "workarea": "home", "sources": "scope" });
+    let (status, first) = recall_over_http(router, &reader, None, recall.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert!(
+        first["search"].get("widen").is_none(),
+        "a recall with no signal served the hint: {first}"
+    );
+    // The lead builds the signal off the request; the next recalls read it.
+    let mut http = Value::Null;
+    for _ in 0..200 {
+        let (_, answer) = recall_over_http(router, &reader, None, recall.clone()).await;
+        if let Some(widen) = answer["search"].get("widen") {
+            http = widen.clone();
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert_eq!(
+        http,
+        json!({ "sources": "wide", "candidates": 2, "matches_at_least": 4 }),
+        "legal and orchard hold the word, two rows each"
+    );
+    let (status, _, mcp) = send(
+        router,
+        "POST",
+        "/mcp",
+        Call::auth(&reader).body(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "oml_read",
+                "arguments": { "query": "kiwi", "workarea": "home", "sources": "scope" },
+            },
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{mcp}");
+    assert_eq!(
+        mcp["result"]["structuredContent"]["search"]["widen"], http,
+        "MCP's oml_read and the HTTP recall disagree on the hint: {mcp}"
+    );
+    let (status, _, settings) = send(router, "GET", "/v2/federation", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    assert!(
+        settings["widen_signal"]["built"].as_u64() >= Some(1),
+        "{settings}"
+    );
+    assert!(
+        settings["widen_signal"]["unserved"].as_u64() >= Some(1),
+        "{settings}"
+    );
+    assert_eq!(settings["widen_signal"]["failed"], 0, "{settings}");
     drop_db(&rig.db_name).await;
 }

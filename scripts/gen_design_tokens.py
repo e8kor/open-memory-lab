@@ -296,7 +296,8 @@ def site_inputs(t: dict) -> dict[Path, bytes]:
     brand = {
         "_generated": HEAD,
         "ground": {"dark": ground["dark"], "light": ground["light"]},
-        "favicon": "data:image/svg+xml," + urllib.parse.quote(fav, safe=" =:/\".,-"),
+        # The data URI sits in a double-quoted href, so a double quote must be percent-encoded.
+        "favicon": "data:image/svg+xml," + urllib.parse.quote(fav, safe=" =:/.,-"),
         "wordmark": inline_mark("oml-wordmark-dark.svg", "wm"),
         "mark": inline_mark("oml-mark.svg", "mk"),
         "gate_wide": inline_diagram(DESIGN / "diagrams/review-gate.svg", "v-wide"),

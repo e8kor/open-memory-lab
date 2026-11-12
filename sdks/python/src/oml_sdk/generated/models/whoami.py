@@ -48,6 +48,7 @@ class Whoami:
             profile (None | Unset | WhoamiProfileType1 | WhoamiProfileType2Type1 | WhoamiProfileType3Type1): The key's
                 profile; null for none (ADR-0030 d8).
             person (None | Unset | WhoamiPerson): The person the key's user root names; null for a tenant key (ADR-0070 d5).
+                Absent with person=false (#286).
             shared (bool | Unset): Whether the server's admins are not the caller's: true when the operator sets
                 server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always
                 sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9).

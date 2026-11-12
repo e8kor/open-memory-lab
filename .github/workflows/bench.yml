@@ -42,7 +42,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install -r eval/bench/requirements.txt
+      - run: python -m pip install --retries 5 --timeout 30 -r eval/bench/requirements.txt
       - uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/bench-data
@@ -76,3 +76,32 @@ jobs:
             ${{ runner.temp }}/bench/*.json
             ${{ runner.temp }}/bench/tables.md
             ${{ runner.temp }}/bench/oml-bench/
+
+  # Test 7's timing half (ADR-0072 d6, d13): wall-clock quantiles move with
+  # the host's load, so they run here, weekly and off the gating suite, which
+  # keeps the deterministic half: the same answers with and without the
+  # unreadable rows (#278). A failure here is a measurement to read, not a
+  # red pull request.
+  timing:
+    name: federated recall timing measurements (test 7)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: oml
+          POSTGRES_PASSWORD: oml_dev_only
+          POSTGRES_DB: oml_dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U oml -d oml_dev"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgres://oml:oml_dev_only@127.0.0.1:5432/oml_dev
+      OML_TEST_REQUIRE_SPLIT: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo test --locked -p oml-pg --test federation_timing -- --ignored --exact federated_recall_timing_does_not_depend_on_an_unreadable_workarea --nocapture
+      - run: cargo test --locked -p oml-port-contracts --test doubles -- --ignored --exact federated_recall_double_timing_does_not_depend_on_an_unreadable_workarea --nocapture

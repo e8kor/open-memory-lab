@@ -31,10 +31,10 @@ use oml_domain::{
 use crate::ports::Retriever;
 use crate::ports::{
     AdmissionEnvelope, ClientDocumentFetcher, Clock, CommitReceipt, CommitRequest, ConnectionStore,
-    DocumentFetchFailure, FetchedDocument, HandleSealer, IdGen, IdempotencyPut, IdempotencyRecord,
-    IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold, OutboxRow,
-    ScanOutcome, Scanner, SignInExchange, Signer, StoreError, SubjectRow, TailEvent, TailScan,
-    WebStore, claim_subject,
+    DocumentFetchFailure, FetchedDocument, HandleSealer, IdGen, IdempotencyClaim, IdempotencyPut,
+    IdempotencyRecord, IdempotencyScope, JournalStore, KeyringError, KeyringStore, MetadataFold,
+    OutboxRow, ScanOutcome, Scanner, SignInExchange, Signer, StoreError, SubjectRow, TailEvent,
+    TailScan, WebStore, claim_subject,
 };
 use crate::search::{
     Candidate, CandidateScope, MatchMode, RetrievalQuery, Retrieved, RetrieverKind,
@@ -157,6 +157,17 @@ fn keyword_ranked<'a>(
 
 /// Whether `m` counts in a reference set (ADR-0072 d4.2): a served tip of
 /// the kinds, never a retirement, unexpired at `expired_at`.
+/// This store's key for a form, its word: FNV-1a over the word's bytes, an
+/// opaque key as PostgreSQL's token id is.
+fn form_key(word: &str) -> i64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in word.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    i64::from_ne_bytes(h.to_ne_bytes())
+}
+
 fn reference_row(m: &MemoryRecord, kinds: &[MemoryKind], expired_at: Option<i64>) -> bool {
     served_tip(m)
         && HIT_KINDS.contains(&m.kind)
@@ -279,6 +290,9 @@ struct UnnamedWorkarea {
 struct TenantState {
     events: Vec<crate::domain::SignedEnvelope>,
     memories: BTreeMap<Uuid, MemoryRecord>,
+    /// The findings list, in the order recorded (ADR-0074 d23), as
+    /// `scan_findings` holds it.
+    findings: Vec<(Uuid, crate::types::VersionFinding)>,
     /// Each workarea's memory ids, so a read names the rows of its nodes
     /// alone and its work never depends on another node's rows (ADR-0072
     /// d6's timing row).
@@ -310,6 +324,10 @@ struct TenantState {
     transitions: BTreeMap<Uuid, (u64, TransitionRecord)>,
     outbox: Vec<OutboxRow>,
     idempotency: BTreeMap<(Uuid, Uuid, String), IdempotencyRecord>,
+    /// The scopes an act claimed and has not settled or released, each with
+    /// its request digest and claim id: the `idempotency` rows whose
+    /// `committed_at` is null (ADR-0070 d5; #233).
+    idempotency_claims: BTreeMap<(Uuid, Uuid, String), (String, Uuid)>,
     /// The web allowlist by the email's digest (postgres-schema.md
     /// `web_emails`; ADR-0045 d2).
     web_entries: BTreeMap<[u8; 32], WebEntry>,
@@ -354,6 +372,20 @@ pub struct MemStore {
     refuse_next: Arc<Mutex<Option<(&'static str, StoreError)>>>,
     /// The next idempotency lookup answers no record, then reads normally.
     miss_next_lookup: Arc<AtomicBool>,
+    /// The next idempotency settle fails as a lost connection would, writing
+    /// nothing, then settles normally: a failure between an act and its
+    /// record (#233).
+    fail_next_settle: Arc<AtomicBool>,
+    /// The next commit parks once it has applied, until the park opens:
+    /// an act whose commit landed and whose request is still in flight.
+    park_after_commit: Arc<Mutex<Option<CommitPark>>>,
+    /// Armed, the next commit makes the `workarea_children` read after it
+    /// fail once: a step after an act's commit that fails.
+    fail_children_after_commit: Arc<AtomicBool>,
+    fail_next_children: Arc<AtomicBool>,
+    /// The next commit panics once it has applied: a defect in an act
+    /// after its commit landed.
+    panic_after_commit: Arc<AtomicBool>,
     /// `similar_candidates` ignores its scope (a store that regressed), so
     /// a test proves the core admits by recall's rule on its own.
     widen_similar: Arc<AtomicBool>,
@@ -382,6 +414,43 @@ pub struct MemStore {
     /// the declining nodes and the reference counts — shared by every
     /// handle, so a law can hold that a recall made none (ADR-0072 d12).
     federation_reads: Arc<AtomicU64>,
+    /// How many widen-signal reads the store answered: a held signal's
+    /// query forms, read on a `scope` recall in place of any count
+    /// (ADR-0072 d8, d12, as built by #244).
+    widen_signal_reads: Arc<AtomicU64>,
+    /// Whether the next vocabulary read yields once before it reads, so a
+    /// test can commit while a widen signal's build is in flight (#244).
+    pause_vocabulary: Arc<AtomicBool>,
+    /// How many memory rows the recall path's reads visited, across every
+    /// handle: a recall's work, counted, so a law can hold that it does not
+    /// grow with rows the key cannot read (ADR-0072 d13 test 7; #278).
+    rows_read: Arc<AtomicU64>,
+    /// The keys `key` answers absent while a user root's listing still
+    /// names them: a key gone between a use case's listing and its read.
+    vanished_keys: Arc<Mutex<BTreeSet<Uuid>>>,
+    /// Whether the next vocabulary read never returns, so a test can hold
+    /// that the refresh stops a build at its timeout (#268).
+    hang_vocabulary: Arc<AtomicBool>,
+}
+
+/// A future that is pending once, waking itself, then ready: a point where
+/// a test's other future runs.
+struct YieldOnce(bool);
+
+impl Future for YieldOnce {
+    type Output = ();
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        if self.0 {
+            std::task::Poll::Ready(())
+        } else {
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
 }
 
 /// Work a test lands between a use case's reads and its commit: run once,
@@ -438,10 +507,51 @@ impl MemStore {
         }
     }
 
+    /// How many memory rows the recall path's reads (`retrieve`, the
+    /// reference and vocabulary counts, steering) visited on any handle.
+    #[must_use]
+    pub fn rows_read(&self) -> u64 {
+        self.rows_read.load(Ordering::SeqCst)
+    }
+
+    /// The rows on `nodes`, read by workarea and counted in
+    /// [`Self::rows_read`]: the one way the recall path's reads reach a
+    /// memory row, so no read of it can skip the count (#278).
+    fn rows_on<'s, 'n>(
+        &self,
+        state: &'s TenantState,
+        nodes: impl Iterator<Item = &'n Uuid>,
+    ) -> impl Iterator<Item = &'s MemoryRecord> {
+        let rows_read = Arc::clone(&self.rows_read);
+        nodes
+            .filter_map(|n| state.by_workarea.get(n))
+            .flatten()
+            .filter_map(|id| state.memories.get(id))
+            .inspect(move |_| {
+                rows_read.fetch_add(1, Ordering::SeqCst);
+            })
+    }
+
     /// How many federation reads every handle of this store answered.
     #[must_use]
     pub fn federation_reads(&self) -> u64 {
         self.federation_reads.load(Ordering::SeqCst)
+    }
+
+    /// Makes the next vocabulary read yield once before it reads (#244).
+    pub fn pause_next_vocabulary_read(&self) {
+        self.pause_vocabulary.store(true, Ordering::SeqCst);
+    }
+
+    /// Makes the next vocabulary read never return (#268).
+    pub fn hang_next_vocabulary_read(&self) {
+        self.hang_vocabulary.store(true, Ordering::SeqCst);
+    }
+
+    /// How many widen-signal reads every handle of this store answered.
+    #[must_use]
+    pub fn widen_signal_reads(&self) -> u64 {
+        self.widen_signal_reads.load(Ordering::SeqCst)
     }
 
     /// The store that answers the `bm25` retriever with its any-word list:
@@ -541,6 +651,56 @@ impl MemStore {
         self.miss_next_lookup.store(true, Ordering::SeqCst);
     }
 
+    /// Fails the next idempotency settle with a backend error, writing
+    /// nothing, then settles normally again: the act committed and its
+    /// record was lost, as a process that dies between them loses it
+    /// (#233).
+    pub fn fail_next_idempotency_settle(&self) {
+        self.fail_next_settle.store(true, Ordering::SeqCst);
+    }
+
+    /// Parks the next commit once it has applied, until the returned park
+    /// opens: the commit has landed and its caller has not seen it, which
+    /// a test uses to drop the request at that point (#233).
+    #[must_use]
+    pub fn park_after_next_commit(&self) -> CommitPark {
+        let park = CommitPark::default();
+        *self.park_after_commit.lock().expect("park lock") = Some(park.clone());
+        park
+    }
+
+    /// Fails the first `workarea_children` read after the next commit, as
+    /// a lost connection would: a read an act makes after its commit fails
+    /// (#233).
+    pub fn fail_workarea_children_after_next_commit(&self) {
+        self.fail_children_after_commit
+            .store(true, Ordering::SeqCst);
+    }
+
+    /// Panics once the next commit has applied, as a defect after an act's
+    /// commit would (#233).
+    pub fn panic_after_next_commit(&self) {
+        self.panic_after_commit.store(true, Ordering::SeqCst);
+    }
+
+    /// What runs after a commit applied, outside the tenant's lock.
+    async fn after_commit(&self) {
+        assert!(
+            !self.panic_after_commit.swap(false, Ordering::SeqCst),
+            "a defect after the commit applied"
+        );
+        if self
+            .fail_children_after_commit
+            .swap(false, Ordering::SeqCst)
+        {
+            self.fail_next_children.store(true, Ordering::SeqCst);
+        }
+        let park = self.park_after_commit.lock().expect("park lock").take();
+        if let Some(park) = park {
+            park.wait().await;
+        }
+    }
+
     /// Makes `similar_candidates` ignore its scope and name every version of
     /// the tenant that shares a key, as a store whose scope predicate
     /// regressed would: the core's own admission is then the only filter
@@ -614,6 +774,16 @@ impl MemStore {
         if let Some(key) = state.keys.get_mut(&key_id) {
             key.user = user;
         }
+    }
+
+    /// Makes `key` answer `key_id` absent from now on while
+    /// `web_user_keys` still lists it: a key gone since a use case listed
+    /// its user root's keys, which no verb does (ADR-0068 d8, #277).
+    pub fn vanish_key(&self, key_id: Uuid) {
+        self.vanished_keys
+            .lock()
+            .expect("vanished lock")
+            .insert(key_id);
     }
 
     /// Test visibility: how many names have been looked up through
@@ -1622,8 +1792,16 @@ fn apply_fold(
             let key_id = connection.key_id;
             void_unopened_codes(state, key_id, seq);
         }
-        MetadataFold::MemoryHeld { memory, enqueue } => {
+        MetadataFold::MemoryHeld {
+            memory,
+            enqueue,
+            findings,
+        } => {
             require_free_ordinal(state, &memory)?;
+            for mut f in findings.into_vec() {
+                f.event_seq = Some(seq);
+                state.findings.push((memory.memory_id, f));
+            }
             if enqueue {
                 state.queue.push(QueueEntry {
                     memory_id: memory.memory_id,
@@ -1676,13 +1854,44 @@ fn apply_fold(
             scanned_under,
             versions,
         } => {
-            for (memory_id, finding) in versions {
-                if let Some(memory) = state.memories.get_mut(&memory_id)
+            for v in versions {
+                if let Some(memory) = state.memories.get_mut(&v.memory_id)
                     && memory.status == MemoryStatus::Held
                 {
                     memory.scanned_under.clone_from(&scanned_under);
                     if memory.scan_finding.is_none() {
-                        memory.scan_finding = finding;
+                        memory.scan_finding = v.summary;
+                    }
+                    // A finding the list holds by class, rule and field
+                    // stays as first recorded (scan_findings_one); a
+                    // migrated one with no field stands for one place of
+                    // its class and rule, the first this rescan finds.
+                    let mut taken: Vec<(String, String)> = Vec::new();
+                    for mut f in v.findings {
+                        let placeless = state
+                            .findings
+                            .iter()
+                            .filter(|(id, g)| {
+                                *id == v.memory_id
+                                    && g.class == f.class
+                                    && g.rule == f.rule
+                                    && g.field.is_none()
+                            })
+                            .count();
+                        let key = (f.class.clone(), f.rule.clone());
+                        let seen = taken.iter().filter(|k| **k == key).count();
+                        taken.push(key);
+                        let held = seen < placeless
+                            || state.findings.iter().any(|(id, g)| {
+                                *id == v.memory_id
+                                    && g.class == f.class
+                                    && g.rule == f.rule
+                                    && g.field == f.field
+                            });
+                        if !held {
+                            f.event_seq = Some(seq);
+                            state.findings.push((v.memory_id, f));
+                        }
                     }
                 }
             }
@@ -2081,7 +2290,7 @@ fn append(state: &mut TenantState, req: CommitRequest) -> Result<CommitReceipt, 
         // One scope holds one record; the caller drops the staged state on
         // a refusal, so the fold above is undone with it.
         let scope = (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key);
-        if state.idempotency.contains_key(&scope) {
+        if state.idempotency.contains_key(&scope) || state.idempotency_claims.contains_key(&scope) {
             return Err(StoreError::IdempotencyRecorded);
         }
         state.idempotency.insert(scope, put.record);
@@ -2146,12 +2355,7 @@ impl Retriever for MemStore {
             nodes.extend(own.nodes.iter().copied());
         }
         let rows_of = |nodes: &BTreeSet<Uuid>| -> Vec<&MemoryRecord> {
-            nodes
-                .iter()
-                .filter_map(|n| state.by_workarea.get(n))
-                .flatten()
-                .filter_map(|id| state.memories.get(id))
-                .collect()
+            self.rows_on(&state, nodes.iter()).collect()
         };
         let scoped = rows_of(&nodes);
         // The scope is the core's: promoted served tips on its nodes, and
@@ -2450,30 +2654,34 @@ impl JournalStore for MemStore {
         // provides with a row lock on the chain head (ADR-0002). The links
         // apply to a copy that replaces the state only once every one has
         // applied, so a refused link leaves the earlier ones unwritten.
-        let mut state = tenant.lock().expect("tenant lock");
-        let mut staged = state.clone();
-        let mut receipt = append(&mut staged, first)?;
-        for req in reqs {
-            if req.event.envelope.tenant_id != tenant_id {
-                return Err(StoreError::Backend(
-                    "a chain commit names one tenant".to_owned(),
-                ));
-            }
-            receipt = append(&mut staged, req)?;
-        }
-        if !tenant_names.is_empty() {
-            let mut names = self.tenant_names.lock().expect("tenant names lock");
-            let mut staged_names = names.clone();
-            for (genesis, name) in &tenant_names {
-                if *genesis {
-                    name_tenant(&mut staged_names, tenant_id, name)?;
-                } else {
-                    assign_tenant_name(&mut staged_names, tenant_id, name)?;
+        let receipt = {
+            let mut state = tenant.lock().expect("tenant lock");
+            let mut staged = state.clone();
+            let mut receipt = append(&mut staged, first)?;
+            for req in reqs {
+                if req.event.envelope.tenant_id != tenant_id {
+                    return Err(StoreError::Backend(
+                        "a chain commit names one tenant".to_owned(),
+                    ));
                 }
+                receipt = append(&mut staged, req)?;
             }
-            *names = staged_names;
-        }
-        *state = staged;
+            if !tenant_names.is_empty() {
+                let mut names = self.tenant_names.lock().expect("tenant names lock");
+                let mut staged_names = names.clone();
+                for (genesis, name) in &tenant_names {
+                    if *genesis {
+                        name_tenant(&mut staged_names, tenant_id, name)?;
+                    } else {
+                        assign_tenant_name(&mut staged_names, tenant_id, name)?;
+                    }
+                }
+                *names = staged_names;
+            }
+            *state = staged;
+            receipt
+        };
+        self.after_commit().await;
         Ok(receipt)
     }
 
@@ -2695,12 +2903,7 @@ impl JournalStore for MemStore {
             .collect();
         if let Some(tenant) = self.tenant_existing(tenant_id) {
             let state = tenant.lock().expect("tenant lock");
-            let rows = scope
-                .nodes
-                .iter()
-                .filter_map(|n| state.by_workarea.get(n))
-                .flatten()
-                .filter_map(|id| state.memories.get(id));
+            let rows = self.rows_on(&state, scope.nodes.iter());
             for m in rows {
                 if !reference_row(m, &scope.kinds, scope.expired_at) {
                     continue;
@@ -2724,6 +2927,79 @@ impl JournalStore for MemStore {
         })
     }
 
+    /// Every word's counts over the nodes, as [`Self::reference_counts`]
+    /// counts a query's words: a federation read, made off the request path.
+    async fn vocabulary_counts(
+        &self,
+        tenant_id: Uuid,
+        scope: &crate::federation::CountsScope,
+        max_pairs: usize,
+    ) -> Result<Option<crate::federation::VocabularyCounts>, StoreError> {
+        self.federation_reads.fetch_add(1, Ordering::SeqCst);
+        if self.pause_vocabulary.swap(false, Ordering::SeqCst) {
+            YieldOnce(false).await;
+        }
+        if self.hang_vocabulary.swap(false, Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+        let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
+        let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
+        if let Some(tenant) = self.tenant_existing(tenant_id) {
+            let state = tenant.lock().expect("tenant lock");
+            let held = self.rows_on(&state, scope.nodes.iter());
+            for m in held {
+                if !reference_row(m, &scope.kinds, scope.expired_at) {
+                    continue;
+                }
+                let Some(n) = rows.get_mut(&m.workarea_id) else {
+                    continue;
+                };
+                *n += 1;
+                for w in words(&m.body) {
+                    *df.entry((m.workarea_id, form_key(&w))).or_default() += 1;
+                }
+                if df.len() > max_pairs {
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(Some(crate::federation::VocabularyCounts::from_counts(
+            rows,
+            df.into_iter().map(|((node, form), n)| (node, form, n)),
+        )))
+    }
+
+    /// The query's words looked up in the vocabulary: one signal read, no
+    /// count read. This store prunes nothing.
+    async fn counts_from_vocabulary(
+        &self,
+        vocabulary: &crate::federation::VocabularyCounts,
+        query: &str,
+        _prunes: bool,
+    ) -> Result<crate::federation::ReferenceCounts, StoreError> {
+        self.widen_signal_reads.fetch_add(1, Ordering::SeqCst);
+        let words: Vec<String> = words(query).into_iter().collect();
+        let keys: Vec<i64> = words.iter().map(|w| form_key(w)).collect();
+        let nodes = vocabulary
+            .rows
+            .iter()
+            .map(|(node, n)| {
+                (
+                    *node,
+                    oml_domain::federation::SourceCounts {
+                        rows: *n,
+                        df: keys.iter().map(|k| vocabulary.df(node, *k)).collect(),
+                    },
+                )
+            })
+            .collect();
+        Ok(crate::federation::ReferenceCounts {
+            words,
+            pruned: Vec::new(),
+            nodes,
+        })
+    }
+
     async fn steering_in_force(
         &self,
         tenant_id: Uuid,
@@ -2736,11 +3012,8 @@ impl JournalStore for MemStore {
         // A promoted version always carries the `promoted_at` its fold
         // stamped, so no row in force is passed over here.
         // The named nodes' rows alone, read by workarea.
-        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = nodes
-            .iter()
-            .filter_map(|n| state.by_workarea.get(n))
-            .flatten()
-            .filter_map(|id| state.memories.get(id))
+        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = self
+            .rows_on(&state, nodes.iter())
             .filter(|m| served_tip(m) && m.kind == MemoryKind::Steering)
             .filter_map(|m| {
                 let depth = nodes.iter().position(|n| *n == m.workarea_id)?;
@@ -2765,11 +3038,8 @@ impl JournalStore for MemStore {
             return Ok(Vec::new());
         };
         let state = tenant.lock().expect("tenant lock");
-        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = nodes
-            .iter()
-            .filter_map(|n| state.by_workarea.get(n))
-            .flatten()
-            .filter_map(|id| state.memories.get(id))
+        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = self
+            .rows_on(&state, nodes.iter())
             .filter(|m| m.kind == MemoryKind::Steering && !m.retirement && tip_at(&state, m, as_of))
             .filter_map(|m| {
                 let depth = nodes.iter().position(|n| *n == m.workarea_id)?;
@@ -2922,13 +3192,30 @@ impl JournalStore for MemStore {
             }))
     }
 
+    async fn scan_findings(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+    ) -> Result<Vec<(Uuid, crate::types::VersionFinding)>, StoreError> {
+        let Some(tenant) = self.tenant_existing(tenant_id) else {
+            return Ok(Vec::new());
+        };
+        let state = tenant.lock().expect("tenant lock");
+        Ok(state
+            .findings
+            .iter()
+            .filter(|(id, _)| memory_ids.contains(id))
+            .cloned()
+            .collect())
+    }
+
     async fn scan_backlog(
         &self,
         tenant_id: Uuid,
         current: Option<&str>,
-    ) -> Result<(u64, u64), StoreError> {
+    ) -> Result<crate::ports::ScanBacklog, StoreError> {
         let Some(tenant) = self.tenant_existing(tenant_id) else {
-            return Ok((0, 0));
+            return Ok(crate::ports::ScanBacklog::default());
         };
         let state = tenant.lock().expect("tenant lock");
         let older: Vec<&MemoryRecord> = state
@@ -2940,7 +3227,20 @@ impl JournalStore for MemStore {
             .iter()
             .filter(|m| m.status == MemoryStatus::Held)
             .count();
-        Ok((held as u64, older.len() as u64))
+        let unlisted = state
+            .memories
+            .values()
+            .filter(|m| {
+                m.status == MemoryStatus::Held
+                    && m.scan_finding.is_some()
+                    && !state.findings.iter().any(|(id, _)| *id == m.memory_id)
+            })
+            .count();
+        Ok(crate::ports::ScanBacklog {
+            held_unrescanned: held as u64,
+            rescan_due: older.len() as u64,
+            findings_unlisted: unlisted as u64,
+        })
     }
 
     async fn held_count(&self, tenant_id: Uuid, nodes: &[Uuid]) -> Result<u64, StoreError> {
@@ -3295,6 +3595,14 @@ impl JournalStore for MemStore {
     }
 
     async fn key(&self, tenant_id: Uuid, key_id: Uuid) -> Result<Option<KeyRecord>, StoreError> {
+        if self
+            .vanished_keys
+            .lock()
+            .expect("vanished lock")
+            .contains(&key_id)
+        {
+            return Ok(None);
+        }
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
         };
@@ -3476,6 +3784,11 @@ impl JournalStore for MemStore {
         tenant_id: Uuid,
         workarea_id: Uuid,
     ) -> Result<Vec<WorkareaRecord>, StoreError> {
+        if self.fail_next_children.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Backend(
+                "the connection was lost reading the children".to_owned(),
+            ));
+        }
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(Vec::new());
         };
@@ -3546,15 +3859,68 @@ impl JournalStore for MemStore {
             .cloned())
     }
 
-    async fn idempotency_put(&self, put: IdempotencyPut) -> Result<bool, StoreError> {
+    async fn idempotency_claim(
+        &self,
+        scope: &IdempotencyScope,
+        request_digest: &str,
+        claim_id: Uuid,
+    ) -> Result<IdempotencyClaim, StoreError> {
+        let state = self.tenant(scope.tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        let key = (scope.key_id, scope.workarea_id, scope.idem_key.clone());
+        if let Some(record) = state.idempotency.get(&key) {
+            return Ok(IdempotencyClaim::Recorded(record.clone()));
+        }
+        if let Some((digest, _)) = state.idempotency_claims.get(&key) {
+            return Ok(IdempotencyClaim::InProgress {
+                request_digest: digest.clone(),
+            });
+        }
+        state
+            .idempotency_claims
+            .insert(key, (request_digest.to_owned(), claim_id));
+        Ok(IdempotencyClaim::Claimed)
+    }
+
+    async fn idempotency_settle(
+        &self,
+        put: IdempotencyPut,
+        claim_id: Uuid,
+    ) -> Result<bool, StoreError> {
+        if self.fail_next_settle.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Backend(
+                "the connection was lost before the record was written".to_owned(),
+            ));
+        }
         let state = self.tenant(put.scope.tenant_id);
         let mut state = state.lock().expect("tenant lock");
         let key = (put.scope.key_id, put.scope.workarea_id, put.scope.idem_key);
-        if state.idempotency.contains_key(&key) {
+        if state.idempotency_claims.get(&key)
+            != Some(&(put.record.request_digest.clone(), claim_id))
+        {
             return Ok(false);
         }
+        state.idempotency_claims.remove(&key);
         state.idempotency.insert(key, put.record);
         Ok(true)
+    }
+
+    async fn idempotency_release(
+        &self,
+        scope: &IdempotencyScope,
+        claim_id: Uuid,
+    ) -> Result<(), StoreError> {
+        let state = self.tenant(scope.tenant_id);
+        let mut state = state.lock().expect("tenant lock");
+        let key = (scope.key_id, scope.workarea_id, scope.idem_key.clone());
+        if state
+            .idempotency_claims
+            .get(&key)
+            .is_some_and(|(_, held)| *held == claim_id)
+        {
+            state.idempotency_claims.remove(&key);
+        }
+        Ok(())
     }
 
     async fn brief_edge(
@@ -4734,6 +5100,50 @@ impl IdGen for SeqIdGen {
         let mut secret = [0_u8; 32];
         secret[24..].copy_from_slice(&n.to_be_bytes());
         secret
+    }
+}
+
+/// A commit parked after it applied, until [`CommitPark::open`]: built on
+/// the standard library alone, as the doubles take no runtime.
+#[derive(Debug, Clone, Default)]
+pub struct CommitPark(Arc<ParkState>);
+
+#[derive(Debug, Default)]
+struct ParkState {
+    reached: AtomicBool,
+    open: AtomicBool,
+    waker: Mutex<Option<std::task::Waker>>,
+}
+
+impl CommitPark {
+    /// Whether a commit has applied and parked here.
+    #[must_use]
+    pub fn reached(&self) -> bool {
+        self.0.reached.load(Ordering::SeqCst)
+    }
+
+    /// Lets the parked commit return.
+    pub fn open(&self) {
+        self.0.open.store(true, Ordering::SeqCst);
+        if let Some(waker) = self.0.waker.lock().expect("waker lock").take() {
+            waker.wake();
+        }
+    }
+
+    async fn wait(&self) {
+        self.0.reached.store(true, Ordering::SeqCst);
+        std::future::poll_fn(|cx| {
+            if self.0.open.load(Ordering::SeqCst) {
+                return std::task::Poll::Ready(());
+            }
+            *self.0.waker.lock().expect("waker lock") = Some(cx.waker().clone());
+            if self.0.open.load(Ordering::SeqCst) {
+                std::task::Poll::Ready(())
+            } else {
+                std::task::Poll::Pending
+            }
+        })
+        .await;
     }
 }
 

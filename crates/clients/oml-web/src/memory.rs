@@ -189,7 +189,8 @@ fn attribution(m: &AdminRead, drawing: &str) -> String {
                 .join("<br>")
         }
     };
-    let key = m.key.as_deref().unwrap_or_default();
+    // A key with no name is named by its id (#253).
+    let key = m.key.as_deref().or(m.key_id.as_deref()).unwrap_or_default();
     let author = match &m.user {
         Some(user) => format!("{} ({})", short(key), short(user)),
         None => short(key),
@@ -572,6 +573,37 @@ mod tests {
         assert!(refuses_supersession(Some("guardrail")));
         assert!(!refuses_supersession(Some("memory")));
         assert!(!refuses_supersession(Some("derived_fact")));
+    }
+
+    /// A key with no name is named by its id, so "written by key" is never
+    /// empty (#253, m5).
+    #[test]
+    fn the_attribution_names_a_nameless_authoring_key_by_its_id() {
+        let read: AdminRead = serde_json::from_value(serde_json::json!({
+            "artifact_id": "m1", "claim_key": "c", "version": 1, "state": "promoted",
+            "workarea_path": "universe.alice", "text": "t", "key": null,
+            "key_id": "6f1c2d4e-0000-4000-8000-0000000000aa",
+            "principal": "alice", "user": "alice", "created_at": "2026-11-11T10:00:00Z",
+        }))
+        .unwrap();
+        let page = attribution(&read, "");
+        assert!(
+            page.contains("6f1c2d4e-0000-4000-8000-0000000000aa (alice)"),
+            "{page}"
+        );
+        let named: AdminRead = serde_json::from_value(serde_json::json!({
+            "artifact_id": "m1", "claim_key": "c", "version": 1, "state": "promoted",
+            "workarea_path": "universe.alice", "text": "t", "key": "alice-laptop",
+            "key_id": "6f1c2d4e-0000-4000-8000-0000000000aa",
+            "principal": "alice", "user": null, "created_at": "2026-11-11T10:00:00Z",
+        }))
+        .unwrap();
+        let page = attribution(&named, "");
+        assert!(page.contains("alice-laptop"), "{page}");
+        assert!(
+            !page.contains("0000000000aa"),
+            "a named key shows its name: {page}"
+        );
     }
 
     #[test]

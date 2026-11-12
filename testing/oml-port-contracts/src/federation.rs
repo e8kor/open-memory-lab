@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use oml_app::App;
+use oml_app::app::{WIDEN_SIGNAL_MAX_AGE_SECS, WIDEN_SIGNAL_REFRESH_SECS, WidenLimits};
 use oml_app::domain::access::Covers;
 use oml_app::domain::in_progress::{KeyProfile, WorkareaMode};
 use oml_app::domain::name::{Name, Reference};
@@ -72,6 +73,8 @@ fn grant(node: Uuid, role: Role, deny: Vec<Uuid>) -> GrantRequest {
 pub struct FedWorld<S: JournalStore> {
     pub app: FedApp<S>,
     pub store: S,
+    /// The app's clock: a test moves it to age a widen signal.
+    pub clock: FixedClock,
     pub tenant: Uuid,
     pub admin: String,
     pub writer: IssuedKey,
@@ -85,10 +88,16 @@ pub struct FedWorld<S: JournalStore> {
 impl<S: JournalStore + Clone> FedWorld<S> {
     /// The tree, the keys, and the rows each test adds to; federation on.
     pub async fn new(store: S) -> Self {
+        Self::with_limits(store, WidenLimits::default()).await
+    }
+
+    /// [`Self::new`] with the widen signal's bounds set (#244).
+    pub async fn with_limits(store: S, limits: WidenLimits) -> Self {
+        let clock = FixedClock::new();
         let app = App::new(
             store.clone(),
             MemSigner::new(TEST_SEED),
-            FixedClock::new(),
+            clock.clone(),
             SeqIdGen::new(),
             MarkerScanner::default(),
         )
@@ -104,7 +113,8 @@ impl<S: JournalStore + Clone> FedWorld<S> {
                 Pipeline::Bm25,
             )
             .expect("a search config"),
-        );
+        )
+        .with_widen_limits(limits);
         let boot = app
             .bootstrap_tenant(&BootstrapRequest {
                 tenant_name: fresh("fed"),
@@ -156,6 +166,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
         let mut world = FedWorld {
             app,
             store,
+            clock,
             tenant: boot.tenant_id,
             admin,
             writer,
@@ -354,6 +365,19 @@ impl<S: JournalStore + Clone> FedWorld<S> {
             .await
     }
 
+    /// A recall that asks for the key's widen signal at `scope`, then the
+    /// build the lead runs off the request: the next recall reads it.
+    pub async fn fresh_signal(
+        &self,
+        key: &IssuedKey,
+        query: &str,
+        scope: &str,
+        sources: Option<Sources>,
+    ) {
+        let _ = self.recall(key, query, scope, sources, "bm25", 10).await;
+        self.app.refresh_widen_signals().await;
+    }
+
     /// [`Self::recall`], with the key's own held rows when `held`.
     #[allow(clippy::too_many_arguments, reason = "one recall's fields")]
     pub async fn recall_held(
@@ -415,7 +439,7 @@ impl<S: JournalStore + Clone> FedWorld<S> {
 
 /// Everything an answer serves and records, but its `recall_id` and its
 /// timings: the hits with their scores' bits, terms and `via`, the steering,
-/// `search.sources`, the spellings, the terms, the pruned
+/// `search.sources`, `search.widen`, the spellings, the terms, the pruned
 /// words, the served ids, the digest and the event's federation record.
 #[must_use]
 pub fn fingerprint(r: &RecallResult) -> String {
@@ -436,8 +460,9 @@ pub fn fingerprint(r: &RecallResult) -> String {
         .collect();
     let steering: Vec<Uuid> = r.steering.iter().map(|m| m.memory.memory_id).collect();
     format!(
-        "hits={hits:?} steering={steering:?} sources={:?} did_you_mean={:?} terms={:?} pruned={:?} served={:?} digest={} event={:?} budget={:?} access={:?}",
+        "hits={hits:?} steering={steering:?} sources={:?} widen={:?} did_you_mean={:?} terms={:?} pruned={:?} served={:?} digest={} event={:?} budget={:?} access={:?}",
         r.sources,
+        r.widen,
         r.did_you_mean,
         r.terms,
         r.pruned,
@@ -469,13 +494,17 @@ const QUERIES: [&str; 3] = [
 ];
 
 /// Each mode's and query's fingerprint for `key` at `home`, at `k` 10 and
-/// with `max_sources` 8 and 1, so a cut is exercised.
+/// with `max_sources` 8 and 1, so a cut is exercised; each `scope` answer
+/// read off a widen signal built over the rows as they are now.
 async fn answers<S: JournalStore + Clone>(w: &FedWorld<S>, key: &IssuedKey) -> Vec<String> {
     let mut out = Vec::new();
+    // Every signal built before is past its bound, so each is rebuilt.
+    w.clock.advance(WIDEN_SIGNAL_MAX_AGE_SECS.unsigned_abs());
     for max in [8, 1] {
         w.max_sources(max).await;
         for sources in modes() {
             for query in QUERIES {
+                w.fresh_signal(key, query, "home", sources.clone()).await;
                 let answer = w
                     .recall(key, query, "home", sources.clone(), "bm25", 10)
                     .await;
@@ -1119,6 +1148,34 @@ pub async fn timing_sample<S: JournalStore + Clone>(
     out
 }
 
+/// Test 7's deterministic half: the [`fingerprint`] of each query's `wide`
+/// recall under `search`, every hit outside W. Equal before and after W's
+/// copies, it shows no copied row and no statistic of one reaches the
+/// answer, whatever the host's load; the timing half is a measurement run
+/// outside the gating suite (#278).
+pub async fn answer_sample<S: JournalStore + Clone>(
+    t: &TimingWorld<S>,
+    search: &str,
+) -> Vec<String> {
+    let mut out = Vec::with_capacity(QUERIES.len());
+    for query in QUERIES {
+        let answer = t
+            .world
+            .recall(&t.key, query, "home", Some(Sources::Wide), search, 10)
+            .await
+            .expect("wide");
+        assert!(
+            answer
+                .hits
+                .iter()
+                .all(|h| !t.w.contains(&h.served.memory.workarea_id)),
+            "a row of an unreadable workarea was served"
+        );
+        out.push(fingerprint(&answer));
+    }
+    out
+}
+
 /// Test 7, the comparison: W with no copies against W with many, p50 and
 /// p95 within noise — p50 within a factor of 2 and 3 ms, p95, which the
 /// suite's other tests running beside it move most, within a factor of 3
@@ -1143,7 +1200,7 @@ fn quantile(mut v: Vec<f64>, q: f64) -> f64 {
 /// Test 8: with federation off, `scope` is today's answer byte for byte —
 /// absent and explicit alike, no report, no hint, no record — and `wide`
 /// and a list are refused at `/sources`; turned on, a `scope` answer
-/// is the same answer byte for byte.
+/// is the same answer byte for byte but for the widen hint.
 pub async fn with_federation_off_scope_is_todays_answer_and_wider_is_refused<
     S: JournalStore + Clone,
 >(
@@ -1156,6 +1213,7 @@ pub async fn with_federation_off_scope_is_todays_answer_and_wider_is_refused<
     let on: Vec<RecallResult> = {
         let mut v = Vec::new();
         for query in QUERIES {
+            w.fresh_signal(&key, query, "home", None).await;
             v.push(
                 w.recall(&key, query, "home", None, "bm25", 10)
                     .await
@@ -1184,11 +1242,17 @@ pub async fn with_federation_off_scope_is_todays_answer_and_wider_is_refused<
             .await
             .expect("scope");
         assert_eq!(fingerprint(&absent), fingerprint(&explicit));
-        assert!(absent.sources.is_none() && absent.federation.is_none());
+        assert!(absent.sources.is_none() && absent.widen.is_none() && absent.federation.is_none());
+        assert!(
+            explicit.widen.is_none(),
+            "federation off, a held signal served the hint"
+        );
         assert!(absent.hits.iter().all(|h| h.source.is_none()));
-        // On, the same answer byte for byte: `scope` does no federation
-        // work (d12, as amended).
-        assert_eq!(fingerprint(&absent), fingerprint(&on[i]), "{query}");
+        // On, the same answer byte for byte but for the hint: `scope` does
+        // no federation work (d12, as amended; #244).
+        let mut same = on[i].clone();
+        same.widen = None;
+        assert_eq!(fingerprint(&absent), fingerprint(&same), "{query}");
         for sources in [Sources::Wide, Sources::List(vec!["legal".to_owned()])] {
             let refused = w
                 .recall(&key, query, "home", Some(sources), "bm25", 10)
@@ -1247,6 +1311,458 @@ pub async fn a_lists_answer_depends_on_the_listed_workareas_alone<S: JournalStor
             "an unlisted workarea moved a list's answer for {query:?}"
         );
     }
+}
+
+/// The world test 9b and the signal's laws read: `home`, the scope, and
+/// `legal` hold "kiwi" at the same rate per row; `product` holds it on one
+/// stray row; `orchard`, under `crew`, holds it on both its rows when
+/// `orchard` is true. The key reads `crew`, `legal` and `product`.
+pub async fn kiwi_world<S: JournalStore + Clone>(
+    store: S,
+    orchard: bool,
+) -> (FedWorld<S>, IssuedKey) {
+    kiwi_world_within(store, orchard, WidenLimits::default()).await
+}
+
+/// [`kiwi_world`] under the widen signal's bounds `limits`.
+pub async fn kiwi_world_within<S: JournalStore + Clone>(
+    store: S,
+    orchard: bool,
+    limits: WidenLimits,
+) -> (FedWorld<S>, IssuedKey) {
+    let mut w = FedWorld::with_limits(store, limits).await;
+    for (node, body) in [
+        ("home", "kiwi orchard notes"),
+        ("home", "kiwi harvest dates"),
+        ("home", "pear orchard notes"),
+        ("home", "plum harvest dates"),
+        ("legal", "kiwi import rules"),
+        ("legal", "kiwi labelling rules"),
+        ("legal", "pear import rules"),
+        ("legal", "plum labelling rules"),
+        ("product", "kiwi"),
+    ] {
+        w.promote(node, body).await;
+    }
+    for node in ["home", "legal", "product"] {
+        w.commit(node).await;
+    }
+    if orchard {
+        w.create("orchard", "crew").await;
+        w.promote("orchard", "kiwi grafting").await;
+        w.promote("orchard", "kiwi pruning").await;
+        w.commit("orchard").await;
+    }
+    let key = w
+        .key(Role::Reader, &["crew", "legal", "product"], &[])
+        .await;
+    (w, key)
+}
+
+/// A `scope` recall of "kiwi" at `home` and its hint.
+pub async fn kiwi_hint<S: JournalStore + Clone>(
+    w: &FedWorld<S>,
+    key: &IssuedKey,
+    k: usize,
+) -> Option<oml_app::federation::Widen> {
+    w.recall(key, "kiwi", "home", Some(Sources::Scope), "bm25", k)
+        .await
+        .expect("scope")
+        .widen
+}
+
+/// Test 9b, rebuilt on the precomputed signal (#244): the widen hint stays
+/// silent on a scope whose rate equals the candidates', ignores a
+/// candidate's single stray row, and fires on a candidate twice as rich
+/// per row, with the candidates holding the word and the lower bound on
+/// their rows.
+pub async fn the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let (mut w, key) = kiwi_world(store, false).await;
+    // Equal rates and a stray row fire nothing, at k 1 and at k 10, where
+    // the scope's two hits leave the answer short of k: the hint reads
+    // rates alone (d8 as amended by the phase 1 eval).
+    w.fresh_signal(&key, "kiwi", "home", Some(Sources::Scope))
+        .await;
+    for k in [1, 10] {
+        assert_eq!(
+            kiwi_hint(&w, &key, k).await,
+            None,
+            "equal rates, and one stray row twice as rich, fired the hint at k {k}"
+        );
+    }
+    w.create("orchard", "crew").await;
+    w.promote("orchard", "kiwi grafting").await;
+    w.promote("orchard", "kiwi pruning").await;
+    w.commit("orchard").await;
+    // The signal built before orchard is past its bound once rebuilt.
+    w.clock.advance(WIDEN_SIGNAL_MAX_AGE_SECS.unsigned_abs());
+    w.fresh_signal(&key, "kiwi", "home", Some(Sources::Scope))
+        .await;
+    let fired = kiwi_hint(&w, &key, 1)
+        .await
+        .expect("a source twice as rich fires the hint");
+    assert_eq!(
+        fired.candidates, 3,
+        "legal, product and orchard hold the word"
+    );
+    assert_eq!(fired.matches_at_least, 5);
+    // The hint rides `scope` alone: never `wide` or a list.
+    for sources in [Sources::Wide, Sources::List(vec!["legal".to_owned()])] {
+        let other = w
+            .recall(&key, "kiwi", "home", Some(sources), "bm25", 10)
+            .await
+            .expect("wider");
+        assert!(other.widen.is_none());
+    }
+}
+
+/// A `scope` recall that finds no signal for its key and scope answers
+/// without the hint, asks for one, and is counted for doctor; once the
+/// lead builds it off the request, the next recall reads the hint from it
+/// (#244).
+pub async fn a_scope_recall_without_its_signal_carries_no_hint_and_asks_for_one<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let (w, key) = kiwi_world(store, true).await;
+    assert!(!w.app.widen_signals_wanted());
+    assert_eq!(kiwi_hint(&w, &key, 10).await, None, "no signal, no hint");
+    assert!(
+        w.app.widen_signals_wanted(),
+        "the recall asked for its signal"
+    );
+    let (before, _) = w
+        .app
+        .federation_settings(w.admin.as_str())
+        .await
+        .expect("settings");
+    assert_eq!(before.widen_signal.unserved, 1);
+    assert_eq!(before.widen_signal.built, 0);
+    assert_eq!(w.app.refresh_widen_signals().await, 1);
+    assert!(!w.app.widen_signals_wanted());
+    assert!(
+        kiwi_hint(&w, &key, 10).await.is_some(),
+        "the built signal serves"
+    );
+    let (after, _) = w
+        .app
+        .federation_settings(w.admin.as_str())
+        .await
+        .expect("settings");
+    assert_eq!(after.widen_signal.built, 1);
+    assert_eq!(after.widen_signal.unserved, 1);
+    assert_eq!(after.widen_signal.failed, 0);
+    // Another scope, or other kinds, is another signal.
+    let other = w
+        .recall(&key, "kiwi", "legal", Some(Sources::Scope), "bm25", 10)
+        .await
+        .expect("scope at legal");
+    assert!(other.widen.is_none());
+    assert!(w.app.widen_signals_wanted());
+}
+
+/// A signal built under the key's grants before a change serves no hint,
+/// so counts of a node the key no longer reads never reach an answer; the
+/// signal rebuilt under the new grants decides the hint again (d6; #244).
+pub async fn a_signal_built_under_other_grants_serves_no_hint<S: JournalStore + Clone>(store: S) {
+    let (w, key) = kiwi_world(store, true).await;
+    w.fresh_signal(&key, "kiwi", "home", Some(Sources::Scope))
+        .await;
+    assert!(kiwi_hint(&w, &key, 10).await.is_some(), "orchard fires it");
+    w.app
+        .deny_key(
+            w.admin.as_str(),
+            key.key_id.into(),
+            w.node("orchard").into(),
+        )
+        .await
+        .expect("deny orchard");
+    assert_eq!(
+        kiwi_hint(&w, &key, 10).await,
+        None,
+        "a signal from before the denial served the hint"
+    );
+    assert!(w.app.widen_signals_wanted());
+    w.app.refresh_widen_signals().await;
+    // Rebuilt without orchard: legal's rate equals the scope's and
+    // product's one row is stray.
+    assert_eq!(kiwi_hint(&w, &key, 10).await, None);
+}
+
+/// A signal past its refresh age still serves and asks to be rebuilt; at
+/// its bound it serves nothing until it is (#244).
+pub async fn a_signal_at_its_age_bound_serves_no_hint<S: JournalStore + Clone>(store: S) {
+    let (w, key) = kiwi_world(store, true).await;
+    w.fresh_signal(&key, "kiwi", "home", Some(Sources::Scope))
+        .await;
+    w.clock.advance(WIDEN_SIGNAL_REFRESH_SECS.unsigned_abs());
+    assert!(
+        kiwi_hint(&w, &key, 10).await.is_some(),
+        "a signal past its refresh age serves"
+    );
+    assert!(w.app.widen_signals_wanted(), "and asks to be rebuilt");
+    w.app.refresh_widen_signals().await;
+    w.clock.advance(WIDEN_SIGNAL_MAX_AGE_SECS.unsigned_abs());
+    assert_eq!(
+        kiwi_hint(&w, &key, 10).await,
+        None,
+        "a signal at its bound served the hint"
+    );
+    w.app.refresh_widen_signals().await;
+    assert!(kiwi_hint(&w, &key, 10).await.is_some());
+}
+
+/// A status transition drops the tenant's signals at once, as an erasure,
+/// a demotion, a mode change and a policy change do: the next `scope`
+/// recall carries no hint from counts taken before it, and asks for a
+/// signal built after it (#244, review F4, F5).
+pub async fn a_status_transition_drops_the_tenants_signals_at_once<S: JournalStore + Clone>(
+    store: S,
+) {
+    let (w, key) = kiwi_world(store, true).await;
+    w.fresh_signal(&key, "kiwi", "home", Some(Sources::Scope))
+        .await;
+    assert!(kiwi_hint(&w, &key, 10).await.is_some(), "orchard fires it");
+    let proposal = w
+        .app
+        .propose_transition(
+            w.admin.as_str(),
+            w.node("orchard").into(),
+            WorkareaStatus::Validated,
+        )
+        .await
+        .expect("propose validated");
+    w.app
+        .ratify_transition(
+            w.reviewer.value.as_str(),
+            w.node("orchard").into(),
+            proposal.transition_id,
+        )
+        .await
+        .expect("ratify validated");
+    assert_eq!(
+        kiwi_hint(&w, &key, 10).await,
+        None,
+        "a signal from before the transition served the hint"
+    );
+    assert!(w.app.widen_signals_wanted());
+    w.app.refresh_widen_signals().await;
+    assert!(
+        kiwi_hint(&w, &key, 10).await.is_some(),
+        "a validated orchard is still a source"
+    );
+}
+
+/// A signal past the tenant's share is never read whole and never held;
+/// the build counts as failed with its reason, and no recall asks for it
+/// again until the mark is as old as the signal's bound (#244, review F1).
+pub async fn a_signal_past_the_tenants_share_is_marked_and_not_rebuilt<S: JournalStore + Clone>(
+    store: S,
+) {
+    let limits = WidenLimits {
+        tenant_pairs: 3,
+        ..WidenLimits::default()
+    };
+    let (w, key) = kiwi_world_within(store, true, limits).await;
+    assert_eq!(kiwi_hint(&w, &key, 10).await, None);
+    assert_eq!(
+        w.app.refresh_widen_signals().await,
+        0,
+        "nothing past the share is held"
+    );
+    let (settings, _) = w
+        .app
+        .federation_settings(w.admin.as_str())
+        .await
+        .expect("settings");
+    assert_eq!(settings.widen_signal.failed, 1);
+    assert!(
+        settings
+            .widen_signal
+            .last_failure
+            .as_deref()
+            .is_some_and(|f| f.contains("share")),
+        "{:?}",
+        settings.widen_signal.last_failure
+    );
+    assert_eq!(kiwi_hint(&w, &key, 10).await, None);
+    assert!(
+        !w.app.widen_signals_wanted(),
+        "a marked signal was asked for again within the bound"
+    );
+    w.clock.advance(WIDEN_SIGNAL_MAX_AGE_SECS.unsigned_abs());
+    assert_eq!(kiwi_hint(&w, &key, 10).await, None);
+    assert!(
+        w.app.widen_signals_wanted(),
+        "past the bound it is asked for again"
+    );
+}
+
+/// Builds run one at a time in the order recalls asked for them, and the
+/// transport's timeout stops one build, not the refresh: the stopped
+/// signal alone is counted as failed and marked, and the builds behind it
+/// go on (#244, review round 2, R3).
+pub async fn a_stopped_build_marks_its_own_signal_and_the_builds_behind_it_go_on<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let (w, key) = kiwi_world(store, true).await;
+    for scope in ["home", "legal", "product"] {
+        let answer = w
+            .recall(&key, "kiwi", scope, Some(Sources::Scope), "bm25", 10)
+            .await
+            .expect("scope");
+        assert!(answer.widen.is_none());
+    }
+    let refresh = w.app.begin_widen_refresh().expect("no refresh runs");
+    assert!(
+        w.app.begin_widen_refresh().is_none(),
+        "a second refresh ran beside the first"
+    );
+    let first = w.app.next_widen_build(&refresh).expect("home first");
+    // The transport's timeout stops the first build.
+    w.app.widen_build_stopped(&first);
+    let mut built = 0;
+    while let Some(build) = w.app.next_widen_build(&refresh) {
+        if w.app.run_widen_build(&build).await {
+            built += 1;
+        }
+    }
+    drop(refresh);
+    assert_eq!(built, 2, "the builds behind the stopped one went on");
+    let (settings, _) = w
+        .app
+        .federation_settings(w.admin.as_str())
+        .await
+        .expect("settings");
+    assert_eq!(settings.widen_signal.failed, 1);
+    assert!(
+        settings
+            .widen_signal
+            .last_failure
+            .as_deref()
+            .is_some_and(|f| f.contains("stopped")),
+        "{:?}",
+        settings.widen_signal.last_failure
+    );
+    // home, asked for first, was the one stopped: it is marked.
+    assert_eq!(kiwi_hint(&w, &key, 10).await, None);
+    assert!(
+        !w.app.widen_signals_wanted(),
+        "the stopped signal was asked for again within the bound"
+    );
+}
+
+/// The widen signal's counts and the reference counts agree: for any
+/// query, the counts taken out of a vocabulary read over a set of nodes
+/// equal the reference counts read over the same nodes, kinds and expiry,
+/// pruning or not, and a vocabulary past its cap is not read (#244). Whether any read pruned a word, so a store that
+/// prunes can hold that the law met its pruning.
+pub async fn the_signals_counts_equal_the_reference_counts<S: JournalStore + Clone>(
+    store: S,
+) -> bool {
+    let mut pruned_any = false;
+    use oml_app::federation::CountsScope;
+    let w = FedWorld::seeded(store).await;
+    // One promoted row that expires, so the subtraction is exercised.
+    let expiring = w
+        .app
+        .submit_memory(
+            w.writer.value.as_str(),
+            &SubmitRequest {
+                origin: None,
+                on_similar: Default::default(),
+                valid_from: None,
+                valid_until: Some("2026-10-30".to_owned()),
+                anchor: None,
+                idempotency_key: "fed-expiring".to_owned(),
+                claim_key: Some("fed-expiring".to_owned()),
+                verb: None,
+                kind: MemoryKind::Memory,
+                body: "an expiring invoice retry note".to_owned(),
+                workarea: Some(w.node("legal").into()),
+                derives_from: Vec::new(),
+                severity: None,
+                rule: None,
+                format: None,
+                title: None,
+            },
+        )
+        .await
+        .expect("submit an expiring row")
+        .receipt
+        .memory_id;
+    w.app
+        .post_verdict(w.reviewer.value.as_str(), expiring, Verdict::Approve, None)
+        .await
+        .expect("approve the expiring row");
+    let nodes: Vec<Uuid> = ["home", "crew", "legal", "product", "drafts"]
+        .iter()
+        .map(|n| w.node(n))
+        .collect();
+    // 2026-11-01T00:00:00Z, past the row's valid time.
+    let after_expiry = 1_793_491_200_000_000_i64;
+    for kinds in [
+        vec![MemoryKind::Memory, MemoryKind::DerivedFact],
+        vec![MemoryKind::Memory],
+    ] {
+        for expired_at in [None, Some(after_expiry)] {
+            for prunes in [false, true] {
+                let scope = CountsScope {
+                    nodes: nodes.clone(),
+                    kinds: kinds.clone(),
+                    expired_at,
+                    prunes,
+                };
+                let vocabulary = w
+                    .store
+                    .vocabulary_counts(w.tenant, &scope, usize::MAX)
+                    .await
+                    .expect("the vocabulary")
+                    .expect("no cap");
+                // Past its cap the read stops and holds nothing (review F1).
+                assert!(vocabulary.pairs() > 1);
+                assert_eq!(
+                    w.store
+                        .vocabulary_counts(w.tenant, &scope, 1)
+                        .await
+                        .expect("a capped read"),
+                    None,
+                    "a vocabulary past its cap was read"
+                );
+                for query in [
+                    "invoice retry policy",
+                    "invoices retried",
+                    "expiring note",
+                    "nothing matches zzz",
+                    "the",
+                ] {
+                    let read = w
+                        .store
+                        .reference_counts(w.tenant, &scope, query)
+                        .await
+                        .expect("the reference counts");
+                    let looked_up = w
+                        .store
+                        .counts_from_vocabulary(&vocabulary, query, prunes)
+                        .await
+                        .expect("the signal's counts");
+                    assert_eq!(
+                        looked_up, read,
+                        "{query:?} under kinds {kinds:?}, expired_at {expired_at:?}, prunes {prunes}"
+                    );
+                    pruned_any |= !read.pruned.is_empty();
+                }
+            }
+        }
+    }
+    pruned_any
 }
 
 /// A `wide` answer marks each hit's source: `scope` for the scope's
@@ -1600,4 +2116,22 @@ where
     a_held_row_scores_alike_on_the_scan_and_the_postings(make().await).await;
     the_policies_are_never_an_agents_act(make().await).await;
     the_candidate_count_is_the_trusted_sources_a_key_reads(make().await).await;
+}
+
+/// The widen hint's laws on its precomputed signal (ADR-0072 d8, d12, as
+/// built by #244) over fresh stores from `make`.
+pub async fn run_widen_suite<S, F, Fut>(make: F)
+where
+    S: JournalStore + Clone,
+    F: Fn() -> Fut,
+    Fut: core::future::Future<Output = S>,
+{
+    let _ = the_signals_counts_equal_the_reference_counts(make().await).await;
+    the_widen_hint_fires_on_a_richer_source_and_never_on_a_stray_row(make().await).await;
+    a_scope_recall_without_its_signal_carries_no_hint_and_asks_for_one(make().await).await;
+    a_signal_built_under_other_grants_serves_no_hint(make().await).await;
+    a_signal_at_its_age_bound_serves_no_hint(make().await).await;
+    a_status_transition_drops_the_tenants_signals_at_once(make().await).await;
+    a_signal_past_the_tenants_share_is_marked_and_not_rebuilt(make().await).await;
+    a_stopped_build_marks_its_own_signal_and_the_builds_behind_it_go_on(make().await).await;
 }

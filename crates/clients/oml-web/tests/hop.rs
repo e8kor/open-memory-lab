@@ -56,7 +56,7 @@ impl Transport for Double {
             .unwrap()
             .to_owned();
         let web = format!("Bearer {}", capacity_credential(TOKEN, "web"));
-        let answer = if path == "/v2/whoami" {
+        let answer = if path == "/v2/whoami?person=false" {
             match (&self.answers.whoami, bearer == web) {
                 (Some(me), true) => json_response(200, me),
                 _ => json_response(401, &envelope("auth.invalid")),
@@ -232,7 +232,10 @@ async fn auth_invalid_from_whoami_sends_the_person_to_sign_in() {
         headers[header::LOCATION],
         "/web/sign-in?next=%2Fweb%2Fguardrails"
     );
-    assert!(calls.iter().all(|(p, _)| p == "/v2/whoami"), "{calls:?}");
+    assert!(
+        calls.iter().all(|(p, _)| p == "/v2/whoami?person=false"),
+        "{calls:?}"
+    );
 }
 
 #[tokio::test]

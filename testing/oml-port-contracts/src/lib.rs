@@ -35,10 +35,12 @@ use oml_app::domain::{
 use oml_app::doubles::FakeSparseEncoder;
 use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
-    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen, IdempotencyPut,
-    IdempotencyRecord, IdempotencyScope, JournalStore, KeyringStore, MetadataFold, OutboxRow,
-    Reranker, Retriever, Scanner, Signer, StoreError, SubjectRow,
+    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen,
+    IdempotencyClaim, IdempotencyPut, IdempotencyRecord, IdempotencyScope, JournalStore,
+    KeyringStore, MetadataFold, OutboxRow, Reranker, Retriever, Scanner, Signer, StoreError,
+    SubjectRow,
 };
+use oml_app::ports::{RecordedVersion, ScanBacklog};
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, OwnHeldScope, PostingsHealth, RetrievalQuery,
     Retrieved, RetrieverKind, SparsePending,
@@ -52,6 +54,7 @@ use oml_app::types::{
     SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
     WorkareaRecord,
 };
+use oml_app::types::{FindingVerdict, FoundBy, VersionFinding};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -481,6 +484,7 @@ pub async fn hold<S: JournalStore>(
         MetadataFold::MemoryHeld {
             memory,
             enqueue: true,
+            findings: Box::default(),
         },
         None,
     )
@@ -828,6 +832,7 @@ pub async fn journal_memory_fold_and_lookup<S: JournalStore>(store: &S) {
         MetadataFold::MemoryHeld {
             memory,
             enqueue: true,
+            findings: Box::default(),
         },
         None,
     )
@@ -1710,6 +1715,356 @@ pub async fn memories_reads_the_named_rows_in_the_order_named<S: JournalStore>(s
     );
 }
 
+fn finding(class: &str, rule: &str, field: &str, line: u32, found_by: FoundBy) -> VersionFinding {
+    VersionFinding {
+        class: class.to_owned(),
+        rule: rule.to_owned(),
+        verdict: FindingVerdict::Hold,
+        rule_set: Some("oml-scan/1.1".to_owned()),
+        field: Some(field.to_owned()),
+        line: Some(line),
+        via: Some("clean".to_owned()),
+        span: Some((4, 36)),
+        found_by,
+        event_seq: None,
+        migrated_from: None,
+    }
+}
+
+/// A held version's findings list is stored in the commit that admits it
+/// and reads back whole, in the order given, each finding under that
+/// commit's seq; a version with no finding, or another tenant's, reads
+/// none (ADR-0074 d23).
+pub async fn a_versions_findings_list_reads_back_in_order_under_its_event_seq<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(213);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0x213A);
+    let flagged = Uuid::from_u128(0x213B);
+    let clean = Uuid::from_u128(0x213C);
+    let key = Uuid::from_u128(0x213D);
+    let list = vec![
+        finding(
+            "injection.override",
+            "ignore-instructions",
+            "/body",
+            3,
+            FoundBy::Admission,
+        ),
+        finding(
+            "injection.role",
+            "persona-switch",
+            "/title",
+            1,
+            FoundBy::Admission,
+        ),
+        finding(
+            "unicode.invisible",
+            "tag-characters",
+            "/body/spec/note",
+            2,
+            FoundBy::Admission,
+        ),
+    ];
+    let receipt = rig
+        .commit(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": flagged.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: MemoryRecord {
+                    scan_finding: Some(
+                        "injection.override: ignore-instructions at /body line 3".to_owned(),
+                    ),
+                    ..held_memory(rig.tenant_id, wa, flagged, "wanda", key, "flagged")
+                },
+                enqueue: true,
+                findings: list.clone().into(),
+            },
+            None,
+        )
+        .await
+        .expect("commit the flagged version");
+    rig.commit(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": clean.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory: MemoryRecord {
+                claim_key: "clean".to_owned(),
+                ..held_memory(rig.tenant_id, wa, clean, "wanda", key, "clean")
+            },
+            enqueue: true,
+            findings: Box::default(),
+        },
+        None,
+    )
+    .await
+    .expect("commit the clean version");
+    let read = store
+        .scan_findings(rig.tenant_id, &[flagged, clean])
+        .await
+        .expect("scan_findings");
+    let expected: Vec<(Uuid, VersionFinding)> = list
+        .into_iter()
+        .map(|f| {
+            (
+                flagged,
+                VersionFinding {
+                    event_seq: Some(receipt.seq),
+                    ..f
+                },
+            )
+        })
+        .collect();
+    assert_eq!(read, expected, "the list, in order, under its commit's seq");
+    assert!(
+        store
+            .scan_findings(rig_tenant(214), &[flagged])
+            .await
+            .expect("scan_findings")
+            .is_empty(),
+        "another tenant reads none"
+    );
+    assert_eq!(
+        store
+            .scan_backlog(rig.tenant_id, Some("oml-scan/1.1"))
+            .await
+            .expect("backlog")
+            .findings_unlisted,
+        0,
+        "every held version with a finding has its list"
+    );
+}
+
+/// The recording rescan adds to a held version's list each finding it
+/// lacks by class, rule and field, under the rescan's seq, and keeps the
+/// one admission recorded; a version no longer held gains nothing; a held
+/// version with a `scan_finding` and no list is counted unlisted until
+/// then (ADR-0074 d23, d28).
+pub async fn a_recording_rescan_adds_only_the_findings_a_held_versions_list_lacks<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(215);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0x215A);
+    let held_id = Uuid::from_u128(0x215B);
+    let unlisted = Uuid::from_u128(0x215C);
+    let key = Uuid::from_u128(0x215D);
+    let summary = Some("injection.override: ignore-instructions at /body line 3".to_owned());
+    let admitted = finding(
+        "injection.override",
+        "ignore-instructions",
+        "/body",
+        3,
+        FoundBy::Admission,
+    );
+    let first = rig
+        .commit(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": held_id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: MemoryRecord {
+                    scan_finding: summary.clone(),
+                    ..held_memory(rig.tenant_id, wa, held_id, "wanda", key, "held")
+                },
+                enqueue: true,
+                findings: vec![admitted.clone()].into(),
+            },
+            None,
+        )
+        .await
+        .expect("commit");
+    // As a binary before the findings list wrote it: a finding, no list.
+    rig.commit(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": unlisted.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory: MemoryRecord {
+                claim_key: "unlisted".to_owned(),
+                scan_finding: summary.clone(),
+                ..held_memory(rig.tenant_id, wa, unlisted, "wanda", key, "unlisted")
+            },
+            enqueue: true,
+            findings: Box::default(),
+        },
+        None,
+    )
+    .await
+    .expect("commit");
+    assert_eq!(
+        store
+            .scan_backlog(rig.tenant_id, Some("oml-scan/1.1"))
+            .await
+            .expect("backlog"),
+        ScanBacklog {
+            held_unrescanned: 2,
+            rescan_due: 2,
+            findings_unlisted: 1,
+        }
+    );
+    let again = finding(
+        "injection.override",
+        "ignore-instructions",
+        "/body",
+        3,
+        FoundBy::Rescan,
+    );
+    let added = finding(
+        "injection.role",
+        "chat-template",
+        "/title",
+        1,
+        FoundBy::Rescan,
+    );
+    let rescan = rig
+        .commit(
+            store,
+            event_types::SCAN_FINDINGS_RECORDED,
+            json!({}),
+            MetadataFold::FindingsRecorded {
+                scanned_under: Some("oml-scan/1.1".to_owned()),
+                versions: vec![
+                    RecordedVersion {
+                        memory_id: held_id,
+                        summary: summary.clone(),
+                        findings: vec![again, added.clone()],
+                    },
+                    RecordedVersion {
+                        memory_id: unlisted,
+                        summary: summary.clone(),
+                        findings: vec![finding(
+                            "injection.override",
+                            "ignore-instructions",
+                            "/body",
+                            3,
+                            FoundBy::Rescan,
+                        )],
+                    },
+                ],
+            },
+            None,
+        )
+        .await
+        .expect("commit the rescan");
+    let read: Vec<VersionFinding> = store
+        .scan_findings(rig.tenant_id, &[held_id])
+        .await
+        .expect("scan_findings")
+        .into_iter()
+        .map(|(_, f)| f)
+        .collect();
+    assert_eq!(
+        read,
+        vec![
+            VersionFinding {
+                event_seq: Some(first.seq),
+                ..admitted
+            },
+            VersionFinding {
+                event_seq: Some(rescan.seq),
+                ..added
+            },
+        ],
+        "admission's finding stays; the rescan adds only what the list lacked"
+    );
+    assert_eq!(
+        store
+            .scan_backlog(rig.tenant_id, Some("oml-scan/1.1"))
+            .await
+            .expect("backlog"),
+        ScanBacklog::default(),
+        "both versions are recorded under the set and listed"
+    );
+}
+
+/// A finding with no field, as migration 0043 stores one it cannot place,
+/// stands for one place of its class and rule: a recording rescan that
+/// finds the rule in two fields takes the first as that place and lists
+/// the second, and a second rescan adds nothing (ADR-0074 d23).
+pub async fn a_placeless_finding_stands_for_one_place_of_its_rule<S: JournalStore>(store: &S) {
+    let mut rig = ChainRig::new(216);
+    rig.seed_chain(store, 0).await;
+    let wa = Uuid::from_u128(0x216A);
+    let id = Uuid::from_u128(0x216B);
+    let key = Uuid::from_u128(0x216C);
+    let placeless = VersionFinding {
+        field: None,
+        line: None,
+        via: None,
+        span: None,
+        ..finding(
+            "injection.override",
+            "ignore-instructions",
+            "/body",
+            1,
+            FoundBy::Admission,
+        )
+    };
+    rig.commit(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": id.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory: MemoryRecord {
+                scan_finding: Some("injection.override: ignore-instructions".to_owned()),
+                ..held_memory(rig.tenant_id, wa, id, "wanda", key, "placeless")
+            },
+            enqueue: true,
+            findings: vec![placeless].into(),
+        },
+        None,
+    )
+    .await
+    .expect("commit");
+    for _ in 0..2 {
+        rig.commit(
+            store,
+            event_types::SCAN_FINDINGS_RECORDED,
+            json!({}),
+            MetadataFold::FindingsRecorded {
+                scanned_under: Some("oml-scan/1.1".to_owned()),
+                versions: vec![RecordedVersion {
+                    memory_id: id,
+                    summary: None,
+                    findings: vec![
+                        finding(
+                            "injection.override",
+                            "ignore-instructions",
+                            "/body",
+                            1,
+                            FoundBy::Rescan,
+                        ),
+                        finding(
+                            "injection.override",
+                            "ignore-instructions",
+                            "/title",
+                            1,
+                            FoundBy::Rescan,
+                        ),
+                    ],
+                }],
+            },
+            None,
+        )
+        .await
+        .expect("the rescan, twice");
+    }
+    let fields: Vec<Option<String>> = store
+        .scan_findings(rig.tenant_id, &[id])
+        .await
+        .expect("scan_findings")
+        .into_iter()
+        .map(|(_, f)| f.field)
+        .collect();
+    assert_eq!(fields, vec![None, Some("/title".to_owned())]);
+}
+
 /// The review queue serves each item to one reviewer, only from the
 /// workarea set it is handed — the reviewer's dreamer effective access
 /// (ADR-0025 d1) — skips rows the reviewer's lineage excludes, and
@@ -1735,6 +2090,7 @@ pub async fn journal_review_claim_laws<S: JournalStore>(store: &S) {
             MetadataFold::MemoryHeld {
                 memory: held_memory(rig.tenant_id, workarea, id, author, key, "body"),
                 enqueue: true,
+                findings: Box::default(),
             },
             None,
         )
@@ -1839,6 +2195,7 @@ pub async fn journal_review_held_laws<S: JournalStore>(store: &S) {
             MetadataFold::MemoryHeld {
                 memory,
                 enqueue: true,
+                findings: Box::default(),
             },
             None,
         )
@@ -2131,6 +2488,7 @@ pub async fn a_second_record_under_one_idempotency_scope_commits_nothing<S: Jour
     let held = |memory: &MemoryRecord| MetadataFold::MemoryHeld {
         memory: memory.clone(),
         enqueue: true,
+        findings: Box::default(),
     };
     rig.commit(
         store,
@@ -2171,6 +2529,215 @@ pub async fn a_second_record_under_one_idempotency_scope_commits_nothing<S: Jour
         store.idempotency_get(&scope).await.expect("get"),
         Some(put(&winner).record),
         "the first record stands"
+    );
+}
+
+/// An act's claim scope for the claim laws: a key's web console act, no
+/// workarea, as `App::act_scope` builds it (ADR-0070 d5).
+fn act_claim_scope(tenant_id: Uuid, idem_key: &str) -> IdempotencyScope {
+    IdempotencyScope {
+        tenant_id,
+        key_id: Uuid::from_u128(0xD233),
+        workarea_id: Uuid::nil(),
+        idem_key: format!("keys.issue:{idem_key}"),
+    }
+}
+
+/// Of two concurrent claims under one scope exactly one acts, and the other
+/// finds the claim in progress under the same digest; once the act settles
+/// its outcome, a claim replays that record, which a commit-time lookup
+/// reads too, and a claim in progress is never read as a record. Only the
+/// claim's own attempt settles it (http-api.md idempotency; ADR-0070 d5;
+/// #233).
+pub async fn of_two_concurrent_claims_under_one_scope_one_acts_and_the_other_replays_its_record<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(233);
+    rig.seed_chain(store, 0).await;
+    let scope = act_claim_scope(rig.tenant_id, "form-1");
+    let (a, b) = (Uuid::from_u128(0xC1A1), Uuid::from_u128(0xC1A2));
+    let (first, second) = both(
+        store.idempotency_claim(&scope, "sha256:aa", a),
+        store.idempotency_claim(&scope, "sha256:aa", b),
+    )
+    .await;
+    let (first, second) = (first.expect("claim"), second.expect("claim"));
+    let (won, lost) = match (&first, &second) {
+        (IdempotencyClaim::Claimed, _) => (a, b),
+        (_, IdempotencyClaim::Claimed) => (b, a),
+        _ => panic!("one of two concurrent claims acts: {first:?} {second:?}"),
+    };
+    let mut claims = [first, second];
+    claims.sort_by_key(|c| !matches!(c, IdempotencyClaim::Claimed));
+    assert_eq!(
+        claims,
+        [
+            IdempotencyClaim::Claimed,
+            IdempotencyClaim::InProgress {
+                request_digest: "sha256:aa".to_owned()
+            }
+        ],
+        "exactly one of two concurrent claims acts"
+    );
+    assert_eq!(
+        store.idempotency_get(&scope).await.expect("get"),
+        None,
+        "a claim in progress is no record to replay"
+    );
+    let record = IdempotencyRecord {
+        request_digest: "sha256:aa".to_owned(),
+        response: json!({ "status": 201, "body": { "key_id": "k-1" } }),
+    };
+    let put = IdempotencyPut {
+        scope: scope.clone(),
+        record: record.clone(),
+    };
+    assert!(
+        !store
+            .idempotency_settle(put.clone(), lost)
+            .await
+            .expect("settle"),
+        "the attempt that lost the claim settles nothing"
+    );
+    store
+        .idempotency_release(&scope, lost)
+        .await
+        .expect("release");
+    assert!(
+        !store
+            .idempotency_settle(
+                IdempotencyPut {
+                    record: IdempotencyRecord {
+                        request_digest: "sha256:bb".to_owned(),
+                        ..record.clone()
+                    },
+                    ..put.clone()
+                },
+                won,
+            )
+            .await
+            .expect("settle"),
+        "a settle under another digest writes nothing, and the loser's release dropped nothing"
+    );
+    assert!(
+        store
+            .idempotency_settle(put.clone(), won)
+            .await
+            .expect("settle")
+    );
+    assert_eq!(
+        store
+            .idempotency_claim(&scope, "sha256:aa", Uuid::from_u128(0xC1A3))
+            .await
+            .expect("claim"),
+        IdempotencyClaim::Recorded(record.clone()),
+        "a claim after the settle replays the record"
+    );
+    assert_eq!(
+        store.idempotency_get(&scope).await.expect("get"),
+        Some(record.clone())
+    );
+    assert!(
+        !store.idempotency_settle(put, won).await.expect("settle"),
+        "a recorded outcome is settled once"
+    );
+    store
+        .idempotency_release(&scope, won)
+        .await
+        .expect("release");
+    assert_eq!(
+        store.idempotency_get(&scope).await.expect("get"),
+        Some(record),
+        "a release never drops a recorded outcome"
+    );
+}
+
+/// A claim whose act committed and whose record was never written, as when
+/// the process dies between them, holds its scope: a retry under the same
+/// key finds it in progress and never acts again. Only its own attempt's
+/// release frees the scope, so a late release of an earlier attempt never
+/// drops a later one's claim (http-api.md idempotency; #233).
+pub async fn a_claim_left_unsettled_holds_its_scope_and_only_a_release_frees_it<S: JournalStore>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(234);
+    rig.seed_chain(store, 0).await;
+    let scope = act_claim_scope(rig.tenant_id, "form-2");
+    let (first, retry, later) = (
+        Uuid::from_u128(0xC2A1),
+        Uuid::from_u128(0xC2A2),
+        Uuid::from_u128(0xC2A3),
+    );
+    assert_eq!(
+        store
+            .idempotency_claim(&scope, "sha256:aa", first)
+            .await
+            .expect("claim"),
+        IdempotencyClaim::Claimed
+    );
+    // The act commits here and the process stops before it settles.
+    for _ in 0..2 {
+        assert_eq!(
+            store
+                .idempotency_claim(&scope, "sha256:aa", retry)
+                .await
+                .expect("claim"),
+            IdempotencyClaim::InProgress {
+                request_digest: "sha256:aa".to_owned()
+            },
+            "a retry never acts again"
+        );
+    }
+    store
+        .idempotency_release(&scope, retry)
+        .await
+        .expect("release");
+    assert!(
+        matches!(
+            store
+                .idempotency_claim(&scope, "sha256:aa", retry)
+                .await
+                .expect("claim"),
+            IdempotencyClaim::InProgress { .. }
+        ),
+        "a release by another attempt drops nothing"
+    );
+    let other = act_claim_scope(rig.tenant_id, "form-3");
+    assert_eq!(
+        store
+            .idempotency_claim(&other, "sha256:cc", retry)
+            .await
+            .expect("claim"),
+        IdempotencyClaim::Claimed,
+        "another key's claim is its own"
+    );
+    store
+        .idempotency_release(&scope, first)
+        .await
+        .expect("release");
+    assert_eq!(
+        store
+            .idempotency_claim(&scope, "sha256:aa", later)
+            .await
+            .expect("claim"),
+        IdempotencyClaim::Claimed,
+        "a released claim is claimed again"
+    );
+    store
+        .idempotency_release(&scope, first)
+        .await
+        .expect("release");
+    assert!(
+        matches!(
+            store
+                .idempotency_claim(&scope, "sha256:aa", retry)
+                .await
+                .expect("claim"),
+            IdempotencyClaim::InProgress { .. }
+        ),
+        "a late release of the first attempt never drops the later claim"
     );
 }
 
@@ -7133,12 +7700,32 @@ where
     .await;
     Box::pin(journal_review_claim_laws(&new_store().await)).await;
     Box::pin(journal_review_held_laws(&new_store().await)).await;
+    Box::pin(a_versions_findings_list_reads_back_in_order_under_its_event_seq(&new_store().await))
+        .await;
+    Box::pin(
+        a_recording_rescan_adds_only_the_findings_a_held_versions_list_lacks(&new_store().await),
+    )
+    .await;
+    Box::pin(a_placeless_finding_stands_for_one_place_of_its_rule(
+        &new_store().await,
+    ))
+    .await;
     Box::pin(journal_key_lookup_by_hash(&new_store().await)).await;
     Box::pin(a_revoked_key_no_longer_resolves_by_its_hash(
         &new_store().await,
     ))
     .await;
     Box::pin(journal_idempotency_roundtrip(&new_store().await)).await;
+    Box::pin(
+        of_two_concurrent_claims_under_one_scope_one_acts_and_the_other_replays_its_record(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(
+        a_claim_left_unsettled_holds_its_scope_and_only_a_release_frees_it(&new_store().await),
+    )
+    .await;
     Box::pin(a_second_record_under_one_idempotency_scope_commits_nothing(
         &new_store().await,
     ))

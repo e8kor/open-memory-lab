@@ -548,6 +548,13 @@ fn web_client(
             "{key} is set: mutual TLS needs the lead to terminate TLS on the listener oml-web reaches, which this build does not; set {KEY_WEB_CLIENT_SECRET} instead (ADR-0070 d2)"
         )));
     }
+    // Set and empty is a template that lost its secret, not a choice to
+    // run without oml-web (#262).
+    if lookup(KEY_WEB_CLIENT_SECRET).is_some_and(|v| v.is_empty()) {
+        return Err(ConfigError::Invalid(format!(
+            "{KEY_WEB_CLIENT_SECRET} is set and empty; unset it to run without oml-web, or set the secret oml-web sends (ADR-0070 d2)"
+        )));
+    }
     let current = web_secret(lookup, KEY_WEB_CLIENT_SECRET, KEY_WEB_CLIENT_SECRET_FILE)?;
     let previous = web_secret(
         lookup,
@@ -579,7 +586,10 @@ fn web_client(
             "{KEY_WEB_CLIENT_SECRET_PREVIOUS} equals {KEY_WEB_CLIENT_SECRET}; a rotation keeps the old secret beside a new one (#230)"
         ))),
         (Some(previous), Some(until)) => {
-            let until_us = oml_app::domain::valid_time::parse_now(until.trim()).ok_or_else(|| {
+            // A date, month or year alone names a period, not an instant;
+            // each is at most 10 characters (#262).
+            let instant = Some(until.trim()).filter(|t| t.len() > 10);
+            let until_us = instant.and_then(oml_app::domain::valid_time::parse_now).ok_or_else(|| {
                 ConfigError::Invalid(format!(
                     "{KEY_WEB_CLIENT_SECRET_PREVIOUS_UNTIL} {until:?} is not an RFC 3339 instant such as 2026-11-12T09:00:00Z (#230)"
                 ))
@@ -1401,14 +1411,34 @@ impl Scanner for RuleScanner {
         off_the_executor(envelope.body.len(), || {
             RULES.findings(scanned_field(envelope), envelope.body)
         })
-        .into_iter()
-        .map(|f| oml_app::ports::ScanFinding {
-            class: f.class.to_owned(),
-            rule: f.rule.to_owned(),
-            veto: f.action == oml_scan::Action::Veto,
-            at: f.location(),
-        })
+        .iter()
+        .map(port_finding)
         .collect()
+    }
+
+    /// One scan, counted once: the verdict and every finding behind it,
+    /// the holds of a held version or the vetoes of a refused one
+    /// (ADR-0074 d23).
+    fn assess(
+        &self,
+        envelope: &AdmissionEnvelope<'_>,
+    ) -> (ScanOutcome, Vec<oml_app::ports::ScanFinding>) {
+        let field = scanned_field(envelope);
+        let verdict = off_the_executor(envelope.body.len(), || {
+            RULES.scan(&[(field, envelope.body)])
+        });
+        let outcome = match (&verdict, verdict.reason()) {
+            (oml_scan::Verdict::Veto(_), Some(reason)) => ScanOutcome::Veto(reason),
+            (oml_scan::Verdict::Hold(_), Some(reason)) => ScanOutcome::Hold(reason),
+            _ => ScanOutcome::Pass,
+        };
+        let found = match &verdict {
+            oml_scan::Verdict::Pass => Vec::new(),
+            oml_scan::Verdict::Hold(f) | oml_scan::Verdict::Veto(f) => {
+                f.iter().map(port_finding).collect()
+            }
+        };
+        (outcome, found)
     }
 
     fn info(&self) -> Option<oml_app::ports::ScannerInfo> {
@@ -1417,6 +1447,22 @@ impl Scanner for RuleScanner {
             rules: RULES.rules(),
             pii: RULES.options().pii,
         })
+    }
+}
+
+/// A rule-set finding as the scanner port carries it: its place in the
+/// scanned text, never the text (ADR-0065 d8; ADR-0074 d23).
+fn port_finding(f: &oml_scan::Finding) -> oml_app::ports::ScanFinding {
+    oml_app::ports::ScanFinding {
+        class: f.class.to_owned(),
+        rule: f.rule.to_owned(),
+        veto: f.action == oml_scan::Action::Veto,
+        at: f.location(),
+        place: Some(oml_app::ports::FindingPlace {
+            line: u32::try_from(f.line).unwrap_or(u32::MAX),
+            via: f.via.to_owned(),
+            span: (f.span.0 as u64, f.span.1 as u64),
+        }),
     }
 }
 
@@ -2731,6 +2777,55 @@ mod tests {
         ])
         .expect("a closed window loads");
         assert_eq!(closed.web_client.previous_until(), Some(now - day));
+    }
+
+    /// `web.client_secret` set and empty stops the start naming it: a blank
+    /// value is a template that lost its secret, not a choice to run
+    /// without `oml-web` (#262).
+    #[test]
+    fn an_empty_web_client_secret_stops_the_start_naming_it() {
+        let mut env = env_of(&[
+            ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ]);
+        env.insert("OML_WEB__CLIENT_SECRET".to_owned(), String::new());
+        let err = Config::from_sources(None, &|k| env.get(k).cloned()).expect_err("empty");
+        let shown = err.to_string();
+        assert!(
+            shown.contains("web.client_secret") && shown.contains("empty"),
+            "{shown}"
+        );
+    }
+
+    /// `web.client_secret_previous_until` is a whole RFC 3339 instant: a
+    /// bare date, month or year names a period, not the instant the old
+    /// secret stops, and stops the start naming the setting (#262).
+    #[test]
+    fn a_previous_until_given_as_a_date_month_or_year_stops_the_start() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_micros();
+        let tomorrow = oml_app::domain::valid_time::fixed_width(
+            i64::try_from(now).expect("in range") + 86_400_000_000,
+        );
+        for period in [&tomorrow[..10], &tomorrow[..7], &tomorrow[..4]] {
+            let mut env = env_of(&[
+                ("OML_POSTGRES__URL", "postgres://serving@env/db"),
+                ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+                ("OML_WEB__CLIENT_SECRET", WEB_SECRET),
+                ("OML_WEB__CLIENT_SECRET_PREVIOUS", WEB_SECRET_OLD),
+            ]);
+            env.insert(
+                "OML_WEB__CLIENT_SECRET_PREVIOUS_UNTIL".to_owned(),
+                period.to_owned(),
+            );
+            let err = Config::from_sources(None, &|k| env.get(k).cloned()).expect_err(period);
+            assert!(
+                err.to_string().contains("web.client_secret_previous_until"),
+                "{period}: {err}"
+            );
+        }
     }
 
     #[test]

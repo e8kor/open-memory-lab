@@ -389,9 +389,10 @@ async fn unreviewed_rows_are_served_inside_an_in_progress_scope_and_invisible_fr
 /// A held row the scan held stays its author's inside an in-progress scope:
 /// another reader there neither recalls, lists nor reads it, while the
 /// author still does, and a held row the scan passed is served as before
-/// (ADR-0030 d3; ADR-0065 d5, amended 2026-11-10).
+/// (ADR-0030 d3; ADR-0065 d5, amended 2026-11-10). ADR-0074 d18 names it
+/// for phase 1.
 #[tokio::test]
-async fn a_held_row_the_scan_flagged_stays_its_authors_inside_an_in_progress_scope() {
+async fn a_held_version_with_a_hold_finding_is_never_served_unreviewed_in_progress() {
     let w = world().await;
     w.mark(w.proj).await;
     let flagged = w
@@ -1506,6 +1507,7 @@ async fn each_r2_clause_alone_keeps_a_curator_off_a_row() {
             MetadataFold::MemoryHeld {
                 memory,
                 enqueue: false,
+                findings: Box::default(),
             },
         )
         .await;
@@ -1538,10 +1540,11 @@ async fn an_edge_to_a_flagged_held_row_is_not_listed_to_a_sibling_in_progress() 
         ] }),
         MetadataFold::FindingsRecorded {
             scanned_under: None,
-            versions: vec![(
-                a,
-                Some("test.marker: marker-hold at /body line 1".to_owned()),
-            )],
+            versions: vec![oml_app::ports::RecordedVersion {
+                memory_id: a,
+                summary: Some("test.marker: marker-hold at /body line 1".to_owned()),
+                findings: Vec::new(),
+            }],
         },
     )
     .await;

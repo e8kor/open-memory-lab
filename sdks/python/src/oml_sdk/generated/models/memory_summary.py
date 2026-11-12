@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from ..models.attachment_descriptor import AttachmentDescriptor
     from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
     from ..models.origin import Origin
+    from ..models.scan_finding import ScanFinding
     from ..models.source_checked import SourceChecked
 
 
@@ -65,6 +66,9 @@ class MemorySummary:
         rule (Any | Unset): On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8).
         load_warning (str | Unset): On a held guardrail alone: every reader of it is told that every key reading its
             workarea will load the rule once it binds (ADR-0037 d10).
+        scan_findings (list[ScanFinding] | Unset): Every finding stored on the version, in the order recorded, on the
+            review serve, the held listing and the named read alone; absent elsewhere, so an empty list means the scan found
+            nothing (ADR-0074 d17, d23).
         principal (None | str | Unset): The authoring principal; null on a version in universe served to a key outside
             its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its
             source (ADR-0044 d9).
@@ -72,7 +76,8 @@ class MemorySummary:
             console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since
             v0.7.0.
         scan_finding (None | str | Unset): Admission's scan finding on the version, class: rule at place, never the
-            matched text; null when the scan found nothing (ADR-0065 d8; ADR-0070 d5). Since v0.7.0.
+            matched text; null when the scan found nothing, and null wherever principal is (ADR-0065 d8; ADR-0044 d9;
+            ADR-0070 d5). Since v0.7.0.
         provenance (MemorySummaryProvenance | Unset):
         simulation_id (None | str | Unset):
         self_signed (bool | Unset): Marked rows under the bounded development exception; never promote beyond their
@@ -120,6 +125,7 @@ class MemorySummary:
     severity: MemorySummarySeverity | Unset = UNSET
     rule: Any | Unset = UNSET
     load_warning: str | Unset = UNSET
+    scan_findings: list[ScanFinding] | Unset = UNSET
     principal: None | str | Unset = UNSET
     author_key_id: None | str | Unset = UNSET
     scan_finding: None | str | Unset = UNSET
@@ -213,6 +219,13 @@ class MemorySummary:
         rule = self.rule
 
         load_warning = self.load_warning
+
+        scan_findings: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.scan_findings, Unset):
+            scan_findings = []
+            for scan_findings_item_data in self.scan_findings:
+                scan_findings_item = scan_findings_item_data.to_dict()
+                scan_findings.append(scan_findings_item)
 
         principal: None | str | Unset
         if isinstance(self.principal, Unset):
@@ -319,6 +332,8 @@ class MemorySummary:
             field_dict["rule"] = rule
         if load_warning is not UNSET:
             field_dict["load_warning"] = load_warning
+        if scan_findings is not UNSET:
+            field_dict["scan_findings"] = scan_findings
         if principal is not UNSET:
             field_dict["principal"] = principal
         if author_key_id is not UNSET:
@@ -360,6 +375,7 @@ class MemorySummary:
         from ..models.attachment_descriptor import AttachmentDescriptor
         from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
         from ..models.origin import Origin
+        from ..models.scan_finding import ScanFinding
         from ..models.source_checked import SourceChecked
 
         d = dict(src_dict)
@@ -498,6 +514,15 @@ class MemorySummary:
 
         load_warning = d.pop("load_warning", UNSET)
 
+        _scan_findings = d.pop("scan_findings", UNSET)
+        scan_findings: list[ScanFinding] | Unset = UNSET
+        if _scan_findings is not UNSET:
+            scan_findings = []
+            for scan_findings_item_data in _scan_findings:
+                scan_findings_item = ScanFinding.from_dict(scan_findings_item_data)
+
+                scan_findings.append(scan_findings_item)
+
         def _parse_principal(data: object) -> None | str | Unset:
             if data is None:
                 return data
@@ -628,6 +653,7 @@ class MemorySummary:
             severity=severity,
             rule=rule,
             load_warning=load_warning,
+            scan_findings=scan_findings,
             principal=principal,
             author_key_id=author_key_id,
             scan_finding=scan_finding,

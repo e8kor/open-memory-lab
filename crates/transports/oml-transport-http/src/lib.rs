@@ -49,7 +49,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_app::App;
-use oml_app::app::Caller;
+use oml_app::app::{Caller, PersonAsk};
 use oml_app::domain::EventTime;
 use oml_app::domain::access::Covers;
 use oml_app::domain::anchor::{self as anchor_grammar, Anchor, CheckResult};
@@ -381,7 +381,7 @@ where
             ("POST", "/v2/web/users/{user}/disable") => post(Self::disable_user),
             ("POST", "/v2/web/users/{user}/deletion/close") => post(Self::close_deletion),
             ("POST", "/v2/web/session/end") => post(Self::end_session),
-            ("GET", "/v2/web/export") => get(Self::web_export),
+            ("GET", "/v2/web/export") => get(Self::export_web_person),
             ("POST", "/v2/web/deletion-requests") => post(Self::request_deletion),
             ("POST", "/v2/admin/memories/search") => post(Self::admin_search_route),
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
@@ -694,11 +694,13 @@ where
     /// `GET /v1/memories`: the own-work listing with `own=true`, else the
     /// scoped listing, as memory summaries without text, newest first
     /// (http-api.md search; ADR-0025 d13). The query's `workarea` is the
-    /// subtree either reads (ADR-0039 d4, d7). `include_text` is the
-    /// agent plugin's alone: `oml_read`'s listing mode returns each item
+    /// subtree either reads (ADR-0039 d4, d7). The `include_text` argument
+    /// is the agent plugin's: `oml_read`'s listing mode returns each item
     /// with its text, as every `oml_read` mode does, from the same rows
-    /// and access the listing reads (ADR-0039 d4); the HTTP route serves
-    /// summaries.
+    /// and access the listing reads (ADR-0039 d4). On the HTTP route the
+    /// scoped listing serves summaries; the query's `include_text` is
+    /// taken only beside `with_own` or `author`, the web console's list
+    /// (ADR-0070 d5), and is an unknown parameter without them.
     async fn list_memories_inner(
         st: &Self,
         params: &[(String, String)],
@@ -815,7 +817,7 @@ where
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let page = st
             .app
-            .web_memories(&caller, &req)
+            .list_memories_with_own(&caller, &req)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(
@@ -1070,12 +1072,34 @@ where
                 })),
             },
         });
-        // `search.sources` under wide or a list (ADR-0072 d8).
-        if let (Some(report), Some(search)) = (
-            &result.sources,
-            response.get_mut("search").and_then(Value::as_object_mut),
-        ) {
-            search.insert("sources".to_owned(), sources_json(report));
+        // `search.sources` under wide or a list, and `search.widen` on a
+        // scope answer whose precomputed signal finds a richer source
+        // (ADR-0072 d8; #244).
+        if let Some(search) = response.get_mut("search").and_then(Value::as_object_mut) {
+            if let Some(report) = &result.sources {
+                search.insert("sources".to_owned(), sources_json(report));
+            }
+            if let Some(widen) = &result.widen {
+                search.insert(
+                    "widen".to_owned(),
+                    json!({
+                        "sources": "wide",
+                        "candidates": widen.candidates,
+                        "matches_at_least": widen.matches_at_least,
+                    }),
+                );
+            }
+        }
+        // A signal this recall asked for is built off the request, once
+        // its answer is composed (ADR-0072 d12, as built by #244).
+        if st.app.widen_signals_wanted() {
+            let app = Arc::clone(&st.app);
+            // One refresh at a time in the process, one build at a time,
+            // tenants in turn; a build past its timeout is stopped, counted
+            // and marked, and the next goes on.
+            tokio::spawn(async move {
+                app.refresh_widen_signals_with(tokio::time::sleep).await;
+            });
         }
         // The budget object is present if and only if max_tokens was sent
         // (retrieval.md token budgets; ADR-0025 d7).
@@ -1657,7 +1681,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         // The body is closed, nested objects included: a field the server
         // does not serve is refused, never dropped (ADR-0025 d16).
@@ -1669,7 +1693,7 @@ where
         // A session key issues only as the person's own issuance, bounded
         // to their root (ADR-0070 d2, d5; ADR-0045 d9, d16).
         if let Some(caller) = session::session_caller() {
-            return Self::issue_key_as_session(st, &caller, &req, &name, &idem, body).await;
+            return Self::issue_key_as_session(st, caller, &req, &name, &idem, body).await;
         }
         // Issued keys do not expire yet: a requested expiry is refused by
         // name, since minting the key without it would leave the key its
@@ -1745,13 +1769,38 @@ where
             guardrail_scope: parse_guardrail_scope(req.guardrail_scope.as_deref())?,
             profile: parse_profile(req.profile.as_deref())?,
         };
-        let issued = retry_chain(|| st.app.issue_key(acting.bearer(), &issue))
+        // A resubmission under the same key and body replays the answer
+        // without the value or the connect code, which are shown once, and
+        // issues nothing again; the key is claimed before the issuance, so
+        // a process stopping between the two never lets the resubmission
+        // issue a second key (ADR-0031 d7; #127, #233).
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = Arc::new(st.console_caller(headers).await?);
+        let acting: Acting<'static> = Acting::Session(caller.clone());
+        let digest = console::act_digest("", body);
+        let claim = match st.claim(&caller, "keys.issue", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
+        let label = req.label.clone();
+        let st = st.clone();
+        claim
+            .run(async move {
+                let issued = retry_chain(|| st.app.issue_key(acting.bearer(), &issue))
+                    .await
+                    .map_err(|e| {
+                        console::ActFailure::first(map_app_error(e, ErrorContext::Write))
+                    })?;
+                let answer = key_issued_json(&issued, label.as_deref());
+                let kept = console::without_secrets(&answer);
+                Ok(console::Acted {
+                    status: StatusCode::CREATED,
+                    answer,
+                    kept,
+                })
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
-            StatusCode::CREATED,
-            &key_issued_json(&issued, req.label.as_deref()),
-        ))
     }
 
     async fn deny_key(
@@ -1787,7 +1836,7 @@ where
         // A session key cuts off one key on universe, as the pages do
         // (ADR-0070 d5; ADR-0045 d9, d13).
         if let Some(caller) = session::session_caller() {
-            return Self::cut_off_as_session(st, &caller, &key, &node, &idem, key_id, body).await;
+            return Self::cut_off_as_session(st, caller, &key, &node, &idem, key_id, body).await;
         }
         let denial = retry_chain(|| st.app.deny_key(acting.bearer(), key.clone(), node.clone()))
             .await
@@ -1813,21 +1862,22 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let req: WorkareaCreateBody = parse_json_renamed(headers, body, |body| {
             refuse_renamed(body, "", &[("parent_id", "parent")])
         })?;
         // A resubmission under the same key answers the recorded creation
         // and creates nothing again (ADR-0070 d3 layer 4).
-        let caller = st.console_caller(headers).await?;
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = Arc::new(st.console_caller(headers).await?);
+        let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest("", body);
-        if let Some(replayed) = st
-            .replayed(&caller, "workarea.create", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
+        let claim = match st.claim(&caller, "workarea.create", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
         if req.prefix.is_some() {
             return Err(ApiError::validation(
                 "prefix (vocabulary workareas, ADR-0021) is outside the PoC slice",
@@ -1837,28 +1887,26 @@ where
         let name = creation_name("/name", &req.name)?;
         // A crew record's id or name (ADR-0026 d8).
         let crew = optional_reference("/crew", req.crew.as_deref())?;
-        let created = retry_chain(|| {
-            st.app
-                .create_workarea(acting.bearer(), &name, parent.clone(), crew.clone())
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        // The path derived from the parent names and the crew record as
-        // stored, as the workarea read serves them (ADR-0025 d14; ADR-0026
-        // d8).
-        let mut response = workarea_json(&created.workarea, &created.path, created.crew.as_ref());
-        if let Some(obj) = response.as_object_mut() {
-            obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
-        }
-        st.record_outcome(
-            &caller,
-            "workarea.create",
-            &idem,
-            &digest,
-            StatusCode::CREATED,
-            &response,
-        )
-        .await
+        let st = st.clone();
+        claim
+            .run(async move {
+                let created = retry_chain(|| {
+                    st.app
+                        .create_workarea(acting.bearer(), &name, parent.clone(), crew.clone())
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                // The path derived from the parent names and the crew record
+                // as stored, as the workarea read serves them (ADR-0025 d14;
+                // ADR-0026 d8).
+                let mut response =
+                    workarea_json(&created.workarea, &created.path, created.crew.as_ref());
+                if let Some(obj) = response.as_object_mut() {
+                    obj.insert("created_at".to_owned(), json!(system_event_time().as_str()));
+                }
+                Ok(console::Acted::new(StatusCode::CREATED, response))
+            })
+            .await
     }
 
     async fn get_workarea(
@@ -1920,20 +1968,24 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let node = reference("workarea", workarea)?;
         let req: TransitionBody = parse_json(headers, body)?;
         // A resubmission under the same key answers the recorded proposal
         // and proposes nothing again (ADR-0070 d3 layer 4).
-        let caller = st.console_caller(headers).await?;
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = Arc::new(st.console_caller(headers).await?);
+        let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest(workarea, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "workarea.transition", &idem, &digest)
+        let claim = match st
+            .claim(&caller, "workarea.transition", &idem, &digest)
             .await?
         {
-            return Ok(replayed);
-        }
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
         let to = match req.to.as_str() {
             "committed" => WorkareaStatus::Committed,
             "validated" => WorkareaStatus::Validated,
@@ -1944,26 +1996,29 @@ where
                 .with_details(json!({ "field": "/to" })));
             }
         };
-        let proposal = retry_chain(|| st.app.propose_transition(acting.bearer(), node.clone(), to))
+        let st = st.clone();
+        claim
+            .run(async move {
+                let proposal =
+                    retry_chain(|| st.app.propose_transition(acting.bearer(), node.clone(), to))
+                        .await
+                        .map_err(|e| {
+                            console::ActFailure::first(map_app_error(e, ErrorContext::Write))
+                        })?;
+                Ok(console::Acted::new(
+                    StatusCode::ACCEPTED,
+                    json!({
+                        "transition_id": proposal.transition_id,
+                        "workarea_id": proposal.workarea_id,
+                        "from": proposal.from.as_str(),
+                        "to": proposal.to.as_str(),
+                        "state": proposal.state.as_str(),
+                        "proposed_by_key_id": proposal.proposer_key_id,
+                        "ratified_by_key_id": Value::Null,
+                    }),
+                ))
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        st.record_outcome(
-            &caller,
-            "workarea.transition",
-            &idem,
-            &digest,
-            StatusCode::ACCEPTED,
-            &json!({
-                "transition_id": proposal.transition_id,
-                "workarea_id": proposal.workarea_id,
-                "from": proposal.from.as_str(),
-                "to": proposal.to.as_str(),
-                "state": proposal.state.as_str(),
-                "proposed_by_key_id": proposal.proposer_key_id,
-                "ratified_by_key_id": Value::Null,
-            }),
-        )
-        .await
     }
 
     async fn ratify_transition(
@@ -1988,48 +2043,49 @@ where
         headers: &HeaderMap,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let node = reference("workarea", workarea)?;
         let transition_id = Uuid::parse_str(transition_id).map_err(|_| {
             ApiError::validation(format!("transition_id {transition_id:?} is not an id"))
                 .with_details(json!({ "field": "transition_id" }))
         })?;
-        let caller = st.console_caller(headers).await?;
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = Arc::new(st.console_caller(headers).await?);
+        let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest(workarea, &Bytes::from(transition_id.to_string()));
-        if let Some(replayed) = st
-            .replayed(&caller, "workarea.ratify", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
-        let ratified = retry_chain(|| {
-            st.app
-                .ratify_transition(acting.bearer(), node.clone(), transition_id)
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Review))?;
-        let from = match ratified.status {
-            WorkareaStatus::Validated => WorkareaStatus::Committed,
-            _ => WorkareaStatus::Development,
+        let claim = match st.claim(&caller, "workarea.ratify", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
         };
-        st.record_outcome(
-            &caller,
-            "workarea.ratify",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &json!({
-                "transition_id": transition_id,
-                "workarea_id": ratified.workarea_id,
-                "from": from.as_str(),
-                "to": ratified.status.as_str(),
-                "state": "ratified",
-                "proposed_by_key_id": Value::Null,
-                "ratified_by_key_id": Value::Null,
-            }),
-        )
-        .await
+        let st = st.clone();
+        claim
+            .run(async move {
+                let ratified = retry_chain(|| {
+                    st.app
+                        .ratify_transition(acting.bearer(), node.clone(), transition_id)
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Review)))?;
+                let from = match ratified.status {
+                    WorkareaStatus::Validated => WorkareaStatus::Committed,
+                    _ => WorkareaStatus::Development,
+                };
+                Ok(console::Acted::new(
+                    StatusCode::OK,
+                    json!({
+                        "transition_id": transition_id,
+                        "workarea_id": ratified.workarea_id,
+                        "from": from.as_str(),
+                        "to": ratified.status.as_str(),
+                        "state": "ratified",
+                        "proposed_by_key_id": Value::Null,
+                        "ratified_by_key_id": Value::Null,
+                    }),
+                ))
+            })
+            .await
     }
 
     async fn list_edges(
@@ -2283,18 +2339,37 @@ where
     ) -> Result<Response, ApiError> {
         let acting = acting(headers, None)?;
         let node = reference("workarea", workarea_id)?;
+        // `offers=true` serves the scope's offers beside the counts, so the
+        // Atlas reads both in one call (#286); only beside `counts=true`,
+        // whose answer has one scope and no page after it.
+        let offers = match params.iter().find(|(n, _)| n == "offers") {
+            Some((_, v)) if v == "true" => true,
+            Some((_, v)) if v == "false" => false,
+            Some(_) => {
+                return Err(ApiError::validation("offers must be true or false")
+                    .with_details(json!({ "field": "offers" })));
+            }
+            None => false,
+        };
+        let counted = |(n, _): &&(String, String)| n == "counts" || n == "offers";
         match params.iter().find(|(n, _)| n == "counts") {
             Some((_, v)) if v == "true" => {
-                if params.len() > 1 {
+                if params.iter().filter(|p| !counted(p)).count() > 0 {
                     return Err(ApiError::validation(
                         "counts=true serves the whole subtree, so it takes no limit or cursor",
                     ));
                 }
-                return Self::tree_counts(st, node, &acting).await;
+                return Self::tree_counts(st, node, &acting, offers).await;
             }
             Some((_, v)) if v == "false" => {}
             Some(_) => return Err(ApiError::validation("counts must be true or false")),
             None => {}
+        }
+        if params.iter().any(|(n, _)| n == "offers") {
+            return Err(ApiError::validation(
+                "offers serves the scope's offers beside counts=true, and only there",
+            )
+            .with_details(json!({ "field": "offers" })));
         }
         let params: Vec<(String, String)> = params
             .iter()
@@ -2324,22 +2399,43 @@ where
     /// `REGION_COUNT_MAX` rows, and `truncated` when either stopped there;
     /// for the admin key role every row is counted as structure, and no
     /// content is served (ADR-0045 d30; ADR-0070 d5).
+    /// With `offers`, the scope's offers too, as `GET
+    /// /v2/workareas/{workarea}/offers` serves them to the caller the tree
+    /// resolved, read beside the counts: the offers operation's own reads
+    /// and checks, under the request rate this request was charged once
+    /// (#286).
     async fn tree_counts(
         st: &Self,
         node: Reference,
         acting: &Acting<'_>,
+        offers: bool,
     ) -> Result<Response, ApiError> {
         let caller = st
             .app
             .caller(acting.bearer())
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let regions = if caller.key().role == Role::Admin {
-            st.app.admin_regions(&caller, Some(node)).await
-        } else {
-            st.app.web_regions(&caller, Some(node)).await
-        }
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        let regions = async {
+            if caller.key().role == Role::Admin {
+                st.app.admin_regions(&caller, Some(node.clone())).await
+            } else {
+                st.app.user_regions(&caller, Some(node.clone())).await
+            }
+            .map_err(|e| map_app_error(e, ErrorContext::Write))
+        };
+        let scope_offers = async {
+            if offers {
+                st.offers_json(Bearer::Session(&caller), node.clone())
+                    .await
+                    .map(Some)
+            } else {
+                Ok(None)
+            }
+        };
+        let (regions, scope_offers) = tokio::join!(regions, scope_offers);
+        // The counts first: a scope the tree refuses names no offers.
+        let regions = regions?;
+        let scope_offers = scope_offers?;
         let items: Vec<Value> = regions
             .regions
             .iter()
@@ -2362,10 +2458,11 @@ where
                 })
             })
             .collect();
-        Ok(json_response(
-            StatusCode::OK,
-            &json!({ "items": items, "next_cursor": null, "truncated": regions.partial }),
-        ))
+        let mut body = json!({ "items": items, "next_cursor": null, "truncated": regions.partial });
+        if let (Some(offers), Some(obj)) = (scope_offers, body.as_object_mut()) {
+            obj.insert("offers".to_owned(), offers);
+        }
+        Ok(json_response(StatusCode::OK, &body))
     }
 
     async fn events_tail(
@@ -2571,7 +2668,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        bearer(headers)?;
         let idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
         let req: ConnectCodeBody = if body.is_empty() {
@@ -2584,7 +2681,7 @@ where
         if let Some(caller) = session::session_caller() {
             return Self::connect_code_as_session(
                 st,
-                &caller,
+                caller,
                 &key,
                 req.ttl_seconds,
                 &idem,
@@ -2593,16 +2690,42 @@ where
             )
             .await;
         }
-        let code = retry_chain(|| {
-            st.app
-                .mint_connect_code_with_ttl(&token, key.clone(), req.ttl_seconds)
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
-            StatusCode::CREATED,
-            &connect_code_json(&code),
-        ))
+        // A resubmission replays the answer without the code, which is
+        // shown once, and mints none: a second code would void the first
+        // (ADR-0031 d7; #233).
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253, #281).
+        let caller = st.console_caller(headers).await?;
+        let digest = console::act_digest(key_id, body);
+        let claim = match st
+            .claim(&caller, "keys.connect_code", &idem, &digest)
+            .await?
+        {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
+        let ttl_seconds = req.ttl_seconds;
+        let st = st.clone();
+        claim
+            .run(async move {
+                let code = retry_chain(|| {
+                    st.app.mint_connect_code_with_ttl(
+                        Bearer::Session(&caller),
+                        key.clone(),
+                        ttl_seconds,
+                    )
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                let answer = connect_code_json(&code);
+                let kept = console::without_secrets(&answer);
+                Ok(console::Acted {
+                    status: StatusCode::CREATED,
+                    answer,
+                    kept,
+                })
+            })
+            .await
     }
 
     async fn revoke_connection(
@@ -2650,31 +2773,46 @@ where
         Ok(json_response(StatusCode::OK, &connection_json(&revoked)))
     }
 
-    async fn whoami(State(st): State<Self>, rid: Rid, headers: HeaderMap) -> Response {
-        finish(&rid, Self::whoami_inner(&st, &headers).await)
+    async fn whoami(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        uri: axum::http::Uri,
+    ) -> Response {
+        let pairs = uri
+            .query()
+            .and_then(|q| crate::oauth::form_pairs(q.as_bytes()).ok())
+            .unwrap_or_default();
+        let result = match whoami_person_ask(&pairs) {
+            Ok(ask) => Self::whoami_inner(&st, &headers, ask).await,
+            Err(e) => Err(e),
+        };
+        finish(&rid, result)
     }
 
     /// `GET /v2/whoami`: the calling key's own record, for any live key;
     /// never its denials, and no read is journalled (http-api.md whoami;
-    /// ADR-0039 d15).
-    async fn whoami_inner(st: &Self, headers: &HeaderMap) -> Result<Response, ApiError> {
+    /// ADR-0039 d15). The credential is resolved once, and the person
+    /// block read only as asked: absent with `person=false` (#286).
+    async fn whoami_inner(
+        st: &Self,
+        headers: &HeaderMap,
+        ask: PersonAsk,
+    ) -> Result<Response, ApiError> {
         let acting = acting(headers, None)?;
-        let whoami = st
+        let (whoami, person) = st
             .app
-            .whoami_of(acting.bearer())
-            .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let person = st
-            .app
-            .whoami_person(acting.bearer())
+            .whoami_served(acting.bearer(), ask)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let mut body = whoami_json(&whoami);
+        if ask != PersonAsk::Omit
+            && let Some(obj) = body.as_object_mut()
+        {
+            let person = person.as_ref().map_or(Value::Null, person_json);
+            obj.insert("person".to_owned(), person);
+        }
         if let Some(obj) = body.as_object_mut() {
-            obj.insert(
-                "person".to_owned(),
-                person.as_ref().map_or(Value::Null, person_json),
-            );
             // Whether the server's admins are not the caller's, which
             // `oml sync` asks consent on (ADR-0076 d9).
             obj.insert("shared".to_owned(), Value::Bool(st.app.shared()));
@@ -2845,7 +2983,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
+        acting(headers, None)?;
         let idem = idempotency_key(headers)?;
         let workarea = reference("workarea", workarea_id)?;
         let req: WorkareaModeBody = parse_json(headers, body)?;
@@ -2856,34 +2994,37 @@ where
             ))
             .with_details(json!({ "field": "/mode" }))
         })?;
-        let caller = st.console_caller(headers).await?;
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = Arc::new(st.console_caller(headers).await?);
+        let acting: Acting<'static> = Acting::Session(caller.clone());
         let digest = console::act_digest(workarea_id, body);
-        if let Some(replayed) = st
-            .replayed(&caller, "workarea.mode", &idem, &digest)
-            .await?
-        {
-            return Ok(replayed);
-        }
-        let updated = retry_chain(|| {
-            st.app
-                .set_workarea_mode(acting.bearer(), workarea.clone(), mode)
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let info = st
-            .app
-            .workarea_info(acting.bearer(), Some(Reference::Id(updated.workarea_id)))
+        let claim = match st.claim(&caller, "workarea.mode", &idem, &digest).await? {
+            console::Claimed::Replayed(replayed) => return Ok(replayed),
+            console::Claimed::Act(claim) => claim,
+        };
+        let st = st.clone();
+        claim
+            .run(async move {
+                let updated = retry_chain(|| {
+                    st.app
+                        .set_workarea_mode(acting.bearer(), workarea.clone(), mode)
+                })
+                .await
+                .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                let info = st
+                    .app
+                    .workarea_info(acting.bearer(), Some(Reference::Id(updated.workarea_id)))
+                    .await
+                    .map_err(|e| {
+                        console::ActFailure::after(map_app_error(e, ErrorContext::Write))
+                    })?;
+                Ok(console::Acted::new(
+                    StatusCode::OK,
+                    workarea_view_json(&info),
+                ))
+            })
             .await
-            .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        st.record_outcome(
-            &caller,
-            "workarea.mode",
-            &idem,
-            &digest,
-            StatusCode::OK,
-            &workarea_view_json(&info),
-        )
-        .await
     }
 
     async fn set_workarea_crew(
@@ -3664,8 +3805,11 @@ fn bearer_value(headers: &HeaderMap) -> Result<String, ApiError> {
 enum Acting<'a> {
     Value(String),
     Connection(&'a Caller),
-    /// A session key's caller, resolved from a capacity credential by the
-    /// session gate (ADR-0070 d2).
+    /// A caller this request already resolved: a session key's, from a
+    /// capacity credential by the session gate (ADR-0070 d2), or a console
+    /// act's, resolved once before it claims its `Idempotency-Key`, so the
+    /// act reads the key's grants again but is not charged a second time
+    /// against its rate (#253).
     Session(Arc<Caller>),
 }
 
@@ -3995,6 +4139,33 @@ fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord]) -> Value {
     })
 }
 
+/// What `whoami`'s query asks of the person block: `person=false` omits
+/// it (#286), `start=true` adds the onboarding status (ADR-0070 d5), and
+/// the two together ask for a block and none, so they are refused, as is a
+/// `person` that is not a boolean. Other parameters are ignored, as they
+/// were before `person`.
+fn whoami_person_ask(pairs: &[(String, String)]) -> Result<PersonAsk, ApiError> {
+    let start = pairs.iter().any(|(n, v)| n == "start" && v == "true");
+    let omit = match pairs.iter().find(|(n, _)| n == "person") {
+        None => false,
+        Some((_, v)) if v == "true" => false,
+        Some((_, v)) if v == "false" => true,
+        Some(_) => {
+            return Err(ApiError::validation("person must be true or false")
+                .with_details(json!({ "field": "person" })));
+        }
+    };
+    match (omit, start) {
+        (true, true) => Err(ApiError::validation(
+            "start=true reads the person block, so it does not go with person=false",
+        )
+        .with_details(json!({ "field": "person" }))),
+        (true, false) => Ok(PersonAsk::Omit),
+        (false, true) => Ok(PersonAsk::WithStart),
+        (false, false) => Ok(PersonAsk::Person),
+    }
+}
+
 /// openapi.yaml `Whoami`: the calling key's own record, each reference
 /// `{id, name}` and the default workarea with its `path`, its stored grants
 /// without their deny masks, and never its denials (ADR-0039 d15).
@@ -4044,13 +4215,29 @@ fn person_json(person: &oml_app::app::Person) -> Value {
         ),
         None => (Value::Null, Value::Null),
     };
-    json!({
+    let mut out = json!({
         "user": person.user.as_str(),
         "under_quotas": person.limits.is_some(),
         "usage": usage,
         "quotas": quotas,
         "deletion_requested_at": person.deletion_requested_at.as_ref().map(|t| t.as_str()),
-    })
+    });
+    // The onboarding status, only when asked (`start=true`): every page's
+    // session check calls whoami (ADR-0070 d5, d8).
+    if let (Some(status), Some(obj)) = (&person.start, out.as_object_mut()) {
+        obj.insert(
+            "start".to_owned(),
+            json!({
+                "connected": status.connected,
+                "first_memory": match status.first_memory {
+                    Some(oml_app::domain::MemoryStatus::Held) => Some("held"),
+                    Some(oml_app::domain::MemoryStatus::Promoted) => Some("promoted"),
+                    _ => None,
+                },
+            }),
+        );
+    }
+    out
 }
 
 /// openapi.yaml `WhoamiGrant`: a stored grant as `whoami` serves it, its
@@ -4424,6 +4611,24 @@ fn source_check(m: &MemoryRecord) -> Option<&SourceCheck> {
         .flatten()
 }
 
+/// `ScanFinding` (openapi.yaml; ADR-0074 d23): one finding of a version's
+/// list, never the matched text.
+pub fn scan_finding_json(f: &oml_app::types::VersionFinding) -> Value {
+    json!({
+        "class": f.class,
+        "rule": f.rule,
+        "verdict": f.verdict.as_str(),
+        "rule_set": f.rule_set,
+        "field": f.field,
+        "line": f.line,
+        "via": f.via,
+        "span": f.span.map(|(a, b)| [a, b]),
+        "found_by": f.found_by.as_str(),
+        "event_seq": f.event_seq,
+        "migrated_from": f.migrated_from,
+    })
+}
+
 /// `SourceChecked` (openapi.yaml; ADR-0057 d5, d18).
 pub fn source_checked_json(check: &SourceCheck) -> Value {
     json!({
@@ -4466,8 +4671,14 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
             Value::from(m.author_key_id.to_string())
         },
         // Admission's scan finding, `class: rule at place`, never the text
-        // (ADR-0065 d8; ADR-0070 d5).
-        "scan_finding": m.scan_finding,
+        // (ADR-0065 d8; ADR-0070 d5); null wherever principal is, so an
+        // anonymous row carries its text and nothing admission recorded of
+        // its writing (ADR-0044 d9; #253).
+        "scan_finding": if served.anonymous {
+            Value::Null
+        } else {
+            Value::from(m.scan_finding.clone())
+        },
         "provenance": "agent",
         "simulation_id": Value::Null,
         "self_signed": false,
@@ -4523,6 +4734,14 @@ pub fn memory_json(served: &ServedMemory, include_text: bool) -> Value {
     }
     if let (Some(warning), Some(obj)) = (served.load_warning, value.as_object_mut()) {
         obj.insert("load_warning".to_owned(), json!(warning));
+    }
+    // Every finding stored on the version, on the surfaces a reviewer
+    // judges from; absent elsewhere (ADR-0074 d17, d23).
+    if let (Some(list), Some(obj)) = (&served.scan_findings, value.as_object_mut()) {
+        obj.insert(
+            "scan_findings".to_owned(),
+            Value::Array(list.iter().map(scan_finding_json).collect()),
+        );
     }
     // What a derived format's claim will be found by, which a reviewer's
     // card shows before the verdict (ADR-0056 d9; ADR-0070 d5).

@@ -145,6 +145,12 @@ class Workflows(unittest.TestCase):
             names.append(re.search(r"^    name: (.*)$", block, re.M).group(1))
         self.assertEqual(sorted(names), ["ci ok (ci)", "ci ok (docs)", "ci ok (practices)", "ci ok (spikes)"])
 
+    def test_every_workflow_with_a_final_check_runs_in_a_merge_queue(self):
+        # A required check that never reports in a merge group holds the queue forever.
+        for wf in [*FILTERED, "practices.yml"]:
+            on = self.text(wf).split("\non:\n", 1)[1].split("\n\n", 1)[0]
+            self.assertRegex(on, r"(^|\n)  merge_group:", wf)
+
     def test_a_crashing_classifier_fails_the_changes_job_and_so_every_final_check(self):
         for wf in FILTERED:
             t = self.text(wf)
@@ -162,7 +168,8 @@ class Workflows(unittest.TestCase):
                        "recall eval data parses and its labels resolve",
                        "kubernetes chart (kind, helm install, quickstart)",
                        "Python SDK against the release server", "TypeScript SDK against the release server",
-                       "generated SDK code is current with openapi.yaml"],
+                       "generated SDK code is current with openapi.yaml",
+                       "crate walls (oml-web)"],
             "docs-checks.yml": ["mkdocs build --strict", "benchmark pages match their results",
                                 "contract surfaces agree", "openapi.yaml validates",
                                 "remember eval data and offline run",

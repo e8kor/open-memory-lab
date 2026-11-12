@@ -23,7 +23,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 
 use oml_app::app::Caller;
-use oml_app::domain::web::{CAPACITY_CREDENTIAL_PREFIX, constant_time_eq};
+use oml_app::domain::web::{CAPACITY_CREDENTIAL_PREFIX, DOCTOR_PROBE_CREDENTIAL, constant_time_eq};
 use oml_app::ports::{Clock, ConnectionStore, IdGen, JournalStore, Scanner, Signer, WebStore};
 use oml_app::types::{AppError, WebSessionRecord};
 
@@ -182,6 +182,25 @@ pub(crate) fn session_caller() -> Option<Arc<Caller>> {
     SESSION.try_with(|r| Arc::clone(&r.caller)).ok()
 }
 
+/// The running request's resolved session, to carry onto a task the
+/// request spawns and awaits (#233).
+#[derive(Clone)]
+pub(crate) struct Carried(Option<Resolved>);
+
+/// The running request's session, as [`within_session`] carries it.
+pub(crate) fn current_session() -> Carried {
+    Carried(SESSION.try_with(Clone::clone).ok())
+}
+
+/// Runs `work` with the session `carried` holds, as the request that
+/// captured it would.
+pub(crate) async fn within_session<F: std::future::Future>(carried: Carried, work: F) -> F::Output {
+    match carried.0 {
+        Some(resolved) => SESSION.scope(resolved, work).await,
+        None => work.await,
+    }
+}
+
 /// The session this request's capacity credential derives from, where it
 /// carries one.
 pub(crate) fn session_record() -> Option<Arc<WebSessionRecord>> {
@@ -236,6 +255,13 @@ where
             // and never `/mcp` (ADR-0070 d2; ADR-0045 d7).
             crate::traffic::credential(None, None);
             return finish(&rid, Err(ApiError::auth_invalid(SESSION_OUTSIDE_WEB)));
+        }
+        if credential == DOCTOR_PROBE_CREDENTIAL {
+            // `oml-web --doctor`'s probe, proven: answered as any credential
+            // no session holds, and neither logged nor counted (#262).
+            let mut answer = finish(&rid, Err(ApiError::auth_invalid("unknown")));
+            answer.extensions_mut().insert(crate::traffic::Unrecorded);
+            return answer;
         }
         match st.app.web_credential_caller(&credential).await {
             Ok((caller, session)) => {

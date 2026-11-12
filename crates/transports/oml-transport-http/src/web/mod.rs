@@ -1,4 +1,4 @@
-//! The web pages' edge (ADR-0045): the six routes of [`WEB_ROUTES`], the
+//! The web pages' edge (ADR-0045): the routes of [`WEB_ROUTES`], the
 //! sealed sign-in cookie, the session cookie, the CSRF token and the
 //! same-origin check, and the `web_sign_in` log line. The routes exist
 //! only where the deployment sets `oauth.issuer` and at least one provider;
@@ -11,15 +11,17 @@
 //! or an email (d14): the request line names the route template, and the
 //! sign-in's own line names its provider, outcome, tenant and user.
 //!
-//! The person's session keys rest on ADR-0044's user roots, not built
-//! here: the user page shows who the person is and every action but
-//! `sign_out` answers the app's `not_built` refusal.
+//! Every view and act of the user and admin pages is `oml-web`'s
+//! (ADR-0070 d7 (b)): the lead renders only the sign-in page and the
+//! sign-up terms page, and runs only `sign_out`. The `303`s from the old
+//! page URLs and acts are deleted (ADR-0070, "The old URLs deleted"), so an
+//! old `?view=` URL is a view the lead does not have and `/web/admin` is an
+//! unknown path.
 
 pub mod admin_read;
 pub mod emails;
 pub mod page;
 pub mod start;
-pub mod views;
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -58,52 +60,13 @@ pub const WEB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/web/sign-in"),
     ("POST", "/web/sign-in"),
     ("GET", "/web/callback/{provider}"),
-    ("GET", "/web/admin"),
-    ("POST", "/web/admin"),
-    // Open sign-up and onboarding (ADR-0068 d10).
+    // Open sign-up (ADR-0068 d2); onboarding is oml-web's (ADR-0070 d7 (b)).
     ("POST", "/web/sign-up"),
-    ("GET", "/web/start"),
-    ("POST", "/web/start"),
-    ("GET", "/web/start/status"),
-    ("GET", "/web/start/export"),
-    ("GET", "/web/admin/users"),
-    ("POST", "/web/admin/users"),
 ];
 
-/// The user page's closed `action` set (ADR-0045 d1, d9, d28).
-pub const USER_ACTIONS: &[&str] = &[
-    "issue_key",
-    "connect_key",
-    "connect_code",
-    "cut_off",
-    "create_workarea",
-    "workarea_mode",
-    "workarea_transition",
-    "workarea_ratify",
-    "review_next",
-    "verdict",
-    "sign_out",
-];
-
-/// The admin page's closed `action` set (ADR-0045 d1, d10, d11, d12, d28;
-/// ADR-0055 d10); `demote` joins it with its verb in v0.6.0.
-pub const ADMIN_ACTIONS: &[&str] = &[
-    "allow_email",
-    "remove_email",
-    "set_admin",
-    "grant_review",
-    "grant_curation",
-    "review_next",
-    "verdict",
-    "bulk_confirm",
-    "bulk_verdict",
-    "curate",
-    "supersede",
-    "cut_off",
-    "workarea_mode",
-    "workarea_transition",
-    "workarea_ratify",
-];
+/// The closed `action` set of `POST /web`: sign-out alone, the one act
+/// the auth context keeps (ADR-0070 d6, d7 (b)).
+pub const USER_ACTIONS: &[&str] = &["sign_out"];
 
 /// The purpose a pending sign-up is sealed under, so no other sealed
 /// value opens as one (ADR-0068 d2).
@@ -321,15 +284,7 @@ where
             ("GET", "/web/sign-in") => get(Self::sign_in_get),
             ("POST", "/web/sign-in") => post(Self::sign_in),
             ("GET", "/web/callback/{provider}") => get(Self::callback),
-            ("GET", "/web/admin") => get(Self::admin_page),
-            ("POST", "/web/admin") => post(Self::admin_act),
             ("POST", "/web/sign-up") => post(Self::sign_up),
-            ("GET", "/web/start") => get(Self::start_page),
-            ("POST", "/web/start") => post(Self::start_act),
-            ("GET", "/web/start/status") => get(Self::start_status),
-            ("GET", "/web/start/export") => get(Self::start_export),
-            ("GET", "/web/admin/users") => get(Self::users_page),
-            ("POST", "/web/admin/users") => post(Self::users_act),
             _ => panic!("{method} {path} is in WEB_ROUTES with no handler"),
         }
     }
@@ -425,31 +380,10 @@ where
         Self::web_finish(&rid, answer)
     }
 
-    /// The query's views, each field at most once.
-    fn query_fields(query: &str) -> Result<views::Fields, ApiError> {
-        form_pairs(query.as_bytes())
-            .and_then(|pairs| unique_fields(&pairs))
-            .map(views::Fields::of)
-            .map_err(|e| ApiError::validation(e.description))
-    }
-
     async fn user_page_inner(&self, headers: &HeaderMap, query: &str) -> Answer {
         let mut line = WebLine::default();
         if let Some(refused) = human_only(headers) {
             return self.refused(&refused, line);
-        }
-        // A view oml-web serves at its own path: a 303 to that fixed path,
-        // carrying nothing from the request but, for one memory, its id,
-        // parsed and written anew (ADR-0070 d7 (b) as amended).
-        if let Some(path) = views::moved_view(query)
-            .map(ToOwned::to_owned)
-            .or_else(|| views::moved_memories(query, false))
-        {
-            return Answer {
-                response: self.redirect(&path, None),
-                error_code: None,
-                line,
-            };
         }
         match self.session_of(headers).await {
             Err(e) => self.refused(&e, line),
@@ -472,92 +406,14 @@ where
                         line,
                     };
                 }
-                let fields = Self::query_fields(query);
-                let html = match fields {
-                    Ok(q) => self.user_view(&session, &q).await,
-                    Err(e) => Err(e),
-                };
-                match html {
-                    Ok(html) => Answer {
-                        response: self.view_response(html),
-                        error_code: None,
-                        line,
-                    },
-                    Err(e) => self.refused(&e, line),
-                }
-            }
-        }
-    }
-
-    // -- GET /web/admin -------------------------------------------------------
-
-    async fn admin_page(
-        State(st): State<Self>,
-        rid: Rid,
-        headers: HeaderMap,
-        uri: Uri,
-    ) -> Response {
-        let answer = st
-            .admin_page_inner(&headers, uri.query().unwrap_or(""))
-            .await;
-        Self::web_finish(&rid, answer)
-    }
-
-    /// Any session but an admin entry's, and no session, answers
-    /// `access.not_found`, so the page's existence confirms nothing
-    /// (ADR-0045 d10).
-    async fn admin_page_inner(&self, headers: &HeaderMap, query: &str) -> Answer {
-        let mut line = WebLine::default();
-        if let Some(refused) = human_only(headers) {
-            return self.refused(&refused, line);
-        }
-        // A view oml-web serves at its own path: a 303 to that fixed path,
-        // carrying nothing from the request but, for one memory, its id,
-        // parsed and written anew (ADR-0070 d7 (b) as amended).
-        if let Some(path) = views::moved_view_of(views::MOVED_ADMIN_VIEWS, query)
-            .map(ToOwned::to_owned)
-            .or_else(|| views::moved_memories(query, true))
-        {
-            return Answer {
-                response: self.redirect(&path, None),
-                error_code: None,
-                line,
-            };
-        }
-        match self.session_of(headers).await {
-            Err(e) => self.refused(&e, line),
-            Ok(Some((token, session))) if session.admin => {
-                line.session(&session);
-                let fields = Self::query_fields(query);
-                let html = match fields {
-                    Ok(q) => self.admin_view(&token, &session, &q).await,
-                    Err(e) => Err(e),
-                };
-                match html {
-                    Ok(html) => Answer {
-                        response: self.view_response(html),
-                        error_code: None,
-                        line,
-                    },
-                    Err(e) => self.refused(&e, line),
-                }
-            }
-            Ok(other) => {
-                if let Some((_, session)) = &other {
-                    line.session(session);
-                }
+                // Every view the page had is oml-web's (ADR-0070 d7 (b)),
+                // and an old `?view=` URL no longer redirects there.
                 self.refused(&ApiError::not_found(), line)
             }
         }
     }
 
-    /// A view's page under d8's policy: no view runs script (ADR-0045
-    /// d32), the Atlas included.
-    fn view_response(&self, html: String) -> Response {
-        self.page(StatusCode::OK, html)
-    }
-
-    // -- POST /web and POST /web/admin ------------------------------------------
+    // -- POST /web -----------------------------------------------------------------
 
     async fn user_act(
         State(st): State<Self>,
@@ -565,26 +421,16 @@ where
         headers: HeaderMap,
         body: Bytes,
     ) -> Response {
-        let answer = st.act(&headers, &body, false).await;
+        let answer = st.act(&headers, &body).await;
         Self::web_finish(&rid, answer)
     }
 
-    async fn admin_act(
-        State(st): State<Self>,
-        rid: Rid,
-        headers: HeaderMap,
-        body: Bytes,
-    ) -> Response {
-        let answer = st.act(&headers, &body, true).await;
-        Self::web_finish(&rid, answer)
-    }
-
-    /// One act of a page (ADR-0045 d1, d8): no `Authorization` header, the
-    /// same-origin check, the form decoded once, a live session (an admin
-    /// one on the admin page), the session's `csrf_token`, and an `action`
-    /// from the page's closed set with no field it does not define. Every
-    /// refusal before the act journals nothing.
-    async fn act(&self, headers: &HeaderMap, body: &Bytes, admin_page: bool) -> Answer {
+    /// The one act of `POST /web`, sign-out (ADR-0045 d1, d8): no
+    /// `Authorization` header, the same-origin check, the form decoded
+    /// once, a live session, the session's `csrf_token`, and `action` from
+    /// [`USER_ACTIONS`] with no field it does not define. Every refusal
+    /// before the act journals nothing.
+    async fn act(&self, headers: &HeaderMap, body: &Bytes) -> Answer {
         let mut line = WebLine::default();
         if let Some(refused) = human_only(headers) {
             return self.refused(&refused, line);
@@ -605,12 +451,7 @@ where
         };
         let session = match self.session_of(headers).await {
             Err(e) => return self.refused(&e, line),
-            Ok(Some((token, session))) if !admin_page || session.admin => (token, session),
-            Ok(Some((_, session))) => {
-                line.session(&session);
-                return self.refused(&ApiError::not_found(), line);
-            }
-            Ok(None) if admin_page => return self.refused(&ApiError::not_found(), line),
+            Ok(Some(session)) => session,
             Ok(None) => {
                 let expired = map_app_error(
                     AppError::WebSignIn(SignInRefusal::SessionExpired),
@@ -636,15 +477,10 @@ where
                 line,
             );
         }
-        let actions = if admin_page {
-            ADMIN_ACTIONS
-        } else {
-            USER_ACTIONS
-        };
         let Some(action) = fields
             .iter()
             .find(|(name, _)| name == "action")
-            .and_then(|(_, v)| actions.iter().find(|a| **a == v.as_str()).copied())
+            .and_then(|(_, v)| USER_ACTIONS.iter().find(|a| **a == v.as_str()).copied())
         else {
             return self.refused(
                 &ApiError::validation("action is not one of this page's actions")
@@ -653,48 +489,24 @@ where
             );
         };
         line.action = Some(action);
-        if action == "sign_out" {
-            if let Some((name, _)) = fields
-                .iter()
-                .find(|(name, _)| name != "action" && name != "csrf_token")
-            {
-                return self.refused(
-                    &ApiError::validation(format!("sign_out takes no field {name}"))
-                        .with_details(json!({"field": name})),
-                    line,
-                );
-            }
-            if let Err(e) = self.app.web_sign_out(&session).await {
-                return self.refused(&map_app_error(e, ErrorContext::Write), line);
-            }
-            return Answer {
-                response: self.redirect("/web", Some(clear_cookie(SESSION_COOKIE))),
-                error_code: None,
+        // `sign_out` is the only action of the set.
+        if let Some((name, _)) = fields
+            .iter()
+            .find(|(name, _)| name != "action" && name != "csrf_token")
+        {
+            return self.refused(
+                &ApiError::validation(format!("sign_out takes no field {name}"))
+                    .with_details(json!({"field": name})),
                 line,
-            };
+            );
         }
-        // Every other act runs as one of the person's session keys.
-        if let Err(closed) = self.require_writes_open() {
-            return self.refused(&closed, line);
+        if let Err(e) = self.app.web_sign_out(&session).await {
+            return self.refused(&map_app_error(e, ErrorContext::Write), line);
         }
-        let fields = views::Fields::of(fields);
-        let outcome = if admin_page {
-            self.admin_page_act(&token, &session, action, &fields).await
-        } else {
-            Self::user_page_act(action)
-        };
-        match outcome {
-            Ok(views::Outcome::Redirect(location)) => Answer {
-                response: self.redirect(&location, None),
-                error_code: None,
-                line,
-            },
-            Ok(views::Outcome::Page(html)) => Answer {
-                response: self.page(StatusCode::OK, html),
-                error_code: None,
-                line,
-            },
-            Err(e) => self.refused(&e, line),
+        Answer {
+            response: self.redirect("/web", Some(clear_cookie(SESSION_COOKIE))),
+            error_code: None,
+            line,
         }
     }
 

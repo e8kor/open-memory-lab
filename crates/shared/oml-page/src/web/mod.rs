@@ -84,8 +84,8 @@ pub const USER_WORKAREAS_PATH: &str = "/web/workareas";
 /// The admin page's Workareas view, which `oml-web` serves (ADR-0070 d7 (b)).
 pub const ADMIN_WORKAREAS_PATH: &str = "/web/admin/workareas";
 
-/// The user page's Review view: the queue, review next and bulk review,
-/// which `oml-web` serves (ADR-0070 d7 (b)).
+/// The user page's Review view, review next only; bulk review stays the
+/// admin page's (ADR-0055 d1). `oml-web` serves it (ADR-0070 d7 (b)).
 pub const USER_REVIEW_PATH: &str = "/web/review";
 
 /// The admin page's Review view, with the tenant's queue above it, which
@@ -113,7 +113,7 @@ pub const ADMIN_CURATE_PATH: &str = "/web/admin/curate";
 /// The admin page's tabs, `(href, text)`; the lead's admin views and
 /// `oml-web`'s draw the same nav.
 pub const ADMIN_TABS: [(&str, &str); 8] = [
-    ("/web/admin", "People"),
+    ("/web/admin/people", "People"),
     ("/web/admin/users", "Quotas"),
     (ADMIN_MEMORIES_PATH, "Memories"),
     (ADMIN_WORKAREAS_PATH, "Workareas"),
@@ -139,7 +139,7 @@ pub fn user_tabs(admin: bool) -> Vec<(&'static str, &'static str)> {
         ("/web/guardrails", "Guardrails"),
     ];
     if admin {
-        tabs.push(("/web/admin", "Administration"));
+        tabs.push((ADMIN_TABS[0].0, "Administration"));
     }
     tabs
 }

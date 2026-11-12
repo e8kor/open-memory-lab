@@ -25,20 +25,26 @@ the admin page the queue of held memories per workarea and bulk review; the revi
 author, and a verdict the API refuses is shown with its code. On the Keys view a key's value or a
 connect code is shown once, on the page the act lands on: it travels there sealed in a cookie that
 page clears, never in an address or a log line, and `oml-web` keeps no copy. The admin's Keys view
-lists one person's keys, named by `user`, with a cut-off beside each. The server answers the old
-addresses, `GET /web` (signed in), `GET /web?view=guardrails`, `?view=workarea`,
-`?view=memories` (with `display=atlas`, the Atlas), `?view=review`, `?view=keys`, and
-`GET /web/admin?view=workarea`, `?view=memories`, `?view=review`, `?view=held` and `?view=queue`,
-with a redirect to the new paths, so bookmarks keep working. One memory opened by its id is at
+lists one person's keys, named by `user`, with a cut-off beside each. A signed-in `GET /web` goes
+on to the Keys view. One memory opened by its id is at
 `/web/memory?id=<id>`, and on the admin page, with its attribution and the form that proposes its
 next version, at `/web/admin/memory?id=<id>`; the admin page's Curate view is at
-`/web/admin/curate`. The server answers `GET /web?view=memories&memory=<id>`,
-`GET /web/admin?view=memories&memory=<id>` and `GET /web/admin?view=curate` with a redirect there,
-carrying only the memory's id. A Mermaid diagram is drawn beside its source on every page that shows
+`/web/admin/curate`. The onboarding page is at `/web/start`, with its status poll at `/web/start/status` and the
+export at `/web/start/export`; the setup view at `/web/setup`, which, like a new key's panel, shows the address an agent
+sets beside its key: the API's issuer, else `web.public_url`, else a `no_server` line and no address (no release
+names a server, ADR-0076 d6); the admin overview (the allowlist and
+the review and curation grants) at `/web/admin/people`; and the users and quotas page at
+`/web/admin/users`. Removing an address, disabling a person and closing a deletion request each show a
+confirmation first. The server's only web pages are now sign-in, the sign-up terms page and
+sign-out. A Mermaid diagram is drawn beside its source on every page that shows
 one, the Review card included, in a sandboxed frame `oml-web` serves at `/web/render/` with its
-pinned bundle at `/web/assets/`; route both prefixes to `oml-web`. A form from an old page that posts
-one of these views' acts, or a creation, a supersession or a curation, to the server runs nothing
-and lands on the view. Run
+pinned bundle at `/web/assets/`; route both prefixes to `oml-web`.
+
+Since v0.7.1 the server no longer redirects the addresses of v0.6 (ADR-0070, "The old URLs
+deleted"). A bookmark of `GET /web?view=...` answers not found once signed in, `GET /web/admin` and
+anything below it that `oml-web` does not serve answer not found, and a form from an old page that
+posts an act other than sign-out to `POST /web` or `POST /web/admin` is refused and runs nothing.
+Use the paths above. Run
 `oml-web` behind the same proxy as the server before you upgrade: a deployment that sends these
 paths to the server shows not found.
 
@@ -75,7 +81,7 @@ oml-web
 |---|---|---|---|
 | `web.api_url` | `OML_WEB__API_URL` | required | The server's base URL, `http://` or `https://`, a host and no path. Plain `http://` is accepted only to a loopback host. |
 | `web.client_secret` | `OML_WEB__CLIENT_SECRET` | required, or the file below | Sent as `OML-Web-Client` on every API call. Never logged. |
-| `web.client_secret_file` | `OML_WEB__CLIENT_SECRET_FILE` | unset | A file holding the secret, read at start, one trailing line ending dropped. On Unix a file its group or others can read stops the start, naming its mode. Setting both stops the start. |
+| `web.client_secret_file` | `OML_WEB__CLIENT_SECRET_FILE` | unset | A file holding the secret, read at start, one trailing line ending dropped. On Unix a file its group or others can read stops the start, naming its mode, and so does a file owned by a user other than the process's or root. Setting both stops the start. |
 | `web.listen` | `OML_WEB__LISTEN` | `127.0.0.1:8091` | Where the pages listen. |
 | `web.public_url` | `OML_WEB__PUBLIC_URL` | the server's `oauth.issuer` | The origin a form's `Origin` must equal. Unset, `oml-web` reads it from the server's `/.well-known/oauth-authorization-server` at start, for up to 30 seconds, and refuses to start without it. |
 | `web.allow_plain_http_api` | `OML_WEB__ALLOW_PLAIN_HTTP_API` | `false` | `true` accepts a plain `http://` `web.api_url` to a host that is not loopback, for a private network. `oml-web` warns at every start. |
@@ -116,6 +122,7 @@ it lives where the process's other secrets live and nowhere else:
 | `oml quickstart` | `OML_WEB_CLIENT_SECRET` in the stack's owner-only `.env`, which compose hands to both services. |
 | `docker-compose.yml` | A fixed development value unless `OML_WEB_CLIENT_SECRET` is set; for development only. |
 | The Helm chart | A Secret: the one `web.clientSecret.existingSecret` names, the recommended path and the only one for GitOps or `helm template`, or one the chart generates once and keeps ([Kubernetes](../guides/kubernetes.md)). `values.yaml` never holds the value. |
+| Kubernetes without the chart | An environment variable from the Secret (`valueFrom.secretKeyRef`), as the chart sets it. A Secret mounted as a volume is owned by root, and with `fsGroup` it is group-readable, so `web.client_secret_file` refuses it; with `defaultMode: 0400` and no `fsGroup` only root can read it. |
 
 Neither process logs the secret, prints it in `--doctor`, or puts it in a debug form; a refusal
 names the setting and, for a file, its path and mode, never the value.
@@ -194,7 +201,15 @@ of kept-alive connections.
 
 When the call a page needs fails, `oml-web` shows the server's error code and message with the
 page's request id. When a secondary part fails, such as the workarea list on the Guardrails view,
-the page renders without it and names that call's request id.
+the page renders without it and names that call's request id. A list the page reads in pages
+past its bound, such as a person's keys past 10 pages of 200 on the Memories view, is refused
+with `limit.list_too_long` rather than shown cut short; the API and the command line read it
+whole.
+
+A key's value or a connect code reaches the page it is shown on in a sealed `__Host-oml_once`
+cookie that lives one minute. The cookie's path is `/`, so it rides every request to the site
+until that page clears it. Neither process logs `Cookie`; keep the proxy in front from logging
+it too (Caddy blanks it unless `log_credentials` is set).
 
 ## Not built yet
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Open Memory Lab HTTP API
-  version: 0.6.3-design
+  version: 0.7.1-design
   summary: >-
     The two-ring JSON API of OML, an agentic external memory provider: /v1 the provider ring,
     /v2 the memory lab.
@@ -554,6 +554,7 @@ paths:
         - { $ref: '#/components/parameters/Limit' }
         - { $ref: '#/components/parameters/Cursor' }
         - { name: counts, in: query, schema: { type: boolean }, description: "true: the whole subtree in one answer, up to 2000 nodes, each with counts of its rows by state as the caller's with_own listing shows them, counted up to 2000 rows, and truncated when either stopped there; for the admin key role every row is counted as structure. No crew, no content, and no limit or cursor beside it (ADR-0045 d30; ADR-0070 d5). Since v0.6.4." }
+        - { name: offers, in: query, schema: { type: boolean }, description: "true, beside counts=true only: the answer carries offers, the scope's offers exactly as GET /v2/workareas/{workarea}/offers serves them to the same caller, read beside the counts in the same request, so the web console's admin Atlas needs no call of its own for them. A scope the tree refuses names no offers; offers without counts=true is request.validation, details.field offers (ADR-0070 d8). Since v0.7.1." }
       responses:
         '200':
           description: One page of nodes, or with counts=true the subtree with its counts.
@@ -1348,7 +1349,7 @@ paths:
       tags: [keys]
       operationId: issueKey
       summary: Issue a key under the issuer ceiling; the value appears exactly once, here.
-      description: 'A person''s web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>), role (reader or writer) and connect_code only; the key names their user and holds writer or reader on their root alone, any other field is request.validation naming it, and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant''s first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant''s workarea_node_id, a deny entry''s subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value''s place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. As built the key routes keep no idempotency record, so a retried issuance answers name.taken and its code is minted again with oml keys connect-code.'
+      description: 'A person''s web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>), role (reader or writer) and connect_code only; the key names their user and holds writer or reader on their root alone, any other field is request.validation naming it, and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant''s first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant''s workarea_node_id, a deny entry''s subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value''s place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again, without value and without connect_code.code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).'
       parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody:
         required: true
@@ -1409,13 +1410,20 @@ paths:
     get:
       tags: [keys]
       operationId: whoami
-      parameters: [{ $ref: '#/components/parameters/XRequestId' }, { $ref: '#/components/parameters/XCorrelationId' }, { $ref: '#/components/parameters/Traceparent' }]
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: start, in: query, required: false, schema: { type: boolean }, description: "true: person carries start, the onboarding status the web console's Start page polls (ADR-0068 d10; ADR-0070 d5). Since v0.7.0." }
+        - { name: person, in: query, required: false, schema: { type: boolean }, description: "false: no person field and none of its reads, as the web console's session check asks on every page; true or absent: person as since v0.7.0; with start=true, request.validation naming the field person (ADR-0070 d8). Since v0.7.1." }
       summary: The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its denials or deny masks.
       description: >-
         Requires: any live key; it reads only its own record. Each reference is {id, name} and the
         default workarea carries its derived path. person names the user a key names, with its
         sign-up usage and limits and its pending deletion request, and is null for a tenant key
-        (ADR-0070 d5; ADR-0068 d5, d6, d10). The key's denials and its grants' per-grant deny
+        (ADR-0070 d5; ADR-0068 d5, d6, d10); with person=false it is absent and unread. The
+        credential is resolved once, so a key value or a connection spends one request of its rate
+        (#286). The key's denials and its grants' per-grant deny
         masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A revoked or
         unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
         ADR-0039 d15).
@@ -1491,7 +1499,7 @@ paths:
       tags: [keys]
       operationId: addDenial
       summary: Create or extend the key's global deny object — deny-wins across all its grants.
-      description: 'A person''s session key cuts a key off on universe alone, workarea universe, the key by name: <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). Otherwise requires: admin key role. Distinct from a per-grant deny mask. Journalled as key.denied; the denial''s epoch is that event''s journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).'
+      description: 'A person''s session key cuts a key off on universe alone, workarea universe, the key by name: <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role, and the Idempotency-Key is required but no outcome is recorded under it: only a session key claims it, so a resubmission by any other key denies again. Distinct from a per-grant deny mask. Journalled as key.denied; the denial''s epoch is that event''s journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -1528,7 +1536,7 @@ paths:
       tags: [keys]
       operationId: mintConnectCode
       summary: Mint a fresh one-time connect code for a connector key; voids the key's earlier codes.
-      description: 'A person''s web session key mints a code for one of their own connector keys, by name, at the default lifetime; another person''s key is access.not_found, and another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). Otherwise requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key''s earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. As built the route keeps no idempotency record, so a retry mints another code and voids this one. Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).'
+      description: 'A person''s web session key mints a code for one of their own connector keys, by name, at the default lifetime; another person''s key is access.not_found, and another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9). Otherwise requires: admin key role. The key must be a connector key (issued with connect_code: true, no bearer value), neither revoked nor expired, on a deployment with oauth.issuer set; otherwise 422 oauth.connect_refused with details.reason (bearer_key, revoked, expired, not_configured). The code is shown exactly once, here; the server keeps only its SHA-256 digest, and connection.code_issued journals its id and expiry, never the code (ADR-0031 d7, d8). The same commit voids the key''s earlier codes as docs/architecture/roles-and-keys.md (Connections) declares. The Idempotency-Key is claimed for the calling key before the code is minted: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and mints nothing, without code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0). Lifetime: the oauth.connect_code_ttl setting, or ttl_seconds up to 30 days for a key confined to one workarea (ADR-0067 d3).'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2107,7 +2115,7 @@ paths:
       tags: [web]
       operationId: grantWebCapacities
       summary: Give a person's session key a capacity on workareas, review or curation.
-      description: 'Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the universe node alone, is created at the first designation, and gains reader on each workarea. Each grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none and journal_seq is null. A user with no session key of that capacity answers access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act''s last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
+      description: 'Requires: admin key role (ADR-0045 d10; ADR-0044 d7; ADR-0070 d5). review: <user>-review gains dreamer and reader on each workarea; curate: <user>-curate, a tenant writer key with writer on the universe node alone, is created at the first designation, and gains reader on each workarea. Each grant is one grant.issued; a grant the key holds already is not added again, so a repeat adds none and journal_seq is null. A user with no session key of that capacity answers access.not_found. This is the one path that creates a session key; POST /v2/keys never mints one. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act''s last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2157,7 +2165,7 @@ paths:
       tags: [web]
       operationId: setWebUserQuota
       summary: Set a person's quotas, or return one to the default with null.
-      description: 'Requires: admin key role (ADR-0068 d5; ADR-0070 d5). Each quota sent is one web.quota_set; a member sent as null returns that quota to the default, and one not sent is left as it is. A limit is a whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers access.not_found. Answers the person''s row as GET /v2/web/users serves it. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act''s last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
+      description: 'Requires: admin key role (ADR-0068 d5; ADR-0070 d5). Each quota sent is one web.quota_set; a member sent as null returns that quota to the default, and one not sent is left as it is. A limit is a whole number from 0 to 1000000, else request.validation naming it. A user with no user root answers access.not_found. Answers the person''s row as GET /v2/web/users serves it. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act''s last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2198,7 +2206,7 @@ paths:
       tags: [web]
       operationId: disableWebUser
       summary: Disable a person, ending their sessions and cutting off their agent keys.
-      description: 'Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin''s, answers access.not_found and journals nothing. The body is empty: no reason is journalled in this build, so a reason is refused rather than dropped. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act''s last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
+      description: 'Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin''s, answers access.not_found and journals nothing. A live admin key whose row names the person''s root, which no verb makes and no denial cuts off, answers 409 workarea.admin_key_under_root naming it and journals nothing (since v0.7.1). A key gone between the listing and its denial is skipped and left out of keys_cut_off. The body is empty: no reason is journalled in this build, so a reason is refused rather than dropped. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act''s last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2236,7 +2244,7 @@ paths:
       tags: [web]
       operationId: closeWebDeletion
       summary: Close a person's pending deletion request, disabling them first.
-      description: 'Requires: admin key role (ADR-0068 d6; ADR-0070 d5). The person is disabled as POST /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act''s last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
+      description: 'Requires: admin key role (ADR-0068 d6; ADR-0070 d5). The person is disabled as POST /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act''s last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2326,7 +2334,7 @@ paths:
       tags: [web]
       operationId: requestWebDeletion
       summary: The person asks for their account's deletion.
-      description: 'Requires: the person''s web session key (<user>-web, through its capacity credential); any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5). Journalled as web.deletion_requested; it ends nothing and changes no access, and an admin closes it. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the outcome recorded after the act''s last commit; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
+      description: 'Requires: the person''s web session key (<user>-web, through its capacity credential); any other key answers access.verb_ceiling with details.reason session_key_only (ADR-0068 d6; ADR-0070 d5). Journalled as web.deletion_requested; it ends nothing and changes no access, and an admin closes it. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act''s last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2606,26 +2614,27 @@ paths:
     get:
       tags: [web]
       operationId: userPage
-      summary: The sign-in page without a session; the user page with one.
-      description: 'Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys, setup, review, and memories with memory, one memory opened by its id), memory. The Memories list and the Atlas are oml-web''s, at /web/memories and /web/atlas. Served with the connect page''s headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.'
+      summary: The sign-in page without a session; a signed-in browser goes on to the Keys view.
+      description: 'Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Every view of the user page is oml-web''s at a path of its own (ADR-0070 d7 (b)); a signed-in request naming a view is access.not_found, the old ?view= URLs'' 303s having been deleted in v0.7.1 (ADR-0070, "The old URLs deleted"). Served with the connect page''s headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.'
       security: []
-      parameters:
-        - { name: view, in: query, required: false, schema: { type: string, enum: [keys, setup, memories, workarea, review] } }
-        - { name: q, in: query, required: false, schema: { type: string, maxLength: 512 } }
-        - { name: memory, in: query, required: false, schema: { type: string } }
       responses:
         '200':
-          description: The page.
+          description: The sign-in page.
           content:
             text/html:
               schema: { type: string }
         '303':
-          description: 'A view oml-web now serves at its own path, view=guardrails or view=workarea: to the fixed /web/guardrails or /web/workareas; view=memories without memory: to /web/memories, or /web/atlas with display=atlas; each carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4; the memories views since v0.7.0.'
+          description: Signed in and naming no view, to the Keys view at /web/keys, carrying nothing from the request.
+        '404':
+          description: access.not_found, on a page, for a signed-in request naming a view.
+          content:
+            text/html:
+              schema: { type: string }
     post:
       tags: [web]
       operationId: userPageAct
-      summary: One act of the user page, named by action.
-      description: 'Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off, review_next, verdict, sign_out; review_next and verdict run as the session''s <user>-review key, which holds dreamer and reader on the person''s own root from the first sign-in, R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea, workarea_mode, workarea_transition and workarea_ratify are the Workareas view''s acts, which oml-web runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas (ADR-0070 d7 (b); since v0.6.4). An issued key''s value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.'
+      summary: Sign out, the one act the lead keeps.
+      description: 'Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is sign_out, which takes no other field; every other act is oml-web''s at its view''s own path, and an old form''s action is request.validation with details.field action, running nothing (ADR-0070 d6, d7 (b); the moved acts'' 303s deleted in v0.7.1). Since v0.5.0.'
       security: []
       requestBody:
         required: true
@@ -2635,16 +2644,16 @@ paths:
               type: object
               required: [action, csrf_token]
               properties:
-                action: { type: string, enum: [issue_key, connect_key, connect_code, cut_off, create_workarea, workarea_mode, workarea_transition, workarea_ratify, review_next, verdict, sign_out] }
+                action: { type: string, enum: [sign_out] }
                 csrf_token: { type: string }
       responses:
-        '200':
-          description: The page after the act.
+        '303':
+          description: To /web, the session ended and its cookie cleared.
+        '400':
+          description: request.validation, on a page.
           content:
             text/html:
               schema: { type: string }
-        '303':
-          description: After sign_out, to /web; for create_workarea, workarea_mode, workarea_transition and workarea_ratify, to /web/workareas, having run nothing.
 
   /web/sign-in:
     get:
@@ -2714,55 +2723,6 @@ paths:
             text/html:
               schema: { type: string }
 
-  /web/admin:
-    get:
-      tags: [web]
-      operationId: adminPage
-      summary: The admin page, for a session whose allowlist entry is an admin's.
-      description: 'Any other session answers access.not_found. Views by query: view (people, queue, review, curate, and memories with memory, one memory''s attribution), memory; view=workarea answers 303 /web/admin/workareas, and view=memories without memory 303 /web/admin/memories, or /web/admin/atlas with display=atlas, which oml-web serves, carrying nothing from the request, signed in or not (ADR-0070 d7 (b); since v0.6.4, the memories views since v0.7.0). The memories list oml-web serves and one memory''s attribution here are the admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin: every memory''s text and attribution, each read journalled (ADR-0045 d10, d21). Since v0.5.0.'
-      security: []
-      parameters:
-        - { name: view, in: query, required: false, schema: { type: string, enum: [people, queue, review, held, curate, memories, workarea] } }
-        - { name: q, in: query, required: false, schema: { type: string, maxLength: 512 } }
-        - { name: memory, in: query, required: false, schema: { type: string } }
-      responses:
-        '200':
-          description: The page.
-          content:
-            text/html:
-              schema: { type: string }
-        '303':
-          description: 'view=workarea, which oml-web serves at its own path: to the fixed /web/admin/workareas, carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4.'
-        '404':
-          description: access.not_found, on a page.
-          content:
-            text/html:
-              schema: { type: string }
-    post:
-      tags: [web]
-      operationId: adminPageAct
-      summary: One act of the admin page, named by action, run as the capacity it needs.
-      description: 'Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator''s own universe claims as <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). workarea_mode, workarea_transition and workarea_ratify are the Workareas view''s acts, which oml-web runs at /web/admin/workareas over the API: the lead runs none of them and answers 303 /web/admin/workareas (ADR-0070 d7 (b); since v0.6.4). Since v0.5.0.'
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              required: [action, csrf_token]
-              properties:
-                action: { type: string, enum: [allow_email, remove_email, set_admin, grant_review, grant_curation, review_next, verdict, bulk_confirm, bulk_verdict, curate, supersede, cut_off, workarea_mode, workarea_transition, workarea_ratify] }
-                csrf_token: { type: string }
-      responses:
-        '200':
-          description: The page after the act.
-          content:
-            text/html:
-              schema: { type: string }
-        '303':
-          description: For workarea_mode, workarea_transition and workarea_ratify, to /web/admin/workareas, having run nothing (ADR-0070 d7 (b)). Since v0.6.4.
-
   /web/sign-up:
     post:
       tags: [web]
@@ -2794,131 +2754,6 @@ paths:
           content:
             text/html:
               schema: { type: string }
-
-  /web/start:
-    get:
-      tags: [web]
-      operationId: startPage
-      summary: The onboarding page; the sign-in page without a session.
-      description: 'Three steps: choose a client (query client: claude-ai, claude-code, other), get its credential, and wait for the first connection and the first memory. The only page with a script, hashed in its CSP with connect-src self, for its copy buttons and its status poll (ADR-0068 d10). Proposed.'
-      security: []
-      parameters:
-        - { name: client, in: query, required: false, schema: { type: string, enum: [claude-ai, claude-code, other] } }
-      responses:
-        '200':
-          description: The page.
-          content:
-            text/html:
-              schema: { type: string }
-    post:
-      tags: [web]
-      operationId: startPageAct
-      summary: One act of the onboarding page, named by action.
-      description: 'Requires a session, csrf_token and the same-origin check. issue_claude_ai issues a connector key <user>-claude-ai and shows its connect code once; issue_claude_code and issue_other issue <user>-claude-code and <user>-agent and show the value once; a taken name gains -2 to -9. Past the keys quota, limit.quota. request_deletion with confirm=delete journals web.deletion_requested (ADR-0068 d6, d10). Proposed.'
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              required: [action, csrf_token]
-              properties:
-                action: { type: string, enum: [issue_claude_ai, issue_claude_code, issue_other, request_deletion] }
-                csrf_token: { type: string }
-                confirm: { type: string }
-      responses:
-        '200':
-          description: The page with the credential, shown once.
-          content:
-            text/html:
-              schema: { type: string }
-        '303':
-          description: After request_deletion, to /web/start.
-
-  /web/start/status:
-    get:
-      tags: [web]
-      operationId: startStatus
-      summary: Whether the person's agent has connected and the state of their newest memory.
-      description: 'A session only; without one access.not_found (ADR-0068 d7, d10). connected is true once any of the person''s agent keys authenticated since the process started or a connector key has an open connection. Proposed.'
-      security: []
-      responses:
-        '200':
-          description: The status.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [connected, first_memory]
-                properties:
-                  connected: { type: boolean }
-                  first_memory: { type: [string, 'null'], enum: [held, promoted, null] }
-        '404':
-          description: access.not_found, on a page.
-          content:
-            text/html:
-              schema: { type: string }
-
-  /web/start/export:
-    get:
-      tags: [web]
-      operationId: startExport
-      summary: Everything the person holds, as a JSON download.
-      description: 'A session only. Every memory in the person''s root and below, every state, with its workarea path, claim key, version, state, text and times; the person''s keys (ADR-0068 d6). Proposed.'
-      security: []
-      responses:
-        '200':
-          description: The export, Content-Disposition attachment.
-          content:
-            application/json:
-              schema: { type: object }
-        '404':
-          description: access.not_found, on a page.
-          content:
-            text/html:
-              schema: { type: string }
-
-  /web/admin/users:
-    get:
-      tags: [web]
-      operationId: usersPage
-      summary: The admin's users page — quota use, quotas and pending deletion requests.
-      description: 'For an admin session; any other answers access.not_found (ADR-0068 d5, d6, d8). Proposed.'
-      security: []
-      responses:
-        '200':
-          description: The page.
-          content:
-            text/html:
-              schema: { type: string }
-        '404':
-          description: access.not_found, on a page.
-          content:
-            text/html:
-              schema: { type: string }
-    post:
-      tags: [web]
-      operationId: usersPageAct
-      summary: One act of the users page, named by action, run as <user>-admin.
-      description: 'set_quota (user, quota, limit; empty limit returns to the default) journals web.quota_set; disable_user journals web.user_disabled and cuts off every agent key of the person; close_deletion disables the person and journals web.deletion_closed (ADR-0068 d5, d6, d8). Proposed.'
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              required: [action, csrf_token, user]
-              properties:
-                action: { type: string, enum: [set_quota, disable_user, close_deletion] }
-                csrf_token: { type: string }
-                user: { type: string }
-                quota: { type: string, enum: [memories, keys, connections, requests_per_minute] }
-                limit: { type: string }
-      responses:
-        '303':
-          description: Back to /web/admin/users.
 
   /v2/admin/memories/search:
     post:
@@ -3294,7 +3129,8 @@ components:
         workarea_path: { type: string }
         text: { type: string }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail], description: "The kind the version was written as; the admin page refuses to supersede or retire a guardrail by it (ADR-0037 d17; ADR-0070 d5). Since v0.7.0." }
-        key: { type: string, description: The authoring key's name. }
+        key: { type: [string, 'null'], description: "The authoring key's name; null for a key that has no name, which key_id names (ADR-0070 d5)." }
+        key_id: { type: string, description: "The authoring key's id, which names a key that has no name (ADR-0070 d5). Since v0.7.0." }
         principal: { type: [string, 'null'] }
         user: { type: [string, 'null'] }
         created_at: { type: string, format: date-time }
@@ -3333,6 +3169,10 @@ components:
             keys: { type: integer }
             connections: { type: integer }
             requests_per_minute: { type: integer }
+        admin_keys:
+          type: array
+          items: { type: string }
+          description: "Each live admin key whose row names the person's user root, by name: a row no verb makes, which refuses the person's disable with workarea.admin_key_under_root and which oml doctor warns about (ADR-0068 d8, d11). Since v0.7.1."
 
     WebEmail:
       type: object
@@ -3474,6 +3314,7 @@ components:
         - workarea.frozen
         - workarea.in_progress_refused
         - workarea.held_remaining
+        - workarea.admin_key_under_root
         - workarea.transition_refused
         - review.author_in_lineage
         - review.ratifier_is_proposer
@@ -3622,9 +3463,13 @@ components:
         severity: { type: string, enum: [never, must, should], description: "On kind guardrail alone, except a retirement version (ADR-0037 d2)." }
         rule: { description: "On kind guardrail alone: its oml-gr/1 rule, or null when it has none (ADR-0037 d8)." }
         load_warning: { type: string, description: "On a held guardrail alone: every reader of it is told that every key reading its workarea will load the rule once it binds (ADR-0037 d10)." }
+        scan_findings:
+          type: array
+          description: "Every finding stored on the version, in the order recorded, on the review serve, the held listing and the named read alone; absent elsewhere, so an empty list means the scan found nothing (ADR-0074 d17, d23)."
+          items: { $ref: '#/components/schemas/ScanFinding' }
         principal: { type: [string, 'null'], description: "The authoring principal; null on a version in universe served to a key outside its authoring key set, which is served with derives_from empty and workarea_path universe, so no field names its source (ADR-0044 d9)." }
         author_key_id: { type: [string, 'null'], description: "The authoring key's id; null wherever principal is (ADR-0044 d9). The web console names the kind of its person's own keys by it and narrows a search to one of them (ADR-0070 d5). Since v0.7.0." }
-        scan_finding: { type: [string, 'null'], description: "Admission's scan finding on the version, class: rule at place, never the matched text; null when the scan found nothing (ADR-0065 d8; ADR-0070 d5). Since v0.7.0." }
+        scan_finding: { type: [string, 'null'], description: "Admission's scan finding on the version, class: rule at place, never the matched text; null when the scan found nothing, and null wherever principal is (ADR-0065 d8; ADR-0044 d9; ADR-0070 d5). Since v0.7.0." }
         provenance: { type: string, enum: [agent, human, connector, simulation] }
         simulation_id: { type: [string, 'null'] }
         self_signed: { type: boolean, description: Marked rows under the bounded development exception; never promote beyond their workarea. }
@@ -3876,6 +3721,21 @@ components:
         floor: { type: [number, 'null'], description: 'The relevance floor applied to this answer (search.rerank.floor), only when the rerank was applied; null when none was.' }
         below_floor: { type: integer, minimum: 0, description: 'How many of the first k candidates the floor withheld; hits empty with below_floor above 0 means nothing scored above the floor (ADR-0053 d6).' }
         sources: { $ref: '#/components/schemas/RecallSources' }
+        widen:
+          type: object
+          additionalProperties: false
+          description: >-
+            On a sources scope answer, when a workarea the key reads outside the scope holds the
+            query's words at least twice as often per row as the scope, on at least two of its
+            rows: a retry with sources wide would search it. Read off a signal the server builds
+            in the background, at most 300 seconds old and under the key's grants as they are
+            now; a scope answer without such a signal carries no widen. It names no workarea
+            (ADR-0072 d8).
+          required: [sources, candidates, matches_at_least]
+          properties:
+            sources: { type: string, enum: [wide] }
+            candidates: { type: integer, minimum: 0, description: The workareas outside the scope that hold a query word. }
+            matches_at_least: { type: integer, minimum: 0, description: 'A lower bound on their rows holding a query word: the largest count of one word, summed over them.' }
     RecallSources:
       type: object
       additionalProperties: false
@@ -3916,8 +3776,8 @@ components:
     FederationSettings:
       type: object
       additionalProperties: false
-      description: The tenant's federation policy (ADR-0072 d5), and for doctor the keys whose recall met more than 1,000 candidate sources since the lead started (d12).
-      required: [enabled, default_sources, max_sources, wide_keys]
+      description: The tenant's federation policy (ADR-0072 d5), and for doctor the keys whose recall met more than 1,000 candidate sources since the lead started (d12) and how the widen hint's signal fared (d8).
+      required: [enabled, default_sources, max_sources, wide_keys, widen_signal]
       properties:
         enabled: { type: boolean, description: 'Whether recall may search beyond its scope when asked; off by default.' }
         default_sources: { type: string, enum: [scope, wide], description: 'What an absent sources reads; never a list.' }
@@ -3931,6 +3791,17 @@ components:
             properties:
               key_id: { type: string, format: uuid }
               candidates: { type: integer, minimum: 0 }
+        widen_signal:
+          type: object
+          additionalProperties: false
+          description: The widen hint's signals on this tenant since the lead started; doctor warns on a failed build, on evictions, and on recalls that found none while none was built.
+          required: [built, unserved, evicted, failed, last_failure]
+          properties:
+            built: { type: integer, minimum: 0, description: Signals built. }
+            unserved: { type: integer, minimum: 0, description: 'Scope recalls answered without the hint because their signal was missing, older than 300 seconds or built under other grants.' }
+            evicted: { type: integer, minimum: 0, description: 'Signals dropped to keep the tenant, or the lead, within its share; each is not rebuilt for 300 seconds.' }
+            failed: { type: integer, minimum: 0, description: Signal builds that failed. }
+            last_failure: { type: [string, 'null'], description: The last failed build's reason. }
 
     RerankOutcome:
       type: string
@@ -4165,6 +4036,29 @@ components:
       type: string
       enum: [changed, removed]
       description: "The served version's latest source check when it is changed or removed. Computed from the source alone, never from a held successor (ADR-0057 d5)."
+
+    ScanFinding:
+      type: object
+      description: "One finding of a version's findings list (ADR-0074 d23): where the scan fired and why, never the matched text (ADR-0065 d8)."
+      additionalProperties: false
+      required: [class, rule, verdict, rule_set, field, line, via, span, found_by, event_seq, migrated_from]
+      properties:
+        class: { type: string, description: "The threat class, injection.override." }
+        rule: { type: string, description: "The rule id, ignore-instructions." }
+        verdict: { type: string, enum: [refuse, hold, annotate], description: "refuse appears only on a finding a recording rescan made on a version already stored (ADR-0074 d14)." }
+        rule_set: { type: [string, 'null'], description: "The rule set it was found under, oml-scan/1.1." }
+        field: { type: [string, 'null'], description: "/body, /title, or /body/ and a decoded view's path; null on a finding migrated from the single stored finding." }
+        line: { type: [integer, 'null'], minimum: 1, description: "The 1-based line of the field the match starts on." }
+        via: { type: [string, 'null'], description: "The view the rule read: raw, clean, spaced or letters (ADR-0074 d6)." }
+        span:
+          type: [array, 'null']
+          description: "The match's byte range, start and end, in that view."
+          items: { type: integer, minimum: 0 }
+          minItems: 2
+          maxItems: 2
+        found_by: { type: string, enum: [admission, rescan], description: "Who recorded it." }
+        event_seq: { type: [integer, 'null'], minimum: 1, description: "The seq of the journal event that recorded it." }
+        migrated_from: { type: [string, 'null'], description: "On a finding migrated from the version's single scan_finding, the text that held." }
 
     SourceChecked:
       type: object
@@ -4825,7 +4719,7 @@ components:
         guardrail_scope: { $ref: '#/components/schemas/GuardrailScope' }
         profile: { type: [string, 'null'], enum: [curator, null], description: "The key's profile; null for none (ADR-0030 d8)." }
         person:
-          description: The person the key's user root names; null for a tenant key (ADR-0070 d5).
+          description: The person the key's user root names; null for a tenant key (ADR-0070 d5). Absent with person=false (#286).
           oneOf:
             - { $ref: '#/components/schemas/WhoamiPerson' }
             - { type: 'null' }
@@ -4852,6 +4746,12 @@ components:
             connections: { type: integer }
             requests_per_minute: { type: integer }
         deletion_requested_at: { type: [string, 'null'], format: date-time, description: "When the person asked for deletion, while the request is pending (ADR-0068 d6)." }
+        start:
+          description: "With start=true, what the onboarding page waits for: whether one of the person's agent keys has connected, and the state of the newest memory of their root, held or promoted, else null (ADR-0068 d10; ADR-0070 d5). Absent otherwise. Since v0.7.0."
+          type: [object, 'null']
+          properties:
+            connected: { type: boolean }
+            first_memory: { type: [string, 'null'], enum: [held, promoted, null] }
 
     ListedKey:
       type: object
@@ -4922,6 +4822,10 @@ components:
                   other: { type: integer, description: Every other state. }
         next_cursor: { type: 'null' }
         truncated: { type: boolean, description: The node or the row count stopped at 2000. }
+        offers:
+          description: With offers=true, the scope's offers, as GET /v2/workareas/{workarea}/offers serves them to the same caller; absent otherwise (#286). Since v0.7.1.
+          allOf:
+            - { $ref: '#/components/schemas/WorkareaOffers' }
 
     WorkareaOffers:
       type: object
@@ -5132,6 +5036,12 @@ components:
               rule: { type: string }
               action: { type: string, enum: [veto, hold] }
               at: { type: string, description: 'The field and line, /body line 3.' }
+              field: { type: string, description: 'The field the findings list stores it under: /body, /title, /body/ and a decoded view''s path, or an anchor field (ADR-0074 d23).' }
+              origin: { type: [string, 'null'], description: 'The version''s origin kind, or null for one stored without: the dry run''s rates per origin (ADR-0074 d18).' }
+        scanned_by_origin:
+          type: object
+          description: 'The versions scanned, counted by origin kind, none for a version stored without one: the denominators of the dry run''s rates (ADR-0074 d18).'
+          additionalProperties: { type: integer, minimum: 0 }
         by_rule:
           type: array
           items:
@@ -5147,6 +5057,7 @@ components:
         recorded: { type: integer, minimum: 0, description: 'Held versions whose findings this call recorded under the server''s rule set (ADR-0065 d15; ADR-0074 d28); 0 for the read.' }
         held_unrescanned: { type: integer, minimum: 0, description: 'After this call, the tenant''s held versions last scanned under another rule set than the server''s, which stay their authors'' alone in in-progress workareas: doctor''s scan_held_unrescanned (ADR-0074 d28).' }
         rescan_due: { type: integer, minimum: 0, description: 'After this call, every stored version, erased ones aside, last scanned under another rule set: doctor''s scan_rescan_due (ADR-0074 d28).' }
+        findings_unlisted: { type: integer, minimum: 0, description: 'After this call, held versions whose stored scan finding has no row in the findings list, written by a server older than migration 0043: doctor''s scan_findings_unlisted (ADR-0074 d23).' }
 
     Build:
       type: object

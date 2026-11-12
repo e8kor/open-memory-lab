@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Open Memory Lab HTTP API, designed operations
-  version: 0.6.3-design
+  version: 0.7.1-design
   summary: >-
     The designed annex of the OML HTTP API: decided, not routed. Nothing is generated from it.
   description: >-

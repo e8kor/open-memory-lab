@@ -730,6 +730,13 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("the deterministic scan vetoed the submission: {finding}"),
         )
         .with_details(json!({ "finding": finding })),
+        AppError::IdempotencyInProgress => ApiError::new(
+            StatusCode::CONFLICT,
+            "idempotency.in_progress",
+            "An idempotency key acts once: a resubmission while the first attempt holds the key waits for its outcome, and is refused rather than acting a second time (D13).",
+            "another attempt under this Idempotency-Key has not recorded its outcome yet",
+        )
+        .retry_after(1),
         AppError::IdempotencyDigestMismatch => ApiError::new(
             StatusCode::CONFLICT,
             "idempotency.digest_mismatch",
@@ -978,6 +985,18 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "a global denial on an admin key is refused: an admin key carries no grant for a denial to attenuate",
         )
         .with_details(json!({ "field": "key" })),
+        // A corrupt row: no verb issues an admin key under a user root,
+        // and no denial cuts one off (ADR-0068 d8, d11; #277).
+        AppError::AdminKeyUnderUserRoot { user, key } => ApiError::new(
+            StatusCode::CONFLICT,
+            "workarea.admin_key_under_root",
+            "A person is disabled only when every key under their root can be cut off, and no denial cuts off an admin key (ADR-0068 d8).",
+            format!(
+                "admin key {key} names the user root of {}, which no verb does; clear its row's user_root_id, then disable again",
+                user.as_str()
+            ),
+        )
+        .with_details(json!({ "user": user.as_str(), "key": key })),
         AppError::EmptyCrewUpdate => ApiError::validation(
             "a crew update sends charter_uri or external_manager, at least one",
         ),

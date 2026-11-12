@@ -73,7 +73,7 @@ against it.
 | `rust` | `crates/`, `sdks/rust/` (the workspace member `oml-sdk`), `Cargo.toml`, `deny.toml`, `testing/lake/`, `testing/oml-port-contracts/` | `cargo` |
 | `migrations` | `migrations/` | `cargo`, `spike 3, RLS hardening` |
 | `api` | `docs/api/*.yaml`, `docs/api/*.json` (the server compiles in and its tests read them) | `cargo`, `openapi.yaml validates`, `generated SDK code is current` |
-| `cargo` | `rust`, `migrations` or `api` | fmt, clippy and doc; `cargo test` with Postgres; `cargo deny`; `demo and quickstart`; `oml CLI` on three targets; the SDK jobs; the recall eval; the release image, `compose` and `chart` |
+| `cargo` | `rust`, `migrations` or `api` | fmt, clippy and doc; `cargo test` with Postgres; `crate walls (oml-web)`; `cargo deny`; `demo and quickstart`; `oml CLI` on three targets; the SDK jobs; the recall eval; the release image, `compose` and `chart` |
 | `docs` | `docs/`, `design/`, `mkdocs.yml`, `requirements.txt`, `changes/`, root `*.md`, licences, `hooks/` (the mkdocs build hook), `site/` (the landing site) | `mkdocs build --strict`, benchmark pages, `contract surfaces agree`, generated references, chain-format vectors, and `docs_tests` |
 | `docs_tests` | `docs` or `eval` | the Rust targets that read those files, unless `cargo` already runs the workspace |
 | `cli_ref` | `docs/cli/` | `CLI reference matches the oml binary's help` |
@@ -95,6 +95,30 @@ The practices workflow has no filter: its jobs are cheap and the lints must alwa
 `ci.yml`, `docs-checks.yml`, `m0-spikes.yml` and `practices.yml` ends in a job named `ci ok (ci)`, `ci ok (docs)`, `ci ok (spikes)` and `ci ok (practices)` respectively, which
 needs every job of its workflow and fails only when one failed or was cancelled, so a skipped job
 never blocks it. Requiring those four checks, by those four distinct names, instead of each job is a repository setting; one name shared by four workflows would let a green check from one satisfy the rule for another.
+
+### The required checks
+
+Branch protection on `main` requires five checks, by these names:
+
+| Check | Workflow | What a red one means |
+|---|---|---|
+| `ci ok (ci)` | `ci.yml` | a code, test, build, image, chart or SDK job failed |
+| `ci ok (docs)` | `docs-checks.yml` | the site, a generated page or a contract surface disagrees |
+| `ci ok (spikes)` | `m0-spikes.yml` | the chain vectors or spike 3 no longer reproduce |
+| `ci ok (practices)` | `practices.yml` | a repository lint failed |
+| `crate walls (oml-web)` | `ci.yml` | `oml-web` reaches an application crate, or the lead serves a page route ([ADR-0070](../adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core.md) d7 (d)) |
+
+`ci ok (ci)` already waits for `crate walls (oml-web)`; requiring the walls by their own name as well
+keeps them named on every pull request and keeps a change to `ci-ok` from dropping them silently.
+A job skipped by its path filter reports success, so each required check reports on every pull
+request. Each of the four workflows also runs on `merge_group`, so the same checks gate a merge
+queue (`scripts/tests/test_ci_paths.py` fails a workflow with a final check that does not).
+
+A new job joins its workflow's `ci-ok` `needs` list, which `test_ci_paths.py` checks, and is then
+required through it; it needs a required check of its own only when a decision names it, as
+ADR-0070 d7 (d) names the walls. A required check's name is a repository setting, so renaming one
+is a change to branch protection in the same pull request, and `test_every_check_name_survives`
+lists every name that must not change by accident.
 
 ## Supply chain: cargo-deny and cargo-audit
 
@@ -175,7 +199,11 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
   binary must also carry no program interpreter. Both musl legs compile ring's C with `musl-gcc`, the
   wrapper Ubuntu's `musl-tools` ships for the runner's own architecture, named in
   `CC_x86_64_unknown_linux_musl` and `CC_aarch64_unknown_linux_musl` of the job's env, and link
-  Rust's self-contained musl with the runner's own `cc`, so no cross toolchain is pinned. The
+  Rust's self-contained musl with the runner's own `cc`, so no cross toolchain is pinned.
+  `scripts/musl_toolchain.sh` installs `musl-tools` under a time limit and, when Ubuntu's mirrors
+  cannot be reached (every run on 2026-11-11 failed resolving them), puts a `musl-gcc` on the
+  path that runs Zig 0.15.2's clang and musl from the `ziglang` wheel on PyPI, checked against its
+  SHA-256, so the jobs' `CC_<target>` and `cargo build` lines are the same on either path. The
   name is needed on the arm64 runner: the `cc` crate (1.10.0 in `Cargo.lock`) counts
   `aarch64-unknown-linux-musl` as a cross compile there and would otherwise call
   `aarch64-linux-musl-gcc`, which `musl-tools` does not ship
@@ -258,7 +286,7 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
   provenance generated by the hosted build, signed, covering source revision and build
   parameters. Until a release actually ships with verifiable provenance, no page calls OML
   SLSA-anything; this sentence is the marker.
-- Release versioning starts where the spec is: the documentation set is versioned `0.6.3-design`
+- Release versioning starts where the spec is: the documentation set is versioned `0.7.1-design`
   (matching the [OpenAPI document](../api/openapi.yaml)'s `info.version`); code releases begin
   their own series when code exists, and the provider ring's compatibility covenant
   (#150) binds versioning from the v1-stable declaration, not before.

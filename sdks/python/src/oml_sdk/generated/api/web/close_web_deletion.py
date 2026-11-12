@@ -97,8 +97,10 @@ def sync_detailed(
     /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending
     request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission
     under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts
-    nothing again, the outcome recorded after the act's last commit; the same key on another request is
-    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+    nothing again, the key claimed before the act and its outcome recorded after the act's last commit,
+    so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -148,8 +150,10 @@ def sync(
     /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending
     request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission
     under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts
-    nothing again, the outcome recorded after the act's last commit; the same key on another request is
-    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+    nothing again, the key claimed before the act and its outcome recorded after the act's last commit,
+    so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -194,8 +198,10 @@ async def asyncio_detailed(
     /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending
     request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission
     under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts
-    nothing again, the outcome recorded after the act's last commit; the same key on another request is
-    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+    nothing again, the key claimed before the act and its outcome recorded after the act's last commit,
+    so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4). Since v0.6.4.
 
     Args:
         user (str):
@@ -243,8 +249,10 @@ async def asyncio(
     /v2/web/users/{user}/disable does, then web.deletion_closed is journalled. A user with no pending
     request answers access.not_found. outcome is deleted, the one close this build makes. A resubmission
     under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts
-    nothing again, the outcome recorded after the act's last commit; the same key on another request is
-    idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.
+    nothing again, the key claimed before the act and its outcome recorded after the act's last commit,
+    so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is
+    idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3
+    layer 4). Since v0.6.4.
 
     Args:
         user (str):

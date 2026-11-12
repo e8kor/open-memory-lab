@@ -1249,6 +1249,99 @@ pub struct ServedMemory {
     /// [`oml_domain::guardrail::LOAD_WARNING`] on a held guardrail, else
     /// `None` (proposed ADR-0037 d10, amending ADR-0012 d5).
     pub load_warning: Option<&'static str>,
+    /// Every finding stored on the version, on the surfaces that read them
+    /// (the review serve, the held listing and the named read, ADR-0074 d17,
+    /// d23); `None` where the surface does not read them, so an empty list
+    /// always means the scan found nothing.
+    pub scan_findings: Option<Vec<VersionFinding>>,
+}
+
+/// What a stored finding does (ADR-0074 d1): a refuse-class finding is only
+/// ever stored by a rescan on a version already admitted (d14), since
+/// admission stores nothing it refuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FindingVerdict {
+    Refuse,
+    Hold,
+    Annotate,
+}
+
+impl FindingVerdict {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Refuse => "refuse",
+            Self::Hold => "hold",
+            Self::Annotate => "annotate",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "refuse" => Some(Self::Refuse),
+            "hold" => Some(Self::Hold),
+            "annotate" => Some(Self::Annotate),
+            _ => None,
+        }
+    }
+}
+
+/// Who recorded a stored finding (ADR-0074 d23). The classifier and the
+/// contradiction check record theirs in later phases (#217, #218).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoundBy {
+    Admission,
+    Rescan,
+}
+
+impl FoundBy {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Admission => "admission",
+            Self::Rescan => "rescan",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "admission" => Some(Self::Admission),
+            "rescan" => Some(Self::Rescan),
+            _ => None,
+        }
+    }
+}
+
+/// One finding on a stored version, a row of the findings list (ADR-0074
+/// d23): its class, rule and verdict, the rule set it was found under, where
+/// it fired (the field, the line, the view the rule read and the byte range
+/// in that view), who recorded it and under which event. Never the matched
+/// text (ADR-0065 d8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionFinding {
+    pub class: String,
+    pub rule: String,
+    pub verdict: FindingVerdict,
+    /// The rule set it was found under; `None` for a scanner that pins none.
+    pub rule_set: Option<String>,
+    /// `/body`, `/title`, or `/body/` and a decoded view's path; `None` on a
+    /// finding migrated from the single stored finding, which named none.
+    pub field: Option<String>,
+    /// The 1-based line of the field the match starts on.
+    pub line: Option<u32>,
+    /// The view the rule read: `raw`, `clean`, `spaced`, `letters`.
+    pub via: Option<String>,
+    /// The match's byte range in that view.
+    pub span: Option<(u64, u64)>,
+    pub found_by: FoundBy,
+    /// The seq of the event that recorded it; the store sets it at commit,
+    /// so a finding about to be committed carries `None`.
+    pub event_seq: Option<u64>,
+    /// On a finding migrated from a version's single `scan_finding`
+    /// (migration 0043), the text that column held, `class: rule at place`.
+    pub migrated_from: Option<String>,
 }
 
 impl MemoryRecord {
@@ -1842,6 +1935,9 @@ pub struct RecallResult {
     pub window: Option<Window>,
     /// `search.sources` under `wide` or a list (ADR-0072 d8).
     pub sources: Option<crate::federation::SourcesReport>,
+    /// `search.widen` on a `scope` answer whose signal finds a candidate
+    /// richer per readable row than the scope (ADR-0072 d8; #244).
+    pub widen: Option<crate::federation::Widen>,
     /// What the recall event records of the sources (ADR-0072 d9); `None`
     /// on a tenant with federation off.
     pub federation: Option<crate::federation::FederationRecord>,
@@ -2502,8 +2598,10 @@ pub enum Bearer<'a> {
     /// The caller of a live connection's access token, resolved on this
     /// request.
     Connection(&'a crate::app::Caller),
-    /// A session key's caller, resolved from a live web session on this
-    /// request (ADR-0045 d6).
+    /// A caller already resolved and admitted on this request: a session
+    /// key's, from a live web session (ADR-0045 d6), or the caller a console
+    /// act resolved before claiming its idempotency key. Its grants are read
+    /// again; its request rate is not charged again (#253).
     Session(&'a crate::app::Caller),
 }
 
@@ -2837,6 +2935,14 @@ pub enum AppError {
         "idempotency key reused with a different request (http-api.md idempotency.digest_mismatch)"
     )]
     IdempotencyDigestMismatch,
+    /// Another attempt under the same `Idempotency-Key` claimed the act and
+    /// recorded no outcome within the wait: it is still acting, or it died
+    /// between its act and its record. Nothing was acted
+    /// (errors.md `idempotency.in_progress`; ADR-0070 d5; #233).
+    #[error(
+        "another attempt under this idempotency key is acting or stopped before it recorded (idempotency.in_progress)"
+    )]
+    IdempotencyInProgress,
     #[error("stored idempotent response is unreadable: {0}")]
     StoredResponse(String),
     /// A verdict sent without `serve_id` while the reviewer key holds no
@@ -2941,6 +3047,15 @@ pub enum AppError {
         "a global denial on an admin key is refused: an admin key carries no grant for it to attenuate (roles-and-keys.md permission matrix footnote 6, request.validation, field key)"
     )]
     DenialOnAdminKey,
+    /// A person's disable met a live admin key whose row names their user
+    /// root. No verb issues one, so the row was edited directly; no denial
+    /// can cut an admin key off, so the disable refuses before its first
+    /// commit and journals nothing (errors.md `workarea.admin_key_under_root`;
+    /// ADR-0068 d8, d11; #277).
+    #[error(
+        "admin key {key} names the user root of {}, which no verb does, and no denial can cut it off: the disable journals nothing until the row's user_root_id is cleared (ADR-0068 d8, workarea.admin_key_under_root)", .user.as_str()
+    )]
+    AdminKeyUnderUserRoot { user: Name, key: String },
     #[error(
         "a crew update sends charter_uri or external_manager, at least one (http-api.md crews, request.validation)"
     )]

@@ -11,6 +11,8 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
+    start: bool | Unset = UNSET,
+    person: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -25,9 +27,18 @@ def _get_kwargs(
     if not isinstance(traceparent, Unset):
         headers["traceparent"] = traceparent
 
+    params: dict[str, Any] = {}
+
+    params["start"] = start
+
+    params["person"] = person
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v2/whoami",
+        "params": params,
     }
 
     _kwargs["headers"] = headers
@@ -66,6 +77,8 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
+    start: bool | Unset = UNSET,
+    person: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -76,11 +89,15 @@ def sync_detailed(
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
     workarea carries its derived path. person names the user a key names, with its sign-up usage and
     limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
-    d10). The key's denials and its grants' per-grant deny masks, which name subtrees it may not read,
-    are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers
-    auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+    d10); with person=false it is absent and unread. The credential is resolved once, so a key value or
+    a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny
+    masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads
+    no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md,
+    Whoami; ADR-0039 d15).
 
     Args:
+        start (bool | Unset):
+        person (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -94,6 +111,8 @@ def sync_detailed(
     """
 
     kwargs = _get_kwargs(
+        start=start,
+        person=person,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -109,6 +128,8 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
+    start: bool | Unset = UNSET,
+    person: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -119,11 +140,15 @@ def sync(
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
     workarea carries its derived path. person names the user a key names, with its sign-up usage and
     limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
-    d10). The key's denials and its grants' per-grant deny masks, which name subtrees it may not read,
-    are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers
-    auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+    d10); with person=false it is absent and unread. The credential is resolved once, so a key value or
+    a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny
+    masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads
+    no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md,
+    Whoami; ADR-0039 d15).
 
     Args:
+        start (bool | Unset):
+        person (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -138,6 +163,8 @@ def sync(
 
     return sync_detailed(
         client=client,
+        start=start,
+        person=person,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -147,6 +174,8 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
+    start: bool | Unset = UNSET,
+    person: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -157,11 +186,15 @@ async def asyncio_detailed(
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
     workarea carries its derived path. person names the user a key names, with its sign-up usage and
     limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
-    d10). The key's denials and its grants' per-grant deny masks, which name subtrees it may not read,
-    are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers
-    auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+    d10); with person=false it is absent and unread. The credential is resolved once, so a key value or
+    a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny
+    masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads
+    no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md,
+    Whoami; ADR-0039 d15).
 
     Args:
+        start (bool | Unset):
+        person (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -175,6 +208,8 @@ async def asyncio_detailed(
     """
 
     kwargs = _get_kwargs(
+        start=start,
+        person=person,
         x_request_id=x_request_id,
         x_correlation_id=x_correlation_id,
         traceparent=traceparent,
@@ -188,6 +223,8 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
+    start: bool | Unset = UNSET,
+    person: bool | Unset = UNSET,
     x_request_id: str | Unset = UNSET,
     x_correlation_id: str | Unset = UNSET,
     traceparent: str | Unset = UNSET,
@@ -198,11 +235,15 @@ async def asyncio(
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
     workarea carries its derived path. person names the user a key names, with its sign-up usage and
     limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
-    d10). The key's denials and its grants' per-grant deny masks, which name subtrees it may not read,
-    are omitted; the read journals nothing, since it reads no claim. A revoked or unknown key answers
-    auth.invalid as on every route (docs/api/http-api.md, Whoami; ADR-0039 d15).
+    d10); with person=false it is absent and unread. The credential is resolved once, so a key value or
+    a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny
+    masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads
+    no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md,
+    Whoami; ADR-0039 d15).
 
     Args:
+        start (bool | Unset):
+        person (bool | Unset):
         x_request_id (str | Unset):
         x_correlation_id (str | Unset):
         traceparent (str | Unset):
@@ -218,6 +259,8 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
+            start=start,
+            person=person,
             x_request_id=x_request_id,
             x_correlation_id=x_correlation_id,
             traceparent=traceparent,

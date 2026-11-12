@@ -1393,6 +1393,54 @@ habits (d18, former question 3). The last, Q4, is decided below:
   `in_a_team_a_same_user_approval_counts_in_the_authors_private_user_root` is listed in #214's
   tests (phase 2).
 
+## Phase 1 as built (#213)
+
+Phase 1 is built on `feat/scan-phase1`. Where this record does not settle a point, the build takes
+the reading below. Each reading is open to change before acceptance, and acceptance is the
+operator's.
+
+| d | What the record leaves open | The reading phase 1 takes |
+|---|---|---|
+| d23 | "replaces `scan_finding`" on a live store | `scan_findings` (migration 0043) is the list. `memories.scan_finding` stays for one release, written as before: the in-progress served-set predicates of d20 and d28 read it. A later migration drops it. An older binary refuses to start once 0043 has run, and the way back after a migration is a restore (upgrades.md), so the only version written without a list is one an older server wrote while 0043 ran. Doctor's `scan_findings_unlisted` counts those, and `oml admin rescan --record-held` lists their findings. |
+| d23 | How a stored `scan_finding` migrates | One row per finding it names, `found_by: admission`, under the version's `scanned_under`, at the seq of its admitting event. Each finding it names, `class: rule at /body line N` with an optional ` at <view>`, gives the class, the rule, the field and the line, and the text is kept in `migrated_from`. Its verdict is `refuse` for a refuse class (`secret.*`, `format.scan_bound`, `anchor.secret_path`), which a v0.6.3 recording rescan could store on a held version, and `hold` otherwise. View and span were never stored, so they are null. Every finding the text names becomes a row (up to five, then `and N more`). A text of several findings with one view suffix, on the last finding or on the `and N more` tail, is ambiguous, since admission's derived scan wrote the view after the last part alone and a rescan after each finding, so none of its findings is placed. A view is the document's own key path, and a key holding `; ` splits a finding in two: a text of several parts where any part fails the grammar is placed nowhere, and that part names no finding. A key crafted so that both halves read as findings is still split, and its second half becomes a finding of its own; the exposure is the texts stored before 0043 runs, once. A finding with no field (ambiguous, or a text that does not parse) stands for one place of its class and rule: the recording rescan takes its first find of them as that place and lists the others, so no finding is listed twice and a second place is not lost. |
+| d23 | The policy version and the dismissal | Not added yet: the columns land with the phase that writes them, d22 and d19 in #214. |
+| d23 | "Every rule reports every finding it makes" | Each rule reports one finding per scanned field, at its first match. Views are deduplicated by rule, as d6 says, and admission keeps every rule's finding, not the first one. Repeated matches of one rule in one field are not listed. |
+| d23 | The field names | `/body`, `/title`, and `/body/` followed by a decoded view's path with its dots as slashes (`/body/spec/note`). An anchor's field appears in the rescan report only, since admission refuses any anchor finding. |
+| d6, d23 | The view names under `/1.1` | `raw`, `clean` (the removable characters deleted), `spaced` (each made a space) and `letters`, which are `/1.1`'s views. d6's `folded`, `skeleton` and `decoded:…` names arrive with `/2`. |
+| d17 | Which surfaces carry the list | `POST /v2/review/next`, the held listing and the named read (`GET /v2/review/held`), as `scan_findings`. The memory read and recall do not carry it: recall's findings are d12, in #215. The card marks a hold with the held chip and an annotation with the quiet one until ADR-0069 adds the finding mark. "Needs a person" is d2's, in #214. |
+| d15 | One file per class | One file per class family (`secret`, `injection`, `unicode`, `encoding`, `exfil`, `phish`, `exec`, `ssrf`, `poison`), each sample naming its exact class. The families `/1.1` has no rule for carry 10 samples and 10 twins each, under the 50 floor, so the report prints counts only for them. |
+| d15 | Translation into five languages | 25 stored samples, five override and role phrases in German, French, Spanish, Polish and Ukrainian, each with a twin. They are written, not machine-translated, and are not made from every malicious sample. |
+| d15 | The held-out set | The test split of deepset/prompt-injections (Apache-2.0; the card's metadata also names CC-BY-4.0, which d15 admits too) at commit `4f61ecb0`, 60 injections and 56 benign. The set has no language label, so recall is reported for the whole set, not per language. |
+| d15 | The benign security prose | 20 written samples in the corpus. The ADRs and the security page are read in place by `--docs`, since a copy would drift with every ADR edit. |
+| d15 | The gates | Phase 1 reports the baseline and enforces no rate gate, because the gates are `/2`'s. Non-regression is enforced: `tests/corpus/baseline.txt` is the report with one line per sample, and `the_redteam_report_matches_the_committed_baseline` fails on any difference, so a rule change that moves a verdict changes the baseline in the same change. |
+| d18 | The origin kinds of the dry run | The kinds a version stores: `repo`, `doc`, `code`, `lake`, `chat`, `web`, `manual`, and `none` for a version without one. `oml sync` writes `repo`, `doc` and `code`, and an agent's write without an origin is `none`. `oml admin rescan --rates` prints the aggregates, per class, per origin and per class within an origin, with no id, claim key or text. Every count from 1 to 4 prints as `<5` with no rate. That floor is not disclosure control: a small origin's exact `scanned`, or a total less its other cells, recovers a hidden count. The output is the operator's; what of it is published, and with what control, is the operator's decision at the live dry run. The CLI aggregates the plain rescan's answer, which carries artifact ids to the admin key that asks, as it always has. |
+| d18 | "the `/2` rules … loaded" | `/2` is not built, so phase 1's tool measures the composed set, `/1.1`. The live dry run, and its rerun once `/2` loads, wait for the operator's approval. |
+
+The phase-1 tests of d18 by name: `every_corpus_sample_states_its_expected_verdict` (`crates/oml-scan/tests/redteam.rs`); `a_black_flag_followed_by_tag_encoded_text_holds`, `a_zero_width_space_inside_an_override_phrase_still_holds`, `fullwidth_injection_text_holds` and `the_rule_set_after_the_fix_is_oml_scan_1_1` (`crates/oml-scan/tests/scan.rs`); `a_held_version_with_a_hold_finding_is_never_served_unreviewed_in_progress` (`crates/oml-app/tests/in_progress.rs`); `rescan_record_held_records_findings_on_held_versions_and_touches_no_promoted_one` (`crates/oml-app/tests/use_cases.rs`); `the_rescan_finds_what_admission_finds_in_a_titled_json_claim` (`crates/bins/oml-server-lead/tests/claim_formats.rs`); `a_held_version_scanned_under_an_older_rule_set_is_author_only_in_progress_until_rescanned` (`crates/bins/oml-server-lead/tests/http_api.rs`); `the_review_card_names_every_scan_finding` (`crates/clients/oml-web/tests/web_pages.rs`); and `the_migration_marks_every_existing_version_scanned_under_oml_scan_1` (`crates/adapters/oml-pg/tests/pg_store.rs`). Five of them shipped with #222 under other names and are renamed to d18's.
+
+**The baseline under `oml-scan/1.1`** (`crates/oml-scan/tests/corpus/baseline.txt`, 802 samples):
+
+| Family | Malicious | Twins | Recall | Twins flagged | Precision |
+|---|---|---|---|---|---|
+| `secret` | 70 | 70 | 100.0 % | 0.0 % | 100.0 % |
+| `injection` | 100 | 100 | 43.0 % | 0.0 % | 100.0 % |
+| `unicode` | 60 | 60 | 83.3 % | 0.0 % | 100.0 % |
+| `encoding` | 50 | 50 | 40.0 % | 0.0 % | 100.0 % |
+| `exfil`, `phish`, `exec`, `ssrf`, `poison` | 10 each | 10 each | 0 caught of each, under the floor | 0 flagged | — |
+
+The counts above are samples, not distinct shapes. The `secret` family is 15 rule shapes with 4 random fills each, plus 10 presigned URLs of one shape: 16 distinct shapes, and its 70 twins are 16 sentences repeated with a suffix. `encoding` is two templates, 20 random blobs and 30 encoded payloads at depths 1 to 3. Those two families clear the floor of 50 by repetition, so their rates measure about 16 shapes and 2 templates.
+
+On the held-out set, `/1.1` catches 1 of 60 injections, recall 1.7 % (Wilson 95 %: 0.3–8.9 %), and
+flags none of the 56 benign samples (0.0–6.4 %). The translated samples are caught 0 of 25, and
+the Markdown-hidden ones 6 of 6. The written benign prose is flagged 0 of 20 times, and 5 of the
+2,562 paragraphs of the ADRs and the security page are flagged (0.20 %). Over the 330 malicious
+samples, plain recall is 55.5 %. The mutations that keep recall within 5 points of that are the
+zero-width split, fullwidth, joins by `_` or `/`, the split across title and body, and base64 split
+by U+200B. The ones that lose more are mixed case (−14.5, all of it secrets, whose case is
+their value), homoglyphs (−32.4), letters spaced out (−36.1), every encoding that needs a decoder
+(base64 at depths 1–3, entities, percent forms, −33.9 to −55.5) and the budget padding (−48.2).
+These are the cases `/2`'s decoding and skeleton views are for.
+
 ## Review log
 
 **Round 1, 2026-11-08.** Two reviews. Security and detection engineering: 4 blockers, 11 majors,

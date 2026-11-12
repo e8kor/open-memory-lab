@@ -23,6 +23,7 @@ recall finds what an agent asks for, and where it fails. The findings are in
 | `gate.py` | each pipeline's gate (ADR-0049 d9; `bm25-rerank`'s from ADR-0053 d9); fails when the default misses its gate or a category falls by more than one query, or when `keyword-all` does not reproduce v0.5.0 |
 | `federated.sh`, `federated.py` | the federated recall eval (ADR-0072 d11): one committed workarea per topic, `sources` scope, wide and the union on a scoped and a cross split, the widen hint, and a skew split padded with SciFact abstracts |
 | `fed2.py`, `descriptors.json` | the phase 2 gate (ADR-0072 d4.5, d11; #206), run as `EVAL_PHASE2=1 federated.sh`: the union's ranking per query from the served lead, then `content`, `described`, oracle and ReDDE selection replayed offline on `bm25-postings` and `bm25-sparse`; `descriptors.json` holds one author-written descriptor per topic |
+| `mapreduce.py`, [`MAPREDUCE.md`](MAPREDUCE.md) | research, offline (2026-11-12): can each workarea rank its own rows and a reducer merge them? `sparse`, `bm25` and `bm25-sparse` over the corpus by topic, the skew split and SciFact in 5, 50 and 500 workareas, the exact merge against per-workarea statistics, per-workarea fusion, RRF and CORI; results in `results/mapreduce.json`; no served path |
 | `results/` | one JSON per method (summary per category, and per query the ranked ids and latency), and `tables.md` |
 
 ### `corpus.json`

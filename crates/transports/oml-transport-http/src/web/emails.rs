@@ -70,6 +70,7 @@ pub(crate) fn user_row_json(u: &UserRow) -> Value {
             "connections": u.quotas.connections,
             "requests_per_minute": u.quotas.requests_per_minute,
         },
+        "admin_keys": u.admin_keys,
     })
 }
 
@@ -160,7 +161,7 @@ where
             .transpose()?;
         let entries = st
             .app
-            .web_emails(acting.bearer(), after.as_ref(), limit)
+            .list_web_emails(acting.bearer(), after.as_ref(), limit)
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         let next_cursor = (entries.len() == limit)
@@ -195,8 +196,23 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        acting(headers, None)?;
+        let idem = idempotency_key(headers)?;
+        // The key is claimed before the act, so a resubmission, or a second
+        // send racing the first, answers the recorded entry and changes
+        // nothing again (ADR-0070 d3 layer 4, d5; #233).
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = std::sync::Arc::new(st.console_caller(headers).await?);
+        let acting: crate::Acting<'static> = crate::Acting::Session(caller.clone());
+        let digest = crate::console::act_digest("", body);
+        let claim = match st
+            .claim(&caller, "web.email_allowed", &idem, &digest)
+            .await?
+        {
+            crate::console::Claimed::Replayed(replayed) => return Ok(replayed),
+            crate::console::Claimed::Act(claim) => claim,
+        };
         let req: AllowBody = parse_json(headers, body)?;
         let email = email_field(req.email.as_deref())?;
         let user = req
@@ -214,16 +230,24 @@ where
             ApiError::validation("admin is required").with_details(json!({ "field": "/admin" }))
         })?;
         let request = WebEmailRequest { email, user, admin };
-        let (entry, _) = retry_chain(|| {
-            st.app.allow_web_email_keeping(
-                acting.bearer(),
-                &request,
-                req.keep_an_admin == Some(true),
-            )
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(StatusCode::OK, &entry_json(&entry)))
+        let keep = req.keep_an_admin == Some(true);
+        let st = st.clone();
+        claim
+            .run(async move {
+                let (entry, _) = retry_chain(|| {
+                    st.app
+                        .allow_web_email_keeping(acting.bearer(), &request, keep)
+                })
+                .await
+                .map_err(|e| {
+                    crate::console::ActFailure::first(map_app_error(e, ErrorContext::Write))
+                })?;
+                Ok(crate::console::Acted::new(
+                    StatusCode::OK,
+                    entry_json(&entry),
+                ))
+            })
+            .await
     }
 
     pub(crate) async fn remove_web_email(
@@ -246,22 +270,37 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let acting = acting(headers, None)?;
-        let _idem = idempotency_key(headers)?;
+        acting(headers, None)?;
+        let idem = idempotency_key(headers)?;
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253).
+        let caller = std::sync::Arc::new(st.console_caller(headers).await?);
+        let acting: crate::Acting<'static> = crate::Acting::Session(caller.clone());
+        let digest = crate::console::act_digest("", body);
+        let claim = match st
+            .claim(&caller, "web.email_removed", &idem, &digest)
+            .await?
+        {
+            crate::console::Claimed::Replayed(replayed) => return Ok(replayed),
+            crate::console::Claimed::Act(claim) => claim,
+        };
         let req: RemoveBody = parse_json(headers, body)?;
         let email = email_field(req.email.as_deref())?;
-        let (_, seq, event_id) = retry_chain(|| {
-            st.app.remove_web_email_keeping(
-                acting.bearer(),
-                &email,
-                req.keep_an_admin == Some(true),
-            )
-        })
-        .await
-        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        Ok(json_response(
-            StatusCode::OK,
-            &json!({ "journal_seq": seq, "event_id": event_id.to_string(), "dry_run": false }),
-        ))
+        let keep = req.keep_an_admin == Some(true);
+        let st = st.clone();
+        claim
+            .run(async move {
+                let (_, seq, event_id) = retry_chain(|| {
+                    st.app
+                        .remove_web_email_keeping(acting.bearer(), &email, keep)
+                })
+                .await
+                .map_err(|e| crate::console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;
+                Ok(crate::console::Acted::new(
+                    StatusCode::OK,
+                    json!({ "journal_seq": seq, "event_id": event_id.to_string(), "dry_run": false }),
+                ))
+            })
+            .await
     }
 }

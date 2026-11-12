@@ -547,6 +547,38 @@ mod tests {
         );
     }
 
+    /// The shared pool's bound is still one pool (#159): past it, the
+    /// source with the oldest expiry goes, whichever session holds it, so
+    /// a person with many sessions under their share each can still evict
+    /// another session's; that session's frame answers `404` and its card
+    /// still shows the source.
+    #[test]
+    fn a_full_pool_gives_up_its_oldest_source_whichever_session_holds_it() {
+        let sealer = Sealer::default();
+        let sources = Sources::default();
+        let sessions = RENDER_SOURCES_MAX / RENDER_SOURCES_PER_SESSION;
+        let oldest = token(&sealer, &sources, "s0", "m-oldest", "flowchart LR", 1_000);
+        for i in 1..RENDER_SOURCES_MAX {
+            let _ = token(
+                &sealer,
+                &sources,
+                &format!("s{}", i % sessions),
+                &format!("m{i}"),
+                "flowchart LR",
+                1_000 + i as u64,
+            );
+        }
+        assert_eq!(sources.len(), RENDER_SOURCES_MAX, "the pool is full");
+        let now = 1_000 + RENDER_SOURCES_MAX as u64;
+        let newcomer = token(&sealer, &sources, "newcomer", "m", "flowchart LR", now);
+        assert_eq!(sources.len(), RENDER_SOURCES_MAX);
+        assert!(open(&sealer, &sources, &newcomer, "newcomer", now + 1).is_some());
+        assert!(
+            open(&sealer, &sources, &oldest, "s0", now + 1).is_none(),
+            "another session's oldest source was evicted"
+        );
+    }
+
     #[test]
     fn the_frame_policy_names_the_bundle_and_the_hashed_initialiser_alone() {
         let policy = frame_policy("https://oml.example.com/");

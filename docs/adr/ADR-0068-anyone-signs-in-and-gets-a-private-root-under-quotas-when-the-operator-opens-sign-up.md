@@ -220,6 +220,20 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     later sign-up then creates a new root, and the old one stays cut off. The cost is that
     "disabled" is a cut-off and not a revocation. Revocation is designed and not built.
 
+    Each `key.denied`, and the closing commit of `close_deletion` (d6), retries alone on a
+    chain-head conflict, so one request journals each of its events at most once
+    ([#266](https://github.com/e8kor/open-memory-lab/issues/266)). No refusal follows the first
+    commit. An admin key whose row names the root is refused before it: no verb issues one and
+    no denial cuts one off, so the row is corrupt, and the disable answers 409
+    `workarea.admin_key_under_root` naming the key and journals nothing until the row's
+    `user_root_id` is cleared ([#277](https://github.com/e8kor/open-memory-lab/issues/277)).
+    A key gone between the listing and its denial, or made an admin key by a row edit in that
+    window, is skipped and the rest are denied; the answer's `keys_cut_off` leaves it out and
+    names it nowhere else. A conflict that outlasts the retries answers `system.unavailable`. The disable it
+    journalled stands, and the act's claim on its `Idempotency-Key` is kept, so the same key
+    answers `idempotency.in_progress` and a new key finishes the cut-off. So a 4xx from
+    `disable_user` or `close_deletion` always means nothing was journalled.
+
 - **d9 — Sign-ups are limited per client address, at the terms page's `POST`.** The address is
   the request line's `client_ip` under `server.trusted_proxies` (ADR-0042 d7). ADR-0045 d15
   declined address limits because behind a proxy every request shares the proxy's address. With
@@ -290,6 +304,7 @@ Review changes visibility, not ranking (R3). Nothing is deleted silently (R4).
     | a key's request rate | `limit.rate` with `Retry-After` | — (metrics) |
     | a disabled entry | `auth.invalid`, `disabled` | — |
     | deletion requests pending | — | `warn signup` with the count and the oldest request's time (d6) |
+    | an admin key whose row names a person's root | `workarea.admin_key_under_root` on that person's disable or deletion close, nothing journalled (d8) | `warn keys` naming the key and the person, from `GET /v2/web/users`' `admin_keys` |
     | open sign-up on a deployment with no backup | — | — (an ADR-0058 d5 rule; the production page checklist) |
 
 ## Consequences

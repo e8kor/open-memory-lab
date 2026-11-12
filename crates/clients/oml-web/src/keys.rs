@@ -24,7 +24,7 @@ use axum::response::Response;
 use http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use oml_page::web::{
     ADMIN_KEYS_PATH, ADMIN_TABS, USER_KEYS_PATH, attr, form, hidden, input, select, shell, short,
-    state_tag, user_tabs,
+    state_tag, text, user_tabs,
 };
 use oml_sdk::{ListedKey, encode};
 
@@ -48,7 +48,7 @@ const KEY_PAGES_MAX: usize = 50;
 
 /// Which page the view is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Side {
+pub(crate) enum Side {
     User,
     Admin,
 }
@@ -79,7 +79,7 @@ fn notice(done: Option<&str>) -> Option<&'static str> {
 
 /// Every key `user` names (the session's own where `None`), a page at a
 /// time.
-async fn keys(
+pub(crate) async fn keys(
     web: &Web,
     credential: &str,
     calls: &PageCalls,
@@ -158,7 +158,7 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str) -> String {
     )
 }
 
-fn table(keys: &[ListedKey], side: Side, csrf: &str, user: &str) -> String {
+pub(crate) fn table(keys: &[ListedKey], side: Side, csrf: &str, user: &str) -> String {
     let mut out = String::from(
         "<table><tr><th>Key</th><th>Role</th><th>Access</th><th>State</th><th></th></tr>",
     );
@@ -167,6 +167,83 @@ fn table(keys: &[ListedKey], side: Side, csrf: &str, user: &str) -> String {
     }
     out.push_str("</table>");
     out
+}
+
+/// This process's clock, in Unix seconds.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+/// Days from 1970-01-01 to the civil date `y-m-d` (proleptic Gregorian).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// `YYYY-MM-DDTHH:MM:SS[.fraction]Z` as Unix seconds; `None` for any other
+/// shape, an offset other than `Z` included.
+fn unix_of(at: &str) -> Option<i64> {
+    let b = at.as_bytes();
+    if b.len() < 20
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || b[10] != b'T'
+        || b[13] != b':'
+        || b[16] != b':'
+    {
+        return None;
+    }
+    let rest = at.get(19..)?;
+    let fraction = rest.strip_suffix('Z')?;
+    if !(fraction.is_empty()
+        || (fraction.len() > 1
+            && fraction.starts_with('.')
+            && fraction[1..].bytes().all(|c| c.is_ascii_digit())))
+    {
+        return None;
+    }
+    let n = |r: std::ops::Range<usize>| -> Option<i64> {
+        let part = at.get(r)?;
+        part.bytes()
+            .all(|c| c.is_ascii_digit())
+            .then(|| part.parse().ok())?
+    };
+    let (y, mo, d, h, mi, sec) = (
+        n(0..4)?,
+        n(5..7)?,
+        n(8..10)?,
+        n(11..13)?,
+        n(14..16)?,
+        n(17..19)?,
+    );
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || sec > 60 {
+        return None;
+    }
+    Some(days_from_civil(y, mo, d) * 86_400 + h * 3_600 + mi * 60 + sec)
+}
+
+/// How long a connect code still works, read at `now`: "expires in 10
+/// minutes (10:20 UTC)", "has expired (10:20 UTC)" once past, or the
+/// instant as served when it is not a UTC instant this page reads.
+fn expiry(expires_at: &str, now: i64) -> String {
+    let Some(at) = unix_of(expires_at) else {
+        return format!("is good until {expires_at}");
+    };
+    let clock = &expires_at[11..16];
+    let left = at - now;
+    if left <= 0 {
+        return format!("has expired ({clock} UTC)");
+    }
+    let minutes = (left + 59) / 60;
+    let unit = if minutes == 1 { "minute" } else { "minutes" };
+    format!("expires in {minutes} {unit} ({clock} UTC)")
 }
 
 /// The card a shown-once secret is drawn on, as the lead's page drew it.
@@ -185,7 +262,7 @@ fn secret_card(secret: &Secret) -> (&'static str, String) {
             (
                 "Key issued",
                 format!(
-                    r#"<h1>{}</h1><p class="desc">Shown once: copy it now. Then <a href="/web?view=setup">set up</a> your agent.</p>{note}<div class="card secret"><p class="label">For your agent</p><pre>{url}OML_API_KEY={}</pre></div><p><a href="{USER_KEYS_PATH}">Back to your keys</a></p>"#,
+                    r#"<h1>{}</h1><p class="desc">Shown once: copy it now. Then <a href="/web/setup">set up</a> your agent.</p>{note}<div class="card secret"><p class="label">For your agent</p><pre>{url}OML_API_KEY={}</pre></div><p><a href="{USER_KEYS_PATH}">Back to your keys</a></p>"#,
                     short(name),
                     attr(value)
                 ),
@@ -199,9 +276,9 @@ fn secret_card(secret: &Secret) -> (&'static str, String) {
         } => (
             "Connect code",
             format!(
-                r#"<p class="label">Connect code</p><h1>{}</h1><p class="desc">Shown once; works once, until {}. Add a custom connector in Claude with this URL, then enter the code.</p><div class="card secret"><p class="label">Connector URL</p><pre>{}</pre><p class="label">Connect code</p><pre>{}</pre></div><p><a href="{USER_KEYS_PATH}">Back to your keys</a></p>"#,
+                r#"<p class="label">Connect code</p><h1>{}</h1><p class="desc">Shown once; works once and {}. Add a custom connector in Claude with this URL, then enter the code.</p><div class="card secret"><p class="label">Connector URL</p><pre>{}</pre><p class="label">Connect code</p><pre>{}</pre></div><p><a href="{USER_KEYS_PATH}">Back to your keys</a></p>"#,
                 short(name),
-                short(expires_at),
+                text(&expiry(expires_at, unix_now())),
                 attr(connector_url),
                 attr(code)
             ),
@@ -211,7 +288,7 @@ fn secret_card(secret: &Secret) -> (&'static str, String) {
 
 /// The page with the `Set-Cookie` that clears a sealed secret, whether or
 /// not it opened.
-fn clearing(mut response: Response) -> Response {
+pub(crate) fn clearing(mut response: Response) -> Response {
     if let Ok(value) = HeaderValue::from_str(&once::clear_cookie()) {
         response.headers_mut().append(header::SET_COOKIE, value);
     }
@@ -389,31 +466,82 @@ pub async fn admin_page(
 fn defined(side: Side, action: &str, name: &str) -> bool {
     match action {
         "issue_key" | "connect_key" => matches!(name, "name" | "role"),
-        _ => name == "key" || (side == Side::Admin && name == "user"),
+        "cut_off" => matches!(name, "key" | "confirm") || (side == Side::Admin && name == "user"),
+        _ => name == "key",
     }
 }
 
-/// The server URL an agent sets beside its key: the API's issuer.
-async fn server(web: &Web) -> String {
+/// The cut-off's confirmation, which records nothing: the key it names,
+/// what cutting it off does, and a form carrying `confirm=yes`, the listed
+/// `user` on the admin page, and a fresh nonce, so a resubmitted
+/// confirmation replays one cut-off (ADR-0045 d13, as the lead confirmed a
+/// removal; #253).
+fn cut_off_confirmation(session: &Session, side: Side, key: &str, user: Option<&str>) -> Response {
+    let page = side.path();
+    let listed = user.map_or_else(String::new, |u| hidden("user", u));
+    let back = user.map_or_else(|| page.to_owned(), |u| format!("{page}?user={}", encode(u)));
+    let mut body = format!(
+        r#"<h1>Cut off {}?</h1><p class="oml-consequence">It stops working on every workarea at once. Its memories stay.</p>"#,
+        short(key)
+    );
+    body.push_str(&form(
+        page,
+        "cut_off",
+        &session.csrf(),
+        &format!(
+            "{}{listed}{}{}",
+            hidden("key", key),
+            hidden("confirm", "yes"),
+            acts::nonce_field()
+        ),
+        "Cut it off",
+        true,
+    ));
+    let _ = write!(body, r#"<p><a href="{}">Keep it</a></p>"#, attr(&back));
+    let (title, tabs) = match side {
+        Side::User => ("Your page", user_tabs(session.admin)),
+        Side::Admin => ("Administration", ADMIN_TABS.to_vec()),
+    };
+    outcome::html(
+        StatusCode::OK,
+        shell(title, &session.who(), &tabs, page, None, &body),
+    )
+}
+
+/// An issue or a new connect code the API answered without the secret and
+/// not as a replay: the page cannot show what it was never sent, so it says
+/// so by name and sets no cookie, never a redirect that looks like a replay.
+pub(crate) fn no_secret(calls: &PageCalls) -> Response {
+    refused(
+        StatusCode::BAD_GATEWAY,
+        "unavailable",
+        "the server answered the act without the value or the code it shows once; cut the key off and issue another",
+        calls,
+    )
+}
+
+/// The server URL an agent sets beside its key: the API's issuer, else
+/// `oml-web`'s own public origin, else empty, and the page then names
+/// `no_server` (ADR-0076 d6, d8).
+pub(crate) async fn server(web: &Web) -> String {
     server_from(
         web.api.issuer().await.ok(),
         web.layers.public_origin.as_deref(),
     )
 }
 
-/// The API's issuer, else `oml-web`'s own public origin, else empty: the
-/// page then names `no_server` and shows no URL, never another server's
-/// (ADR-0076 d6, d8).
+/// The API's issuer, else the public origin, else empty: never another
+/// server's address.
 fn server_from(issuer: Option<String>, public_origin: Option<&str>) -> String {
     issuer
         .or_else(|| public_origin.map(ToOwned::to_owned))
         .unwrap_or_default()
 }
 
-/// The card's line for a key when no server address is known (ADR-0076 d8).
-const NO_SERVER: &str = "This server's address is not configured (no_server: set web.public_url, \
-                         or oauth.issuer on the lead); ask its operator for the URL to give your \
-                         agents.";
+/// The line a page shows when no server address is known (ADR-0076 d8).
+pub(crate) const NO_SERVER: &str = "This server's address is not configured (no_server: set \
+                                    web.public_url, or oauth.issuer on the lead); ask its \
+                                    operator for the URL to give your agents.";
 
 /// One act: the form checked as every act's is ([`acts::read`]), then its
 /// operation under the session's capacity credential and the form's
@@ -442,6 +570,16 @@ async fn act(
     if let Some(missing) = required.iter().find(|n| fields.given(n).is_none()) {
         return acts::invalid(&format!("{missing} is required"), &calls);
     }
+    // A cut-off is confirmed first, and fails closed: only the
+    // confirmation's own field acts (#253).
+    if action == "cut_off" && fields.given("confirm") != Some("yes") {
+        return cut_off_confirmation(
+            &session,
+            side,
+            fields.given("key").unwrap_or_default(),
+            fields.given("user"),
+        );
+    }
     let key = match acts::key(&session, &fields, &calls) {
         Ok(key) => key,
         Err(refusal) => return *refusal,
@@ -460,6 +598,9 @@ async fn act(
             let name = format!("{user}-{}", fields.given("name").unwrap_or_default());
             let connector = action == "connect_key";
             match web.api.issue_key(&call, &key, &name, role, connector).await {
+                // A replay, which shows neither: the first answer's cookie
+                // holds the secret, and this one sets none over it.
+                Ok(issued) if issued.replayed() => return acts::see_other(USER_KEYS_PATH, &[]),
                 Ok(issued) => {
                     let code = issued
                         .connect_code
@@ -476,10 +617,7 @@ async fn act(
                             expires_at,
                             connector_url,
                         },
-                        // A replay, which shows neither: the first answer's
-                        // cookie holds the secret, and this one sets none
-                        // over it.
-                        (None, None) => return acts::see_other(USER_KEYS_PATH, &[]),
+                        (None, None) => return no_secret(&calls),
                     }
                 }
                 Err(e) => return outcome::page(&e, calls.page_id(), page),
@@ -488,6 +626,8 @@ async fn act(
         "connect_code" => {
             let name = fields.given("key").unwrap_or_default();
             match web.api.mint_connect_code(&call, &key, name).await {
+                // A replay, which shows no code: as for an issue.
+                Ok(minted) if minted.replayed() => return acts::see_other(USER_KEYS_PATH, &[]),
                 Ok(oml_sdk::ConnectCode {
                     code: Some(code),
                     expires_at,
@@ -499,8 +639,7 @@ async fn act(
                     expires_at,
                     connector_url,
                 },
-                // A replay, which shows no code: as for an issue.
-                Ok(_) => return acts::see_other(USER_KEYS_PATH, &[]),
+                Ok(_) => return no_secret(&calls),
                 Err(e) => return outcome::page(&e, calls.page_id(), page),
             }
         }
@@ -545,6 +684,33 @@ pub async fn admin_act(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_connect_codes_expiry_reads_as_minutes_left_and_its_utc_clock_time() {
+        let at = "2026-11-11T10:20:00Z";
+        let expires = unix_of(at).unwrap();
+        assert_eq!(expires, 1_794_392_400);
+        assert_eq!(
+            expiry(at, expires - 600),
+            "expires in 10 minutes (10:20 UTC)"
+        );
+        assert_eq!(
+            expiry(at, expires - 599),
+            "expires in 10 minutes (10:20 UTC)"
+        );
+        assert_eq!(expiry(at, expires - 30), "expires in 1 minute (10:20 UTC)");
+        assert_eq!(expiry(at, expires), "has expired (10:20 UTC)");
+        assert_eq!(
+            expiry("2026-11-11T10:20:00.123456Z", expires - 120),
+            "expires in 2 minutes (10:20 UTC)"
+        );
+        // Not a UTC instant this page reads: shown as served.
+        assert_eq!(
+            expiry("2026-11-11T11:20:00+01:00", expires - 600),
+            "is good until 2026-11-11T11:20:00+01:00"
+        );
+        assert_eq!(expiry("soon", 0), "is good until soon");
+    }
 
     /// A new key is shown beside the API's issuer, else beside `oml-web`'s
     /// own public origin, and with neither beside the named `no_server`

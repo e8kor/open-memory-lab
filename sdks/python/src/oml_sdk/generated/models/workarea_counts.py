@@ -6,8 +6,11 @@ from typing import TYPE_CHECKING, Any, Self, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.workarea_counts_items_item import WorkareaCountsItemsItem
+    from ..models.workarea_offers import WorkareaOffers
 
 
 T = TypeVar("T", bound="WorkareaCounts")
@@ -21,11 +24,13 @@ class WorkareaCounts:
         items (list[WorkareaCountsItemsItem]):
         next_cursor (None):
         truncated (bool): The node or the row count stopped at 2000.
+        offers (WorkareaOffers | Unset):
     """
 
     items: list[WorkareaCountsItemsItem]
     next_cursor: None
     truncated: bool
+    offers: WorkareaOffers | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -38,6 +43,10 @@ class WorkareaCounts:
 
         truncated = self.truncated
 
+        offers: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.offers, Unset):
+            offers = self.offers.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -47,12 +56,15 @@ class WorkareaCounts:
                 "truncated": truncated,
             }
         )
+        if offers is not UNSET:
+            field_dict["offers"] = offers
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.workarea_counts_items_item import WorkareaCountsItemsItem
+        from ..models.workarea_offers import WorkareaOffers
 
         d = dict(src_dict)
         items = []
@@ -66,10 +78,18 @@ class WorkareaCounts:
 
         truncated = d.pop("truncated")
 
+        _offers = d.pop("offers", UNSET)
+        offers: WorkareaOffers | Unset
+        if isinstance(_offers, Unset):
+            offers = UNSET
+        else:
+            offers = WorkareaOffers.from_dict(_offers)
+
         workarea_counts = cls(
             items=items,
             next_cursor=next_cursor,
             truncated=truncated,
+            offers=offers,
         )
 
         workarea_counts.additional_properties = d

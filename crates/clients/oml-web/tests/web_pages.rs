@@ -1331,7 +1331,41 @@ async fn the_admin_workareas_page_is_not_found_for_a_person_who_is_not_an_admin(
 }
 
 #[tokio::test]
-async fn the_old_workareas_urls_and_acts_go_through_the_lead_to_the_moved_pages_own_paths() {
+async fn the_admin_workareas_page_refuses_a_create_as_no_action_of_its_own_and_creates_nothing() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, page) = act(
+        &rig,
+        &admin,
+        "/web/admin/workareas",
+        &[("action", "create_workarea"), ("name", "shadow")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{page}");
+    assert!(page.contains("request.validation"), "{page}");
+    assert!(
+        page.contains("action is not one of this page&#39;s actions")
+            || page.contains("action is not one of this page's actions"),
+        "{page}"
+    );
+    let root = key_named(&rig, "boss-web").await.user.expect("a root");
+    let children = rig
+        .store
+        .workarea_children(rig.boot.tenant_id, root)
+        .await
+        .unwrap();
+    assert!(
+        children.iter().all(|w| w.name.as_str() != "shadow"),
+        "nothing was created"
+    );
+}
+
+#[tokio::test]
+async fn the_old_workareas_urls_are_not_found_and_their_acts_run_nothing() {
+    // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
+    // "The old URLs deleted"): an old URL is not found, an old act is
+    // refused and runs nothing, and the moved page answers at its own path.
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
@@ -1342,13 +1376,13 @@ async fn the_old_workareas_urls_and_acts_go_through_the_lead_to_the_moved_pages_
         ("/web/admin?view=workarea", &boss, "/web/admin/workareas"),
     ] {
         let (status, headers, _) = send(&rig.router, get(old, Some(who))).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
-        assert_eq!(headers[header::LOCATION], new, "{old}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
+        assert!(headers.get(header::LOCATION).is_none(), "{old}");
         let (status, _, page) = send(&rig.router, get(new, Some(who))).await;
         assert_eq!(status, StatusCode::OK, "{page}");
         assert!(page.contains("<h1>Workareas</h1>"), "{page}");
     }
-    // An old form's act runs nothing and lands on the view.
+    // An old form's act is no action of POST /web and runs nothing.
     let (status, headers, _) = act(
         &rig,
         &cookie,
@@ -1360,8 +1394,8 @@ async fn the_old_workareas_urls_and_acts_go_through_the_lead_to_the_moved_pages_
         ],
     )
     .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/web/workareas");
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(headers.get(header::LOCATION).is_none());
     let node = rig
         .store
         .workarea(rig.boot.tenant_id, proj)
@@ -1369,8 +1403,8 @@ async fn the_old_workareas_urls_and_acts_go_through_the_lead_to_the_moved_pages_
         .unwrap()
         .unwrap();
     assert!(!node.in_progress);
-    // An old form's create runs nothing either and lands on the view, where
-    // creating a workarea is the view's own act through the API.
+    // An old form's create runs nothing either: creating a workarea is the
+    // view's own act through the API.
     let (status, headers, _) = act(
         &rig,
         &cookie,
@@ -1378,8 +1412,8 @@ async fn the_old_workareas_urls_and_acts_go_through_the_lead_to_the_moved_pages_
         &[("action", "create_workarea"), ("name", "docs")],
     )
     .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/web/workareas");
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(headers.get(header::LOCATION).is_none());
     let root = key_named(&rig, "alice-web").await.user.expect("a root");
     let docs = || async {
         rig.store
@@ -1408,7 +1442,7 @@ async fn the_workareas_pages_draw_the_header_and_tabs_the_leads_pages_draw() {
     rig.allow("bob@example.com", "bob", true).await;
     for (subject, email) in [("sub-1", EMAIL), ("sub-2", "bob@example.com")] {
         let cookie = signed_in(&rig, subject, email).await;
-        let (_, _, lead) = send(&rig.router, get("/web?view=setup", Some(&cookie))).await;
+        let (_, _, lead) = send(&rig.router, get("/web/setup", Some(&cookie))).await;
         let (status, _, moved) = send(&rig.router, get("/web/workareas", Some(&cookie))).await;
         assert_eq!(status, StatusCode::OK, "{moved}");
         assert_eq!(header_of(&moved), header_of(&lead), "{email}");
@@ -1418,7 +1452,7 @@ async fn the_workareas_pages_draw_the_header_and_tabs_the_leads_pages_draw() {
         );
     }
     let boss = signed_in(&rig, "sub-2", "bob@example.com").await;
-    let (_, _, lead) = send(&rig.router, get("/web/admin", Some(&boss))).await;
+    let (_, _, lead) = send(&rig.router, get("/web/admin/people", Some(&boss))).await;
     let (status, _, moved) = send(&rig.router, get("/web/admin/workareas", Some(&boss))).await;
     assert_eq!(status, StatusCode::OK, "{moved}");
     assert_eq!(header_of(&moved), header_of(&lead));
@@ -1443,7 +1477,7 @@ async fn a_moved_page_draws_the_header_and_tabs_the_leads_pages_draw() {
     rig.allow("bob@example.com", "bob", true).await;
     for (subject, email) in [("sub-1", EMAIL), ("sub-2", "bob@example.com")] {
         let cookie = signed_in(&rig, subject, email).await;
-        let (_, _, lead) = send(&rig.router, get("/web?view=setup", Some(&cookie))).await;
+        let (_, _, lead) = send(&rig.router, get("/web/setup", Some(&cookie))).await;
         let (status, headers, moved) =
             send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
         assert_eq!(status, StatusCode::OK, "{moved}");
@@ -1459,15 +1493,16 @@ async fn a_moved_page_draws_the_header_and_tabs_the_leads_pages_draw() {
 }
 
 #[tokio::test]
-async fn the_old_guardrails_url_goes_through_the_lead_to_the_moved_pages_own_path() {
+async fn the_old_guardrails_url_is_not_found_and_the_view_answers_at_its_own_path() {
     // ADR-0070 d7 (b) as amended: each moved page has its own path under
-    // /web/; the lead answers the old ?view= form with a 303 to it.
+    // /web/; the lead's 303 from the old ?view= form is deleted in v0.7.1
+    // (ADR-0070, "The old URLs deleted").
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     for old in ["/web?view=guardrails", "/web?view=guardrails&workarea=x"] {
         let (status, headers, _) = send(&rig.router, get(old, Some(&cookie))).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
-        assert_eq!(headers[header::LOCATION], "/web/guardrails", "{old}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
+        assert!(headers.get(header::LOCATION).is_none(), "{old}");
     }
     let (status, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
@@ -1648,6 +1683,9 @@ async fn the_render_frame_answers_under_its_own_policy_with_the_source_escaped()
     assert!(!csp.contains("unsafe-eval"), "{csp}");
     assert!(!csp.contains("allow-same-origin"), "{csp}");
     assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    // The frame sends no referrer, so the token in its URL goes nowhere
+    // (ADR-0070, the sixth change's table, d3 layer 5).
+    assert_eq!(headers[header::REFERRER_POLICY], "no-referrer");
     assert!(
         body.contains("<pre class=\"mermaid\">flowchart LR"),
         "{body}"
@@ -1837,7 +1875,7 @@ async fn a_supersession_runs_as_the_curator_on_its_own_claim_and_as_the_reviewer
         let (status, _, body) = act(
             &rig,
             &admin,
-            "/web/admin",
+            "/web/admin/people",
             &[("action", action), ("user", "boss"), ("workarea", workarea)],
         )
         .await;
@@ -2045,10 +2083,13 @@ async fn a_person_reaches_nothing_of_another_persons_root_on_oml_webs_pages() {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
-        assert!(!html.contains("Kilimanjaro") && !html.contains("Tanganyika"));
+        for secret in ["Kilimanjaro", "Tanganyika", "flowchart"] {
+            assert!(!html.contains(secret), "{id}: {html}");
+        }
     }
-    let (_, _, review) =
+    let (status, _, review) =
         act_and_follow(&rig, &bob, "/web/review", &[("action", "review_next")]).await;
+    assert_eq!(status, StatusCode::OK, "{review}");
     for secret in ["Kilimanjaro", "Tanganyika", "flowchart"] {
         assert!(!review.contains(secret), "{review}");
     }
@@ -2160,7 +2201,7 @@ async fn a_resubmitted_supersede_form_proposes_one_version_and_lands_on_the_memo
     let (status, _, _) = act(
         &rig,
         &admin,
-        "/web/admin",
+        "/web/admin/people",
         &[
             ("action", "grant_review"),
             ("user", "boss"),
@@ -2220,7 +2261,10 @@ async fn a_resubmitted_supersede_form_proposes_one_version_and_lands_on_the_memo
 }
 
 #[tokio::test]
-async fn the_old_memory_and_curate_urls_go_through_the_lead_to_the_moved_pages_own_paths() {
+async fn the_old_memory_and_curate_urls_are_not_found_and_the_pages_answer_at_their_own_paths() {
+    // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
+    // "The old URLs deleted"): an old URL is not found, an old act is
+    // refused and runs nothing, and the moved page answers at its own path.
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let value = laptop_key(&rig, &cookie).await;
@@ -2245,8 +2289,8 @@ async fn the_old_memory_and_curate_urls_go_through_the_lead_to_the_moved_pages_o
         ),
     ] {
         let (status, headers, _) = send(&rig.router, get(&old, Some(who))).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
-        assert_eq!(headers[header::LOCATION], new.as_str(), "{old}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
+        assert!(headers.get(header::LOCATION).is_none(), "{old}");
         let (status, _, page) = send(&rig.router, get(&new, Some(who))).await;
         assert_eq!(status, StatusCode::OK, "{new}: {page}");
     }
@@ -2276,6 +2320,510 @@ async fn the_old_memory_and_curate_urls_go_through_the_lead_to_the_moved_pages_o
     ] {
         let (status, _, _) = send(&rig.router, get(&path, Some(&cookie))).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
+}
+
+// -- Start, setup, the admin overview and the users page (ADR-0068 d5,
+// d6, d8, d10; ADR-0045 d10, d13), moved to oml-web
+
+#[tokio::test]
+async fn the_setup_page_names_who_and_the_organisation_and_never_the_email() {
+    // Moved from the lead's a_listed_verified_google_email_signs_in_and_sees_who_it_is.
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", "Alice@Example.com").await;
+    let (status, _, page) = send(&rig.router, get("/web/setup", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains("alice · oml"),
+        "who and the organisation: {page}"
+    );
+    assert!(!page.contains(EMAIL), "the page never echoes the email");
+    assert!(
+        page.contains(ISSUER),
+        "the server an agent connects to: {page}"
+    );
+    assert!(
+        page.contains("give each agent this URL with its key"),
+        "{page}"
+    );
+    assert!(!page.to_lowercase().contains("default"), "{page}");
+    assert!(!page.contains("doublegate"), "{page}");
+}
+
+#[tokio::test]
+async fn a_non_admin_session_gets_not_found_on_the_overview_and_the_users_page() {
+    // Moved from the lead's a_non_admin_session_gets_not_found_on_the_admin_page.
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    for path in ["/web/admin/people", "/web/admin/users"] {
+        let (status, _, body) = send(&rig.router, get(path, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert!(body.contains("access.not_found"), "{body}");
+        let (status, headers, _) = send(&rig.router, get(path, None)).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{path}");
+        assert!(
+            headers[header::LOCATION]
+                .to_str()
+                .unwrap()
+                .starts_with("/web/sign-in"),
+            "{path}"
+        );
+    }
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, page) = send(&rig.router, get("/web/admin/people", Some(&admin))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        page.contains("Administration") && page.contains(EMAIL),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn the_last_admin_address_is_never_removed_or_unflagged_from_the_page() {
+    // Moved from the lead; the refusal is now the API's keep_an_admin.
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for fields in [
+        vec![
+            ("action", "set_admin"),
+            ("email", "boss@example.com"),
+            ("admin", "no"),
+        ],
+        vec![
+            ("action", "remove_email"),
+            ("email", "boss@example.com"),
+            ("confirm", "yes"),
+        ],
+    ] {
+        let (status, _, body) = act(&rig, &admin, "/web/admin/people", &fields).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body.contains("admin"), "{body}");
+    }
+    let (status, _, _) = act(
+        &rig,
+        &admin,
+        "/web/admin/people",
+        &[
+            ("action", "allow_email"),
+            ("email", "carol@example.com"),
+            ("user", "carol"),
+            ("admin", "yes"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (status, _, _) = act(
+        &rig,
+        &admin,
+        "/web/admin/people",
+        &[
+            ("action", "set_admin"),
+            ("email", "carol@example.com"),
+            ("admin", "no"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn a_resubmitted_allowlist_form_acts_once_and_lands_on_the_overview() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let nonce = "0123456789abcdef0123456789abcdef";
+    for (fields, done) in [
+        (
+            vec![
+                ("action", "allow_email"),
+                ("email", "carol@example.com"),
+                ("user", "carol"),
+                ("admin", "no"),
+                ("nonce", nonce),
+            ],
+            "/web/admin/people?done=added",
+        ),
+        (
+            vec![
+                ("action", "remove_email"),
+                ("email", "carol@example.com"),
+                ("confirm", "yes"),
+                ("nonce", "fedcba9876543210fedcba9876543210"),
+            ],
+            "/web/admin/people?done=removed",
+        ),
+    ] {
+        let head = rig.head().await;
+        for _ in 0..2 {
+            let (status, headers, body) = act(&rig, &admin, "/web/admin/people", &fields).await;
+            assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+            assert_eq!(headers[header::LOCATION], done);
+        }
+        let events = rig
+            .store
+            .events_range(rig.boot.tenant_id, head + 1, 500)
+            .await
+            .unwrap();
+        let acted = events
+            .iter()
+            .filter(|e| e.envelope.event_type.starts_with("web.email"))
+            .count();
+        assert_eq!(acted, 1, "{done}: the second send replayed");
+    }
+}
+
+#[tokio::test]
+async fn disabling_a_person_is_confirmed_first_and_nothing_acts_until_it_is() {
+    let rig = rig().await;
+    let _alice = signed_in(&rig, "sub-1", EMAIL).await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for action in ["disable_user", "close_deletion"] {
+        let head = rig.head().await;
+        let (status, _, page) = act(
+            &rig,
+            &admin,
+            "/web/admin/users",
+            &[("action", action), ("user", "alice")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{action}: {page}");
+        assert!(page.contains(r#"name="confirm" value="yes""#), "{page}");
+        assert_eq!(
+            rig.head().await,
+            head,
+            "{action}: the confirmation records nothing"
+        );
+    }
+    // A person who is not an admin reaches neither act.
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, _) = act(
+        &rig,
+        &cookie,
+        "/web/admin/users",
+        &[
+            ("action", "disable_user"),
+            ("user", "alice"),
+            ("confirm", "yes"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, headers, body) = act(
+        &rig,
+        &admin,
+        "/web/admin/users",
+        &[
+            ("action", "disable_user"),
+            ("user", "alice"),
+            ("confirm", "yes"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(headers[header::LOCATION], "/web/admin/users?done=disabled");
+    let (_, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert!(!page.contains("<h1>Keys</h1>"), "her session ended: {page}");
+}
+
+#[tokio::test]
+async fn the_start_page_shows_a_credential_once_and_carries_its_one_script() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, headers, page) = send(
+        &rig.router,
+        get("/web/start?client=claude-code", Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+    assert_eq!(csp, oml_web::start::start_csp());
+    assert!(
+        page.contains("<script>") && page.contains("Issue my credential"),
+        "{page}"
+    );
+    let csrf = csrf_of(&page);
+    let nonce = field_of(&page, "nonce");
+    let fields = [
+        ("action", "issue_claude_code"),
+        ("csrf_token", csrf.as_str()),
+        ("nonce", nonce.as_str()),
+    ];
+    let (status, headers, _) = send(&rig.router, post("/web/start", &fields, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let location = headers[header::LOCATION].to_str().unwrap().to_owned();
+    assert_eq!(location, "/web/start?client=claude-code");
+    assert!(!location.contains("oml_"), "never the value in a URL");
+    let (once, _) = set_cookie(&headers, ONCE_COOKIE).expect("the sealed value");
+    let both = format!("{cookie}; {ONCE_COOKIE}={once}");
+    let (_, headers, shown) = send(&rig.router, get(&location, Some(&both))).await;
+    assert!(
+        shown.contains("alice-claude-code") || shown.contains("cred-key"),
+        "{shown}"
+    );
+    assert!(shown.contains("Shown once"), "{shown}");
+    assert!(
+        set_cookie(&headers, ONCE_COOKIE).is_some_and(|(v, _)| v.is_empty()),
+        "cleared"
+    );
+    // The same form again replays: no second key, no cookie over the first.
+    let (status, headers, _) = send(&rig.router, post("/web/start", &fields, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(set_cookie(&headers, ONCE_COOKIE).is_none());
+    key_named(&rig, "alice-claude-code").await;
+    // A second issue takes the next free name.
+    let (_, _, page) = send(
+        &rig.router,
+        get("/web/start?client=claude-code", Some(&cookie)),
+    )
+    .await;
+    let again = [
+        ("action", "issue_claude_code"),
+        ("csrf_token", csrf.as_str()),
+        ("nonce", &field_of(&page, "nonce")),
+    ];
+    let (status, _, _) = send(&rig.router, post("/web/start", &again, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    key_named(&rig, "alice-claude-code-2").await;
+}
+
+#[tokio::test]
+async fn resubmitting_an_issue_that_landed_on_the_next_free_name_issues_nothing_new() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let csrf = csrf_for_page(&rig, &cookie).await;
+    // The first name is taken, so this form's issue lands on -2.
+    for nonce in [
+        "11111111111111111111111111111111",
+        "22222222222222222222222222222222",
+    ] {
+        let fields = [
+            ("action", "issue_claude_code"),
+            ("csrf_token", csrf.as_str()),
+            ("nonce", nonce),
+        ];
+        let (status, _, _) = send(&rig.router, post("/web/start", &fields, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+    }
+    key_named(&rig, "alice-claude-code-2").await;
+    let head = rig.head().await;
+    let again = [
+        ("action", "issue_claude_code"),
+        ("csrf_token", csrf.as_str()),
+        ("nonce", "22222222222222222222222222222222"),
+    ];
+    let (status, headers, _) = send(&rig.router, post("/web/start", &again, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        set_cookie(&headers, ONCE_COOKIE).is_none(),
+        "a replay shows nothing"
+    );
+    assert_eq!(rig.head().await, head, "no key issued, nothing journalled");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_issue_whose_name_a_stopped_attempt_holds_issues_no_next_name() {
+    // F2 of #255's review, closed by the key operation's claim-first record
+    // (#233, #259): an attempt that committed `-2` and stopped before its
+    // outcome was recorded still holds its claim, so the resubmission meets
+    // `idempotency.in_progress` on `-2` and never issues `-3`.
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let csrf = csrf_for_page(&rig, &cookie).await;
+    let first = [
+        ("action", "issue_claude_code"),
+        ("csrf_token", csrf.as_str()),
+        ("nonce", "33333333333333333333333333333333"),
+    ];
+    let (status, _, _) = send(&rig.router, post("/web/start", &first, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    // The stopped attempt: the claim on `-2`'s key, under this form's
+    // nonce, with the request it made.
+    let nonce = "44444444444444444444444444444444";
+    let token = cookie.split_once('=').map_or("", |(_, v)| v);
+    let form_key = oml_web_credential::act_idempotency_key(token, nonce);
+    let attempt: String =
+        ring::digest::digest(&ring::digest::SHA256, format!("{form_key}\n2").as_bytes())
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+    let body = json!({"name": "alice-claude-code-2", "role": "writer", "connect_code": false});
+    let mut bytes = b"\n".to_vec();
+    bytes.extend_from_slice(body.to_string().as_bytes());
+    let web_key = key_named(&rig, "alice-web").await;
+    let scope = oml_app::ports::IdempotencyScope {
+        tenant_id: rig.boot.tenant_id,
+        key_id: web_key.key_id,
+        workarea_id: uuid::Uuid::nil(),
+        idem_key: format!("keys.issue:{attempt}"),
+    };
+    rig.store
+        .idempotency_claim(
+            &scope,
+            &oml_app::domain::Sha256Hash::digest(&bytes).to_prefixed(),
+            uuid::Uuid::from_u128(0xF2),
+        )
+        .await
+        .expect("a claim");
+    let again = [
+        ("action", "issue_claude_code"),
+        ("csrf_token", csrf.as_str()),
+        ("nonce", nonce),
+    ];
+    let (status, _, page) = send(&rig.router, post("/web/start", &again, Some(&cookie))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{page}");
+    assert!(page.contains("idempotency.in_progress"), "{page}");
+    for name in ["alice-claude-code-2", "alice-claude-code-3"] {
+        assert!(
+            rig.store
+                .resolve_name(
+                    rig.boot.tenant_id,
+                    oml_app::domain::name::NamedKind::Key,
+                    &Name::parse(name).unwrap()
+                )
+                .await
+                .unwrap()
+                .is_none(),
+            "{name} was not issued"
+        );
+    }
+}
+
+async fn csrf_for_page(rig: &Rig, cookie: &str) -> String {
+    let (_, _, page) = send(
+        &rig.router,
+        get("/web/start?client=claude-code", Some(cookie)),
+    )
+    .await;
+    csrf_of(&page)
+}
+
+#[tokio::test]
+async fn the_start_routes_are_never_stored_and_the_export_holds_only_the_persons_own() {
+    let rig = rig().await;
+    rig.allow("bob@example.com", "bob", false).await;
+    let alice = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &alice).await;
+    agent_writes(&rig, &value, "alice's private kestrel").await;
+    let bob = signed_in(&rig, "sub-2", "bob@example.com").await;
+    for path in [
+        "/web/start",
+        "/web/start/status",
+        "/web/start/export",
+        "/web/setup",
+    ] {
+        let (status, headers, _) = send(&rig.router, get(path, Some(&bob))).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(headers[header::CACHE_CONTROL], "no-store", "{path}");
+    }
+    let (_, _, export) = send(&rig.router, get("/web/start/export", Some(&bob))).await;
+    assert!(
+        !export.contains("kestrel"),
+        "another person's memory: {export}"
+    );
+    let (_, _, export) = send(&rig.router, get("/web/start/export", Some(&alice))).await;
+    assert!(export.contains("kestrel"), "{export}");
+}
+
+#[tokio::test]
+async fn a_deletion_request_needs_the_word_delete_and_is_shown_as_pending() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let head = rig.head().await;
+    let (status, _, body) = act(
+        &rig,
+        &cookie,
+        "/web/start",
+        &[("action", "request_deletion"), ("confirm", "yes")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(rig.head().await, head, "nothing recorded");
+    let (status, headers, body) = act(
+        &rig,
+        &cookie,
+        "/web/start",
+        &[("action", "request_deletion"), ("confirm", "delete")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(headers[header::LOCATION], "/web/start?done=requested");
+    let (_, _, page) = send(&rig.router, get("/web/start?done=requested", Some(&cookie))).await;
+    assert!(
+        page.contains("Your deletion request is with the administrator"),
+        "{page}"
+    );
+    assert!(!page.contains("Type delete to confirm"), "{page}");
+}
+
+#[tokio::test]
+async fn the_start_status_and_export_are_data_and_answer_nothing_without_a_session() {
+    let rig = rig().await;
+    for path in ["/web/start/status", "/web/start/export"] {
+        let (status, headers, body) = send(&rig.router, get(path, None)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+        assert!(
+            headers.get(header::LOCATION).is_none(),
+            "{path}: no redirect"
+        );
+    }
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    agent_writes(&rig, &value, "an exported fact").await;
+    let (status, _, body) = send(&rig.router, get("/web/start/status", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let status_json: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(status_json["first_memory"], "held", "{body}");
+    let (status, headers, body) = send(&rig.router, get("/web/start/export", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        headers[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment"),
+    );
+    assert!(body.contains("an exported fact"), "{body}");
+    let (status, _, _) = send(
+        &rig.router,
+        Request::get("/web/start/status")
+            .header(header::AUTHORIZATION, format!("Bearer {value}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "a bearer key reaches no page"
+    );
+}
+
+#[tokio::test]
+async fn the_old_setup_and_admin_urls_are_not_found_and_the_pages_answer_at_their_own_paths() {
+    // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
+    // "The old URLs deleted"): an old URL is not found, an old act is
+    // refused and runs nothing, and the moved page answers at its own path.
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for (old, who, new) in [
+        ("/web?view=setup", cookie.as_str(), "/web/setup"),
+        ("/web/admin", boss.as_str(), "/web/admin/people"),
+        ("/web/admin?view=people", boss.as_str(), "/web/admin/people"),
+    ] {
+        let (status, headers, _) = send(&rig.router, get(old, Some(who))).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
+        assert!(headers.get(header::LOCATION).is_none(), "{old}");
+        let (status, _, page) = send(&rig.router, get(new, Some(who))).await;
+        assert_eq!(status, StatusCode::OK, "{new}: {page}");
+    }
+    for path in ["/web/start", "/web/admin/users"] {
+        let (status, _, page) = send(&rig.router, get(path, Some(&boss))).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {page}");
     }
 }
 
@@ -2382,7 +2930,11 @@ async fn a_user_issues_a_key_only_inside_its_root() {
         &rig,
         &cookie,
         "/web/keys",
-        &[("action", "cut_off"), ("key", "alice-laptop")],
+        &[
+            ("action", "cut_off"),
+            ("key", "alice-laptop"),
+            ("confirm", "yes"),
+        ],
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
@@ -2393,7 +2945,11 @@ async fn a_user_issues_a_key_only_inside_its_root() {
         &rig,
         &cookie,
         "/web/keys",
-        &[("action", "cut_off"), ("key", "root-admin")],
+        &[
+            ("action", "cut_off"),
+            ("key", "root-admin"),
+            ("confirm", "yes"),
+        ],
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -2427,6 +2983,8 @@ async fn a_connector_key_shows_its_connect_code_once() {
     .await;
     assert_eq!(status, StatusCode::OK, "{page}");
     assert!(page.contains("Connect code"), "{page}");
+    // Its expiry reads as the minutes left and the clock time in UTC.
+    assert!(page.contains(" UTC)."), "{page}");
 }
 
 #[tokio::test]
@@ -2528,7 +3086,7 @@ async fn removing_the_last_email_leaves_the_agents_keys_working() {
     let (status, _, page) = act(
         &rig,
         &admin,
-        "/web/admin",
+        "/web/admin/people",
         &[("action", "remove_email"), ("email", EMAIL)],
     )
     .await;
@@ -2541,7 +3099,7 @@ async fn removing_the_last_email_leaves_the_agents_keys_working() {
     let (status, _, _) = act(
         &rig,
         &admin,
-        "/web/admin",
+        "/web/admin/people",
         &[
             ("action", "remove_email"),
             ("email", EMAIL),
@@ -2581,7 +3139,7 @@ async fn review_on_the_admin_page_acts_as_the_persons_reviewer_key_and_the_admin
     let (status, _, _) = act(
         &rig,
         &admin,
-        "/web/admin",
+        "/web/admin/people",
         &[
             ("action", "grant_review"),
             ("user", "boss"),
@@ -2651,7 +3209,7 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
         let (status, _, body) = act(
             &rig,
             &admin,
-            "/web/admin",
+            "/web/admin/people",
             &[("action", action), ("user", "boss"), ("workarea", workarea)],
         )
         .await;
@@ -2725,6 +3283,131 @@ async fn a_curated_claim_is_held_until_a_key_outside_its_lineage_approves_and_th
         mine.contains("Keys rotate quarterly.") && mine.contains("the shared area"),
         "{mine}"
     );
+}
+
+#[tokio::test]
+async fn an_anonymous_universe_row_shows_no_scan_finding_to_a_reader_outside_its_authors() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (_, _, page) = act_and_follow(
+        &rig,
+        &cookie,
+        "/web/keys",
+        &[
+            ("action", "issue_key"),
+            ("name", "laptop"),
+            ("role", "writer"),
+        ],
+    )
+    .await;
+    let value = value_of(&page);
+    let source = agent_writes(&rig, &value, "rotate keys every ninety days").await;
+    // Only an approved memory is readable beyond its author: alice approves
+    // her agent's write first.
+    let serve = format!("srv_{}", source.simple());
+    let (status, _, _) = act_and_follow(
+        &rig,
+        &cookie,
+        "/web/review",
+        &[
+            ("action", "verdict"),
+            ("serve_id", &serve),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for (action, workarea) in [("grant_curation", "alice"), ("grant_review", "universe")] {
+        let (status, _, body) = act(
+            &rig,
+            &admin,
+            "/web/admin/people",
+            &[("action", action), ("user", "boss"), ("workarea", workarea)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{action}: {body}");
+    }
+    // A curator designation takes effect at the next sign-in: the session's
+    // capacity credentials are those its entry reached when it opened
+    // (ADR-0070 d2 as built).
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, body) = act(
+        &rig,
+        &admin,
+        "/web/admin/curate",
+        &[
+            ("action", "curate"),
+            ("source", &source.to_string()),
+            ("text", "Keys rotate quarterly. [needs-human]"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let curate = key_named(&rig, "boss-curate").await;
+    let page = rig
+        .app
+        .admin_search(
+            rig.boot.admin_key.value.as_str(),
+            Some("quarterly"),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("the admin reads");
+    let curated = &page.items[0];
+    assert_eq!(curated.state.as_str(), "held", "held until reviewed");
+    assert_eq!(curated.workarea_path, "universe");
+    assert_eq!(curated.memory.author_key_id, curate.key_id);
+    // boss-review is outside the curated claim's lineage, so it is served.
+    let (_, _, page) = act_and_follow(
+        &rig,
+        &admin,
+        "/web/admin/review",
+        &[("action", "review_next")],
+    )
+    .await;
+    assert!(page.contains("Keys rotate quarterly."), "{page}");
+    let serve_id = format!("srv_{}", curated.memory.memory_id.simple());
+    let (status, _, page) = act_and_follow(
+        &rig,
+        &admin,
+        "/web/admin/review",
+        &[
+            ("action", "verdict"),
+            ("serve_id", &serve_id),
+            ("verdict", "approve"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    // The admin reads the finding; alice, outside the authoring keys,
+    // reads the row anonymous and without it (ADR-0044 d9; #253).
+    let page = rig
+        .app
+        .admin_search(
+            rig.boot.admin_key.value.as_str(),
+            Some("quarterly"),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("the admin reads");
+    assert!(
+        page.items[0].memory.scan_finding.is_some(),
+        "the curated text was held with a finding"
+    );
+    let (_, _, mine) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
+    assert!(
+        mine.contains("Keys rotate quarterly.") && mine.contains("the shared area"),
+        "{mine}"
+    );
+    assert!(!mine.contains("marker finding"), "{mine}");
 }
 
 #[tokio::test]
@@ -2861,7 +3544,7 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
     act(
         &rig,
         &admin,
-        "/web/admin",
+        "/web/admin/people",
         &[
             ("action", "grant_review"),
             ("user", "boss"),
@@ -2886,6 +3569,82 @@ async fn a_reviewer_sees_the_valid_time_and_the_end_an_approval_gives_on_the_car
         page.contains("approving ends version 1 at 2026-06-01T00:00:00.000000Z"),
         "{page}"
     );
+}
+
+/// The review card names every finding stored on the version, one line
+/// each with its verdict, its class and rule and where it fired, and the
+/// bulk table counts them by verdict (ADR-0074 d17, d18 phase 1, d23). The
+/// double holds on its marker in the body and in the title alike, so the
+/// version carries two findings where the single stored `scan_finding`
+/// named one.
+#[tokio::test]
+async fn the_review_card_names_every_scan_finding() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let value = laptop_key(&rig, &cookie).await;
+    rig.app
+        .submit_memory(
+            value.as_str(),
+            &oml_app::types::SubmitRequest {
+                origin: None,
+                anchor: None,
+                idempotency_key: "k-flagged".to_owned(),
+                claim_key: Some("flagged".to_owned()),
+                verb: Some(oml_app::types::SubmitVerb::Remember),
+                kind: oml_app::domain::MemoryKind::Memory,
+                body: "the deploy note [needs-human] in the body".to_owned(),
+                workarea: None,
+                derives_from: Vec::new(),
+                severity: None,
+                rule: None,
+                valid_from: None,
+                valid_until: None,
+                format: None,
+                title: Some("[needs-human] in the title".to_owned()),
+                on_similar: Default::default(),
+            },
+        )
+        .await
+        .expect("the agent writes");
+    // The bulk table first: a serve claims the item for its reviewer.
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    act(
+        &rig,
+        &admin,
+        "/web/admin/people",
+        &[
+            ("action", "grant_review"),
+            ("user", "boss"),
+            ("workarea", "alice"),
+        ],
+    )
+    .await;
+    let (_, _, page) = send(&rig.router, get("/web/admin/review", Some(&admin))).await;
+    assert!(page.contains("<th>Findings</th>"), "{page}");
+    assert!(
+        page.contains(r#"<td class="mono findings">2 hold</td>"#),
+        "{page}"
+    );
+    let (status, _, page) =
+        act_and_follow(&rig, &cookie, "/web/review", &[("action", "review_next")]).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains("scan findings · 2"), "{page}");
+    let block = page
+        .split(r#"<div class="findings">"#)
+        .nth(1)
+        .and_then(|rest| rest.split("</div>").next())
+        .expect("a findings block");
+    assert_eq!(
+        block
+            .matches(r#"<span class="tag oml-chip is-held">hold</span>"#)
+            .count(),
+        2,
+        "{block}"
+    );
+    for field in [">/body<", ">/title<"] {
+        assert!(block.contains(field), "{field}: {block}");
+    }
 }
 
 #[tokio::test]
@@ -2940,7 +3699,7 @@ async fn a_key_value_is_shown_once_on_the_redirect_target_and_never_in_a_url_or_
         "Secure",
         "HttpOnly",
         "SameSite=Strict",
-        "Max-Age=300",
+        "Max-Age=60",
     ] {
         assert!(whole.contains(attribute), "{whole}");
     }
@@ -3288,7 +4047,7 @@ async fn a_reviewer_who_is_not_the_author_sees_the_held_diagram_drawn_on_the_car
     let (status, _, _) = act(
         &rig,
         &admin,
-        "/web/admin",
+        "/web/admin/people",
         &[
             ("action", "grant_review"),
             ("user", "boss"),
@@ -3411,6 +4170,7 @@ async fn the_admin_keys_page_lists_a_persons_keys_and_cuts_one_off() {
             ("action", "cut_off"),
             ("key", "alice-laptop"),
             ("user", "alice"),
+            ("confirm", "yes"),
         ],
     )
     .await;
@@ -3442,12 +4202,90 @@ async fn the_admin_keys_page_lists_a_persons_keys_and_cuts_one_off() {
 }
 
 #[tokio::test]
-async fn the_old_review_and_keys_urls_and_acts_go_through_the_lead_to_the_moved_pages_own_paths() {
+async fn a_cut_off_is_confirmed_first_and_nothing_is_cut_off_until_it_is() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    laptop_key(&rig, &cookie).await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let admin = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    for (who, path, listed) in [
+        (&cookie, "/web/keys", None),
+        (&admin, "/web/admin/keys", Some("alice")),
+    ] {
+        let head = rig.head().await;
+        let mut fields = vec![("action", "cut_off"), ("key", "alice-laptop")];
+        if let Some(user) = listed {
+            fields.push(("user", user));
+        }
+        let (status, _, page) = act(&rig, who, path, &fields).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {page}");
+        assert!(page.contains("Cut off alice-laptop?"), "{page}");
+        assert!(page.contains(r#"name="confirm" value="yes""#), "{page}");
+        assert!(page.contains(r#"name="nonce""#), "{page}");
+        if listed.is_some() {
+            assert!(
+                page.contains(r#"<input type="hidden" name="user" value="alice">"#),
+                "the confirmation carries the listed user: {page}"
+            );
+        }
+        assert_eq!(
+            rig.head().await,
+            head,
+            "{path}: the confirmation records nothing"
+        );
+        // Anything but the confirmation's own field acts nothing either.
+        fields.push(("confirm", "no"));
+        let (status, _, _) = act(&rig, who, path, &fields).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(rig.head().await, head, "{path}: confirm=no records nothing");
+    }
+    let (_, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert!(!page.contains("cut off"), "still live: {page}");
+}
+
+#[tokio::test]
+async fn a_cut_off_confirmation_sent_twice_cuts_the_key_off_once() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    laptop_key(&rig, &cookie).await;
+    let head = rig.head().await;
+    let fields = [
+        ("action", "cut_off"),
+        ("key", "alice-laptop"),
+        ("confirm", "yes"),
+        ("nonce", "0f1e2d3c4b5a69788796a5b4c3d2e1f0"),
+    ];
+    for _ in 0..2 {
+        let (status, headers, body) = act(&rig, &cookie, "/web/keys", &fields).await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+        assert_eq!(headers[header::LOCATION], "/web/keys?done=cut+off");
+    }
+    let events = rig
+        .store
+        .events_range(rig.boot.tenant_id, head + 1, 500)
+        .await
+        .unwrap();
+    let denied = events
+        .iter()
+        .filter(|e| e.envelope.event_type == "key.denied")
+        .count();
+    assert_eq!(denied, 1, "the second send replayed");
+}
+
+#[tokio::test]
+async fn the_old_review_and_keys_urls_are_not_found_and_their_acts_run_nothing() {
+    // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
+    // "The old URLs deleted"): an old URL is not found, an old act is
+    // refused and runs nothing, and the moved page answers at its own path.
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
     let cookie = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    // A signed-in GET /web naming no view is the console's landing, the
+    // Keys view; it is not an old URL.
+    let (status, headers, _) = send(&rig.router, get("/web", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/web/keys");
     for (old, new) in [
-        ("/web", "/web/keys"),
         ("/web?view=keys", "/web/keys"),
         ("/web?view=review", "/web/review"),
         ("/web/admin?view=review", "/web/admin/review"),
@@ -3455,16 +4293,16 @@ async fn the_old_review_and_keys_urls_and_acts_go_through_the_lead_to_the_moved_
         ("/web/admin?view=queue", "/web/admin/review"),
     ] {
         let (status, headers, _) = send(&rig.router, get(old, Some(&cookie))).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
-        assert_eq!(headers[header::LOCATION], new, "{old}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
+        assert!(headers.get(header::LOCATION).is_none(), "{old}");
         let (status, _, page) = send(&rig.router, get(new, Some(&cookie))).await;
         assert_eq!(status, StatusCode::OK, "{new}: {page}");
     }
-    for (page, action, new) in [
-        ("/web", "issue_key", "/web/keys"),
-        ("/web", "review_next", "/web/review"),
-        ("/web/admin", "bulk_verdict", "/web/admin/review"),
-        ("/web/admin", "cut_off", "/web/admin/keys"),
+    for (page, action, refused) in [
+        ("/web", "issue_key", StatusCode::BAD_REQUEST),
+        ("/web", "review_next", StatusCode::BAD_REQUEST),
+        ("/web/admin", "bulk_verdict", StatusCode::NOT_FOUND),
+        ("/web/admin", "cut_off", StatusCode::NOT_FOUND),
     ] {
         let (status, headers, _) = act(
             &rig,
@@ -3473,8 +4311,8 @@ async fn the_old_review_and_keys_urls_and_acts_go_through_the_lead_to_the_moved_
             &[("action", action), ("name", "laptop"), ("role", "writer")],
         )
         .await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{action}");
-        assert_eq!(headers[header::LOCATION], new, "{action}");
+        assert_eq!(status, refused, "{page} {action}");
+        assert!(headers.get(header::LOCATION).is_none(), "{action}");
     }
     assert!(
         rig.store
@@ -3495,7 +4333,7 @@ async fn the_review_and_keys_pages_draw_the_header_and_tabs_the_leads_pages_draw
     let rig = rig().await;
     rig.allow("bob@example.com", "bob", true).await;
     let cookie = signed_in(&rig, "sub-2", "bob@example.com").await;
-    let (_, _, lead) = send(&rig.router, get("/web?view=setup", Some(&cookie))).await;
+    let (_, _, lead) = send(&rig.router, get("/web/setup", Some(&cookie))).await;
     for path in ["/web/review", "/web/keys"] {
         let (status, _, moved) = send(&rig.router, get(path, Some(&cookie))).await;
         assert_eq!(status, StatusCode::OK, "{moved}");
@@ -3506,7 +4344,7 @@ async fn the_review_and_keys_pages_draw_the_header_and_tabs_the_leads_pages_draw
         keys.contains("bob-web") && keys.contains("bob-review"),
         "the person's session keys are listed: {keys}"
     );
-    let (_, _, lead) = send(&rig.router, get("/web/admin", Some(&cookie))).await;
+    let (_, _, lead) = send(&rig.router, get("/web/admin/people", Some(&cookie))).await;
     for path in ["/web/admin/review", "/web/admin/keys"] {
         let (status, _, moved) = send(&rig.router, get(path, Some(&cookie))).await;
         assert_eq!(status, StatusCode::OK, "{moved}");
@@ -4299,11 +5137,11 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
 }
 
 #[tokio::test]
-async fn the_old_memories_urls_go_through_the_lead_to_the_moved_pages_own_paths() {
+async fn the_old_memories_urls_are_not_found_and_the_list_and_atlas_answer_at_their_own_paths() {
     // ADR-0070 d7 (b) as amended: the Memories list and the Atlas each have
-    // their own path under /web/; the lead answers the old ?view= forms
-    // with a 303 there, carrying nothing from the request, and still serves
-    // one memory opened by its id.
+    // their own path under /web/, and one memory its own page; the lead's
+    // 303s from the old ?view= forms are deleted in v0.7.1 (ADR-0070, "The
+    // old URLs deleted").
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
     let (cookie, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
@@ -4321,14 +5159,14 @@ async fn the_old_memories_urls_go_through_the_lead_to_the_moved_pages_own_paths(
         ),
     ] {
         let (status, headers, _) = send(&rig.router, get(old, Some(who))).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
-        assert_eq!(headers[header::LOCATION], new, "{old}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
+        assert!(headers.get(header::LOCATION).is_none(), "{old}");
         let (status, _, page) = send(&rig.router, get(new, Some(who))).await;
         assert_eq!(status, StatusCode::OK, "{page}");
         assert!(page.contains("<h1>Memories</h1>"), "{new}: {page}");
     }
-    // The list's rows link to one memory's own page, which the old link
-    // reaches through the lead.
+    // The list's rows link to one memory's own page; the old link to it is
+    // not found.
     let (_, _, list) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
     assert!(
         list.contains(&format!(
@@ -4344,11 +5182,8 @@ async fn the_old_memories_urls_go_through_the_lead_to_the_moved_pages_own_paths(
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(
-        headers[header::LOCATION],
-        format!("/web/memory?id={memory}").as_str()
-    );
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(headers.get(header::LOCATION).is_none());
     let (status, _, opened) = send(
         &rig.router,
         get(&format!("/web/memory?id={memory}"), Some(&cookie)),
@@ -4363,7 +5198,7 @@ async fn the_memories_pages_draw_the_header_and_tabs_the_leads_pages_draw() {
     let rig = rig().await;
     rig.allow("bob@example.com", "bob", true).await;
     let cookie = signed_in(&rig, "sub-2", "bob@example.com").await;
-    let (_, _, lead) = send(&rig.router, get("/web?view=setup", Some(&cookie))).await;
+    let (_, _, lead) = send(&rig.router, get("/web/setup", Some(&cookie))).await;
     for (path, tab) in [
         ("/web/memories", "/web/memories"),
         ("/web/atlas", "/web/atlas"),
@@ -4378,7 +5213,7 @@ async fn the_memories_pages_draw_the_header_and_tabs_the_leads_pages_draw() {
             "{moved}"
         );
     }
-    let (_, _, lead) = send(&rig.router, get("/web/admin", Some(&cookie))).await;
+    let (_, _, lead) = send(&rig.router, get("/web/admin/people", Some(&cookie))).await;
     for path in ["/web/admin/memories", "/web/admin/atlas"] {
         let (status, _, moved) = send(&rig.router, get(path, Some(&cookie))).await;
         assert_eq!(status, StatusCode::OK, "{moved}");

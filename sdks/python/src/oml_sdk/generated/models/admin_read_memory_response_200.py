@@ -31,10 +31,11 @@ class AdminReadMemoryResponse200:
         state (AdminMemoryState):
         workarea_path (str):
         text (str):
-        key (str): The authoring key's name.
+        key (None | str): The authoring key's name; null for a key that has no name, which key_id names (ADR-0070 d5).
         created_at (datetime.datetime):
         kind (AdminMemoryKind | Unset): The kind the version was written as; the admin page refuses to supersede or
             retire a guardrail by it (ADR-0037 d17; ADR-0070 d5). Since v0.7.0.
+        key_id (str | Unset): The authoring key's id, which names a key that has no name (ADR-0070 d5). Since v0.7.0.
         principal (None | str | Unset):
         user (None | str | Unset):
         format_ (str | Unset): The media type signed with the version (ADR-0056 d1).
@@ -61,9 +62,10 @@ class AdminReadMemoryResponse200:
     state: AdminMemoryState
     workarea_path: str
     text: str
-    key: str
+    key: None | str
     created_at: datetime.datetime
     kind: AdminMemoryKind | Unset = UNSET
+    key_id: str | Unset = UNSET
     principal: None | str | Unset = UNSET
     user: None | str | Unset = UNSET
     format_: str | Unset = UNSET
@@ -95,6 +97,7 @@ class AdminReadMemoryResponse200:
 
         text = self.text
 
+        key: None | str
         key = self.key
 
         created_at = self.created_at.isoformat()
@@ -102,6 +105,8 @@ class AdminReadMemoryResponse200:
         kind: str | Unset = UNSET
         if not isinstance(self.kind, Unset):
             kind = self.kind.value
+
+        key_id = self.key_id
 
         principal: None | str | Unset
         if isinstance(self.principal, Unset):
@@ -198,6 +203,8 @@ class AdminReadMemoryResponse200:
         )
         if kind is not UNSET:
             field_dict["kind"] = kind
+        if key_id is not UNSET:
+            field_dict["key_id"] = key_id
         if principal is not UNSET:
             field_dict["principal"] = principal
         if user is not UNSET:
@@ -249,7 +256,12 @@ class AdminReadMemoryResponse200:
 
         text = d.pop("text")
 
-        key = d.pop("key")
+        def _parse_key(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        key = _parse_key(d.pop("key"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
@@ -259,6 +271,8 @@ class AdminReadMemoryResponse200:
             kind = UNSET
         else:
             kind = AdminMemoryKind(_kind)
+
+        key_id = d.pop("key_id", UNSET)
 
         def _parse_principal(data: object) -> None | str | Unset:
             if data is None:
@@ -393,6 +407,7 @@ class AdminReadMemoryResponse200:
             key=key,
             created_at=created_at,
             kind=kind,
+            key_id=key_id,
             principal=principal,
             user=user,
             format_=format_,

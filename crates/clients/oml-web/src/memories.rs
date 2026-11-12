@@ -31,7 +31,9 @@ use serde_json::{Value, json};
 use crate::atlas::{Counts, Tile, legend, lifebar, svg};
 use crate::pages::{Fields, refused};
 use crate::session::{PageCalls, Session, call, cookie};
-use crate::workareas::{Credentials, NodeOffers, Side as ActSide, offers_of};
+use crate::workareas::{
+    Credentials, NodeOffers, Side as ActSide, mode_offers, offers_of, transitions_offers,
+};
 use crate::{Capacity, SESSION_COOKIE, Web, outcome};
 
 /// A page's rows when the query names no size (ADR-0045 d22).
@@ -41,7 +43,9 @@ pub const PAGE_MAX: u32 = 200;
 /// Recall's own bound on one answer, the user page's text search.
 pub const RECALL_MAX: u32 = 100;
 /// The most pages of the person's keys the list reads to name their kinds:
-/// 10 pages of 200. A constant of the build, unmeasured (#170).
+/// 10 pages of 200. Past them the list is refused with
+/// `limit.list_too_long`, never shown with kinds missing. A constant of the
+/// build, unmeasured (#170).
 pub const KEY_PAGES_MAX: usize = 10;
 
 /// The user page's JSON route (ADR-0045 d25).
@@ -76,14 +80,6 @@ impl Side {
         match self {
             Self::User => oml_page::web::USER_MEMORY_PATH,
             Self::Admin => oml_page::web::ADMIN_MEMORY_PATH,
-        }
-    }
-
-    /// The lead's page, the JSON's `base` as it always was.
-    fn lead(self) -> &'static str {
-        match self {
-            Self::User => "/web",
-            Self::Admin => "/web/admin",
         }
     }
 
@@ -485,10 +481,15 @@ impl From<oml_sdk::Error> for Failed {
 }
 
 /// The person's own keys, each with its kind (ADR-0045 d32), through
-/// `GET /v2/keys` as `<user>-web`, a page at a time.
+/// `GET /v2/keys` as `<user>-web`, a page at a time; past
+/// [`KEY_PAGES_MAX`] pages the page is refused `limit.list_too_long`, and
+/// at a cursor the API repeats, the API's fault, `unavailable` with 502
+/// (#281): a list cut short would leave rows without their kind and send
+/// an author search to `access.not_found` for a key the person holds.
 async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kinds, Failed> {
     let mut kinds = Vec::new();
     let mut cursor: Option<String> = None;
+    let mut seen = std::collections::HashSet::new();
     for _ in 0..KEY_PAGES_MAX {
         let ids = calls.next_ids();
         let page = web
@@ -501,11 +502,26 @@ async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kin
                 .map(|k| (k.id, k.name, kind_word(&k.held_by))),
         );
         match page.next_cursor {
-            Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
-            _ => return Ok(kinds),
+            None => return Ok(kinds),
+            Some(next) if !seen.insert(next.clone()) => {
+                return Err(Failed::Refused(
+                    StatusCode::BAD_GATEWAY,
+                    "unavailable",
+                    "the server repeated a cursor of your key list, so the list cannot be read whole; try again"
+                        .to_owned(),
+                ));
+            }
+            Some(next) => cursor = Some(next),
         }
     }
-    Ok(kinds)
+    Err(Failed::Refused(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "limit.list_too_long",
+        format!(
+            "you hold more keys than this page reads ({} pages of {PAGE_MAX}); use the API or the command line",
+            KEY_PAGES_MAX
+        ),
+    ))
 }
 
 /// The user page's page of the list, as `<user>-web`: the merged listing,
@@ -542,8 +558,22 @@ async fn user_cards(
             next: page.next_cursor,
         });
     };
-    let kinds = own_kinds(web, &credential, calls).await?;
-    // The author, one of the person's own keys, named before the search.
+    // The person's keys beside the recall, one round for both (#286).
+    let ids = calls.next_ids();
+    let recall_call = call(&credential, &ids);
+    let recall = RecallQuery {
+        query: text_query,
+        k: q.limit.min(RECALL_MAX),
+        workarea: q.workarea.as_deref(),
+        origin: q.origin.as_deref(),
+    };
+    let (kinds, result) = tokio::join!(
+        own_kinds(web, &credential, calls),
+        web.api.recall(&recall_call, &recall),
+    );
+    let kinds = kinds?;
+    // The author, one of the person's own keys; a name none of them holds
+    // is refused whatever the recall found.
     let author = match &q.author {
         None => None,
         Some(name) => Some(
@@ -560,19 +590,7 @@ async fn user_cards(
                 })?,
         ),
     };
-    let ids = calls.next_ids();
-    let result = web
-        .api
-        .recall(
-            &call(&credential, &ids),
-            &RecallQuery {
-                query: text_query,
-                k: q.limit.min(RECALL_MAX),
-                workarea: q.workarea.as_deref(),
-                origin: q.origin.as_deref(),
-            },
-        )
-        .await?;
+    let result = result?;
     let cards = result
         .steering
         .iter()
@@ -751,10 +769,57 @@ async fn regions(
     let credentials = Credentials::of(session, side.acts());
     let ids = calls.next_ids();
     let counts_call = call(&credential, &ids);
-    tokio::join!(
-        web.api.workarea_counts(&counts_call, scope),
-        offers_of(&web.api, &credentials, calls, scope),
-    )
+    if !credentials.transitions_as(&credential) {
+        return tokio::join!(
+            web.api.workarea_counts(&counts_call, scope, false),
+            offers_of(&web.api, &credentials, calls, scope),
+        );
+    }
+    // The key that reads the counts takes the transitions: the counted tree
+    // carries the scope's offers to it, beside the reviewer key's for the
+    // mode, so the offers add no round (#286).
+    let request_id = ids.request_id.clone().unwrap_or_default();
+    let (counts, mode) = tokio::join!(
+        web.api.workarea_counts(&counts_call, scope, true),
+        mode_offers(&web.api, &credentials, calls, scope),
+    );
+    match counts {
+        Ok(oml_sdk::WorkareaCounts {
+            offers: Some(transitions),
+            items,
+            truncated,
+        }) => (
+            Ok(oml_sdk::WorkareaCounts {
+                items,
+                truncated,
+                offers: None,
+            }),
+            Ok(NodeOffers::of(transitions, mode)),
+        ),
+        // An API one release behind refuses `offers` as a parameter it does
+        // not know (ADR-0070 d4): the counts and the transitions' offers are
+        // read apart, a round more, as before #286.
+        Err(oml_sdk::Error::Api(e)) if e.code == "request.validation" => {
+            let ids = calls.next_ids();
+            let counts_call = call(&credential, &ids);
+            let (counts, transitions) = tokio::join!(
+                web.api.workarea_counts(&counts_call, scope, false),
+                transitions_offers(&web.api, &credentials, calls, scope),
+            );
+            (counts, transitions.map(|t| NodeOffers::of(t, mode)))
+        }
+        Ok(counted) => (
+            Ok(counted),
+            Err((
+                request_id,
+                oml_sdk::Error::Decode {
+                    status: 200,
+                    why: "the counted tree carried no offers".to_owned(),
+                },
+            )),
+        ),
+        Err(e) => (Err(e.clone()), Err((request_id, e))),
+    }
 }
 
 /// The Atlas of `nodes`: the map, the table twin and the scope's panel with
@@ -1106,7 +1171,7 @@ fn json_failed(failed: Failed, calls: &PageCalls) -> Response {
 
 /// The regions as JSON (ADR-0045 d30): each node with its rows by state;
 /// only the scope node, the first, carries the offers, as the Atlas's
-/// panel does.
+/// panel does, or `offers_unavailable` where they failed.
 fn regions_json(nodes: &[CountedNode], partial: bool, offers: Option<&NodeOffers>) -> Value {
     let items: Vec<Value> = nodes
         .iter()
@@ -1218,13 +1283,16 @@ async fn data(
         Ok(counts) => counts,
         Err(e) => return json_failed(Failed::Api(e), &calls),
     };
-    let offers = match offers {
-        Ok(offers) => offers,
-        Err((_, e)) => return json_failed(Failed::Api(e), &calls),
-    };
+    // The offers are the secondary read (d8): their failure marks the scope
+    // node's offers unavailable, as the Atlas's panel does, and the regions
+    // and rows still answer.
     let mut answer = cards.json();
-    answer["workareas"] = regions_json(&counts.items, counts.truncated, Some(&offers));
-    answer["base"] = json!(side.lead());
+    answer["workareas"] = regions_json(&counts.items, counts.truncated, offers.as_ref().ok());
+    if offers.is_err()
+        && let Some(scope) = answer["workareas"]["items"].get_mut(0)
+    {
+        scope["offers_unavailable"] = json!(true);
+    }
     axum::Json(answer).into_response()
 }
 
@@ -1273,6 +1341,58 @@ mod tests {
         );
         let none = ListQuery::parse(&Fields::of_pairs(Vec::new()).unwrap()).unwrap();
         assert_eq!(none.link(USER_MEMORIES_PATH, None), "/web/memories");
+    }
+
+    fn parsed(pairs: &[(&str, &str)]) -> Result<ListQuery, FieldRefusal> {
+        let pairs = pairs
+            .iter()
+            .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
+            .collect();
+        ListQuery::parse(&Fields::of_pairs(pairs).unwrap())
+    }
+
+    #[test]
+    fn an_empty_field_is_no_filter_and_the_default_page_size_holds() {
+        let q = parsed(&[
+            ("q", ""),
+            ("state", ""),
+            ("workarea", ""),
+            ("origin", ""),
+            ("author", ""),
+            ("cursor", ""),
+            ("limit", ""),
+        ])
+        .unwrap();
+        assert!(q.q.is_none() && q.state.is_none() && q.workarea.is_none());
+        assert!(q.origin.is_none() && q.author.is_none() && q.cursor.is_none());
+        assert_eq!(q.limit, PAGE_DEFAULT);
+        assert_eq!(q.link(USER_MEMORIES_PATH, None), "/web/memories");
+    }
+
+    #[test]
+    fn a_malformed_limit_state_or_origin_is_refused_naming_its_field() {
+        for (pairs, field) in [
+            (&[("limit", "0")][..], "limit"),
+            (&[("limit", "201")][..], "limit"),
+            (&[("limit", "ten")][..], "limit"),
+            (&[("limit", "-1")][..], "limit"),
+            (&[("state", "approved")][..], "state"),
+            (&[("state", "HELD")][..], "state"),
+            (&[("origin", "email")][..], "origin"),
+        ] {
+            let refused = parsed(pairs).err().map(|(name, _)| name);
+            assert_eq!(refused, Some(field), "{pairs:?}");
+        }
+        assert_eq!(parsed(&[("limit", "200")]).unwrap().limit, PAGE_MAX);
+    }
+
+    #[test]
+    fn a_field_sent_twice_is_refused_before_it_is_read() {
+        let pairs = vec![
+            ("state".to_owned(), "held".to_owned()),
+            ("state".to_owned(), "promoted".to_owned()),
+        ];
+        assert!(Fields::of_pairs(pairs).is_err());
     }
 
     #[test]

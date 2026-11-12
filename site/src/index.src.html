@@ -34,7 +34,7 @@
       <p class="text">Staging database passwords live in Vault. Never put them in a .env file.</p>
       <ol class="timeline" aria-label="Where it stands">
         <li><span>{{GLYPH:agent}}</span><span class="step">Saved</span><span>by <span class="who">Claude Code</span></span></li>
-        <li><span class="held-c">{{GLYPH:held}}</span><span class="step">Checked</span><span>no secrets found</span></li>
+        <li><span class="held-c">{{GLYPH:held}}</span><span class="step">Checked</span><span>no secret, no finding</span></li>
         <li class="wait"><span>{{GLYPH:person}}</span><span class="step">Approved</span><span>waits for someone who didn't write it</span></li>
         <li class="wait"><span>{{GLYPH:promoted}}</span><span class="step">Shared</span><span>not yet</span></li>
       </ol>
@@ -56,7 +56,7 @@
       {{GATE_TALL}}
       <details class="astext"><summary>As text</summary><ol>
         <li>An agent, here <code>crew/scout</code>, saves a memory.</li>
-        <li>The memory waits, <code>held</code>: only its author and its reviewers can read it. It is scanned for leaked secrets, such as private keys, known providers' API tokens and passwords set in config (<code>DB_PASSWORD=…</code>), and a match refuses the write.</li>
+        <li>The memory waits, <code>held</code>: only its author and its reviewers can read it. It is scanned. A leaked secret refuses the write: a private key, a known provider's API token, a <code>user:password</code> pair in a URL or after <code>curl -u</code>, or a password set in config (<code>DB_PASSWORD=…</code>), and so does a field over 1 MiB. Prompt-injection phrases, hidden Unicode and long base64 blobs do not refuse it: each is recorded as a finding on the held memory and shown to its reviewer.</li>
         <li>Someone who did not write it, nor what it builds on, approves it: a person, here <code>eugene</code>, or a reviewer agent. The key that wrote a memory never approves it.</li>
         <li>The memory is <code>promoted</code>, approved and shared: every agent with access to its workarea recalls it. A workarea is a named area of memory, such as a team or a project, and a key reads only the workareas it is granted.</li>
         <li>Two opt-in exceptions, each confined to one workarea, are described under <a href="{{DOCS_URL}}use/workareas/">workareas</a>.</li>
@@ -73,12 +73,12 @@
     <div class="start">
       <div class="hero-copy">
         <h2 id="start-h">Get started</h2>
-        <p class="caption">The public server is by invitation: email <a href="{{CONTACT_URL}}">{{CONTACT_EMAIL}}</a>. Invited? <a href="/web">Sign in</a> with GitHub or Google, and issue a key for your agent on your account page, <code>/web</code>. Then:</p>
+        <p class="caption">The public server is by invitation: email <a href="{{CONTACT_URL}}">{{CONTACT_EMAIL}}</a>. Invited? <a href="/web">Sign in</a> with GitHub or Google and issue an agent key on the Keys page, <code>/web/keys</code>. Then:</p>
         <ol>
           <li><b>Install <code>oml</code> on Linux.</b> The installer checks the download against the release's signed checksums. On a Mac, build it from source; on Windows, use PowerShell (<a href="{{DOCS_URL}}start/install/">install options</a>).</li>
           <li><b>Store your key.</b> <code>oml login</code> asks for it, checks it with the server and keeps it in a file only you can read.</li>
           <li><b>Set up Claude Code.</b> <code>oml setup claude-code</code> installs the plugin with that key. Then run <code>/reload-plugins</code> in Claude Code, or restart it.</li>
-          <li><b>claude.ai or the Claude app?</b> On your account page, under Connect Claude on the web or a phone, issue a connector key and copy its code. On claude.ai, open Customize &gt; Connectors, add <code>https://memory.doublegate.io/mcp</code> and paste the code. Your phone gets it too.</li>
+          <li><b>claude.ai or the Claude app?</b> On the Keys page, issue a connector key and copy its connect code. On claude.ai, open Customize &gt; Connectors, add <code>https://memory.doublegate.io/mcp</code> and paste the code. Your phone gets it too.</li>
         </ol>
         <p class="caption">No invitation? <a href="{{DOCS_URL}}start/quickstart/">Try a local server</a> in about five minutes. claude.ai and phones cannot reach a server on your laptop; they need one on a public HTTPS address.</p>
         <p class="caption">Your memories stay on the server you choose. On the public server its operator can read them; its request logs hold no memory text and are kept 30 days (<a href="{{DOCS_URL}}operations/observability/">what is logged</a>).</p>

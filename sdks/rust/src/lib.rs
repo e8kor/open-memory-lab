@@ -32,9 +32,9 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 29] = [
+pub const OPERATIONS: [&str; 40] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
-    "whoami GET /v2/whoami resp:Whoami",
+    "whoami GET /v2/whoami query:person resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workarea resp:GuardrailSet",
     "getWorkareaTree GET /v2/workareas/{workarea}/tree query:limit,cursor resp:WorkareaPage",
     "readyz GET /readyz resp:Ready",
@@ -46,7 +46,7 @@ pub const OPERATIONS: [&str; 29] = [
     "listMemories GET /v1/memories query:with_own,include_text,author,workarea,state,origin_kinds,limit,cursor resp:MemoryPage",
     "recallMemories POST /v1/memories/recall body:query,k,workarea,kinds,include_text,include_unreviewed,origin_kinds resp:RecallResponse",
     "adminSearchMemories POST /v2/admin/memories/search body:query,workarea,state,origin_kind,author,limit,cursor resp:AdminMemoryPage",
-    "getWorkareaTree GET /v2/workareas/{workarea}/tree query:counts resp:WorkareaCounts",
+    "getWorkareaTree GET /v2/workareas/{workarea}/tree query:counts,offers resp:WorkareaCounts",
     "listKeys GET /v2/keys query:user,limit,cursor resp:KeyPage",
     "createWorkarea POST /v2/workareas body:name,parent resp:Workarea",
     "reviewNext POST /v2/review/next resp:Serve",
@@ -62,6 +62,17 @@ pub const OPERATIONS: [&str; 29] = [
     "adminReadMemory GET /v2/admin/memories/{artifact_id} resp:AdminRead",
     "submitMemory POST /v1/memories body:verb,claim_key,body,workarea,derives_from resp:Accepted",
     "supersedeMemory POST /v1/memories/{artifact_id}/supersede body:body,expected_version,retirement resp:Accepted",
+    "whoami GET /v2/whoami query:start resp:Onboarding",
+    "listWebEmails GET /v2/web/emails query:limit,cursor resp:WebEmailPage",
+    "allowWebEmail POST /v2/web/emails body:email,user,admin,keep_an_admin resp:WebEmail",
+    "removeWebEmail POST /v2/web/emails/remove body:email,keep_an_admin resp:Removed",
+    "grantWebCapacities POST /v2/web/users/{user}/capacities body:capacity,workareas resp:CapacityGranted",
+    "listWebUsers GET /v2/web/users resp:WebUsers",
+    "setWebUserQuota POST /v2/web/users/{user}/quota body:memories,keys,connections,requests_per_minute resp:WebUser",
+    "disableWebUser POST /v2/web/users/{user}/disable resp:Disabled",
+    "closeWebDeletion POST /v2/web/users/{user}/deletion/close body:outcome resp:Closed",
+    "exportWebPerson GET /v2/web/export resp:Export",
+    "requestWebDeletion POST /v2/web/deletion-requests resp:DeletionRequested",
 ];
 
 /// The request id header (ADR-0042 d4).
@@ -70,6 +81,9 @@ pub const REQUEST_ID: &str = "x-request-id";
 pub const CORRELATION_ID: &str = "x-correlation-id";
 /// The idempotency key every state-creating `POST` carries.
 pub const IDEMPOTENCY_KEY: &str = "idempotency-key";
+/// The header the API sets on an answer it replayed from a recorded
+/// outcome (http-api.md idempotency).
+pub const IDEMPOTENCY_REPLAY: &str = "idempotency-replay";
 
 /// One call's credential and ids: the bearer value it presents, and the
 /// request and correlation ids the API's line will carry.
@@ -362,6 +376,33 @@ pub struct Memory {
     /// Absent from an API before v0.7.0.
     #[serde(default)]
     pub scan_finding: Option<String>,
+    /// Every finding stored on the version, on the review serve, the held
+    /// listing and the named read; `None` elsewhere and from an API that
+    /// predates the findings list (ADR-0074 d17, d23).
+    #[serde(default)]
+    pub scan_findings: Option<Vec<ScanFinding>>,
+}
+
+/// One finding of a version's findings list (openapi.yaml `ScanFinding`;
+/// ADR-0074 d23): where the scan fired and why, never the matched text.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ScanFinding {
+    pub class: String,
+    pub rule: String,
+    /// `refuse`, `hold` or `annotate`.
+    pub verdict: String,
+    #[serde(default)]
+    pub rule_set: Option<String>,
+    #[serde(default)]
+    pub field: Option<String>,
+    #[serde(default)]
+    pub line: Option<u32>,
+    #[serde(default)]
+    pub via: Option<String>,
+    /// `admission` or `rescan`.
+    pub found_by: String,
+    #[serde(default)]
+    pub migrated_from: Option<String>,
 }
 
 /// `GET /v1/memories`: one page of memories.
@@ -445,6 +486,9 @@ pub struct AdminRead {
     #[serde(default)]
     pub title: Option<String>,
     pub key: Option<String>,
+    /// The authoring key's id; absent from an API before v0.7.0.
+    #[serde(default)]
+    pub key_id: Option<String>,
     #[serde(default)]
     pub principal: Option<String>,
     #[serde(default)]
@@ -486,6 +530,146 @@ pub struct Learn<'a> {
     pub claim_key: Option<&'a str>,
 }
 
+/// A person's usage, as `GET /v2/whoami` and `GET /v2/web/users` serve it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct Usage {
+    pub memories: u64,
+    pub keys: u64,
+    pub connections: u64,
+}
+
+/// A person's limits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct Limits {
+    pub memories: u64,
+    pub keys: u64,
+    pub connections: u64,
+    pub requests_per_minute: u64,
+}
+
+/// What the onboarding page waits for (ADR-0068 d10): whether an agent
+/// key connected, and the state of the newest memory of the person's root.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct StartStatus {
+    pub connected: bool,
+    pub first_memory: Option<String>,
+}
+
+/// The person a session key names, with the onboarding status.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Person {
+    pub user: String,
+    pub under_quotas: bool,
+    pub usage: Option<Usage>,
+    pub quotas: Option<Limits>,
+    pub deletion_requested_at: Option<String>,
+    #[serde(default)]
+    pub start: Option<StartStatus>,
+}
+
+/// `GET /v2/whoami?start=true`: the key's person with its onboarding
+/// status.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Onboarding {
+    pub person: Option<Person>,
+}
+
+/// One allowlist entry (ADR-0045 d2).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WebEmail {
+    pub email: String,
+    pub user: String,
+    pub admin: bool,
+}
+
+/// `GET /v2/web/emails`: one page of the allowlist.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WebEmailPage {
+    pub items: Vec<WebEmail>,
+    pub next_cursor: Option<String>,
+}
+
+/// `POST /v2/web/emails/remove`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Removed {
+    pub journal_seq: i64,
+}
+
+/// The key a capacity grant reached.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GrantedKey {
+    pub id: String,
+    pub name: Option<String>,
+}
+
+/// `POST /v2/web/users/{user}/capacities`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct CapacityGranted {
+    pub key: GrantedKey,
+    pub journal_seq: Option<i64>,
+}
+
+/// One person as `GET /v2/web/users` lists them (openapi.yaml `WebUser`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WebUser {
+    pub user: String,
+    pub signed_up: bool,
+    pub disabled: bool,
+    pub under_quotas: bool,
+    pub usage: Usage,
+    pub quotas: Limits,
+    /// Each live admin key whose row names the person's root, a row no verb
+    /// makes, which refuses their disable (ADR-0068 d8, d11); empty from a
+    /// server before v0.7.1.
+    #[serde(default)]
+    pub admin_keys: Vec<String>,
+}
+
+/// A pending deletion request.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DeletionRequest {
+    pub user: String,
+    pub requested_at: String,
+}
+
+/// `GET /v2/web/users`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WebUsers {
+    pub users: Vec<WebUser>,
+    pub deletions: Vec<DeletionRequest>,
+}
+
+/// `POST /v2/web/users/{user}/disable`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Disabled {
+    pub keys_cut_off: u64,
+    pub journal_seq: i64,
+}
+
+/// `POST /v2/web/users/{user}/deletion/close`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Closed {
+    pub journal_seq: i64,
+}
+
+/// `GET /v2/web/export`: everything the person holds; the memories and
+/// keys as the API wrote them.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, Deserialize)]
+pub struct Export {
+    pub format: String,
+    pub user: Option<String>,
+    pub exported_at: String,
+    pub memories: Vec<Value>,
+    pub keys: Vec<Value>,
+}
+
+/// `POST /v2/web/deletion-requests`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DeletionRequested {
+    pub requested_at: Option<String>,
+    pub journal_seq: i64,
+}
+
 /// `POST /v2/admin/memories/search`: one page.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AdminMemoryPage {
@@ -520,6 +704,12 @@ pub struct CountedNode {
 pub struct WorkareaCounts {
     pub items: Vec<CountedNode>,
     pub truncated: bool,
+    /// The scope's offers, asked with `offers=true` (#286); absent when not
+    /// asked. An API before v0.7.1 refuses `offers=true` as
+    /// `request.validation`, so a caller that must work one release behind
+    /// reads the offers apart on that refusal (ADR-0070 d4).
+    #[serde(default)]
+    pub offers: Option<WorkareaOffers>,
 }
 
 /// `POST /v2/review/next`: one served item, claimed by the reviewer key.
@@ -660,6 +850,38 @@ pub struct ConnectCode {
     pub code: Option<String>,
     pub expires_at: String,
     pub connector_url: String,
+    /// Whether the answer was a recorded outcome replayed, which carries no
+    /// code; read off `Idempotency-Replay`, not the body.
+    #[serde(skip)]
+    replayed: bool,
+}
+
+impl ConnectCode {
+    /// A connect code as a first answer, not a replay: what a fake transport
+    /// or a caller's test builds, since the replay mark is the client's to
+    /// set (#281).
+    #[must_use]
+    pub fn new(
+        code_id: String,
+        code: Option<String>,
+        expires_at: String,
+        connector_url: String,
+    ) -> Self {
+        Self {
+            code_id,
+            code,
+            expires_at,
+            connector_url,
+            replayed: false,
+        }
+    }
+
+    /// Whether the API answered `Idempotency-Replay: true`: a replay of a
+    /// recorded outcome, which shows no code.
+    #[must_use]
+    pub fn replayed(&self) -> bool {
+        self.replayed
+    }
 }
 
 /// No debug output prints the code.
@@ -684,6 +906,38 @@ pub struct KeyIssued {
     pub value: Option<String>,
     #[serde(default)]
     pub connect_code: Option<ConnectCode>,
+    /// Whether the answer was a recorded outcome replayed, which carries no
+    /// value or code; read off `Idempotency-Replay`, not the body.
+    #[serde(skip)]
+    replayed: bool,
+}
+
+impl KeyIssued {
+    /// A key issue as a first answer, not a replay: what a fake transport
+    /// or a caller's test builds, since the replay mark is the client's to
+    /// set (#281).
+    #[must_use]
+    pub fn new(
+        key_id: String,
+        name: String,
+        value: Option<String>,
+        connect_code: Option<ConnectCode>,
+    ) -> Self {
+        Self {
+            key_id,
+            name,
+            value,
+            connect_code,
+            replayed: false,
+        }
+    }
+
+    /// Whether the API answered `Idempotency-Replay: true`: a replay of a
+    /// recorded issue, which shows neither the value nor the code.
+    #[must_use]
+    pub fn replayed(&self) -> bool {
+        self.replayed
+    }
 }
 
 /// No debug output prints the value or the code.
@@ -852,6 +1106,21 @@ impl<T: Transport> Client<T> {
         idempotency_key: Option<&str>,
         body: Option<&Value>,
     ) -> Result<R, Error> {
+        self.exchange(method, call, path, idempotency_key, body)
+            .await
+            .map(|(answer, _)| answer)
+    }
+
+    /// [`Self::send`], with whether the API answered a recorded outcome:
+    /// `Idempotency-Replay: true` on the answer (http-api.md idempotency).
+    async fn exchange<R: DeserializeOwned>(
+        &self,
+        method: Method,
+        call: Option<&Call<'_>>,
+        path: String,
+        idempotency_key: Option<&str>,
+        body: Option<&Value>,
+    ) -> Result<(R, bool), Error> {
         let bytes = body.map_or_else(Vec::new, |body| body.to_string().into_bytes());
         let mut request = Request::builder()
             .method(method)
@@ -904,15 +1173,21 @@ impl<T: Transport> Client<T> {
         }
         // `204 No Content` decodes as JSON `null`, so an `Option` answer
         // reads it as `None` and any other type refuses it.
+        let replayed = response
+            .headers()
+            .get(IDEMPOTENCY_REPLAY)
+            .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"true"));
         let body: &[u8] = if status == 204 {
             b"null"
         } else {
             response.body()
         };
-        serde_json::from_slice(body).map_err(|e| Error::Decode {
-            status,
-            why: e.to_string(),
-        })
+        serde_json::from_slice(body)
+            .map(|answer| (answer, replayed))
+            .map_err(|e| Error::Decode {
+                status,
+                why: e.to_string(),
+            })
     }
 
     /// `GET /.well-known/oauth-authorization-server`. No credential.
@@ -944,12 +1219,15 @@ impl<T: Transport> Client<T> {
         self.get(None, "/readyz".to_owned()).await
     }
 
-    /// `GET /v2/whoami`.
+    /// `GET /v2/whoami?person=false`: the key's record without the person
+    /// block, which [`Whoami`] does not read, so the API reads none of it
+    /// (#286); an API before v0.7.1 ignores the flag and serves it.
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
     pub async fn whoami(&self, call: &Call<'_>) -> Result<Whoami, Error> {
-        self.get(Some(call), "/v2/whoami".to_owned()).await
+        self.get(Some(call), "/v2/whoami?person=false".to_owned())
+            .await
     }
 
     /// `GET /v1/guardrails`, at `workarea` (an id or a name) or at the key's
@@ -1177,7 +1455,8 @@ impl<T: Transport> Client<T> {
     }
 
     /// `GET /v2/workareas/{workarea}/tree?counts=true`: the subtree with
-    /// each node's rows counted by state.
+    /// each node's rows counted by state, and with `offers` the scope's
+    /// offers to the same caller, read beside them (#286).
     ///
     /// # Errors
     /// The API's refusal, or no usable answer.
@@ -1185,10 +1464,12 @@ impl<T: Transport> Client<T> {
         &self,
         call: &Call<'_>,
         workarea: &str,
+        offers: bool,
     ) -> Result<WorkareaCounts, Error> {
+        let asked = if offers { "&offers=true" } else { "" };
         self.get(
             Some(call),
-            format!("/v2/workareas/{}/tree?counts=true", encode(workarea)),
+            format!("/v2/workareas/{}/tree?counts=true{asked}", encode(workarea)),
         )
         .await
     }
@@ -1368,13 +1649,17 @@ impl<T: Transport> Client<T> {
         role: &str,
         connect_code: bool,
     ) -> Result<KeyIssued, Error> {
-        self.post(
-            call,
-            "/v2/keys".to_owned(),
-            idempotency_key,
-            &serde_json::json!({ "name": name, "role": role, "connect_code": connect_code }),
-        )
-        .await
+        let (mut issued, replayed): (KeyIssued, bool) = self
+            .exchange(
+                Method::POST,
+                Some(call),
+                "/v2/keys".to_owned(),
+                Some(idempotency_key),
+                Some(&serde_json::json!({ "name": name, "role": role, "connect_code": connect_code })),
+            )
+            .await?;
+        issued.replayed = replayed;
+        Ok(issued)
     }
 
     /// `POST /v2/keys/{key}/connect-codes`: a new code for a connector key,
@@ -1388,14 +1673,17 @@ impl<T: Transport> Client<T> {
         idempotency_key: &str,
         key: &str,
     ) -> Result<ConnectCode, Error> {
-        self.send(
-            Method::POST,
-            Some(call),
-            format!("/v2/keys/{}/connect-codes", encode(key)),
-            Some(idempotency_key),
-            None,
-        )
-        .await
+        let (mut code, replayed): (ConnectCode, bool) = self
+            .exchange(
+                Method::POST,
+                Some(call),
+                format!("/v2/keys/{}/connect-codes", encode(key)),
+                Some(idempotency_key),
+                None,
+            )
+            .await?;
+        code.replayed = replayed;
+        Ok(code)
     }
 
     /// `POST /v2/keys/{key}/denials` on `workarea`: on `universe`, the key
@@ -1493,6 +1781,196 @@ impl<T: Transport> Client<T> {
         )
         .await
     }
+
+    /// `GET /v2/whoami?start=true`: the key's person with its onboarding
+    /// status.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn whoami_start(&self, call: &Call<'_>) -> Result<Onboarding, Error> {
+        self.get(Some(call), "/v2/whoami?start=true".to_owned())
+            .await
+    }
+
+    /// `GET /v2/web/emails`: one page of the allowlist.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn list_web_emails(
+        &self,
+        call: &Call<'_>,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<WebEmailPage, Error> {
+        let mut path = format!("/v2/web/emails?limit={limit}");
+        if let Some(cursor) = cursor {
+            path.push_str("&cursor=");
+            path.push_str(&encode(cursor));
+        }
+        self.get(Some(call), path).await
+    }
+
+    /// `POST /v2/web/emails`: adds an entry or changes one; with
+    /// `keep_an_admin` un-flagging the last admin is refused.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn allow_web_email(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        email: &str,
+        user: &str,
+        admin: bool,
+    ) -> Result<WebEmail, Error> {
+        self.post(
+            call,
+            "/v2/web/emails".to_owned(),
+            idempotency_key,
+            &serde_json::json!({
+                "email": email, "user": user, "admin": admin, "keep_an_admin": true,
+            }),
+        )
+        .await
+    }
+
+    /// `POST /v2/web/emails/remove`, refusing the last admin entry.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn remove_web_email(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        email: &str,
+    ) -> Result<Removed, Error> {
+        self.post(
+            call,
+            "/v2/web/emails/remove".to_owned(),
+            idempotency_key,
+            &serde_json::json!({ "email": email, "keep_an_admin": true }),
+        )
+        .await
+    }
+
+    /// `POST /v2/web/users/{user}/capacities`: review or curation on
+    /// `workarea`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn grant_web_capacity(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        user: &str,
+        capacity: &str,
+        workarea: &str,
+    ) -> Result<CapacityGranted, Error> {
+        self.post(
+            call,
+            format!("/v2/web/users/{}/capacities", encode(user)),
+            idempotency_key,
+            &serde_json::json!({ "capacity": capacity, "workareas": [workarea] }),
+        )
+        .await
+    }
+
+    /// `GET /v2/web/users`: the people with their quotas, and the pending
+    /// deletion requests.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn list_web_users(&self, call: &Call<'_>) -> Result<WebUsers, Error> {
+        self.get(Some(call), "/v2/web/users".to_owned()).await
+    }
+
+    /// `POST /v2/web/users/{user}/quota`: one quota, `None` its default.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn set_web_user_quota(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        user: &str,
+        quota: &str,
+        limit: Option<u64>,
+    ) -> Result<WebUser, Error> {
+        let mut body = serde_json::Map::new();
+        body.insert(quota.to_owned(), limit.map_or(Value::Null, Value::from));
+        self.post(
+            call,
+            format!("/v2/web/users/{}/quota", encode(user)),
+            idempotency_key,
+            &Value::Object(body),
+        )
+        .await
+    }
+
+    /// `POST /v2/web/users/{user}/disable`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn disable_web_user(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        user: &str,
+    ) -> Result<Disabled, Error> {
+        self.post(
+            call,
+            format!("/v2/web/users/{}/disable", encode(user)),
+            idempotency_key,
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// `POST /v2/web/users/{user}/deletion/close` with outcome `deleted`.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn close_web_deletion(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+        user: &str,
+    ) -> Result<Closed, Error> {
+        self.post(
+            call,
+            format!("/v2/web/users/{}/deletion/close", encode(user)),
+            idempotency_key,
+            &serde_json::json!({ "outcome": "deleted" }),
+        )
+        .await
+    }
+
+    /// `GET /v2/web/export`: everything the person holds.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn export_web_person(&self, call: &Call<'_>) -> Result<Export, Error> {
+        self.get(Some(call), "/v2/web/export".to_owned()).await
+    }
+
+    /// `POST /v2/web/deletion-requests`: the person asks for deletion.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn request_web_deletion(
+        &self,
+        call: &Call<'_>,
+        idempotency_key: &str,
+    ) -> Result<DeletionRequested, Error> {
+        self.send(
+            Method::POST,
+            Some(call),
+            "/v2/web/deletion-requests".to_owned(),
+            Some(idempotency_key),
+            None,
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -1540,6 +2018,43 @@ mod tests {
         request_id: Some("page-1.1"),
         correlation_id: Some("page-1"),
     };
+
+    /// Answers every request `201` with `body`, and `Idempotency-Replay:
+    /// true` when `replay` is set.
+    struct Replaying {
+        replay: bool,
+        body: &'static str,
+    }
+
+    impl Transport for Replaying {
+        fn send(&self, _: Request<Vec<u8>>) -> Sending<'_> {
+            let mut response = Response::builder().status(201);
+            if self.replay {
+                response = response.header(IDEMPOTENCY_REPLAY, "true");
+            }
+            let response = response.body(self.body.as_bytes().to_vec()).unwrap();
+            Box::pin(async move { Ok(response) })
+        }
+    }
+
+    #[tokio::test]
+    async fn an_issue_or_a_connect_code_is_a_replay_only_where_the_answer_says_so_in_its_header() {
+        const BODY: &str = r#"{"key_id":"k9","name":"alice-laptop","code_id":"c1","expires_at":"2026-11-11T10:20:00Z","connector_url":"https://m/mcp"}"#;
+        for replay in [true, false] {
+            let client = Client::new(Replaying { replay, body: BODY });
+            let issued = client
+                .issue_key(&CALL, "idem", "alice-laptop", "writer", false)
+                .await
+                .unwrap();
+            assert_eq!(issued.replayed(), replay);
+            assert!(issued.value.is_none());
+            let code = client
+                .mint_connect_code(&CALL, "idem", "alice-phone")
+                .await
+                .unwrap();
+            assert_eq!(code.replayed(), replay);
+        }
+    }
 
     /// The method and path template of each table entry, by operation id.
     /// Each entry's operation id, method, path template and `resp:` type.
@@ -1638,7 +2153,7 @@ mod tests {
                     )
                     .await,
             ),
-            decodes(&client.workarea_counts(&CALL, "alice").await),
+            decodes(&client.workarea_counts(&CALL, "alice", true).await),
             decodes(&client.list_keys(&CALL, Some("alice"), 200, None).await),
             decodes(
                 &client
@@ -1703,6 +2218,33 @@ mod tests {
                     .supersede(&CALL, "idem-11", "m-1", "new text", 1, false)
                     .await,
             ),
+            decodes(&client.whoami_start(&CALL).await),
+            decodes(&client.list_web_emails(&CALL, 200, None).await),
+            decodes(
+                &client
+                    .allow_web_email(&CALL, "idem-12", "a@example.com", "alice", false)
+                    .await,
+            ),
+            decodes(
+                &client
+                    .remove_web_email(&CALL, "idem-13", "a@example.com")
+                    .await,
+            ),
+            decodes(
+                &client
+                    .grant_web_capacity(&CALL, "idem-14", "alice", "review", "alice")
+                    .await,
+            ),
+            decodes(&client.list_web_users(&CALL).await),
+            decodes(
+                &client
+                    .set_web_user_quota(&CALL, "idem-15", "alice", "keys", Some(5))
+                    .await,
+            ),
+            decodes(&client.disable_web_user(&CALL, "idem-16", "alice").await),
+            decodes(&client.close_web_deletion(&CALL, "idem-17", "alice").await),
+            decodes(&client.export_web_person(&CALL).await),
+            decodes(&client.request_web_deletion(&CALL, "idem-18").await),
         ];
         let seen = seen.lock().unwrap();
         let table = table();
@@ -1721,6 +2263,8 @@ mod tests {
         }
         assert!(!seen[0].headers().contains_key(AUTHORIZATION));
         assert!(!seen[4].headers().contains_key(AUTHORIZATION));
+        // The record alone: no client of this SDK reads the person block.
+        assert_eq!(seen[1].uri(), "/v2/whoami?person=false");
         assert_eq!(seen[2].uri(), "/v1/guardrails?workarea=alice.proj");
         assert_eq!(
             seen[3].uri(),
@@ -1749,7 +2293,10 @@ mod tests {
         for i in [11, 12] {
             assert!(!seen[i].headers().contains_key(IDEMPOTENCY_KEY), "{i}");
         }
-        assert_eq!(seen[13].uri(), "/v2/workareas/alice/tree?counts=true");
+        assert_eq!(
+            seen[13].uri(),
+            "/v2/workareas/alice/tree?counts=true&offers=true"
+        );
         assert_eq!(seen[15].headers()[IDEMPOTENCY_KEY], "idem-4");
         assert_eq!(
             std::str::from_utf8(seen[15].body()).unwrap(),
@@ -1781,7 +2328,9 @@ mod tests {
                 code: Some("ABCD-EFGH-JKMN".to_owned()),
                 expires_at: "2026-11-11T00:00:00Z".to_owned(),
                 connector_url: "https://oml.example.com/mcp".to_owned(),
+                replayed: false,
             }),
+            replayed: false,
         };
         let shown = format!("{issued:?}");
         assert!(!shown.contains("oml_the-secret-value"), "{shown}");

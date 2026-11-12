@@ -32,7 +32,10 @@ fn report_json(r: &RescanReport) -> Value {
             "rule": h.finding.rule,
             "action": action(h.finding.veto),
             "at": h.finding.at,
+            "field": h.field,
+            "origin": h.origin,
         })).collect::<Vec<_>>(),
+        "scanned_by_origin": r.scanned_by_origin,
         "by_rule": r.by_rule.iter().map(|(class, rule, veto, count)| json!({
             "class": class, "rule": rule, "action": action(*veto), "count": count,
         })).collect::<Vec<_>>(),
@@ -40,6 +43,7 @@ fn report_json(r: &RescanReport) -> Value {
         "recorded": r.recorded,
         "held_unrescanned": r.held_unrescanned,
         "rescan_due": r.rescan_due,
+        "findings_unlisted": r.findings_unlisted,
     })
 }
 

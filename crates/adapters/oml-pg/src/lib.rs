@@ -32,9 +32,9 @@ use oml_app::domain::{
 };
 use oml_app::ed25519_dalek::Signature;
 use oml_app::ports::{
-    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyPut, IdempotencyRecord,
-    IdempotencyScope, JournalStore, MetadataFold, Retriever, StoreError, SubjectRow, TailEvent,
-    TailScan, WebStore, claim_subject,
+    CommitReceipt, CommitRequest, ConnectionStore, IdempotencyClaim, IdempotencyPut,
+    IdempotencyRecord, IdempotencyScope, JournalStore, MetadataFold, Retriever, ScanBacklog,
+    StoreError, SubjectRow, TailEvent, TailScan, WebStore, claim_subject,
 };
 use oml_app::search::{
     Access, Candidate, CandidateScope, MatchMode, MatchedToken, OwnHeldScope, PostingsHealth,
@@ -48,8 +48,8 @@ use oml_app::types::{
     HeldFilter, HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition,
     ListingScope, MemoryRecord, NamedRef, OAuthClientRecord, PROVIDER_TENANT, PinOutcome,
     QueueDepth, RefreshFacts, RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair,
-    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, WebEntry, WebSessionRecord,
-    WorkareaRecord, WorkareaRef,
+    TokenRecord, TransitionRecord, TransitionState, UnnamedRows, VersionFinding, WebEntry,
+    WebSessionRecord, WorkareaRecord, WorkareaRef,
 };
 use serde_json::{Value, json};
 use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions, PgRow};
@@ -1183,6 +1183,31 @@ const REFERENCE_EXPIRED: &str = "SELECT m.id, m.workarea_id FROM memories m \
      WHERE m.tenant_id = $1 AND m.valid_until_us <= $4::int8 AND m.status = 'promoted' \
        AND m.is_tip AND NOT m.retirement AND m.workarea_id = ANY($2::uuid[]) \
        AND m.kind = ANY($3::text[])";
+
+/// Each node of `$2`'s served versions of the memory kinds `$3`: the widen
+/// signal's rows (ADR-0072 d8, as built by #244).
+const VOCABULARY_ROWS: &str = "SELECT c.workarea_id, COALESCE(sum(c.rows), 0)::int8 \
+     FROM search_workarea_rows c \
+     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+       AND c.memory_kind = ANY($3::int2[]) \
+     GROUP BY c.workarea_id";
+
+/// Every token's count per node of `$2`, [`REFERENCE_COUNTS`]' second half
+/// without its token filter, cut at `$4` rows so a vocabulary past the
+/// signal's cap is never read whole: the widen signal's read, made off the
+/// request path (ADR-0072 d8, as built by #244).
+const VOCABULARY_TERMS: &str = "SELECT c.workarea_id, c.token_id, sum(c.rows)::int8 \
+     FROM search_term_rows c \
+     WHERE c.tenant_id = $1 AND c.workarea_id = ANY($2::uuid[]) AND c.kind = 1 \
+       AND c.memory_kind = ANY($3::int2[]) \
+     GROUP BY c.workarea_id, c.token_id \
+     LIMIT $4";
+
+/// Every token each expired version `$2` holds, from its postings by the
+/// `(memory_id)` index.
+const VOCABULARY_EXPIRED_TOKENS: &str = "SELECT DISTINCT p.memory_id, p.token_id \
+     FROM search_postings p \
+     WHERE p.tenant_id = $1 AND p.memory_id = ANY($2::uuid[]) AND p.kind = 1";
 
 /// Which tokens of `$3` each expired version `$2` holds, from its postings
 /// by the `(memory_id)` index.
@@ -2567,6 +2592,93 @@ fn signed_envelope_from_row(row: &PgRow) -> Result<SignedEnvelope, StoreError> {
 // The metadata fold inside the commit transaction
 // ---------------------------------------------------------------------------
 
+/// The findings lists of `lists` under the commit's `seq`, each in its
+/// order (ADR-0074 d23). A finding the version's list already holds by
+/// class, rule and field is kept as first recorded (`scan_findings_one`).
+/// A finding migration 0043 could not place, with no field, stands for one
+/// place of its class and rule: the first of `list`'s finds of them, in
+/// order, is taken as that place and not added, and the rest are, so a
+/// finding is never listed twice and a second place is never lost.
+async fn insert_findings(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    seq: i64,
+    lists: &[(Uuid, Vec<VersionFinding>)],
+) -> Result<(), StoreError> {
+    let rows: Vec<(Uuid, i32, &VersionFinding)> = lists
+        .iter()
+        .flat_map(|(id, list)| list.iter().zip(0_i32..).map(move |(f, ord)| (*id, ord, f)))
+        .collect();
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let int = |v: Option<u64>| v.map(i64::try_from).transpose().map_err(backend);
+    let mut ids = Vec::with_capacity(rows.len());
+    let mut ords = Vec::with_capacity(rows.len());
+    let mut classes = Vec::with_capacity(rows.len());
+    let mut rules = Vec::with_capacity(rows.len());
+    let mut verdicts = Vec::with_capacity(rows.len());
+    let mut rule_sets = Vec::with_capacity(rows.len());
+    let mut fields = Vec::with_capacity(rows.len());
+    let mut lines = Vec::with_capacity(rows.len());
+    let mut vias = Vec::with_capacity(rows.len());
+    let mut starts = Vec::with_capacity(rows.len());
+    let mut ends = Vec::with_capacity(rows.len());
+    let mut found_by = Vec::with_capacity(rows.len());
+    let mut migrated = Vec::with_capacity(rows.len());
+    for (id, ord, f) in rows {
+        ids.push(id);
+        ords.push(ord);
+        classes.push(f.class.clone());
+        rules.push(f.rule.clone());
+        verdicts.push(f.verdict.as_str());
+        rule_sets.push(f.rule_set.clone());
+        fields.push(f.field.clone());
+        lines.push(f.line.map(i32::try_from).transpose().map_err(backend)?);
+        vias.push(f.via.clone());
+        starts.push(int(f.span.map(|s| s.0))?);
+        ends.push(int(f.span.map(|s| s.1))?);
+        found_by.push(f.found_by.as_str());
+        migrated.push(f.migrated_from.clone());
+    }
+    sqlx::query(
+        "INSERT INTO scan_findings (tenant_id, memory_id, event_seq, ord, class, rule, verdict, \
+         rule_set, field, line, via, span_start, span_end, found_by, migrated_from) \
+         SELECT $1, u.id, $2, u.ord, u.class, u.rule, u.verdict, u.rule_set, u.field, u.line, \
+                u.via, u.span_start, u.span_end, u.found_by, u.migrated_from \
+         FROM (SELECT u.*, row_number() OVER (PARTITION BY u.id, u.class, u.rule \
+                                              ORDER BY u.ord) AS k \
+               FROM unnest($3::uuid[], $4::int4[], $5::text[], $6::text[], $7::text[], \
+                           $8::text[], $9::text[], $10::int4[], $11::text[], $12::int8[], \
+                           $13::int8[], $14::text[], $15::text[]) \
+                 AS u(id, ord, class, rule, verdict, rule_set, field, line, via, span_start, \
+                      span_end, found_by, migrated_from)) u \
+         WHERE u.k > (SELECT count(*) FROM scan_findings f \
+                       WHERE f.tenant_id = $1 AND f.memory_id = u.id \
+                         AND f.class = u.class AND f.rule = u.rule AND f.field IS NULL) \
+         ON CONFLICT ON CONSTRAINT scan_findings_one DO NOTHING",
+    )
+    .bind(tenant_id)
+    .bind(seq)
+    .bind(ids)
+    .bind(ords)
+    .bind(classes)
+    .bind(rules)
+    .bind(verdicts)
+    .bind(rule_sets)
+    .bind(fields)
+    .bind(lines)
+    .bind(vias)
+    .bind(starts)
+    .bind(ends)
+    .bind(found_by)
+    .bind(migrated)
+    .execute(&mut **tx)
+    .await
+    .map_err(backend)?;
+    Ok(())
+}
+
 async fn insert_memory(
     tx: &mut Transaction<'_, Postgres>,
     created_event_id: Uuid,
@@ -3643,8 +3755,19 @@ async fn apply_fold(
         } => {
             fold_connection_revoked(tx, tenant_id, seq, connection_id, cause).await?;
         }
-        MetadataFold::MemoryHeld { memory, enqueue } => {
+        MetadataFold::MemoryHeld {
+            memory,
+            enqueue,
+            findings,
+        } => {
             insert_memory(tx, event_id, &memory).await?;
+            insert_findings(
+                tx,
+                tenant_id,
+                seq,
+                &[(memory.memory_id, findings.into_vec())],
+            )
+            .await?;
             if enqueue {
                 enqueue_review(tx, tenant_id, memory.memory_id).await?;
             }
@@ -3683,20 +3806,30 @@ async fn apply_fold(
         } => {
             // Held versions alone; a finding already on the row stays
             // (ADR-0065 d13, d15).
-            let (ids, findings): (Vec<Uuid>, Vec<Option<String>>) = versions.into_iter().unzip();
-            sqlx::query(
+            let ids: Vec<Uuid> = versions.iter().map(|v| v.memory_id).collect();
+            let summaries: Vec<Option<String>> =
+                versions.iter().map(|v| v.summary.clone()).collect();
+            // The versions still held: a list is kept for those alone.
+            let held: Vec<Uuid> = sqlx::query_scalar(
                 "UPDATE memories m SET scanned_under = $2, \
                  scan_finding = COALESCE(m.scan_finding, u.finding) \
                  FROM unnest($3::uuid[], $4::text[]) AS u(id, finding) \
-                 WHERE m.tenant_id = $1 AND m.id = u.id AND m.status = 'held'",
+                 WHERE m.tenant_id = $1 AND m.id = u.id AND m.status = 'held' \
+                 RETURNING m.id",
             )
             .bind(tenant_id)
             .bind(scanned_under)
             .bind(ids)
-            .bind(findings)
-            .execute(&mut **tx)
+            .bind(summaries)
+            .fetch_all(&mut **tx)
             .await
             .map_err(backend)?;
+            let lists: Vec<(Uuid, Vec<VersionFinding>)> = versions
+                .into_iter()
+                .filter(|v| held.contains(&v.memory_id))
+                .map(|v| (v.memory_id, v.findings))
+                .collect();
+            insert_findings(tx, tenant_id, seq, &lists).await?;
         }
         MetadataFold::TipSuperseded {
             successor,
@@ -5608,6 +5741,91 @@ pub const SPARSE_MAX_ATTEMPTS: i32 = 5;
 /// pass skips them meanwhile (ADR-0052 d15; L1 on review).
 pub const SPARSE_LEASE_SECS: i64 = 300;
 
+impl PgStore {
+    /// A query's counts from per-(node, form) counts (ADR-0072 d4.2): each
+    /// word's frequency is its most frequent form's, and the words a
+    /// pruning pipeline drops are decided over the nodes' sums as
+    /// `bm25_postings` decides them (ADR-0052 d6). Shared by the reference
+    /// counts and the widen signal's lookup, so the two cannot disagree.
+    fn counts_of_forms(
+        &self,
+        forms: &[(String, String)],
+        rows: &BTreeMap<Uuid, u64>,
+        df: &BTreeMap<(Uuid, i64), u64>,
+        prunes: bool,
+    ) -> oml_app::federation::ReferenceCounts {
+        let mut words: Vec<String> = forms.iter().map(|(w, _)| w.clone()).collect();
+        words.dedup();
+        // Each word's forms, in the words' order.
+        let word_forms: Vec<Vec<i64>> = words
+            .iter()
+            .map(|w| {
+                let mut f: Vec<i64> = forms
+                    .iter()
+                    .filter(|(fw, _)| fw == w)
+                    .map(|(_, f)| token_id(f))
+                    .collect();
+                f.sort_unstable();
+                f.dedup();
+                f
+            })
+            .collect();
+        let nodes: BTreeMap<Uuid, oml_app::domain::federation::SourceCounts> = rows
+            .iter()
+            .map(|(node, n)| {
+                (
+                    *node,
+                    oml_app::domain::federation::SourceCounts {
+                        rows: *n,
+                        df: word_forms
+                            .iter()
+                            .map(|fs| {
+                                fs.iter()
+                                    .map(|t| df.get(&(*node, *t)).copied().unwrap_or(0))
+                                    .max()
+                                    .unwrap_or(0)
+                            })
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+        // The words a pruning pipeline drops, decided over the set's sums
+        // as `bm25_postings` decides them (ADR-0052 d6; ADR-0072 d4.2).
+        let pruned = if prunes {
+            let total_rows: u64 = rows.values().sum();
+            let entries: Vec<Vec<(i64, u64)>> = word_forms
+                .iter()
+                .map(|fs| {
+                    fs.iter()
+                        .map(|t| {
+                            let n: u64 = df
+                                .iter()
+                                .filter(|((_, tok), _)| tok == t)
+                                .map(|(_, n)| *n)
+                                .sum();
+                            (*t, n)
+                        })
+                        .filter(|(_, n)| *n > 0)
+                        .collect()
+                })
+                .collect();
+            self.prune
+                .pruned(&entries, total_rows)
+                .into_iter()
+                .map(|i| words[i].clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        oml_app::federation::ReferenceCounts {
+            words,
+            pruned,
+            nodes,
+        }
+    }
+}
+
 impl JournalStore for PgStore {
     async fn user_usage(
         &self,
@@ -6054,8 +6272,6 @@ impl JournalStore for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(backend)?;
-        let mut words: Vec<String> = forms.iter().map(|(w, _)| w.clone()).collect();
-        words.dedup();
         let kinds = hit_kinds(&scope.kinds);
         let memory_kinds: Vec<i16> = kinds
             .iter()
@@ -6124,73 +6340,141 @@ impl JournalStore for PgStore {
             }
         }
         tx.commit().await.map_err(backend)?;
-        // Each word's forms, in the words' order.
-        let word_forms: Vec<Vec<i64>> = words
+        Ok(self.counts_of_forms(&forms, &rows, &df, scope.prunes))
+    }
+
+    async fn vocabulary_counts(
+        &self,
+        tenant_id: Uuid,
+        scope: &oml_app::federation::CountsScope,
+        max_pairs: usize,
+    ) -> Result<Option<oml_app::federation::VocabularyCounts>, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            .execute(&mut *tx)
+            .await
+            .map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        // The database cancels each statement of the read at 25 s. The
+        // limit is per statement and the read runs up to four, so a build
+        // the lead stops at 30 s can leave its last statement running for
+        // at most 25 s more, one at a time (ADR-0072 d12; #268).
+        sqlx::query(&format!(
+            "SET LOCAL statement_timeout = '{}s'",
+            oml_app::app::WIDEN_SIGNAL_STATEMENT_SECS
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        let kinds = hit_kinds(&scope.kinds);
+        let memory_kinds: Vec<i16> = kinds
             .iter()
-            .map(|w| {
-                let mut f: Vec<i64> = forms
-                    .iter()
-                    .filter(|(fw, _)| fw == w)
-                    .map(|(_, f)| token_id(f))
-                    .collect();
-                f.sort_unstable();
-                f.dedup();
-                f
+            .filter_map(|k| match *k {
+                "memory" => Some(1_i16),
+                "derived_fact" => Some(2_i16),
+                _ => None,
             })
             .collect();
-        let nodes: BTreeMap<Uuid, oml_app::domain::federation::SourceCounts> = rows
-            .iter()
-            .map(|(node, n)| {
+        let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
+        let mut counted: Vec<(Uuid, i64, i64)> = Vec::new();
+        // Each expired version's (node, token), subtracted from the counts.
+        let mut expired_pairs: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
+        if !scope.nodes.is_empty() {
+            let per_node: Vec<(Uuid, i64)> = sqlx::query_as(VOCABULARY_ROWS)
+                .bind(tenant_id)
+                .bind(&scope.nodes)
+                .bind(&memory_kinds)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(backend)?;
+            for (node, n) in per_node {
+                *rows.entry(node).or_default() += u64::try_from(n).map_err(backend)?;
+            }
+            // At most one row past the cap is read, so a vocabulary too large
+            // to hold is never read whole.
+            counted = sqlx::query_as(VOCABULARY_TERMS)
+                .bind(tenant_id)
+                .bind(&scope.nodes)
+                .bind(&memory_kinds)
+                .bind(i64::try_from(max_pairs.saturating_add(1)).unwrap_or(i64::MAX))
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(backend)?;
+            if counted.len() > max_pairs {
+                tx.commit().await.map_err(backend)?;
+                return Ok(None);
+            }
+            if let Some(now) = scope.expired_at {
+                let expired: Vec<(Uuid, Uuid)> = sqlx::query_as(REFERENCE_EXPIRED)
+                    .bind(tenant_id)
+                    .bind(&scope.nodes)
+                    .bind(&kinds)
+                    .bind(now)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(backend)?;
+                if !expired.is_empty() {
+                    let home: BTreeMap<Uuid, Uuid> = expired.iter().copied().collect();
+                    for node in home.values() {
+                        if let Some(r) = rows.get_mut(node) {
+                            *r = r.saturating_sub(1);
+                        }
+                    }
+                    let ids: Vec<Uuid> = home.keys().copied().collect();
+                    let held: Vec<(Uuid, i64)> = sqlx::query_as(VOCABULARY_EXPIRED_TOKENS)
+                        .bind(tenant_id)
+                        .bind(&ids)
+                        .fetch_all(&mut *tx)
+                        .await
+                        .map_err(backend)?;
+                    for (memory_id, token) in held {
+                        if let Some(node) = home.get(&memory_id) {
+                            *expired_pairs.entry((*node, token)).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+        tx.commit().await.map_err(backend)?;
+        // Taken out of the rows as read, with no second copy: the read's
+        // 32 bytes a row and the signal's 16 a pair are the build's peak.
+        Ok(Some(oml_app::federation::VocabularyCounts::from_counts(
+            rows,
+            counted.into_iter().map(|(node, token, n)| {
+                let less = expired_pairs.get(&(node, token)).copied().unwrap_or(0);
                 (
-                    *node,
-                    oml_app::domain::federation::SourceCounts {
-                        rows: *n,
-                        df: word_forms
-                            .iter()
-                            .map(|fs| {
-                                fs.iter()
-                                    .map(|t| df.get(&(*node, *t)).copied().unwrap_or(0))
-                                    .max()
-                                    .unwrap_or(0)
-                            })
-                            .collect(),
-                    },
+                    node,
+                    token,
+                    u64::try_from(n).unwrap_or(0).saturating_sub(less),
                 )
-            })
-            .collect();
-        // The words a pruning pipeline drops, decided over the set's sums
-        // as `bm25_postings` decides them (ADR-0052 d6; ADR-0072 d4.2).
-        let pruned = if scope.prunes {
-            let total_rows: u64 = rows.values().sum();
-            let entries: Vec<Vec<(i64, u64)>> = word_forms
-                .iter()
-                .map(|fs| {
-                    fs.iter()
-                        .map(|t| {
-                            let n: u64 = df
-                                .iter()
-                                .filter(|((_, tok), _)| tok == t)
-                                .map(|(_, n)| *n)
-                                .sum();
-                            (*t, n)
-                        })
-                        .filter(|(_, n)| *n > 0)
-                        .collect()
-                })
-                .collect();
-            self.prune
-                .pruned(&entries, total_rows)
-                .into_iter()
-                .map(|i| words[i].clone())
-                .collect()
-        } else {
-            Vec::new()
-        };
-        Ok(oml_app::federation::ReferenceCounts {
-            words,
-            pruned,
-            nodes,
-        })
+            }),
+        )))
+    }
+
+    /// The query's forms, one statement over no table, then their counts out
+    /// of the vocabulary as [`Self::reference_counts`] reads them.
+    async fn counts_from_vocabulary(
+        &self,
+        vocabulary: &oml_app::federation::VocabularyCounts,
+        query: &str,
+        prunes: bool,
+    ) -> Result<oml_app::federation::ReferenceCounts, StoreError> {
+        let forms: Vec<(String, String)> = sqlx::query_as(&search_forms_sql())
+            .bind(query)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend)?;
+        let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
+        for (_, form) in &forms {
+            let token = token_id(form);
+            for node in vocabulary.rows.keys() {
+                let n = vocabulary.df(node, token);
+                if n > 0 {
+                    df.insert((*node, token), n);
+                }
+            }
+        }
+        Ok(self.counts_of_forms(&forms, &vocabulary.rows, &df, prunes))
     }
 
     async fn steering_in_force(
@@ -6470,15 +6754,23 @@ impl JournalStore for PgStore {
         &self,
         tenant_id: Uuid,
         current: Option<&str>,
-    ) -> Result<(u64, u64), StoreError> {
+    ) -> Result<ScanBacklog, StoreError> {
         // One pass over the tenant's partition; doctor reads it once per
-        // run (ADR-0074 d28).
+        // run (ADR-0074 d23, d28). The unlisted count probes the findings
+        // list by its primary key for the held versions that carry a
+        // finding.
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, tenant_id).await?;
-        let (held, all): (i64, i64) = sqlx::query_as(
-            "SELECT count(*) FILTER (WHERE status = 'held'), count(*) FROM memories \
-             WHERE tenant_id = $1 AND status <> 'erased' \
-               AND scanned_under IS DISTINCT FROM $2::text",
+        let (held, all, unlisted): (i64, i64, i64) = sqlx::query_as(
+            "SELECT count(*) FILTER (WHERE status = 'held' \
+                                       AND scanned_under IS DISTINCT FROM $2::text), \
+                    count(*) FILTER (WHERE scanned_under IS DISTINCT FROM $2::text), \
+                    count(*) FILTER (WHERE status = 'held' AND scan_finding IS NOT NULL \
+                                       AND NOT EXISTS (SELECT 1 FROM scan_findings f \
+                                                        WHERE f.tenant_id = m.tenant_id \
+                                                          AND f.memory_id = m.id)) \
+             FROM memories m \
+             WHERE tenant_id = $1 AND status <> 'erased'",
         )
         .bind(tenant_id)
         .bind(current)
@@ -6486,10 +6778,75 @@ impl JournalStore for PgStore {
         .await
         .map_err(backend)?;
         tx.commit().await.map_err(backend)?;
-        Ok((
-            u64::try_from(held).map_err(backend)?,
-            u64::try_from(all).map_err(backend)?,
-        ))
+        Ok(ScanBacklog {
+            held_unrescanned: u64::try_from(held).map_err(backend)?,
+            rescan_due: u64::try_from(all).map_err(backend)?,
+            findings_unlisted: u64::try_from(unlisted).map_err(backend)?,
+        })
+    }
+
+    async fn scan_findings(
+        &self,
+        tenant_id: Uuid,
+        memory_ids: &[Uuid],
+    ) -> Result<Vec<(Uuid, VersionFinding)>, StoreError> {
+        if memory_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, tenant_id).await?;
+        let rows = sqlx::query(
+            "SELECT memory_id, event_seq, class, rule, verdict, rule_set, field, line, via, \
+                    span_start, span_end, found_by, migrated_from \
+             FROM scan_findings WHERE tenant_id = $1 AND memory_id = ANY($2::uuid[]) \
+             ORDER BY memory_id, event_seq, ord",
+        )
+        .bind(tenant_id)
+        .bind(memory_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)?;
+        rows.iter()
+            .map(|r| {
+                let get_u = |c: &str| -> Result<Option<u64>, StoreError> {
+                    r.try_get::<Option<i64>, _>(c)
+                        .map_err(backend)?
+                        .map(u64::try_from)
+                        .transpose()
+                        .map_err(backend)
+                };
+                let verdict: String = r.try_get("verdict").map_err(backend)?;
+                let found_by: String = r.try_get("found_by").map_err(backend)?;
+                let span = match (get_u("span_start")?, get_u("span_end")?) {
+                    (Some(a), Some(b)) => Some((a, b)),
+                    _ => None,
+                };
+                Ok((
+                    r.try_get("memory_id").map_err(backend)?,
+                    VersionFinding {
+                        class: r.try_get("class").map_err(backend)?,
+                        rule: r.try_get("rule").map_err(backend)?,
+                        verdict: oml_app::types::FindingVerdict::parse(&verdict)
+                            .ok_or_else(|| backend(format!("verdict {verdict:?}")))?,
+                        rule_set: r.try_get("rule_set").map_err(backend)?,
+                        field: r.try_get("field").map_err(backend)?,
+                        line: r
+                            .try_get::<Option<i32>, _>("line")
+                            .map_err(backend)?
+                            .map(u32::try_from)
+                            .transpose()
+                            .map_err(backend)?,
+                        via: r.try_get("via").map_err(backend)?,
+                        span,
+                        found_by: oml_app::types::FoundBy::parse(&found_by)
+                            .ok_or_else(|| backend(format!("found_by {found_by:?}")))?,
+                        event_seq: get_u("event_seq")?,
+                        migrated_from: r.try_get("migrated_from").map_err(backend)?,
+                    },
+                ))
+            })
+            .collect()
     }
 
     async fn held_count(&self, tenant_id: Uuid, nodes: &[Uuid]) -> Result<u64, StoreError> {
@@ -7275,7 +7632,7 @@ impl JournalStore for PgStore {
         set_tenant(&mut tx, scope.tenant_id).await?;
         let row = sqlx::query(
             "SELECT request_digest, response FROM idempotency \
-             WHERE tenant_id = $1 AND key = $2",
+             WHERE tenant_id = $1 AND key = $2 AND committed_at IS NOT NULL",
         )
         .bind(scope.tenant_id)
         .bind(scope_key(scope))
@@ -7294,24 +7651,118 @@ impl JournalStore for PgStore {
         }))
     }
 
-    async fn idempotency_put(&self, put: IdempotencyPut) -> Result<bool, StoreError> {
+    async fn idempotency_claim(
+        &self,
+        scope: &IdempotencyScope,
+        request_digest: &str,
+        claim_id: Uuid,
+    ) -> Result<IdempotencyClaim, StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, scope.tenant_id).await?;
+        // A claim is a row without `committed_at` whose response names the
+        // claim and when it was taken. A concurrent claim's insert waits on
+        // the primary key until this one commits, then inserts nothing and
+        // reads this row (ADR-0070 d5; #233).
+        let claimed = sqlx::query(
+            "INSERT INTO idempotency (tenant_id, key, request_digest, response, \
+             committed_at) VALUES ($1, $2, $3, \
+             jsonb_build_object('claim', $4::text, 'claimed_at', now()), NULL) \
+             ON CONFLICT (tenant_id, key) DO NOTHING",
+        )
+        .bind(scope.tenant_id)
+        .bind(scope_key(scope))
+        .bind(request_digest.as_bytes())
+        .bind(claim_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?
+        .rows_affected()
+            == 1;
+        let held = if claimed {
+            None
+        } else {
+            sqlx::query(
+                "SELECT request_digest, response, committed_at IS NOT NULL AS recorded \
+                 FROM idempotency WHERE tenant_id = $1 AND key = $2",
+            )
+            .bind(scope.tenant_id)
+            .bind(scope_key(scope))
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(backend)?
+        };
+        tx.commit().await.map_err(backend)?;
+        if claimed {
+            return Ok(IdempotencyClaim::Claimed);
+        }
+        let Some(row) = held else {
+            // Released between the insert and the read: the claimant was
+            // refused, so this attempt waits and claims again.
+            return Ok(IdempotencyClaim::InProgress {
+                request_digest: request_digest.to_owned(),
+            });
+        };
+        let digest = String::from_utf8(
+            row.try_get::<Vec<u8>, _>("request_digest")
+                .map_err(backend)?,
+        )
+        .map_err(backend)?;
+        if row.try_get::<bool, _>("recorded").map_err(backend)? {
+            let response: Option<Value> = row.try_get("response").map_err(backend)?;
+            Ok(IdempotencyClaim::Recorded(IdempotencyRecord {
+                request_digest: digest,
+                response: response.unwrap_or(Value::Null),
+            }))
+        } else {
+            Ok(IdempotencyClaim::InProgress {
+                request_digest: digest,
+            })
+        }
+    }
+
+    async fn idempotency_settle(
+        &self,
+        put: IdempotencyPut,
+        claim_id: Uuid,
+    ) -> Result<bool, StoreError> {
         let mut tx = self.pool.begin().await.map_err(backend)?;
         set_tenant(&mut tx, put.scope.tenant_id).await?;
-        let inserted = sqlx::query(
-            "INSERT INTO idempotency (tenant_id, key, request_digest, response, \
-             committed_at) VALUES ($1, $2, $3, $4, now()) \
-             ON CONFLICT (tenant_id, key) DO NOTHING",
+        let settled = sqlx::query(
+            "UPDATE idempotency SET response = $4, committed_at = now() \
+             WHERE tenant_id = $1 AND key = $2 AND request_digest = $3 \
+             AND committed_at IS NULL AND response ->> 'claim' = $5",
         )
         .bind(put.scope.tenant_id)
         .bind(scope_key(&put.scope))
         .bind(put.record.request_digest.into_bytes())
         .bind(put.record.response)
+        .bind(claim_id.to_string())
         .execute(&mut *tx)
         .await
         .map_err(backend)?
         .rows_affected();
         tx.commit().await.map_err(backend)?;
-        Ok(inserted == 1)
+        Ok(settled == 1)
+    }
+
+    async fn idempotency_release(
+        &self,
+        scope: &IdempotencyScope,
+        claim_id: Uuid,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await.map_err(backend)?;
+        set_tenant(&mut tx, scope.tenant_id).await?;
+        sqlx::query(
+            "DELETE FROM idempotency WHERE tenant_id = $1 AND key = $2 \
+             AND committed_at IS NULL AND response ->> 'claim' = $3",
+        )
+        .bind(scope.tenant_id)
+        .bind(scope_key(scope))
+        .bind(claim_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(backend)?;
+        tx.commit().await.map_err(backend)
     }
 
     async fn brief_edge(
