@@ -666,7 +666,14 @@ build of part of the minimal phase is re-ported, not merged
 ([#344](https://github.com/e8kor/open-memory-lab/issues/344)). Between the two dates `main` went
 from v0.5.8 to v0.7.2. Each point names an accepted sentence that `main` no longer lets a build
 keep as written, what `main` holds instead, read at `d5f85c34`, and the replacement proposed. The
-intention of every decision is kept, and no decision is added.
+intention of every decision is kept, and none gains a d-number. What the points add inside
+existing decisions: `oml.server` in the clone's git config, the sync key file kept per origin, and
+the `whoami` answer recorded in `.git/oml/state.json` and refreshed by each sync run and each
+session start (b, f); setup's print of each source's claim count (question 8); and four doctor
+lines (a hook whose pair names another origin, a sync key file of another origin, `capture_key`,
+and question 8's refused sync). The back-pointers `· amended by ADR-0064` on the Status lines of
+ADR-0029, ADR-0030, ADR-0038, ADR-0044, ADR-0047, ADR-0057 and ADR-0063, which "Pages to change
+at acceptance" names, wait for the build; this change adds none.
 
 ### a — The release
 
@@ -680,12 +687,15 @@ question 1.
 
 ### b — d17 asks consent of a server that declares itself shared, and names no server
 
-**What the record says.** d2: the per-clone part "refuses the maintainer's public server unless
-`--allow-public-server` (d17)". d17: "`oml setup repo` refuses" the URL ADR-0043 made the default
-"unless `--allow-public-server` is given, after printing that the server's admins read every
-memory and that nothing written can be erased (ADR-0047 question 11, a); the answer is recorded in
-`oml.allowPublicServer`, and every hook of either mode is silent in a clone whose server is the
-public one without it." d23: "a clone on the public server without its recorded confirmation".
+**What the record says.** d2, step 3, "done the first time and skipped after": "issues the
+person's **sync key**, `<user>-code-sync`, […] to an owner-only file […] under
+`$XDG_CONFIG_HOME/oml/keys/` (d10)". d2: the per-clone part "refuses the maintainer's public
+server unless `--allow-public-server` (d17)". d17: "`oml setup repo` refuses" the URL ADR-0043
+made the default "unless `--allow-public-server` is given, after printing that the server's admins
+read every memory and that nothing written can be erased (ADR-0047 question 11, a); the answer is
+recorded in `oml.allowPublicServer`, and every hook of either mode is silent in a clone whose
+server is the public one without it." d23: "a clone on the public server without its recorded
+confirmation".
 
 **What `main` holds.**
 [ADR-0076](ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment.md)
@@ -702,11 +712,26 @@ consent (`authorize_shared_server`, `record_shared_server_consent` and `origin_o
 `crates/bins/oml-cli/src/main.rs`; the doctor lines in `crates/bins/oml-cli/src/sync/doctor.rs`).
 The build on #97 wrote `oml.allowPublicServer=true`, the value `main` no longer reads. ADR-0076 d1
 also keeps the pair rule whole: a key goes only to a URL its holder named beside it. d10's
-detached job reads the sync key from `oml.syncKeyFile`, and the record names no URL for it.
+detached job reads the sync key from `oml.syncKeyFile`, and the record names no URL for it. Nor
+does the key file say which server issued it: d2 issues it once per person, and the build on #97
+wrote `oml/keys/<user>-code-sync.key` and skipped the issuance when the file existed
+(`crates/bins/oml-cli/src/capture/setup.rs` on `feat/implicit-capture`). A second clone set up
+against another server would record that server beside a key the first one issued, and the
+detached job would send the key there.
 
-**The replacement.** These sentences replace the three quoted above; the rest of d2, d17 and d23
+**The replacement.** These sentences replace the four quoted above; the rest of d2, d17 and d23
 stands.
 
+- **d2, step 3:** "issues the person's **sync key** for this server, `<user>-code-sync`, writer and
+  reader on `<user>.code` and its subtree, `held_by: agent`, to the owner-only file
+  `$XDG_CONFIG_HOME/oml/keys/<origin>/<user>-code-sync.key` (d10), where `<origin>` is the
+  server's origin as consent records it (ADR-0076 d9: scheme, lowercased host, port) with every
+  byte outside `[a-z0-9.-]` percent-encoded, for example
+  `oml/keys/https%3A%2F%2Foml.example.org/e8kor-code-sync.key`. This step is done the first time
+  for an origin and skipped after. A key file is paired only with the origin whose directory
+  holds it: setup refuses, sending nothing, to record an `oml.syncKeyFile` that lies anywhere
+  else, the accepted layout's `oml/keys/<user>-code-sync.key` included, and the detached job
+  sends nothing under such a file."
 - **d2, the per-clone part:** "derives the repository (d4), records the server (d17), asks consent
   of a server that declares itself shared unless the clone already holds it for that origin (d17),
   resolves or creates the clone's workarea, records the mode, and installs the git hooks when the
@@ -723,21 +748,27 @@ stands.
   asked nothing. Every hook of either mode is silent in a clone unless the server it would reach
   has the origin of `oml.server`, and that server either did not declare itself shared when it
   was last asked or has its origin among the values of `oml.allowPublicServer`. The answer is the
-  one setup or the latest sync run got: each sync run asks `whoami` before it writes (ADR-0076
-  d9) and records the answer in `.git/oml/state.json`, so no hook opens a connection in the
-  foreground to decide (d6)."
+  latest one recorded in `.git/oml/state.json`: setup records it, each sync run asks `whoami`
+  before it writes (ADR-0076 d9) and records it, and session start records the `shared` of the
+  `whoami` it already reads (point f), at no further request. So no git hook opens a connection
+  in the foreground to decide (d6), and the fill sends no request (d15)."
 - **d23:** "a clone whose server declares itself shared without consent recorded for its origin
   (ADR-0076 d9's `warn sync_shared_server`, its remedy naming `oml setup repo
   --allow-public-server` as well); a clone holding `oml.allowPublicServer=true` (`warn
-  sync_consent_unbound`); a hook whose pair names another origin than `oml.server`".
+  sync_consent_unbound`); a hook whose pair names another origin than `oml.server`; an
+  `oml.syncKeyFile` outside the directory of `oml.server`'s origin (`warn
+  capture_sync_key_origin: <file> is not the sync key file of <origin>, so the background sync
+  sends nothing; run oml setup repo against <origin>`)".
 
 `oml.allowPublicServer` keeps its name and takes ADR-0076 d9's meaning: one origin per value,
 shared with `oml sync`, `true` never written and never read as consent. The flag keeps its name.
 Test plan step 5's `setup_refuses_the_public_server_without_allow_public_server` becomes
 `setup_refuses_a_server_that_declares_itself_shared_without_consent_for_its_origin`, beside
 `consent_for_one_origin_covers_no_other_in_setup_or_in_a_hook`,
-`a_recorded_true_is_not_consent_for_setup` and
-`a_hook_is_silent_when_its_pair_names_another_origin_than_the_clones_server`.
+`a_recorded_true_is_not_consent_for_setup`,
+`a_hook_is_silent_when_its_pair_names_another_origin_than_the_clones_server`,
+`setup_issues_one_sync_key_per_origin_and_pairs_no_key_file_with_another_origin` and
+`session_start_records_the_servers_shared_answer_without_another_request`.
 
 **What it keeps and what it costs.** Client code still reaches a server other people use only
 after the person said so for that server, and every hook is still silent without it. The accepted
@@ -745,7 +776,10 @@ refusal held against one named host whatever that host answered. The amended one
 server's own `shared`, which ADR-0076 d9 calls a disclosure and not a security control: a shared
 server whose operator leaves `server.shared` unset is asked nothing. ADR-0076 d9's other case, a
 `whoami` that omits `shared`, does not reach setup, since a server that serves d3's mark is newer
-than v0.7.2.
+than v0.7.2. The recorded answer can be stale: a server that becomes shared after setup keeps
+receiving hook-filled anchors until the next `whoami` is recorded. The session-start refresh
+leaves one window, a session already running when the server changed, until its next sync run or
+its end; and a session start whose `whoami` goes unanswered refreshes nothing.
 
 ### c — d4's workarea is referenced as `<user>.<name>`
 
@@ -763,10 +797,15 @@ more as a path, `request.validation`
   path, `universe.<user>.code.<label>-<6 hex>`, is displayed and never accepted.
 - `<label>` is the repository's last segment made a name under ADR-0026 d2
   (`crates/oml-domain/src/name.rs`: a lowercase label of at most 63 characters, a letter first,
-  that does not read as an id): lowercased; every character outside `[a-z0-9]` becomes `-`;
-  leading and trailing `-` are cut; `repo-` goes first when it does not start with a letter or
-  holds only hex digits and hyphens; and it is cut to 56 characters. The six hex digits are still
-  of SHA-256(`repo`), so the name stays a pure function of the repository.
+  that does not read as an id). Every clone must compute the same name, so the rule is exactly
+  the one the build on #97 has (`workarea_name`, `crates/bins/oml-cli/src/capture/mod.rs` on
+  `feat/implicit-capture`), in this order: (1) the text after the last `/` of `repo`, lowercased;
+  (2) every character outside `[a-z0-9]` becomes `-`; (3) leading and trailing `-` are cut; (4)
+  `repo-` goes first when the result does not start with a letter, an empty result included; (5)
+  `repo-` goes first when the result holds only hex digits and `-`; (6) the result is cut to its
+  first 56 characters; (7) trailing `-` are cut again, so a cut that ends on `-` gives
+  `x-3fa2c1` and not `x--3fa2c1`. The name is that label, `-`, and the first six hex digits of
+  SHA-256(`repo`), so it stays a pure function of the repository.
 - A user namespace holds every name beneath that user's root (ADR-0044 d5), so the name is unique
   in the person's whole root, not under `<user>.code` alone. `name.taken` at creation means
   another workarea of the person holds it: setup names that workarea and stops.
@@ -776,7 +815,7 @@ more as a path, `request.validation`
 | The record depends on | The record says | On `main` | What changes here |
 |---|---|---|---|
 | ADR-0030 revision 2: in-progress workareas, the curator, the commit | accepted design, planned for v0.6.0, #79 | introduced in v0.6.0 with migration 0028: `workareas.mode`, `POST /v2/workareas/{workarea}/mode`, the boundary rule (d2), the curator profile (d8), the commit (d6) | d19's wait is over. d3 adds its mark to the route as served. A held version the scan held, or one not yet scanned under the server's rule set, stays author-only inside (ADR-0030 d3, amended 2026-11-10), so d18's "reads held writes at once" has that exception. d18's re-mark meets ADR-0030 d2: point h, first item. |
-| ADR-0061: the `rust` adapter | proposed, planned for v0.5.9, #70 | accepted 2026-11-06, introduced in v0.6.1: `oml sync --adapter rust`, never inferred, one claim per crate and per module doc, `origin.kind` `code` | d19's wait is over and d8's default `rust` source can be recorded. The adapter is a function of every file under the source (ADR-0061 d4), and a crate claim states its dependents (d6), so an edit of one crate's manifest can change another crate's claim. d8's `--paths` therefore cannot narrow a `rust` source to "the changed paths' claims": question 4. |
+| ADR-0061: the `rust` adapter | proposed, planned for v0.5.9, #70 | accepted 2026-11-06, introduced in v0.6.1: `oml sync --adapter rust`, never inferred, one claim per crate and per module doc; its writes carry `origin.kind` `doc`, as every adapter's do (`write_body`, `crates/bins/oml-cli/src/sync/plan.rs`) | d19's wait is over and d8's default `rust` source can be recorded. ADR-0063 d2 gives the `rust` adapter `code` and `plan.rs` sends `doc`: the two disagree, and a follow-up issue asks which stands. The adapter is a function of every file under the source (ADR-0061 d4), and a crate claim states its dependents (d6), so an edit of one crate's manifest can change another crate's claim. d8's `--paths` therefore cannot narrow a `rust` source to "the changed paths' claims": question 4. |
 | ADR-0063: chat memory, `origin.kind`, the chat anchor, capture at `Stop` | proposed, planned for v0.6.0, #78 | accepted, introduced in v0.6.0 with migrations 0029 and 0030; `user-prompt`, `stop` and `pre-compact` run through one dispatcher (`crates/bins/oml-cli/src/events.rs`) | d16 no longer waits. `origin` is a closed object (ADR-0063 d1), so `origin.turn` is a new member in the contract and a change to d2's composition check, both unbuilt. The dispatcher differs from d11's reading in two places: point e. |
 | ADR-0055: bulk review | a dependency, by link | introduced in v0.5.7: `oml review list --workarea`, `oml review approve` and `reject --ids -`, at most 200 items in one bulk verdict | d18's `oml review commit` submits one bulk verdict per 200 held items. |
 | ADR-0057: anchors and `oml sync` | introduced in v0.5.8 | as the record has it; d6's consent is ADR-0076 d9's (point b) | none beyond b. |
@@ -789,7 +828,7 @@ more as a path, `request.validation`
 
 | Event | Verb | What it does on `main` |
 |---|---|---|
-| `SessionStart` | `session-start` | under the plugin's pair, the own-work listing and one budgeted recall; 3 s a request, 8 s in all |
+| `SessionStart` | `session-start` | under the plugin's pair, the own-work listing and one budgeted recall, then `GET /v2/whoami` and the default workarea's read for the brief; one after another, 3 s a request, 8 s in all |
 | `SessionStart`, `SubagentStart` | `guardrails` | loads the key's reviewed rules as context and, at session start, writes the session's rule cache |
 | `PreToolUse` on `^(Bash\|PowerShell\|Write\|.*Edit\|Read\|Grep\|Glob\|WebFetch\|mcp__.*)$` | `pre-tool-use` | checks the call against the rule cache with no request; answers deny, ask or nothing, never allow; a failure blocks the call (`onFailure: block`) |
 | `PostToolUseFailure` on `Bash` | `tool-failure` | with `OML_FAILURE_RECALL=1`, one recall from the error's words |
@@ -823,12 +862,16 @@ Four sentences of d11, d13 and d22 change to fit:
   only for the clone's own server. Whether the fill matches it is question 5.
 - **The fill inside the guardrails verb.** `pre-tool-use` never answers `allow` and fails closed
   ([ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md));
-  d11's "each verb fails open" holds for the fill's handler, not for the verb. The fill answers
-  `updatedInput` with no `permissionDecision`. A guardrail's deny or ask wins and drops the fill,
-  and a fill that fails prints nothing and leaves the guardrail's answer. Claude Code's hooks page,
-  read on 2026-11-12, says `updatedInput` "replaces the entire input object", so the fill sends
-  every field of the call, and that with no `permissionDecision` auto mode "can deny the changed
-  call"; how often it does is unmeasured, and d20's arms record it.
+  d11's "each verb fails open" holds for the fill's handler, not for the verb. As proposed here
+  the fill answers `updatedInput` with no `permissionDecision`, a guardrail's deny or ask wins and
+  drops the fill, and a fill that fails prints nothing and leaves the guardrail's answer. Claude
+  Code's hooks page, read on 2026-11-12, says of `updatedInput`: "Replaces the entire input
+  object, so include unchanged fields alongside modified ones", so the fill sends every field of
+  the call; and: "With no `permissionDecision`, auto mode can deny the changed call", after which
+  "Claude can issue the changed call again so that the server reviews it". In auto mode the hook
+  can therefore cause the agent's own `oml_write` to be denied, which sets ADR-0037 d8 and d9's
+  never-`allow` against d22's "nothing new for the agent". How often it happens is unmeasured,
+  and d20's arms record it. Question 12.
 - **One block at `Stop`.** d11 has `stop` compose chat capture's reason and the stale list "into
   one block". The dispatcher as built keeps the first block and drops the rest
   (`events.rs`, "the first block decision wins"). It joins the reasons in handler order instead,
@@ -840,33 +883,49 @@ Four sentences of d11, d13 and d22 change to fit:
 ### f — ADR-0044 d16: only the person's own keys start memories in their root
 
 *This point depends on ADR-0044 d16, proposed on 2026-11-12 in
-[#339](https://github.com/e8kor/open-memory-lab/pull/339) and not on `main`; read at
-`origin/bulk73b/roots-narrow`, `1c73a664`. If d16 is declined, this point falls away.*
+[#339](https://github.com/e8kor/open-memory-lab/pull/339) and not on `main`; read at that pull
+request's head, `origin/bulk/v0.7.3b`, `eb99d2c7`, which carries d16's final text (from
+`bulk73b/roots-narrow`, `a3aa22f6`). If d16 is declined, this point falls away.*
 
 d16: "A memory is started in a user root, or in a workarea beneath one, by that user's keys only;
 any other key is refused `submission.user_root_refused`. A successor or a retirement of a served
-memory there stays under the grants." Every repository workarea lies beneath `universe.<user>`, so:
+memory there stays under the grants." Its test reads the key's person: a session key's
+`session_user`, else the name of the root a user key's `user` names; a key with neither acts for
+no one. Every repository workarea lies beneath `universe.<user>`, so:
 
 - **d2, step 3.** The sync key is issued naming its person, `user: <user>` (ADR-0044 d2, d11), as
   the build on #97 issued it. A sync key that names no user is refused its first claim.
 - **d10, the rows "knowledge an agent writes" and "chat facts".** The agent's own key must be one
-  of the same person's keys, issued with `--user <user>`. A tenant key, which names no user, or
-  another person's key starts no memory in a clone set up under `<user>.code`: it is answered
-  `submission.user_root_refused` where it reads the workarea and `access.not_found` where it does
-  not. d13's three answers are successors and stay under the grants, but such a key wrote nothing
-  there to answer for. A workarea there is already created by a user's key or an admin's, never by
-  a tenant writer key (ADR-0044 d6).
-- **d12 and d15.** Session start learns the key's `user` from `GET /v2/whoami`, in parallel with
-  d12's requests. When it is not the first label of `oml.workarea`, the fill, the Stop check and
-  the Stop sync stay off for the session, so no write is sent to be refused, and session start
-  says once: `oml capture: this key is not one of <user>'s keys, so nothing is captured into
-  <workarea>; issue the agent a key with --user <user>`. The recall of d12 runs wherever the key
-  reads.
+  of that person's keys: one an admin issued naming them, or one the person issued on their
+  account page. A tenant key, which names no user, or another person's key starts no memory in a
+  clone set up under `<user>.code`: it is answered `submission.user_root_refused` where it reads
+  the workarea and `access.not_found` where it does not. d13's three answers are successors and
+  stay under the grants, but such a key wrote nothing there to answer for. A workarea there is
+  already created by a user's key or an admin's, never by a tenant writer key (ADR-0044 d6).
+- **The put-back.** d16's guard gives a successor of a ratified retirement to the person's keys
+  alone. One capture path proposes one: the sync answers a claim that was retired and that the
+  source states again with a successor of the retirement (`plan.rs`, "the claim was retired; the
+  source states it again"), under the sync key, which is one of the person's. d13's three answers
+  replace a version still in service, and d18 proposes nothing.
+- **d12 and d15.** Session start learns the key's `user` from the `GET /v2/whoami` it already
+  sends for the brief (`default_brief`, `crates/bins/oml-cli/src/hook.rs`). When it is not the
+  first label of `oml.workarea`, the fill, the Stop check and the Stop sync stay off for the
+  session, so no write is sent to be refused, and session start says once: `oml capture: this key
+  is not one of <user>'s keys, so nothing is captured into <workarea>; give the agent one of
+  <user>'s keys`. The recall of d12 runs wherever the key reads. The client's test on `whoami`'s
+  `user` is enough, though d16 also reads `session_user`: capture's keys are bearer keys, and an
+  `omls_` session credential is refused on `/mcp` always and on `/v1` and `/v2` outside `oml-web`
+  (ADR-0070 d2), so no hook holds one.
+- **d22, the `session-start` row.** It counts "the existing two requests and two more, in
+  parallel, 1 s timeout each". `main`'s session start sends four, one after another, at 3 s a
+  request and 8 s in all (point e). With d12's two it sends six, and this point adds none, since
+  its test and point b's `shared` read the `whoami` already sent. Whether the six run in parallel
+  under the row's 300 ms is for the build to measure (FR-172).
 - **`oml setup repo`** issues the sync key with `user`, and ends with the line that the agents
-  working in this clone need keys issued with `--user <user>`.
+  working in this clone need keys of `<user>`'s.
 - **d23 gains** `warn capture_key: this agent key names no user (or names <other>), and
   <workarea> lies in <user>'s root, where only <user>'s keys start memories
-  (submission.user_root_refused); issue the agent a key with --user <user>`, beside d16's own
+  (submission.user_root_refused); give the agent one of <user>'s keys`, beside d16's own
   `user root` line.
 
 A repository a crew captures under one shared tenant key has no place beneath one person's
@@ -876,10 +935,13 @@ A repository a crew captures under one shared tenant key has no place beneath on
 
 [ADR-0071](ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md)
 (accepted 2026-11-12, on `main` since #324) charges a write to the account of the key that wrote
-it (d1). The sync identity is the person's sync key (d10), so every mechanical claim is one live
-chain on that person's `memories`, its text on their `text_bytes`, and each version a write on
-their month's `writes` (d2); the commit refuses past a limit with `429 limit.quota` (d3). The
-sync key is one more key on their `keys`.
+it, the account being the user root the key names; a tenant key belongs to no account (d1). The
+sync key names its person whatever becomes of point f: it creates the repository workarea when
+it is the first to need it (d10's table), and in a user root only a user key or an admin creates
+one (ADR-0044 d6), which is why the build on #97 issued it with `user`. The sync identity is that key (d10), so every mechanical claim
+is one live chain on that person's `memories`, its text on their `text_bytes`, and each version a
+write on their month's `writes` (d2); the commit refuses past a limit with `429 limit.quota` (d3).
+The sync key is one more key on their `keys`.
 
 **How many.** Counted on this repository at `d5f85c34` by the adapters themselves: a scratch
 program outside the tree linked the `oml-cli` library and called `sync::run::load` and
@@ -911,13 +973,16 @@ minute it takes about sixteen minutes of the sync key's rate. How they are count
 
 ### h — Other sentences that no longer build as written
 
-- **d18's re-mark closes the workarea again.** d18 commits and then marks the workarea in progress
-  again, and states the cost as "approved facts reach reads outside the repository workarea (the
+- **d18's re-mark closes the workarea again, which is the effect the operator declined.** d18
+  commits and then marks the workarea in progress again, and states the cost as "approved facts reach reads outside the repository workarea (the
   user root, a phone) only at the commit". ADR-0030 d2 as built serves a row on a node inside an
   in-progress subtree to no read scoped outside it, "promoted rows included", and a re-mark
-  "writes no row" (`crates/oml-domain/src/in_progress.rs`, `crosses_into`). After the re-mark a
-  read scoped outside finds none of the repository's facts, approved ones included, until the
-  next commit. Question 9.
+  "writes no row" (`crates/oml-domain/src/in_progress.rs`, `crosses_into`). `oml review commit`
+  re-marks in the same sitting, so once it returns a read scoped outside finds none of the
+  repository's facts, approved ones included, and the next commit changes that only until its
+  own re-mark: the facts are read inside the workarea, or by id. That is what option b of
+  question 6 of 2026-11-05 offered, "approve only, never commit, so nothing leaves the repository
+  workarea", and the operator chose a over it. Question 9.
 - **A code snippet is a claim format since v0.6.1.**
   [ADR-0056](ADR-0056-a-claim-version-names-its-format-the-signature-covers-its-source-and-adapters-compiled-into-the-server-derive-what-search-reads.md)
   d1 and d7 admit `format: text/vnd.oml.code; lang=<tag>`. d15 and d17 refuse a fenced block and
@@ -935,7 +1000,7 @@ minute it takes about sixteen minutes of the sync key's rate. How they are count
   [ADR-0066](ADR-0066-open-work-is-tracked-as-github-issues-and-the-roadmap-fr-numbers-and-design-draft-status-lines-are-retired.md)
   (accepted 2026-11-06) retired FR numbers and the roadmap, and the restructure deleted the
   use-cases page, the call map and the releases page. FR-170 to FR-176 resolve to #344 through
-  `docs/contributing/fr-to-issues.md` until each is an issue of its own; FR-78 to FR-80 are
+  `docs/contributing/fr-to-issues.md` until each is an issue of its own (question 13); FR-78 to FR-80 are
   [#142](https://github.com/e8kor/open-memory-lab/issues/142). UC-CC-01 to UC-CC-05 are declared
   in this record's own table, whose two page links no longer resolve. Of "Pages to change at
   acceptance", the use cases, the call map and releases no longer exist; the build changes
@@ -947,13 +1012,15 @@ minute it takes about sixteen minutes of the sync key's rate. How they are count
 | # | Question | Options | Recommendation |
 |---|---|---|---|
 | 1 | Which release builds the minimal phase (a)? | a. v0.8.0, where #344 sits; b. ahead of it, in a v0.7.x after v0.7.3; c. v0.8.3, with the other agent integrations | a: v0.7.3 is the public opening and its bulk is already in review; the re-port still owes its PostgreSQL suites, an independent review and d20's harness. It ships opt-in either way (question 1 of 2026-11-05). The cost: the capture waits for v0.7.3 and competes with v0.8.0's access hardening |
-| 2 | Does d17 become the shared-server consent of point b? | a. yes: the server's own `shared`, consent per origin in `oml.allowPublicServer`, hooks silent without it; b. ask consent of every server at setup, shared or not; c. decline, leaving d17 unbuildable under ADR-0076 d1 | a: one rule for sync and capture, and no release names a server. b makes every self-hoster confirm their own server per clone, which ADR-0076 rejected for sync. The cost of a is in point b: a shared server that does not say so is asked nothing |
+| 2 | Does d17 become the shared-server consent of point b? | a. yes: the server's own `shared`, consent per origin in `oml.allowPublicServer`, hooks silent without it; b. ask consent of every server at setup, shared or not; c. decline, leaving d17 unbuildable under ADR-0076 d1 | a: one rule for sync and capture, and no release names a server. b makes every self-hoster confirm their own server per clone, which ADR-0076 rejected for sync. The cost of a is in point b: a shared server that does not say so is asked nothing, and a server that becomes shared after setup keeps receiving hook-filled anchors from a session already running, until that session's next sync run or its end. The session-start `whoami` of point f refreshes `shared` for every later session at no extra request |
 | 3 | Is the repository workarea referenced as `<user>.<label>-<6 hex>`, with the label rule of point c? | a. yes; b. keep three labels and amend ADR-0044 d5 to accept a path | a: ADR-0026 d7 refuses every path as a reference, and a qualified name survives a re-parenting. The cost: the name must be unique in the person's whole root |
 | 4 | How does `--paths` treat a `rust` source (d)? | a. it decides only whether the source is queued, and the run reads and diffs the whole source; b. the adapter reports which claims a changed path feeds, and the run narrows to those | a: a crate claim reads several files and other crates' manifests, and the whole source of this repository is 192 claims, one listing page. b when a workspace's listing exceeds a few pages |
 | 5 | Which `oml_write` does the pre-tool hook fill (e)? | a. the plugin's tool only; b. any `mcp__…__oml_write`, a connector's included | a: the hook knows the plugin's server and can hold it to `oml.server` (b); it cannot tell which server a connector's tool reaches, and a filled anchor names the repository, the commit and a path. The cost: a fact written through a connector in Claude Code is not anchored |
 | 6 | What gives the Stop check its 2 s (e)? | a. the `stop` verb's deadline becomes 3 s and the plugin's `Stop` timeout 5 s; b. the deadlines stay and d13's budget becomes under 1 s | a: the budget was accepted and is still unmeasured (FR-172); chat capture's handler does no file work and is not slowed. The cost: a hung `stop` holds every plugin user's turn for 5 s, where it held it for 2 |
 | 7 | With ADR-0044 d16 accepted, does capture run only under the person's own keys, with the lines of point f? | a. yes; b. only the sync key names the user, and agents' facts go to a workarea outside the person's root | a: it is what d16 enforces, and one workarea per repository keeps d10's single owner. The cost: a crew's shared tenant key captures nothing until shared capture is designed. If d16 is declined, no answer is needed |
-| 8 | How are the sync's claims counted (g)? | a. like any memory: the profile's limits must fit the repositories a person syncs; b. not counted when the sync key wrote them; c. a second limit for chains under a code parent | a for the minimal phase: a mechanical claim is stored, reviewed and recalled like any other, and an unmetered key is a way round every quota. `oml setup repo` prints each source's claim count beside the account's free `memories` before the first sync, and a refused sync keeps its queue entry and gets a doctor line. The cost: on a `memories` limit of 1,000 this repository does not fit, so #180's free limit decides who can use capture, and the 205 generated-page claims count too. c after d20's evaluation shows which sources recall uses; it adds a seventh meter and a tree read in the commit. b has no signed field to test, since `origin.kind` is `doc` or `code` for an agent's fact too |
-| 9 | What does `oml review commit` do after the commit (h)? | a. mark in progress again, as accepted, with the cost restated: the repository's facts are read only inside its workarea, or by id; b. leave it `standard`: approved facts are served everywhere the key reads, and new writes are held and author-only until reviewed | a for the minimal phase: every read the capture makes is scoped inside (d12, d13, d15), and b ends the reading of unreviewed facts between the person's agents that d18 rests on. The cost: a phone or a read at the user root never recalls repository knowledge. Serving promoted rows of an in-progress subtree outside it would be a change to ADR-0030 d2, its own decision |
+| 8 | How are the sync's claims counted (g)? | a. like any memory: the profile's limits must fit the repositories a person syncs; b. not counted when the sync key wrote them; c. a second limit for chains under a code parent | a for the minimal phase: a mechanical claim is stored, reviewed and recalled like any other, and an unmetered key is a way round every quota. `oml setup repo` prints each source's claim count beside the account's free `memories` before the first sync, and a refused sync keeps its queue entry and gets a doctor line. The cost: on a `memories` limit of 1,000 this repository does not fit, so #180's free limit decides who can use capture, and the 205 generated-page claims count too. c after d20's evaluation shows which sources recall uses; it adds a seventh meter and a tree read in the commit. b would rest on the key, and a key says nothing of what it writes: the sync key is a writer key on `<user>.code` kept in a file on the person's machine, so any text sent under it, by `oml sync` or by hand, would be stored uncounted, and this repository's 2.4 MB of text costs the server the same whichever key wrote it |
+| 9 | What does `oml review commit` do after the commit (h)? On 2026-11-05 the operator chose "committing and re-marking" over "approve only, never commit, so nothing leaves the repository workarea" (question 6 of 2026-11-05), and d18 states the cost as facts reaching reads outside "only at the commit". ADR-0030 d2 as built leaves a re-marked subtree out of every read scoped outside it, so the re-mark as accepted has the effect of the option declined | a. mark in progress again, as accepted: once the command returns no read scoped outside finds the repository's facts, approved ones included; they are read inside the workarea or by id. This is the effect of question 6's option b, which the operator declined. Nothing to build beyond d18; b. leave the workarea `standard` after the commit: approved facts are served wherever the key reads, from each approval on, and after the first commit `oml review commit` is the bulk verdicts alone. A new write is held and author-only until reviewed (R3), so the person's agents and the sync key stop reading each other's unreviewed facts, which d18's first sentence rests on, and d3's in-progress creation serves the first iteration only. Nothing to build, and d23's line for a repository workarea that is not in progress goes; c. keep the re-mark, and serve to reads scoped outside the promoted rows of an in-progress subtree that a commit released: a change to ADR-0030 d2, proposed as its own amendment. It would have to guarantee at least that a read outside is served only versions promoted before the subtree's latest commit, never a held one and never one approved since the re-mark, and that a demotion or an erasure inside takes effect outside at once. Its cost: a recorded commit point per root, where d2 stamps nothing on a row; a second predicate in every retriever's statement, before its `LIMIT` and its statistics (ADR-0049 d2); `P-R3-BOUNDARY` restated; and a rule for what a read outside is served of a chain superseded since the commit | Not a. c: it keeps both things the operator accepted on 2026-11-05, the reading of unreviewed facts between the person's agents inside (d18, ADR-0030 d3) and approved facts leaving at the commit (question 6, a). The cost: an amendment of ADR-0030 d2 accepted and built on the server before the minimal phase ships, the largest build of the three. b is the fallback for the minimal phase if c is not wanted in that release: it builds nothing, keeps the second thing and gives up the first. This is a recommendation for the operator, not a decision |
 | 10 | Does the pre-tool hook refuse the code format on a write it anchors (h)? | a. yes, once per call, as for a fenced block; b. no | a: d17's "no code body is stored or sent" stays whole. The cost: an agent in a capturing clone cannot store a snippet about a file there |
-| 11 | Who does the per-person part where the person holds no admin and no bearer reviewer key (h)? | a. the minimal phase serves a server the person administers; elsewhere `oml setup repo` and `oml review commit` name the missing key and stop; b. the web console gains the code-parent mark and the commit, and setup takes a sync key file issued there | a: capture is opt-in and d17 already asks consent before a shared server takes code knowledge. The cost: a person on a hosted server with open sign-up cannot set up capture until b is built |
+| 11 | Who does the per-person part where the person holds no admin and no bearer reviewer key (h)? | a. the minimal phase serves a person who holds a bearer reviewer key and a sync key an admin issued, on a server they administer or on a team's server whose admin issues both; elsewhere `oml setup repo` and `oml review commit` name the missing key and stop; b. the web console gains the code-parent mark and the commit, and setup takes a sync key file issued there | a: capture is opt-in and d17 already asks consent before a shared server takes code knowledge. The cost: a person on a hosted server with open sign-up cannot set up capture until b is built |
+| 12 | How does the fill reach `oml_write` in Claude Code, where a rewrite with no `permissionDecision` can be denied in auto mode (e)? | a. rewrite with no `permissionDecision`, as point e has it: the verb never prints `allow`, a guardrail's deny or ask drops the fill, and d11's "fails open" holds for the fill's handler only; b. rewrite with `allow` only when the person's configuration already allows `oml_write` without asking, as d21 does for Codex CLI, and otherwise as c; c. never rewrite: deny once with the filled anchor in the reason, for the agent to resend | a: ADR-0037 d8 and d9 stay whole, and outside auto mode the agent sees nothing. The cost: in auto mode a filled write can be denied once, and the agent resends the changed call, which is what c costs every filled write in every mode; how often is unmeasured, and d20's arms record it. b amends ADR-0037 d9 (`no_input_ever_answers_allow`) for this one tool, has the hook read and interpret the harness's permission settings inside its 50 ms, and approves a call whose input the hook changed (the hooks page: "Combine with `"allow"` to auto-approve"). c gives up d22's "nothing new for the agent": every anchored write is two calls. b or c if d20 shows the denial is common |
+| 13 | Do FR-170 to FR-176 become issues of their own now (h)? | a. they stay in #344, which holds their text, until the re-port opens each as an issue; b. seven issues now, labelled `roadmap` and `measure` (FR-174 `feature`), in the milestone of question 1 | a: six of the seven measure a capture that is not built, and the answers above may change what they measure (question 6 for FR-172's Stop budget, questions 5 and 12 for the writes FR-170 counts as unanchored). The cost: seven numbers resolve to one tracking issue until then, where ADR-0066 makes each limitation an issue |
