@@ -13,8 +13,8 @@ use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, MemStore, SeqIdGen}
 use oml_app::ports::JournalStore as _;
 use oml_app::types::{
     AppError, Bearer, BootstrapRequest, BootstrapResult, GrantRequest, GuardrailRequest,
-    GuardrailSet, IssueKeyRequest, IssuedKey, RecallRequest, SubmitRequest, Verdict,
-    WebEmailRequest, WebSessionRecord,
+    GuardrailSet, IssueKeyRequest, IssuedKey, RecallRequest, SubmitRequest, SupersedeRequest,
+    Verdict, WebEmailRequest, WebSessionRecord,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
@@ -1609,9 +1609,11 @@ async fn last_event(store: &MemStore, tenant: Uuid, event_type: &str) -> serde_j
 /// ratification and a claim edge's: true when both keys act for one person,
 /// false for two people, and false whenever either key is a tenant key that
 /// names no person (ADR-0046 d2, ADR-0055 d7). A tenant key starts no memory
-/// in a user's root (ADR-0044 d16), so the tenant key here is the reviewer;
-/// a claim a tenant key wrote there before that rule is approved with
-/// `same_user` false in the port contracts' user-root suite.
+/// in a user's root (ADR-0044 d16), so the tenant key is the reviewer of
+/// alice's claim, and as an author it is a reviewer granted there whose
+/// successor of her claim her own review key approves; a claim a tenant key
+/// wrote there before that rule is approved with `same_user` false in the
+/// port contracts' user-root suite.
 #[tokio::test]
 async fn same_user_is_one_rule_for_claim_approvals_transitions_and_edges() {
     let (app, store) = rig();
@@ -1713,6 +1715,47 @@ async fn same_user_is_one_rule_for_claim_approvals_transitions_and_edges() {
             if expected { "alice" } else { "the crew" }
         );
     }
+
+    // A tenant key as the author: the crew reviewer edits alice's claim by
+    // proposal, which the rule still allows it, and alice's review key
+    // approves the successor. Its author names no person.
+    let successor = app
+        .supersede(
+            crew_review.value.as_str(),
+            &SupersedeRequest {
+                idempotency_key: "crew-successor".to_owned(),
+                on_similar: Default::default(),
+                target_id: promoted[1],
+                body: "Decision own-again, as the crew reworded it.".to_owned(),
+                kind: None,
+                retirement: false,
+                derives_from: Vec::new(),
+                reason: None,
+                workarea: None,
+                refuse_vocabulary_target: false,
+                severity: None,
+                rule: None,
+                valid_from: None,
+                valid_until: None,
+                anchor: None,
+                format: None,
+                title: None,
+                origin: None,
+                expected_version: 1,
+            },
+        )
+        .await
+        .expect("a tenant reviewer granted in alice's root edits by proposal")
+        .receipt
+        .memory_id;
+    let verdict = app
+        .post_verdict(&alice_review.value, successor, Verdict::Approve, None)
+        .await
+        .expect("alice's review key approves the crew's successor");
+    assert!(!verdict.same_user, "a tenant author is no one's person");
+    let journalled = last_event(&store, tenant, event_types::LIFECYCLE_SUPERSEDE).await;
+    assert_eq!(journalled["new_artifact_id"], successor.to_string());
+    assert_eq!(journalled["same_user"], false, "claim crew-author");
 }
 
 /// A person signed in once on the web: the session keys the first sign-in
