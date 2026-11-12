@@ -1,6 +1,6 @@
 {
   "name": "open-memory-lab-sdk",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "TypeScript client for the Open Memory Lab HTTP API: types generated from openapi.yaml, openapi-fetch, and a thin hand-written wrapper.",
   "license": "Apache-2.0",
   "author": "e8kor",

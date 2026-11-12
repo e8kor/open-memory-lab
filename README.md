@@ -36,7 +36,7 @@ You need a server and an agent key from it. Run one on your machine with `oml qu
 its administrator gives you its address and the key. Then, with that address:
 
 ```sh
-curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.7.1/scripts/install/install.sh | sh
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.7.2/scripts/install/install.sh | sh
 oml login https://oml.example.com
 oml setup claude-code
 ```

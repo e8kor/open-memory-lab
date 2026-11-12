@@ -7,7 +7,7 @@ answers: what replaces the marker scanner; how the rule set is named, versioned 
 
 # ADR-0065 — The scan is a versioned, compiled-in rule set that vetoes leaked keys and holds what a reviewer should judge
 
-**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05 · amended 2026-11-10 (d1, d5, d13, d14, d15, as ADR-0074 d28 shapes them: the rule set becomes `oml-scan/1.1`; every rule reads the normalised view; a tag sequence passes only whole and RGI; a version records the rule set it was scanned under, and inside an in-progress scope another author's held version is served only when the server's rule set scanned it and found nothing; `oml admin rescan --record-held` records held versions)
+**Status:** accepted design · 2026-11-06 (was proposed) · introduced in v0.6.0 · first recorded 2026-11-05 · amended 2026-11-10 (d1, d5, d13, d14, d15, as ADR-0074 d28 shapes them: the rule set becomes `oml-scan/1.1`; every rule reads the normalised view; a tag sequence passes only whole and RGI; a version records the rule set it was scanned under, and inside an in-progress scope another author's held version is served only when the server's rule set scanned it and found nothing; `oml admin rescan --record-held` records held versions) · amended by [ADR-0074](ADR-0074-the-scan-names-a-threat-class-for-every-finding-refuses-only-what-can-never-be-safe-holds-or-annotates-the-rest-and-recall-serves-every-hit-as-data-with-its-findings.md) d6 on 2026-11-12 (d14: the letters-only view reads a phrase only at word edges; the rule set becomes `oml-scan/1.2`)
 
 **Amends:** ADR-0019 (d4: the scanner port gains `version()`, the plugin's identity on the events
 it informs, as d4 already asks); ADR-0057 (d2, d6, d18: the secret-shaped path list becomes one
@@ -327,6 +327,7 @@ Rust ([ADR-0006](ADR-0006-pure-rust.md)); the scanner reads content as data and 
   mixed-script confusables (a Cyrillic о, small capitals), tracked as
   [#225](https://github.com/e8kor/open-memory-lab/issues/225) for ADR-0074's skeleton view;
   percent or HTML encoding, a token split across lines, and base64.
+  Amended by ADR-0074 d6 (#226, #317): from `oml-scan/1.2` a phrase in the letters-only view counts only where no ASCII letter of the text as written touches either end of it, a combining mark counting with its letter, so a phrase glued to an ASCII letter (`xignore previous instructions`) is no longer held; and `new system instructions` counts only when its three words are set apart by marks (any character that is not a letter or a digit) but not by a bar, a line break other than one that follows a hyphen, the end of a clause, or a full stop and a space that is not repeated after every word or letter, and either a colon follows it on its line or its line holds nothing else but it, marks, one lone number or letter before it as a list marker, up to eight tags before it and up to eight tags or repeats of the phrase after it.
 
 - **d15 — Inside an in-progress scope, another author's held version is served only when the
   server's rule set scanned it and found nothing** (added 2026-11-10, amending

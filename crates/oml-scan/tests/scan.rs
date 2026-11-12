@@ -525,6 +525,10 @@ const ACCEPTED: &[(&str, &str)] = &[
     ("ADR-0065-", "system-prompt-tag"),
     ("ADR-0065-", "persona-switch"),
     ("ADR-0065-", "tool-call-markup"),
+    // The release notes quote the phrases a rule set's change holds or lets
+    // pass, each example as the scan reads it (v0.7.2's `new system
+    // instructions` line rule).
+    ("changelog.md", "new-instructions"),
 ];
 
 fn accepted(path: &Path, rule: &str) -> bool {
