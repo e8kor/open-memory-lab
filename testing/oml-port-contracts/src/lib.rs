@@ -10693,6 +10693,135 @@ pub async fn an_expired_refresh_token_is_not_rotated_and_is_not_reuse<S: Connect
     );
 }
 
+/// A refresh reads its connection's key as expired from the key's expiry
+/// on: before it the token rotates; at the instant and after, the rule is
+/// handed `KeyState::Expired`, answers `oauth.refresh_invalid` (key ended)
+/// and rotates and mints nothing, and the connection stays open; once
+/// `key.limits_set` moves the date later, the same token rotates again
+/// (postgres-schema.md, redemption and rotation are conditional updates;
+/// ADR-0031 d11; ADR-0079 d2, d5).
+pub async fn a_refresh_reads_its_connections_key_as_expired_from_the_keys_expiry_on_and_rotates_nothing<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(352);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let expiry = fixture_time("2026-10-29T13:05:00.000000Z");
+    let key = KeyRecord {
+        expiry: Some(expiry.clone()),
+        ..connector_key(t, Uuid::from_u128(0xD3520))
+    };
+    rig.issue_key(store, key.clone()).await;
+    let connection = Uuid::from_u128(0xE3520);
+    rig.opened_connection(
+        store,
+        key.key_id,
+        Uuid::from_u128(0xC3520),
+        connection,
+        None,
+        None,
+    )
+    .await;
+
+    let first = token_pair(Uuid::from_u128(0xF3521));
+    let before = store
+        .rotate_refresh(
+            t,
+            &token_pair(connection).refresh.token_hash,
+            first.clone(),
+            &fixture_time("2026-10-29T13:04:59.999999Z"),
+            fixture_refresh_rule,
+        )
+        .await
+        .expect("refresh");
+    assert_eq!(
+        before.decision,
+        RefreshDecision::Rotate,
+        "before its expiry the key is active"
+    );
+    assert_eq!(before.facts.map(|facts| facts.key), Some(KeyState::Active));
+
+    let presented = first.refresh.token_hash;
+    for (n, at) in [
+        (0xF3522_u128, expiry.clone()),
+        (0xF3523, fixture_time("2026-10-29T13:30:00.000000Z")),
+    ] {
+        let next = token_pair(Uuid::from_u128(n));
+        let outcome = store
+            .rotate_refresh(t, &presented, next.clone(), &at, fixture_refresh_rule)
+            .await
+            .expect("refresh");
+        assert_eq!(
+            outcome.decision,
+            RefreshDecision::Refuse(RefreshInvalid::KeyEnded),
+            "at {at:?}"
+        );
+        let facts = outcome.facts.expect("the row was read");
+        assert_eq!(
+            (facts.key, facts.rotated, facts.expired),
+            (KeyState::Expired, false, false),
+            "the key reads as expired, not revoked, at {at:?}"
+        );
+        assert_eq!(
+            store
+                .token_by_hash(&presented, TokenKind::Refresh)
+                .await
+                .expect("lookup")
+                .map(|r| r.row.rotated_at),
+            Some(None),
+            "the presented token is not rotated"
+        );
+        assert_eq!(
+            store
+                .token_by_hash(&next.refresh.token_hash, TokenKind::Refresh)
+                .await
+                .expect("lookup"),
+            None,
+            "no pair is minted"
+        );
+    }
+    assert_eq!(
+        store
+            .connection(t, connection)
+            .await
+            .expect("read")
+            .map(|c| c.state),
+        Some(ConnectionState::Open),
+        "an expiry revokes nothing"
+    );
+
+    rig.commit(
+        store,
+        event_types::KEY_LIMITS_SET,
+        json!({ "key_id": key.key_id }),
+        MetadataFold::KeyLimitsSet {
+            key_id: key.key_id,
+            expiry: Some(fixture_time("2026-10-29T14:00:00.000000Z")),
+            requests_per_minute: None,
+        },
+        None,
+    )
+    .await
+    .expect("the date is moved");
+    let moved = store
+        .rotate_refresh(
+            t,
+            &presented,
+            token_pair(Uuid::from_u128(0xF3524)),
+            &fixture_time("2026-10-29T13:31:00.000000Z"),
+            fixture_refresh_rule,
+        )
+        .await
+        .expect("refresh");
+    assert_eq!(
+        moved.decision,
+        RefreshDecision::Rotate,
+        "the refused refreshes rotated nothing, so the token still rotates"
+    );
+}
+
 /// At `/mcp`-kind lookup a refresh token's digest finds nothing, and at a
 /// refresh an access token's digest finds nothing: each digest finds its
 /// row only under its own kind (roles-and-keys.md connections; ADR-0031
@@ -11451,6 +11580,10 @@ where
     two_racing_refreshes_with_one_token_mint_exactly_one_new_pair(&new_store().await).await;
     a_rotated_refresh_token_keeps_its_row_until_its_own_expiry(&new_store().await).await;
     an_expired_refresh_token_is_not_rotated_and_is_not_reuse(&new_store().await).await;
+    a_refresh_reads_its_connections_key_as_expired_from_the_keys_expiry_on_and_rotates_nothing(
+        &new_store().await,
+    )
+    .await;
     at_mcp_kind_lookup_a_refresh_tokens_digest_finds_nothing(&new_store().await).await;
     connect_after_cancel_finds_no_authorization_row(&new_store().await).await;
     the_sweep_removes_a_lapsed_authorized_connection_and_a_request_a_day_after_it_lapses(

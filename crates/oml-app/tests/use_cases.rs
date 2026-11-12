@@ -9125,6 +9125,143 @@ async fn a_key_held_to_a_rate_is_refused_past_it_and_admitted_again_the_next_min
         .expect("the next minute admits the key again");
 }
 
+/// The limit a refused request names, else `None`.
+fn rate_refused<T>(result: Result<T, AppError>) -> Option<u64> {
+    match result {
+        Err(AppError::KeyRateLimited { limit, .. }) => Some(limit),
+        _ => None,
+    }
+}
+
+/// A key of an account under a quota is held to both rates, and the lower
+/// refuses first: with the key's own rate under the account's the refusal
+/// names the key's limit, and with the account's under the key's it names
+/// the account's. A request the account's rate refuses has already been
+/// counted against the key's own, so the key's rate is then reached by
+/// refused requests (ADR-0079 d4; ADR-0068 d5).
+#[tokio::test]
+async fn a_key_of_an_account_under_a_quota_is_held_to_both_rates_and_the_lower_refuses_first() {
+    // (the account's rate, the key's own, the limit each request past the
+    // second is refused by)
+    for (account, own, refused_by) in [(5, 2, [2, 2, 2, 2]), (2, 5, [2, 2, 2, 5])] {
+        let probe = oauth_app_over(MemStore::new());
+        let boot = bootstrap(&probe).await;
+        let quotas = oml_app::domain::signup::Quotas {
+            requests_per_minute: account,
+            ..oml_app::domain::signup::Quotas::default()
+        };
+        let app = metered(probe, boot.tenant_id, quotas);
+        let key = app
+            .issue_key(
+                boot.admin_key.value.as_str(),
+                &IssueKeyRequest {
+                    user: Some(name("ada")),
+                    requests_per_minute: Some(own),
+                    ..issue_req(
+                        Role::Writer,
+                        "ada-agent",
+                        vec![GrantRequest {
+                            node: by_name("ada"),
+                            role: Role::Writer,
+                            deny: Vec::new(),
+                            covers: Covers::Subtree,
+                        }],
+                    )
+                },
+            )
+            .await
+            .expect("a key of ada's with a rate of its own");
+
+        for request in 1..=2 {
+            app.caller(Bearer::Key(&key.value))
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("account {account}, key {own}: request {request} is within both: {e:?}")
+                });
+        }
+        let mut limits = Vec::new();
+        for _ in 0..4 {
+            limits.push(rate_refused(app.caller(Bearer::Key(&key.value)).await));
+        }
+        assert_eq!(
+            limits,
+            refused_by.map(Some),
+            "account {account}, key {own}: the lower rate refuses first"
+        );
+    }
+}
+
+/// A change of a key's rate holds from the key's next request, inside the
+/// minute it is made in: a key refused at two requests a minute is admitted
+/// once an admin raises its rate, on the count the minute already holds,
+/// and is refused again as soon as the rate is set under that count
+/// (ADR-0079 d5).
+#[tokio::test]
+async fn a_change_of_a_keys_rate_holds_from_the_keys_next_request() {
+    let (app, clock) = oauth_app_with_clock(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let key = app
+        .issue_key(
+            admin,
+            &limited_req(
+                Role::Reader,
+                "reviewer",
+                vec![grant(crew, Role::Reader)],
+                None,
+                Some(2),
+            ),
+        )
+        .await
+        .expect("a key with a rate");
+    let rate = |requests_per_minute: Option<u32>| KeyLimitsChange {
+        expiry: None,
+        requests_per_minute: Some(requests_per_minute),
+    };
+    clock.advance(10);
+    for _ in 0..2 {
+        app.caller(Bearer::Key(&key.value))
+            .await
+            .expect("within the rate");
+    }
+    assert_eq!(
+        rate_refused(app.caller(Bearer::Key(&key.value)).await),
+        Some(2)
+    );
+
+    app.set_key_limits(admin, Reference::Id(key.key_id), rate(Some(4)))
+        .await
+        .expect("the admin raises the rate");
+    for request in 3..=4 {
+        app.caller(Bearer::Key(&key.value))
+            .await
+            .unwrap_or_else(|e| {
+                panic!("request {request} of the same minute is within the new rate: {e:?}")
+            });
+    }
+    assert_eq!(
+        rate_refused(app.caller(Bearer::Key(&key.value)).await),
+        Some(4)
+    );
+
+    app.set_key_limits(admin, Reference::Id(key.key_id), rate(None))
+        .await
+        .expect("the admin clears the rate");
+    for _ in 0..6 {
+        app.caller(Bearer::Key(&key.value))
+            .await
+            .expect("a key with no rate of its own is not limited");
+    }
+    app.set_key_limits(admin, Reference::Id(key.key_id), rate(Some(1)))
+        .await
+        .expect("the admin sets a lower rate");
+    assert_eq!(
+        rate_refused(app.caller(Bearer::Key(&key.value)).await),
+        Some(1),
+        "the count of this minute is already past the new rate"
+    );
+}
+
 /// An admin key moves another key's expiry later, and the expired key
 /// authenticates again; `key.limits_set` journals both limits as they stand
 /// after the change, a member not named keeps its value, and `null` clears
