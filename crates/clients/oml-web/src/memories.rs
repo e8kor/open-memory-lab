@@ -207,8 +207,10 @@ struct Card {
     written: String,
     served: Option<String>,
     scan: Option<String>,
-    /// The day the approving verdict was given and the kind of reviewer that
-    /// gave it, where the API serves them: never who (ADR-0077 d2, d4).
+    /// When the approving verdict was given, the API's `approved_at` whole,
+    /// and the kind of key that gave it, where the API serves them: never
+    /// who (ADR-0077 d2, d4). The card shows the day; the JSON route serves
+    /// the timestamp under the API's name.
     approved: Option<String>,
     approver: Option<Approver>,
     anchor: Option<String>,
@@ -302,7 +304,7 @@ impl Card {
             written: day(&m.created_at),
             served: m.promoted_at.as_deref().map(day),
             scan: m.scan_finding.clone(),
-            approved: m.approved_at.as_deref().map(day),
+            approved: m.approved_at.clone(),
             approver: m.approver.as_ref().map(|a| Approver {
                 kind: kind_word(&a.held_by),
                 same_user: a.same_user,
@@ -379,23 +381,26 @@ impl Card {
         })
     }
 
-    /// What the review step says of an approved version: when it was
-    /// approved and whether a person or a reviewer agent approved it, and
-    /// that a person's own review of their agent's write is one. A field the
+    /// What the review step says of an approved version: the day it was
+    /// approved and whether a person's, an agent's or a service's key
+    /// approved it, and that a person's own review of their agent's write is
+    /// one. The line names the key's kind: a key no one attested is stored
+    /// as an agent's (`key.issued`'s `held_by`), so "a reviewer agent" would
+    /// say more than is known. A field the
     /// API does not serve, an unreviewed or a `universe` row's, adds nothing,
     /// so the line never says more than the API did (ADR-0077 d2, d4).
     fn approval_line(&self) -> String {
         let mut line = String::from("approved");
         if let Some(approver) = self.approver {
             let who = match approver.kind {
-                "person" => "a person",
-                "agent" => "a reviewer agent",
-                _ => "a service",
+                "person" => "a person's key",
+                "agent" => "an agent's key",
+                _ => "a service's key",
             };
             let _ = write!(line, " by {who}");
         }
-        if let Some(day) = &self.approved {
-            let _ = write!(line, " on {}", text(day));
+        if let Some(at) = &self.approved {
+            let _ = write!(line, " on {}", text(&day(at)));
         }
         if self.approver.is_some_and(|a| a.same_user) {
             line.push_str(" · self-review: the same person's keys wrote it and approved it");

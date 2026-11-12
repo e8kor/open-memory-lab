@@ -598,8 +598,8 @@ pub struct Person {
     pub start: Option<StartStatus>,
 }
 
-/// `GET /v2/whoami?start=true`: the key's person with its onboarding
-/// status.
+/// `GET /v2/whoami` with its person block: the key's person, and with
+/// `start=true` the onboarding status on it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Onboarding {
     pub person: Option<Person>,
@@ -2305,7 +2305,7 @@ mod tests {
         }
         assert!(!seen[0].headers().contains_key(AUTHORIZATION));
         assert!(!seen[4].headers().contains_key(AUTHORIZATION));
-        // The record alone: no client of this SDK reads the person block.
+        // The record alone, for a caller that needs no person block.
         assert_eq!(seen[1].uri(), "/v2/whoami?person=false");
         // The person block is asked for by name, on the one method that reads it.
         assert_eq!(seen[seen.len() - 1].uri(), "/v2/whoami");

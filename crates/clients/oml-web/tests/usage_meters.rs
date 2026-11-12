@@ -193,6 +193,9 @@ async fn the_start_page_draws_each_meter_against_its_limit_with_a_mark_at_eighty
     assert!(!memories.contains("is-rejected"), "{memories}");
     assert!(memories.contains(r#"max="1000""#), "{memories}");
     assert!(memories.contains(r#"value="800""#), "{memories}");
+    // The bar is past its low mark where the chip says 80%, and past its
+    // high mark only at the limit.
+    assert!(memories.contains(r#"low="799" high="999""#), "{memories}");
 
     let text = row(&page.body, "Text stored");
     assert!(text.contains("2.0 MB / 2.0 MB"), "{text}");

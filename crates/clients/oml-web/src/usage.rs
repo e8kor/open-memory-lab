@@ -50,16 +50,57 @@ impl Reading {
     fn count(&self, n: u64) -> String {
         if self.bytes { bytes(n) } else { n.to_string() }
     }
+
+    /// The count and `limit` as the page prints them side by side. A byte
+    /// count under its limit never prints equal to it: both take more
+    /// digits until they differ, which the exact bytes always do.
+    fn counts(&self, limit: u64) -> (String, String) {
+        let mut pair = (self.count(self.used), self.count(limit));
+        if self.bytes && self.used < limit {
+            for digits in 2..=9 {
+                if pair.0 != pair.1 {
+                    break;
+                }
+                pair = (bytes_to(self.used, digits), bytes_to(limit, digits));
+            }
+        }
+        pair
+    }
 }
 
-/// A byte count in the unit a person reads: B, kB, MB or GB, decimal.
+/// A byte count in the unit a person reads: B, kB, MB or GB, decimal, to
+/// one digit.
 fn bytes(n: u64) -> String {
-    match n {
-        0..1_000 => format!("{n} B"),
-        1_000..1_000_000 => format!("{:.1} kB", n as f64 / 1e3),
-        1_000_000..1_000_000_000 => format!("{:.1} MB", n as f64 / 1e6),
-        _ => format!("{:.1} GB", n as f64 / 1e9),
-    }
+    bytes_to(n, 1)
+}
+
+/// [`bytes`] to `digits` digits after the point, as many as the unit has
+/// at most. The count is cut, never rounded up, so it never prints as a
+/// thousand of a unit or as more than it is.
+fn bytes_to(n: u64, digits: u32) -> String {
+    let (unit, exponent, name) = match n {
+        0..1_000 => return format!("{n} B"),
+        1_000..1_000_000 => (1_000_u64, 3, "kB"),
+        1_000_000..1_000_000_000 => (1_000_000, 6, "MB"),
+        _ => (1_000_000_000, 9, "GB"),
+    };
+    let digits = digits.clamp(1, exponent);
+    let part = (n % unit) / 10_u64.pow(exponent - digits);
+    format!(
+        "{}.{part:0width$} {name}",
+        n / unit,
+        width = digits as usize
+    )
+}
+
+/// The `low` and `high` of a meter's bar over a limit above zero, so the
+/// bar is in the region the chip names at every count: a browser colours
+/// a count at or under `low` as fine, one up to `high` as the middle and
+/// one past it as the worst, and the chip says 80% from four fifths of the
+/// limit and limit at it.
+fn bar_bounds(limit: u64) -> (u64, u64) {
+    let warning_from = limit.saturating_mul(8).div_ceil(10);
+    (warning_from.saturating_sub(1), limit.saturating_sub(1))
 }
 
 /// The meters `usage` and `limits` carry, in the order the API lists them:
@@ -120,11 +161,10 @@ fn cell_where(reading: &Reading, holds: bool) -> String {
         _ => "",
     };
     match reading.limit {
-        Some(limit) => format!(
-            r#"<span class="mono">{} / {}</span>{mark}"#,
-            reading.count(reading.used),
-            reading.count(limit)
-        ),
+        Some(limit) => {
+            let (used, limit) = reading.counts(limit);
+            format!(r#"<span class="mono">{used} / {limit}</span>{mark}"#)
+        }
         None => format!(
             r#"<span class="mono">{}</span>"#,
             reading.count(reading.used)
@@ -193,14 +233,15 @@ pub(crate) fn card(person: &Person) -> Option<String> {
     out.push_str("<table><tr><th>meter</th><th>used</th><th></th></tr>");
     for r in &readings {
         let bar = match r.limit {
-            Some(limit) if limit > 0 => format!(
-                r#"<meter min="0" max="{limit}" low="{low}" high="{low}" optimum="0" value="{}" aria-label="{}: {} of {}"></meter>"#,
-                r.used.min(limit),
-                r.name,
-                r.count(r.used),
-                r.count(limit),
-                low = limit.saturating_mul(8) / 10,
-            ),
+            Some(limit) if limit > 0 => {
+                let (low, high) = bar_bounds(limit);
+                let (used, of) = r.counts(limit);
+                format!(
+                    r#"<meter min="0" max="{limit}" low="{low}" high="{high}" optimum="0" value="{}" aria-label="{}: {used} of {of}"></meter>"#,
+                    r.used.min(limit),
+                    r.name,
+                )
+            }
             _ => String::new(),
         };
         let _ = write!(
@@ -251,6 +292,77 @@ mod tests {
         assert_eq!(reading(u64::MAX, None).mark(), Mark::Ok);
         // A limit of zero refuses every charge, so it is reached at zero.
         assert_eq!(reading(0, Some(0)).mark(), Mark::Reached);
+    }
+
+    /// The region a browser colours a `<meter>` whose optimum is its
+    /// minimum: at or under `low` the optimum, to `high` the middle, past
+    /// it the worst (HTML, the meter element's gauge regions).
+    fn region(value: u64, low: u64, high: u64) -> Mark {
+        if value <= low {
+            Mark::Ok
+        } else if value <= high {
+            Mark::Warning
+        } else {
+            Mark::Reached
+        }
+    }
+
+    #[test]
+    fn the_bar_is_in_the_region_of_the_chip_at_every_count() {
+        for limit in [1, 2, 4, 5, 9, 10, 11, 100, 1000] {
+            let (low, high) = bar_bounds(limit);
+            assert!(low <= high && high < limit, "{limit}: {low} {high}");
+            for used in 0..=limit + 1 {
+                assert_eq!(
+                    region(used.min(limit), low, high),
+                    reading(used, Some(limit)).mark(),
+                    "{used} of {limit}"
+                );
+            }
+        }
+        // At exactly 80% the chip says so, and the bar is past its low mark.
+        assert_eq!(bar_bounds(1000), (799, 999));
+    }
+
+    #[test]
+    fn a_byte_count_never_prints_as_a_thousand_of_a_unit() {
+        assert_eq!(bytes(999_949), "999.9 kB");
+        assert_eq!(bytes(999_999), "999.9 kB");
+        assert_eq!(bytes(999_999_999), "999.9 MB");
+        assert_eq!(bytes(1_000_000), "1.0 MB");
+    }
+
+    #[test]
+    fn a_byte_count_under_its_limit_never_prints_equal_to_it() {
+        let pair = |used, limit| {
+            let r = Reading {
+                name: "Text stored",
+                used,
+                limit: Some(limit),
+                bytes: true,
+            };
+            r.counts(limit)
+        };
+        // One byte under: the count is cut, not rounded up to the limit.
+        assert_eq!(
+            pair(1_999_999, 2_000_000),
+            ("1.9 MB".to_owned(), "2.0 MB".to_owned())
+        );
+        // Both in the same tenth: more digits, until they differ.
+        assert_eq!(
+            pair(2_040_000, 2_050_000),
+            ("2.04 MB".to_owned(), "2.05 MB".to_owned())
+        );
+        assert_eq!(
+            pair(2_000_000, 2_000_001),
+            ("2.000000 MB".to_owned(), "2.000001 MB".to_owned())
+        );
+        // At the limit and past it they may print alike: the chip says limit.
+        assert_eq!(
+            pair(2_000_000, 2_000_000),
+            ("2.0 MB".to_owned(), "2.0 MB".to_owned())
+        );
+        assert_eq!(pair(900, 1_000), ("900 B".to_owned(), "1.0 kB".to_owned()));
     }
 
     #[test]

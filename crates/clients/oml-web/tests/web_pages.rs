@@ -3053,7 +3053,7 @@ async fn the_user_page_opens_its_agents_held_rows_and_a_person_approves_their_ow
     // that a person's review of their own agent's write is a self-review.
     let (_, _, page) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
     assert!(
-        page.contains("<span>approved by a person on 20")
+        page.contains("<span>approved by a person's key on 20")
             && page.contains("self-review: the same person"),
         "{page}"
     );

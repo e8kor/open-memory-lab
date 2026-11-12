@@ -1,5 +1,5 @@
 //! What a memory's card says of its approval (ADR-0077): when it was
-//! approved and whether a person or a reviewer agent approved it, a
+//! approved and whether a person's, an agent's or a service's key approved it, a
 //! self-review marked as one, and nothing where the API serves nothing,
 //! against an API double that lists the memories a test names.
 
@@ -122,7 +122,8 @@ fn review_step(page: &str, id: &str) -> String {
 }
 
 #[tokio::test]
-async fn a_card_says_when_a_person_or_a_reviewer_agent_approved_it() {
+async fn a_card_says_when_it_was_approved_and_whether_a_persons_an_agents_or_a_services_key_approved_it()
+ {
     let page = list(json!([
         memory(
             "by-person",
@@ -136,16 +137,29 @@ async fn a_card_says_when_a_person_or_a_reviewer_agent_approved_it() {
             Some("alice"),
             Some(("agent", false))
         ),
+        memory(
+            "by-service",
+            "promoted",
+            Some("alice"),
+            Some(("service", false))
+        ),
     ]))
     .await;
     assert_eq!(
         review_step(&page, "by-person"),
-        "approved by a person on 2026-11-10"
+        "approved by a person's key on 2026-11-10"
     );
+    // A key no one attested is stored as an agent's, so the line names
+    // the key's kind and never says a reviewer agent ran.
     assert_eq!(
         review_step(&page, "by-agent"),
-        "approved by a reviewer agent on 2026-11-10"
+        "approved by an agent's key on 2026-11-10"
     );
+    assert_eq!(
+        review_step(&page, "by-service"),
+        "approved by a service's key on 2026-11-10"
+    );
+    assert!(!page.contains("reviewer agent"), "{page}");
     assert!(!page.contains("self-review"), "{page}");
     assert!(!page.contains("outside its lineage"), "{page}");
 }
@@ -161,7 +175,7 @@ async fn a_person_approving_their_own_agents_write_is_marked_a_self_review() {
     .await;
     let step = review_step(&page, "own");
     assert!(
-        step.starts_with("approved by a person on 2026-11-10 · self-review"),
+        step.starts_with("approved by a person's key on 2026-11-10 · self-review"),
         "{step}"
     );
 }
@@ -197,6 +211,12 @@ async fn the_json_route_carries_the_approval_the_card_shows_and_nothing_more() {
                 Some("alice"),
                 Some(("agent", false))
             ),
+            memory(
+                "by-service",
+                "promoted",
+                Some("alice"),
+                Some(("service", false))
+            ),
             memory("shared", "promoted", None, None),
             memory("waiting", "held", Some("alice"), None),
         ]),
@@ -212,7 +232,8 @@ async fn the_json_route_carries_the_approval_the_card_shows_and_nothing_more() {
             .unwrap_or_else(|| panic!("no {id} in {value}"))
             .clone()
     };
-    assert_eq!(item("own")["approved_at"], "2026-11-10");
+    // The timestamp, as `approved_at` is on the API, not the card's day.
+    assert_eq!(item("own")["approved_at"], "2026-11-10T09:30:00.000000Z");
     assert_eq!(
         item("own")["approver"],
         json!({"kind": "person", "same_user": true})
@@ -220,6 +241,10 @@ async fn the_json_route_carries_the_approval_the_card_shows_and_nothing_more() {
     assert_eq!(
         item("by-agent")["approver"],
         json!({"kind": "agent", "same_user": false})
+    );
+    assert_eq!(
+        item("by-service")["approver"],
+        json!({"kind": "service", "same_user": false})
     );
     for id in ["shared", "waiting"] {
         assert_eq!(item(id)["approved_at"], Value::Null, "{id}");
