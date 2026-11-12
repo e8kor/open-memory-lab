@@ -1603,7 +1603,10 @@ async fn last_event(store: &MemStore, tenant: Uuid, event_type: &str) -> serde_j
 /// One definition of `same_user` for a claim's approval, a transition's
 /// ratification and a claim edge's: true when both keys act for one person,
 /// false for two people, and false whenever either key is a tenant key that
-/// names no person (ADR-0046 d2, ADR-0055 d7).
+/// names no person (ADR-0046 d2, ADR-0055 d7). A tenant key writes no claim
+/// in a user's root (ADR-0044 d16), so the tenant key here is the reviewer;
+/// a claim a tenant key wrote there before that rule is approved with
+/// `same_user` false in the port contracts' user-root suite.
 #[tokio::test]
 async fn same_user_is_one_rule_for_claim_approvals_transitions_and_edges() {
     let (app, store) = rig();
@@ -1637,11 +1640,20 @@ async fn same_user_is_one_rule_for_claim_approvals_transitions_and_edges() {
     let _bob = user_writer(&app, admin, "bob", "bob/laptop").await;
     let bob_review = user_curator(&app, admin, "bob", "bob/review").await;
 
-    // Claims: the person's own agent and reviewer; a crew author; a crew
-    // reviewer.
+    // A crew key holding writer on alice's root writes nothing there.
+    let refused = app
+        .submit_memory(
+            crew_writer.value.as_str(),
+            &submit("crew-author", "Decision crew-author.", Some("alice")),
+        )
+        .await
+        .expect_err("a user's root takes claim writes from that user's keys only");
+    assert!(matches!(refused, AppError::UserRootRefused), "{refused:?}");
+
+    // Claims: the person's own agent and reviewer, twice; a crew reviewer.
     let cases = [
         (&alice_writer, &alice_review, true, "own"),
-        (&crew_writer, &alice_review, false, "crew-author"),
+        (&alice_writer, &alice_review, true, "own-again"),
         (&alice_writer, &crew_review, false, "crew-reviewer"),
     ];
     let mut promoted = Vec::new();

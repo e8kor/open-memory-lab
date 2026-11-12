@@ -104,8 +104,11 @@ def sync_detailed(
     attribution, not a verb of its own. The target workarea is the body's workarea, by id or name,
     honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved
     with neither, and an X-OML-Workarea header is request.validation naming /workarea in
-    details.renamed_to (ADR-0039 d7). Journals submission.remember or submission.learn; verb learn with
-    an empty or omitted derives_from is refused (submission.lineage_required).
+    details.renamed_to (ADR-0039 d7). A workarea in a user's root takes the write from that user's keys
+    alone: from any other key that reads the workarea it is 409 submission.user_root_refused, answered
+    in place of access.grant_refused, and a key that reads nothing of it gets 404 access.not_found
+    (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with an empty or
+    omitted derives_from is refused (submission.lineage_required).
 
     Args:
         x_request_id (str | Unset):
@@ -159,8 +162,11 @@ def sync(
     attribution, not a verb of its own. The target workarea is the body's workarea, by id or name,
     honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved
     with neither, and an X-OML-Workarea header is request.validation naming /workarea in
-    details.renamed_to (ADR-0039 d7). Journals submission.remember or submission.learn; verb learn with
-    an empty or omitted derives_from is refused (submission.lineage_required).
+    details.renamed_to (ADR-0039 d7). A workarea in a user's root takes the write from that user's keys
+    alone: from any other key that reads the workarea it is 409 submission.user_root_refused, answered
+    in place of access.grant_refused, and a key that reads nothing of it gets 404 access.not_found
+    (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with an empty or
+    omitted derives_from is refused (submission.lineage_required).
 
     Args:
         x_request_id (str | Unset):
@@ -209,8 +215,11 @@ async def asyncio_detailed(
     attribution, not a verb of its own. The target workarea is the body's workarea, by id or name,
     honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved
     with neither, and an X-OML-Workarea header is request.validation naming /workarea in
-    details.renamed_to (ADR-0039 d7). Journals submission.remember or submission.learn; verb learn with
-    an empty or omitted derives_from is refused (submission.lineage_required).
+    details.renamed_to (ADR-0039 d7). A workarea in a user's root takes the write from that user's keys
+    alone: from any other key that reads the workarea it is 409 submission.user_root_refused, answered
+    in place of access.grant_refused, and a key that reads nothing of it gets 404 access.not_found
+    (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with an empty or
+    omitted derives_from is refused (submission.lineage_required).
 
     Args:
         x_request_id (str | Unset):
@@ -262,8 +271,11 @@ async def asyncio(
     attribution, not a verb of its own. The target workarea is the body's workarea, by id or name,
     honoured only within the key's grants, else the key's default_workarea; request.workarea_unresolved
     with neither, and an X-OML-Workarea header is request.validation naming /workarea in
-    details.renamed_to (ADR-0039 d7). Journals submission.remember or submission.learn; verb learn with
-    an empty or omitted derives_from is refused (submission.lineage_required).
+    details.renamed_to (ADR-0039 d7). A workarea in a user's root takes the write from that user's keys
+    alone: from any other key that reads the workarea it is 409 submission.user_root_refused, answered
+    in place of access.grant_refused, and a key that reads nothing of it gets 404 access.not_found
+    (ADR-0044 d16). Journals submission.remember or submission.learn; verb learn with an empty or
+    omitted derives_from is refused (submission.lineage_required).
 
     Args:
         x_request_id (str | Unset):

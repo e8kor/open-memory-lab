@@ -360,6 +360,12 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "Universe holds only curated claims: a curator writes there and a second identity reviews it; a user key reads it and never writes it (ADR-0044 d7).",
             "universe is curated: a user key never writes there",
         ),
+        AppError::UserRootRefused => ApiError::new(
+            StatusCode::CONFLICT,
+            "submission.user_root_refused",
+            "A user root takes claim writes from its own user's keys only: a tenant key reads and reviews there under its grants and never writes there (ADR-0044 d16).",
+            "this workarea lies in a user's root: only that user's keys write there",
+        ),
         AppError::UserRootInvalid => ApiError::auth_invalid("user_root"),
         AppError::RoleExclusive => ApiError::new(
             StatusCode::FORBIDDEN,

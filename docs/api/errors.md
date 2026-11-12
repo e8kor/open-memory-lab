@@ -116,6 +116,7 @@ Refusals at write time. A refused write stores nothing.
 | `submission.claim_key_conflict` | 409 | A new memory would put a second live version under one `claim_key` in the workarea. |
 | `submission.similar_exists` | 409 | The write sent `on_similar: refuse` and a readable memory already says the same. `details.similar` lists up to three. Resend with `hold`. |
 | `submission.universe_refused` | 409 | A write addressed the tenant's `universe` root from a key that may not write there. |
+| `submission.user_root_refused` | 409 | A new memory, a successor or a retirement addressed a user's root, or a workarea beneath it, from a key that is not that user's. Answered where the key reads the workarea or the target; a key that reads neither gets `access.not_found`. |
 
 ## `name` — unique names
 
@@ -218,7 +219,7 @@ Review unavailability is not an API error. When no reviewer can approve, writes 
 | 401 | `auth.missing`, `auth.invalid` |
 | 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
 | 404 | `access.not_found` |
-| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `name.taken`, `workarea.frozen`, `workarea.transition_refused`, `workarea.in_progress_refused`, `workarea.held_remaining`, `workarea.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
+| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workarea.frozen`, `workarea.transition_refused`, `workarea.in_progress_refused`, `workarea.held_remaining`, `workarea.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
 | 410 | `lifecycle.erased` |
 | 413 | `request.payload_too_large` |
 | 415 | `request.unsupported_media` |

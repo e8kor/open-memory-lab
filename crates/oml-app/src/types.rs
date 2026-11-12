@@ -2878,6 +2878,16 @@ pub enum AppError {
         "universe holds only claims its curators write; a user key never writes there (ADR-0044 d7, submission.universe_refused)"
     )]
     UniverseRefused,
+    /// A claim write addresses a user root, or a workarea beneath one, with
+    /// a key that is not that user's: answered where the key reads the
+    /// node or the target, in place of `access.grant_refused` and
+    /// `access.author_only`; a key that reads neither keeps
+    /// `access.not_found` (ADR-0044 d16; errors.md
+    /// `submission.user_root_refused`).
+    #[error(
+        "a user root takes claim writes from its own user's keys only; this key is not one of them (ADR-0044 d16, submission.user_root_refused)"
+    )]
+    UserRootRefused,
     /// The key names a user root that is not one: the lead serves it
     /// nothing (ADR-0044 d14; auth.invalid, reason user_root).
     #[error("the key's user root is not a user root (ADR-0044 d14, auth.invalid)")]

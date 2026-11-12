@@ -4823,6 +4823,45 @@ fn run_claude(args: &[String], stdin: Option<&str>) -> Result<(), CliError> {
 // oml doctor
 // ---------------------------------------------------------------------------
 
+/// The user whose root holds `node`, a workarea read: the node's own name
+/// when it is a user root, else the first label under `universe` when the
+/// qualified name `<user>.<name>` reads back as the same node, which it
+/// does only inside a user root and which a tenant key resolves (ADR-0044
+/// d5). `None` for a shared workarea.
+fn user_root_holding(client: &Client, node: &Value) -> Option<String> {
+    let name = node["name"].as_str()?;
+    if node["user_root"] == true {
+        return Some(name.to_owned());
+    }
+    let mut labels = node["path"].as_str()?.split('.');
+    let (Some(_), Some(user), Some(_)) = (labels.next(), labels.next(), labels.next()) else {
+        return None;
+    };
+    let (_, qualified) = client.get(&format!("/v2/workareas/{user}.{name}")).ok()?;
+    (qualified["id"] == node["id"]).then(|| user.to_owned())
+}
+
+/// A user's root takes memories from that user's keys only (ADR-0044 d16):
+/// a tenant writer key whose default workarea lies in `user`'s root is
+/// refused every write it does not address elsewhere, so the line warns and
+/// names the fix. Nothing for a user key, whose default lies in its own
+/// root, or for a key that writes nothing.
+fn user_root_writes_doctor(
+    me: Option<&Value>,
+    default_node: Option<&Value>,
+    user: Option<&str>,
+) -> Option<String> {
+    let (me, node, user) = (me?, default_node?, user?);
+    (me["user"].is_null() && me["role"] == "writer").then(|| {
+        format!(
+            "warn: the default workarea {} lies in the root of user {user}, where only \
+             {user}'s keys write memories; this tenant key's writes there are refused \
+             (submission.user_root_refused); issue the agent a key with --user {user}",
+            node["path"].as_str().unwrap_or("of this key"),
+        )
+    })
+}
+
 /// Whether this key may review in bulk, for a dreamer key only (ADR-0055
 /// d1, d13): a key a person holds may; one held by an agent or a service is
 /// refused, which a person holding such a key otherwise learns mid-import,
@@ -4923,6 +4962,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     // the reason where an admin's read failed.
     let mut rescan_read: Option<Result<Value, String>> = None;
     let mut default_node: Option<Value> = None;
+    // The user whose root holds a tenant writer key's default workarea
+    // (ADR-0044 d16).
+    let mut default_in_root_of: Option<String> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
     let mut federation_settings: Option<Value> = None;
@@ -4958,6 +5000,12 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                     .get(&format!("/v2/workareas/{segment}"))
                     .ok()
                     .map(|(_, n)| n);
+                if v["user"].is_null()
+                    && v["role"] == "writer"
+                    && let Some(node) = &default_node
+                {
+                    default_in_root_of = user_root_holding(&client, node);
+                }
                 // What a person's reviewer key sees held under the
                 // in-progress root, one page (ADR-0030 d14).
                 if v["role"] == "dreamer"
@@ -5041,6 +5089,11 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     search.extend(federation_doctor(federation_settings.as_ref()));
     let search_warn = search.iter().any(|line| line.starts_with("warn"));
     let review = review_doctor(me.as_ref().and_then(|m| m.as_ref().ok()));
+    let user_root_writes = user_root_writes_doctor(
+        me.as_ref().and_then(|m| m.as_ref().ok()),
+        default_node.as_ref(),
+        default_in_root_of.as_deref(),
+    );
     let in_progress = in_progress_doctor(
         me.as_ref().and_then(|m| m.as_ref().ok()),
         default_node.as_ref(),
@@ -5103,6 +5156,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || server_origin.is_some()
         || plugin.is_some()
         || reads_universe == Some(false)
+        || user_root_writes.is_some()
         || web_warn
         || search_warn
         || review_warn
@@ -5146,6 +5200,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "whoami": whoami,
             "chain_head_seq": head_seq,
             "reads_universe": reads_universe,
+            "user_root_writes": user_root_writes,
             "default_workarea": default_node.as_ref().map(|n| json!({
                 "path": n["path"],
                 "brief_items": n["brief"]["items"].as_array().map_or(0, Vec::len),
@@ -5216,6 +5271,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         if reads_universe == Some(false) {
             println!("universe    : warn: this key does not read universe's claims");
+        }
+        if let Some(line) = &user_root_writes {
+            println!("user root   : {line}");
         }
         if let Some(n) = &default_node {
             let items = n["brief"]["items"].as_array().map_or(0, Vec::len);
@@ -6798,6 +6856,34 @@ mod tests {
         let quiet = serde_json::json!({"mode": "allowlist", "address_limit_shared": true, "users": [], "deletions": []});
         assert!(signup_doctor(Some(&quiet)).is_empty());
         assert!(signup_doctor(None).is_empty());
+    }
+
+    #[test]
+    fn doctor_warns_when_a_tenant_writer_keys_default_workarea_lies_in_a_users_root() {
+        let node = serde_json::json!({ "path": "universe.alice.project" });
+        let tenant_writer = serde_json::json!({ "role": "writer", "user": null });
+        assert_eq!(
+            user_root_writes_doctor(Some(&tenant_writer), Some(&node), Some("alice")).as_deref(),
+            Some(
+                "warn: the default workarea universe.alice.project lies in the root of user alice, where only alice's keys write memories; this tenant key's writes there are refused (submission.user_root_refused); issue the agent a key with --user alice"
+            )
+        );
+        // A shared default, a user key in its own root and a key that
+        // writes nothing are told nothing.
+        assert_eq!(
+            user_root_writes_doctor(Some(&tenant_writer), Some(&node), None),
+            None
+        );
+        let alices = serde_json::json!({ "role": "writer", "user": { "name": "alice" } });
+        assert_eq!(
+            user_root_writes_doctor(Some(&alices), Some(&node), Some("alice")),
+            None
+        );
+        let reviewer = serde_json::json!({ "role": "dreamer", "user": null });
+        assert_eq!(
+            user_root_writes_doctor(Some(&reviewer), Some(&node), Some("alice")),
+            None
+        );
     }
 
     #[test]

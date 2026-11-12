@@ -9724,6 +9724,19 @@ async fn as_of_reads_pass_the_suite() {
     drop_dbs(&created).await;
 }
 
+/// Who writes in a user root, on PostgreSQL as the serving role under row
+/// security, exactly as the double passes it (ADR-0044 d16).
+#[tokio::test]
+async fn user_root_writes_pass_the_suite() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    oml_port_contracts::user_roots::run_user_root_write_suite(|| fresh_search_store(&created))
+        .await;
+    drop_dbs(&created).await;
+}
+
 /// An erased version is served at no instant, and no earlier version stands
 /// in for it: the tip probe reads promoted versions in every state
 /// (ADR-0059 d15, d20, d21). The erasure fold is not built, so the owner

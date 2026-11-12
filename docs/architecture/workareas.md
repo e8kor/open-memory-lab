@@ -60,6 +60,7 @@ flowchart TD
 
 - **A user key reaches its own root and the `universe` node, nothing else.** It reads memories placed on `universe` itself. It never reads another user's root or a shared workarea.
 - **Recall.** A recall inside your root also searches `universe`. A memory shown from `universe` carries no author and no source.
+- **Only your keys write in your root.** A tenant key granted there reads and reviews. Its new memory, successor or retirement is refused with `submission.user_root_refused`.
 - **Curation.** `universe` holds only memories that curators place there. A second identity reviews each one like any write. No user key writes to it directly.
 - **Climbing the ladder.** A user root reaches `committed` and no further.
 

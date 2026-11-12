@@ -95,25 +95,27 @@ def sync_detailed(
     submission, held like any write.
 
      Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility
-    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal.
-    The target must be the current served tip: submission.tip_conflict, with details.current_tip when
-    the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
-    ordinal, competing-successor, retirement and retired-claim rules are declared in
-    docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal
-    the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-
-    Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that
-    check, the tip, the kind and retirement checks and workarea.frozen are answered only after the
-    target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
-    the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so
-    a committed supersession replays its stored response whatever the target's state or the key's access
-    now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor
-    declares its own anchor or has none (ADR-0057 d2). expected_version is required: the claim's latest
-    version the caller can read (its promoted versions where the caller reads the workarea, and the
-    versions its own keys wrote; never another author's held version) as the caller last read it; any
-    other is 409 submission.version_conflict with details.current_version, answered after the target is
-    known readable and before the tip check, with nothing captured (ADR-0057 d19). The designed
-    attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml
-    (ADR-0039 d9).
+    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. A
+    target in a user's root takes a successor from that user's keys alone: any other key that reads the
+    target is 409 submission.user_root_refused, answered after step 2 of that rule and ahead of
+    access.author_only and access.grant_refused (ADR-0044 d16). The target must be the current served
+    tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves
+    only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement
+    and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11).
+    The body's workarea, if sent, must equal the target's workarea (request.validation, details.field
+    /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in
+    details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and
+    workarea.frozen are answered only after the target is known readable, in the order of step 5 of the
+    supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up
+    after step 1 of that rule and before step 2, so a committed supersession replays its stored response
+    whatever the target's state or the key's access now, and it is claimed only after step 2 passes.
+    Only kind is inherited from the target; a successor declares its own anchor or has none (ADR-0057
+    d2). expected_version is required: the claim's latest version the caller can read (its promoted
+    versions where the caller reads the workarea, and the versions its own keys wrote; never another
+    author's held version) as the caller last read it; any other is 409 submission.version_conflict with
+    details.current_version, answered after the target is known readable and before the tip check, with
+    nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a
+    successor are declared in openapi-designed.yaml (ADR-0039 d9).
 
     Args:
         artifact_id (str):
@@ -165,25 +167,27 @@ def sync(
     submission, held like any write.
 
      Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility
-    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal.
-    The target must be the current served tip: submission.tip_conflict, with details.current_tip when
-    the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
-    ordinal, competing-successor, retirement and retired-claim rules are declared in
-    docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal
-    the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-
-    Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that
-    check, the tip, the kind and retirement checks and workarea.frozen are answered only after the
-    target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
-    the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so
-    a committed supersession replays its stored response whatever the target's state or the key's access
-    now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor
-    declares its own anchor or has none (ADR-0057 d2). expected_version is required: the claim's latest
-    version the caller can read (its promoted versions where the caller reads the workarea, and the
-    versions its own keys wrote; never another author's held version) as the caller last read it; any
-    other is 409 submission.version_conflict with details.current_version, answered after the target is
-    known readable and before the tip check, with nothing captured (ADR-0057 d19). The designed
-    attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml
-    (ADR-0039 d9).
+    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. A
+    target in a user's root takes a successor from that user's keys alone: any other key that reads the
+    target is 409 submission.user_root_refused, answered after step 2 of that rule and ahead of
+    access.author_only and access.grant_refused (ADR-0044 d16). The target must be the current served
+    tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves
+    only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement
+    and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11).
+    The body's workarea, if sent, must equal the target's workarea (request.validation, details.field
+    /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in
+    details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and
+    workarea.frozen are answered only after the target is known readable, in the order of step 5 of the
+    supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up
+    after step 1 of that rule and before step 2, so a committed supersession replays its stored response
+    whatever the target's state or the key's access now, and it is claimed only after step 2 passes.
+    Only kind is inherited from the target; a successor declares its own anchor or has none (ADR-0057
+    d2). expected_version is required: the claim's latest version the caller can read (its promoted
+    versions where the caller reads the workarea, and the versions its own keys wrote; never another
+    author's held version) as the caller last read it; any other is 409 submission.version_conflict with
+    details.current_version, answered after the target is known readable and before the tip check, with
+    nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a
+    successor are declared in openapi-designed.yaml (ADR-0039 d9).
 
     Args:
         artifact_id (str):
@@ -230,25 +234,27 @@ async def asyncio_detailed(
     submission, held like any write.
 
      Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility
-    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal.
-    The target must be the current served tip: submission.tip_conflict, with details.current_tip when
-    the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
-    ordinal, competing-successor, retirement and retired-claim rules are declared in
-    docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal
-    the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-
-    Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that
-    check, the tip, the kind and retirement checks and workarea.frozen are answered only after the
-    target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
-    the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so
-    a committed supersession replays its stored response whatever the target's state or the key's access
-    now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor
-    declares its own anchor or has none (ADR-0057 d2). expected_version is required: the claim's latest
-    version the caller can read (its promoted versions where the caller reads the workarea, and the
-    versions its own keys wrote; never another author's held version) as the caller last read it; any
-    other is 409 submission.version_conflict with details.current_version, answered after the target is
-    known readable and before the tip check, with nothing captured (ADR-0057 d19). The designed
-    attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml
-    (ADR-0039 d9).
+    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. A
+    target in a user's root takes a successor from that user's keys alone: any other key that reads the
+    target is 409 submission.user_root_refused, answered after step 2 of that rule and ahead of
+    access.author_only and access.grant_refused (ADR-0044 d16). The target must be the current served
+    tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves
+    only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement
+    and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11).
+    The body's workarea, if sent, must equal the target's workarea (request.validation, details.field
+    /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in
+    details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and
+    workarea.frozen are answered only after the target is known readable, in the order of step 5 of the
+    supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up
+    after step 1 of that rule and before step 2, so a committed supersession replays its stored response
+    whatever the target's state or the key's access now, and it is claimed only after step 2 passes.
+    Only kind is inherited from the target; a successor declares its own anchor or has none (ADR-0057
+    d2). expected_version is required: the claim's latest version the caller can read (its promoted
+    versions where the caller reads the workarea, and the versions its own keys wrote; never another
+    author's held version) as the caller last read it; any other is 409 submission.version_conflict with
+    details.current_version, answered after the target is known readable and before the tip check, with
+    nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a
+    successor are declared in openapi-designed.yaml (ADR-0039 d9).
 
     Args:
         artifact_id (str):
@@ -298,25 +304,27 @@ async def asyncio(
     submission, held like any write.
 
      Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility
-    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal.
-    The target must be the current served tip: submission.tip_conflict, with details.current_tip when
-    the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
-    ordinal, competing-successor, retirement and retired-claim rules are declared in
-    docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal
-    the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-
-    Workarea header is request.validation naming /workarea in details.renamed_to (ADR-0039 d7); that
-    check, the tip, the kind and retirement checks and workarea.frozen are answered only after the
-    target is known readable, in the order of step 5 of the supersede rule. Idempotency-Key is scoped to
-    the key with a nil workarea; the record is looked up after step 1 of that rule and before step 2, so
-    a committed supersession replays its stored response whatever the target's state or the key's access
-    now, and it is claimed only after step 2 passes. Only kind is inherited from the target; a successor
-    declares its own anchor or has none (ADR-0057 d2). expected_version is required: the claim's latest
-    version the caller can read (its promoted versions where the caller reads the workarea, and the
-    versions its own keys wrote; never another author's held version) as the caller last read it; any
-    other is 409 submission.version_conflict with details.current_version, answered after the target is
-    known readable and before the tip check, with nothing captured (ADR-0057 d19). The designed
-    attachment, simulation and vocabulary fields of a successor are declared in openapi-designed.yaml
-    (ADR-0039 d9).
+    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. A
+    target in a user's root takes a successor from that user's keys alone: any other key that reads the
+    target is 409 submission.user_root_refused, answered after step 2 of that rule and ahead of
+    access.author_only and access.grant_refused (ADR-0044 d16). The target must be the current served
+    tip: submission.tip_conflict, with details.current_tip when the caller can read it. The tip moves
+    only at ratification, by compare-and-set; the tip, version-ordinal, competing-successor, retirement
+    and retired-claim rules are declared in docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11).
+    The body's workarea, if sent, must equal the target's workarea (request.validation, details.field
+    /workarea, otherwise), and an X-OML-Workarea header is request.validation naming /workarea in
+    details.renamed_to (ADR-0039 d7); that check, the tip, the kind and retirement checks and
+    workarea.frozen are answered only after the target is known readable, in the order of step 5 of the
+    supersede rule. Idempotency-Key is scoped to the key with a nil workarea; the record is looked up
+    after step 1 of that rule and before step 2, so a committed supersession replays its stored response
+    whatever the target's state or the key's access now, and it is claimed only after step 2 passes.
+    Only kind is inherited from the target; a successor declares its own anchor or has none (ADR-0057
+    d2). expected_version is required: the claim's latest version the caller can read (its promoted
+    versions where the caller reads the workarea, and the versions its own keys wrote; never another
+    author's held version) as the caller last read it; any other is 409 submission.version_conflict with
+    details.current_version, answered after the target is known readable and before the tip check, with
+    nothing captured (ADR-0057 d19). The designed attachment, simulation and vocabulary fields of a
+    successor are declared in openapi-designed.yaml (ADR-0039 d9).
 
     Args:
         artifact_id (str):
