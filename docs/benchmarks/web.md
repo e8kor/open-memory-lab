@@ -50,33 +50,33 @@ Health probe: in-process 0.4 ms p50, 0.6 ms p95; oml-web 0.4 ms p50, 0.5 ms p95.
 
 | page | in process p50 | p95 | oml-web p50 | p95 | p95 added | within budget | API calls | rounds | outside the lead p95 |
 |---|---:|---:|---:|---:|---:|---|---:|---:|---:|
-| `guardrails` | 17.8 | 20.3 | 17.1 | 25.4 | +5.1 | no | 4 | 2–3 | 2.9 |
-| `workareas` | 612 | 685 | 378 | 445 | -240.2 | yes | 99 | 14–16 | 4.2 |
-| `admin/workareas` | 496 | 565 | 532 | 627 | +61.9 | no | 150 | 21–26 | 3.7 |
-| `memories` | 106 | 122 | 70.1 | 94.0 | -28.2 | yes | 4 | 2 | 4.5 |
-| `memories?q` | 70.9 | 81.3 | 51.8 | 77.5 | -3.8 | yes | 4 | 2 | 4.1 |
-| `atlas` | 401 | 442 | 270 | 436 | -5.7 | yes | 4 | 2 | 4.1 |
-| `data/memories` | 495 | 550 | 277 | 422 | -127.9 | yes | 6 | 2 | 4.1 |
-| `admin/memories` | 126 | 146 | 99.6 | 150 | +4.5 | yes | 3 | 2 | 4.4 |
-| `admin/atlas` | 26.6 | 29.9 | 26.7 | 39.3 | +9.4 | no | 4 | 2–3 | 3.4 |
-| `admin/data/memories` | 149 | 170 | 101 | 151 | -18.7 | yes | 5 | 2–3 | 3.7 |
-| `memory` | 10.4 | 12.1 | 14.4 | 22.2 | +10.1 | no | 3 | 2–3 | 3.5 |
-| `admin/memory` | 41.2 | 54.0 | 38.7 | 54.1 | +0.0 | yes | 3 | 2–3 | 3.0 |
-| `admin/curate` | 4.7 | 5.5 | 7.7 | 11.5 | +5.9 | no | 2 | 1 | 1.7 |
-| `review` | 6.0 | 7.1 | 7.3 | 10.9 | +3.8 | yes | 2 | 1–2 | 1.7 |
-| `admin/review` | – | – | 70.2 | 112 | – | – | 4 | 3 | 4.4 |
-| `keys` | 18.6 | 21.2 | 20.7 | 32.2 | +10.9 | no | 3 | 2–3 | 3.5 |
-| `admin/keys` | – | – | 14.1 | 21.4 | – | – | 3 | 2–3 | 2.7 |
-| `start` | 11.7 | 13.3 | 17.5 | 27.0 | +13.7 | no | 3 | 2 | 4.1 |
-| `start/status` | 10.9 | 12.6 | 10.7 | 17.4 | +4.8 | yes | 1 | 1 | 2.1 |
-| `start/export` | 15.1 | 17.2 | 11.9 | 19.7 | +2.5 | yes | 1 | 1 | 2.6 |
-| `setup` | 6.0 | 6.9 | 7.6 | 11.6 | +4.7 | yes | 2 | 1–2 | 3.5 |
-| `admin/people` | 5.2 | 6.0 | 11.0 | 16.9 | +10.9 | no | 3 | 2 | 3.3 |
-| `admin/users` | 8.4 | 9.9 | 13.5 | 20.9 | +11.0 | no | 3 | 2 | 2.9 |
+| `guardrails` | 17.8 | 20.3 | 22.1 | 25.7 | +5.4 | no | 4 | 2 | 1.9 |
+| `workareas` | 612 | 685 | 339 | 493 | -191.9 | yes | 99 | 14–15 | 2.5 |
+| `admin/workareas` | 496 | 565 | 349 | 414 | -151.5 | yes | 150 | 21–22 | 1.7 |
+| `memories` | 106 | 122 | 52.8 | 68.3 | -54.0 | yes | 4 | 2 | 2.7 |
+| `memories?q` | 70.9 | 81.3 | 62.8 | 79.0 | -2.3 | yes | 4 | 2 | 3.5 |
+| `atlas` | 401 | 442 | 396 | 442 | +0.0 | yes | 4 | 2 | 3.5 |
+| `data/memories` | 495 | 550 | 404 | 449 | -100.8 | yes | 6 | 2 | 3.2 |
+| `admin/memories` | 126 | 146 | 134 | 155 | +8.9 | no | 3 | 2 | 3.3 |
+| `admin/atlas` | 26.6 | 29.9 | 34.2 | 39.0 | +9.1 | no | 4 | 2 | 2.3 |
+| `admin/data/memories` | 149 | 170 | 133 | 159 | -10.9 | yes | 5 | 2 | 3.4 |
+| `memory` | 10.4 | 12.1 | 19.2 | 22.6 | +10.4 | no | 3 | 2 | 2.0 |
+| `admin/memory` | 41.2 | 54.0 | 49.7 | 63.5 | +9.5 | no | 3 | 2 | 2.0 |
+| `admin/curate` | 4.7 | 5.5 | 9.5 | 11.3 | +5.8 | no | 2 | 1 | 1.4 |
+| `review` | 6.0 | 7.1 | 9.1 | 11.0 | +3.9 | yes | 2 | 1 | 1.2 |
+| `admin/review` | – | – | 103 | 118 | – | – | 4 | 3 | 3.7 |
+| `keys` | 18.6 | 21.2 | 29.0 | 33.7 | +12.4 | no | 3 | 2 | 2.0 |
+| `admin/keys` | – | – | 19.0 | 22.1 | – | – | 3 | 2 | 1.8 |
+| `start` | 11.7 | 13.3 | 23.5 | 28.3 | +15.0 | no | 3 | 2 | 2.3 |
+| `start/status` | 10.9 | 12.6 | 14.8 | 17.7 | +5.1 | no | 1 | 1 | 1.2 |
+| `start/export` | 15.1 | 17.2 | 18.5 | 21.7 | +4.5 | yes | 1 | 1 | 2.8 |
+| `setup` | 6.0 | 6.9 | 9.7 | 11.4 | +4.5 | yes | 2 | 1 | 1.7 |
+| `admin/people` | 5.2 | 6.0 | 14.7 | 17.3 | +11.3 | no | 3 | 2 | 1.7 |
+| `admin/users` | 8.4 | 9.9 | 19.1 | 22.2 | +12.3 | no | 3 | 2 | 1.7 |
 | `admin/review (held)` | 53.9 | 60.2 | – | – | – | – | – | – | – |
 | `admin/review (queue)` | 43.1 | 49.2 | – | – | – | – | – | – | – |
 
-Health probe: in-process 0.4 ms p50, 0.5 ms p95; oml-web 0.2 ms p50, 0.9 ms p95.
+Health probe: in-process 0.4 ms p50, 0.5 ms p95; oml-web 0.4 ms p50, 0.5 ms p95.
 
 ## Runs
 
@@ -85,6 +85,6 @@ Health probe: in-process 0.4 ms p50, 0.5 ms p95; oml-web 0.2 ms p50, 0.9 ms p95.
 | `bench/web/results/in-process-6.json` | 2026-11-11 | `4dedf532` | 500 after 50 | 2.69, 2.2 | 8 CPUs, postgres (PostgreSQL) 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1) |
 | `bench/web/results/oml-web-6.json` | 2026-11-12 | `b3c7a75745b6` | 500 after 50 | 1.92, 2.35 | 8 CPUs, postgres (PostgreSQL) 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1) |
 | `bench/web/results/in-process-48.json` | 2026-11-11 | `4dedf532` | 200 after 20 | 2.75, 1.41 | 8 CPUs, postgres (PostgreSQL) 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1) |
-| `bench/web/results/oml-web-48.json` | 2026-11-12 | `b3c7a75745b6` | 200 after 20 | 1.1, 8.67 | 8 CPUs, postgres (PostgreSQL) 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1) |
+| `bench/web/results/oml-web-48.json` | 2026-11-12 | `cdf88fe01e22` | 200 after 20 | 1.31, 2.44 | 8 CPUs, postgres (PostgreSQL) 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1) |
 
 Both shapes ran on one shared host, so a latency is an upper bound. The in-process lead is commit `4dedf532`, the last before phase (b), with the sign-in double of `bench/web/before-e2e-sign-in.patch`; the admin Review view was then two pages, the queue and the held list, and the admin Keys view did not exist. How to run it: `bench/web/README.md`.
