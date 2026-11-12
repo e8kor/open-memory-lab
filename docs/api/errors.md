@@ -85,7 +85,7 @@ Malformed or unsupported requests. `details.field` names the refused value: a pa
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `request.validation` | 400 | Malformed JSON, a missing or mistyped field, an unknown field or enum value, a stale cursor. A renamed field also carries `details.renamed_to`. |
+| `request.validation` | 400 | Malformed JSON, a missing or mistyped field, an unknown field or enum value, a stale cursor. A renamed field also carries `details.renamed_to`. A key's limits asked for a key that takes none carry `details.reason`: on `POST /v2/keys/{key}/limits`, `own_key`, `session_key`, `revoked` or `admin_key` with `details.field: key`; on `POST /v2/keys` for an admin key, `admin_key` with `details.field` the limit sent, since an admin key carries no expiry and no rate ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d1, d5). |
 | `request.idempotency_key_required` | 400 | A state-creating `POST` has no `Idempotency-Key`. |
 | `request.payload_too_large` | 413 | The body exceeds the admitted size. See [limits](../reference/limits.md). |
 | `request.unsupported_media` | 415 | The `Content-Type` is not supported. `details.supported` names what is. |

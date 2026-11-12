@@ -369,7 +369,8 @@ enum KeysCommand {
         ttl: Option<String>,
     },
     /// Set or clear a key's expiry and its requests per minute; needs an admin
-    /// key other than the key itself, and journals key.limits_set.
+    /// key other than the key itself, and journals key.limits_set. An admin key
+    /// takes neither limit.
     Limit {
         /// Key id or name.
         #[arg(value_name = "KEY")]
@@ -452,11 +453,11 @@ struct KeysIssueArgs {
 struct KeyLimitArgs {
     /// Instant the key stops authenticating, RFC 3339 with its offset, such as
     /// 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not
-    /// expire.
+    /// expire. Refused for an admin key.
     #[arg(long, value_name = "INSTANT")]
     expires: Option<String>,
     /// Requests the key may make in one UTC minute, from 1 to 1000000. Omitted,
-    /// the key has no rate of its own.
+    /// the key has no rate of its own. Refused for an admin key.
     #[arg(long, value_name = "N")]
     requests_per_minute: Option<u32>,
 }

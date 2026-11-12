@@ -1805,6 +1805,73 @@ async fn keys_limit_moves_a_keys_expiry_and_rate_and_doctor_names_an_expired_key
     lab.stop().await;
 }
 
+/// An admin key carries no limit: `oml keys issue --role admin` with
+/// `--expires` or `--requests-per-minute` is refused by the server naming
+/// `admin_key` and issues nothing, and `oml keys limit` naming an admin
+/// key is refused the same way, by another admin key too (cli/reference.md
+/// `oml keys`; ADR-0079 d1, d5).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_issue_and_keys_limit_refuse_a_limit_on_an_admin_key() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    for limit in [
+        ["--expires", "2999-01-01T00:00:00Z"],
+        ["--requests-per-minute", "600"],
+    ] {
+        let (code, refused, log) = lab.json(
+            None,
+            &[
+                "keys",
+                "issue",
+                "limited-admin",
+                "--role",
+                "admin",
+                limit[0],
+                limit[1],
+            ],
+        );
+        assert_ne!(code, 0, "{limit:?}: {log}");
+        let answer = format!("{refused}{log}");
+        assert!(
+            answer.contains("request.validation") && answer.contains("admin_key"),
+            "{limit:?}: {answer}"
+        );
+    }
+    let (code, _, log) = lab.json(None, &["keys", "show", "limited-admin"]);
+    assert_ne!(code, 0, "no such key was issued: {log}");
+
+    let second = lab.issue("second-admin", &["--role", "admin"]);
+    assert_eq!(second["expiry"], Value::Null);
+    assert_eq!(second["requests_per_minute"], Value::Null);
+    let second_value = second["value"].as_str().expect("a value").to_owned();
+    // The claim's first admin key, which the stored credentials hold.
+    let first = "root-admin";
+    for (key, target, flags) in [
+        (None, "second-admin", ["--expires", "2999-01-01T00:00:00Z"]),
+        (
+            Some(second_value.as_str()),
+            first,
+            ["--requests-per-minute", "1"],
+        ),
+    ] {
+        let (code, refused, log) = lab.json(key, &["keys", "limit", target, flags[0], flags[1]]);
+        assert_ne!(code, 0, "{target}: {log}");
+        let answer = format!("{refused}{log}");
+        assert!(
+            answer.contains("request.validation") && answer.contains("admin_key"),
+            "{target}: {answer}"
+        );
+    }
+    let (code, refused, log) = lab.json(
+        Some(second_value.as_str()),
+        &["keys", "limit", first, "--no-expiry"],
+    );
+    assert_ne!(code, 0, "a clear on an admin key is refused too: {log}");
+    assert!(format!("{refused}{log}").contains("admin_key"), "{log}");
+    lab.stop().await;
+}
+
 /// `oml workareas crew set <workarea> --crew <crew>` points a workarea at a
 /// crew record, each by id or name sent as typed, in one `POST
 /// /v2/workareas/{workarea_id}/crew {crew}`, and the workarea read then

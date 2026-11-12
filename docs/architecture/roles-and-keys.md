@@ -82,12 +82,14 @@ Not available: revoking or rotating a key. To cut a key off today, add a global 
 
 ### Expiry and rate
 
-A key can carry two limits, each set when it is issued (`--expires`, `--requests-per-minute`) and neither required:
+A reader, writer or dreamer key can carry two limits, each set when it is issued (`--expires`, `--requests-per-minute`) and neither required:
 
 - **An expiry**, an instant. From it on the key authenticates nothing: its request answers `auth.invalid` with `details.reason: expired`, where an unknown or revoked key answers `unknown`. Only the holder of the key's own credential is told. The key's row, grants and name stay, and `oml keys show` says it has expired. A connector key's expiry is its connection's: the access token is refused the same way, a refresh answers `invalid_grant`, and no connect code is minted for it.
 - **A rate**, in requests per UTC minute. The request past it answers `429 limit.rate` with `Retry-After`. A key of an account under a quota is held to both rates. Each server process counts alone, so n processes admit up to n times the rate ([settings](../operations/configuration.md#limits-counted-per-process)).
 
-`oml keys limit <key>` changes or clears either, journalled as `key.limits_set`. It takes an admin key that is not the key itself: no agent key reaches the route, and an admin key naming itself is refused, so no key extends its own date or raises its own rate. Moving an expired key's date later makes it work again. A session key takes neither limit, and a revoked key none ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md)).
+`oml keys limit <key>` changes or clears either, journalled as `key.limits_set`. It takes an admin key that is not the key itself: no agent key reaches the route, and an admin key naming itself is refused, so no key extends its own date or raises its own rate. Moving an expired key's date later makes it work again. A session key takes neither limit, and a revoked key none.
+
+An admin key carries neither limit: issuing one with an expiry or a rate is refused, and so is `oml keys limit` naming one, each as `request.validation` with `details.reason: admin_key`. The admin key role is the one that changes limits, so no key that can change a limit carries one: a limited key cannot lift its own through a second admin key, and no admin key ends another by a date. The cost is that no admin key is temporary ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md)).
 
 ### Names, principals and labels
 

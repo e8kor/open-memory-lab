@@ -3843,7 +3843,9 @@ async fn apply_fold(
             // A connector key has no hash, which
             // api_keys_connector_has_no_hash holds (0012; ADR-0031 d7). A
             // key with no limit names neither limit column, so a schema
-            // before 0046 still takes it (ADR-0079 d1, d4).
+            // before 0046 still takes it, and an admin key with one is
+            // refused by api_keys_admin_key_has_no_limits (0046; ADR-0079
+            // d1, d4).
             let limited = k.expiry.is_some() || k.requests_per_minute.is_some();
             let insert = if limited {
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
@@ -3992,13 +3994,13 @@ async fn apply_fold(
             requests_per_minute,
         } => {
             // Both limits take the event's values. The guard matches only a
-            // live bearer or connector key of this tenant, so a change of
-            // anything else aborts the commit rather than journalling a
-            // change of nothing (ADR-0079 d5).
+            // live bearer or connector key of this tenant that is not an
+            // admin key, so a change of anything else aborts the commit
+            // rather than journalling a change of nothing (ADR-0079 d5).
             let set = sqlx::query(
                 "UPDATE api_keys SET expires_at = ($3)::timestamptz, requests_per_minute = $4 \
                  WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
-                 AND credential <> 'session'",
+                 AND credential <> 'session' AND role <> 'admin'",
             )
             .bind(tenant_id)
             .bind(key_id)
@@ -4009,7 +4011,7 @@ async fn apply_fold(
             .map_err(backend)?;
             if set.rows_affected() != 1 {
                 return Err(StoreError::Backend(format!(
-                    "key {key_id} is not a live bearer or connector key of this tenant"
+                    "key {key_id} is not a live bearer or connector key of this tenant, or is an admin key"
                 )));
             }
         }

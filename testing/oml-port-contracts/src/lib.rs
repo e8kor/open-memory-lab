@@ -2596,6 +2596,101 @@ pub async fn a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits
     );
 }
 
+/// An admin key is stored with no limit and takes none: `key.issued` for
+/// an admin key that carries an expiry, a rate or both is refused, as is
+/// `key.limits_set` naming an admin key, whether it sets a limit or clears
+/// both. Each refusal commits nothing, and the admin key reads back with
+/// neither limit (migration 0046 `api_keys_admin_key_has_no_limits`;
+/// event-catalog.md `key.limits_set`; ADR-0079 d1, d5).
+pub async fn an_admin_key_is_stored_with_no_limit_and_takes_none_from_key_limits_set<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(24);
+    rig.seed_chain(store, 0).await;
+    let later = EventTime::parse("2030-06-01T12:30:00.250000Z").expect("a fixture instant");
+    let admin = key_record(rig.tenant_id, Uuid::from_u128(0xF0), Role::Admin, None);
+    rig.issue_key(store, admin.clone()).await;
+    let head = store
+        .chain_head(rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("chain");
+
+    for (id, expiry, requests_per_minute) in [
+        (0xF1, Some(later.clone()), Some(30)),
+        (0xF2, Some(later.clone()), None),
+        (0xF3, None, Some(30)),
+    ] {
+        let limited = KeyRecord {
+            expiry,
+            requests_per_minute,
+            ..key_record(
+                rig.tenant_id,
+                Uuid::from_u128(id),
+                Role::Admin,
+                Some(admin.key_id),
+            )
+        };
+        let refused = rig
+            .commit(
+                store,
+                event_types::KEY_ISSUED,
+                json!({ "key_id": limited.key_id.to_string(), "role": "admin" }),
+                MetadataFold::KeyIssued(limited.clone()),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "an admin key issued with a limit: {refused:?}"
+        );
+        assert_eq!(
+            store
+                .key(rig.tenant_id, limited.key_id)
+                .await
+                .expect("read"),
+            None
+        );
+    }
+    for (expiry, requests_per_minute) in [
+        (Some(later.clone()), None),
+        (None, Some(5)),
+        (Some(later), Some(5)),
+        (None, None),
+    ] {
+        let refused = rig
+            .commit(
+                store,
+                event_types::KEY_LIMITS_SET,
+                json!({ "key_id": admin.key_id }),
+                MetadataFold::KeyLimitsSet {
+                    key_id: admin.key_id,
+                    expiry,
+                    requests_per_minute,
+                },
+                None,
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "limits set on an admin key: {refused:?}"
+        );
+    }
+    assert_eq!(
+        store.chain_head(rig.tenant_id).await.expect("head"),
+        Some(head),
+        "a refused issuance or change commits nothing"
+    );
+    let stored = store
+        .key(rig.tenant_id, admin.key_id)
+        .await
+        .expect("read")
+        .expect("the admin key");
+    assert_eq!((stored.expiry, stored.requests_per_minute), (None, None));
+}
+
 /// The idempotency record rides the commit and reads back whole; an absent
 /// scope is absent (http-api.md idempotency record).
 pub async fn journal_idempotency_roundtrip<S: JournalStore>(store: &S) {
@@ -8685,6 +8780,10 @@ where
     .await;
     Box::pin(
         a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits_set(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        an_admin_key_is_stored_with_no_limit_and_takes_none_from_key_limits_set(&new_store().await),
     )
     .await;
     Box::pin(journal_idempotency_roundtrip(&new_store().await)).await;

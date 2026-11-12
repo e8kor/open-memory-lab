@@ -2945,9 +2945,10 @@ where
         req: &IssueKeyRequest,
         how: Issuance<'_>,
     ) -> Result<IssuedKey, AppError> {
-        // An expiry later than now and a rate within its bound, checked
-        // with the rest of the body, before any lookup (ADR-0079 d1, d4).
-        self.check_key_limits(req.expiry.as_ref(), req.requests_per_minute)?;
+        // No limit for an admin key; for any other, an expiry later than
+        // now and a rate within its bound, checked with the rest of the
+        // body, before any lookup (ADR-0079 d1, d4).
+        self.check_issued_limits(req)?;
         let issuer = issuer.clone();
         let tenant_id = issuer.tenant_id;
         // The person the key acts for, and the root its references resolve

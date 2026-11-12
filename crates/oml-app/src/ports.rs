@@ -271,9 +271,9 @@ pub enum MetadataFold {
     },
     /// `key.limits_set`: the key's expiry and its requests per minute become
     /// these two values, `None` clearing one, from this commit on. The
-    /// store refuses a key it does not hold, a revoked key and a session
-    /// key, which carries neither (event-catalog.md `key.limits_set`;
-    /// ADR-0079 d5).
+    /// store refuses a key it does not hold, a revoked key, and a session
+    /// key and an admin key, which carry neither (event-catalog.md
+    /// `key.limits_set`; ADR-0079 d5).
     KeyLimitsSet {
         key_id: Uuid,
         expiry: Option<EventTime>,

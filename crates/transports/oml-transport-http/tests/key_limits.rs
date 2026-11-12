@@ -440,3 +440,113 @@ async fn an_agent_key_changes_no_limits_and_an_admin_key_never_its_own() {
     assert_eq!(read["expiry"], EXPIRY);
     assert_eq!(read["requests_per_minute"], 30);
 }
+
+/// The body of an admin key's issuance, held by an agent, with `limits`
+/// merged in.
+fn admin_key_body(name: &str, limits: &Value) -> Value {
+    let mut body = json!({ "role": "admin", "name": name, "held_by": "agent", "grants": [] });
+    for (member, value) in limits.as_object().expect("an object") {
+        body[member] = value.clone();
+    }
+    body
+}
+
+/// An admin key, an agent's included, carries no limit and is given none:
+/// `POST /v2/keys` for role `admin` with `expiry` or `requests_per_minute`
+/// is `request.validation` naming the member with `reason: admin_key`, and
+/// `POST /v2/keys/{key}/limits` naming an admin key is `request.validation`
+/// with `field: key, reason: admin_key`, whether it sets or clears. So a
+/// limited admin key cannot shed its limits through a second admin key it
+/// issues, since none is ever limited, and no admin key ends another by a
+/// near expiry: the first still authenticates past the date that was asked.
+/// Nothing is journalled by a refusal (ADR-0079 d1, d5; R1).
+#[tokio::test]
+async fn an_admin_key_is_issued_with_no_limit_and_given_none_by_another_admin_key() {
+    let w = world().await;
+    let head = w.head_seq().await;
+    for (limits, field) in [
+        (
+            json!({ "expiry": EXPIRY_SENT, "requests_per_minute": 30 }),
+            "/expiry",
+        ),
+        (json!({ "expiry": EXPIRY_SENT }), "/expiry"),
+        (json!({ "requests_per_minute": 30 }), "/requests_per_minute"),
+    ] {
+        let (status, _, refused) = w
+            .post(
+                "/v2/keys",
+                &w.admin,
+                &admin_key_body("limited-admin", &limits),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{limits}: {refused}");
+        assert_eq!(
+            refusal(&refused),
+            (
+                "request.validation",
+                &json!({ "field": field, "reason": "admin_key" })
+            ),
+            "{limits}"
+        );
+    }
+    assert_eq!(w.head_seq().await, head, "nothing journalled");
+
+    let (status, _, second) = w
+        .post(
+            "/v2/keys",
+            &w.admin,
+            &admin_key_body("second-admin", &json!({})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    assert_eq!(second["expiry"], Value::Null);
+    assert_eq!(second["requests_per_minute"], Value::Null);
+    let head = w.head_seq().await;
+    for (caller, target, change) in [
+        // The second key clears the first's limits.
+        (
+            value_of(&second),
+            w.admin_name,
+            json!({ "expiry": null, "requests_per_minute": null }),
+        ),
+        // The second key ends the first by a near expiry.
+        (
+            value_of(&second),
+            w.admin_name,
+            json!({ "expiry": EXPIRY_SENT }),
+        ),
+        // The first limits the second, an admin key an agent holds.
+        (
+            w.admin.as_str(),
+            "second-admin",
+            json!({ "expiry": EXPIRY_SENT, "requests_per_minute": 1 }),
+        ),
+    ] {
+        let (status, _, body) = w
+            .post(&format!("/v2/keys/{target}/limits"), caller, &change)
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{target}: {body}");
+        assert_eq!(
+            refusal(&body),
+            (
+                "request.validation",
+                &json!({ "field": "key", "reason": "admin_key" })
+            ),
+            "{target}: {change}"
+        );
+    }
+    assert_eq!(w.head_seq().await, head, "nothing journalled");
+
+    w.clock.advance(660);
+    for (bearer, name) in [
+        (w.admin.as_str(), w.admin_name),
+        (value_of(&second), "second-admin"),
+    ] {
+        for _ in 0..2 {
+            let (status, _, me) = w.get("/v2/whoami", bearer).await;
+            assert_eq!(status, StatusCode::OK, "{name}: {me}");
+            assert_eq!(me["expiry"], Value::Null, "{name}");
+            assert_eq!(me["requests_per_minute"], Value::Null, "{name}");
+        }
+    }
+}

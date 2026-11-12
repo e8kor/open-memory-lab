@@ -9202,9 +9202,10 @@ async fn an_admin_key_moves_an_expired_keys_date_later_and_the_key_authenticates
 }
 
 /// R1 for a key's limits: a reader, a writer and a dreamer key cannot set
-/// any key's limits, their own included, and an admin key, whoever holds
-/// it, cannot set its own. Each refusal journals nothing and leaves the
-/// limits as they were (ADR-0079 d5).
+/// any key's limits, their own included. An admin key an agent holds is
+/// issued with neither limit, cannot set its own, and is given none by
+/// another admin key. Each refusal journals nothing and leaves the limits
+/// as they were (ADR-0079 d1, d5).
 #[tokio::test]
 async fn no_key_extends_its_own_expiry_or_raises_its_own_rate() {
     let store = MemStore::new();
@@ -9232,19 +9233,30 @@ async fn no_key_extends_its_own_expiry_or_raises_its_own_rate() {
             .expect("an agent key with both limits"),
         );
     }
+    let before_admin = journal(&store, boot.tenant_id).await.len();
+    for (expiry, rate, refusal) in [
+        (Some(KEY_EXPIRY), Some(30), KeyLimitsRefusal::AdminKeyExpiry),
+        (Some(KEY_EXPIRY), None, KeyLimitsRefusal::AdminKeyExpiry),
+        (None, Some(30), KeyLimitsRefusal::AdminKeyRate),
+    ] {
+        let err = app
+            .issue_key(
+                admin,
+                &limited_req(Role::Admin, "agent-admin", Vec::new(), expiry, rate),
+            )
+            .await
+            .expect_err("an admin key an agent holds carries no limit");
+        assert_eq!(limits_refused(&err), Some(refusal), "{err:?}");
+    }
+    assert_eq!(
+        journal(&store, boot.tenant_id).await.len(),
+        before_admin,
+        "a refused issuance journals nothing"
+    );
     let agent_admin = app
-        .issue_key(
-            admin,
-            &limited_req(
-                Role::Admin,
-                "agent-admin",
-                Vec::new(),
-                Some(KEY_EXPIRY),
-                Some(30),
-            ),
-        )
+        .issue_key(admin, &issue_req(Role::Admin, "agent-admin", Vec::new()))
         .await
-        .expect("an admin key an agent holds");
+        .expect("an admin key an agent holds, with no limit");
     let head = journal(&store, boot.tenant_id).await.len();
 
     for agent in &agents {
@@ -9266,29 +9278,123 @@ async fn no_key_extends_its_own_expiry_or_raises_its_own_rate() {
             );
         }
     }
-    for (value, own) in [
-        (agent_admin.value.as_str(), agent_admin.key_id),
-        (admin, boot.admin_key.key_id),
+    for (value, target, refusal) in [
+        (
+            agent_admin.value.as_str(),
+            agent_admin.key_id,
+            KeyLimitsRefusal::OwnKey,
+        ),
+        (admin, boot.admin_key.key_id, KeyLimitsRefusal::OwnKey),
+        (admin, agent_admin.key_id, KeyLimitsRefusal::AdminKey),
+        (
+            agent_admin.value.as_str(),
+            boot.admin_key.key_id,
+            KeyLimitsRefusal::AdminKey,
+        ),
     ] {
         let err = app
-            .set_key_limits(value, Reference::Id(own), wider.clone())
+            .set_key_limits(value, Reference::Id(target), wider.clone())
             .await
             .unwrap_err();
-        assert_eq!(
-            limits_refused(&err),
-            Some(KeyLimitsRefusal::OwnKey),
-            "{err:?}"
-        );
+        assert_eq!(limits_refused(&err), Some(refusal), "{err:?}");
     }
 
     assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
-    for key in agents.iter().chain([&agent_admin]) {
+    for key in &agents {
         let stored = app
             .key(admin, Reference::Id(key.key_id))
             .await
             .expect("the key reads");
         assert_eq!(stored.key.expiry, Some(at(KEY_EXPIRY)));
         assert_eq!(stored.key.requests_per_minute, Some(30));
+    }
+    for key_id in [agent_admin.key_id, boot.admin_key.key_id] {
+        let stored = app
+            .key(admin, Reference::Id(key_id))
+            .await
+            .expect("the key reads");
+        assert_eq!(
+            (stored.key.expiry, stored.key.requests_per_minute),
+            (None, None)
+        );
+    }
+}
+
+/// No admin key carries a limit, so neither of two holes can open. A
+/// limited admin key cannot shed its limits through a second admin key it
+/// issues, because it is never limited: its issuance with an expiry or a
+/// rate is refused. And no admin key ends another by setting a near expiry
+/// on it: the change is refused as `admin_key`, clearing included, and the
+/// target still authenticates past the date that was asked. Nothing is
+/// journalled by any refusal (ADR-0079 d1, d5; R1).
+#[tokio::test]
+async fn an_admin_key_is_issued_with_no_limit_and_given_none_by_another_admin_key() {
+    let store = MemStore::new();
+    let (app, clock) = oauth_app_with_clock(store.clone());
+    let (boot, _crew) = tenant(&app).await;
+    let first = boot.admin_key.value.as_str();
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    // The first hole began with an admin key that carries limits.
+    let err = app
+        .issue_key(
+            first,
+            &limited_req(
+                Role::Admin,
+                "limited-admin",
+                Vec::new(),
+                Some(KEY_EXPIRY),
+                Some(30),
+            ),
+        )
+        .await
+        .expect_err("an admin key is issued with no limit");
+    assert_eq!(
+        limits_refused(&err),
+        Some(KeyLimitsRefusal::AdminKeyExpiry),
+        "{err:?}"
+    );
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+
+    let second = app
+        .issue_key(first, &issue_req(Role::Admin, "second-admin", Vec::new()))
+        .await
+        .expect("a second admin key");
+    let head = journal(&store, boot.tenant_id).await.len();
+    // Its second call, the clear, names an admin key and is refused.
+    for change in [
+        KeyLimitsChange {
+            expiry: Some(None),
+            requests_per_minute: Some(None),
+        },
+        // The second hole: a near expiry set on another admin key.
+        expiry_change(Some(KEY_EXPIRY)),
+        KeyLimitsChange {
+            expiry: None,
+            requests_per_minute: Some(Some(1)),
+        },
+    ] {
+        let err = app
+            .set_key_limits(
+                second.value.as_str(),
+                Reference::Id(boot.admin_key.key_id),
+                change,
+            )
+            .await
+            .expect_err("no admin key is given a limit");
+        assert_eq!(
+            limits_refused(&err),
+            Some(KeyLimitsRefusal::AdminKey),
+            "{err:?}"
+        );
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+
+    clock.advance(660);
+    for _ in 0..3 {
+        app.caller(Bearer::Key(first))
+            .await
+            .expect("the first admin key still authenticates, past that date and that rate");
     }
 }
 

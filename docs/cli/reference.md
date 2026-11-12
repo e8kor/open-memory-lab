@@ -34,7 +34,7 @@ Per-command sections below omit these options.
 | `oml keys issue-agent` | Issue an agent-plugin key and print OML_URL/OML_API_KEY exports; with --out, print the claude configure line that reads it |
 | `oml keys show` | Show a key's grants, denials, crew, and epoch, including revoked keys; never print its value |
 | `oml keys connect-code` | Mint a connector key's connect code, void earlier codes, and print the connector URL and code |
-| `oml keys limit` | Set or clear a key's expiry and its requests per minute; needs an admin key other than the key itself, and journals key.limits_set |
+| `oml keys limit` | Set or clear a key's expiry and its requests per minute; needs an admin key other than the key itself, and journals key.limits_set. |
 | `oml keys disconnect` | Revoke one connector-key connection and journal connection.revoked |
 | `oml deny set` | Create or extend a global deny over a subtree, overriding all grants; journals key.denied |
 | `oml chat init` | Open your `chat` workarea under your user root and print OML_CHAT_WORKAREA for plugin capture and recall. |
@@ -191,8 +191,8 @@ oml keys issue [OPTIONS] --role <ROLE> <KEY_NAME>
 | `--label <LABEL>` |  |
 | `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workarea loads only the default workarea's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workarea, ancestors] |
 | `--profile <PROFILE>` | Key profile: curator is an agent-held dreamer that narrows within an in-progress workarea and never promotes [possible values: curator] |
-| `--expires <INSTANT>` | Instant the key stops authenticating, RFC 3339 with its offset, such as 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not expire |
-| `--requests-per-minute <N>` | Requests the key may make in one UTC minute, from 1 to 1000000. Omitted, the key has no rate of its own |
+| `--expires <INSTANT>` | Instant the key stops authenticating, RFC 3339 with its offset, such as 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not expire. Refused for an admin key |
+| `--requests-per-minute <N>` | Requests the key may make in one UTC minute, from 1 to 1000000. Omitted, the key has no rate of its own. Refused for an admin key |
 
 ### `oml keys issue-agent`
 
@@ -217,8 +217,8 @@ oml keys issue-agent [OPTIONS] --principal <PRINCIPAL> <KEY_NAME>
 | `--out <OUT>` | Write the key to a new 0600 file without overwriting and print a line that reads it instead of the value |
 | `--connect-code` | Issue a claude.ai custom-connector key with a single-use connect code instead of a key value |
 | `--guardrail-scope <GUARDRAIL_SCOPE>` | Guardrail scope: workarea loads only the default workarea's guardrails; ancestors also loads every readable ancestor. Defaults to ancestors [possible values: workarea, ancestors] |
-| `--expires <INSTANT>` | Instant the key stops authenticating, RFC 3339 with its offset, such as 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not expire |
-| `--requests-per-minute <N>` | Requests the key may make in one UTC minute, from 1 to 1000000. Omitted, the key has no rate of its own |
+| `--expires <INSTANT>` | Instant the key stops authenticating, RFC 3339 with its offset, such as 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not expire. Refused for an admin key |
+| `--requests-per-minute <N>` | Requests the key may make in one UTC minute, from 1 to 1000000. Omitted, the key has no rate of its own. Refused for an admin key |
 
 ### `oml keys show`
 
@@ -250,7 +250,7 @@ oml keys connect-code [OPTIONS] <KEY>
 
 ### `oml keys limit`
 
-Set or clear a key's expiry and its requests per minute; needs an admin key other than the key itself, and journals key.limits_set
+Set or clear a key's expiry and its requests per minute; needs an admin key other than the key itself, and journals key.limits_set. An admin key takes neither limit
 
 ```
 oml keys limit [OPTIONS] <KEY>

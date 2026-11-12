@@ -2,7 +2,7 @@
 id: adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself
 tier: engineering
 status: proposed
-answers: how a key is given an end date and a request rate; what a request under an expired key is answered and how that differs from a revoked key; what an expired key's connection does; who may change a key's date or rate and why the key itself never may; where the rate is counted and what that means with more than one server process; what stays of an expired key; and the open questions
+answers: how a key is given an end date and a request rate; what a request under an expired key is answered and how that differs from a revoked key; what an expired key's connection does; who may change a key's date or rate and why the key itself never may; why an admin key carries neither; where the rate is counted and what that means with more than one server process; what stays of an expired key; and the open questions
 -->
 
 # ADR-0079 — A key ends on a date and is held to a request rate, both set at issuance and changed only by an admin key that is not the key itself
@@ -50,6 +50,15 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
   `connect_code` only. The cost: a date is an instant, so an operator who means "the end of
   Friday" writes the instant; a bare date is refused, not read as some midnight.
 
+    An admin key carries neither limit, this date or the rate of d4. `POST /v2/keys` for role
+    `admin` with `expiry` or `requests_per_minute` is `request.validation` naming the member,
+    with `details.reason: admin_key`, and nothing is journalled; the store refuses the row too
+    (`api_keys_admin_key_has_no_limits`). The limits are for keys of the other roles. The
+    reason is d5: the admin key role is the one that changes limits, so a limit on an admin
+    key is one its holder lifts, and a date one admin key may set on another is a way to end
+    it that no record decided. The operator decided this on 2026-11-12. The cost: no admin key
+    ends on a date, so a temporary admin key is not possible.
+
 - **d2 — From its expiry on a key authenticates nothing, and the refusal says so.** A request
   that presents the key's value at or after its expiry is `401 auth.invalid` with `details:
   {reason: "expired", expiry}`, where an unknown and a revoked key answer `reason: "unknown"`.
@@ -85,20 +94,27 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
   `/mcp` that calls no tool (`initialize`, `tools/list`, `ping`) reaches no use case and is not
   counted, as today; a flood of those, or of requests with no valid key, is the edge's to stop.
 
-- **d5 — The date and the rate change only by an admin key that is not the key itself.** `POST
-  /v2/keys/{key}/limits` takes `{expiry?, requests_per_minute?}`, at least one member: a member
-  sent replaces the value, `null` clears it, and a member not sent keeps it. It needs the admin
-  key role, the role that already fences a key and ends its connection, in the key's own tenant,
-  and journals `key.limits_set` with `key_id`, `set_by_key_id` and both values as they stand
-  after the change. A key of any other role is `access.verb_ceiling`; a key the tenant does not
-  hold is `access.not_found`; and three targets are `request.validation` naming `key`, with
-  `details.reason`: `own_key` (the calling key), `session_key`, and `revoked`. No MCP tool
-  reaches the route, so an agent's surface cannot ask for it at all, and an admin key held by an
-  agent still cannot move its own date or raise its own rate (R1). A new `expiry` is later than
-  the lead's clock, as at issuance; to end a key now, fence it or end its connection. Moving an
-  expired key's date later makes it authenticate again: an expiry is a date an admin holds, not
-  an act like a revocation. The rate a key is held to is read from its row on each request, so a
-  change holds from the next request.
+- **d5 — The date and the rate change only by an admin key that is not the key itself, and
+  never on an admin key.** `POST /v2/keys/{key}/limits` takes `{expiry?, requests_per_minute?}`,
+  at least one member: a member sent replaces the value, `null` clears it, and a member not
+  sent keeps it. It needs the admin key role, the role that already fences a key and ends its
+  connection, in the key's own tenant, and journals `key.limits_set` with `key_id`,
+  `set_by_key_id` and both values as they stand after the change. A key of any other role is
+  `access.verb_ceiling`; a key the tenant does not hold is `access.not_found`; and four
+  targets are `request.validation` naming `key`, with `details.reason`: `own_key` (the calling
+  key), `session_key`, `revoked`, and `admin_key` (any admin key, whether the change sets a
+  limit or clears one). No MCP tool reaches the route, so an agent's surface cannot ask for it
+  at all. No key that can change limits ever carries one: the route takes the admin key role,
+  and an admin key is issued with neither limit (d1) and given neither here. So the gate is
+  not callable by the thing being gated (R1): a key of any other role, which is every key
+  that carries a date or a rate, never reaches the route, and an admin key, whoever holds it,
+  has no date to move and no rate to raise, by itself or through a second admin key it
+  issues. Nor does one admin key end another by setting a near date on it. A new `expiry` is
+  later than the lead's clock, as at issuance; to end a key now, fence it or end its
+  connection, which every key that carries a limit admits, since a denial is refused only on
+  an admin key. Moving an expired key's date later makes it authenticate again: an expiry is a
+  date an admin holds, not an act like a revocation. The rate a key is held to is read from
+  its row on each request, so a change holds from the next request.
 
     This amends ADR-0031 d11's "one whose key ended is dead for good" for an expired key: its
     connection stays `open` with no event, as that record says, and works again if the date is
@@ -115,7 +131,8 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
   request, which this record does not buy for a reviewer's key; it is open question 2.
 
 - **d7 — The CLI sets both, and doctor names their failures.** `oml keys issue` and `oml keys
-  issue-agent` take `--expires <instant>` and `--requests-per-minute <n>`. `oml keys limit <key>`
+  issue-agent` take `--expires <instant>` and `--requests-per-minute <n>`; `oml keys issue --role
+  admin` with either is refused by the server (d1). `oml keys limit <key>`
   takes those two, and `--no-expiry` and `--no-rate-limit` to clear each. `oml keys show` and the
   issuing verbs print both. `oml doctor` prints, for the key it runs under: a failure when the
   server refused it as expired, with the date; a warning when the server answered `limit.rate`;
@@ -125,7 +142,10 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
 ## Consequences
 
 - Migration 0046 adds `api_keys.expires_at` and `api_keys.requests_per_minute`, both null for
-  every existing key, which therefore neither expires nor is limited.
+  every existing key, which therefore neither expires nor is limited, and the constraint
+  `api_keys_admin_key_has_no_limits`, which holds both null on an admin key's row.
+- A temporary admin key is not possible. An admin key has no expiry, takes no denial and is
+  not revoked by any verb, so one issued for a short task stays live.
 - `docs/api/openapi.yaml` serves `expiry` and `requests_per_minute` on `KeyIssueRequest`, `Key`,
   `ListedKey` and `Whoami`, `expired` on `Key` and `ListedKey`, and the operation
   `setKeyLimits`; `openapi-designed.yaml` drops `issueKey.expiry`. `docs/data/event-catalog.md` gains `key.limits_set`, and
@@ -164,5 +184,7 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
 | **Apply `quota.requests_per_minute` to every key** | It would put a rate on every tenant key of every deployment on upgrade, and a demo key needs a much lower one than a person's agents. A rate on the key is set where it is wanted. |
 | **A token bucket, a burst, or limits per operation** | #185 needs one sentence an operator can say to a reviewer: this key makes n requests a minute. The fixed UTC minute is the window ADR-0068 d5 already counts and explains. |
 | **Count requests in PostgreSQL so every process shares the count** | One row write per request on the read path, for a bound that one lead already gives. Reopened by open question 2. |
+| **Limits bind admin keys too**, as this record first proposed | Declined by the operator on 2026-11-12, for two scenarios an independent review found. One: a limited admin key sheds its limits in two calls. Admin key A, issued with an expiry and a rate, issues admin key A2 with neither, and A2 posts `{expiry: null, requests_per_minute: null}` to A's limits. Two: any admin key ends any other by setting a near expiry on it, which nothing could do before: a denial on an admin key is refused, and the administering guide says an admin key cannot be cut off. |
+| **Keep limits on admin keys and document both scenarios** | Declined by the operator on 2026-11-12, for the same two scenarios. A limit its holder lifts in two calls limits nothing, and writing down that one admin key can end another would make a new power a rule without deciding it. Refusing both limits on an admin key is the smallest change that closes both. |
 | **Let a key shorten its own date or lower its own rate** | Harmless in itself, but the rule "a key never sets its own limits" is one sentence with no direction to get wrong, and an admin who wants less holds another admin key or fences the key. |
 | **Sweep expired keys into `key.revoked`** | A background writer that signs events no actor asked for, and a revocation that could not be undone when the date was a mistake. Each lookup reads the date, so nothing needs sweeping. |

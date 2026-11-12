@@ -17,8 +17,8 @@ Every number has a unit and a source. Where no figure exists, the page says so i
 | Recall `k` (MCP) | 1 to 100 | tool schema | `request.validation` | Ask for fewer hits |
 | Unused OAuth client registrations | 10,000 | build constant | `429 limit.rate`, with `Retry-After` | Retry after the delay |
 | Recall feedback labels | 1,000 a UTC day | build constant | `429 limit.rate`, with `Retry-After` | Retry after the delay |
-| A key's own request rate | 1 to 1,000,000 requests a UTC minute; none unless set | `oml keys issue --requests-per-minute`, `oml keys limit` | `429 limit.rate`, with `Retry-After` | Retry in the next minute, or have an admin raise it |
-| A key's expiry | an instant later than now; none unless set | `oml keys issue --expires`, `oml keys limit` | `401 auth.invalid`, `details.reason: expired` | An admin moves the date with `oml keys limit`, or issues another key |
+| A key's own request rate | 1 to 1,000,000 requests a UTC minute; none unless set, and never on an admin key | `oml keys issue --requests-per-minute`, `oml keys limit` | `429 limit.rate`, with `Retry-After` | Retry in the next minute, or have an admin raise it |
+| A key's expiry | an instant later than now; none unless set, and never on an admin key | `oml keys issue --expires`, `oml keys limit` | `401 auth.invalid`, `details.reason: expired` | An admin moves the date with `oml keys limit`, or issues another key |
 | Brief size | 400 tokens | `brief.max_tokens` | none; the brief is cut | Raise the setting |
 | Rerank concurrency | 2 at a time; 1,000 ms deadline | `search.rerank.max_concurrent`, `search.rerank.timeout_ms` | none; recall serves the unreranked order | Raise concurrency or the deadline |
 | Web session life | 8 hours | build constant | sign in again | none |

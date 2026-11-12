@@ -102,9 +102,10 @@ def sync_detailed(
     tool reaches the route. A member sent replaces the value, null clears it, and a member not sent
     keeps it; a body that names neither is request.validation. expiry is later than the server's clock
     (details.field /expiry) and requests_per_minute from 1 to 1000000 (details.field
-    /requests_per_minute). The key is never the calling key, a session key or a revoked key:
-    request.validation with details.field key and details.reason own_key, session_key or revoked, so no
-    key moves its own date or raises its own rate. Journalled as key.limits_set with both values as they
+    /requests_per_minute). The key is never the calling key, a session key, a revoked key or an admin
+    key: request.validation with details.field key and details.reason own_key, session_key, revoked or
+    admin_key. No key that can change limits carries one, so none moves its own date or raises its own
+    rate, and no admin key ends another by a date. Journalled as key.limits_set with both values as they
     stand after the change; the Idempotency-Key is required and not replayed, so a request sent twice
     journals two events that leave the same limits. Moving an expired key's expiry later makes it
     authenticate again; the rate holds from the key's next request (ADR-0079 d5; since v0.7.3).
@@ -159,9 +160,10 @@ def sync(
     tool reaches the route. A member sent replaces the value, null clears it, and a member not sent
     keeps it; a body that names neither is request.validation. expiry is later than the server's clock
     (details.field /expiry) and requests_per_minute from 1 to 1000000 (details.field
-    /requests_per_minute). The key is never the calling key, a session key or a revoked key:
-    request.validation with details.field key and details.reason own_key, session_key or revoked, so no
-    key moves its own date or raises its own rate. Journalled as key.limits_set with both values as they
+    /requests_per_minute). The key is never the calling key, a session key, a revoked key or an admin
+    key: request.validation with details.field key and details.reason own_key, session_key, revoked or
+    admin_key. No key that can change limits carries one, so none moves its own date or raises its own
+    rate, and no admin key ends another by a date. Journalled as key.limits_set with both values as they
     stand after the change; the Idempotency-Key is required and not replayed, so a request sent twice
     journals two events that leave the same limits. Moving an expired key's expiry later makes it
     authenticate again; the rate holds from the key's next request (ADR-0079 d5; since v0.7.3).
@@ -211,9 +213,10 @@ async def asyncio_detailed(
     tool reaches the route. A member sent replaces the value, null clears it, and a member not sent
     keeps it; a body that names neither is request.validation. expiry is later than the server's clock
     (details.field /expiry) and requests_per_minute from 1 to 1000000 (details.field
-    /requests_per_minute). The key is never the calling key, a session key or a revoked key:
-    request.validation with details.field key and details.reason own_key, session_key or revoked, so no
-    key moves its own date or raises its own rate. Journalled as key.limits_set with both values as they
+    /requests_per_minute). The key is never the calling key, a session key, a revoked key or an admin
+    key: request.validation with details.field key and details.reason own_key, session_key, revoked or
+    admin_key. No key that can change limits carries one, so none moves its own date or raises its own
+    rate, and no admin key ends another by a date. Journalled as key.limits_set with both values as they
     stand after the change; the Idempotency-Key is required and not replayed, so a request sent twice
     journals two events that leave the same limits. Moving an expired key's expiry later makes it
     authenticate again; the rate holds from the key's next request (ADR-0079 d5; since v0.7.3).
@@ -266,9 +269,10 @@ async def asyncio(
     tool reaches the route. A member sent replaces the value, null clears it, and a member not sent
     keeps it; a body that names neither is request.validation. expiry is later than the server's clock
     (details.field /expiry) and requests_per_minute from 1 to 1000000 (details.field
-    /requests_per_minute). The key is never the calling key, a session key or a revoked key:
-    request.validation with details.field key and details.reason own_key, session_key or revoked, so no
-    key moves its own date or raises its own rate. Journalled as key.limits_set with both values as they
+    /requests_per_minute). The key is never the calling key, a session key, a revoked key or an admin
+    key: request.validation with details.field key and details.reason own_key, session_key, revoked or
+    admin_key. No key that can change limits carries one, so none moves its own date or raises its own
+    rate, and no admin key ends another by a date. Journalled as key.limits_set with both values as they
     stand after the change; the Idempotency-Key is required and not replayed, so a request sent twice
     journals two events that leave the same limits. Moving an expired key's expiry later makes it
     authenticate again; the rate holds from the key's next request (ADR-0079 d5; since v0.7.3).

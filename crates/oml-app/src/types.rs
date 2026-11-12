@@ -179,6 +179,14 @@ pub enum KeyLimitsRefusal {
     SessionKey,
     /// A revoked key authenticates nothing, whatever its limits.
     Revoked,
+    /// The key to change is an admin key: limits are for the other roles,
+    /// so no key that can change a limit carries one, and no admin key ends
+    /// another by a date (ADR-0079 d1, d5).
+    AdminKey,
+    /// An admin key issued with an `expiry`.
+    AdminKeyExpiry,
+    /// An admin key issued with a `requests_per_minute`.
+    AdminKeyRate,
 }
 
 impl KeyLimitsRefusal {
@@ -187,22 +195,29 @@ impl KeyLimitsRefusal {
     #[must_use]
     pub fn field(self) -> Option<&'static str> {
         match self {
-            KeyLimitsRefusal::ExpiryNotLater => Some("/expiry"),
-            KeyLimitsRefusal::RateOutOfRange => Some("/requests_per_minute"),
-            KeyLimitsRefusal::Empty => None,
-            KeyLimitsRefusal::OwnKey | KeyLimitsRefusal::SessionKey | KeyLimitsRefusal::Revoked => {
-                Some("key")
+            KeyLimitsRefusal::ExpiryNotLater | KeyLimitsRefusal::AdminKeyExpiry => Some("/expiry"),
+            KeyLimitsRefusal::RateOutOfRange | KeyLimitsRefusal::AdminKeyRate => {
+                Some("/requests_per_minute")
             }
+            KeyLimitsRefusal::Empty => None,
+            KeyLimitsRefusal::OwnKey
+            | KeyLimitsRefusal::SessionKey
+            | KeyLimitsRefusal::Revoked
+            | KeyLimitsRefusal::AdminKey => Some("key"),
         }
     }
 
-    /// `details.reason`, for a refusal of the key the request names.
+    /// `details.reason`, for a refusal of the key the request names, and of
+    /// a limit asked for an admin key.
     #[must_use]
     pub fn reason(self) -> Option<&'static str> {
         match self {
             KeyLimitsRefusal::OwnKey => Some("own_key"),
             KeyLimitsRefusal::SessionKey => Some("session_key"),
             KeyLimitsRefusal::Revoked => Some("revoked"),
+            KeyLimitsRefusal::AdminKey
+            | KeyLimitsRefusal::AdminKeyExpiry
+            | KeyLimitsRefusal::AdminKeyRate => Some("admin_key"),
             KeyLimitsRefusal::ExpiryNotLater
             | KeyLimitsRefusal::RateOutOfRange
             | KeyLimitsRefusal::Empty => None,
@@ -227,6 +242,11 @@ impl KeyLimitsRefusal {
                 "a session key ends with its web session and takes no limits"
             }
             KeyLimitsRefusal::Revoked => "a revoked key takes no limits",
+            KeyLimitsRefusal::AdminKey
+            | KeyLimitsRefusal::AdminKeyExpiry
+            | KeyLimitsRefusal::AdminKeyRate => {
+                "an admin key carries no expiry and no rate of its own"
+            }
         }
     }
 }
@@ -1613,11 +1633,12 @@ pub struct IssueKeyRequest {
     /// `profile: "curator"` (ADR-0030 d8); `None` for every other key.
     pub profile: Option<KeyProfile>,
     /// The instant the key stops authenticating, later than the lead's
-    /// clock at issuance; `None` issues a key that does not expire
-    /// (ADR-0079 d1).
+    /// clock at issuance; `None` issues a key that does not expire, and an
+    /// admin key takes no other (ADR-0079 d1).
     pub expiry: Option<EventTime>,
     /// The key's own requests per UTC minute, from 1 to
-    /// [`KEY_REQUESTS_PER_MINUTE_MAX`]; `None` gives it none (ADR-0079 d4).
+    /// [`KEY_REQUESTS_PER_MINUTE_MAX`]; `None` gives it none, and an admin
+    /// key takes no other (ADR-0079 d4).
     pub requests_per_minute: Option<u32>,
 }
 
