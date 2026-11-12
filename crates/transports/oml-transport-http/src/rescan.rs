@@ -44,6 +44,7 @@ fn report_json(r: &RescanReport) -> Value {
         "held_unrescanned": r.held_unrescanned,
         "rescan_due": r.rescan_due,
         "findings_unlisted": r.findings_unlisted,
+        "promoted_unapproved": r.promoted_unapproved,
     })
 }
 

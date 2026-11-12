@@ -71,6 +71,10 @@ pub struct RescanReport {
     /// After this call, held versions whose `scan_finding` has no row in
     /// the findings list: doctor's `scan_findings_unlisted` (ADR-0074 d23).
     pub findings_unlisted: u64,
+    /// After this call, promoted versions with no approval, which only a
+    /// version promoted before migration 0044 can be: doctor's
+    /// `approval_unmatched` (ADR-0077 d6).
+    pub promoted_unapproved: u64,
 }
 
 /// A finding as a version's `scan_finding` carries it, as admission's
@@ -342,6 +346,7 @@ where
             held_unrescanned: backlog.held_unrescanned,
             rescan_due: backlog.rescan_due,
             findings_unlisted: backlog.findings_unlisted,
+            promoted_unapproved: backlog.promoted_unapproved,
         })
     }
 }

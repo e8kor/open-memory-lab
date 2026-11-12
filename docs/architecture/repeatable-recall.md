@@ -82,7 +82,7 @@ Other pipelines read more than the inputs above:
 | `bm25-rerank` | A local cross-encoder, under a time limit. When it is busy or late, the answer keeps the first stage's order and says `search.rerank: "skipped"`. |
 | `bm25-trigram`, `bm25`, `keyword-any`, `keyword-all` | They read no model. The test below does not cover them. |
 
-A recall with `as_of` is answered by the `bm25` scan over the scope at that instant, whatever pipeline is set (`keyword-all` is answered by `keyword-any` with every word required). The test below does not cover it.
+A recall with `as_of` reads the scope at that instant. Only `bm25-postings` and `sparse` are swapped for the `bm25` scan, because their counts and weights are today's, and `keyword-all` is answered by `keyword-any` with every word required. `bm25-trigram`, `bm25` and `keyword-any` answer as they are. The test below does not cover a recall with `as_of`.
 
 A recall that names `sources: "wide"` or a list reads more workareas, chosen without a clock, a random number or a model. The same inputs choose the same workareas ([ADR-0072](../adr/ADR-0072-recall-searches-the-trusted-workareas-a-key-already-reads-chosen-per-query-by-reviewed-descriptors-and-never-widens-what-it-may-read.md) d9).
 

@@ -5042,6 +5042,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut scan = scan_doctor(ready.as_ref(), scrape.as_ref());
     scan.extend(scan_backlog_doctor(scan_backlog.as_ref()));
     let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
+    let approvals = approval_doctor(scan_backlog.as_ref());
+    let approvals_warn = approvals.iter().any(|line| line.starts_with("warn"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     let usage = usage_doctor(usage_drift.as_ref());
     let usage_warn = usage.iter().any(|line| line.starts_with("warn"));
@@ -5097,6 +5099,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || telemetry_warn
         || handlers_warn
         || scan_warn
+        || approvals_warn
         || sync_warn
         || chat_warn
         || sources_warn
@@ -5151,6 +5154,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "handlers": handlers,
             "scan": scan,
             "usage": usage,
+            "approvals": approvals,
             "sources": sources,
             "in_progress": in_progress,
             "client_version": env!("CARGO_PKG_VERSION"),
@@ -5274,6 +5278,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &usage {
             println!("usage       : {line}");
+        }
+        for line in &approvals {
+            println!("approvals   : {line}");
         }
         for line in &sync {
             println!("sync        : {line}");
@@ -5648,6 +5655,26 @@ fn scan_backlog_doctor(report: Option<&Value>) -> Vec<String> {
         });
     }
     lines
+}
+
+/// The approval line (ADR-0077 d6), from the same one-event rescan window:
+/// how many promoted versions carry no approval because migration 0044's
+/// fill could not match their verdict. A count, never a list. A server
+/// before the count does not report it, and the line is then absent.
+fn approval_doctor(report: Option<&Value>) -> Vec<String> {
+    let Some(report) = report else {
+        return vec!["approval_unmatched: not read; an admin key reads it".to_owned()];
+    };
+    let Some(unmatched) = report["promoted_unapproved"].as_u64() else {
+        return Vec::new();
+    };
+    vec![if unmatched > 0 {
+        format!(
+            "warn approval_unmatched: {unmatched} promoted version(s) carry no approval, because migration 0044 found no verdict for their promotion in the journal; recall serves them with approver and approved_at null; supersede one with oml write --replaces and a reviewer approves the successor, or leave it"
+        )
+    } else {
+        "approval_unmatched: 0".to_owned()
+    }]
 }
 
 /// The scan doctor lines (ADR-0065 d11): the rule set `/readyz` names, how
@@ -6610,6 +6637,27 @@ mod tests {
                 "scan_held_unrescanned, scan_rescan_due: not read; an admin key reads them"
                     .to_owned()
             ]
+        );
+    }
+
+    #[test]
+    fn the_approval_doctor_names_the_count_of_promoted_versions_with_no_approval() {
+        let some = json!({ "scanner_version": "oml-scan/1.2", "promoted_unapproved": 3 });
+        assert_eq!(
+            approval_doctor(Some(&some)),
+            vec!["warn approval_unmatched: 3 promoted version(s) carry no approval, because migration 0044 found no verdict for their promotion in the journal; recall serves them with approver and approved_at null; supersede one with oml write --replaces and a reviewer approves the successor, or leave it".to_owned()]
+        );
+        let none = json!({ "scanner_version": "oml-scan/1.2", "promoted_unapproved": 0 });
+        assert_eq!(
+            approval_doctor(Some(&none)),
+            vec!["approval_unmatched: 0".to_owned()]
+        );
+        // A server before the count says nothing, and a key that cannot read
+        // the window says so.
+        assert!(approval_doctor(Some(&json!({ "scanner_version": "oml-scan/1.2" }))).is_empty());
+        assert_eq!(
+            approval_doctor(None),
+            vec!["approval_unmatched: not read; an admin key reads it".to_owned()]
         );
     }
 

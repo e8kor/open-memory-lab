@@ -1185,8 +1185,10 @@ pub trait JournalStore: Retriever + Send + Sync {
     /// How many of the tenant's versions, erased ones aside, were last
     /// scanned under a rule set other than `current`, the held ones and
     /// every one, and how many held versions carry a `scan_finding` with
-    /// no row in the findings list. Doctor's `scan_held_unrescanned`,
-    /// `scan_rescan_due` and `scan_findings_unlisted` (ADR-0074 d23, d28).
+    /// no row in the findings list, and how many promoted versions have no
+    /// approval. Doctor's `scan_held_unrescanned`, `scan_rescan_due`,
+    /// `scan_findings_unlisted` (ADR-0074 d23, d28) and
+    /// `approval_unmatched` (ADR-0077 d6).
     fn scan_backlog(
         &self,
         tenant_id: Uuid,
@@ -2089,12 +2091,17 @@ pub struct RecordedVersion {
 /// The tenant's rescan backlog (ADR-0074 d23, d28): held versions scanned
 /// under another rule set, every version so scanned, and held versions
 /// whose stored `scan_finding` has no row in the findings list, which an
-/// older server wrote while migration 0043 ran.
+/// older server wrote while migration 0043 ran. It carries, from the same
+/// pass, the promoted versions with no approval (ADR-0077 d6), which only
+/// a version promoted before migration 0044 can be.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScanBacklog {
     pub held_unrescanned: u64,
     pub rescan_due: u64,
     pub findings_unlisted: u64,
+    /// Promoted versions whose `approved_at` is null: migration 0044's fill
+    /// could not match their promotion's verdict.
+    pub promoted_unapproved: u64,
 }
 
 /// What a scanner says about itself, for `/readyz` and doctor's scan line

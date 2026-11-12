@@ -79,9 +79,22 @@ impl Git {
         if rev.starts_with('-') {
             return Err(not_a_commit());
         }
-        self.run(&["rev-parse", "--verify", &format!("{rev}^{{commit}}")])
-            .map(|s| s.trim().to_owned())
-            .map_err(|_| not_a_commit())
+        let out = self
+            .run(&["rev-parse", "--verify", &format!("{rev}^{{commit}}")])
+            .map_err(|_| not_a_commit())?;
+        // `^HEAD` verifies and prints `^<id>`, a negated revision and no
+        // commit. A bare object id is what every later git call and every
+        // message built on the result can rely on.
+        let id = out.trim();
+        if is_object_id(id) {
+            Ok(id.to_owned())
+        } else {
+            Err(format!(
+                "--rev {rev:?} did not resolve to one commit id in {}; name a commit, branch or \
+                 tag, not a negated or ranged revision",
+                self.dir.display()
+            ))
+        }
     }
 
     /// Whether this clone holds the commit `rev`.
@@ -174,12 +187,13 @@ impl Git {
             .map(|s| s.trim().to_owned())
     }
 
-    /// Every value of a multi-valued local git config entry of this clone;
-    /// empty when it is unset.
+    /// Every value of a multi-valued local git config entry of this clone,
+    /// as git holds it (a value `"true "` keeps its space and is not
+    /// `true`); empty when it is unset.
     #[must_use]
     pub fn config_all(&self, name: &str) -> Vec<String> {
         self.run(&["config", "--local", "--get-all", name])
-            .map(|s| s.lines().map(|l| l.trim().to_owned()).collect())
+            .map(|s| s.lines().map(ToOwned::to_owned).collect())
             .unwrap_or_default()
     }
 
@@ -267,6 +281,11 @@ impl Git {
             .collect::<Vec<_>>()
             .join("/"))
     }
+}
+
+/// Whether `text` is a full object id: 40 hex digits, or 64 under SHA-256.
+fn is_object_id(text: &str) -> bool {
+    matches!(text.len(), 40 | 64) && text.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// `text` as a pattern that matches only itself: the characters of
