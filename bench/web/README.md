@@ -102,8 +102,8 @@ with the change. The side without it ran the lead built at `e80efde6`, since no 
 links changed from there to `47ef9ffa`, beside the `oml-web` of `9a2f4bd2`, which the change does
 not touch.
 
-Other jobs shared the host that day. A run started only below a one-minute load of 2.0, the load
-was sampled every 5 seconds, and a run was stopped once it passed 4:
+Other jobs shared the host that day. A run started only below a one-minute load of 2.0, and the
+load was sampled every 5 seconds through it:
 
 | run | time | load at start | load at end | mean | highest | samples over 3 |
 |---|---|---|---|---|---|---|
