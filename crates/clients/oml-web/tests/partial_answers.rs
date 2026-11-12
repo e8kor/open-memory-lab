@@ -2,8 +2,8 @@
 //! bound (ADR-0070 d8), against an API double that answers each path as a
 //! test says: the Atlas and its JSON when the offers fail, the JSON route
 //! when the listing fails, a verdict whose next claim fails, the list past
-//! the pages of keys it reads, and a key issue whose answer carries no
-//! value (#253).
+//! the pages of keys it reads, a key issue whose answer carries no value
+//! (#253), and the allowlist at a cursor the API repeats (#293).
 
 use std::sync::{Arc, Mutex};
 
@@ -30,6 +30,8 @@ type Script = Arc<dyn Fn(&Method, &str) -> Answer + Send + Sync>;
 struct Double {
     script: Script,
     seen: Arc<Mutex<Vec<String>>>,
+    /// Whether the session's `admin` credential resolves too.
+    admin: bool,
 }
 
 fn envelope(code: &str) -> Value {
@@ -56,9 +58,12 @@ impl Transport for Double {
             .to_str()
             .unwrap()
             .to_owned();
-        // Only the web credential resolves, as for a person who is no admin.
+        // Only the web credential resolves, as for a person who is no admin,
+        // unless the double is an admin's.
         let (status, body, extra) = if path.starts_with("/v2/whoami") {
-            if bearer == format!("Bearer {}", capacity_credential(TOKEN, "web")) {
+            let resolves =
+                |capacity| bearer == format!("Bearer {}", capacity_credential(TOKEN, capacity));
+            if resolves("web") || (self.admin && resolves("admin")) {
                 (200, whoami(), Vec::new())
             } else {
                 (401, envelope("auth.invalid"), Vec::new())
@@ -84,6 +89,11 @@ struct Answered {
 }
 
 async fn send(script: Script, request: Request<Body>) -> Answered {
+    send_as(script, request, false).await
+}
+
+/// As [`send`], by an admin's session where `admin`.
+async fn send_as(script: Script, request: Request<Body>, admin: bool) -> Answered {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let app = router(Web {
         layers: Layers {
@@ -94,6 +104,7 @@ async fn send(script: Script, request: Request<Body>) -> Answered {
             Arc::new(Double {
                 script,
                 seen: seen.clone(),
+                admin,
             }),
             SECRET,
         )
@@ -271,6 +282,55 @@ async fn a_key_cursor_the_api_repeats_is_refused_as_an_api_fault_instead_of_cutt
     assert!(page.body.contains("unavailable"), "{}", page.body);
     assert!(page.body.contains("repeated"), "{}", page.body);
     assert!(!page.body.contains("limit.list_too_long"), "{}", page.body);
+}
+
+/// The allowlist the same way (#293): a cursor the API repeats is refused
+/// `unavailable` with 502, on the page and on the act that reads the list
+/// to find its entry, and the list is never shown cut at the repeat.
+#[tokio::test]
+async fn an_allowlist_cursor_the_api_repeats_is_refused_as_an_api_fault_instead_of_cutting_the_list()
+ {
+    let script: Script = Arc::new(|_, path| {
+        if path.starts_with("/v2/web/emails") {
+            let entry = json!({"email": "first@example.com", "user": "first", "admin": true});
+            (
+                200,
+                json!({"items": [entry], "next_cursor": "same"}),
+                Vec::new(),
+            )
+        } else {
+            (200, empty_page(), Vec::new())
+        }
+    });
+    let page = send_as(script.clone(), get("/web/admin/people"), true).await;
+    assert_eq!(page.status, StatusCode::BAD_GATEWAY, "{}", page.body);
+    assert!(page.body.contains("unavailable"), "{}", page.body);
+    assert!(page.body.contains("repeated"), "{}", page.body);
+    assert!(!page.body.contains("first@example.com"), "{}", page.body);
+    let listed = |calls: &[String]| {
+        calls
+            .iter()
+            .filter(|c| c.starts_with("GET /v2/web/emails"))
+            .count()
+    };
+    assert_eq!(listed(&page.calls), 2, "{:?}", page.calls);
+
+    let act = send_as(
+        script,
+        post(
+            "/web/admin/people",
+            "action=set_admin&email=first%40example.com&nonce=0123456789abcdef0123456789abcdef",
+        ),
+        true,
+    )
+    .await;
+    assert_eq!(act.status, StatusCode::BAD_GATEWAY, "{}", act.body);
+    assert!(act.body.contains("unavailable"), "{}", act.body);
+    assert!(
+        !act.calls.iter().any(|c| c.starts_with("POST ")),
+        "{:?}",
+        act.calls
+    );
 }
 
 #[tokio::test]
