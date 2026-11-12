@@ -1,8 +1,11 @@
+import contextlib
+import io
 import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import sys
 S = Path(__file__).resolve().parents[1]
@@ -104,6 +107,131 @@ class Numbers(unittest.TestCase):
         sh(c, "git", "fetch", "-q", "origin")
         sh(c, "git", "update-ref", "refs/remotes/origin/main", "refs/remotes/origin/other/x")
         self.assertFalse(any("also introduced on other/x" in p for p in CN.check(c, "origin/main", "mine", prs={"other/x": 1, "mine": 2})))
+
+
+def push_reservation(c, name, kind, number, title="theirs"):
+    """A branch of origin that holds a reservation in its NUMBERS.md and nothing else, as a branch
+    does between reserve_number.py and the pull request."""
+    sh(c, "git", "checkout", "-qb", name, "origin/main")
+    R.write_registry(c / "docs/NUMBERS.md", [
+        {"kind": kind, "number": number, "branch": name, "pr": "", "title": title, "state": "reserved"}])
+    sh(c, "git", "add", "-A"); sh(c, "git", "commit", "-qm", "reserve")
+    sh(c, "git", "push", "-q", "origin", name)
+    sh(c, "git", "checkout", "-q", "mine")
+    sh(c, "git", "reset", "-q", "--hard", "HEAD")
+    sh(c, "git", "fetch", "-q", "origin")
+
+
+OPEN = {"other/x": 1, "mine": 2}
+
+
+class EveryRemoteBranch(unittest.TestCase):
+    def reserve(self, c, *extra):
+        with mock.patch.object(N, "open_prs", return_value=OPEN):
+            return R.main(["adr", "--branch", "mine", "--title", "a", "--root", str(c), *extra])
+
+    def test_a_reservation_on_a_branch_with_no_pull_request_holds_its_number(self):
+        c = repo()
+        push_reservation(c, "res/y", "adr", 3)
+        self.assertEqual(0, self.reserve(c))
+        text = (c / "docs/NUMBERS.md").read_text()
+        self.assertIn("| adr | 0004 | `mine` |", text)
+        self.assertIn("| adr | 0003 | `res/y` |", text)
+
+    def test_a_number_another_branch_without_a_pull_request_reserved_is_refused_and_the_branch_is_named(self):
+        c = repo()
+        put(c, "docs/adr/ADR-0003-mine.md", "x")
+        R.main(["adr", "--branch", "mine", "--title", "a", "--root", str(c), "--no-fetch"])
+        sh(c, "git", "add", "-A"); sh(c, "git", "commit", "-qm", "a")
+        push_reservation(c, "res/y", "adr", 3)
+        with mock.patch.object(N, "open_prs", return_value=OPEN):
+            problems = CN.check(c, "origin/main", "mine")
+        self.assertIn("ADR-0003 is also reserved on res/y: one of the two renumbers", problems)
+
+    def test_a_reservation_whose_branch_was_deleted_or_whose_number_main_uses_holds_nothing(self):
+        c = repo()
+        push_reservation(c, "res/y", "adr", 1)  # main already uses ADR-0001
+        push_reservation(c, "res/z", "adr", 9)
+        sh(c, "git", "push", "-q", "origin", "--delete", "res/z")
+        self.assertEqual(0, self.reserve(c))
+        self.assertIn("| adr | 0003 | `mine` |", (c / "docs/NUMBERS.md").read_text())
+
+    def test_a_stale_reservation_copied_into_the_registry_is_released_with_its_branch(self):
+        c = repo()
+        R.write_registry(c / "docs/NUMBERS.md", [
+            {"kind": "adr", "number": 9, "branch": "res/z", "pr": "", "title": "gone", "state": "reserved"}])
+        self.assertEqual(0, self.reserve(c))  # res/z is on no remote and in no local branch
+        text = (c / "docs/NUMBERS.md").read_text()
+        self.assertIn("| adr | 0003 | `mine` |", text)
+        self.assertNotIn("res/z", text)
+
+    def test_a_failed_fetch_reserves_nothing_and_says_why(self):
+        c = repo()
+        sh(c, "git", "remote", "set-url", "origin", str(c / "no-such-remote"))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = self.reserve(c)
+        self.assertEqual(1, code)
+        self.assertIn("cannot read the remote branches: git fetch origin failed", err.getvalue())
+        self.assertIn("does not appear to be a git repository", err.getvalue())
+        self.assertIn("nothing was reserved", err.getvalue())
+        self.assertFalse((c / "docs/NUMBERS.md").exists())
+
+    def test_a_failed_fetch_fails_the_check_with_the_reason(self):
+        c = repo()
+        sh(c, "git", "remote", "set-url", "origin", str(c / "no-such-remote"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = CN.main(["--root", str(c), "--branch", "mine"])
+        self.assertEqual(1, code)
+        self.assertIn("numbers: FAIL: cannot read the remote branches", out.getvalue())
+
+    def test_no_fetch_reserves_against_the_refs_already_here_and_says_so(self):
+        c = repo()
+        sh(c, "git", "remote", "set-url", "origin", str(c / "no-such-remote"))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(0, self.reserve(c, "--no-fetch"))
+        self.assertIn("--no-fetch, using the remote refs already here", err.getvalue())
+
+
+    def test_no_fetch_says_so_on_the_check_and_on_its_ok_line(self):
+        c = repo()
+        sh(c, "git", "remote", "set-url", "origin", str(c / "no-such-remote"))
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+                mock.patch.object(N, "open_prs", return_value=OPEN):
+            code = CN.main(["--root", str(c), "--branch", "mine", "--no-fetch"])
+        self.assertEqual(0, code)
+        self.assertIn("numbers: --no-fetch, using the remote refs already here", err.getvalue())
+        self.assertIn("numbers: ok (mine, remote refs not refreshed)", out.getvalue())
+
+    def _broken_registry(self, c, text):
+        sh(c, "git", "checkout", "-qb", "res/broken", "origin/main")
+        put(c, "docs/NUMBERS.md", text)
+        sh(c, "git", "add", "-A"); sh(c, "git", "commit", "-qm", "broken")
+        sh(c, "git", "push", "-q", "origin", "res/broken")
+        sh(c, "git", "checkout", "-q", "mine")
+        sh(c, "git", "fetch", "-q", "origin")
+
+    def test_a_registry_with_conflict_markers_on_another_branch_refuses_the_reserve_and_names_the_branch(self):
+        c = repo()
+        self._broken_registry(c, "<<<<<<< HEAD\n| adr | 0003 | `res/broken` |  | t | reserved |\n=======\n>>>>>>> x\n")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = self.reserve(c)
+        self.assertEqual(1, code)
+        self.assertIn("res/broken", err.getvalue())
+        self.assertIn("conflict marker", err.getvalue())
+        self.assertFalse((c / "docs/NUMBERS.md").exists())
+
+    def test_a_malformed_row_on_another_branch_fails_the_check_and_names_the_branch(self):
+        c = repo()
+        self._broken_registry(c, "| adr | 0003 | `res/broken` | t | reserved |\n")
+        with mock.patch.object(N, "open_prs", return_value=OPEN):
+            problems = CN.check(c, "origin/main", "mine")
+        self.assertTrue(any("cannot read docs/NUMBERS.md on res/broken" in p and "malformed row" in p
+                            for p in problems), problems)
 
 
 class Changelog(unittest.TestCase):

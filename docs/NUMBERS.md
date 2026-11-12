@@ -16,9 +16,11 @@ git add docs/NUMBERS.md && git commit -m "chore: reserve ADR-nnnn" && git push
 ```
 
 `scripts/check_numbers.py` fails a pull request that introduces a number the registry assigns
-to another branch, or does not list. `python scripts/reserve_number.py --rebuild` rescans main
-and the unmerged remote branches and keeps the reservations. A number listed for two branches
-is a collision: the branch that reserved later renumbers.
+to another branch, or does not list. A reservation pushed on any unmerged remote branch holds its
+number, whether or not the branch has a pull request yet; delete a dead branch to release its
+numbers. `python scripts/reserve_number.py --rebuild` rescans main and the unmerged remote
+branches and keeps the reservations. A number listed for two branches is a collision: the
+branch that reserved later renumbers.
 
 | kind | number | branch | PR | title | state |
 |---|---|---|---|---|---|

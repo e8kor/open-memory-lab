@@ -29,7 +29,7 @@ use oml_page::web::{
 use oml_sdk::{ListedKey, encode};
 
 use crate::once::{self, ONCE_COOKIE, Secret};
-use crate::pages::{Fields, refused};
+use crate::pages::{Fields, WalkEnd, refused, walk};
 use crate::session::{PageCalls, Session, call, cookie};
 use crate::{Capacity, Web, acts, outcome};
 
@@ -47,9 +47,9 @@ pub const ADMIN_ACTIONS: &[&str] = &["cut_off"];
 /// The most keys one listing call reads, the API's maximum.
 const KEY_PAGE: u32 = 200;
 
-/// The most pages of keys a view reads: 10,000 keys. A constant of the
-/// build, unmeasured (#170).
-const KEY_PAGES_MAX: usize = 50;
+/// The most pages of keys a view reads: 10,000 keys, past which it is
+/// refused by name. A constant of the build, unmeasured (#170).
+pub const KEY_PAGES_MAX: usize = 50;
 
 /// Which page the view is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,28 +83,46 @@ fn notice(done: Option<&str>) -> Option<&'static str> {
 }
 
 /// Every key `user` names (the session's own where `None`), a page at a
-/// time.
+/// time, or the page that says why the list could not be read whole, so
+/// no view shows it cut short (#308): the API's refusal, `unavailable`
+/// with 502 at a cursor the API repeats, the API's fault, and
+/// `limit.list_too_long` past [`KEY_PAGES_MAX`] pages. `next` is the page
+/// a sign-in returns to.
 pub(crate) async fn keys(
     web: &Web,
     credential: &str,
     calls: &PageCalls,
     user: Option<&str>,
-) -> Result<Vec<ListedKey>, oml_sdk::Error> {
-    let mut out = Vec::new();
-    let mut cursor: Option<String> = None;
-    for _ in 0..KEY_PAGES_MAX {
+    next: &str,
+) -> Result<Vec<ListedKey>, acts::Refusal> {
+    walk(KEY_PAGES_MAX, |cursor| async move {
         let ids = calls.next_ids();
         let page = web
             .api
             .list_keys(&call(credential, &ids), user, KEY_PAGE, cursor.as_deref())
             .await?;
-        out.extend(page.items);
-        match page.next_cursor {
-            Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
-            _ => break,
-        }
-    }
-    Ok(out)
+        Ok((page.items, page.next_cursor))
+    })
+    .await
+    .map_err(|end| {
+        Box::new(match end {
+            WalkEnd::Failed(e) => outcome::page(&e, calls.page_id(), next),
+            WalkEnd::Repeated => refused(
+                StatusCode::BAD_GATEWAY,
+                "unavailable",
+                "the server repeated a cursor of the key list, so the list cannot be read whole; try again",
+                calls,
+            ),
+            WalkEnd::TooLong => refused(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "limit.list_too_long",
+                &format!(
+                    "the key list is longer than this page reads ({KEY_PAGES_MAX} pages of {KEY_PAGE}); use the API or the command line"
+                ),
+                calls,
+            ),
+        })
+    })
 }
 
 /// One key's row, with the acts the page allows on it: a live key that is
@@ -361,9 +379,9 @@ async fn user_view(
             calls,
         );
     };
-    let listed = match keys(web, &session.credential(Capacity::Web), calls, None).await {
+    let listed = match keys(web, &session.credential(Capacity::Web), calls, None, next).await {
         Ok(listed) => listed,
-        Err(e) => return outcome::page(&e, calls.page_id(), next),
+        Err(response) => return *response,
     };
     let csrf = session.csrf();
     let mut body = format!(
@@ -439,11 +457,12 @@ pub async fn admin_page(
             &session.credential(Capacity::Admin),
             &calls,
             Some(user),
+            next,
         )
         .await
         {
             Ok(listed) => listed,
-            Err(e) => return outcome::page(&e, calls.page_id(), next),
+            Err(response) => return *response,
         };
         body.push_str(&table(&listed, Side::Admin, &session.csrf(), user));
     }

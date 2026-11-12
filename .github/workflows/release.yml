@@ -29,7 +29,16 @@ name: Release
 #     these five, written by scripts/package_agent_artifacts.py, are summed and
 #     signed with the archives above;
 #   - oml-site-X.Y.Z.tar.gz, the landing site as static files (site/README.md),
-#     built by site/build.py and summed and signed with the archives above.
+#     built by site/build.py and summed and signed with the archives above;
+#   - the Python and TypeScript SDKs at the same version (a wheel, an sdist and an
+#     npm tarball, named by scripts/sdk_names.py from their manifests), built and
+#     smoke-tested from a clean install by scripts/build_sdk_packages.py, summed
+#     and signed with the archives above. They reach PyPI (trusted publishing) and
+#     npm (provenance) only when the repository variable PUBLISH_SDKS is `true`
+#     (GitHub compares case-insensitively, so `True` also turns it on) and
+#     sdks/REGISTRY-NAMES.toml records the operator's choice of registry names,
+#     from the signed bytes, after the GitHub release exists
+#     (docs/contributing/releasing.md, "Publishing the SDKs").
 # The verification command the release notes carry is the one that page
 # states; this file's path is the identity it pins.
 
@@ -51,6 +60,9 @@ jobs:
     timeout-minutes: 10
     outputs:
       version: ${{ steps.v.outputs.version }}
+      sdk_wheel: ${{ steps.v.outputs.sdk_wheel }}
+      sdk_sdist: ${{ steps.v.outputs.sdk_sdist }}
+      sdk_tgz: ${{ steps.v.outputs.sdk_tgz }}
     steps:
       - uses: actions/checkout@v4
       # RELEASE-HOLD at the root holds every release; every other job needs
@@ -66,6 +78,11 @@ jobs:
             echo "tag $tag, workspace $crate, plugin $plugin: all three must agree" >&2
             exit 1
           fi
+          # The SDKs are published at the server's version, so a tag whose
+          # SDK manifests were not bumped with it stops here.
+          python3 scripts/check_sdk_versions.py --tag "$tag"
+          # The SDK file names, from the manifests, for every job that names them.
+          python3 scripts/sdk_names.py --version "$tag" >> "$GITHUB_OUTPUT"
           echo "version=$tag" >> "$GITHUB_OUTPUT"
 
   # The runner labels are the ones GitHub lists for public repositories
@@ -316,11 +333,49 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The SDK packages, built from this checkout at the tag's version and shown to
+  # install and import from a fresh environment before anything signs or
+  # publishes them. This job never uploads to a registry; the two publish-sdk
+  # jobs below do, from these bytes. Actions here are pinned by commit.
+  sdks:
+    name: SDK packages, built and smoke-tested
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The Python floor, so the wheel and the sdist install where the package says they do.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          version: "0.11.6"  # the version ci.yml and m0-spikes.yml pin
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: Build both packages, check what they ship, install and import them
+        run: python scripts/build_sdk_packages.py --out sdk-dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sdks-python
+          path: sdk-dist/python/
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sdks-typescript
+          path: sdk-dist/typescript/
+          if-no-files-found: error
+          retention-days: 1
+
   # One job signs everything, so every bundle carries this workflow's identity
   # from one runner, and SHA256SUMS is written once the set is complete.
   binaries:
     name: SBOMs, SHA256SUMS, signatures
-    needs: [version, cli, server, web, lakewriter, agents, site]
+    needs: [version, cli, server, web, lakewriter, agents, site, sdks]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -333,6 +388,9 @@ jobs:
       SERVER_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
       WEB_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
       LAKEWRITER_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+      SDK_WHEEL: ${{ needs.version.outputs.sdk_wheel }}
+      SDK_SDIST: ${{ needs.version.outputs.sdk_sdist }}
+      SDK_TGZ: ${{ needs.version.outputs.sdk_tgz }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -343,7 +401,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: "{cli,server,web,lakewriter,agents,site}-*"
+          pattern: "{cli,server,web,lakewriter,agents,site,sdks}-*"
           merge-multiple: true
       - name: Every archive is here, and nothing else
         run: |
@@ -361,6 +419,7 @@ jobs:
           want="$want oml-agent-kit-${VERSION}.tar.gz oml-agent-kit-${VERSION}.zip"
           want="$want oml-marketplace-${VERSION}.json"
           want="$want oml-site-${VERSION}.tar.gz"
+          want="$want $SDK_WHEEL $SDK_SDIST $SDK_TGZ"
           diff <(printf '%s\n' $want | sort) <(ls dist | sort)
       - name: One SBOM per archive, for its own target's dependency graph
         run: |
@@ -382,11 +441,11 @@ jobs:
             cargo cyclonedx --format json --override-filename sbom --target "$t"
             cp crates/bins/oml-lakewriter/sbom.json "dist/oml-lakewriter-${VERSION}-$t.cdx.json"
           done
-          (cd dist && sha256sum ./*.tar.gz ./*.zip ./*.cdx.json ./oml-marketplace-*.json > SHA256SUMS)
+          (cd dist && sha256sum ./*.tar.gz ./*.zip ./*.whl ./*.tgz ./*.cdx.json ./oml-marketplace-*.json > SHA256SUMS)
       - name: Sign (keyless, bound to this workflow)
         run: |
           cd dist
-          for f in *.tar.gz *.zip *.cdx.json oml-marketplace-*.json SHA256SUMS; do
+          for f in *.tar.gz *.zip *.whl *.tgz *.cdx.json oml-marketplace-*.json SHA256SUMS; do
             cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
           done
       - uses: actions/upload-artifact@v4
@@ -526,6 +585,9 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       DIGEST: ${{ needs.merge.outputs.digest }}
+      SDK_WHEEL: ${{ needs.version.outputs.sdk_wheel }}
+      SDK_SDIST: ${{ needs.version.outputs.sdk_sdist }}
+      SDK_TGZ: ${{ needs.version.outputs.sdk_tgz }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -596,10 +658,13 @@ jobs:
           aarch64-unknown-linux-gnu.
           The landing site, static files for a web server (site/README.md):
           \`oml-site-${VERSION}.tar.gz\`.
+          The Python and TypeScript SDKs, installed from the files here: \`${SDK_WHEEL}\` and
+          \`${SDK_SDIST}\` (\`pip install ./${SDK_WHEEL}\`), and \`${SDK_TGZ}\`
+          (\`npm install ./${SDK_TGZ}\`).
 
           ## Verify
 
-          Every archive, SBOM, the pinned marketplace and \`SHA256SUMS\` here, and the image, are
+          Every archive, SDK package, SBOM, the pinned marketplace and \`SHA256SUMS\` here, and the image, are
           signed keyless by this release workflow; the image's signature is on the index digest, and each platform image
           is signed too:
 
@@ -626,7 +691,7 @@ jobs:
                 oml-cli-${VERSION}-x86_64-pc-windows-msvc.zip
               Expand-Archive oml-cli-${VERSION}-x86_64-pc-windows-msvc.zip -DestinationPath .
 
-          \`SHA256SUMS\` lists every archive, SBOM and the pinned marketplace; verify its bundle the
+          \`SHA256SUMS\` lists every archive, SDK package, SBOM and the pinned marketplace; verify its bundle the
           same way, then \`sha256sum --check --ignore-missing SHA256SUMS\`.
 
           Each binary has a CycloneDX SBOM (\`*.cdx.json\`), generated from the committed Cargo.lock.
@@ -639,6 +704,110 @@ jobs:
             --title "Open Memory Lab ${VERSION}" \
             --notes-file notes.md \
             --verify-tag
+
+  # Publishing the SDKs is an outward act and belongs to the operator, so both
+  # jobs below are skipped unless the repository variable PUBLISH_SDKS is `true`
+  # (Settings, Secrets and variables, Actions, Variables; GitHub compares
+  # case-insensitively, so `True` turns it on too), and each stops at its first
+  # step while sdks/REGISTRY-NAMES.toml does not record the operator's choice of
+  # registry names. Each runs only after the signed GitHub release exists, then
+  # checks every file it uploads, by name, against the signed SHA256SUMS, and
+  # uploads those bytes. A job holds `id-token: write` beyond a read of the
+  # repository, and its actions are pinned by commit. scripts/check_release.py
+  # holds all of this (no continue-on-error, no `|| true`, the environment kept).
+  # The registry-side set-up and the order the operator does it in are in
+  # docs/contributing/releasing.md, "Publishing the SDKs". A published version
+  # cannot be replaced, so a rerun after a partial publish fails at the file the
+  # registry already holds.
+  publish-sdk-pypi:
+    name: Python SDK to PyPI (trusted publishing)
+    needs: [version, binaries, publish]
+    if: vars.PUBLISH_SDKS == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SDK_WHEEL: ${{ needs.version.outputs.sdk_wheel }}
+      SDK_SDIST: ${{ needs.version.outputs.sdk_sdist }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: The registry name is decided
+        run: python3 scripts/check_sdk_registry_names.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist
+      - name: Only files that were signed, each checked by name against SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          for f in "$SDK_WHEEL" "$SDK_SDIST"; do
+            line="$(awk -v f="./$f" '$2 == f' SHA256SUMS)"
+            [ "$(printf '%s\n' "$line" | grep -c .)" = 1 ] || { echo "$f is not listed exactly once in SHA256SUMS" >&2; exit 1; }
+            printf '%s\n' "$line" | sha256sum --check --strict -
+          done
+          cd ..
+          mkdir pypi
+          cp "dist/$SDK_WHEEL" "dist/$SDK_SDIST" pypi/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: pypi
+          print-hash: true
+
+  publish-sdk-npm:
+    name: TypeScript SDK to npm (provenance)
+    needs: [version, binaries, publish]
+    if: vars.PUBLISH_SDKS == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SDK_TGZ: ${{ needs.version.outputs.sdk_tgz }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: The registry name is decided
+        run: python3 scripts/check_sdk_registry_names.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: Only the file that was signed, checked by name against SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          for f in "$SDK_TGZ"; do
+            line="$(awk -v f="./$f" '$2 == f' SHA256SUMS)"
+            [ "$(printf '%s\n' "$line" | grep -c .)" = 1 ] || { echo "$f is not listed exactly once in SHA256SUMS" >&2; exit 1; }
+            printf '%s\n' "$line" | sha256sum --check --strict -
+          done
+      # Trusted publishing (no token) needs npm 11.5.1 or later
+      # (docs.npmjs.com/trusted-publishers, fetched 2026-11-12), which Node 24 ships.
+      - name: npm is new enough to sign a provenance statement over OIDC
+        run: |
+          have="$(npm --version)"
+          printf '%s\n' "11.5.1" "$have" | sort -V -C || { echo "npm $have is older than 11.5.1" >&2; exit 1; }
+      # NPM_TOKEN is for the first publish only: a trusted publisher is
+      # configured on a package that exists. Once it is configured, delete the
+      # secret and this step does nothing.
+      - name: Token for the first publish, when the secret is set
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"
+          fi
+      # ./ matters: npm reads a bare dist/x.tgz as the GitHub repository dist/x.tgz.
+      - name: Publish with provenance
+        run: npm publish "./dist/$SDK_TGZ" --provenance --access public
 
   # The Helm chart (docs/adr/ADR-0033-interim-helm-chart.md d10): packaged at
   # the tag's version, signed keyless like every other artifact here, and

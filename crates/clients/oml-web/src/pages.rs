@@ -118,6 +118,41 @@ pub async fn guardrails_page(
 /// workareas. A constant of the build, unmeasured (#170).
 pub const TREE_PAGES_MAX: usize = 50;
 
+/// Why a cursor walk read no whole list.
+pub(crate) enum WalkEnd<E> {
+    /// A page's call failed.
+    Failed(E),
+    /// The API named a cursor it had named before, at once or in a cycle.
+    Repeated,
+    /// The list goes on past the pages the walk reads.
+    TooLong,
+}
+
+/// Every item of a listing the API pages by cursor, at most `pages_max`
+/// pages of it: `page` reads the page at a cursor and answers its items
+/// with the next cursor. A cursor the API names twice ends the walk as
+/// [`WalkEnd::Repeated`], and a next cursor on the last page read as
+/// [`WalkEnd::TooLong`], so no caller is handed a list cut short (#308).
+pub(crate) async fn walk<T, E, F, Fut>(pages_max: usize, mut page: F) -> Result<Vec<T>, WalkEnd<E>>
+where
+    F: FnMut(Option<String>) -> Fut,
+    Fut: Future<Output = Result<(Vec<T>, Option<String>), E>>,
+{
+    let mut items = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..pages_max {
+        let (read, next) = page(cursor).await.map_err(WalkEnd::Failed)?;
+        items.extend(read);
+        match next {
+            None => return Ok(items),
+            Some(next) if !seen.insert(next.clone()) => return Err(WalkEnd::Repeated),
+            Some(next) => cursor = Some(next),
+        }
+    }
+    Err(WalkEnd::TooLong)
+}
+
 /// Every workarea under `root`, a page of the tree at a time, or the
 /// request id of the call that ended the listing, with the API's error
 /// where a call failed: a failed call, a cursor the API repeats, or a
@@ -128,25 +163,23 @@ pub(crate) async fn workareas(
     calls: &PageCalls,
     root: &str,
 ) -> Result<Vec<WorkareaNode>, (String, Option<oml_sdk::Error>)> {
-    let mut nodes = Vec::new();
-    let mut cursor: Option<String> = None;
-    let mut seen = std::collections::HashSet::new();
-    for _ in 0..TREE_PAGES_MAX {
+    walk(TREE_PAGES_MAX, |cursor| async move {
         let ids = calls.next_ids();
-        let request_id = ids.request_id.clone().unwrap_or_default();
         let page = web
             .api
             .workarea_tree(&call(credential, &ids), root, TREE_PAGE, cursor.as_deref())
-            .await
-            .map_err(|e| (request_id.clone(), Some(e)))?;
-        nodes.extend(page.items);
-        match page.next_cursor {
-            None => return Ok(nodes),
-            Some(next) if !seen.insert(next.clone()) => return Err((request_id, None)),
-            Some(next) => cursor = Some(next),
+            .await?;
+        Ok((page.items, page.next_cursor))
+    })
+    .await
+    .map_err(|end| {
+        // The call that ended the listing is the last one made.
+        let request_id = calls.made().last().cloned().unwrap_or_default();
+        match end {
+            WalkEnd::Failed(e) => (request_id, Some(e)),
+            WalkEnd::Repeated | WalkEnd::TooLong => (request_id, None),
         }
-    }
-    Err((calls.made().last().cloned().unwrap_or_default(), None))
+    })
 }
 
 /// The guardrails in force at the selected workarea, read-only: the scope,

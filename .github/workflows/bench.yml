@@ -77,13 +77,14 @@ jobs:
             ${{ runner.temp }}/bench/tables.md
             ${{ runner.temp }}/bench/oml-bench/
 
-  # Test 7's timing half (ADR-0072 d6, d13): wall-clock quantiles move with
-  # the host's load, so they run here, weekly and off the gating suite, which
-  # keeps the deterministic half: the same answers with and without the
-  # unreadable rows (#278). A failure here is a measurement to read, not a
-  # red pull request.
+  # The timing halves of tests 7 and 4 (ADR-0072 d6, d13): wall-clock times
+  # move with the host's load, so they run here, weekly and off the gating
+  # suite, which keeps the deterministic halves: the same answers and the
+  # same work, rows or tuples read, with and without the unreadable rows
+  # (#278), and with an unreadable list name as with an absent one (#295).
+  # A failure here is a measurement to read, not a red pull request.
   timing:
-    name: federated recall timing measurements (test 7)
+    name: federated recall timing measurements (tests 7 and 4)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     services:
@@ -105,3 +106,5 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo test --locked -p oml-pg --test federation_timing -- --ignored --exact federated_recall_timing_does_not_depend_on_an_unreadable_workarea --nocapture
       - run: cargo test --locked -p oml-port-contracts --test doubles -- --ignored --exact federated_recall_double_timing_does_not_depend_on_an_unreadable_workarea --nocapture
+      - run: cargo test --locked -p oml-pg --test federation_timing -- --ignored --exact a_lists_unreadable_name_refusal_takes_the_time_of_an_absent_names_refusal --nocapture
+      - run: cargo test --locked -p oml-port-contracts --test doubles -- --ignored --exact a_lists_unreadable_name_refusal_takes_the_time_of_an_absent_names_refusal --nocapture
