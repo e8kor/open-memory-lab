@@ -944,6 +944,10 @@ fn claim_item(m: &Value) -> Map<String, Value> {
         ("tokens", "tokens"),
         ("created_at", "created_at"),
         ("promoted_at", "promoted_at"),
+        // When the version was approved and by what kind of reviewer, as
+        // the ring serves both (ADR-0077 d1).
+        ("approved_at", "approved_at"),
+        ("approver", "approver"),
         ("valid_from", "valid_from"),
         ("valid_until", "valid_until"),
         ("format", "format"),

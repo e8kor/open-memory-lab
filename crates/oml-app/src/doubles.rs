@@ -1815,7 +1815,10 @@ fn apply_fold(
                 .insert(memory.memory_id);
             state.memories.insert(memory.memory_id, memory);
         }
-        MetadataFold::MemoryPromoted { memory_id } => {
+        MetadataFold::MemoryPromoted {
+            memory_id,
+            approval,
+        } => {
             if let Some(promoted) = state.memories.get(&memory_id).cloned() {
                 // One served tip per claim: any other tip refuses the
                 // commit, as `memories_served_tip` does (ADR-0025 d10).
@@ -1835,6 +1838,7 @@ fn apply_fold(
                     memory.status = MemoryStatus::Promoted;
                     memory.is_tip = true;
                     memory.promoted_at = Some(at.clone());
+                    memory.approval = approval;
                 }
             }
             state.queue.retain(|e| e.memory_id != memory_id);
@@ -1900,6 +1904,7 @@ fn apply_fold(
             successor,
             replaced,
             replaced_valid_until,
+            approval,
         } => {
             // The compare-and-set: the successor is held and replaces
             // `replaced`, which is still the promoted tip under the
@@ -1947,6 +1952,7 @@ fn apply_fold(
                 memory.status = MemoryStatus::Promoted;
                 memory.is_tip = true;
                 memory.promoted_at = Some(at.clone());
+                memory.approval = approval;
             }
             state.queue.retain(|e| e.memory_id != successor);
         }

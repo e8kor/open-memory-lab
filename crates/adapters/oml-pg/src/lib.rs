@@ -41,7 +41,7 @@ use oml_app::search::{
     RetrievalQuery, Retrieved, RetrieverKind, SparsePending, SparsePosting, SparseTenant,
 };
 use oml_app::types::{
-    AdminSearch, AdminState, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
+    AdminSearch, AdminState, Approval, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition,
     ClaimEdgeRecord, ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode,
     ConnectCodeRecord, ConnectGrant, ConnectOutcome, ConnectionRecord, Credential, CrewRecord,
     DenialRecord, DocumentCaching, FormatFields, GrantRecord, GuardrailFields, HIT_KINDS,
@@ -2117,7 +2117,10 @@ const MEMORY_COLUMNS: &str = "m.id, m.tenant_id, m.workarea_id, m.claim_key, m.v
      to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
      AS created_at_signed, \
      to_char(m.promoted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
-     AS promoted_at_signed";
+     AS promoted_at_signed, \
+     m.approver_held_by, m.approver_same_user, \
+     to_char(m.approved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     AS approved_at_signed";
 
 fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
     let status: String = row.try_get("status").map_err(backend)?;
@@ -2167,6 +2170,7 @@ fn memory_from_row(row: &PgRow) -> Result<MemoryRecord, StoreError> {
         anchor: anchor_from_row(row)?.map(Box::new),
         origin_kind: origin_kind_from_row(row)?,
         source_check: source_check_from_row(row)?.map(Box::new),
+        approval: approval_from_row(row)?.map(Box::new),
         format: Box::new(FormatFields {
             media_type: row.try_get("format").map_err(backend)?,
             title: row.try_get("title").map_err(backend)?,
@@ -2253,6 +2257,26 @@ fn source_check_from_row(row: &PgRow) -> Result<Option<SourceCheck>, StoreError>
         moved_to: text("source_check_path")?
             .map(|path| Ok::<_, StoreError>((path, text("source_check_fragment")?)))
             .transpose()?,
+        at: EventTime::parse(&at).map_err(backend)?,
+    }))
+}
+
+/// The approving verdict stored on a version's row, `None` where it holds
+/// none; a row that holds its time without its attestation fails closed
+/// (ADR-0077 d6).
+fn approval_from_row(row: &PgRow) -> Result<Option<Approval>, StoreError> {
+    let Some(at) = row
+        .try_get::<Option<String>, _>("approved_at_signed")
+        .map_err(backend)?
+    else {
+        return Ok(None);
+    };
+    let held_by: Option<String> = row.try_get("approver_held_by").map_err(backend)?;
+    let held_by = held_by
+        .ok_or_else(|| StoreError::Backend("an approval without its attestation".to_owned()))?;
+    Ok(Some(Approval {
+        held_by: held_by_from_str(&held_by)?,
+        same_user: row.try_get("approver_same_user").map_err(backend)?,
         at: EventTime::parse(&at).map_err(backend)?,
     }))
 }
@@ -2817,6 +2841,22 @@ async fn insert_memory(
         .await
         .map_err(backend)?;
     }
+    // A version stored already promoted keeps the approval it carries, as
+    // its promotion's fold would have written it (ADR-0077 d6).
+    if let Some(approval) = m.approval.as_deref() {
+        sqlx::query(
+            "UPDATE memories SET approver_held_by = $3, approver_same_user = $4, \
+             approved_at = ($5)::timestamptz WHERE tenant_id = $1 AND id = $2",
+        )
+        .bind(m.tenant_id)
+        .bind(m.memory_id)
+        .bind(approval.held_by.as_str())
+        .bind(approval.same_user)
+        .bind(approval.at.as_str())
+        .execute(&mut **tx)
+        .await
+        .map_err(backend)?;
+    }
     Ok(())
 }
 
@@ -2864,17 +2904,35 @@ async fn promote_memory(
     tenant_id: Uuid,
     memory_id: Uuid,
     at: &EventTime,
+    approval: Option<&Approval>,
 ) -> Result<(), StoreError> {
-    sqlx::query(
-        "UPDATE memories SET status = 'promoted', is_tip = true, \
-         promoted_at = ($3)::timestamptz WHERE tenant_id = $1 AND id = $2",
-    )
-    .bind(tenant_id)
-    .bind(memory_id)
-    .bind(at.as_str())
-    .execute(&mut **tx)
-    .await
-    .map_err(backend)?;
+    // The row keeps the approving verdict that ratified it, in the one
+    // statement that promotes it; a promotion that carries none names no
+    // approval column, so a schema before 0044 still takes it (ADR-0077
+    // d6).
+    let promote = match approval {
+        Some(_) => {
+            "UPDATE memories SET status = 'promoted', is_tip = true, \
+             promoted_at = ($3)::timestamptz, approver_held_by = $4, \
+             approver_same_user = $5, approved_at = ($6)::timestamptz \
+             WHERE tenant_id = $1 AND id = $2"
+        }
+        None => {
+            "UPDATE memories SET status = 'promoted', is_tip = true, \
+             promoted_at = ($3)::timestamptz WHERE tenant_id = $1 AND id = $2"
+        }
+    };
+    let mut promote = sqlx::query(promote)
+        .bind(tenant_id)
+        .bind(memory_id)
+        .bind(at.as_str());
+    if let Some(approval) = approval {
+        promote = promote
+            .bind(approval.held_by.as_str())
+            .bind(approval.same_user)
+            .bind(approval.at.as_str());
+    }
+    promote.execute(&mut **tx).await.map_err(backend)?;
     sqlx::query("DELETE FROM review_queue WHERE tenant_id = $1 AND memory_id = $2")
         .bind(tenant_id)
         .bind(memory_id)
@@ -2898,6 +2956,7 @@ async fn supersede_tip(
     replaced: Uuid,
     replaced_valid_until: Option<&ValidEnd>,
     at: &EventTime,
+    approval: Option<&Approval>,
 ) -> Result<(), StoreError> {
     // The ratification's end for the replaced version, when it gives one
     // (proposed ADR-0059 d4); null leaves the end as it was.
@@ -2931,7 +2990,7 @@ async fn supersede_tip(
         .await
         .map_err(backend)?;
     }
-    promote_memory(tx, tenant_id, successor, at).await
+    promote_memory(tx, tenant_id, successor, at, approval).await
 }
 
 /// The fold of `claim_edge.proposed`: the edge row, then the lineage
@@ -3772,8 +3831,11 @@ async fn apply_fold(
                 enqueue_review(tx, tenant_id, memory.memory_id).await?;
             }
         }
-        MetadataFold::MemoryPromoted { memory_id } => {
-            promote_memory(tx, tenant_id, memory_id, at).await?;
+        MetadataFold::MemoryPromoted {
+            memory_id,
+            approval,
+        } => {
+            promote_memory(tx, tenant_id, memory_id, at, approval.as_deref()).await?;
         }
         MetadataFold::MemoryRejected { memory_id } => {
             set_memory_status(tx, tenant_id, memory_id, MemoryStatus::Rejected).await?;
@@ -3835,6 +3897,7 @@ async fn apply_fold(
             successor,
             replaced,
             replaced_valid_until,
+            approval,
         } => {
             supersede_tip(
                 tx,
@@ -3843,6 +3906,7 @@ async fn apply_fold(
                 replaced,
                 replaced_valid_until.as_deref(),
                 at,
+                approval.as_deref(),
             )
             .await?;
         }

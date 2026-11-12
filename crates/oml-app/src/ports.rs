@@ -167,6 +167,10 @@ pub enum StoreError {
 /// (ADR-0026 d1, d5); a row that names a crew names one of its own tenant's
 /// crew records, or the store refuses it (postgres-schema.md `crews`).
 #[derive(Debug, Clone)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "MemoryHeld carries the whole record, 8 bytes past the lint's bound since the record names its approval (ADR-0077 d6); a commit builds one or two folds and moves them"
+)]
 pub enum MetadataFold {
     /// `tenant.genesis`: the tenant's row, named, unique in the deployment.
     /// The PoC creates its tenant here, since the provider chain's
@@ -324,9 +328,15 @@ pub enum MetadataFold {
     /// Ratification of a claim's first version: it is promoted and becomes
     /// the tip, and `promoted_at` is the event's `at`. The store refuses a
     /// second promoted tip of one `claim_key` in one workarea
-    /// (postgres-schema.md `memories_served_tip`; ADR-0025 d10).
+    /// (postgres-schema.md `memories_served_tip`; ADR-0025 d10). `approval`
+    /// is the approving verdict the event's `ratification_event_id` names,
+    /// stored on the row with the promotion (ADR-0077 d6). The application
+    /// always sends one; `None` writes none, so a store over a schema
+    /// before migration 0044 still takes the promotion, as the migration
+    /// laws send it.
     MemoryPromoted {
         memory_id: Uuid,
+        approval: Option<Box<crate::types::Approval>>,
     },
     MemoryRejected {
         memory_id: Uuid,
@@ -362,6 +372,10 @@ pub enum MetadataFold {
         /// successor's declared start, when it begins inside the replaced
         /// version's interval; `None` changes no end (proposed ADR-0059 d4).
         replaced_valid_until: Option<Box<oml_domain::valid_time::ValidEnd>>,
+        /// The approving verdict that ratified the successor, stored on its
+        /// row with the promotion; `None` as on [`Self::MemoryPromoted`]
+        /// (ADR-0077 d6).
+        approval: Option<Box<crate::types::Approval>>,
     },
     /// `web.email_allowed`: the entry's row, with no pinned subject. The
     /// store refuses an email another tenant's entry holds with

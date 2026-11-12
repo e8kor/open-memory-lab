@@ -1050,6 +1050,8 @@ async fn oml_read_get_returns_the_authors_held_row_to_its_author_and_not_found_t
         fields(item),
         vec![
             "anchor",
+            "approved_at",
+            "approver",
             "artifact_id",
             "attachments",
             "claim_key",
@@ -2405,6 +2407,8 @@ async fn oml_read_listing_pages_with_a_client_held_cursor() {
         fields,
         vec![
             "anchor",
+            "approved_at",
+            "approver",
             "artifact_id",
             "claim_key",
             "created_at",
@@ -2821,6 +2825,8 @@ async fn oml_read_recall_steering_items_carry_text_and_tokens_not_body() {
     // claim item; ADR-0025 d12; ADR-0049 d6).
     let base = [
         "anchor",
+        "approved_at",
+        "approver",
         "artifact_id",
         "claim_key",
         "created_at",
@@ -3395,6 +3401,8 @@ async fn every_oml_read_mode_returns_claim_items_with_text_under_mode() {
     // ADR-0025 d12's claim item and its text, in each mode's container.
     let base = [
         "anchor",
+        "approved_at",
+        "approver",
         "artifact_id",
         "claim_key",
         "created_at",
