@@ -4917,7 +4917,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut reads_universe: Option<bool> = None;
     let mut admin_emails: Option<(usize, Vec<String>)> = None;
     let mut signup_overview: Option<Value> = None;
-    let mut scan_backlog: Option<Value> = None;
+    // The rescan window an admin key reads: `None` for any other key, and
+    // the reason where an admin's read failed.
+    let mut rescan_read: Option<Result<Value, String>> = None;
     let mut default_node: Option<Value> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
@@ -5007,14 +5009,19 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 federation_settings = client.get("/v2/federation").ok().map(|(_, v)| v);
                 // One event's window, read for the counts it carries
                 // (ADR-0074 d28).
-                scan_backlog = client.get("/v2/admin/rescan?limit=1").ok().map(|(_, v)| v);
+                rescan_read = Some(
+                    client
+                        .get("/v2/admin/rescan?limit=1")
+                        .map(|(_, v)| v)
+                        .map_err(unread_reason),
+                );
                 // The usage counters against their rows (ADR-0071 d3, d5).
-                usage_drift = Some(client.get("/v2/admin/usage/drift").map(|(_, v)| v).map_err(
-                    |e| match e {
-                        CliError::Refused { status, code, .. } => format!("{status} {code}"),
-                        CliError::Local(reason) | CliError::Unanswered(reason) => reason,
-                    },
-                ));
+                usage_drift = Some(
+                    client
+                        .get("/v2/admin/usage/drift")
+                        .map(|(_, v)| v)
+                        .map_err(unread_reason),
+                );
             }
         }
     }
@@ -5040,9 +5047,10 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
     let telemetry = telemetry_doctor(scrape.as_ref());
     let mut scan = scan_doctor(ready.as_ref(), scrape.as_ref());
-    scan.extend(scan_backlog_doctor(scan_backlog.as_ref()));
+    let scan_backlog = rescan_read.as_ref().and_then(|read| read.as_ref().ok());
+    scan.extend(scan_backlog_doctor(scan_backlog));
     let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
-    let approvals = approval_doctor(scan_backlog.as_ref());
+    let approvals = approval_doctor(rescan_read.as_ref());
     let approvals_warn = approvals.iter().any(|line| line.starts_with("warn"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     let usage = usage_doctor(usage_drift.as_ref());
@@ -5657,17 +5665,35 @@ fn scan_backlog_doctor(report: Option<&Value>) -> Vec<String> {
     lines
 }
 
+/// Why a read doctor made was not answered, as its lines name it: the
+/// status and code of a refusal, else the local reason.
+fn unread_reason(e: CliError) -> String {
+    match e {
+        CliError::Refused { status, code, .. } => format!("{status} {code}"),
+        CliError::Local(reason) | CliError::Unanswered(reason) => reason,
+    }
+}
+
 /// The approval line (ADR-0077 d6), from the same one-event rescan window:
 /// how many served versions carry no approval because migration 0044's
 /// fill could not match their verdict. A count, never a list, and no
 /// command lists them. A server
-/// before the count does not report it, and the line is then absent.
-fn approval_doctor(report: Option<&Value>) -> Vec<String> {
-    let Some(report) = report else {
-        return vec!["approval_unmatched: not read; an admin key reads it".to_owned()];
+/// before the count does not report it, and the line is then absent. An
+/// admin key whose read failed is told so with the reason, and a count
+/// that is no unsigned integer is named, never read as zero.
+fn approval_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
+    let report = match read {
+        None => return vec!["approval_unmatched: not read; an admin key reads it".to_owned()],
+        Some(Err(reason)) => return vec![format!("warn approval_unmatched: not read ({reason})")],
+        Some(Ok(report)) => report,
     };
-    let Some(unmatched) = report["promoted_unapproved"].as_u64() else {
+    let Some(count) = report.get("promoted_unapproved") else {
         return Vec::new();
+    };
+    let Some(unmatched) = count.as_u64() else {
+        return vec![format!(
+            "warn approval_unmatched: the server's promoted_unapproved is {count}, not a count"
+        )];
     };
     vec![if unmatched > 0 {
         format!(
@@ -6645,21 +6671,43 @@ mod tests {
     fn the_approval_doctor_names_the_count_of_promoted_versions_with_no_approval() {
         let some = json!({ "scanner_version": "oml-scan/1.2", "promoted_unapproved": 3 });
         assert_eq!(
-            approval_doctor(Some(&some)),
+            approval_doctor(Some(&Ok(some))),
             vec!["warn approval_unmatched: 3 served version(s) carry no approval, because migration 0044 found no verdict for their promotion in the journal; recall serves them with approver and approved_at null, and no command lists which they are; to clear one, supersede it with oml write --replaces, and it is no longer counted once a reviewer approves the successor; or leave it".to_owned()]
         );
         let none = json!({ "scanner_version": "oml-scan/1.2", "promoted_unapproved": 0 });
         assert_eq!(
-            approval_doctor(Some(&none)),
+            approval_doctor(Some(&Ok(none))),
             vec!["approval_unmatched: 0".to_owned()]
         );
         // A server before the count says nothing, and a key that cannot read
         // the window says so.
-        assert!(approval_doctor(Some(&json!({ "scanner_version": "oml-scan/1.2" }))).is_empty());
+        assert!(
+            approval_doctor(Some(&Ok(json!({ "scanner_version": "oml-scan/1.2" })))).is_empty()
+        );
         assert_eq!(
             approval_doctor(None),
             vec!["approval_unmatched: not read; an admin key reads it".to_owned()]
         );
+    }
+
+    #[test]
+    fn the_approval_doctor_warns_when_an_admins_read_fails_and_when_the_count_is_not_a_count() {
+        // The admin's read failed: a warn naming why, not "an admin key
+        // reads it", which this key is.
+        assert_eq!(
+            approval_doctor(Some(&Err("503 unavailable".to_owned()))),
+            vec!["warn approval_unmatched: not read (503 unavailable)".to_owned()]
+        );
+        // The member is there and is no unsigned integer.
+        for odd in [json!("many"), json!(-1), json!(1.5), Value::Null] {
+            let report = json!({ "scanner_version": "oml-scan/1.2", "promoted_unapproved": odd });
+            assert_eq!(
+                approval_doctor(Some(&Ok(report))),
+                vec![format!(
+                    "warn approval_unmatched: the server's promoted_unapproved is {odd}, not a count"
+                )],
+            );
+        }
     }
 
     #[test]
