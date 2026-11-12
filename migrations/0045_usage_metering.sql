@@ -8,10 +8,19 @@
 --
 -- Run by the owner role, with oml.serving_role set as 0007 requires.
 --
--- Safe on a live database: four new tables, two functions, a check widened
--- on user_quotas (at most six rows a person, new in 0037), and a fill of
--- the new rows from the stored ones; a lock is waited for at most 5 s, then
--- the migration fails and is run again in a quieter moment.
+-- What it costs a live database: four new tables, three functions, a check
+-- widened on user_quotas (at most six rows a person, new in 0037), and a
+-- fill of the new rows from the stored ones, in one transaction. Until its
+-- commit it holds SHARE ROW EXCLUSIVE on tenants (the new tables' foreign
+-- keys), which a tenant's creation or settings change waits for, and ACCESS
+-- EXCLUSIVE on user_quotas, which a read of an account's overrides waits
+-- for. memories, api_keys and oauth_connections are read and never locked
+-- against a write. The fill reads each tenant's memories three times, each
+-- an aggregate. Measured on PostgreSQL 18 over one tenant of 100 accounts,
+-- three runs each (2026-11-12): 59 to 92 ms with 10,000 versions stored,
+-- 424 to 444 ms with 100,000. The server runs it at start, before it
+-- serves. A lock is waited for at most 5 s, then the migration fails and is
+-- run again in a quieter moment.
 
 SET LOCAL lock_timeout = '5s';
 

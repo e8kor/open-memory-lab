@@ -186,7 +186,11 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
   under the tenant RLS of 0004. It widens the `user_quotas` check to six quotas and sets the
   serving grants (`usage_daily`: SELECT, INSERT and DELETE for the 25-month retention, no UPDATE).
   It fills `account_meters` and `account_activity` from the rows already stored, so a live
-  database starts with no drift.
+  database starts with no drift: each account's `memories`, `text_bytes`, `keys` and
+  `connections` by d2's definitions, and its `writes` per day for the last 62 days from each
+  stored version's `created_at`. `recalls` starts at zero, since nothing stored counts them. It
+  assigns no profile and adds no limit. The migration's header names the locks it holds and its
+  measured time: under half a second with 100,000 versions stored.
 - `account.profile_set` joins the [event catalog](../data/event-catalog.md). `limit.quota`'s
   `details.quota` gains `text_bytes` and `writes_per_month`.
 - [http-api](../api/http-api.md) and openapi.yaml gain the five routes, and the SDKs are
