@@ -195,7 +195,10 @@ async fn the_start_page_draws_each_meter_against_its_limit_with_a_mark_at_eighty
     assert!(memories.contains(r#"value="800""#), "{memories}");
     // The bar is past its low mark where the chip says 80%, and past its
     // high mark only at the limit.
-    assert!(memories.contains(r#"low="799" high="999""#), "{memories}");
+    assert!(
+        memories.contains(r#"low="799.5" high="999.5""#),
+        "{memories}"
+    );
 
     let text = row(&page.body, "Text stored");
     assert!(text.contains("2.0 MB / 2.0 MB"), "{text}");
@@ -437,7 +440,8 @@ async fn the_users_page_marks_no_meter_of_a_person_whose_limits_do_not_hold() {
     }
     assert!(!free.contains("oml-chip"), "{free}");
     assert!(
-        page.body.contains("for a person the limits hold for"),
+        page.body
+            .contains("on a row whose <code>under_quotas</code> is true"),
         "{}",
         page.body
     );

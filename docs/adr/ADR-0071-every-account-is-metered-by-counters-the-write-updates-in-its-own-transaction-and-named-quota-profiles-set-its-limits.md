@@ -93,7 +93,8 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
   is the author of its earliest version 1, which the review of the build measured on 2026-11-12
   in two outcomes for a tenant key: a tenant writer key that revives a person's released
   `claim_key` in their root raises that person's `memories` with no check against their ceiling,
-  and a person who claims a key a tenant key first used in their root is charged nothing.
+  and a person who claims a key a tenant key first used in their root is charged no memory;
+  their bytes and their write are counted.
 
     Counters can drift from their rows only through a bug or a hand edit. `GET
     /v2/admin/usage/drift` recomputes every account's stocks from the rows, by the definitions
@@ -208,7 +209,8 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     `POST /v2/web/users/{user}/quota` takes; `text_bytes` and `writes_per_month` are set through
     the profile route with an admin key, and the card and the page say so. The Keys page gained
     one call for the card, `GET /v2/whoami` with the person block, sent in the same round as the
-    key list. Its cost is unmeasured, on a page that was already over its budget (#322).
+    key list. The call is unmeasured, on a page measured inside its budget without it: +1.2 and
+    +1.9 ms p95 after #309 ([web benchmark](../benchmarks/web.md); #322).
 
 - **d7 — Meters are counts. They never hold text, a query or an address.** `account_meters`,
   `account_activity` and `usage_daily` hold ids, a profile name, dates and integers. A recall

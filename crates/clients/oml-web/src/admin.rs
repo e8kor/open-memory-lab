@@ -475,7 +475,7 @@ pub async fn users_page(
         }
         body.push_str("</table><p class=\"dim\">Closing disables the person and cuts off their keys; their memories stay until they are erased with <code>oml erase</code>.</p>");
     }
-    body.push_str("<h2>People</h2><p class=\"dim\">Each count against its limit. A mark shows at 80% of a limit and at the limit, for a person the limits hold for: the people of the sign-up tenant. Writes count this UTC month.</p><table><tr><th>user</th><th>memories</th><th>text stored</th><th>writes</th><th>keys</th><th>connections</th><th>requests/min</th><th></th></tr>");
+    body.push_str("<h2>People</h2><p class=\"dim\">Each count against its limit. A mark shows at 80% of a limit and at the limit, on a row whose <code>under_quotas</code> is true. Writes count this UTC month.</p><table><tr><th>user</th><th>memories</th><th>text stored</th><th>writes</th><th>keys</th><th>connections</th><th>requests/min</th><th></th></tr>");
     for u in &listed.users {
         let flags = match (u.signed_up, u.disabled) {
             (_, true) => r#" <span class="tag dim">disabled</span>"#,

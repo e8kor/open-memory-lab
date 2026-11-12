@@ -93,14 +93,29 @@ fn bytes_to(n: u64, digits: u32) -> String {
     )
 }
 
-/// The `low` and `high` of a meter's bar over a limit above zero, so the
-/// bar is in the region the chip names at every count: a browser colours
-/// a count at or under `low` as fine, one up to `high` as the middle and
-/// one past it as the worst, and the chip says 80% from four fifths of the
-/// limit and limit at it.
+/// The `low` and `high` of a meter's bar over a limit above zero, in
+/// halves of a count, so the bar is in the region the chip names at every
+/// count: a browser colours a count at or under `low` as fine, one up to
+/// `high` as the middle and one past it as the worst, and the chip says
+/// 80% from four fifths of the limit and limit at it. Each bound is half a
+/// count under the count that changes the chip, so `low` is above the
+/// bar's optimum, zero, even at a limit of one: a `low` equal to the
+/// optimum makes a browser colour no part as the worst.
 fn bar_bounds(limit: u64) -> (u64, u64) {
     let warning_from = limit.saturating_mul(8).div_ceil(10);
-    (warning_from.saturating_sub(1), limit.saturating_sub(1))
+    (
+        warning_from.saturating_mul(2).saturating_sub(1),
+        limit.saturating_mul(2).saturating_sub(1),
+    )
+}
+
+/// A bound in halves of a count as a `<meter>` attribute reads it.
+fn halves(n: u64) -> String {
+    if n.is_multiple_of(2) {
+        (n / 2).to_string()
+    } else {
+        format!("{}.5", n / 2)
+    }
 }
 
 /// The meters `usage` and `limits` carry, in the order the API lists them:
@@ -237,7 +252,9 @@ pub(crate) fn card(person: &Person) -> Option<String> {
                 let (low, high) = bar_bounds(limit);
                 let (used, of) = r.counts(limit);
                 format!(
-                    r#"<meter min="0" max="{limit}" low="{low}" high="{high}" optimum="0" value="{}" aria-label="{}: {used} of {of}"></meter>"#,
+                    r#"<meter min="0" max="{limit}" low="{}" high="{}" optimum="0" value="{}" aria-label="{}: {used} of {of}"></meter>"#,
+                    halves(low),
+                    halves(high),
                     r.used.min(limit),
                     r.name,
                 )
@@ -294,10 +311,21 @@ mod tests {
         assert_eq!(reading(0, Some(0)).mark(), Mark::Reached);
     }
 
-    /// The region a browser colours a `<meter>` whose optimum is its
-    /// minimum: at or under `low` the optimum, to `high` the middle, past
-    /// it the worst (HTML, the meter element's gauge regions).
+    /// The region a browser colours a `<meter>` whose minimum and optimum
+    /// are zero (HTML, the meter element's gauge regions). An optimum below
+    /// `low` makes the part up to `low` the best, the part up to `high` the
+    /// middle and the rest the worst. An optimum that is `low` itself makes
+    /// `low` to `high` the best and every other part the middle: no part is
+    /// then the worst, whatever the count.
     fn region(value: u64, low: u64, high: u64) -> Mark {
+        let optimum = 0;
+        if optimum >= low {
+            return if value >= low && value <= high {
+                Mark::Ok
+            } else {
+                Mark::Warning
+            };
+        }
         if value <= low {
             Mark::Ok
         } else if value <= high {
@@ -310,18 +338,29 @@ mod tests {
     #[test]
     fn the_bar_is_in_the_region_of_the_chip_at_every_count() {
         for limit in [1, 2, 4, 5, 9, 10, 11, 100, 1000] {
+            // The bounds are in halves of a count, so the count is too.
             let (low, high) = bar_bounds(limit);
-            assert!(low <= high && high < limit, "{limit}: {low} {high}");
+            assert!(
+                0 < low && low <= high && high < 2 * limit,
+                "{limit}: {low} {high}"
+            );
             for used in 0..=limit + 1 {
                 assert_eq!(
-                    region(used.min(limit), low, high),
+                    region(2 * used.min(limit), low, high),
                     reading(used, Some(limit)).mark(),
                     "{used} of {limit}"
                 );
             }
         }
         // At exactly 80% the chip says so, and the bar is past its low mark.
-        assert_eq!(bar_bounds(1000), (799, 999));
+        assert_eq!(bar_bounds(1000), (1599, 1999));
+        assert_eq!(
+            (halves(1599), halves(1999)),
+            ("799.5".to_owned(), "999.5".to_owned())
+        );
+        // A limit of one: the bar is fine at none and the worst at one.
+        assert_eq!(bar_bounds(1), (1, 1));
+        assert_eq!(halves(1), "0.5");
     }
 
     #[test]
