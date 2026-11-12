@@ -10,10 +10,8 @@ class of disagreement found:
   names one version for the image, the binaries and the plugin;
 - the plugin declares exactly url and a sensitive api_key: plugin.json's
   userConfig is ADR-0040 d1's two options, titles and descriptions included,
-  as ADR-0043 d2 amends them: url with the default server and not required,
-  api_key required with no default; and url's default is DEFAULT_URL in
-  crates/bins/oml-cli/src/setup.rs, the server the hooks and `oml setup
-  claude-code` take for a key named alone (ADR-0043 d1, d8);
+  as ADR-0076 d2 restores them: url required with no default, and api_key
+  required with no default (ADR-0076 d10 test 2);
 - the mcp entry reads no environment variable: .mcp.json declares exactly one
   http server, `oml`, since one key does the agent's whole loop (ADR-0025), at
   `${user_config.url}/mcp` with the header `Bearer ${user_config.api_key}`,
@@ -143,17 +141,14 @@ PLUGIN_AGENT_FIELDS = {
     "disallowedTools", "skills", "memory", "background", "omitClaudeMd", "isolation", "color",
 }
 # ADR-0040 d1: the same URL-and-key pair as every other client, lower-cased;
-# ADR-0043 d2: url defaults to the maintainer's public server and is not
-# required. Written out here, not read from setup.rs, so the check does not
-# agree with itself; the_default_url_is_the_clis checks the two agree.
-DEFAULT_URL = "https://memory.doublegate.io"
-SETUP_RS = "crates/bins/oml-cli/src/setup.rs"
+# ADR-0076 d2: url is required and names no default server, so Claude Code's
+# configuration dialog asks for it.
 USER_CONFIG = {
     "url": {
         "type": "string",
         "title": "OML server URL",
-        "description": "Your Open Memory Lab server, without /mcp. Leave the default to use the maintainer's public server.",
-        "default": DEFAULT_URL,
+        "description": "Your Open Memory Lab server, without /mcp, as its sign-up page or administrator gave it to you.",
+        "required": True,
     },
     "api_key": {
         "type": "string",
@@ -199,7 +194,6 @@ def main() -> int:
         )
 
     the_plugin_declares_exactly_url_and_a_sensitive_api_key(manifest, errors)
-    the_default_url_is_the_clis(errors)
     the_mcp_entry_reads_no_environment_variable(plugin_dir, errors)
     the_readme_exports_no_api_key(plugin_dir, errors)
 
@@ -248,30 +242,16 @@ def main() -> int:
 
 
 def the_plugin_declares_exactly_url_and_a_sensitive_api_key(manifest: dict, errors: list[str]) -> None:
-    """plugin.json's userConfig is exactly ADR-0040 d1's two options as ADR-0043
-    d2 amends them: `url` with the maintainer's public server as its default
-    and not required, so a user of that server pastes only the key, and
-    `api_key` with `sensitive: true` and no default, so Claude Code keeps the
-    key in the keychain and never in settings.json."""
+    """plugin.json's userConfig is exactly ADR-0040 d1's two options as ADR-0076
+    d2 restores them: `url` required with no default, so the configuration
+    dialog asks for the server and no release names one, and `api_key` with
+    `sensitive: true` and no default, so Claude Code keeps the key in the
+    keychain and never in settings.json."""
     declared = manifest.get("userConfig")
     if declared != USER_CONFIG:
         errors.append(
             f"plugin.json userConfig is {json.dumps(declared, sort_keys=True)}, not exactly the url and "
-            f"sensitive api_key options of ADR-0040 d1 and ADR-0043 d2: {json.dumps(USER_CONFIG, sort_keys=True)}"
-        )
-
-
-def the_default_url_is_the_clis(errors: list[str]) -> None:
-    """The url option's default is the server `oml hook` pairs with a plugin
-    key set alone and `oml setup claude-code` with a key named alone, so the
-    tools, the hooks and the setup verb reach one server (ADR-0043 d1, d3, d4)."""
-    match = re.search(r'pub const DEFAULT_URL: &str = "([^"]*)";', (ROOT / SETUP_RS).read_text())
-    if not match:
-        errors.append(f"DEFAULT_URL not found in {SETUP_RS}")
-    elif match.group(1) != DEFAULT_URL:
-        errors.append(
-            f"{SETUP_RS} DEFAULT_URL is {match.group(1)!r}, not the plugin's url default {DEFAULT_URL!r} "
-            f"(ADR-0043 d1)"
+            f"sensitive api_key options of ADR-0040 d1 and ADR-0076 d2: {json.dumps(USER_CONFIG, sort_keys=True)}"
         )
 
 

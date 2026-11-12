@@ -7494,6 +7494,8 @@ async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_worka
             "profile": null,
             // A tenant key names no person (ADR-0070 d5).
             "person": null,
+            // No server.shared and no open sign-up (ADR-0076 d9).
+            "shared": false,
         })
     );
 

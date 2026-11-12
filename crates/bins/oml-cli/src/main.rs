@@ -232,14 +232,15 @@ struct QuickstartArgs {
 enum SetupCommand {
     /// Install the matching oml plugin through the claude CLI, passing the URL and key
     /// on stdin. Admin and operator keys are refused. Print commands with --print or
-    /// when claude is unavailable. Without --url, use <https://memory.doublegate.io>.
+    /// when claude is unavailable. A key without --url asks for the server on a terminal
+    /// and is refused elsewhere.
     ClaudeCode(SetupClaudeCodeArgs),
 }
 
 #[derive(Args)]
 struct SetupClaudeCodeArgs {
     /// Key file from `oml keys issue-agent --out`, used instead of --api-key and
-    /// paired with --url or the default server.
+    /// paired with --url alone, never with OML_URL.
     #[arg(long)]
     key_file: Option<PathBuf>,
     /// Print claude commands without running them; configure reads the key file or OML_API_KEY.
@@ -827,7 +828,7 @@ struct SyncArgs {
     /// With --edges, ratify matching pending edges proposed by another key.
     #[arg(long, requires = "edges")]
     ratify: bool,
-    /// Allow the maintainer's public server and record consent for this clone.
+    /// Allow a server that declares itself shared and record consent for its origin in this clone.
     /// Its admins can read submissions; supersession or retirement does not erase
     /// submitted text or anchors.
     #[arg(long)]
@@ -1143,23 +1144,52 @@ impl Source<'_> {
         }
     }
 
-    /// Why a source that sets one value alone is refused, naming the other.
+    /// Why a source that sets one value alone is refused, naming the other;
+    /// a key without a URL is `no_server`, and names `oml login <server>`
+    /// (ADR-0076 d5, d8).
     fn half(&self) -> String {
         let (set, unset) = if self.url.is_some() {
             (self.url_name, self.key_name)
         } else {
             (self.key_name, self.url_name)
         };
-        match &self.file {
+        let why = match &self.file {
             Some(file) => format!("{file} sets {set} without {unset}"),
             None => format!("{set} is set without {unset}"),
+        };
+        if self.url.is_some() {
+            why
+        } else {
+            format!("no_server: {why}; name the server beside it, or run `oml login <server>`")
         }
     }
 }
 
+/// Doctor's `url` line when no source names a server: it fails, and no
+/// server API is called (ADR-0076 d8).
+const NO_SERVER_DOCTOR: &str = "fail no_server: no server URL is configured (--url, OML_URL or \
+                                the credentials file); no server API was called, and the \
+                                metrics listener is read only where OML_METRICS_URL names it";
+
+/// Doctor's line for an admin on a lead that sets no `oauth.issuer`
+/// (ADR-0076 d6, d8).
+const SERVER_ORIGIN: &str = "warn server_origin: the server names no public origin (oauth.issuer \
+                             unset), so its pages cannot show the URL agents set beside their keys";
+
+/// Doctor's line when the plugin exported its key option and no url: its
+/// tools and hooks reach no server, since the url has no default
+/// (ADR-0076 d8). `None` otherwise.
+fn plugin_no_server(var: &dyn Fn(&str) -> Option<String>) -> Option<&'static str> {
+    let set = |name: &str| var(name).is_some_and(|v| !v.is_empty());
+    (set(oml_cli::hook::OPTION_API_KEY) && !set(oml_cli::hook::OPTION_URL)).then_some(
+        "warn plugin_no_server: the oml plugin has a key and no url; since this release its url \
+         has no default, so its tools reach no server and its hooks load nothing",
+    )
+}
+
 /// Why no start source sets anything.
-const NO_PAIR: &str = "no URL and API key: pass --url and --api-key, set OML_URL and OML_API_KEY, \
-                       or run `oml bootstrap claim`";
+const NO_PAIR: &str = "no_server: no URL and API key: pass --url and --api-key, set OML_URL and \
+                       OML_API_KEY, run `oml login <server>`, or run `oml bootstrap claim`";
 
 /// The flags, then the environment, then the credentials file: the first
 /// that sets either value, or `None` (ADR-0039 d15).
@@ -1220,7 +1250,16 @@ fn resolve_url(cli: &Cli, stored: &Credentials) -> Result<Client, CliError> {
         .clone()
         .or_else(|| cli.start.env_url.clone())
         .or_else(|| stored.url.clone())
-        .ok_or_else(|| missing("no URL: pass --url or set OML_URL"))?;
+        .ok_or_else(|| {
+            let file = creds::path().map_or_else(
+                |_| "the credentials file".to_owned(),
+                |p| format!("the credentials file {}", p.display()),
+            );
+            missing(&format!(
+                "no_server: no URL: pass --url, set OML_URL, or have {file} name one (oml login \
+                 <server> writes it)"
+            ))
+        })?;
     Ok(Client::new(url, None))
 }
 
@@ -2162,27 +2201,30 @@ fn grants_json(grants: &[(String, String)]) -> Vec<Value> {
 /// (ADR-0057 d6, d17).
 fn authorize_public_sync(client: &Client, source: &Path, explicit: bool) -> Result<(), CliError> {
     use oml_cli::sync::source::{
-        PublicServerConsent, authorize_public_server, record_public_server_consent,
+        SharedServerConsent, authorize_shared_server, record_shared_server_consent,
     };
-    let consent =
-        authorize_public_server(client.server(), source, explicit).map_err(CliError::Local)?;
+    // A whoami without `shared` comes from a server older than ADR-0076 and
+    // counts as not shared: the operator's choice of 2026-11-11 (d9).
+    let shared = client.whoami()?["shared"].as_bool().unwrap_or(false);
+    let consent = authorize_shared_server(client.server(), shared, source, explicit)
+        .map_err(CliError::Local)?;
     let scope = match consent {
-        PublicServerConsent::FirstOptIn => "for this clone",
-        PublicServerConsent::OneTime => "for this run only; the source is outside a git clone",
-        PublicServerConsent::NotRequired | PublicServerConsent::Recorded => return Ok(()),
+        SharedServerConsent::FirstOptIn => "for this server in this clone",
+        SharedServerConsent::OneTime => "for this run only; the source is outside a git clone",
+        SharedServerConsent::NotRequired | SharedServerConsent::Recorded => return Ok(()),
     };
     eprintln!(
-        "warn: public-server sync allowed {scope} for {}: its admins can read submitted memories; \
-         supersession or retirement does not erase submitted text or anchors",
+        "warn: shared-server sync allowed {scope} for {}: its admins can read submitted \
+         memories; superseding or retiring a memory does not erase submitted text or anchors",
         client.server()
     );
-    if consent == PublicServerConsent::FirstOptIn {
-        record_public_server_consent(source).map_err(CliError::Local)?;
+    if consent == SharedServerConsent::FirstOptIn {
+        record_shared_server_consent(source, client.server()).map_err(CliError::Local)?;
     }
     Ok(())
 }
 
-/// `oml sync`: refuses the public server unless allowed, reads the source
+/// `oml sync`: refuses a shared server unless allowed, reads the source
 /// at --rev, and runs the plan through the HTTP API (ADR-0057 d6-d11).
 fn run_sync(cli: &Cli, stored: &Credentials, args: &SyncArgs) -> Result<ExitCode, CliError> {
     use oml_cli::sync::{adapter::Kind, api::HttpApi, run};
@@ -4511,25 +4553,17 @@ fn owner_only_dir(path: &std::path::Path) -> Result<(), CliError> {
 // oml setup claude-code
 // ---------------------------------------------------------------------------
 
-/// The pair `oml setup claude-code` hands the plugin, and whether its URL is
-/// the default: `--key-file`'s key with the `--url` flag, a flag source of
-/// its own, or the pair as [`resolve`] takes it (ADR-0039 d15, ADR-0041 d7
-/// step 1). A key named without a URL, by either form, is paired with
-/// [`oml_cli::setup::DEFAULT_URL`] and the verb says so on stderr before
-/// anything is sent; a URL named without a key is refused (ADR-0043 d4).
+/// The pair `oml setup claude-code` hands the plugin: `--key-file`'s key
+/// with the `--url` flag, or the pair as [`resolve`] takes it (ADR-0039 d15,
+/// ADR-0041 d7 step 1). A key named without a URL, by any form, asks for the
+/// server on a terminal and is refused as `setup.no_server` off one, before
+/// anything is sent; a key file is never paired with `OML_URL`, and a URL
+/// named without a key is refused (ADR-0076 d4).
 fn setup_pair(
     cli: &Cli,
     stored: &Credentials,
     key_file: Option<&std::path::Path>,
-) -> Result<(Client, String, bool), CliError> {
-    use oml_cli::setup::url_beside_key;
-    let beside = |named: Option<&String>| {
-        let (url, said) = url_beside_key(named.map(String::as_str));
-        if let Some(said) = said {
-            eprintln!("{said}");
-        }
-        (url, said.is_some())
-    };
+) -> Result<(Client, String), CliError> {
     let Some(path) = key_file else {
         return match first_source(cli, stored) {
             Some(Source {
@@ -4537,8 +4571,11 @@ fn setup_pair(
                 key: Some(key),
                 ..
             }) => {
-                let (url, defaulted) = beside(url);
-                Ok((Client::new(url, Some(key.clone())), key.clone(), defaulted))
+                let url = match url {
+                    Some(url) => url.clone(),
+                    None => ask_for_the_server(false)?,
+                };
+                Ok((Client::new(url, Some(key.clone())), key.clone()))
             }
             Some(source) => Err(missing(&source.half())),
             None => Err(missing(NO_PAIR)),
@@ -4558,12 +4595,34 @@ fn setup_pair(
             path.display()
         )));
     }
-    let (url, defaulted) = beside(cli.start.flag_url.as_ref());
-    Ok((
-        Client::new(url, Some(key.to_owned())),
-        key.to_owned(),
-        defaulted,
-    ))
+    let url = match &cli.start.flag_url {
+        Some(url) => url.clone(),
+        None => ask_for_the_server(cli.start.env_url.is_some())?,
+    };
+    Ok((Client::new(url, Some(key.to_owned())), key.to_owned()))
+}
+
+/// The server for a key named without a URL: asked for on stderr and read
+/// from stdin when both are terminals, the test `oml login` uses for its key
+/// ([`read_secret`]); refused as `setup.no_server` otherwise, or on an empty
+/// answer. `oml_url_set` adds why `OML_URL` was not used (ADR-0076 d4).
+fn ask_for_the_server(oml_url_set: bool) -> Result<String, CliError> {
+    use oml_cli::setup;
+    use std::io::{BufRead as _, IsTerminal as _, Write as _};
+    let refused = || CliError::local(setup::no_server(oml_url_set));
+    if !(std::io::stdin().is_terminal() && std::io::stderr().is_terminal()) {
+        return Err(refused());
+    }
+    if oml_url_set {
+        eprintln!("{}", setup::OML_URL_NOT_PAIRED);
+    }
+    eprint!("{}", setup::URL_PROMPT);
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line).map_err(|e| {
+        CliError::local(format!("cannot read the server URL from the terminal: {e}"))
+    })?;
+    setup::answered_url(&line).ok_or_else(refused)
 }
 
 /// `oml setup claude-code` (ADR-0041 d7): check the key through whoami and
@@ -4577,12 +4636,8 @@ fn run_setup_claude_code(
     args: &SetupClaudeCodeArgs,
 ) -> Result<ExitCode, CliError> {
     use oml_cli::setup;
-    let (client, key, defaulted) = setup_pair(cli, stored, args.key_file.as_deref())?;
-    let me = client.whoami().inspect_err(|_| {
-        if defaulted {
-            eprintln!("{}", setup::DEFAULT_REFUSED);
-        }
-    })?;
+    let (client, key) = setup_pair(cli, stored, args.key_file.as_deref())?;
+    let me = client.whoami()?;
     let role = me["role"].as_str().unwrap_or_default();
     if setup::refuses_role(role) {
         return Err(CliError::local(format!(
@@ -4986,6 +5041,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     // stale count and the waiting edges are the sources lines'.
     let sync = oml_cli::sync::doctor::lines(
         source.as_ref().and_then(|s| s.url.map(String::as_str)),
+        me.as_ref()
+            .and_then(|m| m.as_ref().ok())
+            .and_then(|m| m["shared"].as_bool()),
         &std::env::current_dir().unwrap_or_default(),
     );
     let sync_warn = sync.iter().any(|line| line.starts_with("warn"));
@@ -5006,12 +5064,22 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         .zip(ready.as_ref())
         .map(|(url, (_, body))| discovery::check(url, body));
     let oauth_ok = !oauth.as_ref().is_some_and(|o| o["state"] == "failing");
+    // A lead with no oauth.issuer cannot show agents the URL to set beside
+    // their keys; an admin can set it (ADR-0076 d6, d8).
+    let server_origin = (oauth.as_ref().is_some_and(|o| o["state"] == "off")
+        && matches!(&me, Some(Ok(v)) if v["role"] == "admin"))
+    .then_some(SERVER_ORIGIN);
+    // The plugin's key option exported with no url reaches no server, since
+    // its url has no default (ADR-0076 d8).
+    let plugin = plugin_no_server(&|name: &str| std::env::var(name).ok());
     let probes_ok = matches!((&health, &ready), (Some((200, _)), Some((200, _))));
     let whoami_ok = !matches!(me, Some(Err(_)));
     let review_warn = review.as_ref().is_some_and(|line| line.starts_with("warn"));
     let outcome = if !probes_ok || !whoami_ok || !oauth_ok {
         "fail"
     } else if me.is_none()
+        || server_origin.is_some()
+        || plugin.is_some()
         || reads_universe == Some(false)
         || web_warn
         || search_warn
@@ -5061,6 +5129,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 "pending_transitions": n["pending_transitions"].as_array().map_or(0, Vec::len),
             })),
             "oauth_discovery": oauth,
+            "server_origin": server_origin,
+            "plugin": plugin,
             "web": web,
             "search": search,
             "review": review,
@@ -5077,26 +5147,28 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "next": next,
         }));
     } else {
-        println!("url         : {}", url_source.as_deref().unwrap_or("unset"));
+        match &url_source {
+            Some(source) => println!("url         : {source}"),
+            None => println!("url         : {NO_SERVER_DOCTOR}"),
+        }
         println!("api key     : {}", key_source.as_deref().unwrap_or("unset"));
-        match &health {
-            Some((status, body)) => println!(
+        if let Some(line) = plugin {
+            println!("plugin      : {line}");
+        }
+        if let Some((status, body)) = &health {
+            println!(
                 "healthz     : {} ({})",
                 verdict(*status == 200),
                 field(body, "status")
-            ),
-            None => println!("healthz     : not probed (no URL)"),
+            );
         }
-        match &ready {
-            Some((status, body)) => {
-                println!("readyz      : {}", verdict(*status == 200));
-                if let Some(checks) = body["checks"].as_object() {
-                    for (name, state) in checks {
-                        println!("  {name:<10}: {}", state.as_str().unwrap_or("—"));
-                    }
+        if let Some((status, body)) = &ready {
+            println!("readyz      : {}", verdict(*status == 200));
+            if let Some(checks) = body["checks"].as_object() {
+                for (name, state) in checks {
+                    println!("  {name:<10}: {}", state.as_str().unwrap_or("—"));
                 }
             }
-            None => println!("readyz      : not probed (no URL)"),
         }
         match &me {
             Some(Ok(_)) => println!(
@@ -5162,7 +5234,10 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 field(o, "url"),
                 field(o, "reason")
             ),
-            None => println!("oauth       : not probed (no URL)"),
+            None => {}
+        }
+        if let Some(line) = server_origin {
+            println!("oauth       : {line}");
         }
         for line in &web {
             println!("web         : {line}");
@@ -5201,7 +5276,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         match (&ready, server_version(ready.as_ref())) {
             (_, Some(version)) => println!("server      : oml-server-lead {version}"),
             (Some(_), None) => println!("server      : version not reported by /readyz"),
-            (None, None) => println!("server      : not probed (no URL)"),
+            (None, None) => {}
         }
         println!("verdict     : {outcome}");
         if let Some(next) = &next {
@@ -5566,8 +5641,10 @@ fn scan_backlog_doctor(report: Option<&Value>) -> Vec<String> {
 /// start by action and the rules that fired most. Counts only: no finding
 /// carries what it matched.
 fn scan_doctor(ready: Option<&(u16, Value)>, scrape: Option<&Scrape>) -> Vec<String> {
+    // No URL: doctor's url line names no_server, and nothing stands in for
+    // the probe (ADR-0076 d8).
     let Some((_, body)) = ready else {
-        return vec!["not probed (no URL)".to_owned()];
+        return Vec::new();
     };
     let scan = &body["scan"];
     let Some(version) = scan["version"].as_str() else {

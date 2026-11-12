@@ -47,10 +47,6 @@ pub const EXPORT_PATH: &str = "/web/start/export";
 /// The setup view, the server URL and the guides.
 pub const SETUP_PATH: &str = "/web/setup";
 
-/// The public server the plugins and the agent kit connect to unless told
-/// otherwise (ADR-0043).
-pub const DEFAULT_SERVER: &str = "https://memory.doublegate.io";
-
 const GUIDES: &str = "https://e8kor.github.io/open-memory-lab/guides";
 
 /// The `/web/start` acts (ADR-0068 d10).
@@ -185,19 +181,30 @@ fn credential_card(client: Client, secret: &Secret, server: &str) -> String {
         }
         (Client::ClaudeCode, Secret::Key { value, .. }) => {
             out.push_str(&copy_block("cred-key", "Your key, shown once", value));
+            if server.is_empty() {
+                let _ = write!(out, r#"<p class="desc">{}</p>"#, keys::NO_SERVER);
+            }
             out.push_str(&copy_block(
                 "cred-cmd",
                 "In Claude Code",
                 "/plugin marketplace add e8kor/open-memory-lab\n/plugin install oml@open-memory-lab",
             ));
+            let url = if server.is_empty() {
+                "the server's address as <code>url</code>".to_owned()
+            } else {
+                format!("<code>{}</code> as <code>url</code>", attr(server))
+            };
             let _ = write!(
                 out,
-                r#"<p class="dim">The install asks for the plugin's options: paste the key as <code>api_key</code> and <code>{}</code> as <code>url</code>. Then run <code>/reload-plugins</code>.</p>"#,
-                attr(server)
+                r#"<p class="dim">The install asks for the plugin's options: paste the key as <code>api_key</code> and {url}. Then run <code>/reload-plugins</code>.</p>"#
             );
         }
         (_, Secret::Key { value, .. }) => {
-            out.push_str(&copy_block("cred-url", "MCP URL", &mcp));
+            if server.is_empty() {
+                let _ = write!(out, r#"<p class="desc">{}</p>"#, keys::NO_SERVER);
+            } else {
+                out.push_str(&copy_block("cred-url", "MCP URL", &mcp));
+            }
             out.push_str(&copy_block(
                 "cred-key",
                 "Your key, shown once, as a Bearer token",
@@ -672,16 +679,24 @@ pub async fn export(
     }
 }
 
+/// The setup view's server and the line under it: the address to give
+/// agents, or with none known the named `no_server` line and no address
+/// (ADR-0076 d6, d8).
+fn setup_server(issuer: &str) -> (String, String) {
+    if issuer.is_empty() {
+        (String::new(), keys::NO_SERVER.to_owned())
+    } else {
+        (
+            issuer.to_owned(),
+            "This server's address: give each agent this URL with its key.".to_owned(),
+        )
+    }
+}
+
 /// `GET /web/setup`: the server an agent connects to and the guides.
 pub async fn setup(State(web): State<Web>, Extension(session): Extension<Session>) -> Response {
     let issuer = keys::server(&web).await;
-    let url_line = if issuer == DEFAULT_SERVER {
-        "The plugins' default server: an agent needs only its key.".to_owned()
-    } else {
-        format!(
-            "Not the plugins' default (<code>{DEFAULT_SERVER}</code>): give each agent this URL with its key."
-        )
-    };
+    let (issuer, url_line) = setup_server(&issuer);
     let body = format!(
         r#"<h1>Set up</h1><div class="card"><p class="label">Server</p><pre class="mono">{}</pre></div><p class="desc">{url_line}</p><h2>Claude Code</h2><p>Agent key · <a href="{GUIDES}/claude-code/">guide</a></p><h2>Claude on the web and on a phone</h2><p>Connector key · <a href="{GUIDES}/claude-ai-and-mobile/">guide</a></p><h2>Other agent tools</h2><p>Codex CLI, Cursor, Gemini CLI, VS Code, Claude Desktop · <a href="{GUIDES}/other-harnesses/">guide</a></p>"#,
         attr(&issuer)
@@ -702,6 +717,59 @@ pub async fn setup(State(web): State<Web>, Extension(session): Extension<Session
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A key's card with no server address known names `no_server` and shows
+    /// no empty URL, neither as the plugin's `url` nor as an MCP URL
+    /// (ADR-0076 d8).
+    #[test]
+    fn a_new_keys_card_with_no_server_address_names_no_server_and_shows_no_empty_url() {
+        let key = |client| {
+            let secret = Secret::Key {
+                name: "alice-agent".to_owned(),
+                value: "oml_value".to_owned(),
+                server: String::new(),
+            };
+            credential_card(client, &secret, "")
+        };
+        for client in [Client::ClaudeCode, Client::Other] {
+            let card = key(client);
+            assert!(card.contains("no_server"), "{card}");
+            assert!(card.contains("oml_value"), "{card}");
+            assert!(!card.contains("<code></code>"), "{card}");
+            assert!(!card.contains(r#"<pre id="cred-url">/mcp</pre>"#), "{card}");
+        }
+        let with = credential_card(
+            Client::ClaudeCode,
+            &Secret::Key {
+                name: "alice-agent".to_owned(),
+                value: "oml_value".to_owned(),
+                server: "https://oml.example.com".to_owned(),
+            },
+            "https://oml.example.com",
+        );
+        assert!(!with.contains("no_server"), "{with}");
+        assert!(with.contains("https://oml.example.com"), "{with}");
+    }
+
+    /// The setup view shows the server's own address as the URL to give
+    /// agents, and with none known names `no_server` and shows no URL; it
+    /// names no other server and no default (ADR-0076 d6, d8).
+    #[test]
+    fn the_setup_view_shows_the_servers_own_issuer_and_names_no_other_server() {
+        let (shown, line) = setup_server("https://oml.example.com");
+        assert_eq!(shown, "https://oml.example.com");
+        assert!(
+            line.contains("give each agent this URL with its key"),
+            "{line}"
+        );
+        let (shown, line) = setup_server("");
+        assert_eq!(shown, "");
+        assert!(line.contains("no_server"), "{line}");
+        for text in [&line, &setup_server("https://oml.example.com").1] {
+            assert!(!text.to_lowercase().contains("default"), "{text}");
+            assert!(!text.contains("doublegate"), "{text}");
+        }
+    }
 
     #[test]
     fn the_start_policy_names_the_one_script_and_its_poll_alone() {

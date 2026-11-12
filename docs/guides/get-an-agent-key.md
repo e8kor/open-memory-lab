@@ -10,13 +10,13 @@ An agent key lets one agent write and recall in one workarea. Every client in th
 
 | You are | Get the key from |
 |---|---|
-| Signed up on a server that has the web pages on, such as the public server | [the web user page](#from-the-web-user-page) |
+| Signed up on a server that has the web pages on | [the web user page](#from-the-web-user-page) |
 | An administrator, or the person who runs the server | [`oml keys issue-agent`](#with-the-cli) |
 | Trying OML alone on your machine | [the quickstart](../start/quickstart.md), which writes `oml/keys/agent` |
 
 ## From the web user page
 
-You need an email address on the server's allowlist; access to the public server, `https://memory.doublegate.io`, is by invitation.
+You need the server's address and an email address on its allowlist, unless its operator opened sign-up. The page shows the address beside each key it issues.
 
 1. Open the server's address in a browser and sign in with Google or GitHub.
 2. Open the Keys tab. Under "Issue a key for an agent", enter a name and choose `writer`. Choose `reader` for an agent that only recalls.
