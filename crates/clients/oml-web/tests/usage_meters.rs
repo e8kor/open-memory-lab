@@ -356,6 +356,50 @@ async fn the_users_page_shows_each_persons_meters_with_their_marks_and_a_dash_fo
     assert!(!bob.contains("oml-chip"), "{bob}");
 }
 
+#[tokio::test]
+async fn the_users_page_marks_no_meter_of_a_person_whose_limits_do_not_hold() {
+    let row = |user: &str, under_quotas: bool| {
+        json!({
+            "user": user, "signed_up": false, "disabled": false, "under_quotas": under_quotas,
+            "usage": {
+                "memories": 800, "text_bytes": 1000, "writes": 0, "keys": 7, "connections": 0,
+            },
+            "quotas": {
+                "memories": 1000, "text_bytes": 1000, "writes_per_month": 100,
+                "keys": 5, "connections": 5, "requests_per_minute": 60,
+            },
+            "admin_keys": [],
+        })
+    };
+    let users = json!([row("held", true), row("free", false)]);
+    let page = get(users_script(users), "/web/admin/users").await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+
+    // Under the limits: seven keys of five is at the limit, and marked.
+    let held = row_of_user(&page.body, "held");
+    assert!(
+        held.contains(r#"mono">7 / 5</span> <span class="oml-chip is-rejected">limit"#),
+        "{held}"
+    );
+    assert!(
+        held.contains(r#"mono">800 / 1000</span> <span class="oml-chip is-held">80%"#),
+        "{held}"
+    );
+
+    // Outside them: the same counts and limits, and no mark, since a
+    // seventh key was accepted and an eighth will be.
+    let free = row_of_user(&page.body, "free");
+    for cell in ["7 / 5", "800 / 1000", "1.0 kB / 1.0 kB"] {
+        assert!(free.contains(cell), "{cell}: {free}");
+    }
+    assert!(!free.contains("oml-chip"), "{free}");
+    assert!(
+        page.body.contains("for a person the limits hold for"),
+        "{}",
+        page.body
+    );
+}
+
 /// The users table's row of `user`.
 fn row_of_user(page: &str, user: &str) -> String {
     let start = page

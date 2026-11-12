@@ -105,12 +105,19 @@ pub(crate) fn readings(usage: &Usage, limits: &Limits) -> Vec<Reading> {
 }
 
 /// A meter's count with its limit and its mark, for a table cell: the
-/// count alone where no limit holds.
+/// count alone where no limit is set.
 pub(crate) fn cell(reading: &Reading) -> String {
+    cell_where(reading, true)
+}
+
+/// [`cell`], with no mark where the limits do not hold for the person
+/// (`under_quotas` false): the next charge past such a limit is accepted,
+/// so a mark would say what the server does not do.
+fn cell_where(reading: &Reading, holds: bool) -> String {
     let mark = match reading.mark() {
-        Mark::Ok => "",
-        Mark::Warning => r#" <span class="oml-chip is-held">80%</span>"#,
-        Mark::Reached => r#" <span class="oml-chip is-rejected">limit</span>"#,
+        Mark::Warning if holds => r#" <span class="oml-chip is-held">80%</span>"#,
+        Mark::Reached if holds => r#" <span class="oml-chip is-rejected">limit</span>"#,
+        _ => "",
     };
     match reading.limit {
         Some(limit) => format!(
@@ -127,8 +134,10 @@ pub(crate) fn cell(reading: &Reading) -> String {
 
 /// The five meters of a users-page row as table cells: memories, text
 /// stored, writes this month, keys and connections. A meter the API does
-/// not serve is a dash, never a zero.
-pub(crate) fn cells(usage: &Usage, limits: &Limits) -> [String; 5] {
+/// not serve is a dash, never a zero. `holds` is the row's `under_quotas`:
+/// a person the limits do not hold for is shown the counts and the limits
+/// with no mark, as `oml doctor` skips them.
+pub(crate) fn cells(usage: &Usage, limits: &Limits, holds: bool) -> [String; 5] {
     let all = readings(usage, limits);
     [
         "Memories",
@@ -140,7 +149,7 @@ pub(crate) fn cells(usage: &Usage, limits: &Limits) -> [String; 5] {
     .map(|name| {
         all.iter()
             .find(|r| r.name == name)
-            .map_or_else(|| "—".to_owned(), cell)
+            .map_or_else(|| "—".to_owned(), |r| cell_where(r, holds))
     })
 }
 
