@@ -179,6 +179,12 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
 4. **Whether an expired key leaves its account's `keys` meter.** It stays (d3). Recommended:
    keep it, since the key can be given a later date and would then pass a quota it never
    counted against.
+5. **The operator role.** The rule and migration 0046's check name the `admin` role alone. No
+   path in this build issues an operator key (an admin asking for one is
+   `access.issuer_ceiling`), and one could not reach the limits route, which takes the admin
+   role exactly, so neither scenario of the review applies today. Recommended: when the
+   operator path is built, refuse a date and a rate on every role that can issue an admin key,
+   in the use case, both stores and the check, before the first such key is issued.
 
 ## Rejected alternatives
 
@@ -191,7 +197,7 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
 | **Apply `quota.requests_per_minute` to every key** | It would put a rate on every tenant key of every deployment on upgrade, and a demo key needs a much lower one than a person's agents. A rate on the key is set where it is wanted. |
 | **A token bucket, a burst, or limits per operation** | #185 needs one sentence an operator can say to a reviewer: this key makes n requests a minute. The fixed UTC minute is the window ADR-0068 d5 already counts and explains. |
 | **Count requests in PostgreSQL so every process shares the count** | One row write per request on the read path, for a bound that one lead already gives. Reopened by open question 2. |
-| **Limits bind admin keys too**, as this record first proposed | Declined by the operator on 2026-11-12, for two scenarios an independent review found. One: a limited admin key sheds its limits in two calls. Admin key A, issued with an expiry and a rate, issues admin key A2 with neither, and A2 posts `{expiry: null, requests_per_minute: null}` to A's limits. Two: any admin key ends any other by setting a near expiry on it, which nothing could do before: a denial on an admin key is refused, and the administering guide says an admin key cannot be cut off. |
-| **Keep limits on admin keys and document both scenarios** | Declined by the operator on 2026-11-12, for the same two scenarios. A limit its holder lifts in two calls limits nothing, and writing down that one admin key can end another would make a new power a rule without deciding it. Refusing both limits on an admin key is the smallest change that closes both. |
+| **Limits bind admin keys too**, as this record first proposed | Declined: the operator decided "No limits on admin keys" on 2026-11-12, after an independent review found two scenarios. One: a limited admin key sheds its limits in two calls. Admin key A, issued with an expiry and a rate, issues admin key A2 with neither, and A2 posts `{expiry: null, requests_per_minute: null}` to A's limits. Two: any admin key ends any other by setting a near expiry on it, which nothing could do before: a denial on an admin key is refused, and the administering guide says an admin key cannot be cut off. |
+| **Keep limits on admin keys and document both scenarios** | Declined by the same decision of 2026-11-12. This record's reasons: a limit its holder lifts in two calls limits nothing, and writing down that one admin key can end another would make a new power a rule without deciding it. Refusing both limits on an admin key is the smallest change that closes both. |
 | **Let a key shorten its own date or lower its own rate** | Harmless in itself, but the rule "a key never sets its own limits" is one sentence with no direction to get wrong, and an admin who wants less holds another admin key or fences the key. |
 | **Sweep expired keys into `key.revoked`** | A background writer that signs events no actor asked for, and a revocation that could not be undone when the date was a mistake. Each lookup reads the date, so nothing needs sweeping. |
