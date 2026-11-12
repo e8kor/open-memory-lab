@@ -1,0 +1,356 @@
+{
+ "k": 100,
+ "pool": 8,
+ "queries": 100,
+ "cpus": 8,
+ "sizes": {
+  "1000": {
+   "postings": 118588,
+   "heap_mib": 7.0,
+   "load_s": 0.1,
+   "load_avg_before": [
+    2.69140625,
+    4.06591796875,
+    5.5224609375
+   ],
+   "workareas": {
+    "5": {
+     "single": {
+      "p50": 1.59,
+      "p95": 2.67,
+      "same_list": 1.0
+     },
+     "single-parallel": {
+      "p50": 12.03,
+      "p95": 13.59,
+      "same_list": 1.0,
+      "plan_has_gather": true
+     },
+     "fanout-each": {
+      "p50": 2.67,
+      "p95": 4.23,
+      "same_list": 1.0
+     },
+     "fanout-groups-2": {
+      "p50": 1.78,
+      "p95": 2.65,
+      "same_list": 1.0
+     },
+     "fanout-groups-4": {
+      "p50": 2.35,
+      "p95": 3.35,
+      "same_list": 1.0
+     }
+    },
+    "50": {
+     "single": {
+      "p50": 1.75,
+      "p95": 3.49,
+      "same_list": 1.0
+     },
+     "single-parallel": {
+      "p50": 12.31,
+      "p95": 14.11,
+      "same_list": 1.0,
+      "plan_has_gather": true
+     },
+     "fanout-each": {
+      "p50": 23.36,
+      "p95": 30.71,
+      "same_list": 1.0
+     },
+     "fanout-groups-2": {
+      "p50": 1.95,
+      "p95": 3.67,
+      "same_list": 1.0
+     },
+     "fanout-groups-4": {
+      "p50": 2.58,
+      "p95": 3.85,
+      "same_list": 1.0
+     },
+     "fanout-groups-8": {
+      "p50": 4.58,
+      "p95": 6.55,
+      "same_list": 1.0
+     }
+    },
+    "500": {
+     "single": {
+      "p50": 3.35,
+      "p95": 4.77,
+      "same_list": 1.0
+     },
+     "single-parallel": {
+      "p50": 14.3,
+      "p95": 16.21,
+      "same_list": 1.0,
+      "plan_has_gather": true
+     },
+     "fanout-each": {
+      "p50": 223.43,
+      "p95": 291.3,
+      "same_list": 1.0
+     },
+     "fanout-groups-2": {
+      "p50": 3.01,
+      "p95": 4.12,
+      "same_list": 1.0
+     },
+     "fanout-groups-4": {
+      "p50": 3.45,
+      "p95": 4.56,
+      "same_list": 1.0
+     },
+     "fanout-groups-8": {
+      "p50": 6.06,
+      "p95": 8.1,
+      "same_list": 1.0
+     }
+    }
+   },
+   "index_mib": {
+    "5": 5.6,
+    "50": 5.6,
+    "500": 5.6
+   },
+   "load_avg_after": [
+    2.79052734375,
+    3.8251953125,
+    5.33837890625
+   ]
+  },
+  "10000": {
+   "postings": 1225333,
+   "heap_mib": 70.5,
+   "load_s": 1.2,
+   "load_avg_before": [
+    2.79052734375,
+    3.8251953125,
+    5.33837890625
+   ],
+   "workareas": {
+    "5": {
+     "single": {
+      "p50": 8.2,
+      "p95": 15.49,
+      "same_list": 1.0
+     },
+     "single-parallel": {
+      "p50": 12.2,
+      "p95": 15.21,
+      "same_list": 1.0,
+      "plan_has_gather": true
+     },
+     "fanout-each": {
+      "p50": 4.55,
+      "p95": 8.84,
+      "same_list": 1.0
+     },
+     "fanout-groups-2": {
+      "p50": 6.72,
+      "p95": 14.25,
+      "same_list": 1.0
+     },
+     "fanout-groups-4": {
+      "p50": 5.6,
+      "p95": 9.83,
+      "same_list": 1.0
+     }
+    },
+    "50": {
+     "single": {
+      "p50": 9.09,
+      "p95": 19.55,
+      "same_list": 1.0
+     },
+     "single-parallel": {
+      "p50": 8.32,
+      "p95": 12.67,
+      "same_list": 1.0,
+      "plan_has_gather": true
+     },
+     "fanout-each": {
+      "p50": 28.89,
+      "p95": 38.1,
+      "same_list": 1.0
+     },
+     "fanout-groups-2": {
+      "p50": 6.35,
+      "p95": 13.07,
+      "same_list": 1.0
+     },
+     "fanout-groups-4": {
+      "p50": 5.13,
+      "p95": 9.46,
+      "same_list": 1.0
+     },
+     "fanout-groups-8": {
+      "p50": 5.74,
+      "p95": 7.9,
+      "same_list": 1.0
+     }
+    },
+    "500": {
+     "single": {
+      "p50": 10.5,
+      "p95": 17.4,
+      "same_list": 1.0
+     },
+     "single-parallel": {
+      "p50": 13.78,
+      "p95": 16.2,
+      "same_list": 1.0,
+      "plan_has_gather": true
+     },
+     "fanout-each": {
+      "p50": 230.55,
+      "p95": 291.47,
+      "same_list": 1.0
+     },
+     "fanout-groups-2": {
+      "p50": 8.29,
+      "p95": 14.92,
+      "same_list": 1.0
+     },
+     "fanout-groups-4": {
+      "p50": 6.67,
+      "p95": 12.17,
+      "same_list": 1.0
+     },
+     "fanout-groups-8": {
+      "p50": 7.1,
+      "p95": 10.82,
+      "same_list": 1.0
+     }
+    }
+   },
+   "index_mib": {
+    "5": 58.0,
+    "50": 58.0,
+    "500": 58.0
+   },
+   "load_avg_after": [
+    2.00439453125,
+    3.3349609375,
+    5.03173828125
+   ]
+  },
+  "100000": {
+   "postings": 12259847,
+   "heap_mib": 704.5,
+   "load_s": 11.7,
+   "load_avg_before": [
+    2.00341796875,
+    3.29052734375,
+    4.99853515625
+   ],
+   "workareas": {
+    "5": {
+     "single": {
+      "p50": 34.71,
+      "p95": 89.63,
+      "same_list": 1.0
+     },
+     "single-parallel": {
+      "p50": 35.46,
+      "p95": 90.25,
+      "same_list": 1.0,
+      "plan_has_gather": true
+     },
+     "fanout-each": {
+      "p50": 20.45,
+      "p95": 34.3,
+      "same_list": 1.0
+     },
+     "fanout-groups-2": {
+      "p50": 25.72,
+      "p95": 54.92,
+      "same_list": 1.0
+     },
+     "fanout-groups-4": {
+      "p50": 24.68,
+      "p95": 42.26,
+      "same_list": 1.0
+     }
+    },
+    "50": {
+     "single": {
+      "p50": 41.54,
+      "p95": 100.7,
+      "same_list": 1.0
+     },
+     "single-parallel": {
+      "p50": 41.41,
+      "p95": 102.9,
+      "same_list": 1.0,
+      "plan_has_gather": true
+     },
+     "fanout-each": {
+      "p50": 28.82,
+      "p95": 38.44,
+      "same_list": 1.0
+     },
+     "fanout-groups-2": {
+      "p50": 23.25,
+      "p95": 59.22,
+      "same_list": 1.0
+     },
+     "fanout-groups-4": {
+      "p50": 25.93,
+      "p95": 38.41,
+      "same_list": 1.0
+     },
+     "fanout-groups-8": {
+      "p50": 18.07,
+      "p95": 31.82,
+      "same_list": 1.0
+     }
+    },
+    "500": {
+     "single": {
+      "p50": 43.48,
+      "p95": 108.87,
+      "same_list": 1.0
+     },
+     "single-parallel": {
+      "p50": 43.74,
+      "p95": 110.74,
+      "same_list": 1.0,
+      "plan_has_gather": true
+     },
+     "fanout-each": {
+      "p50": 239.81,
+      "p95": 328.55,
+      "same_list": 1.0
+     },
+     "fanout-groups-2": {
+      "p50": 31.56,
+      "p95": 60.82,
+      "same_list": 1.0
+     },
+     "fanout-groups-4": {
+      "p50": 29.75,
+      "p95": 56.42,
+      "same_list": 1.0
+     },
+     "fanout-groups-8": {
+      "p50": 24.24,
+      "p95": 37.5,
+      "same_list": 1.0
+     }
+    }
+   },
+   "index_mib": {
+    "5": 580.7,
+    "50": 580.6,
+    "500": 580.5
+   },
+   "load_avg_after": [
+    2.8818359375,
+    3.12890625,
+    4.607421875
+   ]
+  }
+ }
+}
