@@ -199,10 +199,19 @@ of kept-alive connections.
 
 When the call a page needs fails, `oml-web` shows the server's error code and message with the
 page's request id. When a secondary part fails, such as the workarea list on the Guardrails view,
-the page renders without it and names that call's request id. A list the page reads in pages
-past its bound, such as a person's keys past 10 pages of 200 on the Memories view, is refused
-with `limit.list_too_long` rather than shown cut short; the API and the command line read it
-whole.
+the page renders without it and names that call's request id.
+
+A list the page reads a page at a time is read whole or refused, never shown cut short:
+
+| List | Read by | Bound |
+|---|---|---|
+| a person's keys | the Memories view and its JSON | 10 pages of 200 |
+| a person's keys | the Keys views, and the confirmation before a person's last address is removed, which lists their agent keys with a cut-off beside each | 50 pages of 200 |
+| the allowlist | the People page and its acts | 50 pages of 200 |
+
+Past its bound the list is refused with `limit.list_too_long` (422); the API and the command
+line read it whole. A cursor the server repeats, at once or in a cycle, is refused with
+`unavailable` (502): the fault is the server's, so load the page again.
 
 A key's value or a connect code reaches the page it is shown on in a sealed `__Host-oml_once`
 cookie that lives one minute. The cookie's path is `/`, so it rides every request to the site
