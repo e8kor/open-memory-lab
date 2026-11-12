@@ -130,9 +130,6 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   every promoted row at the upgrade. Measured on a loaded shared host under PostgreSQL 18, the
   fill took 0.84 to 1.5 s at 10,000 promoted rows and 13.4 to 21.6 s at 100,000, and `memories`
   grew about 70% until vacuum ([upgrades](../operations/upgrades.md#migration-0044-fills-each-promoted-versions-approval)).
-  A promoted version the fill could not match stays served with `approver` null, and `oml
-  doctor` names how many there are as `approval_unmatched`, a count and never a list, read by
-  an admin key from the rescan read's `promoted_unapproved` (#311).
 
 - **d7 — A pseudonymised approver stays pseudonymised in recall, because recall never held
   it.** #146's act erases or pseudonymises the attribution a deployment keeps. This record
@@ -171,8 +168,6 @@ promotion, since ADR-0044 d9's rule for the tail removes key ids and the princip
   [Audit and lineage](../architecture/audit-and-lineage.md) says what a reader is shown.
 - Migration 0044 adds the three columns and the fill. An older server refuses to start once it has
   run, as after any migration ([upgrades](../operations/upgrades.md)).
-- `RescanReport` gains `promoted_unapproved`, the count of promoted versions whose `approved_at`
-  is null, from the pass that already counts the scan backlog; the SDK layers follow `openapi.yaml`.
 - `MetadataFold::MemoryPromoted` and `MetadataFold::TipSuperseded` carry the approval, so both
   stores write it in the promotion's own commit; a port law holds them equal.
 - A store whose schema keeps the approval refuses a promotion or a ratification that carries
