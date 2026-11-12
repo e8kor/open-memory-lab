@@ -9,7 +9,7 @@ answers: why OML's releases stop naming a default server; where a client gets it
 
 **Status:** accepted design · 2026-11-11, by the operator ("Accept, then build"), with three of the four readings put to them accepted and the fourth reversed in d9 · proposed the same day as #265
 
-**Release:** not assigned; the build lands after v0.7.0 is cut, with the production split (#194)
+**Release:** v0.7.2 (built; #265)
 
 **Amends:** ADR-0043 (d1, d2, d3, d4, d6, d8 replaced; d7 narrowed; its Consequences' "a move of
 the maintainer's server is a release"), ADR-0039 (d15: the setup exception and the kit clause
