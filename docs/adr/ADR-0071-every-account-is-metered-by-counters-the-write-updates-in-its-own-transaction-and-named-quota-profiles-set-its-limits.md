@@ -89,7 +89,11 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
   before it signs, so most refusals cost no signature. The check inside the commit is the one
   that holds. Of two writers racing at the last free memory, exactly one commits. Both checks
   follow every idempotency replay: a write retried under its key answers its record at the limit,
-  and a commit under a recorded key is refused as recorded before its ceiling.
+  and a commit under a recorded key is refused as recorded before its ceiling. A chain's account
+  is the author of its earliest version 1, which the review of the build measured on 2026-11-12
+  in two outcomes for a tenant key: a tenant writer key that revives a person's released
+  `claim_key` in their root raises that person's `memories` with no check against their ceiling,
+  and a person who claims a key a tenant key first used in their root is charged nothing.
 
     Counters can drift from their rows only through a bug or a hand edit. `GET
     /v2/admin/usage/drift` recomputes every account's stocks from the rows, by the definitions
