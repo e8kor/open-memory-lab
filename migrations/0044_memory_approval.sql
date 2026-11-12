@@ -21,8 +21,9 @@
 -- an erasure to cover (#146).
 --
 -- Rows promoted before this migration are filled from the journal, the
--- record: for each tenant, each version's latest promotion event, the
--- review.approve event it names, and that event's key's held_by. The event
+-- record: for each tenant, each version's latest promotion event first,
+-- then the review.approve event that one names, and that event's key's
+-- held_by; an earlier promotion's verdict is never read in its place. The event
 -- names its verdict as ratification_event_id; v0.1.0 named it
 -- verdict_event_id, and both are read. A promotion whose event names no
 -- verdict the journal holds leaves its row NULL, and the row is served with
@@ -57,21 +58,27 @@ BEGIN
            SET approver_held_by   = v.held_by,
                approver_same_user = v.same_user,
                approved_at        = v.at
-          FROM (SELECT DISTINCT ON (p.subject)
-                       p.subject, k.held_by, p.same_user, a.at
-                  FROM (SELECT r.seq,
-                               COALESCE(r.payload ->> 'artifact_id',
-                                        r.payload ->> 'new_artifact_id')::uuid AS subject,
-                               COALESCE(r.payload ->> 'ratification_event_id',
-                                        r.payload ->> 'verdict_event_id')::uuid AS verdict,
-                               (r.payload ->> 'same_user')::boolean AS same_user
-                          FROM journal r
-                         WHERE r.tenant_id = t
-                           AND r.event_type IN ('lifecycle.promote', 'lifecycle.supersede')) p
-                  JOIN journal a ON a.tenant_id = t AND a.event_id = p.verdict
-                                AND a.event_type = 'review.approve'
-                  JOIN api_keys k ON k.id = a.api_key_id
-                 ORDER BY p.subject, p.seq DESC) v
+          FROM (SELECT p.subject, k.held_by, a.at,
+                       CASE WHEN k.id IS NOT NULL THEN p.same_user END AS same_user
+                  FROM (SELECT DISTINCT ON (r.subject)
+                               r.subject, r.verdict, r.same_user
+                          FROM (SELECT j.seq,
+                                       COALESCE(j.payload ->> 'artifact_id',
+                                                j.payload ->> 'new_artifact_id')::uuid AS subject,
+                                       COALESCE(j.payload ->> 'ratification_event_id',
+                                                j.payload ->> 'verdict_event_id')::uuid AS verdict,
+                                       (j.payload ->> 'same_user')::boolean AS same_user
+                                  FROM journal j
+                                 WHERE j.tenant_id = t
+                                   AND j.event_type IN ('lifecycle.promote',
+                                                        'lifecycle.supersede')) r
+                         ORDER BY r.subject, r.seq DESC) p
+                  LEFT JOIN (journal a
+                             JOIN api_keys k ON k.id = a.api_key_id)
+                         ON a.tenant_id = t AND a.event_id = p.verdict
+                        AND a.event_type = 'review.approve') v
          WHERE m.tenant_id = t AND m.id = v.subject;
     END LOOP;
+    PERFORM set_config('oml.tenant_id', '', true);
+    PERFORM set_config('oml.startup_check', '', true);
 END $$;

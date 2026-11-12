@@ -1024,3 +1024,62 @@ async fn migration_0044_reads_a_promotion_that_names_its_verdict_as_v0_1_0_did()
     );
     drop_db(&w.rig.db_name).await;
 }
+
+/// A version's latest promotion decides its approval: where that promotion
+/// names a verdict the journal does not hold, the row is left null, and an
+/// earlier promotion's verdict is not read in its place.
+#[tokio::test]
+async fn migration_0044_leaves_a_version_null_when_its_latest_promotion_names_an_unknown_verdict() {
+    let Some(w) = World::boot().await else {
+        return;
+    };
+    let before = stored_approvals(&w.rig.db_name).await;
+    assert!(
+        before
+            .iter()
+            .any(|(id, approval)| *id == w.by_crew && approval.is_some()),
+        "the control: the crew-approved version holds its first promotion's approval: {before:?}"
+    );
+    // A later promotion of the same version, naming a verdict that is not in
+    // the journal: appended by the minting superuser, since no build writes
+    // one. The first promotion, with its real verdict, stays in the chain.
+    let mut conn = PgConnection::connect(&super_url(&w.rig.db_name))
+        .await
+        .expect("superuser connect");
+    sqlx::query(
+        "INSERT INTO journal (tenant_id, seq, event_id, event_type, prev_hash, principal, \
+                              at, payload, signed_bytes_hash, sig, signed_bytes) \
+         SELECT a.tenant_id, (SELECT max(seq) + 1 FROM journal), gen_random_uuid(), \
+                'lifecycle.promote', decode(repeat('00', 32), 'hex'), 'oml-server', now(), \
+                jsonb_build_object('artifact_id', $1::text, \
+                                   'ratification_event_id', gen_random_uuid()::text, \
+                                   'policy', jsonb_build_object('k', 1)), \
+                decode(repeat('00', 32), 'hex'), decode(repeat('00', 64), 'hex'), \
+                decode('00', 'hex') \
+           FROM journal a \
+          WHERE a.event_type = 'review.approve' AND a.payload->>'artifact_id' = $1 \
+          LIMIT 1",
+    )
+    .bind(&w.by_crew)
+    .execute(&mut conn)
+    .await
+    .expect("append the later promotion");
+    conn.close().await.expect("close");
+
+    run_the_fill(&w.rig.db_name).await;
+
+    let after = stored_approvals(&w.rig.db_name).await;
+    assert!(
+        after
+            .iter()
+            .any(|(id, approval)| *id == w.by_crew && approval.is_none()),
+        "the version whose latest promotion names no verdict holds none: {after:?}"
+    );
+    let others_before: Vec<_> = before.iter().filter(|(id, _)| *id != w.by_crew).collect();
+    let others_after: Vec<_> = after.iter().filter(|(id, _)| *id != w.by_crew).collect();
+    assert_eq!(
+        others_after, others_before,
+        "no other version's approval changed"
+    );
+    drop_db(&w.rig.db_name).await;
+}
