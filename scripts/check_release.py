@@ -52,8 +52,11 @@ disagreement found:
   jobs that upload to PyPI or npm are publish-sdk-pypi and publish-sdk-npm, each
   skipped unless vars.PUBLISH_SDKS is 'true', each needing the version job and the
   GitHub release job, each checking the files against SHA256SUMS first and holding
-  `id-token: write`; every action in those three jobs is pinned by commit (docs/contributing/releasing.md,
-  "Publishing the SDKs");
+  `id-token: write`; every action in those three jobs is pinned by commit, the publish
+  jobs have no step-level `if:`, run the checksum step before the upload (any `npm`,
+  `pnpm`, `yarn`, `twine` or `uv` publish, with flags or through npx), set no
+  `packages-dir`, `repository-url` or `password` on the PyPI action and check out
+  only the tag (docs/contributing/releasing.md, "Publishing the SDKs");
 - ci.yml job cli-matrix runs on the same target and runner pairs and, on each,
   runs `oml --version` and the CLI's unit tests, so a broken platform fails a
   pull request before a tag (docs/engineering/ci-and-toolchain.md "Release
@@ -584,11 +587,17 @@ SDK_PUBLISHERS = {
     "publish-sdk-pypi": ("pypi", ("SDK_WHEEL", "SDK_SDIST")),
     "publish-sdk-npm": ("npm", ("SDK_TGZ",)),
 }
-NPM_PUBLISH_FROM_A_PATH = re.compile(r'\bnpm\s+publish\s+"?\./')
-NPM_PUBLISH = re.compile(r"\bnpm\s+publish\b")
+# `npm publish`, `npm --tag next publish`, `npx npm publish`, `pnpm publish`, `yarn npm publish`: the tool, then
+# `publish` after any flags on the same command.
+NPM_PUBLISH = re.compile(r"\b(?:npm|pnpm|yarn)\b[^\n;&|]*?\bpublish\b")
+PUBLISH_FROM_A_PATH = re.compile(r'\bpublish\s+"?\./')
+# A publish job's checkout is the tag that triggered the release, whichever way it is written.
+TAG_REFS = {"${{github.ref_name}}", "${{github.ref}}", "refs/tags/${{github.ref_name}}"}
+# Inputs that point the PyPI action at other files, another index or a stored credential.
+PYPI_INPUTS_REFUSED = ("packages-dir", "repository-url", "password")
 OR_TRUE = re.compile(r"\|\|\s*true\b")
 PINNED_BY_COMMIT = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}(\s|$)")
-UPLOADS_TO_A_REGISTRY = re.compile(r"\bnpm\s+publish\b|\btwine\s+upload\b|\buv\s+publish\b")
+UPLOADS_TO_A_REGISTRY = re.compile(NPM_PUBLISH.pattern + r"|\btwine\s+upload\b|\buv\s+publish\b")
 
 
 def check_sdks(errors: list[str], jobs: dict) -> None:
@@ -650,6 +659,20 @@ def check_sdks(errors: list[str], jobs: dict) -> None:
              if "gh-action-pypi-publish" in str(st.get("uses", "")) or NPM_PUBLISH.search(str(st.get("run", "")))),
             None,
         )
+        checksum = step_index(job, "sha256sum --check --strict -")
+        if checksum is not None and upload is not None and checksum >= upload:
+            errors.append(f"job {name}: checks the files against SHA256SUMS after the upload")
+        if any("if" in st for st in steps(job)):
+            errors.append(f"job {name}: has a step-level if:, which can skip a check and still reach the upload")
+        for st in steps(job):
+            uses, given = str(st.get("uses", "")), st.get("with") or {}
+            if "gh-action-pypi-publish" in uses:
+                for key in PYPI_INPUTS_REFUSED:
+                    if key in given:
+                        errors.append(f"job {name}: sets {key} on the PyPI action, which points it away from the checked files, the trusted index or the OIDC identity")
+            if uses.startswith("actions/checkout@") and "ref" in given:
+                if str(given["ref"]).replace(" ", "") not in TAG_REFS:
+                    errors.append(f"job {name}: checks out {given['ref']!r}, not the tag that triggered the release")
         if guard is None:
             errors.append(f"job {name}: does not run scripts/check_sdk_registry_names.py, so an undecided registry name could publish")
         elif upload is not None and guard >= upload:
@@ -671,7 +694,7 @@ def check_sdks(errors: list[str], jobs: dict) -> None:
             errors.append(f"job {name}: has a command ending in || true, which hides a failed check")
         if name == "publish-sdk-npm":
             for run in runs(job):
-                if NPM_PUBLISH.search(run) and not NPM_PUBLISH_FROM_A_PATH.search(run):
+                if NPM_PUBLISH.search(run) and not PUBLISH_FROM_A_PATH.search(run):
                     errors.append(f"job {name}: npm publish does not start its argument with ./, so npm reads it as a GitHub repository")
     for name in sorted(set(SDK_PUBLISHERS) | set(builders)):
         for step in steps(jobs.get(name, {})):

@@ -739,22 +739,23 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
-          path: dist
+          path: release
       - name: Only files that were signed, each checked by name against SHA256SUMS
         run: |
           set -euo pipefail
-          cd dist
+          cd release
           for f in "$SDK_WHEEL" "$SDK_SDIST"; do
             line="$(awk -v f="./$f" '$2 == f' SHA256SUMS)"
             [ "$(printf '%s\n' "$line" | grep -c .)" = 1 ] || { echo "$f is not listed exactly once in SHA256SUMS" >&2; exit 1; }
             printf '%s\n' "$line" | sha256sum --check --strict -
           done
           cd ..
-          mkdir pypi
-          cp "dist/$SDK_WHEEL" "dist/$SDK_SDIST" pypi/
+          mkdir dist
+          cp "release/$SDK_WHEEL" "release/$SDK_SDIST" dist/
+      # The action uploads dist/, its default, which holds only the two checked files; the job
+      # sets no packages-dir, repository-url or password (scripts/check_release.py).
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
-          packages-dir: pypi
           print-hash: true
 
   publish-sdk-npm:

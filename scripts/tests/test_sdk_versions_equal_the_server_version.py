@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import check_sdk_versions as V  # noqa: E402
+import sdk_names as N  # noqa: E402
 
 REPO = V.DEFAULT_ROOT
 FILES = [
@@ -76,7 +77,7 @@ class SdkVersions(unittest.TestCase):
         workspace = V.read_versions(REPO)["Cargo.toml [workspace.package] version"]
         cases = {
             "sdks/python/pyproject.toml": f'version = "{workspace}"',
-            "sdks/python/uv.lock": f'name = "oml-sdk"\nversion = "{workspace}"',
+            "sdks/python/uv.lock": f'name = "{N.python_name(REPO)}"\nversion = "{workspace}"',
             "sdks/typescript/package.json": f'"version": "{workspace}"',
             "sdks/typescript/package-lock.json": f'"version": "{workspace}"',
             "sdks/typescript/src/client.ts": f"oml-sdk-typescript/{workspace}",

@@ -105,7 +105,10 @@ all of it is.
    add yourself as a required reviewer, so each upload waits for a click. A job that names an
    environment that does not exist creates it without a reviewer.
 6. **Set the switch.** Settings, Secrets and variables, Actions, Variables: create `PUBLISH_SDKS`
-   with the value `true`. Delete it, or set it to anything else, to turn publishing off again.
+   with the value `true`. The jobs compare it with `==`, which GitHub evaluates without regard to
+   case, so `true`, `True` and `TRUE` all turn publishing on. Any other value (`1` and `yes` too)
+   leaves both jobs skipped, and so does deleting the variable; delete it to turn publishing off
+   again.
 7. **Cut a release.** Tag `vX.Y.Z` as usual. Watch jobs `publish-sdk-pypi` and `publish-sdk-npm`;
    approve each if step 5 put a reviewer on it.
 8. **After the first publish.** In the next release pull request, add the registry install lines to

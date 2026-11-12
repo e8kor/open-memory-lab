@@ -143,6 +143,77 @@ class SdkPublishing(unittest.TestCase):
             problems(jobs), ["job publish-sdk-npm: actions/download-artifact@v4 is not pinned by commit"]
         )
 
+    def test_a_step_level_if_in_a_publish_job_is_named(self):
+        for name in sorted(R.SDK_PUBLISHERS):
+            for index in (1, 2):
+                with self.subTest(name, step=index):
+                    jobs = copy.deepcopy(JOBS)
+                    jobs[name]["steps"][index]["if"] = "always()"
+                    self.assertEqual(
+                        problems(jobs),
+                        [f"job {name}: has a step-level if:, which can skip a check and still reach the upload"],
+                    )
+
+    def test_a_publish_job_that_checks_the_files_after_it_uploads_them_is_named(self):
+        for name in sorted(R.SDK_PUBLISHERS):
+            with self.subTest(name):
+                jobs = copy.deepcopy(JOBS)
+                steps = jobs[name]["steps"]
+                check = next(i for i, s in enumerate(steps) if "sha256sum --check --strict -" in str(s.get("run", "")))
+                steps.append(steps.pop(check))
+                self.assertEqual(problems(jobs), [f"job {name}: checks the files against SHA256SUMS after the upload"])
+
+    def test_an_upload_written_with_flags_npx_or_pnpm_is_still_an_upload(self):
+        for command in ("npm --tag next publish a.tgz", "npx npm publish a.tgz", "pnpm publish a.tgz", "yarn npm publish a.tgz"):
+            with self.subTest(command, job="sdks"):
+                jobs = copy.deepcopy(JOBS)
+                jobs["sdks"]["steps"].append({"run": command})
+                errors = problems(jobs)
+                self.assertIn("job sdks: builds the SDK packages and uploads them to a registry", errors)
+                self.assertTrue(any("only ['publish-sdk-npm', 'publish-sdk-pypi'] may" in e for e in errors), errors)
+            with self.subTest(command, job="publish-sdk-npm"):
+                jobs = copy.deepcopy(JOBS)
+                for step in jobs["publish-sdk-npm"]["steps"]:
+                    if "npm publish" in str(step.get("run", "")):
+                        step["run"] = command
+                self.assertEqual(
+                    problems(jobs),
+                    ["job publish-sdk-npm: npm publish does not start its argument with ./, so npm reads it as a GitHub repository"],
+                )
+
+    def test_an_npm_upload_written_with_flags_before_the_checksum_step_is_named(self):
+        jobs = copy.deepcopy(JOBS)
+        steps = jobs["publish-sdk-npm"]["steps"]
+        steps.insert(2, {"run": 'npm --tag next publish "./dist/$SDK_TGZ"'})
+        self.assertEqual(
+            problems(jobs), ["job publish-sdk-npm: checks the files against SHA256SUMS after the upload"]
+        )
+
+    def test_the_pypi_action_with_another_directory_index_or_password_is_named(self):
+        for key, value in (("packages-dir", "release"), ("repository-url", "https://example.org/legacy/"), ("password", "${{ secrets.X }}")):
+            with self.subTest(key):
+                jobs = copy.deepcopy(JOBS)
+                action = next(s for s in jobs["publish-sdk-pypi"]["steps"] if "gh-action-pypi-publish" in str(s.get("uses", "")))
+                action["with"][key] = value
+                errors = problems(jobs)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertTrue(errors[0].startswith(f"job publish-sdk-pypi: sets {key} on the PyPI action"), errors)
+
+    def test_a_publish_job_that_checks_out_anything_but_the_tag_is_named(self):
+        for name in sorted(R.SDK_PUBLISHERS):
+            for ref in ("main", "${{ github.event.repository.default_branch }}", "refs/heads/main", "${{ github.sha }}"):
+                with self.subTest(name, ref=ref):
+                    jobs = copy.deepcopy(JOBS)
+                    jobs[name]["steps"][0]["with"] = {"ref": ref}
+                    self.assertEqual(
+                        problems(jobs), [f"job {name}: checks out {ref!r}, not the tag that triggered the release"]
+                    )
+            for ref in ("${{ github.ref_name }}", "${{github.ref}}", "refs/tags/${{ github.ref_name }}"):
+                with self.subTest(name, allowed=ref):
+                    jobs = copy.deepcopy(JOBS)
+                    jobs[name]["steps"][0]["with"] = {"ref": ref}
+                    self.assertEqual(problems(jobs), [])
+
     def test_a_signing_job_that_drops_an_sdk_file_is_named(self):
         jobs = copy.deepcopy(JOBS)
         for step in jobs["binaries"]["steps"]:
