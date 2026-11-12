@@ -32,7 +32,7 @@ pub use transport::{HttpTransport, Sending, Transport, TransportError};
 /// and of each struct it holds, to the operation's 2xx schema;
 /// `every_method_sends_the_method_path_and_type_its_table_entry_names`
 /// holds the methods to it.
-pub const OPERATIONS: [&str; 40] = [
+pub const OPERATIONS: [&str; 41] = [
     "authorizationServerMetadata GET /.well-known/oauth-authorization-server resp:AuthorizationServerMetadata",
     "whoami GET /v2/whoami query:person resp:Whoami",
     "getGuardrails GET /v1/guardrails query:workarea resp:GuardrailSet",
@@ -73,6 +73,7 @@ pub const OPERATIONS: [&str; 40] = [
     "closeWebDeletion POST /v2/web/users/{user}/deletion/close body:outcome resp:Closed",
     "exportWebPerson GET /v2/web/export resp:Export",
     "requestWebDeletion POST /v2/web/deletion-requests resp:DeletionRequested",
+    "whoami GET /v2/whoami resp:Onboarding",
 ];
 
 /// The request id header (ADR-0042 d4).
@@ -381,6 +382,24 @@ pub struct Memory {
     /// predates the findings list (ADR-0074 d17, d23).
     #[serde(default)]
     pub scan_findings: Option<Vec<ScanFinding>>,
+    /// When the approving verdict was given; `None` on a version that is
+    /// not promoted, on an anonymous `universe` row and from an API before
+    /// v0.7.2 (ADR-0077 d1, d4).
+    #[serde(default)]
+    pub approved_at: Option<String>,
+    /// What kind of reviewer approved it, never who; `None` wherever
+    /// `approved_at` is (ADR-0077 d2).
+    #[serde(default)]
+    pub approver: Option<Approver>,
+}
+
+/// The kind of reviewer that approved a version (ADR-0077 d2): the
+/// reviewing key's attestation, `agent`, `human` or `service`, and whether
+/// that key acts for the author's person.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Approver {
+    pub held_by: String,
+    pub same_user: bool,
 }
 
 /// One finding of a version's findings list (openapi.yaml `ScanFinding`;
@@ -530,21 +549,33 @@ pub struct Learn<'a> {
     pub claim_key: Option<&'a str>,
 }
 
-/// A person's usage, as `GET /v2/whoami` and `GET /v2/web/users` serve it.
+/// A person's usage, as `GET /v2/whoami` and `GET /v2/web/users` serve it:
+/// the stocks, and the versions submitted this UTC month (ADR-0071 d2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct Usage {
     pub memories: u64,
+    /// Absent, with `writes`, from an API before the usage meters.
+    #[serde(default)]
+    pub text_bytes: Option<u64>,
+    #[serde(default)]
+    pub writes: Option<u64>,
     pub keys: u64,
     pub connections: u64,
 }
 
-/// A person's limits.
+/// A person's limits, each `None` where the quota is unlimited (the API
+/// serves an unlimited quota as null, ADR-0071 d5); `text_bytes` and
+/// `writes_per_month` are also `None` from an API before the usage meters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct Limits {
-    pub memories: u64,
-    pub keys: u64,
-    pub connections: u64,
-    pub requests_per_minute: u64,
+    pub memories: Option<u64>,
+    pub keys: Option<u64>,
+    pub connections: Option<u64>,
+    pub requests_per_minute: Option<u64>,
+    #[serde(default)]
+    pub text_bytes: Option<u64>,
+    #[serde(default)]
+    pub writes_per_month: Option<u64>,
 }
 
 /// What the onboarding page waits for (ADR-0068 d10): whether an agent
@@ -1782,6 +1813,16 @@ impl<T: Transport> Client<T> {
         .await
     }
 
+    /// `GET /v2/whoami`: the key's person block, with its usage and limits
+    /// where the person is under limits (ADR-0070 d5). A page that needs the
+    /// person asks for it here; [`Client::whoami`] leaves the block out.
+    ///
+    /// # Errors
+    /// The API's refusal, or no usable answer.
+    pub async fn whoami_person(&self, call: &Call<'_>) -> Result<Onboarding, Error> {
+        self.get(Some(call), "/v2/whoami".to_owned()).await
+    }
+
     /// `GET /v2/whoami?start=true`: the key's person with its onboarding
     /// status.
     ///
@@ -2245,6 +2286,7 @@ mod tests {
             decodes(&client.close_web_deletion(&CALL, "idem-17", "alice").await),
             decodes(&client.export_web_person(&CALL).await),
             decodes(&client.request_web_deletion(&CALL, "idem-18").await),
+            decodes(&client.whoami_person(&CALL).await),
         ];
         let seen = seen.lock().unwrap();
         let table = table();
@@ -2265,6 +2307,8 @@ mod tests {
         assert!(!seen[4].headers().contains_key(AUTHORIZATION));
         // The record alone: no client of this SDK reads the person block.
         assert_eq!(seen[1].uri(), "/v2/whoami?person=false");
+        // The person block is asked for by name, on the one method that reads it.
+        assert_eq!(seen[seen.len() - 1].uri(), "/v2/whoami");
         assert_eq!(seen[2].uri(), "/v1/guardrails?workarea=alice.proj");
         assert_eq!(
             seen[3].uri(),

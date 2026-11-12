@@ -3049,6 +3049,15 @@ async fn the_user_page_opens_its_agents_held_rows_and_a_person_approves_their_ow
         .unwrap()
         .unwrap();
     assert_eq!(promoted.status.as_str(), "promoted");
+    // The card says when it was approved and by what kind of reviewer, and
+    // that a person's review of their own agent's write is a self-review.
+    let (_, _, page) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
+    assert!(
+        page.contains("<span>approved by a person on 20")
+            && page.contains("self-review: the same person"),
+        "{page}"
+    );
+    assert!(!page.contains("outside its lineage"), "{page}");
     let events = rig
         .store
         .events_range(rig.boot.tenant_id, 1, 500)
@@ -4657,6 +4666,8 @@ async fn the_json_route_answers_exactly_the_lists_rows() {
                             "title",
                             "text",
                             "claim_key",
+                            "approved_at",
+                            "approver",
                             "author",
                             "author_kind",
                             "anchor",

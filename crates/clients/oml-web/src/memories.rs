@@ -207,9 +207,21 @@ struct Card {
     written: String,
     served: Option<String>,
     scan: Option<String>,
+    /// The day the approving verdict was given and the kind of reviewer that
+    /// gave it, where the API serves them: never who (ADR-0077 d2, d4).
+    approved: Option<String>,
+    approver: Option<Approver>,
     anchor: Option<String>,
     format: Option<String>,
     valid: Option<String>,
+}
+
+/// The kind of reviewer that approved a version, as the page words it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Approver {
+    kind: &'static str,
+    /// Whether the reviewing key acts for the author's person.
+    same_user: bool,
 }
 
 /// An anchor as one line (ADR-0057 d2), unescaped.
@@ -290,6 +302,11 @@ impl Card {
             written: day(&m.created_at),
             served: m.promoted_at.as_deref().map(day),
             scan: m.scan_finding.clone(),
+            approved: m.approved_at.as_deref().map(day),
+            approver: m.approver.as_ref().map(|a| Approver {
+                kind: kind_word(&a.held_by),
+                same_user: a.same_user,
+            }),
             id: m.artifact_id.clone(),
             state: row_state(&m.state, m.tip),
             workarea: m.workarea_path.clone().unwrap_or_default(),
@@ -314,6 +331,10 @@ impl Card {
             written: day(&m.created_at),
             served: m.promoted_at.as_deref().map(day),
             scan: m.scan_finding.clone(),
+            // The admin search serves no approval: the line says approved
+            // and nothing of who.
+            approved: None,
+            approver: None,
             id: m.artifact_id.clone(),
             state: STATES
                 .iter()
@@ -345,12 +366,41 @@ impl Card {
             "title": self.title,
             "text": self.body,
             "claim_key": self.claim_key,
+            "approved_at": self.approved,
+            "approver": self.approver.map(|a| json!({
+                "kind": a.kind,
+                "same_user": a.same_user,
+            })),
             "author": self.author,
             "author_kind": self.author_kind,
             "anchor": self.anchor,
             "format": self.format,
             "valid": self.valid,
         })
+    }
+
+    /// What the review step says of an approved version: when it was
+    /// approved and whether a person or a reviewer agent approved it, and
+    /// that a person's own review of their agent's write is one. A field the
+    /// API does not serve, an unreviewed or a `universe` row's, adds nothing,
+    /// so the line never says more than the API did (ADR-0077 d2, d4).
+    fn approval_line(&self) -> String {
+        let mut line = String::from("approved");
+        if let Some(approver) = self.approver {
+            let who = match approver.kind {
+                "person" => "a person",
+                "agent" => "a reviewer agent",
+                _ => "a service",
+            };
+            let _ = write!(line, " by {who}");
+        }
+        if let Some(day) = &self.approved {
+            let _ = write!(line, " on {}", text(day));
+        }
+        if self.approver.is_some_and(|a| a.same_user) {
+            line.push_str(" · self-review: the same person's keys wrote it and approved it");
+        }
+        line
     }
 
     /// The memory as the design system's Round 3 compact row (ADR-0045
@@ -401,7 +451,7 @@ impl Card {
         let review_line = match self.state {
             "held" => "held until someone else reviews it".to_owned(),
             "rejected" => "rejected by a key outside its lineage".to_owned(),
-            _ => "approved by a key outside its lineage".to_owned(),
+            _ => self.approval_line(),
         };
         let served_line = match (self.state, &self.served) {
             ("rejected", _) => "never: the text is kept".to_owned(),

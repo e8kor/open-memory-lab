@@ -30,7 +30,7 @@ use oml_sdk::WebEmail;
 
 use crate::pages::{Fields, WalkEnd, refused, walk};
 use crate::session::{PageCalls, Session, call};
-use crate::{Capacity, Web, acts, keys, outcome};
+use crate::{Capacity, Web, acts, keys, outcome, usage};
 
 /// The admin overview: the allowlist and the capacities.
 pub const PEOPLE_PATH: &str = "/web/admin/people";
@@ -473,7 +473,7 @@ pub async fn users_page(
         }
         body.push_str("</table><p class=\"dim\">Closing disables the person and cuts off their keys; their memories stay until they are erased with <code>oml erase</code>.</p>");
     }
-    body.push_str("<h2>People</h2><table><tr><th>user</th><th>memories</th><th>keys</th><th>connections</th><th>requests/min</th><th></th></tr>");
+    body.push_str("<h2>People</h2><p class=\"dim\">Each count against its limit; a mark shows at 80% of a limit and at the limit. Writes count this UTC month.</p><table><tr><th>user</th><th>memories</th><th>text stored</th><th>writes</th><th>keys</th><th>connections</th><th>requests/min</th><th></th></tr>");
     for u in &listed.users {
         let flags = match (u.signed_up, u.disabled) {
             (_, true) => r#" <span class="tag dim">disabled</span>"#,
@@ -492,17 +492,20 @@ pub async fn users_page(
                 false,
             )
         };
+        let [memories, text_stored, writes, key_count, connections] =
+            usage::cells(&u.usage, &u.quotas);
         let _ = write!(
             body,
-            r#"<tr><td class="mono">{}{flags}</td><td>{} / {}</td><td>{} / {}</td><td>{} / {}</td><td>{}</td><td>{disable}</td></tr>"#,
+            r#"<tr><td class="mono">{}{flags}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{disable}</td></tr>"#,
             short(&u.user),
-            u.usage.memories,
-            u.quotas.memories,
-            u.usage.keys,
-            u.quotas.keys,
-            u.usage.connections,
-            u.quotas.connections,
-            u.quotas.requests_per_minute,
+            memories,
+            text_stored,
+            writes,
+            key_count,
+            connections,
+            u.quotas
+                .requests_per_minute
+                .map_or_else(|| "—".to_owned(), |n| n.to_string()),
         );
     }
     body.push_str("</table>");
