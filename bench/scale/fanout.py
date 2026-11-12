@@ -25,9 +25,10 @@ rotated per query, p50 / p95 ms of the whole recall:
 - `fanout-each`: one statement per workarea on a pool of `--pool` connections, merged by score;
 - `fanout-groups-P`: the workareas cut into P groups, one statement per group, P in 2, 4, 8.
 
-`--throughput` instead runs 1, 4 and 8 concurrent clients at 100,000 memories and 50 workareas,
-each client every query once after a warm pass, under `single` and `fanout-groups-4` and `-8`:
-recalls a second and p50 / p95, so the fan-out's extra backends are paid for under load.
+`--throughput` instead runs 1, 2, 4 and 8 concurrent clients at 100,000 memories and 50
+workareas, each client every query once per cell, under `single` and `fanout-groups-2`, `-4` and
+`-8`, for `--rounds` rounds with the mode order rotated per round: each cell's median recalls a
+second, p50 and p95 and their range, so the fan-out's extra backends are paid for under load.
 
 Every mode returns the same top `LIMIT` (checked per query): the leg's score is a function of
 the row and the query alone, so the merge is exact.
@@ -52,6 +53,8 @@ SEED = 20261111
 SIZES = [1_000, 10_000, 100_000]
 WORKAREAS = [5, 50, 500]
 GROUPS = [2, 4, 8]
+
+PREPARE = [5]   # psycopg's default: a statement run 5 times on a connection is prepared
 
 PARALLEL = ["SET max_parallel_workers_per_gather = 4", "SET parallel_setup_cost = 0",
             "SET parallel_tuple_cost = 0", "SET min_parallel_index_scan_size = 0",
@@ -133,7 +136,7 @@ def merged(lists, k):
 
 class Pool:
     def __init__(self, dsn, n):
-        self.conns = [psycopg.connect(dsn, autocommit=True) for _ in range(n)]
+        self.conns = [psycopg.connect(dsn, autocommit=True, prepare_threshold=PREPARE[0]) for _ in range(n)]
         self.free = list(self.conns)
         self.lock = threading.Lock()
         self.ex = ThreadPoolExecutor(n)
@@ -166,51 +169,64 @@ def pct(xs, p):
     return round(xs[min(len(xs) - 1, int(round(p * (len(xs) - 1))))], 2)
 
 
-def throughput(a, docs, qs, size, n, clients_list, modes):
-    """Concurrent clients, each running every query once (after one warm pass): recalls a
-    second and p95 per mode, so the fan-out's cores are paid for under load."""
+def throughput(a, docs, qs, size, n, clients_list, modes, rounds):
+    """Concurrent clients, each running every query once per cell: recalls a second, p50 and
+    p95 per (clients, mode). Every round runs every cell, the mode order rotated per round and
+    the client counts in turn, so the cells share the host's drift; the report is each cell's
+    median over the rounds and its range."""
     conn = psycopg.connect(a.dsn, autocommit=False)
     info = build(conn, size, docs)
     table = f"postings_{size}"
-    index(conn, table, n)
+    info["index_mib"] = index(conn, table, n)
     col, all_wa = f"wa_{n}", list(range(n))
-    out = {"size": size, "workareas": n, "runs": []}
+    out = {"size": size, "workareas": n, "rounds": rounds, "table": info, "cells": {}, "runs": []}
+    groups_of = {m: 1 if m == "single" else int(m.rsplit("-", 1)[1]) for m in modes}
+    pools = {(c, m): [Pool(a.dsn, groups_of[m]) for _ in range(c)] for c in clients_list for m in modes}
+
+    def recall(pool, groups, q):
+        parts = [all_wa[i::groups] for i in range(groups)]
+        return merged(pool.map(lambda c, wa: run_one(c, table, col, q, wa, a.k), parts), a.k)
+
+    for (c, m), ps in pools.items():          # warm every connection's plan and the cache
+        for p in ps:
+            for q in qs[:20]:
+                recall(p, groups_of[m], q)
+    for r in range(rounds):
+        for clients in clients_list:
+            order = modes[r % len(modes):] + modes[:r % len(modes)]
+            for mode in order:
+                ps, groups = pools[(clients, mode)], groups_of[mode]
+                lat, lock = [], threading.Lock()
+
+                def client(i):
+                    for q in qs[i % len(qs):] + qs[:i % len(qs)]:
+                        t0 = time.perf_counter()
+                        recall(ps[i], groups, q)
+                        with lock:
+                            lat.append((time.perf_counter() - t0) * 1000)
+
+                load0 = os.getloadavg()[0]
+                t0 = time.perf_counter()
+                threads = [threading.Thread(target=client, args=(i,)) for i in range(clients)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+                wall = time.perf_counter() - t0
+                row = {"round": r, "clients": clients, "mode": mode,
+                       "recalls_per_s": round(len(lat) / wall, 1), "p50": pct(lat, 0.5),
+                       "p95": pct(lat, 0.95), "load_avg_1m": round(load0, 2)}
+                out["runs"].append(row)
+                print(json.dumps(row), flush=True)
     for clients in clients_list:
         for mode in modes:
-            groups = 1 if mode == "single" else int(mode.rsplit("-", 1)[1])
-            pools = [Pool(a.dsn, groups) for _ in range(clients)]
-
-            def recall(pool, q):
-                parts = [all_wa[i::groups] for i in range(groups)]
-                return merged(pool.map(lambda c, wa: run_one(c, table, col, q, wa, a.k), parts), a.k)
-
-            for q in qs:
-                recall(pools[0], q)
-            lat = []
-            lock = threading.Lock()
-
-            def client(i):
-                order = qs[i % len(qs):] + qs[:i % len(qs)]
-                for q in order:
-                    t0 = time.perf_counter()
-                    recall(pools[i], q)
-                    with lock:
-                        lat.append((time.perf_counter() - t0) * 1000)
-
-            load0 = os.getloadavg()[0]
-            t0 = time.perf_counter()
-            threads = [threading.Thread(target=client, args=(i,)) for i in range(clients)]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join()
-            wall = time.perf_counter() - t0
-            for p in pools:
-                p.close()
-            row = {"clients": clients, "mode": mode, "recalls_per_s": round(len(lat) / wall, 1),
-                   "p50": pct(lat, 0.5), "p95": pct(lat, 0.95), "load_avg": load0}
-            out["runs"].append(row)
-            print(json.dumps(row), flush=True)
+            rs = [x for x in out["runs"] if x["clients"] == clients and x["mode"] == mode]
+            out["cells"][f"{clients}/{mode}"] = {
+                k: {"median": statistics.median(x[k] for x in rs), "min": min(x[k] for x in rs),
+                    "max": max(x[k] for x in rs)} for k in ("recalls_per_s", "p50", "p95")}
+    for ps in pools.values():
+        for p in ps:
+            p.close()
     with conn.cursor() as cur:
         cur.execute(f"DROP TABLE {table}")
     conn.commit()
@@ -227,14 +243,25 @@ def main():
     ap.add_argument("--queries", type=int, default=100)
     ap.add_argument("--k", type=int, default=100, help="each list's depth; 100 is CC_DEPTH")
     ap.add_argument("--sizes", type=int, nargs="*", default=SIZES)
+    ap.add_argument("--rounds", type=int, default=5)
+    ap.add_argument("--no-prepare", action="store_true",
+                    help="never prepare: every statement planned for its own parameters")
+    ap.add_argument("--workareas", type=int, nargs="*", default=WORKAREAS)
+    ap.add_argument("--modes", nargs="*", default=None, help="only these modes in the matrix")
     ap.add_argument("--throughput", action="store_true",
                     help="instead: concurrent clients at 100,000 memories and 50 workareas")
     a = ap.parse_args()
+    if a.no_prepare:
+        PREPARE[0] = None
     docs, enc_q = load_cache(a.cache)
     qs = [([t for t, _, _ in v], [w for _, w, _ in v]) for i, v in sorted(enc_q.items()) if i.startswith("sf-")]
     qs = qs[: a.queries]
+    load_before = os.getloadavg()
     if a.throughput:
-        res = throughput(a, docs, qs, 100_000, 50, [1, 4, 8], ["single", "fanout-groups-4", "fanout-groups-8"])
+        res = throughput(a, docs, qs, 100_000, 50, [1, 2, 4, 8],
+                         ["single", "fanout-groups-2", "fanout-groups-4", "fanout-groups-8"], a.rounds)
+        res["load_avg_before"] = load_before
+        res["load_avg_after"] = os.getloadavg()
         res.update({"k": a.k, "queries": len(qs), "cpus": os.cpu_count()})
         Path(a.out).write_text(json.dumps(res, indent=1) + "\n")
         return
@@ -247,7 +274,7 @@ def main():
         info["load_avg_before"] = os.getloadavg()
         info["workareas"] = {}
         info["index_mib"] = {}
-        for n in WORKAREAS:
+        for n in a.workareas:
             info["index_mib"][str(n)] = index(main_conn, table, n)
             col = f"wa_{n}"
             all_wa = list(range(n))
@@ -277,6 +304,8 @@ def main():
             for g in GROUPS:
                 if g < n:
                     runs[f"fanout-groups-{g}"] = (lambda g: lambda q: fan(q, g))(g)
+            if a.modes:
+                runs = {m: f for m, f in runs.items() if m in a.modes}
             # every mode on each query in turn, the order rotated per query, so each mode
             # meets the same host load and the same cache; each timed run is the second
             names = list(runs)
@@ -302,7 +331,8 @@ def main():
                 plan = "\n".join(r[0] for r in cur.fetchall())
                 cur.execute("RESET ALL")
             main_conn.rollback()
-            modes["single-parallel"]["plan_has_gather"] = "Gather" in plan
+            if "single-parallel" in modes:
+                modes["single-parallel"]["plan_has_gather"] = "Gather" in plan
             info["workareas"][str(n)] = modes
             drop_index(main_conn, table, n)
             print(size, n, json.dumps(modes), flush=True)

@@ -10,22 +10,27 @@ workarea's scores are the union's scores, and a merge by score returns the globa
 byte for byte. The BM25 leg needs the union's `n`, `avgdl`, per-form document frequencies and
 pruned words, which are sums of the per-workarea counts OML already keeps. The fusion needs
 each leg's minimum and maximum over its merged top 100, so the reducer must fuse, never the
-workarea. With those three rules the merged answer equalled the global one on every query of
-six partitions, scores included. Every shortcut lost quality: merging per-workarea fused
+workarea. With those three rules, each workarea scoring only its own rows from the summed
+counts, the merged answer equalled the global one on every query of six partitions, scores
+included, with pruning active on 75% of the SciFact queries. Every shortcut lost quality: merging per-workarea fused
 answers by score or by reciprocal rank lost up to 0.79 of success@5 at 500 workareas.
 
-On one PostgreSQL it buys latency only from idle cores. Cutting a large scope into 8 groups,
-one statement each on its own connection, took a lone recall's sparse leg at 100,000 memories
-from 100.7 to 31.8 ms p95. With 8 clients on the 8 vCPUs the same split served 8 to 14% fewer
-recalls a second at no better p95, and one statement per workarea cost 220 to 330 ms at 500
-workareas at every size. The lever for the sparse leg on one database stays #104's bound on the
-postings a query reads; fan-out is the shape for ADR-0073's nodes, where each shard reads on its
-own cores.
+On one PostgreSQL a split buys latency and throughput from idle cores, and costs throughput
+once the cores are busy. At 100,000 memories and 50 workareas, with 1 to 4 clients on 8 vCPUs,
+grouping the scope into 2 to 8 statements cut the sparse leg's p95 from about 95 ms to 19 to
+56 ms and served 1.6 to 4.3 times the recalls a second; with 8 clients it served 7 to 14% fewer
+(five rounds, ranges not overlapping). One statement per workarea cost 220 to 330 ms at 500
+workareas at every size. So a split is a latency tool for a lightly loaded server, and the shape
+ADR-0073's nodes need, where each shard reads on its own cores; it does not reduce the postings a
+query reads, which is #104's lever.
 
 The prototype: [`mapreduce.py`](mapreduce.py) (quality, standard library) and
 [`../../bench/scale/fanout.py`](../../bench/scale/fanout.py) (latency, psycopg). Results:
-[`results/mapreduce.json`](results/mapreduce.json) and
-[`../../bench/scale/results/fanout.json`](../../bench/scale/results/fanout.json).
+[`results/mapreduce.json`](results/mapreduce.json),
+[`../../bench/scale/results/fanout.json`](../../bench/scale/results/fanout.json) and
+[`../../bench/scale/results/fanout-throughput.json`](../../bench/scale/results/fanout-throughput.json).
+Revised 2026-11-12 after review: each workarea now scores itself from its own rows and the summed
+counts, pruning included, and the throughput run is repeated and interleaved.
 
 ## 1. Map: what a workarea can compute alone
 
@@ -49,9 +54,23 @@ six partitions.
 
 ## 2. Reduce: how to merge, and how deep each workarea must return
 
-**When scores are comparable, merge by score.** Each leg merged by score (ties by id), cut at
-100, then fused at the reducer, equals the global answer. Measured: `exact` matches `global`'s
-top 10 *and* its scores on 100% of queries, every pipeline, every partition (tables below).
+**When scores are comparable, merge by score.** In the prototype each workarea is its own
+index over its own rows (`Shard` in `mapreduce.py`). Round 1 asks every workarea for its row
+count, summed length and each query form's document frequency over its rows alone; the reducer
+sums them and decides the pruned words from the sums with `oml-pg`'s rule (`PruneRule::pruned`,
+`FREQUENT_SHARE` 0.1, `POSTING_BUDGET` 10,000). Round 2 hands every workarea those numbers; it
+scores its own rows from its own postings and returns each leg's top 100. The global run is a
+separate index over the union that counts its own statistics. Measured on all six partitions:
+
+- round 1's sums equalled the union's own counts on 100% of queries;
+- each merged leg equalled the global leg, ids and scores, on 100% of queries for `sparse`,
+  `bm25` and both legs of `bm25-sparse`, the largest score difference 0.0 (float equality);
+- the fused top 10 equalled the global top 10 with its scores on 100% of queries.
+
+Pruning took part: on SciFact 75.3% of queries pruned at least one word (5.8% on the skew split,
+none on the topics split), and in every one of them a workarea deciding pruning from its own
+counts would have pruned differently from the union. Round 1 fixes it, so the exact merge never
+sees that difference.
 
 **How deep.** A single-list pipeline needs `k` per workarea: the global top `k` is inside the
 union of the workareas' top `k`. A CC pipeline needs 100 per leg per workarea, because the
@@ -64,16 +83,17 @@ rest. Rows shipped per `bm25-sparse` query, mean:
 | partition | workareas | fixed depth (100 per leg) | threshold round | queries needing a second round | depth one workarea needed, mean / p95 / max |
 |---|---:|---:|---:|---:|---|
 | topics | 11 | 133 | 131 | 8.3% | 11.8 / 20 / 21 |
-| skew | 11 | 286 | 284 | 96.7% | 79.0 / 97 / 99 |
-| scifact-5 | 5 | 999 | 400 | 0% | 26.4 / 31 / 34 |
-| scifact-50 | 50 | 7,705 | 999 | 0.7% | 6.3 / 8 / 10 |
-| scifact-zipf-50 | 50 | 4,596 | 1,409 | 100% | 24.2 / 30 / 36 |
-| scifact-500 | 500 | 7,846 | 7,690 | 0% | 2.6 / 3 / 4 |
+| skew | 11 | 279 | 278 | 96.7% | 79.0 / 97 / 99 |
+| scifact-5 | 5 | 970 | 396 | 0% | 26.4 / 31 / 34 |
+| scifact-50 | 50 | 4,619 | 963 | 0.7% | 6.3 / 8 / 10 |
+| scifact-zipf-50 | 50 | 3,063 | 1,253 | 100% | 24.3 / 30 / 36 |
+| scifact-500 | 500 | 4,631 | 4,608 | 0% | 2.6 / 3 / 4 |
 
-The threshold round matters when workareas are many and remote: at 50 workareas it ships 7.7
-times fewer rows for the same answer. At 500 the floor of 10 per leg dominates; a floor of
-`⌈200 / N⌉` with no minimum would ship about 3,000. Under skew (one workarea holding 93% of the
-rows) the large workarea needs nearly the full 100 every time, so no protocol saves it work.
+The threshold round matters when workareas are many and remote: at 50 workareas it ships 4.8
+times fewer rows for the same answer. At 500 the floor of 10 per leg dominates. Under skew (one
+workarea holding 93% of the rows) the large workarea needs nearly the full 100 every time, so no
+protocol saves it work. (Fewer rows ship than `N × 200` because a workarea returns only the rows
+its kept words generate.)
 
 **When scores are not comparable, nothing recovers the global answer.** Three ways a reducer
 could merge per-workarea answers that each workarea fused on its own statistics, against the
@@ -121,9 +141,9 @@ Full tables, `nDCG@10`, top-10 overlap and agreement for `sparse` and `bm25` too
   5, 50 and 500 workareas (seed 20261111), and **scifact-zipf-50**, 50 workareas sized 1/rank
   (1,150 to 23 rows). The sparse model encoded all 5,383 texts through `sparse_encode` at the
   pinned revision (digests checked), 2.3 to 9.4 texts a second on 6 threads on a shared host.
-- Not tested: pruning. At these sizes no query's postings cross `POSTING_BUDGET`, so the pruned
-  words never differ between a workarea and the union. A workarea deciding its own pruning would
-  be a fourth source of disagreement; d9's round 1 fixes pruning with the statistics.
+- Pruning is `oml-pg`'s rule over the offline analyzer's counts. The candidates are the rows the
+  kept words' forms generate, each scored with every word; the served statement also cuts the
+  generated rows at `k × RESCORE_DEPTH` before rescoring, which the prototype does not.
 
 ## 3. Does it help latency?
 
@@ -152,20 +172,34 @@ ms per recall, one client; every mode returned the same top 100 as `single` on e
 of 8 connections; `fanout-groups-P` cuts the workareas into P groups, one statement per group,
 each merged by score.
 
-Under load, at 100,000 memories and 50 workareas, each client running all 100 queries once after
-a warm pass (`results/fanout-throughput.json`):
+Under concurrent clients, at 100,000 memories and 50 workareas (`results/fanout-throughput.json`,
+re-run 2026-11-12 on a quiet host: load average 1.47 before the run, every other lane idle; the
+load rose to 14.7 from the bench's own backends). Each client runs all 100 queries once per
+cell; every round runs every cell, client counts in turn and the mode order rotated per round;
+five rounds, each cell's median and its range over them:
 
 | clients | mode | recalls a second | p50 ms | p95 ms |
 |---:|---|---:|---:|---:|
-| 1 | `single` | 23.4 | 39.8 | 95.3 |
-| 1 | `fanout-groups-4` | 60.2 | 13.9 | 40.2 |
-| 1 | `fanout-groups-8` | 104.8 | 9.1 | 16.6 |
-| 4 | `single` | 89.9 | 41.8 | 95.7 |
-| 4 | `fanout-groups-4` | 146.3 | 26.0 | 53.3 |
-| 4 | `fanout-groups-8` | 138.1 | 26.0 | 55.0 |
-| 8 | `single` | 172.5 | 42.8 | 100.2 |
-| 8 | `fanout-groups-4` | 158.5 | 46.4 | 103.0 |
-| 8 | `fanout-groups-8` | 147.9 | 48.6 | 104.9 |
+| 1 | `single` | 23.2 (22.7–24.3) | 41.1 (39.4–41.4) | 94.2 (91.5–97.9) |
+| 1 | `fanout-groups-2` | 39.2 (38.5–41.1) | 23.5 (23.0–24.9) | 53.5 (52.4–54.6) |
+| 1 | `fanout-groups-4` | 51.7 (50.2–61.2) | 16.6 (14.6–18.0) | 40.7 (35.2–42.1) |
+| 1 | `fanout-groups-8` | 99.3 (93.9–102.5) | 9.7 (9.2–9.9) | 18.6 (17.4–20.5) |
+| 2 | `single` | 45.4 (44.7–46.9) | 41.1 (40.4–41.7) | 95.8 (95.4–97.0) |
+| 2 | `fanout-groups-2` | 75.7 (73.3–75.9) | 24.6 (24.2–24.8) | 53.7 (51.9–56.4) |
+| 2 | `fanout-groups-4` | 127.3 (120.9–131.4) | 14.8 (14.4–15.1) | 30.9 (28.8–34.2) |
+| 2 | `fanout-groups-8` | 126.4 (125.4–131.2) | 14.9 (14.1–15.3) | 28.6 (27.8–29.3) |
+| 4 | `single` | 89.8 (88.9–91.0) | 41.7 (41.0–42.3) | 99.2 (95.4–100.1) |
+| 4 | `fanout-groups-2` | 148.1 (148.0–152.0) | 24.7 (24.6–25.0) | 56.4 (54.3–57.9) |
+| 4 | `fanout-groups-4` | 147.7 (143.0–150.1) | 25.0 (24.9–25.2) | 54.8 (53.3–57.5) |
+| 4 | `fanout-groups-8` | 142.6 (141.3–147.1) | 25.4 (25.1–26.1) | 53.1 (51.8–53.3) |
+| 8 | `single` | 174.7 (173.0–178.4) | 41.8 (41.6–42.0) | 100.8 (98.4–101.8) |
+| 8 | `fanout-groups-2` | 162.4 (162.1–163.4) | 45.3 (45.0–45.8) | 105.7 (104.4–105.9) |
+| 8 | `fanout-groups-4` | 155.7 (154.9–158.4) | 46.8 (46.1–47.0) | 106.9 (102.7–107.5) |
+| 8 | `fanout-groups-8` | 150.1 (147.0–151.7) | 49.0 (48.8–49.9) | 103.6 (100.4–106.7) |
+
+The ranges do not overlap between `single` and any split at any client count, so the differences
+below are not drift. (The first throughput run, one pass per cell in a fixed order while the load
+rose from 3.1 to 4.7, is superseded by this one.)
 
 What the numbers say:
 
@@ -173,15 +207,34 @@ What the numbers say:
   round trip and a plan per statement.
 - **One statement per workarea is never worth it past a handful.** At 500 workareas it takes
   220 to 330 ms whatever the size: 500 round trips on 8 connections.
-- **A few groups help a lone recall at 10,000 and 100,000 memories**: p95 2.6 to 3.2 times lower
-  at 100,000 (100.7 to 31.8 ms at 50 workareas). The gain is partly more cores and partly smaller
-  aggregates: each group sums and sorts its own candidates, and a common query token's candidates
-  are most of the scope.
-- **It adds no capacity.** With 8 clients on 8 vCPUs every core is already busy, and the split
-  serves 8 to 14% fewer recalls a second at the same p95. Its gain is borrowed from idle cores,
-  and it holds P connections per recall while it lasts.
+- **While cores are idle, a split wins in latency and in throughput.** With 1 to 4 clients on 8
+  vCPUs, splitting a 100,000-memory scope cut p50 from about 41 ms to 10 to 25 ms and p95 from
+  about 95 ms to 19 to 56 ms, and served 1.6 to 4.3 times the recalls a second (4 clients: 148
+  against 90, +65%). The cores to split onto should match what is idle: with 1 client 8 groups
+  win, with 4 clients 2 groups do as well as 8.
+- **Once the cores are busy it costs.** With 8 clients the split served 7 to 14% fewer recalls
+  a second (150 to 162 against 175) at a p95 3 to 6% higher: the same postings are read, plus a
+  plan, a round trip and a merge per group. It also holds P connections per recall.
+- **So it is a latency tool for a lightly loaded server, not capacity.** Where it helps depends
+  on the recall concurrency against the cores, which the server would have to read per recall
+  (for instance, split only while fewer than half the connections are busy). That control, and
+  the 50 ms bar's case at 100,000 memories, are what a build would have to measure.
 - **PostgreSQL's own parallel query does not do it.** The planner took a Gather at every point
   and it did not help, or cost about 10 ms of worker start at the small sizes.
+
+**Two harnesses, two numbers for the same split.** The single-client table gives
+`fanout-groups-8` at 100,000 memories and 50 workareas 18.1 / 31.8 ms (p50 / p95); the
+throughput table gives 9.7 / 18.6 for one client. `single` agrees in both (41.5 / 100.7 against
+41.1 / 94.2), so the split's gain is 2.1 to 4.3 times at p50 whichever is right. Re-run on the
+quiet host, the first harness gave 16.7 / 27.3 with only `single` and the split interleaved,
+12.5 / 22.4 with every mode, 19.3 / 32.6 with the split alone, and 18.8 / 29.5 with psycopg's
+statement preparation off; the throughput harness gave 9.2 to 9.9 / 17.4 to 20.5 over five
+rounds. So host load, the other modes and prepared generic plans are ruled out. What is left is
+how each harness times: the first runs a single-statement reference recall and a warm run of the
+same query before each timed split, leaving seven of eight cores idle for about 40 ms between
+splits; the second runs the split back to back on connections that run nothing else. The cause
+is not confirmed; the conclusions above use the throughput harness, which repeats and reports its
+range. The four re-runs are in `bench/scale/results/fanout-reconcile/`.
 
 Two further reads cost less than splitting a scope. Today `bm25-sparse` reads its two lists one
 after the other (`bench/scale/REPORT.md`: 272 ms p95 at 100,000 memories for both lists, 100
@@ -193,7 +246,7 @@ which the split only spreads.
 nodes, and no single statement can read them. There each source reads its own postings on its
 own cores, so the capacity argument above does not apply, and the cost is the slowest source plus
 two network rounds, which d9 bounds with hedging. The threshold round in section 2 keeps round
-2's payload near 1,000 rows at 50 sources instead of 7,700.
+2's payload near 1,000 rows at 50 sources instead of 4,600.
 
 ## 4. How it composes
 
@@ -204,6 +257,17 @@ two network rounds, which d9 bounds with hedging. The threshold round in section
   statistics, so no unreadable row moves a readable one. The shortcuts in section 2 break that
   property in a different way: a workarea's own statistics or bounds would make a hit's score
   depend on which workarea it lives in and what else that workarea holds.
+- **The caller's own held rows go to one shard.** Both statements read a second branch beside the
+  workarea filter: the postings of the caller's own held rows by id (`$4`, `p.memory_id =
+  ANY($4::uuid[])`, `oml-pg` `sparse_sql` and `bm25_postings_sql`), with no `workarea_id`
+  predicate. Handed to every shard, each would return the same held rows, and under BM25 the
+  summed round 1 would count them once per shard. So exactly one shard carries `$4`: the one
+  serving the scope's own nodes, where ADR-0072 d7 keeps own held rows (and ADR-0030 d3, d4 an
+  in-progress scope's), and every other shard gets an empty list. Its round 1 adds the held rows'
+  counts once, as `POSTINGS_OWN_HELD_DF` does today, and under a reference set it adds none (R
+  holds served rows alone, d7). The prototype has no held rows; this is the rule a built version
+  needs and a test it must carry: a held row appears once, with the score the single statement
+  gives it.
 - **ADR-0072 federation.** d7.1 (score independence) holds for the exact merge, and the
   measurement is its test 6 extended to `sparse` and `bm25-sparse`. d7.2 refuses `Cc` under
   `wide` and a list "until its bounds are taken over R". Merging each leg over R to 100, fusing
@@ -219,12 +283,15 @@ two network rounds, which d9 bounds with hedging. The threshold round in section
 
 ## 5. Recommendation
 
-**Do not build per-workarea fan-out on one database now.** One statement per workarea is
-slower at every size measured. Grouped fan-out lowers a lone recall's p95 at 10,000 memories and
-more, but serves fewer recalls a second once the cores are busy, and the sparse leg's problem
-(#104) is the postings a query reads, which a split spreads and does not reduce. If a large
-scope's sparse p95 still misses the bar after #104's bound, a grouped split that runs only when
-the server has idle cores is the option to measure then, with a concurrency test as its gate.
+**Never one statement per workarea; a grouped split on one database is worth building later,
+gated on load.** One statement per workarea is slower at every size measured. A grouped split
+(the scope cut into P statements on P connections, each leg merged by score) gives the global
+answer exactly, and at 100,000 memories it cut p95 from about 95 ms to 19 to 56 ms and added
+throughput while the server had idle cores; it served 7 to 14% fewer recalls once 8 clients
+filled 8 vCPUs. It is not the fix for #104 (the postings a query reads), and it is not needed
+below about 10,000 memories in scope. Build it after #104's bound, as an adaptive split: P chosen
+per recall from the idle backends or cores (P 1 under load), only above a scope size, measured
+with `fanout.py --throughput` against the 50 ms bar with the bound in place.
 
 **Build later, inside the work already planned:**
 
@@ -234,8 +301,10 @@ the server has idle cores is the option to measure then, with a concurrency test
    (#205's named follow-up) with no new statement and no fan-out.
 2. **Read `bm25-sparse`'s two legs concurrently** in the core: the recall costs the slower leg.
    Measure it with `sparse.py` before building.
-3. **ADR-0073 phase 3 (#211) builds d9 as written**, with the threshold round as an option for
-   round 2 once units are remote.
+3. **The adaptive grouped split on one database**, after #104's bound, gated as above.
+4. **ADR-0073 phase 3 (#211) builds d9 as written**, with the threshold round as an option for
+   round 2 once units are remote, and with the caller's own held rows on one source only
+   (section 4).
 
 **What an ADR amendment would need to decide:**
 
@@ -249,8 +318,18 @@ the server has idle cores is the option to measure then, with a concurrency test
   write it as a rule.
 - Whether the lead reads a fused pipeline's legs concurrently, and what that costs in
   connections per recall.
-- Nothing about fan-out inside one database: it stays out of the design unless the measurement
-  above is repeated with #104's bound in place and shows a gain under load.
+- For a split inside one database: the scope size above which it runs, how P follows the load
+  (and that P is 1 when the server is busy), the connections a recall may hold, and that it is
+  exact by construction (round 1 over the whole scope, legs merged before fusion).
+- That the caller's own held rows (`$4`) go to exactly one source, the scope's.
+
+## Inputs
+
+| input | source | pin |
+|---|---|---|
+| BEIR SciFact | `https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/scifact.zip`, CC BY-NC 2.0 (`eval/bench/README.md`); not committed | sha256 `536e14446a0ba56ed1398ab1055f39fe852686ecad24a6306c80c490fa8e0165`; `corpus.jsonl` (5,183), `queries.jsonl`, `qrels/test.tsv` (300 queries) |
+| doc-v3-distill | `opensearch-project/opensearch-neural-sparse-encoding-doc-v3-distill`, Apache-2.0, revision `babf71f3c48695e2e53a978208e8aba48335e3c0` | `config.json` `ee977804…cbe3`, `tokenizer.json` `91f1def9…1854`, `model.safetensors` `83a3cc97…f70a`, `idf.json` `da23a1c0…dd`: the digests `oml-rerank`'s `DOC_V3_DISTILL` pins, checked after download |
+| the recall corpus and queries | `eval/recall/corpus.json`, `queries.json` (data version 2) | this commit |
 
 ## Rerunning
 

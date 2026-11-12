@@ -26,13 +26,18 @@ Over four partitions of the rows into workareas (shards):
   workareas, N in 5, 50, 500, and `scifact-zipf-50`, 50 workareas whose sizes follow 1/rank.
 
 And six ways to answer, each compared with `global`, one search over the union:
-- `exact`: each shard scores every leg with the union's statistics (BM25's n, avgdl, df: sums of
-  per-shard counts, ADR-0073 d9 round 1), returns each leg's top 100 with raw scores; the reducer
-  merges each leg by score (ties by id), cuts it at 100, fuses, cuts at k;
+- `exact`: each shard is its own index over its own rows. Round 1: every shard counts its rows,
+  their summed length and each query form's df over its own rows; the reducer sums them and
+  decides the pruned words from the sums (oml-pg's PruneRule). Round 2: every shard scores its
+  own rows with those numbers and returns each leg's top 100 with raw scores; the reducer merges
+  each leg by score (ties by id), cuts it at 100, fuses, cuts at k. `global` is a separate index
+  over the union counting its own statistics, and the merged legs are compared with its legs,
+  ids and float scores;
 - `exact-adaptive`: as `exact`, but each shard first returns d0 = max(10, ceil(2 * 100 / N)) per
   leg; the reducer takes the 100th best score it holds as a threshold and asks again, to 100, only
   the shards whose d0-th score is at or above it (Fagin's threshold idea); still exact;
-- `local-stats`: as `exact`, but BM25 on each shard uses that shard's own n, avgdl and df;
+- `local-stats`: as `exact`, but BM25 on each shard uses that shard's own n, avgdl, df and
+  pruned words;
 - `local-fused-score`: each shard runs the whole pipeline on its own rows and statistics, its own
   CC bounds included, and returns its top k fused scores; the reducer sorts them by score;
 - `local-fused-rrf`: the same shard lists merged by reciprocal rank, k 60;
@@ -154,11 +159,15 @@ def forms(text):
     return out
 
 
-class Bm25Index:
-    def __init__(self, texts):
-        self.tf = {}      # doc -> Counter(form)
-        self.len = {}
-        self.post = defaultdict(list)  # form -> docs
+FREQUENT_SHARE, POSTING_BUDGET = 0.1, 10_000   # oml-pg's compiled pruning constants
+
+
+class Rows:
+    """Per-row data only: each row's BM25 forms and length, and its sparse postings. A shard
+    derives these from its own rows; nothing here is a statistic over rows."""
+
+    def __init__(self, texts, enc_docs):
+        self.tf, self.len = {}, {}
         for d, t in texts.items():
             fsets = forms(t)
             c = Counter()
@@ -166,67 +175,100 @@ class Bm25Index:
                 c.update(fs)
             self.tf[d] = c
             self.len[d] = max(1, sum(len(fs) for fs in fsets.values()))
-            for f in c:
-                self.post[f].append(d)
+        self.sparse = enc_docs
 
-    def score(self, qwords, shard_of, stats):
-        """BM25 of every row in `shard_of`, {doc: score}. `stats` maps a shard to the key whose
-        statistics score its rows: one key for all (the union's) or each shard its own."""
-        key_of = {s: stats(s) for s in set(shard_of.values())}
-        n, total = Counter(), Counter()
-        for d, s in shard_of.items():
-            n[key_of[s]] += 1
-            total[key_of[s]] += self.len[d]
+
+class Shard:
+    """One workarea's (or the union's) own index over its own rows. `stats` answers round 1
+    from these rows alone; `search` scores these rows alone with whatever statistics and pruned
+    words it is handed."""
+
+    def __init__(self, rows, ids):
+        self.ids = set(ids)
+        self.rows = rows
+        self.post = defaultdict(list)       # form -> [doc]
+        self.spost = defaultdict(list)      # token -> [(doc, weight)]
+        for d in sorted(self.ids):
+            for f in rows.tf[d]:
+                self.post[f].append(d)
+            for tok, w, _in_text in rows.sparse.get(d, ()):
+                self.spost[tok].append((d, w))
+
+    def stats(self, qwords):
+        """Round 1: (rows, summed length, {form: df}) over this shard's rows."""
+        df = {f: len(self.post.get(f, ())) for fs in qwords.values() for f in fs}
+        return len(self.ids), sum(self.rows.len[d] for d in self.ids), df
+
+    def bm25(self, qwords, stats, pruned, depth):
+        """BM25 of this shard's rows under `stats` = (n, total length, df): candidates from the
+        kept words' forms, every word scoring (bm25_postings' generate-then-rescore)."""
+        n, total, df = stats
+        if n == 0:
+            return []
+        avgdl = max(1.0, total / n)
+        tf, ln = self.rows.tf, self.rows.len
+        cand = set()
+        for w, fs in qwords.items():
+            if w not in pruned:
+                for f in fs:
+                    cand.update(self.post.get(f, ()))
         acc = defaultdict(float)
         for _w, fs in qwords.items():
             best = defaultdict(float)
-            for f in fs:
-                docs = [d for d in self.post.get(f, ()) if d in shard_of]
-                if not docs:
+            for f in sorted(fs):
+                if df.get(f, 0) == 0:
                     continue
-                df = Counter(key_of[shard_of[d]] for d in docs)
-                for d in docs:
-                    key = key_of[shard_of[d]]
-                    idf = math.log(1 + (n[key] - df[key] + 0.5) / (df[key] + 0.5))
-                    avgdl = max(1.0, total[key] / n[key])
-                    tf = self.tf[d][f]
-                    c = idf * tf * 2.2 / (tf + K1 * (0.25 + 0.75 * self.len[d] / avgdl))
-                    if c > best[d]:
-                        best[d] = c
+                idf = math.log(1 + (n - df[f] + 0.5) / (df[f] + 0.5))
+                for d in self.post.get(f, ()):
+                    if d in cand:
+                        c = idf * tf[d][f] * 2.2 / (tf[d][f] + K1 * (0.25 + 0.75 * ln[d] / avgdl))
+                        if c > best[d]:
+                            best[d] = c
             for d, c in best.items():
                 acc[d] += c
-        return acc
+        return top(acc, depth)
 
-
-class SparseIndex:
-    def __init__(self, enc_docs):
-        self.post = defaultdict(list)  # token -> [(doc, weight)]
-        for d, terms in enc_docs.items():
-            for tok, w, _in_text in terms:
-                self.post[tok].append((d, w))
-
-    def score(self, qterms, shard_of):
+    def sparse(self, qterms, depth):
+        """The model's weights times idf.json's: no statistic of any row set."""
         acc = defaultdict(float)
         for tok, w, _piece in qterms:
-            for d, dw in self.post.get(tok, ()):
-                if d in shard_of:
-                    acc[d] += w * dw
-        return acc
+            for d, dw in self.spost.get(tok, ()):
+                acc[d] += w * dw
+        return top(acc, depth)
+
+
+def pruned_words(qwords, n, df):
+    """oml-pg's PruneRule::pruned over the given counts: nothing while the query's distinct
+    forms' postings fit POSTING_BUDGET; past it every word with a form above FREQUENT_SHARE of
+    the rows, then the heaviest kept word until they fit."""
+    words = [(w, [(f, df.get(f, 0)) for f in sorted(fs) if df.get(f, 0) > 0]) for w, fs in qwords.items()]
+
+    def postings(ws):
+        return sum(dict(f for _w, fl in ws for f in fl).values())
+
+    if postings(words) <= POSTING_BUDGET:
+        return set()
+    out = {w for w, fl in words if fl and any(c > FREQUENT_SHARE * n for _f, c in fl)}
+    while True:
+        kept = [(i, w, fl) for i, (w, fl) in enumerate(words) if w not in out and fl]
+        if postings([(w, fl) for _i, w, fl in kept]) <= POSTING_BUDGET or not kept:
+            return out
+        heaviest = max(kept, key=lambda x: (sum(c for _f, c in x[2]), -x[0]))
+        out.add(heaviest[1])
+
+
+def round1(shards, qwords):
+    """The reducer sums every shard's counts: the union's statistics without the union's rows."""
+    n, total, df = 0, 0, Counter()
+    for sh in shards.values():
+        a, b, c = sh.stats(qwords)
+        n, total = n + a, total + b
+        df.update(c)
+    return n, total, dict(df)
 
 
 def top(scores, n):
     return sorted(scores.items(), key=lambda x: (-x[1], x[0]))[:n]
-
-
-def per_shard(scores, shard_of, n):
-    """Each shard's own top n of a score dict: what a shard returns when a row's score is a
-    function of the row, the query and statistics fixed before the search."""
-    out = defaultdict(list)
-    for d, s in sorted(scores.items(), key=lambda x: (-x[1], x[0])):
-        lst = out[shard_of[d]]
-        if len(lst) < n:
-            lst.append((d, s))
-    return out
 
 
 def cc(lists):
@@ -248,9 +290,8 @@ def merge(lists, n):
 # ---------------------------------------------------------------- one query over one partition
 
 class World:
-    def __init__(self, texts, enc_docs, enc_q):
-        self.bm = Bm25Index(texts)
-        self.sp = SparseIndex(enc_docs)
+    def __init__(self, rows, enc_q):
+        self.rows = rows
         self.enc_q = enc_q
 
     @staticmethod
@@ -259,55 +300,70 @@ class World:
             return top(cc([(legs["bm25"][:DEPTH], CC[0]), (legs["sparse"][:DEPTH], CC[1])]), k)
         return legs[pipeline][:k]
 
-    def cori(self, q, shard_of, shards):
+    def cori(self, q, shards):
         """CORI's belief per shard for the query's words (Callan, Lu and Croft, SIGIR 1995),
-        min-max normalised over the shards."""
+        min-max normalised over the shards, from each shard's own counts."""
         words = forms(q["query"])
-        cw = Counter()
-        for d, s in shard_of.items():
-            cw[s] += self.bm.len[d]
-        avg_cw = statistics.mean(cw[s] for s in shards) or 1
+        cw = {s: sum(self.rows.len[d] for d in sh.ids) for s, sh in shards.items()}
+        avg_cw = statistics.mean(cw.values()) or 1
         nshards = len(shards)
         bel = Counter()
         for _w, fs in words.items():
-            df = Counter()
-            for f in fs:
-                c = Counter(shard_of[d] for d in self.bm.post.get(f, ()) if d in shard_of)
-                for s, v in c.items():
-                    df[s] = max(df[s], v)
+            df = {s: max(len(sh.post.get(f, ())) for f in fs) for s, sh in shards.items()}
             cf = sum(1 for s in shards if df[s] > 0)
             for s in shards:
                 T = df[s] / (df[s] + 50 + 150 * cw[s] / avg_cw)
                 I = math.log((nshards + 0.5) / max(cf, 1)) / math.log(nshards + 1)
                 bel[s] += 0.4 + 0.6 * T * I
-        vals = [bel[s] for s in shards]
-        lo, hi = min(vals), max(vals)
+        lo, hi = min(bel[s] for s in shards), max(bel[s] for s in shards)
         return {s: ((bel[s] - lo) / (hi - lo) if hi > lo else 1.0) for s in shards}
 
-    def run_query(self, q, shard_of, shards):
+    def run_query(self, q, union, shards):
         qwords = forms(q["query"])
-        g_bm = self.bm.score(qwords, shard_of, lambda s: "union")
-        l_bm = self.bm.score(qwords, shard_of, lambda s: s)
-        sp = self.sp.score(self.enc_q[q["id"]], shard_of)
-        g = {"bm25": top(g_bm, DEPTH), "sparse": top(sp, DEPTH)}
-        exact = {"bm25": per_shard(g_bm, shard_of, DEPTH), "sparse": per_shard(sp, shard_of, DEPTH)}
-        local = {"bm25": per_shard(l_bm, shard_of, DEPTH), "sparse": exact["sparse"]}
-        nshards = len(shards)
+        qterms = self.enc_q[q["id"]]
+        # the global run: one index over the union, its statistics counted from its own rows
+        gstats = union.stats(qwords)
+        gpruned = pruned_words(qwords, gstats[0], gstats[2])
+        g = {"bm25": union.bm25(qwords, gstats, gpruned, DEPTH), "sparse": union.sparse(qterms, DEPTH)}
+        # map: round 1 summed from the shards' counts, round 2 each shard over its own rows
+        sstats = round1(shards, qwords)
+        spruned = pruned_words(qwords, sstats[0], sstats[2])
+        exact = {"bm25": {s: sh.bm25(qwords, sstats, spruned, DEPTH) for s, sh in shards.items()},
+                 "sparse": {s: sh.sparse(qterms, DEPTH) for s, sh in shards.items()}}
+        local = {"bm25": {}, "sparse": exact["sparse"]}
+        local_pruned_differs = False
+        for s, sh in shards.items():
+            st = sh.stats(qwords)
+            pr = pruned_words(qwords, st[0], st[2])
+            local_pruned_differs |= pr != gpruned
+            local["bm25"][s] = sh.bm25(qwords, st, pr, DEPTH)
+        names = sorted(shards)
+        nshards = len(names)
         d0 = max(10, math.ceil(2 * DEPTH / nshards))
-        cori = self.cori(q, shard_of, shards)
-        out = {}
+        cori = self.cori(q, shards)
+        shard_of = {d: s for s, sh in shards.items() for d in sh.ids}
+        out = {"_pruned": bool(gpruned), "_stats_equal": sstats == gstats,
+               "_local_pruned_differs": local_pruned_differs}
         for p in PIPELINES:
             res = {"global": self.answer(p, g, K)}
             legs_used = ["bm25", "sparse"] if p == "bm25-sparse" else [p]
-            merged = {leg: merge([exact[leg][s] for s in shards], DEPTH) for leg in legs_used}
+            merged = {leg: merge([exact[leg][s] for s in names], DEPTH) for leg in legs_used}
             res["exact"] = self.answer(p, merged, K)
+            # each leg's merged list against the global leg, scores compared as floats
+            diff = 0.0
+            for leg in legs_used:
+                gl = dict(g[leg])
+                for d, sc in merged[leg]:
+                    diff = max(diff, abs(sc - gl[d]) if d in gl else float("inf"))
+            res["_leg_max_abs_diff"] = diff
+            res["_legs_equal"] = all(merged[leg] == g[leg] for leg in legs_used)
             # adaptive: d0 per leg per shard first, then up to `need` only from the shards whose
             # d0-th score is at or above the `need`-th best score the reducer holds; a
             # single-leg pipeline needs k per leg, a CC pipeline DEPTH (its bounds)
             need = DEPTH if p == "bm25-sparse" else K
             shipped, second, got = 0, 0, {}
             for leg in legs_used:
-                first = {s: exact[leg][s][:min(d0, need)] for s in shards}
+                first = {s: exact[leg][s][:min(d0, need)] for s in names}
                 shipped += sum(len(v) for v in first.values())
                 pool = merge(first.values(), need)
                 tau = pool[-1][1] if len(pool) >= need else float("-inf")
@@ -322,15 +378,15 @@ class World:
                 got[leg] = merge(full.values(), need)
             res["exact-adaptive"] = self.answer(p, got, K)
             res["_adaptive"] = {"rows": shipped, "second_round_shards": second,
-                                "full_rows": sum(len(exact[leg][s][:need]) for s in shards for leg in legs_used)}
+                                "full_rows": sum(len(exact[leg][s][:need]) for s in names for leg in legs_used)}
             depth = 0
             for leg in legs_used:
                 c = Counter(shard_of[d] for d, _ in g[leg][:need])
                 depth = max(depth, max(c.values(), default=0))
             res["_depth_needed"] = depth
-            local_merged = {leg: merge([local[leg][s] for s in shards], DEPTH) for leg in legs_used}
+            local_merged = {leg: merge([local[leg][s] for s in names], DEPTH) for leg in legs_used}
             res["local-stats"] = self.answer(p, local_merged, K)
-            shard_answers = {s: self.answer(p, {leg: local[leg][s] for leg in legs_used}, K) for s in shards}
+            shard_answers = {s: self.answer(p, {leg: local[leg][s] for leg in legs_used}, K) for s in names}
             res["local-fused-score"] = merge(shard_answers.values(), K)
             rrf = defaultdict(float)
             for lst in shard_answers.values():
@@ -386,9 +442,14 @@ def quality(ranked, rel):
 def summarise(name, shard_docs, qs, results):
     sizes = sorted(len(v) for v in shard_docs.values())
     out = {"workareas": len(shard_docs), "rows": sum(sizes), "largest": sizes[-1],
-           "smallest": sizes[0], "queries": len(qs), "pipelines": {}}
+           "smallest": sizes[0], "queries": len(qs), "pipelines": {},
+           "round1_stats_equal_global": round(sum(r["_stats_equal"] for r in results) / len(qs), 4),
+           "queries_pruned": round(sum(r["_pruned"] for r in results) / len(qs), 4),
+           "queries_local_pruning_differs": round(sum(r["_local_pruned_differs"] for r in results) / len(qs), 4)}
     for p in PIPELINES:
-        rows = {}
+        rows = {"_map": {
+            "merged_legs_equal_global_ids_and_scores": round(sum(r[p]["_legs_equal"] for r in results) / len(qs), 4),
+            "max_abs_score_diff": max(r[p]["_leg_max_abs_diff"] for r in results)}}
         for v in ["global"] + VARIANTS:
             s5, nd, same, ov, same_scores = [], [], 0, [], 0
             for q, r in zip(qs, results):
@@ -434,14 +495,14 @@ def run(a):
     enc_docs, enc_q = load_cache(a.cache)
     texts = {m["id"]: m["text"] for m in memories}
     texts.update(dict(sf_docs))
-    world = World(texts, enc_docs, enc_q)
+    world = World(Rows(texts, enc_docs), enc_q)
     report = {"k": K, "depth": DEPTH, "cc_weights": CC, "rrf_k": RRF_K, "seed": SEED, "partitions": {}}
     for name, shard_docs, qs in partitions(memories, queries, sf_docs, sf_queries):
         if a.only and name not in a.only:
             continue
-        shard_of = {d: s for s, ds in shard_docs.items() for d in ds}
-        shards = sorted(shard_docs)
-        results = [world.run_query(q, shard_of, shards) for q in qs]
+        shards = {s: Shard(world.rows, ds) for s, ds in shard_docs.items()}
+        union = Shard(world.rows, set().union(*shard_docs.values()))
+        results = [world.run_query(q, union, shards) for q in qs]
         report["partitions"][name] = summarise(name, shard_docs, qs, results)
         print(f"done {name}", file=sys.stderr)
     out = Path(a.out)
@@ -454,6 +515,13 @@ def print_tables(report):
     for name, part in report["partitions"].items():
         print(f"\n## {name}: {part['workareas']} workareas, {part['rows']} rows "
               f"(largest {part['largest']}, smallest {part['smallest']}), {part['queries']} queries\n")
+        print(f"round 1 statistics equal to the union's own: {part['round1_stats_equal_global']:.3f}; "
+              f"queries pruned: {part['queries_pruned']:.3f}; local pruning differs: {part['queries_local_pruning_differs']:.3f}")
+        for p, rows in part["pipelines"].items():
+            m = rows["_map"]
+            print(f"{p}: merged legs equal global (ids and scores) {m['merged_legs_equal_global_ids_and_scores']:.3f}, "
+                  f"max |score diff| {m['max_abs_score_diff']}")
+        print()
         print("| pipeline | answer | success@5 | nDCG@10 | same top 10 as global | same top 10 and scores | top-10 overlap |")
         print("|---|---|---:|---:|---:|---:|---:|")
         for p, rows in part["pipelines"].items():

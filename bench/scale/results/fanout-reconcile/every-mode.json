@@ -1,0 +1,61 @@
+{
+ "k": 100,
+ "pool": 8,
+ "queries": 100,
+ "cpus": 8,
+ "sizes": {
+  "100000": {
+   "postings": 12259847,
+   "heap_mib": 704.5,
+   "load_s": 13.0,
+   "load_avg_before": [
+    2.20458984375,
+    3.57275390625,
+    4.857421875
+   ],
+   "workareas": {
+    "50": {
+     "single": {
+      "p50": 43.15,
+      "p95": 102.49,
+      "same_list": 1.0
+     },
+     "single-parallel": {
+      "p50": 43.24,
+      "p95": 100.77,
+      "same_list": 1.0,
+      "plan_has_gather": true
+     },
+     "fanout-each": {
+      "p50": 24.22,
+      "p95": 35.66,
+      "same_list": 1.0
+     },
+     "fanout-groups-2": {
+      "p50": 25.6,
+      "p95": 60.78,
+      "same_list": 1.0
+     },
+     "fanout-groups-4": {
+      "p50": 18.17,
+      "p95": 38.47,
+      "same_list": 1.0
+     },
+     "fanout-groups-8": {
+      "p50": 12.54,
+      "p95": 22.39,
+      "same_list": 1.0
+     }
+    }
+   },
+   "index_mib": {
+    "50": 580.6
+   },
+   "load_avg_after": [
+    4.02685546875,
+    3.90576171875,
+    4.9052734375
+   ]
+  }
+ }
+}
