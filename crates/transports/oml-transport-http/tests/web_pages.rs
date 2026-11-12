@@ -2242,6 +2242,110 @@ async fn a_cut_off_session_key_cuts_off_no_key() {
     assert_eq!(rig.head().await, head, "nothing journalled");
 }
 
+/// The refusal is permanent, and any denial brings it: `alice-web` denied on
+/// a workarea outside alice's root, where the key holds no grant, runs none
+/// of its key acts, and it runs none after the admin removes alice's entry,
+/// adds it back and she signs in again, since no route lifts a denial and a
+/// sign-in finds the session key by its name and issues no other (ADR-0070
+/// d2; ADR-0045 d6; #325).
+#[tokio::test]
+async fn a_denied_session_key_is_still_refused_after_its_entry_is_removed_added_back_and_signed_in_again()
+ {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let _ = issued(&rig, &cookie, "laptop").await;
+    let (status, phone) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({"name": "alice-phone", "role": "writer", "connect_code": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{phone}");
+    let (status, team) = as_admin(
+        &rig,
+        "/v2/workareas",
+        "team",
+        json!({"name": "team", "parent": "universe"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{team}");
+    let (status, denial) = as_admin(
+        &rig,
+        "/v2/keys/alice-web/denials",
+        "deny-alice-web-on-team",
+        json!({"workarea": "team"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+    let refused = |cookie: String, tablet: &'static str| {
+        let rig = &rig;
+        async move {
+            for (path, body, verb) in [
+                (
+                    "/v2/keys",
+                    json!({"name": tablet, "role": "writer", "connect_code": false}),
+                    "issue_key",
+                ),
+                (
+                    "/v2/keys/alice-phone/connect-codes",
+                    json!({}),
+                    "mint_connect_code",
+                ),
+                (
+                    "/v2/keys/alice-laptop/denials",
+                    json!({"workarea": "universe"}),
+                    "deny_key",
+                ),
+            ] {
+                let (status, answer) = as_web(rig, &cookie, "web", path, body).await;
+                assert_session_key_denied(status, &answer, verb);
+            }
+        }
+    };
+    let head = rig.head().await;
+    refused(cookie.clone(), "alice-tablet").await;
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    let web = key_named(&rig, "alice-web").await.key_id;
+    let issued_before = journalled(&rig, "key.issued").await;
+    // The entry removed and added back: the session ends, and the next
+    // sign-in opens a new one on the same key.
+    rig.app
+        .remove_web_email(&rig.boot.admin_key.value, &Email::parse(EMAIL).unwrap())
+        .await
+        .expect("removed");
+    assert_eq!(
+        credential_status(&rig, &cookie, "web").await,
+        StatusCode::UNAUTHORIZED,
+        "the old session ended with the entry"
+    );
+    rig.allow(EMAIL, "alice", false).await;
+    let again = signed_in(&rig, "sub-1", EMAIL).await;
+    assert_ne!(again, cookie, "a new session");
+    assert_eq!(
+        credential_status(&rig, &again, "web").await,
+        StatusCode::OK,
+        "the denial refuses no sign-in"
+    );
+    assert_eq!(
+        key_named(&rig, "alice-web").await.key_id,
+        web,
+        "the same session key"
+    );
+    assert_eq!(
+        journalled(&rig, "key.issued").await,
+        issued_before,
+        "the sign-in issued no key"
+    );
+    assert!(denied(&rig, web).await, "the denial stands");
+    let head = rig.head().await;
+    refused(again, "alice-slate").await;
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    let laptop = key_named(&rig, "alice-laptop").await;
+    assert!(!denied(&rig, laptop.key_id).await, "no key was cut off");
+}
+
 /// A cut-off session key still ends its session, and every credential of
 /// the session ends with it: refusing the sign-out would keep the session
 /// of a key an admin cut off (ADR-0070 d2, d5 #5; #325).

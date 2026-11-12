@@ -102,6 +102,8 @@ An admin key cannot be cut off today: keep the admin credentials file on one mac
 
 A denial on a person's `<user>-web` session key also stops their console issuing a key, minting a connect code and cutting a key off, each refused as `access.verb_ceiling` with `details.reason: session_key_denied`. It ends no session and denies none of the person's agent keys: the person still signs in, sees their keys and signs out, and their agents keep working. To stop the person and their agents together, disable them on the admin page's Quotas view.
 
+There is no way back from that denial. Any denial on `<user>-web` has this effect, on `universe`, inside the person's root or on a workarea outside it where the key holds nothing; no verb lifts a denial; and removing the person's address and adding it back changes nothing, since their next sign-in opens on the same `<user>-web`. From then on an administrator issues the person's keys (`oml keys issue-agent <name> --principal <principal> --user <user>`), mints their connect codes (`oml keys connect-code <key>`) and cuts their keys off (`oml deny set <key> universe`). So deny `<user>-web` only to stop a person's console for good. To keep one of their agents out of one workarea, deny that agent's key there: `oml deny set <key> <workarea>`. A workarea outside the person's root needs no denial on `<user>-web` or on their agents' keys: a key naming their user holds no grant there.
+
 ## Read the journal
 
 `oml events [--after-seq <seq>] [--workarea <workarea>] [--limit <n>]` prints one digest-only page of `GET /v2/events` within a reader key's access. `oml audit verify-chain` is refused while the server serves no chain export.
