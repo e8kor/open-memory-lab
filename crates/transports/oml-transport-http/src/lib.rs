@@ -22,6 +22,7 @@ mod console;
 pub mod error;
 mod federation;
 pub mod mcp;
+mod metering;
 pub mod oauth;
 mod rescan;
 mod search;
@@ -43,7 +44,7 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
-use axum::routing::{MethodRouter, get, post};
+use axum::routing::{MethodRouter, get, post, put};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -103,6 +104,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/memories/{artifact_id}/supersede"),
     ("POST", "/v1/memories/{artifact_id}/source-check"),
     ("GET", "/v1/guardrails"),
+    ("GET", "/v1/account/usage"),
     ("POST", "/v2/review/next"),
     ("POST", "/v2/review/verdicts"),
     ("GET", "/v2/review/held"),
@@ -151,6 +153,10 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/v2/admin/memories/{artifact_id}"),
     ("GET", "/v2/admin/rescan"),
     ("POST", "/v2/admin/rescan"),
+    ("GET", "/v2/admin/accounts/{account}/usage"),
+    ("PUT", "/v2/admin/accounts/{account}/profile"),
+    ("GET", "/v2/admin/usage"),
+    ("GET", "/v2/admin/usage/drift"),
     ("GET", "/v2/search"),
     ("POST", "/v2/search/default"),
     ("GET", "/v2/federation"),
@@ -387,6 +393,11 @@ where
             ("GET", "/v2/admin/memories/{artifact_id}") => get(Self::admin_read_route),
             ("GET", "/v2/admin/rescan") => get(Self::rescan_route),
             ("POST", "/v2/admin/rescan") => post(Self::rescan_record_route),
+            ("GET", "/v1/account/usage") => get(Self::account_usage_route),
+            ("GET", "/v2/admin/accounts/{account}/usage") => get(Self::admin_account_usage_route),
+            ("PUT", "/v2/admin/accounts/{account}/profile") => put(Self::set_account_profile_route),
+            ("GET", "/v2/admin/usage") => get(Self::admin_usage_route),
+            ("GET", "/v2/admin/usage/drift") => get(Self::admin_usage_drift_route),
             ("GET", "/v2/search") => get(Self::search_settings),
             ("POST", "/v2/search/default") => post(Self::set_search_default),
             ("GET", "/v2/federation") => get(Self::federation_settings),
@@ -4196,17 +4207,8 @@ fn whoami_json(whoami: &Whoami) -> Value {
 fn person_json(person: &oml_app::app::Person) -> Value {
     let (usage, quotas) = match &person.limits {
         Some((usage, quotas)) => (
-            json!({
-                "memories": usage.memories,
-                "keys": usage.keys,
-                "connections": usage.connections,
-            }),
-            json!({
-                "memories": quotas.memories,
-                "keys": quotas.keys,
-                "connections": quotas.connections,
-                "requests_per_minute": quotas.requests_per_minute,
-            }),
+            web::emails::counts_json(usage),
+            web::emails::limits_json(quotas),
         ),
         None => (Value::Null, Value::Null),
     };

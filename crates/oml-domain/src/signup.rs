@@ -34,11 +34,13 @@ impl SignupMode {
     }
 }
 
-/// One of the four per-person quotas (ADR-0068 d5): the closed set the
-/// refusal's `details.quota` and the metric's label take.
+/// One of the six per-person quotas (ADR-0068 d5; ADR-0071 d5): the
+/// closed set the refusal's `details.quota` and the metric's label take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Quota {
     Memories,
+    TextBytes,
+    WritesPerMonth,
     Keys,
     Connections,
     RequestsPerMinute,
@@ -46,8 +48,10 @@ pub enum Quota {
 
 impl Quota {
     /// Every quota, in the order the pages list them.
-    pub const ALL: [Quota; 4] = [
+    pub const ALL: [Quota; 6] = [
         Quota::Memories,
+        Quota::TextBytes,
+        Quota::WritesPerMonth,
         Quota::Keys,
         Quota::Connections,
         Quota::RequestsPerMinute,
@@ -57,9 +61,21 @@ impl Quota {
     pub fn as_str(self) -> &'static str {
         match self {
             Quota::Memories => "memories",
+            Quota::TextBytes => "text_bytes",
+            Quota::WritesPerMonth => "writes_per_month",
             Quota::Keys => "keys",
             Quota::Connections => "connections",
             Quota::RequestsPerMinute => "requests_per_minute",
+        }
+    }
+
+    /// The largest limit an admin or a profile may set for this quota: a
+    /// byte count reaches further than a count (ADR-0071 d5).
+    #[must_use]
+    pub fn max_limit(self) -> u64 {
+        match self {
+            Quota::TextBytes => TEXT_BYTES_LIMIT_MAX,
+            _ => QUOTA_LIMIT_MAX,
         }
     }
 
@@ -69,24 +85,36 @@ impl Quota {
     }
 }
 
-/// The largest limit an admin may set (ADR-0068 d5).
+/// The largest count limit an admin may set (ADR-0068 d5).
 pub const QUOTA_LIMIT_MAX: u64 = 1_000_000;
 
-/// The per-person limits: the deployment's defaults, or one person's after
-/// an admin's override (ADR-0068 d1, d5).
+/// The largest `text_bytes` limit, a terabyte (ADR-0071 d5).
+pub const TEXT_BYTES_LIMIT_MAX: u64 = 1_000_000_000_000;
+
+/// A limit no count reaches: `text_bytes` and `writes_per_month` in the
+/// `default` profile until the operator sets them (ADR-0071 d5).
+pub const UNLIMITED: u64 = u64::MAX;
+
+/// The per-person limits: a profile's, or one person's after an admin's
+/// override (ADR-0068 d1, d5; ADR-0071 d5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Quotas {
     pub memories: u64,
+    pub text_bytes: u64,
+    pub writes_per_month: u64,
     pub keys: u64,
     pub connections: u64,
     pub requests_per_minute: u64,
 }
 
 impl Default for Quotas {
-    /// The operator's defaults of 2026-11-06, unmeasured (issue #164).
+    /// The operator's defaults of 2026-11-06, unmeasured (issue #164);
+    /// `text_bytes` and `writes_per_month` unlimited until set (ADR-0071 d5).
     fn default() -> Self {
         Self {
             memories: 1000,
+            text_bytes: UNLIMITED,
+            writes_per_month: UNLIMITED,
             keys: 5,
             connections: 5,
             requests_per_minute: 120,
@@ -95,29 +123,50 @@ impl Default for Quotas {
 }
 
 impl Quotas {
+    /// Every limit zero: the limits of an account whose profile the
+    /// configuration no longer declares, which fail closed (ADR-0071 d5).
+    pub const ZERO: Quotas = Quotas {
+        memories: 0,
+        text_bytes: 0,
+        writes_per_month: 0,
+        keys: 0,
+        connections: 0,
+        requests_per_minute: 0,
+    };
+
     #[must_use]
     pub fn get(&self, quota: Quota) -> u64 {
         match quota {
             Quota::Memories => self.memories,
+            Quota::TextBytes => self.text_bytes,
+            Quota::WritesPerMonth => self.writes_per_month,
             Quota::Keys => self.keys,
             Quota::Connections => self.connections,
             Quota::RequestsPerMinute => self.requests_per_minute,
         }
     }
 
+    /// These limits with `quota` set to `limit`.
+    #[must_use]
+    pub fn with(mut self, quota: Quota, limit: u64) -> Self {
+        match quota {
+            Quota::Memories => self.memories = limit,
+            Quota::TextBytes => self.text_bytes = limit,
+            Quota::WritesPerMonth => self.writes_per_month = limit,
+            Quota::Keys => self.keys = limit,
+            Quota::Connections => self.connections = limit,
+            Quota::RequestsPerMinute => self.requests_per_minute = limit,
+        }
+        self
+    }
+
     /// These limits with one person's overrides applied: an override
     /// replaces its quota's default, and an absent one keeps it.
     #[must_use]
-    pub fn with_overrides(mut self, overrides: &[(Quota, u64)]) -> Self {
-        for (quota, limit) in overrides {
-            match quota {
-                Quota::Memories => self.memories = *limit,
-                Quota::Keys => self.keys = *limit,
-                Quota::Connections => self.connections = *limit,
-                Quota::RequestsPerMinute => self.requests_per_minute = *limit,
-            }
-        }
-        self
+    pub fn with_overrides(self, overrides: &[(Quota, u64)]) -> Self {
+        overrides
+            .iter()
+            .fold(self, |quotas, (quota, limit)| quotas.with(*quota, *limit))
     }
 }
 
@@ -132,7 +181,14 @@ pub struct QuotaReached {
 /// Whether one more of `quota` fits: `used` already counted, one more
 /// allowed only while `used < limit`, so a limit of zero admits none.
 pub fn check_quota(quota: Quota, limit: u64, used: u64) -> Result<(), QuotaReached> {
-    if used < limit {
+    check_charge(quota, limit, used, 1)
+}
+
+/// Whether `delta` more of `quota` fits beside `used`: the sum may reach the
+/// limit and never pass it, so a limit of zero admits nothing and a
+/// `text_bytes` charge is its byte count (ADR-0071 d3).
+pub fn check_charge(quota: Quota, limit: u64, used: u64, delta: u64) -> Result<(), QuotaReached> {
+    if used.saturating_add(delta) <= limit {
         Ok(())
     } else {
         Err(QuotaReached { quota, limit, used })
@@ -155,10 +211,12 @@ pub fn drawn_user(random: &[u8; 32]) -> Name {
     Name::parse(&name).expect("u and lower-case Crockford symbols are a name")
 }
 
-/// Whether the 90% doctor warning holds for `used` of `limit`.
+/// Whether the 80% warning holds for `used` of `limit`: the usage
+/// endpoints' `warning` state and the doctor line (ADR-0071 d5, amending
+/// ADR-0068 d5's 90%). An unlimited quota never warns.
 #[must_use]
 pub fn near_quota(limit: u64, used: u64) -> bool {
-    limit > 0 && used.saturating_mul(10) >= limit.saturating_mul(9)
+    limit > 0 && limit != UNLIMITED && used.saturating_mul(10) >= limit.saturating_mul(8)
 }
 
 #[cfg(test)]
@@ -172,6 +230,7 @@ mod tests {
             (q.memories, q.keys, q.connections, q.requests_per_minute),
             (1000, 5, 5, 120)
         );
+        assert_eq!(Quota::TextBytes.max_limit(), TEXT_BYTES_LIMIT_MAX);
     }
 
     #[test]
@@ -212,9 +271,28 @@ mod tests {
     }
 
     #[test]
-    fn near_quota_is_ninety_percent() {
-        assert!(near_quota(1000, 900));
-        assert!(!near_quota(1000, 899));
+    fn near_quota_is_eighty_percent_and_never_for_an_unlimited_quota() {
+        assert!(near_quota(1000, 800));
+        assert!(!near_quota(1000, 799));
         assert!(!near_quota(0, 0));
+        assert!(!near_quota(UNLIMITED, u64::MAX / 2));
+    }
+
+    #[test]
+    fn a_charge_may_reach_its_limit_and_never_pass_it() {
+        assert!(check_charge(Quota::TextBytes, 100, 60, 40).is_ok());
+        let reached = check_charge(Quota::TextBytes, 100, 60, 41).unwrap_err();
+        assert_eq!((reached.limit, reached.used), (100, 60));
+        assert!(check_charge(Quota::WritesPerMonth, UNLIMITED, u64::MAX - 1, 5).is_ok());
+    }
+
+    #[test]
+    fn the_new_quotas_default_to_unlimited_and_zero_admits_nothing() {
+        let q = Quotas::default();
+        assert_eq!((q.text_bytes, q.writes_per_month), (UNLIMITED, UNLIMITED));
+        for quota in Quota::ALL {
+            assert_eq!(Quotas::ZERO.get(quota), 0);
+            assert!(check_quota(quota, Quotas::ZERO.get(quota), 0).is_err());
+        }
     }
 }

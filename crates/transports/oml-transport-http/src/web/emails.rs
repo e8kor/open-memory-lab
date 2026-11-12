@@ -53,23 +53,43 @@ fn entry_json(entry: &WebEntry) -> Value {
 
 /// One person as `GET /v2/web/users` serves them, and as the quota
 /// update answers (ADR-0068 d5; ADR-0070 d5 #8).
+/// A person's counts as the users listing and whoami's `person` serve them
+/// (ADR-0068 d5; ADR-0071 d2): the stocks, and the versions submitted this
+/// UTC month.
+pub(crate) fn counts_json(usage: &oml_app::types::UserUsage) -> Value {
+    json!({
+        "memories": usage.memories,
+        "text_bytes": usage.text_bytes,
+        "writes": usage.writes,
+        "keys": usage.keys,
+        "connections": usage.connections,
+    })
+}
+
+/// A person's limits as the users listing and whoami's `person` serve them:
+/// every quota by name, an unlimited one null (ADR-0071 d5).
+pub(crate) fn limits_json(quotas: &oml_app::domain::signup::Quotas) -> Value {
+    oml_app::domain::signup::Quota::ALL
+        .iter()
+        .map(|q| {
+            let limit = quotas.get(*q);
+            (
+                q.as_str().to_owned(),
+                json!((limit != oml_app::domain::signup::UNLIMITED).then_some(limit)),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into()
+}
+
 pub(crate) fn user_row_json(u: &UserRow) -> Value {
     json!({
         "user": u.user.as_str(),
         "signed_up": u.signed_up,
         "disabled": u.disabled,
         "under_quotas": u.under_quotas,
-        "usage": {
-            "memories": u.usage.memories,
-            "keys": u.usage.keys,
-            "connections": u.usage.connections,
-        },
-        "quotas": {
-            "memories": u.quotas.memories,
-            "keys": u.quotas.keys,
-            "connections": u.quotas.connections,
-            "requests_per_minute": u.quotas.requests_per_minute,
-        },
+        "usage": counts_json(&u.usage),
+        "quotas": limits_json(&u.quotas),
         "admin_keys": u.admin_keys,
     })
 }

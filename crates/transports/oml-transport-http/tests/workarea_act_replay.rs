@@ -360,19 +360,23 @@ async fn world_at_one_request_a_minute() -> World {
         .await
         .expect("ann's key")
         .value;
-    let app = app.with_signup(oml_app::types::SignupPolicy {
-        mode: oml_app::domain::signup::SignupMode::Allowlist,
-        tenant_id: boot.tenant_id,
-        issuer: name("acme-admin"),
-        terms_version: "2026-11-06".to_owned(),
-        terms_url: "https://oml.example.com/terms".to_owned(),
-        privacy_url: "https://oml.example.com/privacy".to_owned(),
-        per_ip_per_hour: 10,
-        quotas: oml_app::domain::signup::Quotas {
-            requests_per_minute: 1,
-            ..oml_app::domain::signup::Quotas::default()
-        },
-    });
+    // The limits an account is held to are its profile's (ADR-0071 d5).
+    let quotas = oml_app::domain::signup::Quotas {
+        requests_per_minute: 1,
+        ..oml_app::domain::signup::Quotas::default()
+    };
+    let app = app
+        .with_signup(oml_app::types::SignupPolicy {
+            mode: oml_app::domain::signup::SignupMode::Allowlist,
+            tenant_id: boot.tenant_id,
+            issuer: name("acme-admin"),
+            terms_version: "2026-11-06".to_owned(),
+            terms_url: "https://oml.example.com/terms".to_owned(),
+            privacy_url: "https://oml.example.com/privacy".to_owned(),
+            per_ip_per_hour: 10,
+            quotas,
+        })
+        .with_quota_profiles(oml_app::types::QuotaProfiles::only(quotas));
     World {
         router: state(&store, app).into_router(),
         tenant: boot.tenant_id,

@@ -114,8 +114,62 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
+        at: &EventTime,
     ) -> impl Future<Output = Result<oml_app::types::UserUsage, StoreError>> + Send {
-        timed("user_usage", self.inner.user_usage(tenant_id, user_root))
+        timed(
+            "user_usage",
+            self.inner.user_usage(tenant_id, user_root, at),
+        )
+    }
+
+    fn account_profile(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+    ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send {
+        timed(
+            "account_profile",
+            self.inner.account_profile(tenant_id, user_root),
+        )
+    }
+
+    fn meter_recall(
+        &self,
+        tenant_id: Uuid,
+        user_root: Uuid,
+        at: &EventTime,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send {
+        timed(
+            "meter_recall",
+            self.inner.meter_recall(tenant_id, user_root, at),
+        )
+    }
+
+    fn usage_accounts(
+        &self,
+        tenant_id: Uuid,
+        month: oml_app::domain::usage::Month,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::AccountCounters>, StoreError>> + Send {
+        timed(
+            "usage_accounts",
+            self.inner.usage_accounts(tenant_id, month),
+        )
+    }
+
+    fn usage_ledger(
+        &self,
+        tenant_id: Uuid,
+        month: oml_app::domain::usage::Month,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::LedgerRow>, StoreError>> + Send {
+        timed("usage_ledger", self.inner.usage_ledger(tenant_id, month))
+    }
+
+    fn usage_drift(
+        &self,
+        tenant_id: Uuid,
+        month: oml_app::domain::usage::Month,
+    ) -> impl Future<Output = Result<Vec<oml_app::types::MeterDrift>, StoreError>> + Send {
+        timed("usage_drift", self.inner.usage_drift(tenant_id, month))
     }
 
     fn user_quota_overrides(

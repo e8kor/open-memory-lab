@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Self, TypeVar
+from typing import Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -16,12 +16,16 @@ class WhoamiPersonQuotasType0:
     """
     Attributes:
         memories (int | Unset):
+        text_bytes (int | None | Unset): Null is unlimited (ADR-0071 d5). Since v0.7.2.
+        writes_per_month (int | None | Unset): Null is unlimited (ADR-0071 d5). Since v0.7.2.
         keys (int | Unset):
         connections (int | Unset):
         requests_per_minute (int | Unset):
     """
 
     memories: int | Unset = UNSET
+    text_bytes: int | None | Unset = UNSET
+    writes_per_month: int | None | Unset = UNSET
     keys: int | Unset = UNSET
     connections: int | Unset = UNSET
     requests_per_minute: int | Unset = UNSET
@@ -29,6 +33,18 @@ class WhoamiPersonQuotasType0:
 
     def to_dict(self) -> dict[str, Any]:
         memories = self.memories
+
+        text_bytes: int | None | Unset
+        if isinstance(self.text_bytes, Unset):
+            text_bytes = UNSET
+        else:
+            text_bytes = self.text_bytes
+
+        writes_per_month: int | None | Unset
+        if isinstance(self.writes_per_month, Unset):
+            writes_per_month = UNSET
+        else:
+            writes_per_month = self.writes_per_month
 
         keys = self.keys
 
@@ -41,6 +57,10 @@ class WhoamiPersonQuotasType0:
         field_dict.update({})
         if memories is not UNSET:
             field_dict["memories"] = memories
+        if text_bytes is not UNSET:
+            field_dict["text_bytes"] = text_bytes
+        if writes_per_month is not UNSET:
+            field_dict["writes_per_month"] = writes_per_month
         if keys is not UNSET:
             field_dict["keys"] = keys
         if connections is not UNSET:
@@ -55,6 +75,24 @@ class WhoamiPersonQuotasType0:
         d = dict(src_dict)
         memories = d.pop("memories", UNSET)
 
+        def _parse_text_bytes(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        text_bytes = _parse_text_bytes(d.pop("text_bytes", UNSET))
+
+        def _parse_writes_per_month(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        writes_per_month = _parse_writes_per_month(d.pop("writes_per_month", UNSET))
+
         keys = d.pop("keys", UNSET)
 
         connections = d.pop("connections", UNSET)
@@ -63,6 +101,8 @@ class WhoamiPersonQuotasType0:
 
         whoami_person_quotas_type_0 = cls(
             memories=memories,
+            text_bytes=text_bytes,
+            writes_per_month=writes_per_month,
             keys=keys,
             connections=connections,
             requests_per_minute=requests_per_minute,

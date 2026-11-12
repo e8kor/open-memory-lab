@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_domain::name::{Name, NamedKind, Reference, UNIVERSE};
-use oml_domain::signup::{QUOTA_LIMIT_MAX, Quota, Quotas, check_quota};
+use oml_domain::signup::{QUOTA_LIMIT_MAX, Quota, Quotas};
 use oml_domain::{Role, event_types};
 
 use super::{App, Caller, require_role};
@@ -216,7 +216,9 @@ where
             let root = self.signup_root(tenant_id, &user).await?;
             let (usage, quotas, admin_keys) = match root {
                 Some(root) => (
-                    self.journal.user_usage(tenant_id, root).await?,
+                    self.journal
+                        .user_usage(tenant_id, root, &self.clock.now())
+                        .await?,
                     self.quotas_of(tenant_id, root).await?,
                     self.admin_keys_under(tenant_id, root).await?,
                 ),
@@ -264,10 +266,14 @@ where
         limit: Option<u64>,
     ) -> Result<(), AppError> {
         require_role(&admin.key, Role::Admin, "web_users")?;
-        if limit.is_some_and(|l| l > QUOTA_LIMIT_MAX) {
+        if limit.is_some_and(|l| l > quota.max_limit()) {
             return Err(AppError::WebField {
                 field: "limit",
-                message: "a quota's limit is a whole number from 0 to 1000000",
+                message: if quota.max_limit() == QUOTA_LIMIT_MAX {
+                    "a quota's limit is a whole number from 0 to 1000000"
+                } else {
+                    "a byte limit is a whole number from 0 to 1000000000000"
+                },
             });
         }
         let tenant_id = admin.key.tenant_id;
@@ -529,7 +535,13 @@ where
             let windows = self.signup_windows();
             agent_keys.iter().any(|k| windows.contains(&k.key_id))
         };
-        let connected = seen || self.journal.user_usage(tenant_id, root).await?.connections > 0;
+        let connected = seen
+            || self
+                .journal
+                .user_usage(tenant_id, root, &self.clock.now())
+                .await?
+                .connections
+                > 0;
         let newest = self.root_memories(tenant_id, root, 1).await?;
         Ok(StartStatus {
             connected,
@@ -538,7 +550,7 @@ where
     }
 
     /// `GET /v2/whoami`'s `person` usage and limits (ADR-0070 d5); `None` where
-    /// they are under no quota (ADR-0068 d5).
+    /// they are under no quota (ADR-0068 d5; ADR-0071 d5).
     async fn whoami_limits(
         &self,
         key: &KeyRecord,
@@ -547,9 +559,14 @@ where
             return Ok(None);
         };
         let tenant_id = key.tenant_id;
+        let Some(quotas) = self.account_limits(tenant_id, root).await?.quotas else {
+            return Ok(None);
+        };
         Ok(Some((
-            self.journal.user_usage(tenant_id, root).await?,
-            self.quotas_of(tenant_id, root).await?,
+            self.journal
+                .user_usage(tenant_id, root, &self.clock.now())
+                .await?,
+            quotas,
         )))
     }
 
@@ -754,42 +771,42 @@ where
         self.signup.as_deref().map(|s| &s.policy)
     }
 
+    /// The sign-up profile's limits, what a person with no root yet would
+    /// start on (ADR-0071 d5).
     fn default_quotas(&self) -> Quotas {
-        self.signup_policy().map(|p| p.quotas).unwrap_or_default()
+        self.profiles
+            .get(&self.profiles.signup_profile)
+            .unwrap_or(Quotas::ZERO)
     }
 
-    /// The root a key's person is under quotas by: a user key, or a
-    /// person's session key, of the sign-up tenant (ADR-0068 d5).
+    /// The account a key belongs to: a user key, or a person's session key
+    /// (ADR-0071 d1). Whether it is under limits is its profile's.
     fn quota_root(&self, key: &KeyRecord) -> Option<Uuid> {
-        let policy = self.signup_policy()?;
-        (key.tenant_id == policy.tenant_id)
-            .then_some(key.user)
-            .flatten()
+        key.user
     }
 
-    /// A person's limits: the defaults with their overrides.
+    /// A person's limits as the users listing serves them: their profile's
+    /// with their overrides; for an account under no limits, the sign-up
+    /// profile's with their overrides, which hold nothing until a profile
+    /// does, so a quota an admin sets reads back in the row either way
+    /// (ADR-0068 d5; ADR-0070 d5; ADR-0071 d5).
     pub(crate) async fn quotas_of(&self, tenant_id: Uuid, root: Uuid) -> Result<Quotas, AppError> {
+        if let Some(quotas) = self.account_limits(tenant_id, root).await?.quotas {
+            return Ok(quotas);
+        }
         let overrides = self.journal.user_quota_overrides(tenant_id, root).await?;
         Ok(self.default_quotas().with_overrides(&overrides))
     }
 
     /// One more of `quota` for `key`'s person, or `limit.quota` naming
-    /// what was hit (ADR-0068 d5); a key under no quota passes.
+    /// what was hit (ADR-0068 d5); a key under no limit passes. The
+    /// commit's ceiling is the check that holds (ADR-0071 d3).
     pub(crate) async fn require_quota(
         &self,
         key: &KeyRecord,
         quota: Quota,
     ) -> Result<(), AppError> {
-        let Some(root) = self.quota_root(key) else {
-            return Ok(());
-        };
-        let limit = self.quotas_of(key.tenant_id, root).await?.get(quota);
-        let used = self
-            .journal
-            .user_usage(key.tenant_id, root)
-            .await?
-            .get(quota);
-        check_quota(quota, limit, used).map_err(AppError::QuotaReached)
+        self.require_charge(key, &[(quota, 1)]).await
     }
 
     /// The key's request in its UTC minute (ADR-0068 d5): past its limit,
@@ -812,13 +829,10 @@ where
         };
         let limit = match current {
             Some((m, _, limit)) if m == minute => limit,
-            _ => {
-                let limit = self
-                    .quotas_of(key.tenant_id, root)
-                    .await?
-                    .requests_per_minute;
-                request_limit(key.credential, limit)
-            }
+            _ => match self.account_limits(key.tenant_id, root).await?.quotas {
+                Some(quotas) => request_limit(key.credential, quotas.requests_per_minute),
+                None => return Ok(()),
+            },
         };
         let mut windows = state.windows.lock().expect("rate lock");
         let slot = windows.entry(key.key_id).or_insert((minute, 0, limit));

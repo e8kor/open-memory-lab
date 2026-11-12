@@ -6238,6 +6238,7 @@ async fn seal_onto(
             event,
             fold,
             idempotency: None,
+            ceiling: None,
         })
         .await
         .expect("the fixture commit");
@@ -9833,6 +9834,7 @@ async fn ratify_in_store(
                 ratifier_key_id: ratifier,
             },
             idempotency: None,
+            ceiling: None,
         })
         .await
         .expect("the ratification commits");
@@ -11318,6 +11320,7 @@ fn propose_before_next_head(store: &MemStore, edge: ClaimEdgeRecord) {
             event,
             fold: MetadataFold::ClaimEdgeProposed(edge),
             idempotency: None,
+            ceiling: None,
         }
     });
 }
@@ -11967,6 +11970,7 @@ async fn commit_pending_edge(store: &MemStore, edge: ClaimEdgeRecord, event_id: 
             event,
             fold: MetadataFold::ClaimEdgeProposed(edge),
             idempotency: None,
+            ceiling: None,
         })
         .await
         .expect("commit the pending edge");
@@ -14085,16 +14089,8 @@ async fn a_connections_whoami_costs_one_request_of_its_keys_rate() {
             requests_per_minute: 1,
             ..oml_app::domain::signup::Quotas::default()
         };
-        let app = probe.with_signup(oml_app::types::SignupPolicy {
-            mode: oml_app::domain::signup::SignupMode::Open,
-            tenant_id: boot.tenant_id,
-            issuer: name("root-admin"),
-            terms_version: "2026-11-06".to_owned(),
-            terms_url: "https://example.com/terms".to_owned(),
-            privacy_url: "https://example.com/privacy".to_owned(),
-            per_ip_per_hour: 100,
-            quotas,
-        });
+        // The limits an account is held to are its profile's (ADR-0071 d5).
+        let app = metered(probe, boot.tenant_id, quotas);
         let issued = app
             .issue_key(
                 boot.admin_key.value.as_str(),
@@ -14141,4 +14137,25 @@ async fn a_connections_whoami_costs_one_request_of_its_keys_rate() {
             "{ask:?}: {second:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Usage metering on the write path (ADR-0071 d2, d3)
+// ---------------------------------------------------------------------------
+
+/// `probe`'s store served with open sign-up into `tenant_id` and `quotas`
+/// as the one profile its accounts are on.
+fn metered(probe: TestApp, tenant_id: Uuid, quotas: oml_app::domain::signup::Quotas) -> TestApp {
+    probe
+        .with_signup(oml_app::types::SignupPolicy {
+            mode: oml_app::domain::signup::SignupMode::Open,
+            tenant_id,
+            issuer: name("root-admin"),
+            terms_version: "2026-11-06".to_owned(),
+            terms_url: "https://example.com/terms".to_owned(),
+            privacy_url: "https://example.com/privacy".to_owned(),
+            per_ip_per_hour: 100,
+            quotas,
+        })
+        .with_quota_profiles(oml_app::types::QuotaProfiles::only(quotas))
 }

@@ -16,17 +16,25 @@ class WhoamiPersonUsageType0:
     """
     Attributes:
         memories (int | Unset):
+        text_bytes (int | Unset): UTF-8 bytes of every version the account wrote (ADR-0071 d2). Since v0.7.2.
+        writes (int | Unset): Versions submitted this UTC month (ADR-0071 d2). Since v0.7.2.
         keys (int | Unset):
         connections (int | Unset):
     """
 
     memories: int | Unset = UNSET
+    text_bytes: int | Unset = UNSET
+    writes: int | Unset = UNSET
     keys: int | Unset = UNSET
     connections: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         memories = self.memories
+
+        text_bytes = self.text_bytes
+
+        writes = self.writes
 
         keys = self.keys
 
@@ -37,6 +45,10 @@ class WhoamiPersonUsageType0:
         field_dict.update({})
         if memories is not UNSET:
             field_dict["memories"] = memories
+        if text_bytes is not UNSET:
+            field_dict["text_bytes"] = text_bytes
+        if writes is not UNSET:
+            field_dict["writes"] = writes
         if keys is not UNSET:
             field_dict["keys"] = keys
         if connections is not UNSET:
@@ -49,12 +61,18 @@ class WhoamiPersonUsageType0:
         d = dict(src_dict)
         memories = d.pop("memories", UNSET)
 
+        text_bytes = d.pop("text_bytes", UNSET)
+
+        writes = d.pop("writes", UNSET)
+
         keys = d.pop("keys", UNSET)
 
         connections = d.pop("connections", UNSET)
 
         whoami_person_usage_type_0 = cls(
             memories=memories,
+            text_bytes=text_bytes,
+            writes=writes,
             keys=keys,
             connections=connections,
         )
