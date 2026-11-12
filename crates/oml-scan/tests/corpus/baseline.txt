@@ -31,9 +31,9 @@ mutations over 366 malicious samples; plain recall 59.8% (219 caught); invarianc
   homoglyph                 22.7%  -37.2 points  below
   joined-underscore         55.7%  -4.1 points  holds
   joined-slash              55.7%  -4.1 points  holds
-  letters-dash              26.5%  -33.3 points  below
+  letters-dash              26.8%  -33.1 points  below
   letters-dot               26.5%  -33.3 points  below
-  letters-space             26.2%  -33.6 points  below
+  letters-space             26.5%  -33.3 points  below
   title-body-split          56.0%  -3.8 points  holds
   base64-depth-1             6.6%  -53.3 points  below
   base64-depth-2            10.1%  -49.7 points  below

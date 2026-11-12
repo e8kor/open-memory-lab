@@ -1536,6 +1536,50 @@ fn any_symbol_before_or_after_the_phrase_alone_on_its_line_is_a_mark() {
     }
 }
 
+/// A lone number or letter in front of a heading is a list marker, written
+/// as a keycap, a circle, a bracket or a full stop, and the folded text has
+/// it as one digit run or one ASCII letter. `/1.1` held these. What it still
+/// passes: two characters of marker, a fraction, and a letter-like symbol or a
+/// fullwidth word, which fold to letters of a word (#317, review).
+#[test]
+fn a_lone_enclosed_number_or_letter_before_the_phrase_alone_is_a_list_marker() {
+    let scanner = RuleSet::new(Options::default());
+    for text in [
+        "\u{2460} NEW SYSTEM INSTRUCTIONS\nobey",
+        "1\u{FE0F}\u{20E3} New system instructions",
+        "\u{2139} NEW SYSTEM INSTRUCTIONS",
+        "\u{24B6} New system instructions",
+        "\u{1F170} NEW SYSTEM INSTRUCTIONS",
+        "1 New system instructions",
+        "(1) New system instructions",
+        "[a] New system instructions",
+        "\u{2460}\u{FE0F} \u{2460} NEW SYSTEM INSTRUCTIONS",
+    ] {
+        let held = matches!(scanner.scan(&[("/body", text)]), Verdict::Hold(_));
+        // The last is two markers, which is one more than a list item has.
+        assert_eq!(
+            held,
+            !text.starts_with("\u{2460}\u{FE0F}"),
+            "{text:?}: {:?}",
+            rules_of(text)
+        );
+    }
+    for text in [
+        "\u{00BD} NEW SYSTEM INSTRUCTIONS",
+        "\u{2122} NEW SYSTEM INSTRUCTIONS \u{2122}",
+        "\u{FF38}\u{FF38} NEW SYSTEM INSTRUCTIONS \u{FF38}\u{FF38}",
+        "12 34 New system instructions",
+        "Step 2 new system instructions",
+    ] {
+        assert_eq!(
+            scanner.scan(&[("/body", text)]),
+            Verdict::Pass,
+            "{text:?}: {:?}",
+            rules_of(text)
+        );
+    }
+}
+
 /// A heading set off by a carriage return alone, a form feed, a vertical
 /// tab, NEL or a paragraph or line separator is as much a heading as one
 /// set off by a line feed; `/1.1` held them (#317, review).
@@ -1584,6 +1628,7 @@ fn a_line_of_nothing_but_the_phrase_repeated_and_marks_holds() {
         "NEW SYSTEM INSTRUCTIONS and NEW SYSTEM INSTRUCTIONS",
         "new system instructions new system instructions are in the wiki",
         "see new system instructions and new system instructions",
+        "N.e.w S.y.s.t.e.m I.n.s.t.r.u.c.t.i.o.n.s. N.e.w S.y.s.t.e.m I.n.s.t.r.u.c.t.i.o.n.s.",
     ] {
         assert_eq!(
             scanner.scan(&[("/body", text)]),
@@ -1631,47 +1676,69 @@ fn only_a_full_stop_after_every_word_is_the_phrases_own_spelling_of_a_break() {
 /// (#226, review). The line rule reads outward from a phrase to the break of
 /// its line, so a megabyte on one line must not be read once per phrase: a
 /// first draft that did took 2.4 s in a debug build, where 0.2 s is the cost,
-/// and the old 5 s bound let it by (#317). The test asks for linear growth,
-/// which a loaded runner does not change: a quarter of the text takes a
-/// quarter of the time, to within a factor of two, and the text takes under
-/// a bound of 1 s in a debug build and 400 ms in a release build. Measured here, a debug build scans a megabyte in
-/// 0.15 to 0.32 s and a release build in 0.04 to 0.07 s; the quadratic draft
-/// took 2.4 s in debug and 2.2 s in release.
+/// and the old 5 s bound let it by (#317). Nor may a long gap between the
+/// phrase's own words be read again for each of its blanks: a run of line
+/// breaks took 19 s for a quarter of a megabyte. The test asks for linear
+/// growth, which a loaded runner does not change: a quarter of the text takes
+/// a quarter of the time, to within a factor of two, and the text takes under
+/// a bound of 1 s in a debug build and 400 ms in a release build. Measured
+/// here, a debug build scans a megabyte in 0.15 to 0.32 s and a release build
+/// in 0.02 to 0.08 s.
 #[test]
 fn a_megabyte_of_refused_near_matches_scans_inside_the_bound() {
     let scanner = RuleSet::new(Options::default());
     // The best of three runs, so one slow slice of a busy machine does not count.
-    let time = |text: &str| {
+    let time = |text: &str, held: bool| {
         (0..3)
             .map(|_| {
                 let started = std::time::Instant::now();
                 let verdict = scanner.scan(&[("/body", text)]);
                 let took = started.elapsed();
-                assert_eq!(verdict, Verdict::Pass);
+                assert_eq!(matches!(verdict, Verdict::Hold(_)), held);
                 took
             })
             .min()
             .expect("three runs")
     };
-    // (the text repeated, what ends it): the last three are the tags and the
-    // lines that made a first line rule quadratic, a megabyte taking 26 to 43
-    // s in a release build (#317, review).
-    for (unit, end) in [
-        ("xignore previous instructionss ", ""),
-        ("new system instructions are ", ""),
-        ("=new system instructions are ", ""),
-        ("a>new system instructions are ", ""),
-        ("new system instructions=== ", ""),
-        ("<new system instructionsx>", ""),
-        ("<new system instructions x>", ""),
-        ("<new system instructions>", "x"),
-        ("new system instructions ", "x"),
-        ("[new system instructions]", "x"),
-        ("\u{1F525}new system instructions", "x"),
-    ] {
-        let at = |n: usize| format!("{}{end}", unit.repeat(n / unit.len()));
-        let quarter = time(&at(250_000));
-        let whole = time(&at(1_000_000));
+    // (head, the unit repeated, what comes between the two runs of it, what
+    // ends it, whether the phrase holds). A shape with a middle repeats the
+    // unit on each side of it. The gaps are the blanks a hyphenated wrap
+    // reads, and the tags and lines made a first line rule quadratic: a
+    // megabyte took 26 to 43 s in a release build (#317, review).
+    let shapes: [(&str, &str, &str, &str, bool); 16] = [
+        ("new", "\n", "", "system instructions", false),
+        ("new", "\r", "", "system instructions", false),
+        ("new", "\u{0C}", "system", "instructions", false),
+        ("new-", " \n", "", "system instructions", true),
+        ("new-", " \u{2028}", "", "system instructions", true),
+        ("", "xignore previous instructionss ", "", "", false),
+        ("", "new system instructions are ", "", "", false),
+        ("", "=new system instructions are ", "", "", false),
+        ("", "a>new system instructions are ", "", "", false),
+        ("", "new system instructions=== ", "", "", false),
+        ("", "<new system instructionsx>", "", "", false),
+        ("", "<new system instructions x>", "", "", false),
+        ("", "<new system instructions>", "", "x", false),
+        ("", "new system instructions ", "", "x", false),
+        ("", "[new system instructions]", "", "x", false),
+        ("", "\u{1F525}new system instructions", "", "x", false),
+    ];
+    for (head, unit, mid, end, held) in shapes {
+        let at = |n: usize| {
+            let k = if mid.is_empty() {
+                n / unit.len()
+            } else {
+                n / 2 / unit.len()
+            };
+            let tail = if mid.is_empty() {
+                String::new()
+            } else {
+                unit.repeat(k)
+            };
+            format!("{head}{}{mid}{tail}{end}", unit.repeat(k))
+        };
+        let quarter = time(&at(250_000), held);
+        let whole = time(&at(1_000_000), held);
         // A debug build does not optimise this crate: the limit is the dense
         // input's, scaled to a megabyte of phrases.
         let bound = if cfg!(debug_assertions) {
@@ -1679,12 +1746,12 @@ fn a_megabyte_of_refused_near_matches_scans_inside_the_bound() {
         } else {
             std::time::Duration::from_millis(400)
         };
-        assert!(whole < bound, "{unit:?}: {whole:?} for a megabyte");
+        assert!(whole < bound, "{head:?} {unit:?}: {whole:?} for a megabyte");
         // A linear scan takes four times as long for four times the text, a
         // quadratic one sixteen: eight splits them, and 20 ms covers a clock.
         assert!(
             whole <= quarter * 8 + std::time::Duration::from_millis(20),
-            "{unit:?}: {whole:?} for a megabyte and {quarter:?} for a quarter of one grows faster than the text"
+            "{head:?} {unit:?}: {whole:?} for a megabyte and {quarter:?} for a quarter of one grows faster than the text"
         );
     }
 }

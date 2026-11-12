@@ -550,8 +550,8 @@ flowchart TD
     follows it on its line, a combining mark counting with its letter. Or it is its line: nothing
     stands on its line, up to the line break on either side (a line feed, a carriage return, a
     vertical tab, a form feed, NEL, or a line or paragraph separator), but marks, a list marker (a
-    number or one letter, then a full stop or a closing bracket), up to eight HTML tags and up to
-    eight more of the phrase. A heading of any depth, a closed or setext heading, a line in capitals,
+    lone number or letter, however written, a keycap, a circle or a bracket included), up to eight
+    HTML tags before the phrase, and up to eight tags or further phrases after it. A heading of any depth, a closed or setext heading, a line in capitals,
     an emphasis, a quote, a list item, a banner of any symbol, a bracketed or tagged line and a
     dotted heading with its trailing dot all hold, and so does a line of the phrase twice.
     **What the rule holds that is no heading, and what it passes that is a directive.** It holds a
@@ -564,7 +564,9 @@ flowchart TD
     before it, a heading with a section number or a page number, a heading in a table cell, a
     heading beside a word in another script (a Chinese word set against `NEW-SYSTEM-INSTRUCTIONS`
     on its own line, which is a letter and not a mark), a heading letter-spaced inside an HTML tag,
-    a line of more than eight tags or phrases, a roman-numeral list marker, and the phrase with a
+    a line of more than eight tags or phrases, a roman-numeral list marker, a fraction, a letter-like symbol or a fullwidth word before the
+    heading (they fold to letters of a word), a dotted or dashed heading written twice on a line
+    (the repeat must be spelled plainly), and the phrase with a
     bar, a line break or the end of a clause between its words. A commit subject, a to-do, a list
     item with a label, a path, an import, a URL ending in the slug and a sentence with or without
     its full stop pass, as does a sentence such as the one in the wiki that names the new system

@@ -598,9 +598,15 @@ fn dot_break(gap: &str) -> bool {
 /// and does not end a clause.
 fn unwrap_hyphens(gap: &str) -> String {
     let mut out = String::with_capacity(gap.len());
+    // Whether the last character kept that is not a blank is a hyphen: kept as
+    // a flag, since a gap of many blanks must not be read again for each.
+    let mut hyphen = false;
     for c in gap.replace("\r\n", "\n").chars() {
-        if line_break(c) && out.trim_end().ends_with('-') {
+        if line_break(c) && hyphen {
             continue;
+        }
+        if !c.is_whitespace() {
+            hyphen = c == '-';
         }
         out.push(c);
     }
@@ -612,7 +618,11 @@ fn unwrap_hyphens(gap: &str) -> String {
 /// character that is not a letter, a digit or a bar (which bounds a table
 /// cell), a combining mark counting with its letter. A line break is not one.
 fn line_mark(c: char) -> bool {
-    !line_break(c) && (mark(c) || (!c.is_alphanumeric() && c != '|'))
+    // The enclosed alphanumerics are letters of Unicode's alphabetic property
+    // and look like a symbol: a circled or squared letter is a bullet.
+    let enclosed =
+        matches!(c, '\u{2460}'..='\u{24FF}' | '\u{2776}'..='\u{2793}' | '\u{1F100}'..='\u{1F1FF}');
+    !line_break(c) && (mark(c) || enclosed || (!c.is_alphanumeric() && c != '|'))
 }
 
 /// How many tags, or phrases, a line may carry on either side of the phrase
@@ -642,7 +652,7 @@ static PHRASE_HERE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Whether only what opens a line stands before the phrase on it: marks, a
-/// list marker (a number or one letter and a full stop or a bracket) and up
+/// list marker (a lone number or letter) and up
 /// to `SKIPS` tags, back to the line break before it. `before` is the text up
 /// to the phrase and is read backwards, so the cost is what the phrase's line
 /// holds up to its first letter, and never the text before the line (d9: a
@@ -665,14 +675,20 @@ fn opens_line(before: &str) -> bool {
                 continue;
             }
         }
-        if (c == '.' || c == ')') && !marker {
-            let head = &rest[..cut];
-            let word = head.trim_end_matches(char::is_alphanumeric);
-            let run = &head[word.len()..];
-            if (!run.is_empty() && run.len() <= 9 && run.bytes().all(|b| b.is_ascii_digit()))
-                || (run.len() == 1 && run.bytes().all(|b| b.is_ascii_alphabetic()))
+        if !marker && c.is_alphanumeric() && !mark(c) {
+            // A lone number or letter is a list marker, however a keycap, a
+            // circle or a bracket wrote it: the folded text has it as one
+            // digit run or one ASCII letter. Read at most ten characters back.
+            let run: String = rest
+                .chars()
+                .rev()
+                .take(10)
+                .take_while(|&d| d.is_alphanumeric())
+                .collect();
+            if run.len() == 1 && run.bytes().all(|b| b.is_ascii_alphabetic())
+                || (run.len() <= 9 && run.bytes().all(|b| b.is_ascii_digit()))
             {
-                rest = word;
+                rest = &rest[..rest.len() - run.len()];
                 marker = true;
                 continue;
             }
