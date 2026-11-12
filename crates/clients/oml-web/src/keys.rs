@@ -49,7 +49,7 @@ const KEY_PAGE: u32 = 200;
 
 /// The most pages of keys a view reads: 10,000 keys. A constant of the
 /// build, unmeasured (#170).
-const KEY_PAGES_MAX: usize = 50;
+pub const KEY_PAGES_MAX: usize = 50;
 
 /// Which page the view is on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
