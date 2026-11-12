@@ -649,6 +649,13 @@ async fn a_rejected_chain_leaves_the_memories_meter_and_its_bytes_and_write_stay
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     review_next(&rig, &ada, "approve").await;
     assert_eq!(meter(&own_usage(&rig, &key).await, "memories")["used"], 1);
+    // The rejection released k0: the claim captured under it next is a
+    // version 1 that revives the chain, one memory and one more write.
+    let (status, body) = remember(&rig, &key, "k0", "A fact to keep after all.").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let usage = own_usage(&rig, &key).await;
+    assert_eq!(meter(&usage, "memories")["used"], 2);
+    assert_eq!(meter(&usage, "writes")["used"], 3);
     assert_eq!(drift(&rig).await["drift"], json!([]));
     drop_db(&rig.db).await;
 }

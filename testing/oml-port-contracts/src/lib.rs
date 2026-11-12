@@ -8149,6 +8149,104 @@ pub async fn a_versions_write_is_counted_on_the_day_its_row_was_stored<S: Journa
     }
 }
 
+/// A claim_key every version of which was rejected is released, and the
+/// claim captured under it next is a version 1 again (ADR-0025 d18): it
+/// joins the chain the first version 1 started, whose author names the
+/// chain's account. A chain a tenant key started is no account's whoever
+/// revives it, and a chain an account started is that account's again
+/// when a tenant key revives it (ADR-0071 d2).
+pub async fn a_claim_captured_under_a_released_key_counts_on_the_account_that_started_its_chain<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::usage::Month;
+    let mut rig = ChainRig::new(74);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0x7410), None, "universe");
+    let root = WorkareaRecord {
+        user_root: true,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0x7411),
+            Some(universe.workarea_id),
+            "ada",
+        )
+    };
+    for w in [universe, root.clone()] {
+        rig.create_workarea(store, w).await;
+    }
+    let account = root.workarea_id;
+    let (ada_key, tenant_key) = (Uuid::from_u128(0x7420), Uuid::from_u128(0x7421));
+    rig.issue_key(
+        store,
+        KeyRecord {
+            user: Some(account),
+            ..key_record(t, ada_key, Role::Writer, None)
+        },
+    )
+    .await;
+    rig.issue_key(store, key_record(t, tenant_key, Role::Writer, None))
+        .await;
+    let at = fixture_time("2026-10-29T13:00:00.000000Z");
+    // Each claim_key's two versions 1, the first rejected before the second.
+    let stored = |n: u32| fixture_time(&format!("2026-10-29T12:00:{n:02}.000000Z"));
+    let version = |id: u128, claim_key: &str, key: Uuid, n: u32| MemoryRecord {
+        claim_key: claim_key.to_owned(),
+        created_at: stored(n),
+        ..held_memory(
+            t,
+            account,
+            Uuid::from_u128(0x7430 + id),
+            "ada",
+            key,
+            "a fact",
+        )
+    };
+    for (first, second) in [
+        (
+            version(1, "started-by-the-tenant", tenant_key, 1),
+            version(2, "started-by-the-tenant", ada_key, 2),
+        ),
+        (
+            version(3, "started-by-ada", ada_key, 3),
+            version(4, "started-by-ada", tenant_key, 4),
+        ),
+    ] {
+        for (n, memory) in [first, second].into_iter().enumerate() {
+            rig.commit(
+                store,
+                event_types::SUBMISSION_REMEMBER,
+                json!({ "artifact_id": memory.memory_id.to_string() }),
+                MetadataFold::MemoryHeld {
+                    memory: memory.clone(),
+                    enqueue: true,
+                    findings: Box::default(),
+                },
+                None,
+            )
+            .await
+            .expect("held");
+            if n == 0 {
+                reject(&mut rig, store, memory.memory_id)
+                    .await
+                    .expect("reject");
+            }
+        }
+    }
+    let usage = store.user_usage(t, account, &at).await.expect("usage");
+    assert_eq!(
+        (usage.memories, usage.text_bytes, usage.writes),
+        (1, 12, 2),
+        "the chain ada started is hers and live; the one the tenant key started is no account's; her two versions' bytes and writes"
+    );
+    assert_eq!(
+        store.usage_drift(t, Month::of(&at)).await.expect("drift"),
+        Vec::new()
+    );
+}
+
 /// A commit under an idempotency key already recorded writes nothing and
 /// moves no meter, and it is refused as the recorded key it is even where
 /// its fold would pass its account's ceiling: the caller answers the record,
@@ -8303,6 +8401,12 @@ where
     Box::pin(a_versions_write_is_counted_on_the_day_its_row_was_stored(
         &new_store().await,
     ))
+    .await;
+    Box::pin(
+        a_claim_captured_under_a_released_key_counts_on_the_account_that_started_its_chain(
+            &new_store().await,
+        ),
+    )
     .await;
     Box::pin(journal_commit_refuses_conflicts(&new_store().await)).await;
     Box::pin(journal_events_range_pages(&new_store().await)).await;
