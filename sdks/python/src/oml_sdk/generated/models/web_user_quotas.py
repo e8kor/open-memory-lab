@@ -16,8 +16,8 @@ class WebUserQuotas:
     """
     Attributes:
         memories (int | Unset):
-        text_bytes (int | None | Unset): Null is unlimited (ADR-0071 d5). Since v0.7.2.
-        writes_per_month (int | None | Unset): Null is unlimited (ADR-0071 d5). Since v0.7.2.
+        text_bytes (int | None | Unset): Null is unlimited (ADR-0071 d5). Since v0.7.3.
+        writes_per_month (int | None | Unset): Null is unlimited (ADR-0071 d5). Since v0.7.3.
         keys (int | Unset):
         connections (int | Unset):
         requests_per_minute (int | Unset):

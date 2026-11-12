@@ -133,15 +133,16 @@ impl<J: JournalStore> JournalStore for Timed<J> {
         )
     }
 
-    fn meter_recall(
+    fn meter_recalls(
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
-        at: &EventTime,
+        day: &str,
+        count: u64,
     ) -> impl Future<Output = Result<(), StoreError>> + Send {
         timed(
             "meter_recall",
-            self.inner.meter_recall(tenant_id, user_root, at),
+            self.inner.meter_recalls(tenant_id, user_root, day, count),
         )
     }
 

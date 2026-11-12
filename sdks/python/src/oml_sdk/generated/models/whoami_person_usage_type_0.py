@@ -16,8 +16,8 @@ class WhoamiPersonUsageType0:
     """
     Attributes:
         memories (int | Unset):
-        text_bytes (int | Unset): UTF-8 bytes of every version the account wrote (ADR-0071 d2). Since v0.7.2.
-        writes (int | Unset): Versions submitted this UTC month (ADR-0071 d2). Since v0.7.2.
+        text_bytes (int | Unset): UTF-8 bytes of every version the account wrote (ADR-0071 d2). Since v0.7.3.
+        writes (int | Unset): Versions submitted this UTC month (ADR-0071 d2). Since v0.7.3.
         keys (int | Unset):
         connections (int | Unset):
     """

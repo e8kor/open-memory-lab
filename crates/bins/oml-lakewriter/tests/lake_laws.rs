@@ -293,6 +293,7 @@ async fn erase(store: &PgStore, tenant: Uuid, artifact: Uuid) {
             },
             idempotency: None,
             ceiling: None,
+            written: None,
         })
         .await
         .expect("erase commits");

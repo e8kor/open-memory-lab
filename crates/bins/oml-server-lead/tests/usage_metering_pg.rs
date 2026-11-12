@@ -840,13 +840,13 @@ async fn the_rollup_appends_one_ledger_row_per_account_per_closed_day_once_and_e
     let tomorrow = EventTime::from_unix_micros(now + 86_400_000_000).expect("a time");
     let appended = rig
         .store
-        .roll_up_usage(rig.boot.tenant_id, &tomorrow)
+        .roll_up_usage(rig.boot.tenant_id, &tomorrow, Some("free"))
         .await
         .expect("the rollup");
     assert!(appended >= 1, "{appended}");
     let again = rig
         .store
-        .roll_up_usage(rig.boot.tenant_id, &tomorrow)
+        .roll_up_usage(rig.boot.tenant_id, &tomorrow, Some("free"))
         .await
         .expect("the rollup again");
     assert_eq!(again, 0);
@@ -1450,7 +1450,10 @@ async fn the_ledger_names_the_profile_each_account_is_on_assigned_or_not() {
     let now = i64::try_from(now).expect("fits");
     let today = EventTime::from_unix_micros(now).expect("a time");
     let tomorrow = EventTime::from_unix_micros(now + 86_400_000_000).expect("a time");
-    let (tenants, appended) = oml_server_lead::roll_up_usage(&rig.store, &tomorrow)
+    // As the lead's hourly pass runs it: the sign-up tenant's accounts
+    // with no profile assigned are on the sign-up profile.
+    let unassigned = Some((rig.boot.tenant_id, profiles().signup_profile));
+    let (tenants, appended) = oml_server_lead::roll_up_usage(&rig.store, &tomorrow, &unassigned)
         .await
         .expect("the rollup");
     assert!(tenants >= 1 && appended >= 2, "{tenants} {appended}");

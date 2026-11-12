@@ -20,8 +20,8 @@ class AccountUsage:
         account (str): The id of the root workarea the account is.
         user (None | str):
         profile (None | str): The quota profile the limits come from; null for an account under no limits.
-        profile_declared (bool): false when the configuration no longer declares the profile, which holds every limit at
-            zero.
+        profile_declared (bool): false when the configuration no longer declares the profile: every write, key and
+            connection is then refused limit.quota, and reads answer at the deployment's request rate (ADR-0071 d5, d8).
         period (str): The UTC month the flows count, YYYY-MM.
         meters (list[AccountUsageMetersItem]):
     """

@@ -776,7 +776,7 @@ where
     fn default_quotas(&self) -> Quotas {
         self.profiles
             .get(&self.profiles.signup_profile)
-            .unwrap_or(Quotas::ZERO)
+            .unwrap_or_else(|| self.undeclared_quotas())
     }
 
     /// The account a key belongs to: a user key, or a person's session key
@@ -812,8 +812,10 @@ where
     /// The key's request in its UTC minute (ADR-0068 d5): past its limit,
     /// `limit.rate` with the seconds left in the minute. The limit is read
     /// at each minute's first request, so an override holds from the next
-    /// minute. Every key of the sign-up tenant is recorded, which is the
-    /// onboarding page's "connected" (d10).
+    /// minute; an account under no limits is recorded as one whose rate
+    /// nothing reaches, so its later requests of the minute read nothing
+    /// either (ADR-0071 d5). Every key of an account is recorded, which is
+    /// the onboarding page's "connected" (d10).
     pub(crate) async fn admit_request(&self, key: &KeyRecord) -> Result<(), AppError> {
         let Some(state) = self.signup.as_deref() else {
             return Ok(());
@@ -831,7 +833,7 @@ where
             Some((m, _, limit)) if m == minute => limit,
             _ => match self.account_limits(key.tenant_id, root).await?.quotas {
                 Some(quotas) => request_limit(key.credential, quotas.requests_per_minute),
-                None => return Ok(()),
+                None => u64::MAX,
             },
         };
         let mut windows = state.windows.lock().expect("rate lock");

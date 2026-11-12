@@ -123,16 +123,22 @@ impl Default for Quotas {
 }
 
 impl Quotas {
-    /// Every limit zero: the limits of an account whose profile the
-    /// configuration no longer declares, which fail closed (ADR-0071 d5).
-    pub const ZERO: Quotas = Quotas {
-        memories: 0,
-        text_bytes: 0,
-        writes_per_month: 0,
-        keys: 0,
-        connections: 0,
-        requests_per_minute: 0,
-    };
+    /// The limits of an account whose profile the configuration no longer
+    /// declares: every quota a write, a key or a connection is held to is
+    /// zero, so each fails closed as `limit.quota`, and the request rate
+    /// is `requests_per_minute`, the deployment's, so the account still
+    /// reads: no quota refuses a read (ADR-0071 d5, d8).
+    #[must_use]
+    pub fn writes_refused(requests_per_minute: u64) -> Quotas {
+        Quotas {
+            memories: 0,
+            text_bytes: 0,
+            writes_per_month: 0,
+            keys: 0,
+            connections: 0,
+            requests_per_minute,
+        }
+    }
 
     #[must_use]
     pub fn get(&self, quota: Quota) -> u64 {
@@ -287,12 +293,18 @@ mod tests {
     }
 
     #[test]
-    fn the_new_quotas_default_to_unlimited_and_zero_admits_nothing() {
+    fn the_new_quotas_default_to_unlimited_and_an_undeclared_profile_admits_no_write_and_keeps_its_rate()
+     {
         let q = Quotas::default();
         assert_eq!((q.text_bytes, q.writes_per_month), (UNLIMITED, UNLIMITED));
+        let closed = Quotas::writes_refused(120);
         for quota in Quota::ALL {
-            assert_eq!(Quotas::ZERO.get(quota), 0);
-            assert!(check_quota(quota, Quotas::ZERO.get(quota), 0).is_err());
+            if quota == Quota::RequestsPerMinute {
+                assert_eq!(closed.get(quota), 120);
+            } else {
+                assert_eq!(closed.get(quota), 0);
+                assert!(check_quota(quota, closed.get(quota), 0).is_err());
+            }
         }
     }
 }

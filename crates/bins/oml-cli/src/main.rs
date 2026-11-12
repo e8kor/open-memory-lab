@@ -4922,7 +4922,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
     let mut federation_settings: Option<Value> = None;
-    let mut usage_drift: Option<Value> = None;
+    let mut usage_drift: Option<Result<Value, String>> = None;
     // The chat workarea's path and whether the server takes origin_kinds
     // (ADR-0063 d13).
     let mut chat_server: Vec<String> = Vec::new();
@@ -5009,7 +5009,12 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 // (ADR-0074 d28).
                 scan_backlog = client.get("/v2/admin/rescan?limit=1").ok().map(|(_, v)| v);
                 // The usage counters against their rows (ADR-0071 d3, d5).
-                usage_drift = client.get("/v2/admin/usage/drift").ok().map(|(_, v)| v);
+                usage_drift = Some(client.get("/v2/admin/usage/drift").map(|(_, v)| v).map_err(
+                    |e| match e {
+                        CliError::Refused { status, code, .. } => format!("{status} {code}"),
+                        CliError::Local(reason) | CliError::Unanswered(reason) => reason,
+                    },
+                ));
             }
         }
     }
@@ -6041,13 +6046,21 @@ fn web_doctor(
     lines
 }
 
-/// Usage metering's doctor lines (ADR-0071 d3, d5), from
+/// Usage metering's doctor lines (ADR-0071 d3, d5, d8), from
 /// `GET /v2/admin/usage/drift` read by an admin key: the accounts whose
 /// counters differ from their rows, and the accounts on a profile the
-/// configuration does not declare; nothing when neither holds.
-fn usage_doctor(report: Option<&Value>) -> Vec<String> {
-    let Some(r) = report else {
-        return Vec::new();
+/// configuration does not declare; nothing when neither holds, and
+/// nothing for a key that is no admin's, which does not read it. A read
+/// that fails is a line of its own: the counters are then unchecked.
+fn usage_doctor(report: Option<&Result<Value, String>>) -> Vec<String> {
+    let r = match report {
+        None => return Vec::new(),
+        Some(Err(reason)) => {
+            return vec![format!(
+                "warn usage: the drift report was not read ({reason}); the counters are unchecked against their rows"
+            )];
+        }
+        Some(Ok(r)) => r,
     };
     let mut lines = Vec::new();
     let drift = r["drift"].as_array().map(Vec::as_slice).unwrap_or_default();
@@ -6080,7 +6093,7 @@ fn usage_doctor(report: Option<&Value>) -> Vec<String> {
     }
     for (profile, n) in undeclared {
         lines.push(format!(
-            "warn usage: {n} accounts on profile {profile}, which the configuration does not declare; every limit is zero until an admin reassigns them"
+            "warn usage: {n} accounts on profile {profile}, which the configuration does not declare; their writes are refused limit.quota until an admin reassigns them or declares it"
         ));
     }
     lines
@@ -6710,15 +6723,25 @@ mod tests {
             ]
         });
         assert_eq!(
-            usage_doctor(Some(&report)),
+            usage_doctor(Some(&Ok(report))),
             vec![
                 "warn usage: 1 accounts drift from their rows (ua memories counter 12 rows 11, ua text_bytes counter 40 rows 41)",
-                "warn usage: 2 accounts on profile pro, which the configuration does not declare; every limit is zero until an admin reassigns them",
+                "warn usage: 2 accounts on profile pro, which the configuration does not declare; their writes are refused limit.quota until an admin reassigns them or declares it",
             ]
         );
         let clean = serde_json::json!({"drift": [], "undeclared_profiles": []});
-        assert!(usage_doctor(Some(&clean)).is_empty());
+        assert!(usage_doctor(Some(&Ok(clean))).is_empty());
         assert!(usage_doctor(None).is_empty());
+    }
+
+    #[test]
+    fn doctor_says_so_when_the_drift_report_could_not_be_read() {
+        assert_eq!(
+            usage_doctor(Some(&Err("503 store.unavailable".to_owned()))),
+            vec![
+                "warn usage: the drift report was not read (503 store.unavailable); the counters are unchecked against their rows"
+            ]
+        );
     }
 
     #[test]

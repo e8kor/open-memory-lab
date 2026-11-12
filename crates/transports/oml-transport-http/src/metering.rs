@@ -1,7 +1,8 @@
 //! Per-account usage's routes (ADR-0071 d6): `GET /v1/account/usage` for a
 //! key's own account, and, admin by key role, `GET` an account's usage,
-//! `GET` the month's ledger as JSON or CSV, `GET` the drift report and
-//! `PUT` an account's quota profile. Counts only, never content (d7).
+//! `GET` the month's ledger as JSON or CSV, `GET` the drift report, and
+//! `PUT` and `DELETE` an account's quota profile. Counts only, never
+//! content (d7).
 
 use std::collections::BTreeMap;
 
@@ -129,6 +130,26 @@ where
                         overrides,
                     },
                 )
+                .await
+                .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+            Ok(json_response(StatusCode::OK, &usage_json(&usage)))
+        }
+        .await;
+        finish(&rid, result)
+    }
+
+    pub(crate) async fn clear_account_profile_route(
+        State(st): State<Self>,
+        rid: Rid,
+        headers: HeaderMap,
+        Path(account): Path<String>,
+    ) -> Response {
+        let result = async {
+            st.require_writes_open()?;
+            let token = bearer(&headers)?;
+            let usage = st
+                .app
+                .admin_clear_profile(&token, &account)
                 .await
                 .map_err(|e| map_app_error(e, ErrorContext::Write))?;
             Ok(json_response(StatusCode::OK, &usage_json(&usage)))

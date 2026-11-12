@@ -99,8 +99,9 @@ def sync_detailed(
      Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is
     json, the default, or csv, whose header is
     day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks
-    as the hourly rollup read them after the day closed and that day's flows; profile is the one an
-    admin assigned, null for the deployment's default. Rows are kept 25 months. Counts only (d7).
+    as the hourly rollup read them after the day closed and that day's flows; profile is the one the
+    account was on when the day closed: the one an admin assigned, else the sign-up profile in the sign-
+    up tenant, and null for an account under no limits. Rows are kept 25 months. Counts only (d7).
     Journals nothing. Proposed.
 
     Args:
@@ -148,8 +149,9 @@ def sync(
      Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is
     json, the default, or csv, whose header is
     day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks
-    as the hourly rollup read them after the day closed and that day's flows; profile is the one an
-    admin assigned, null for the deployment's default. Rows are kept 25 months. Counts only (d7).
+    as the hourly rollup read them after the day closed and that day's flows; profile is the one the
+    account was on when the day closed: the one an admin assigned, else the sign-up profile in the sign-
+    up tenant, and null for an account under no limits. Rows are kept 25 months. Counts only (d7).
     Journals nothing. Proposed.
 
     Args:
@@ -192,8 +194,9 @@ async def asyncio_detailed(
      Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is
     json, the default, or csv, whose header is
     day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks
-    as the hourly rollup read them after the day closed and that day's flows; profile is the one an
-    admin assigned, null for the deployment's default. Rows are kept 25 months. Counts only (d7).
+    as the hourly rollup read them after the day closed and that day's flows; profile is the one the
+    account was on when the day closed: the one an admin assigned, else the sign-up profile in the sign-
+    up tenant, and null for an account under no limits. Rows are kept 25 months. Counts only (d7).
     Journals nothing. Proposed.
 
     Args:
@@ -239,8 +242,9 @@ async def asyncio(
      Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is
     json, the default, or csv, whose header is
     day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks
-    as the hourly rollup read them after the day closed and that day's flows; profile is the one an
-    admin assigned, null for the deployment's default. Rows are kept 25 months. Counts only (d7).
+    as the hourly rollup read them after the day closed and that day's flows; profile is the one the
+    account was on when the day closed: the one an admin assigned, else the sign-up profile in the sign-
+    up tenant, and null for an account under no limits. Rows are kept 25 months. Counts only (d7).
     Journals nothing. Proposed.
 
     Args:

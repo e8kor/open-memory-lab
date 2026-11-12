@@ -1837,7 +1837,9 @@ fn apply_fold(
                 state.findings.push((memory.memory_id, f));
             }
             if let Some(root) = state.keys.get(&memory.author_key_id).and_then(|k| k.user) {
-                let day = oml_domain::usage::day_of(at).to_owned();
+                // Counted on the day of the row's own clock read, which
+                // the month's stored versions are read by (ADR-0071 d2).
+                let day = oml_domain::usage::day_of(&memory.created_at).to_owned();
                 state.activity.entry((root, day)).or_default().0 += 1;
             }
             if enqueue {
@@ -2728,16 +2730,20 @@ impl JournalStore for MemStore {
         }))
     }
 
-    async fn meter_recall(
+    async fn meter_recalls(
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
-        at: &EventTime,
+        day: &str,
+        count: u64,
     ) -> Result<(), StoreError> {
         let state = self.tenant(tenant_id);
         let mut state = state.lock().expect("tenant lock");
-        let day = oml_domain::usage::day_of(at).to_owned();
-        state.activity.entry((user_root, day)).or_default().1 += 1;
+        state
+            .activity
+            .entry((user_root, day.to_owned()))
+            .or_default()
+            .1 += count;
         Ok(())
     }
 
@@ -2853,7 +2859,12 @@ impl JournalStore for MemStore {
         let receipt = {
             let mut state = tenant.lock().expect("tenant lock");
             let mut staged = state.clone();
-            let month = oml_domain::usage::Month::of(&first.event.envelope.at);
+            // A held version's write is the month's of its own clock read,
+            // as its row is (ADR-0071 d2).
+            let month = oml_domain::usage::Month::of(match &first.fold {
+                MetadataFold::MemoryHeld { memory, .. } => &memory.created_at,
+                _ => &first.event.envelope.at,
+            });
             let mut ceilings: Vec<crate::ports::Ceiling> = first.ceiling.into_iter().collect();
             let mut receipt = append(&mut staged, first)?;
             for req in reqs {

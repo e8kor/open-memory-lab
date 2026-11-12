@@ -9,18 +9,22 @@
 -- Run by the owner role, with oml.serving_role set as 0007 requires.
 --
 -- What it costs a live database: four new tables, three functions, a check
--- widened on user_quotas (at most six rows a person, new in 0037), and a
--- fill of the new rows from the stored ones, in one transaction. Until its
--- commit it holds SHARE ROW EXCLUSIVE on tenants (the new tables' foreign
--- keys), which a tenant's creation or settings change waits for, and ACCESS
--- EXCLUSIVE on user_quotas, which a read of an account's overrides waits
--- for. memories, api_keys and oauth_connections are read and never locked
--- against a write. The fill reads each tenant's memories three times, each
--- an aggregate. Measured on PostgreSQL 18 over one tenant of 100 accounts,
--- three runs each (2026-11-12): 59 to 92 ms with 10,000 versions stored,
--- 424 to 444 ms with 100,000. The server runs it at start, before it
--- serves. A lock is waited for at most 5 s, then the migration fails and is
--- run again in a quieter moment.
+-- widened on user_quotas (at most six rows a person, new in 0037), one
+-- index on memories built partition by partition, and a fill of the new
+-- rows from the stored ones, in one transaction. Until its commit it holds
+-- SHARE ROW EXCLUSIVE on tenants (the new tables' foreign keys), which a
+-- tenant's creation or settings change waits for; ACCESS EXCLUSIVE on
+-- user_quotas, which a read of an account's overrides waits for; and SHARE
+-- on memories and each of its partitions (the index builds), which every
+-- write of a memory waits for. Reads of memories never wait. The server
+-- runs it at start, before it serves, so the wait is the upgrade's. The
+-- time is the index build's and the fill's, both in step with the
+-- versions stored. Measured on PostgreSQL 18 over one tenant of 100
+-- accounts, three runs each (2026-11-12): 70 to 89 ms with 10,000
+-- versions stored, the build 19 to 26 ms of it and the fill 39 to 47 ms;
+-- 563 to 630 ms with 100,000, the build 150 to 184 ms and the fill 366 to
+-- 419 ms. A lock is waited for at most 5 s, then the migration fails and
+-- is run again in a quieter moment.
 
 SET LOCAL lock_timeout = '5s';
 
@@ -32,10 +36,10 @@ SET LOCAL lock_timeout = '5s';
 CREATE TABLE account_meters (
     tenant_id   uuid   NOT NULL REFERENCES tenants (id),
     user_root   uuid   NOT NULL,
-    memories    bigint NOT NULL DEFAULT 0,
-    text_bytes  bigint NOT NULL DEFAULT 0,
-    keys        bigint NOT NULL DEFAULT 0,
-    connections bigint NOT NULL DEFAULT 0,
+    memories    bigint NOT NULL DEFAULT 0 CHECK (memories >= 0),
+    text_bytes  bigint NOT NULL DEFAULT 0 CHECK (text_bytes >= 0),
+    keys        bigint NOT NULL DEFAULT 0 CHECK (keys >= 0),
+    connections bigint NOT NULL DEFAULT 0 CHECK (connections >= 0),
     PRIMARY KEY (tenant_id, user_root)
 );
 COMMENT ON TABLE account_meters IS
@@ -50,8 +54,8 @@ CREATE TABLE account_activity (
     tenant_id uuid   NOT NULL REFERENCES tenants (id),
     user_root uuid   NOT NULL,
     day       date   NOT NULL,
-    writes    bigint NOT NULL DEFAULT 0,
-    recalls   bigint NOT NULL DEFAULT 0,
+    writes    bigint NOT NULL DEFAULT 0 CHECK (writes >= 0),
+    recalls   bigint NOT NULL DEFAULT 0 CHECK (recalls >= 0),
     PRIMARY KEY (tenant_id, user_root, day)
 );
 COMMENT ON TABLE account_activity IS
@@ -115,20 +119,60 @@ ALTER TABLE user_quotas VALIDATE CONSTRAINT user_quotas_quota;
 ALTER TABLE user_quotas VALIDATE CONSTRAINT user_quotas_max_count;
 
 ------------------------------------------------------------------------------
+-- memories_chain_first — the versions 1 of each chain by when they were
+-- stored, whatever their state, so the chain's first version, whose author
+-- names its account, is one index probe (ADR-0071 d2, d3). A chain's first
+-- version is its earliest version 1: a claim_key every version of which
+-- was rejected is released, and the claim captured under it next is a
+-- version 1 again (ADR-0025 d18). memories_claim_version holds the live
+-- states alone, so it cannot answer for a rejected first version. The
+-- index holds one entry a version 1 and none for a revision, and names no
+-- other version, so the as-of tip probe of 0041 cannot be planned on it.
+-- Built as 0041 builds its index: ON ONLY the parent, then each
+-- partition's, attached; here inside the migration's transaction, so the
+-- index and the function that reads it arrive together. A tenant partition
+-- created later inherits it.
+------------------------------------------------------------------------------
+CREATE INDEX memories_chain_first
+    ON ONLY memories (tenant_id, workarea_id, claim_key, created_at)
+    WHERE version = 1;
+DO $$
+DECLARE
+    part regclass;
+    name text;
+BEGIN
+    FOR part IN SELECT inhrelid::regclass FROM pg_inherits
+                 WHERE inhparent = 'memories'::regclass
+                 ORDER BY inhrelid::regclass::text
+    LOOP
+        name := replace(part::text, '"', '') || '_chain_first';
+        EXECUTE format(
+            'CREATE INDEX %I ON %s (tenant_id, workarea_id, claim_key, created_at) '
+            'WHERE version = 1',
+            name, part);
+        EXECUTE format('ALTER INDEX memories_chain_first ATTACH PARTITION %I', name);
+    END LOOP;
+END $$;
+
+------------------------------------------------------------------------------
 -- The one definition of a chain's account and of a live chain (ADR-0071
--- d2): the account is the author's of the chain's first version; a chain is
--- live while a version of it is held, promoted or demoted and its promoted
--- tip is not a retirement. The fold reads both before and after a memory
--- fold, by the memories_claim_version index; the source below reads them
--- for every chain.
+-- d2): the account is the author's of the chain's first version, its
+-- earliest version 1; a chain is live while a version of it is held,
+-- promoted or demoted and its promoted tip is not a retirement. The fold reads them before and after a memory
+-- fold, each by an index on the chain: memories_chain_first for the
+-- account, memories_claim_version and memories_served_tip for the
+-- liveness. The source below reads them for every chain.
 ------------------------------------------------------------------------------
 CREATE FUNCTION oml_chain_account(t uuid, w uuid, ck text) RETURNS uuid
     LANGUAGE sql STABLE AS $$
     SELECT k.user_root_id
-      FROM memories m JOIN api_keys k ON k.tenant_id = m.tenant_id AND k.id = m.author_key_id
-     WHERE m.tenant_id = t AND m.workarea_id = w AND m.claim_key = ck
-     ORDER BY m.version, m.created_at
-     LIMIT 1
+      FROM (SELECT m.author_key_id
+              FROM memories m
+             WHERE m.tenant_id = t AND m.workarea_id = w AND m.claim_key = ck
+               AND m.version = 1
+             ORDER BY m.created_at
+             LIMIT 1) first
+      JOIN api_keys k ON k.tenant_id = t AND k.id = first.author_key_id
 $$;
 
 CREATE FUNCTION oml_chain_live(t uuid, w uuid, ck text) RETURNS boolean
@@ -177,6 +221,7 @@ CREATE FUNCTION oml_account_source(t uuid)
         SELECT k.user_root_id AS root, count(*) AS n
           FROM oauth_connections c JOIN api_keys k ON k.tenant_id = c.tenant_id AND k.id = c.key_id
          WHERE c.tenant_id = t AND k.user_root_id IS NOT NULL AND c.state = 'open'
+           AND k.revoked_at IS NULL AND k.credential <> 'session'
          GROUP BY k.user_root_id
     ), roots AS (
         SELECT root FROM mem UNION SELECT root FROM bytes

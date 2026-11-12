@@ -632,6 +632,7 @@ impl Lab {
                 fold: MetadataFold::KeyRevoked { key_id },
                 idempotency: None,
                 ceiling: None,
+                written: None,
             })
             .await
             .expect("the revocation commits");

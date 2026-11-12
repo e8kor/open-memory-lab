@@ -3007,12 +3007,35 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         default: { $ref: '#/components/responses/Error' }
 
+    delete:
+      tags: [admin]
+      operationId: clearAccountProfile
+      summary: Take an account's quota profile and its overrides away, so it is on the deployment's default again.
+      description: 'Requires: admin key role (ADR-0071 d5); every other role answers access.verb_ceiling. Removes the profile an admin assigned and every override of the account. The account is then on the deployment''s default: the sign-up profile in the sign-up tenant, and no limits outside it. Journalled as account.profile_set with a null profile and no overrides, also for an account that had none assigned; the limits hold from the next write. Answers the account''s usage under them. Deletes no memory, key or count. Idempotent by its replace semantics; no Idempotency-Key. Proposed.'
+      parameters:
+        - { $ref: '#/components/parameters/XRequestId' }
+        - { $ref: '#/components/parameters/XCorrelationId' }
+        - { $ref: '#/components/parameters/Traceparent' }
+        - { name: account, in: path, required: true, schema: { type: string }, description: 'The account: its root workarea id or its user name.' }
+      responses:
+        '200':
+          description: The account's usage under the deployment's default.
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/XRequestId' }
+            X-Correlation-Id: { $ref: '#/components/headers/XCorrelationId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountUsage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        default: { $ref: '#/components/responses/Error' }
+
   /v2/admin/usage:
     get:
       tags: [admin]
       operationId: adminUsageLedger
       summary: The usage ledger of one UTC month, every account, one row per account per closed day, as JSON or CSV.
-      description: 'Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is json, the default, or csv, whose header is day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks as the hourly rollup read them after the day closed and that day''s flows; profile is the one an admin assigned, null for the deployment''s default. Rows are kept 25 months. Counts only (d7). Journals nothing. Proposed.'
+      description: 'Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is json, the default, or csv, whose header is day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks as the hourly rollup read them after the day closed and that day''s flows; profile is the one the account was on when the day closed: the one an admin assigned, else the sign-up profile in the sign-up tenant, and null for an account under no limits. Rows are kept 25 months. Counts only (d7). Journals nothing. Proposed.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -3309,16 +3332,16 @@ components:
           type: object
           properties:
             memories: { type: integer }
-            text_bytes: { type: integer, description: 'UTF-8 bytes of every version the account wrote (ADR-0071 d2). Since v0.7.2.' }
-            writes: { type: integer, description: 'Versions submitted this UTC month (ADR-0071 d2). Since v0.7.2.' }
+            text_bytes: { type: integer, description: 'UTF-8 bytes of every version the account wrote (ADR-0071 d2). Since v0.7.3.' }
+            writes: { type: integer, description: 'Versions submitted this UTC month (ADR-0071 d2). Since v0.7.3.' }
             keys: { type: integer }
             connections: { type: integer }
         quotas:
           type: object
           properties:
             memories: { type: integer }
-            text_bytes: { type: [integer, 'null'], description: 'Null is unlimited (ADR-0071 d5). Since v0.7.2.' }
-            writes_per_month: { type: [integer, 'null'], description: 'Null is unlimited (ADR-0071 d5). Since v0.7.2.' }
+            text_bytes: { type: [integer, 'null'], description: 'Null is unlimited (ADR-0071 d5). Since v0.7.3.' }
+            writes_per_month: { type: [integer, 'null'], description: 'Null is unlimited (ADR-0071 d5). Since v0.7.3.' }
             keys: { type: integer }
             connections: { type: integer }
             requests_per_minute: { type: integer }
@@ -4909,16 +4932,16 @@ components:
           type: [object, 'null']
           properties:
             memories: { type: integer }
-            text_bytes: { type: integer, description: 'UTF-8 bytes of every version the account wrote (ADR-0071 d2). Since v0.7.2.' }
-            writes: { type: integer, description: 'Versions submitted this UTC month (ADR-0071 d2). Since v0.7.2.' }
+            text_bytes: { type: integer, description: 'UTF-8 bytes of every version the account wrote (ADR-0071 d2). Since v0.7.3.' }
+            writes: { type: integer, description: 'Versions submitted this UTC month (ADR-0071 d2). Since v0.7.3.' }
             keys: { type: integer }
             connections: { type: integer }
         quotas:
           type: [object, 'null']
           properties:
             memories: { type: integer }
-            text_bytes: { type: [integer, 'null'], description: 'Null is unlimited (ADR-0071 d5). Since v0.7.2.' }
-            writes_per_month: { type: [integer, 'null'], description: 'Null is unlimited (ADR-0071 d5). Since v0.7.2.' }
+            text_bytes: { type: [integer, 'null'], description: 'Null is unlimited (ADR-0071 d5). Since v0.7.3.' }
+            writes_per_month: { type: [integer, 'null'], description: 'Null is unlimited (ADR-0071 d5). Since v0.7.3.' }
             keys: { type: integer }
             connections: { type: integer }
             requests_per_minute: { type: integer }
@@ -5199,7 +5222,7 @@ components:
         account: { type: string, description: 'The id of the root workarea the account is.' }
         user: { type: [string, 'null'] }
         profile: { type: [string, 'null'], description: 'The quota profile the limits come from; null for an account under no limits.' }
-        profile_declared: { type: boolean, description: 'false when the configuration no longer declares the profile, which holds every limit at zero.' }
+        profile_declared: { type: boolean, description: 'false when the configuration no longer declares the profile: every write, key and connection is then refused limit.quota, and reads answer at the deployment''s request rate (ADR-0071 d5, d8).' }
         period: { type: string, description: 'The UTC month the flows count, YYYY-MM.' }
         meters:
           type: array
@@ -5239,7 +5262,7 @@ components:
               day: { type: string, format: date }
               account: { type: string }
               user: { type: [string, 'null'] }
-              profile: { type: [string, 'null'] }
+              profile: { type: [string, 'null'], description: 'The profile the account was on when the day closed; null for an account under no limits (ADR-0071 d4, d5).' }
               memories: { type: integer }
               text_bytes: { type: integer }
               writes: { type: integer }

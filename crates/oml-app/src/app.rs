@@ -230,6 +230,10 @@ pub struct App<J, S, C, I, Sc> {
     /// The recall telemetry's writer; `None` where the deployment records
     /// no recall (ADR-0054 d2).
     telemetry: Option<Arc<dyn Telemetry>>,
+    /// The recall meter's queue; `None` where nothing writes one, and then
+    /// a recall counts itself through the store before it answers, as the
+    /// in-memory store's cost nothing (ADR-0071 d2, d8).
+    recall_meter: Option<Arc<dyn crate::ports::RecallMeter>>,
     /// Each key's feedback members checked today, by UTC day: the per-key
     /// cap, held before any lookup (ADR-0054 d6, as amended).
     feedback_counts: std::sync::Mutex<BTreeMap<Uuid, (i64, u64)>>,
@@ -1196,6 +1200,7 @@ fn commit_request(
         outbox,
         idempotency,
         ceiling: None,
+        written: None,
     }
 }
 
@@ -1410,6 +1415,7 @@ where
             search: SearchConfig::default(),
             reranker: None,
             telemetry: None,
+            recall_meter: None,
             feedback_counts: std::sync::Mutex::default(),
             sparse: None,
             formats: Arc::new(crate::ports::ProseFormats),
@@ -5063,6 +5069,12 @@ where
             });
         }
 
+        // The account's limits, read once and before the head: the check
+        // below and the commit's ceiling hold to the same ones, and nothing
+        // is looked up in the window a conflicting commit reopens
+        // (ADR-0071 d3).
+        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
+
         // The head first, then the node's status, the ancestors' closures,
         // which a claim edge's proposal widens, and the claim_key read: a
         // ratification, an edge proposal or a capture that commits in between
@@ -5154,12 +5166,11 @@ where
             key_ids.extend(m.lineage_key_ids);
         }
 
-        if self
+        let claim_state = self
             .journal
             .claim_key_state(key.tenant_id, workarea_id, &claim_key)
-            .await?
-            .live
-        {
+            .await?;
+        if claim_state.live {
             return Err(AppError::ClaimKeyConflict);
         }
 
@@ -5171,8 +5182,9 @@ where
         // conflict it was; a new version goes through `supersede`, which
         // adds no memory. This check spares the signature; the commit's
         // ceiling is the one that holds (ADR-0068 d5; ADR-0071 d3).
-        self.require_charge(
-            key,
+        self.require_within(
+            key.tenant_id,
+            ceiling.as_ref(),
             &[
                 (oml_domain::signup::Quota::Memories, 1),
                 (oml_domain::signup::Quota::TextBytes, body.len() as u64),
@@ -5292,8 +5304,7 @@ where
                     .map_err(|e| AppError::StoredResponse(e.to_string()))?,
             },
         });
-        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
-        self.commit_charged(
+        self.commit_written(
             event,
             MetadataFold::MemoryHeld {
                 memory,
@@ -5301,6 +5312,10 @@ where
                 findings: findings.into(),
             },
             idempotency,
+            key,
+            // No earlier row carries the claim_key: this version starts
+            // its chain. A key released by a rejection does not.
+            claim_state.greatest_version.is_none(),
             ceiling,
         )
         .await?;
@@ -6051,14 +6066,12 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let started = std::time::Instant::now();
         let result = self.recall_as(&caller, req).await?;
-        // One recall on the account's meter, and never what was asked. A
-        // count that fails to write leaves the recall served: reading never
-        // blocks (ADR-0071 d2, d5, d7).
+        // One recall on the account's meter, and never what was asked,
+        // handed to the meter without waiting. A count that is dropped or
+        // fails to write leaves the recall served: reading never blocks
+        // (ADR-0071 d2, d5, d7, d8).
         if let Some(root) = caller.key.user {
-            let _ = self
-                .journal
-                .meter_recall(caller.key.tenant_id, root, &self.clock.now())
-                .await;
+            self.count_recall(caller.key.tenant_id, root).await;
         }
         // The answer's shape and latency, by pipeline, for the metrics
         // listener; then the event, handed to the writer without waiting,
@@ -7546,6 +7559,9 @@ where
                 replayed: true,
             });
         }
+        // The account's limits, read once and before the head, as a
+        // submit's are (ADR-0071 d3).
+        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
 
         // The head first, then the target, whose closure a claim edge's
         // proposal widens, the ancestors and the ordinal: a commit landing in
@@ -7750,8 +7766,9 @@ where
         // revision refused for its target is the refusal it was. This check
         // spares the signature; the commit's ceiling is the one that holds
         // (ADR-0071 d2, d3).
-        self.require_charge(
-            key,
+        self.require_within(
+            key.tenant_id,
+            ceiling.as_ref(),
             &[
                 (oml_domain::signup::Quota::TextBytes, body.len() as u64),
                 (oml_domain::signup::Quota::WritesPerMonth, 1),
@@ -7880,9 +7897,8 @@ where
                     .map_err(|e| AppError::StoredResponse(e.to_string()))?,
             },
         });
-        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
         let committed = self
-            .commit_charged(
+            .commit_written(
                 event,
                 MetadataFold::MemoryHeld {
                     memory: successor,
@@ -7890,6 +7906,8 @@ where
                     findings: findings.into(),
                 },
                 idempotency,
+                key,
+                false,
                 ceiling,
             )
             .await;

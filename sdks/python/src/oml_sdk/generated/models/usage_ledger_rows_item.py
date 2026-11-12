@@ -16,7 +16,8 @@ class UsageLedgerRowsItem:
         day (datetime.date):
         account (str):
         user (None | str):
-        profile (None | str):
+        profile (None | str): The profile the account was on when the day closed; null for an account under no limits
+            (ADR-0071 d4, d5).
         memories (int):
         text_bytes (int):
         writes (int):

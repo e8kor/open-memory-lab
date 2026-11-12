@@ -1797,19 +1797,41 @@ pub const USAGE_ROLLUP_SECONDS: u64 = 60 * 60;
 pub const EVENT_USAGE_ROLLUP: &str = "usage_rollup";
 /// The `event` field of the log line a failed rollup writes.
 pub const EVENT_USAGE_ROLLUP_FAILED: &str = "usage_rollup_failed";
+/// The `event` field of the log line recall counts that could not be
+/// written leave (observability.md; ADR-0071 d8).
+pub const EVENT_RECALL_COUNTS_LOST: &str = "usage_recall_counts_lost";
+
+/// The profile an account with none assigned is on (ADR-0071 d5): the
+/// sign-up tenant's id and `quota.signup_profile`; `None` without sign-up,
+/// where such an account is under no limits. The ledger writes it beside
+/// each day's counts.
+pub type UnassignedProfile = Option<(uuid::Uuid, String)>;
 
 /// One usage rollup at `at` over every tenant (ADR-0071 d4): each
-/// tenant's closed days appended to the ledger and its expired rows
-/// deleted. Returns the tenants and the rows appended. A failed tenant
-/// fails the pass with its reason; the next pass appends what it missed.
-pub async fn roll_up_usage(store: &PgStore, at: &EventTime) -> Result<(usize, u64), String> {
+/// tenant's closed days appended to the ledger, each row naming the
+/// profile its account is on, `unassigned`'s in its tenant where no admin
+/// assigned one, and its expired rows deleted. Returns the tenants and the
+/// rows appended. A failed tenant fails the pass with its reason; the next
+/// pass appends what it missed.
+pub async fn roll_up_usage(
+    store: &PgStore,
+    at: &EventTime,
+    unassigned: &UnassignedProfile,
+) -> Result<(usize, u64), String> {
     let tenants = enumerate_tenants(store.pool())
         .await
         .map_err(|e| format!("tenant enumeration: {e}"))?;
     let mut rows = 0;
     for tenant_id in &tenants {
         rows += store
-            .roll_up_usage(*tenant_id, at)
+            .roll_up_usage(
+                *tenant_id,
+                at,
+                unassigned
+                    .as_ref()
+                    .filter(|(tenant, _)| tenant == tenant_id)
+                    .map(|(_, profile)| profile.as_str()),
+            )
             .await
             .map_err(|e| format!("tenant {tenant_id}: {e}"))?;
     }
@@ -1820,13 +1842,16 @@ pub async fn roll_up_usage(store: &PgStore, at: &EventTime) -> Result<(usize, u6
 /// [`USAGE_ROLLUP_SECONDS`] after, on the system clock, logging
 /// [`EVENT_USAGE_ROLLUP`] or [`EVENT_USAGE_ROLLUP_FAILED`] with its reason.
 /// A failed pass never stops the lead or the next pass.
-pub fn spawn_usage_rollup(store: PgStore) -> tokio::task::JoinHandle<()> {
+pub fn spawn_usage_rollup(
+    store: PgStore,
+    unassigned: UnassignedProfile,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticks = tokio::time::interval(std::time::Duration::from_secs(USAGE_ROLLUP_SECONDS));
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticks.tick().await;
-            match roll_up_usage(&store, &SystemClock.now()).await {
+            match roll_up_usage(&store, &SystemClock.now(), &unassigned).await {
                 Ok((tenants, rows)) => tracing::info!(
                     event = EVENT_USAGE_ROLLUP,
                     tenants,
@@ -2121,6 +2146,20 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     traffic.metrics().with_scan_counts(scan_counts);
     let (telemetry, _writer) = PgTelemetry::spawn(store.pool().clone(), meter);
     let app = app.with_telemetry(telemetry);
+    // A recall hands its count to this queue and never waits on its
+    // account's counter row (ADR-0071 d2, d8).
+    let (recall_meter, _counts) = oml_pg::recall_meter::PgRecallMeter::spawn(
+        store.clone(),
+        Arc::new(|count, reason| {
+            tracing::warn!(
+                event = EVENT_RECALL_COUNTS_LOST,
+                count,
+                %reason,
+                "RECALL COUNTS LOST — the month's recalls meter reads low by them (ADR-0071 d8)"
+            );
+        }),
+    );
+    let app = app.with_recall_meter(recall_meter);
     let app = match sparse {
         Some(sparse) => app.with_sparse_encoder(sparse),
         None => app,

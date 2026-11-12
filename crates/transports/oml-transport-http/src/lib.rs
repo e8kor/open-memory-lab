@@ -44,7 +44,7 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
-use axum::routing::{MethodRouter, get, post, put};
+use axum::routing::{MethodRouter, delete, get, post, put};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -155,6 +155,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/admin/rescan"),
     ("GET", "/v2/admin/accounts/{account}/usage"),
     ("PUT", "/v2/admin/accounts/{account}/profile"),
+    ("DELETE", "/v2/admin/accounts/{account}/profile"),
     ("GET", "/v2/admin/usage"),
     ("GET", "/v2/admin/usage/drift"),
     ("GET", "/v2/search"),
@@ -396,6 +397,9 @@ where
             ("GET", "/v1/account/usage") => get(Self::account_usage_route),
             ("GET", "/v2/admin/accounts/{account}/usage") => get(Self::admin_account_usage_route),
             ("PUT", "/v2/admin/accounts/{account}/profile") => put(Self::set_account_profile_route),
+            ("DELETE", "/v2/admin/accounts/{account}/profile") => {
+                delete(Self::clear_account_profile_route)
+            }
             ("GET", "/v2/admin/usage") => get(Self::admin_usage_route),
             ("GET", "/v2/admin/usage/drift") => get(Self::admin_usage_drift_route),
             ("GET", "/v2/search") => get(Self::search_settings),

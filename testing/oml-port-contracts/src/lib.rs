@@ -216,6 +216,7 @@ impl ChainRig {
                 },
                 idempotency,
                 ceiling,
+                written: None,
             })
             .await;
         match receipt {
@@ -253,6 +254,7 @@ impl ChainRig {
                 fold,
                 idempotency: None,
                 ceiling: None,
+                written: None,
             });
         }
         let receipt = store.commit_chain(reqs).await;
@@ -748,6 +750,7 @@ async fn commit_raw<S: JournalStore>(
             },
             idempotency: None,
             ceiling: None,
+            written: None,
         })
         .await
 }
@@ -4781,6 +4784,7 @@ pub async fn a_chain_whose_ratification_loses_the_compare_and_set_journals_no_ve
         fold: filler_fold.clone(),
         idempotency: None,
         ceiling: None,
+        written: None,
     };
     let filler = || json!({ "body_digest": "sha256:00" });
     let (a, b) = (

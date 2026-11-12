@@ -623,6 +623,24 @@ pub struct CommitRequest {
     /// for an account under no limits and for every unmetered fold
     /// (ADR-0071 d3). Metering itself happens either way.
     pub ceiling: Option<Ceiling>,
+    /// What the caller already read of the version a `MemoryHeld` fold
+    /// holds, so the store reads none of it again inside the commit; `None`
+    /// has the store read it (ADR-0071 d3).
+    pub written: Option<Written>,
+}
+
+/// What a use case knows of the version it commits before it commits
+/// (ADR-0071 d1, d3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Written {
+    /// The account of the key that wrote it, from the key's record; `None`
+    /// for a key of no account.
+    pub author_account: Option<Uuid>,
+    /// Whether no earlier row carries its `claim_key` in its workarea, read
+    /// after the head as the capture reads it: the version then starts its
+    /// chain, which is its author's account's and live once held. A claim
+    /// captured under a released key, and every revision, does not.
+    pub starts_chain: bool,
 }
 
 /// One account's limits, carried by a metered commit (ADR-0071 d3).
@@ -630,6 +648,21 @@ pub struct CommitRequest {
 pub struct Ceiling {
     pub user_root: Uuid,
     pub quotas: oml_domain::signup::Quotas,
+}
+
+/// The recall meter (ADR-0071 d2, d8): a recall hands its count over and
+/// never waits for the write, so no recall sits behind its account's
+/// counter row. Held as `Arc<dyn RecallMeter>`, as the telemetry is; a
+/// count that is dropped or fails to write leaves the month's `recalls`
+/// low, and nothing recomputes it.
+pub trait RecallMeter: Send + Sync {
+    /// One recall by a key of `user_root`'s account, counted on `at`'s UTC
+    /// day. Never blocks: a full queue drops the count.
+    fn count(&self, tenant_id: Uuid, user_root: Uuid, at: &EventTime);
+
+    /// Writes the counts handed over before this call, then answers: what a
+    /// read of the meters waits for, so an account reads its own recalls.
+    fn flush(&self) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send + '_>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -865,13 +898,15 @@ pub trait JournalStore: Retriever + Send + Sync {
         user_root: Uuid,
     ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
 
-    /// One recall by a key of the account, counted in `at`'s UTC day; the
-    /// query is never recorded (ADR-0071 d2, d7).
-    fn meter_recall(
+    /// `count` recalls by keys of the account, counted in the UTC day
+    /// `day` (`YYYY-MM-DD`); the queries are never recorded (ADR-0071 d2,
+    /// d7).
+    fn meter_recalls(
         &self,
         tenant_id: Uuid,
         user_root: Uuid,
-        at: &EventTime,
+        day: &str,
+        count: u64,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
 
     /// Every account of the tenant that has a counter row, with its

@@ -1356,7 +1356,11 @@ export interface paths {
          */
         put: operations["setAccountProfile"];
         post?: never;
-        delete?: never;
+        /**
+         * Take an account's quota profile and its overrides away, so it is on the deployment's default again.
+         * @description Requires: admin key role (ADR-0071 d5); every other role answers access.verb_ceiling. Removes the profile an admin assigned and every override of the account. The account is then on the deployment's default: the sign-up profile in the sign-up tenant, and no limits outside it. Journalled as account.profile_set with a null profile and no overrides, also for an account that had none assigned; the limits hold from the next write. Answers the account's usage under them. Deletes no memory, key or count. Idempotent by its replace semantics; no Idempotency-Key. Proposed.
+         */
+        delete: operations["clearAccountProfile"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1371,7 +1375,7 @@ export interface paths {
         };
         /**
          * The usage ledger of one UTC month, every account, one row per account per closed day, as JSON or CSV.
-         * @description Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is json, the default, or csv, whose header is day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks as the hourly rollup read them after the day closed and that day's flows; profile is the one an admin assigned, null for the deployment's default. Rows are kept 25 months. Counts only (d7). Journals nothing. Proposed.
+         * @description Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is json, the default, or csv, whose header is day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks as the hourly rollup read them after the day closed and that day's flows; profile is the one the account was on when the day closed: the one an admin assigned, else the sign-up profile in the sign-up tenant, and null for an account under no limits. Rows are kept 25 months. Counts only (d7). Journals nothing. Proposed.
          */
         get: operations["adminUsageLedger"];
         put?: never;
@@ -1456,18 +1460,18 @@ export interface components {
             under_quotas: boolean;
             usage: {
                 memories?: number;
-                /** @description UTF-8 bytes of every version the account wrote (ADR-0071 d2). Since v0.7.2. */
+                /** @description UTF-8 bytes of every version the account wrote (ADR-0071 d2). Since v0.7.3. */
                 text_bytes?: number;
-                /** @description Versions submitted this UTC month (ADR-0071 d2). Since v0.7.2. */
+                /** @description Versions submitted this UTC month (ADR-0071 d2). Since v0.7.3. */
                 writes?: number;
                 keys?: number;
                 connections?: number;
             };
             quotas: {
                 memories?: number;
-                /** @description Null is unlimited (ADR-0071 d5). Since v0.7.2. */
+                /** @description Null is unlimited (ADR-0071 d5). Since v0.7.3. */
                 text_bytes?: number | null;
-                /** @description Null is unlimited (ADR-0071 d5). Since v0.7.2. */
+                /** @description Null is unlimited (ADR-0071 d5). Since v0.7.3. */
                 writes_per_month?: number | null;
                 keys?: number;
                 connections?: number;
@@ -2795,18 +2799,18 @@ export interface components {
             under_quotas: boolean;
             usage: {
                 memories?: number;
-                /** @description UTF-8 bytes of every version the account wrote (ADR-0071 d2). Since v0.7.2. */
+                /** @description UTF-8 bytes of every version the account wrote (ADR-0071 d2). Since v0.7.3. */
                 text_bytes?: number;
-                /** @description Versions submitted this UTC month (ADR-0071 d2). Since v0.7.2. */
+                /** @description Versions submitted this UTC month (ADR-0071 d2). Since v0.7.3. */
                 writes?: number;
                 keys?: number;
                 connections?: number;
             } | null;
             quotas: {
                 memories?: number;
-                /** @description Null is unlimited (ADR-0071 d5). Since v0.7.2. */
+                /** @description Null is unlimited (ADR-0071 d5). Since v0.7.3. */
                 text_bytes?: number | null;
-                /** @description Null is unlimited (ADR-0071 d5). Since v0.7.2. */
+                /** @description Null is unlimited (ADR-0071 d5). Since v0.7.3. */
                 writes_per_month?: number | null;
                 keys?: number;
                 connections?: number;
@@ -3063,7 +3067,7 @@ export interface components {
             user: string | null;
             /** @description The quota profile the limits come from; null for an account under no limits. */
             profile: string | null;
-            /** @description false when the configuration no longer declares the profile, which holds every limit at zero. */
+            /** @description false when the configuration no longer declares the profile: every write, key and connection is then refused limit.quota, and reads answer at the deployment's request rate (ADR-0071 d5, d8). */
             profile_declared: boolean;
             /** @description The UTC month the flows count, YYYY-MM. */
             period: string;
@@ -3091,6 +3095,7 @@ export interface components {
                 day: string;
                 account: string;
                 user: string | null;
+                /** @description The profile the account was on when the day closed; null for an account under no limits (ADR-0071 d4, d5). */
                 profile: string | null;
                 memories: number;
                 text_bytes: number;
@@ -7492,6 +7497,41 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    clearAccountProfile: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+            };
+            path: {
+                /** @description The account: its root workarea id or its user name. */
+                account: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's usage under the deployment's default. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountUsage"];
+                };
+            };
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];

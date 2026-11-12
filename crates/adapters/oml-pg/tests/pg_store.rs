@@ -449,6 +449,7 @@ async fn commit_at(
             },
             idempotency: None,
             ceiling: None,
+            written: None,
         })
         .await
 }
@@ -574,6 +575,7 @@ async fn open_at(
             },
             idempotency: None,
             ceiling: None,
+            written: None,
         })
         .await
 }
@@ -3728,6 +3730,7 @@ async fn an_operator_key_with_tenant_id_null_still_issues_a_tenants_first_admin_
                 },
                 idempotency: None,
                 ceiling: None,
+                written: None,
             })
             .await
             .expect("the operator's commit");
@@ -3872,6 +3875,7 @@ async fn a_tenants_fenced_partition_exists_before_its_row_commits() {
             },
             idempotency: None,
             ceiling: None,
+            written: None,
         })
         .await
         .expect("the genesis commits");
@@ -4307,6 +4311,7 @@ async fn the_widening_statement_names_its_tenant_and_touches_no_other_tenants_ro
             fold: MetadataFold::ClaimEdgeProposed(edge),
             idempotency: None,
             ceiling: None,
+            written: None,
         })
         .await
         .expect("the proposal commits");
@@ -10985,7 +10990,8 @@ async fn migration_0045_gives_every_tenants_partition_the_chain_index_and_a_late
     );
     for (partition, definition, valid) in &indexes {
         assert!(
-            definition.ends_with("(tenant_id, workarea_id, claim_key, version, created_at)"),
+            definition
+                .ends_with("(tenant_id, workarea_id, claim_key, created_at) WHERE (version = 1)"),
             "{partition}: {definition}"
         );
         assert!(valid, "{partition}");
@@ -10998,14 +11004,14 @@ async fn migration_0045_gives_every_tenants_partition_the_chain_index_and_a_late
     .expect("the parent's index");
     assert!(parent_valid, "every partition's index is attached");
     // The account lookup names no status, so the live-states index cannot
-    // answer it, and it orders a chain's versions as the index does.
+    // answer it, and it reads a chain's versions 1 in the index's order.
     let lookup: String =
         sqlx::query_scalar("SELECT prosrc FROM pg_proc WHERE proname = 'oml_chain_account'")
             .fetch_one(&mut owner)
             .await
             .expect("the function");
     assert!(
-        lookup.contains("ORDER BY m.version, m.created_at"),
+        lookup.contains("AND m.version = 1") && lookup.contains("ORDER BY m.created_at"),
         "{lookup}"
     );
     drop(owner);
@@ -11078,16 +11084,27 @@ async fn a_tenant_keys_first_version_commits_without_touching_the_meters() {
         .execute("LOCK TABLE account_meters, account_activity IN ACCESS EXCLUSIVE MODE")
         .await
         .expect("lock the meters");
+    // As a served write commits: the request says what the use case read,
+    // an author of no account and a claim_key no row carries yet.
     let (payload, fold) = write(held(2));
+    let event = rig.next_event(event_types::SUBMISSION_REMEMBER, payload);
     let committed = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        rig.commit(
-            &store,
-            event_types::SUBMISSION_REMEMBER,
-            payload,
+        store.commit(CommitRequest {
+            outbox: OutboxRow {
+                event_id: event.envelope.event_id,
+                topic: event.envelope.event_type.clone(),
+                payload: json!({ "seq": event.envelope.seq }),
+            },
+            event,
             fold,
-            None,
-        ),
+            idempotency: None,
+            ceiling: None,
+            written: Some(oml_app::ports::Written {
+                author_account: None,
+                starts_chain: true,
+            }),
+        }),
     )
     .await;
     locker.execute("ROLLBACK").await.expect("unlock");

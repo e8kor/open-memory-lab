@@ -6239,6 +6239,7 @@ async fn seal_onto(
             fold,
             idempotency: None,
             ceiling: None,
+            written: None,
         })
         .await
         .expect("the fixture commit");
@@ -9835,6 +9836,7 @@ async fn ratify_in_store(
             },
             idempotency: None,
             ceiling: None,
+            written: None,
         })
         .await
         .expect("the ratification commits");
@@ -11321,6 +11323,7 @@ fn propose_before_next_head(store: &MemStore, edge: ClaimEdgeRecord) {
             fold: MetadataFold::ClaimEdgeProposed(edge),
             idempotency: None,
             ceiling: None,
+            written: None,
         }
     });
 }
@@ -11971,6 +11974,7 @@ async fn commit_pending_edge(store: &MemStore, edge: ClaimEdgeRecord, event_id: 
             fold: MetadataFold::ClaimEdgeProposed(edge),
             idempotency: None,
             ceiling: None,
+            written: None,
         })
         .await
         .expect("commit the pending edge");
@@ -14665,4 +14669,82 @@ async fn a_key_of_an_account_under_no_limits_has_its_limits_looked_up_once_a_min
         .await
         .expect("a recall in the next minute");
     assert_eq!(store.account_profile_reads() - before, 2);
+}
+
+/// An account outside the sign-up tenant is under no limits until an admin
+/// assigns it a profile, and under none again once the admin takes the
+/// profile away; a key that is no admin's may do neither (ADR-0071 d5).
+#[tokio::test]
+async fn an_account_outside_the_sign_up_tenant_returns_to_no_limits_when_its_profile_is_taken_away()
+{
+    use oml_app::domain::signup::{Quota, Quotas};
+    use oml_app::types::{ProfileAssignment, QuotaProfiles};
+    let (app, store, _clock, boot) = metered_on_a_clock(
+        QuotaProfiles::only(Quotas::default().with(Quota::Memories, 1)),
+        Some(Uuid::from_u128(0x51_6e_00)),
+    )
+    .await;
+    let admin = boot.admin_key.value.as_str();
+    let (writer, _) = account_keys(&app, admin).await;
+    let limit_of = |usage: &oml_app::types::AccountUsage| {
+        usage
+            .meters
+            .iter()
+            .find(|m| m.meter == oml_app::domain::usage::Meter::Memories)
+            .expect("the memories meter")
+            .limit
+    };
+    let usage = app.account_usage(&writer.value).await.expect("usage");
+    assert_eq!((usage.profile.as_deref(), limit_of(&usage)), (None, None));
+    let assigned = app
+        .admin_set_profile(
+            admin,
+            "ada",
+            &ProfileAssignment {
+                profile: "default".to_owned(),
+                overrides: vec![(Quota::Keys, 9)],
+            },
+        )
+        .await
+        .expect("assign");
+    assert_eq!(
+        (assigned.profile.as_deref(), limit_of(&assigned)),
+        (Some("default"), Some(1))
+    );
+    app.submit_memory(&writer.value, &submit_req("i1", "the canary drains first"))
+        .await
+        .expect("the one memory default admits");
+    let refused = app
+        .submit_memory(&writer.value, &submit_req("i2", "the fleet follows"))
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, AppError::QuotaReached(_)), "{refused:?}");
+
+    let not_admin = app
+        .admin_clear_profile(&writer.value, "ada")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(not_admin, AppError::VerbCeiling { .. }),
+        "{not_admin:?}"
+    );
+    let head = journal(&store, boot.tenant_id).await.len();
+    let cleared = app
+        .admin_clear_profile(admin, "ada")
+        .await
+        .expect("an admin takes it away");
+    assert_eq!(
+        (cleared.profile.as_deref(), limit_of(&cleared)),
+        (None, None),
+        "no profile, no override, no limit"
+    );
+    let events = journal(&store, boot.tenant_id).await;
+    assert_eq!(events.len(), head + 1);
+    let last = &events.last().expect("an event").envelope;
+    assert_eq!(last.event_type, "account.profile_set");
+    assert_eq!(last.payload["profile"], Value::Null);
+    assert_eq!(last.payload["overrides"], json!({}));
+    app.submit_memory(&writer.value, &submit_req("i2", "the fleet follows"))
+        .await
+        .expect("under no limits again");
 }
