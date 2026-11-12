@@ -60,10 +60,10 @@ class KeyIssueRequest:
             held_by service (held_by_service), or a deployment without oauth.issuer (not_configured). Default: False.
         expiry (datetime.datetime | Unset): The instant from which the key authenticates nothing: RFC 3339 with its
             offset, later than the server's clock. Omitted, the key does not expire. A connector key's expiry is its
-            connection's (ADR-0079 d1, d2; since v0.7.3).
+            connection's. Refused for role admin (ADR-0079 d1, d2; since v0.7.3).
         requests_per_minute (int | Unset): The requests the key may make in one UTC minute, its own rate beside any
-            quota of its account; the request past it is 429 limit.rate. Omitted, the key has none of its own (ADR-0079 d4;
-            since v0.7.3).
+            quota of its account; the request past it is 429 limit.rate. Omitted, the key has none of its own. Refused for
+            role admin (ADR-0079 d1, d4; since v0.7.3).
     """
 
     role: Role

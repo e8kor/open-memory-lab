@@ -1559,6 +1559,49 @@ async fn a_session_key_has_no_value_and_no_connect_code() {
     assert!(format!("{refused:?}").contains("SessionKey"), "{refused:?}");
 }
 
+/// A person's own issuance sets no limit: `POST /v2/keys` as `<user>-web`
+/// with `expiry` or `requests_per_minute` is `request.validation` naming
+/// the member, journals nothing and issues no key; a date or a rate on a
+/// person's key is an admin key's to set (ADR-0079 d1, open question 3;
+/// ADR-0045 d9).
+#[tokio::test]
+async fn a_persons_own_issuance_takes_no_expiry_and_no_rate() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let head = rig.head().await;
+    for (member, value) in [
+        ("expiry", json!("2999-01-01T00:00:00Z")),
+        ("requests_per_minute", json!(60)),
+    ] {
+        let mut body = json!({"name": "alice-laptop", "role": "writer", "connect_code": false});
+        body[member] = value;
+        let (status, answer) = as_web(&rig, &cookie, "web", "/v2/keys", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{member}: {answer}");
+        assert_eq!(answer["error"]["code"], "request.validation", "{answer}");
+        assert_eq!(
+            answer["error"]["details"],
+            json!({ "field": format!("/{member}") }),
+            "{answer}"
+        );
+    }
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    let named = rig
+        .store
+        .resolve_name(
+            rig.boot.tenant_id,
+            oml_app::domain::name::NamedKind::Key,
+            &Name::parse("alice-laptop").expect("a name"),
+        )
+        .await
+        .expect("a lookup");
+    assert_eq!(named, None, "no key was issued");
+
+    // The same issuance without a limit is the person's to make.
+    let _ = issued(&rig, &cookie, "laptop").await;
+    let key = key_named(&rig, "alice-laptop").await;
+    assert_eq!((key.expiry, key.requests_per_minute), (None, None));
+}
+
 #[tokio::test]
 async fn the_admin_read_serves_text_and_attribution_and_journals_the_read() {
     let rig = rig().await;

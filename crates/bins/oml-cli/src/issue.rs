@@ -189,6 +189,25 @@ impl KeyFile {
     }
 }
 
+/// A key's limits as the key verbs print them: its expiry, marked once the
+/// server says it has passed, and its own rate; no line for a limit the key
+/// does not carry (ADR-0079 d3, d4).
+#[must_use]
+pub fn key_limit_lines(key: &Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(expiry) = key["expiry"].as_str() {
+        lines.push(if key["expired"] == true {
+            format!("expiry   : {expiry} (expired: the key authenticates nothing)")
+        } else {
+            format!("expiry   : {expiry}")
+        });
+    }
+    if let Some(rate) = key["requests_per_minute"].as_u64() {
+        lines.push(format!("rate     : {rate} requests per minute"));
+    }
+    lines
+}
+
 /// What a connect-code verb prints and exits with: each stdout line, each
 /// stderr line, and the exit code.
 #[derive(Debug, PartialEq, Eq)]
@@ -201,8 +220,9 @@ pub struct Printed {
 /// What `oml keys issue-agent --connect-code` prints for its `201`
 /// (cli/reference.md `--connect-code`; ADR-0031 d7). A fresh answer puts
 /// exactly two lines on stdout, the connector URL the server names (never
-/// the address the CLI used) and the code, and the key, the code's expiry and
-/// the next step on stderr. An answer without a code, the stored body an
+/// the address the CLI used) and the code, and the key, the code's expiry,
+/// the key's own expiry and rate if it carries them (ADR-0079 d7) and the
+/// next step on stderr. An answer without a code, the stored body an
 /// idempotent replay (`Idempotency-Replay: true`) returns among them, puts
 /// nothing on stdout, names the key and how to mint a code, and exits 2.
 /// With `json` the body goes to stdout as it came, and only the exit code and
@@ -241,17 +261,22 @@ pub fn connect_code_printed(answer: &Value, replayed: bool, json: bool) -> Print
             exit: 0,
         };
     }
+    let mut stderr = vec![format!(
+        "connector key {key_name} ({key_id}) issued to {}: no value, and the connect \
+         code above in its place, single use, shown this once and expiring at {}",
+        text(&answer["principal"]),
+        text(&connect_code["expires_at"]),
+    )];
+    // The limits the key was issued with (ADR-0079 d7).
+    stderr.extend(
+        key_limit_lines(answer)
+            .into_iter()
+            .map(|line| format!("    {line}")),
+    );
+    stderr.push(NEXT_STEP.to_owned());
     Printed {
         stdout: vec![text(&connect_code["connector_url"]), code.to_owned()],
-        stderr: vec![
-            format!(
-                "connector key {key_name} ({key_id}) issued to {}: no value, and the connect \
-                 code above in its place, single use, shown this once and expiring at {}",
-                text(&answer["principal"]),
-                text(&connect_code["expires_at"]),
-            ),
-            NEXT_STEP.to_owned(),
-        ],
+        stderr,
         exit: 0,
     }
 }
@@ -461,6 +486,38 @@ mod tests {
             !stderr.contains("7KQ2-M9XD-4TPA"),
             "the code is on stdout alone: {stderr}"
         );
+    }
+
+    /// A connector key issued with limits names both on stderr, between the
+    /// line that names the key and the next step, and stdout is unchanged;
+    /// one issued with neither adds no line (ADR-0079 d7).
+    #[test]
+    fn issue_agent_connect_code_prints_the_keys_expiry_and_rate_on_stderr() {
+        let mut limited = issued(Some("7KQ2-M9XD-4TPA"));
+        limited["expiry"] = json!("2026-12-01T17:00:00.000000Z");
+        limited["requests_per_minute"] = json!(60);
+        let printed = connect_code_printed(&limited, false, false);
+        assert_eq!(
+            printed.stdout,
+            ["https://oml.example.com/mcp", "7KQ2-M9XD-4TPA"],
+            "{printed:?}"
+        );
+        assert_eq!(printed.stderr.len(), 4, "{printed:?}");
+        assert!(printed.stderr[0].contains("claude-mobile"), "{printed:?}");
+        assert_eq!(
+            printed.stderr[1..3],
+            [
+                "    expiry   : 2026-12-01T17:00:00.000000Z",
+                "    rate     : 60 requests per minute",
+            ]
+        );
+        assert!(
+            printed.stderr[3].contains("Customize > Connectors"),
+            "{printed:?}"
+        );
+
+        let plain = connect_code_printed(&issued(Some("7KQ2-M9XD-4TPA")), false, false);
+        assert_eq!(plain.stderr.len(), 2, "{plain:?}");
     }
 
     #[test]

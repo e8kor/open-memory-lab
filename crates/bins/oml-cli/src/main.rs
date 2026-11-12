@@ -22,8 +22,8 @@ use oml_cli::creds::{self, Credentials};
 use oml_cli::discovery;
 use oml_cli::hook;
 use oml_cli::issue::{
-    KeyFile, configure_line, connect_code_printed, minted_code_printed, parse_ttl, setup_line,
-    sh_quote, with_reader_beside_writers,
+    KeyFile, configure_line, connect_code_printed, key_limit_lines, minted_code_printed, parse_ttl,
+    setup_line, sh_quote, with_reader_beside_writers,
 };
 use oml_cli::verify::parse_verifying_key;
 
@@ -369,7 +369,8 @@ enum KeysCommand {
         ttl: Option<String>,
     },
     /// Set or clear a key's expiry and its requests per minute; needs an admin
-    /// key other than the key itself, and journals key.limits_set.
+    /// key other than the key itself, and journals key.limits_set. An admin key
+    /// takes neither limit.
     Limit {
         /// Key id or name.
         #[arg(value_name = "KEY")]
@@ -452,11 +453,11 @@ struct KeysIssueArgs {
 struct KeyLimitArgs {
     /// Instant the key stops authenticating, RFC 3339 with its offset, such as
     /// 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not
-    /// expire.
+    /// expire. Refused for an admin key.
     #[arg(long, value_name = "INSTANT")]
     expires: Option<String>,
     /// Requests the key may make in one UTC minute, from 1 to 1000000. Omitted,
-    /// the key has no rate of its own.
+    /// the key has no rate of its own. Refused for an admin key.
     #[arg(long, value_name = "N")]
     requests_per_minute: Option<u32>,
 }
@@ -1634,9 +1635,13 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 }
                 println!("    epoch    : {}", response["epoch"]);
                 // A revoked key's name still resolves, so the read says
-                // whether the key is history (ADR-0026 d10).
+                // whether the key is history (ADR-0026 d10); a key past its
+                // expiry is not revoked and not live either (ADR-0079 d3).
                 match response["revoked_at"].as_str() {
                     Some(at) => println!("    revoked  : {at}"),
+                    None if response["expired"] == true => {
+                        println!("    revoked  : no (expired)");
+                    }
                     None => println!("    revoked  : no (live)"),
                 }
                 // The key's end date, saying when it has passed, and its
@@ -3432,6 +3437,11 @@ fn run_issue_agent(
         granted.join(", "),
         field(&response, "default_workarea_id"),
     );
+    // The limits the key was issued with (ADR-0079 d7); stdout stays the
+    // lines a shell evaluates.
+    for line in key_limit_lines(&response) {
+        eprintln!("    {line}");
+    }
     match &args.out {
         Some(_) => eprintln!(
             "the value is only in the key file (0600); delete it once `claude plugin \
@@ -5003,24 +5013,6 @@ fn key_limits_body(
         );
     }
     Ok(Value::Object(body))
-}
-
-/// A key's limits as the key verbs print them: its expiry, marked once the
-/// server says it has passed, and its own rate; no line for a limit the key
-/// does not carry (ADR-0079 d3, d4).
-fn key_limit_lines(key: &Value) -> Vec<String> {
-    let mut lines = Vec::new();
-    if let Some(expiry) = key["expiry"].as_str() {
-        lines.push(if key["expired"] == true {
-            format!("expiry   : {expiry} (expired: the key authenticates nothing)")
-        } else {
-            format!("expiry   : {expiry}")
-        });
-    }
-    if let Some(rate) = key["requests_per_minute"].as_u64() {
-        lines.push(format!("rate     : {rate} requests per minute"));
-    }
-    lines
 }
 
 /// The key lines (ADR-0079 d7), for the key doctor runs under: that the

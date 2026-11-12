@@ -1,8 +1,8 @@
 //! A key's limits (ADR-0079): the instant it stops authenticating and the
 //! requests it may make in a minute. Both are set at issuance and changed
-//! only by an admin key that is not the key itself; the expiry is read
-//! against the clock on every request, and the rate is counted in this
-//! process's memory.
+//! only by an admin key that is not the key itself, and an admin key
+//! carries neither; the expiry is read against the clock on every request,
+//! and the rate is counted in this process's memory.
 
 use serde_json::json;
 use uuid::Uuid;
@@ -13,8 +13,8 @@ use oml_domain::{EventTime, Role, event_types};
 use super::{App, require_role};
 use crate::ports::{Clock, IdGen, JournalStore, MetadataFold, Scanner, Signer};
 use crate::types::{
-    AppError, Bearer, Credential, KEY_REQUESTS_PER_MINUTE_MAX, KeyLimitsChange, KeyLimitsRefusal,
-    KeyRecord,
+    AppError, Bearer, Credential, IssueKeyRequest, KEY_REQUESTS_PER_MINUTE_MAX, KeyLimitsChange,
+    KeyLimitsRefusal, KeyRecord,
 };
 
 /// Whether `count` requests already admitted this minute leave room for one
@@ -48,6 +48,22 @@ where
     #[must_use]
     pub fn key_expired(&self, key: &KeyRecord) -> bool {
         key.expired_at(&self.clock.now())
+    }
+
+    /// The limits an issuance asks for: none for an admin key, which is
+    /// refused by the member it sent, since the keys that change limits
+    /// carry none; for any other role, what [`Self::check_key_limits`]
+    /// admits (ADR-0079 d1, d4).
+    pub(super) fn check_issued_limits(&self, req: &IssueKeyRequest) -> Result<(), AppError> {
+        if req.role == Role::Admin {
+            if req.expiry.is_some() {
+                return Err(AppError::KeyLimits(KeyLimitsRefusal::AdminKeyExpiry));
+            }
+            if req.requests_per_minute.is_some() {
+                return Err(AppError::KeyLimits(KeyLimitsRefusal::AdminKeyRate));
+            }
+        }
+        self.check_key_limits(req.expiry.as_ref(), req.requests_per_minute)
     }
 
     /// An `expiry` a request names is later than the lead's clock, and a
@@ -98,9 +114,11 @@ where
     /// requests per minute or both, replaced or cleared, journalled as
     /// `key.limits_set` with both values as they stand after the change.
     /// Admin key role only, in the key's own tenant; a key the tenant does
-    /// not hold is absent. The calling key itself, a session key and a
-    /// revoked key are refused by reason, so no key moves its own date or
-    /// raises its own rate (R1). A change that names neither member is
+    /// not hold is absent. The calling key itself, a session key, a revoked
+    /// key and an admin key are refused by reason: no key that can change a
+    /// limit carries one, so none moves its own date or raises its own
+    /// rate, alone or through a second admin key, and no admin key ends
+    /// another by a date (R1). A change that names neither member is
     /// refused, as is an expiry that is not later than now.
     pub async fn set_key_limits(
         &self,
@@ -130,6 +148,9 @@ where
         }
         if target.revoked_at.is_some() {
             return Err(AppError::KeyLimits(KeyLimitsRefusal::Revoked));
+        }
+        if target.role == Role::Admin {
+            return Err(AppError::KeyLimits(KeyLimitsRefusal::AdminKey));
         }
         if let Some(expiry) = change.expiry {
             target.expiry = expiry;

@@ -1609,6 +1609,15 @@ fn apply_fold(
                     key.key_id
                 )));
             }
+            // api_keys_admin_key_has_no_limits (0046; ADR-0079 d1).
+            if key.role == Role::Admin
+                && (key.expiry.is_some() || key.requests_per_minute.is_some())
+            {
+                return Err(StoreError::Backend(format!(
+                    "admin key {} carries a limit; an admin key has no expiry and no rate",
+                    key.key_id
+                )));
+            }
             if let Some(name) = &key.name {
                 require_free_name(
                     state.keys.values().filter_map(|k| k.name.as_ref()),
@@ -1637,20 +1646,20 @@ fn apply_fold(
             state.keys.insert(key.key_id, key);
         }
         // Both limits take the event's values; a key the tenant does not
-        // hold, a revoked key and a session key are refused, as the
-        // store's guarded update refuses them (ADR-0079 d5).
+        // hold, a revoked key, a session key and an admin key are refused,
+        // as the store's guarded update refuses them (ADR-0079 d5).
         MetadataFold::KeyLimitsSet {
             key_id,
             expiry,
             requests_per_minute,
         } => {
-            let Some(key) = state
-                .keys
-                .get_mut(&key_id)
-                .filter(|k| k.revoked_at.is_none() && k.credential != Credential::Session)
-            else {
+            let Some(key) = state.keys.get_mut(&key_id).filter(|k| {
+                k.revoked_at.is_none()
+                    && k.credential != Credential::Session
+                    && k.role != Role::Admin
+            }) else {
                 return Err(StoreError::Backend(format!(
-                    "key {key_id} is not a live bearer or connector key of this tenant"
+                    "key {key_id} is not a live bearer or connector key of this tenant, or is an admin key"
                 )));
             };
             key.expiry = expiry;
