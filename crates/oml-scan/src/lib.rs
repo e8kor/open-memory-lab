@@ -557,40 +557,231 @@ fn glued_after(folded: &str, glue: &[bool], at: usize) -> bool {
         .is_some_and(|(i, _)| glue[at + i])
 }
 
-/// Whether the words of a phrase are joined across a sentence: a line
-/// break, or a full stop, comma, colon, semicolon, question or exclamation
-/// mark followed by a space. A separator inside a word (`n.e.w`) is not.
-fn sentence_break(gap: &str) -> bool {
+/// A line break: a line feed, a carriage return, a vertical tab, a form
+/// feed, NEL, or a line or paragraph separator.
+fn line_break(c: char) -> bool {
+    matches!(
+        c,
+        '\n' | '\r' | '\u{0B}' | '\u{0C}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+/// Whether a gap between two words of a phrase ends a clause: a line break,
+/// or a comma, semicolon, colon, question or exclamation mark followed by a
+/// space. `new, system, instructions:` is a list of three words.
+fn clause_break(gap: &str) -> bool {
     let mut chars = gap.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '\n' || (".!?;:,".contains(c) && chars.peek().is_some_and(|n| n.is_whitespace())) {
+        if line_break(c) || (",;:!?".contains(c) && chars.peek().is_some_and(|n| n.is_whitespace()))
+        {
             return true;
         }
     }
     false
 }
 
+/// Whether a gap holds a full stop and a space, the end of a sentence, or of
+/// one letter of a word spelled `n. e. w.`. A separator inside a word
+/// (`n.e.w`) is not one.
+fn dot_break(gap: &str) -> bool {
+    let mut chars = gap.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '.' && chars.peek().is_some_and(|n| n.is_whitespace()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The gap between two words of a phrase with a hyphenated line wrap read
+/// as the hyphen alone: a line break that follows a hyphen splits a word,
+/// and does not end a clause.
+fn unwrap_hyphens(gap: &str) -> String {
+    let mut out = String::with_capacity(gap.len());
+    // Whether the last character kept that is not a blank is a hyphen: kept as
+    // a flag, since a gap of many blanks must not be read again for each.
+    let mut hyphen = false;
+    for c in gap.replace("\r\n", "\n").chars() {
+        if line_break(c) && hyphen {
+            continue;
+        }
+        if !c.is_whitespace() {
+            hyphen = c == '-';
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// A character that is part of the line a heading, an emphasis, a quote, a
+/// list item, a banner or a bracket makes, and no part of its words: any
+/// character that is not a letter, a digit or a bar (which bounds a table
+/// cell), a combining mark counting with its letter. A line break is not one.
+fn line_mark(c: char) -> bool {
+    // The enclosed alphanumerics are letters of Unicode's alphabetic property
+    // and look like a symbol: a circled or squared letter is a bullet.
+    let enclosed =
+        matches!(c, '\u{2460}'..='\u{24FF}' | '\u{2776}'..='\u{2793}' | '\u{1F100}'..='\u{1F1FF}');
+    !line_break(c) && (mark(c) || enclosed || (!c.is_alphanumeric() && c != '|'))
+}
+
+/// How many tags, or phrases, a line may carry on either side of the phrase
+/// and still be its line. A tag is read whole, letters and all, so a line of
+/// tags would be read again for each phrase on it (d9).
+const SKIPS: usize = 8;
+
+/// The length of the HTML tag that starts `s`, its `<` included: a name and
+/// whatever attributes, up to the `>`, on the one line.
+fn tag_len(s: &str) -> Option<usize> {
+    let rest = s.strip_prefix('<')?;
+    let rest = rest.strip_prefix('/').unwrap_or(rest);
+    if !rest.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let end = rest.find(|c: char| c == '<' || c == '>' || line_break(c))?;
+    rest[end..]
+        .starts_with('>')
+        .then(|| s.len() - rest.len() + end + 1)
+}
+
+/// The `new system instructions` phrase at the start of `s`, as the folded
+/// text shows it, with a few marks between its words.
+static PHRASE_HERE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:new|updated|real)[^\p{L}\p{N}]{0,8}system[^\p{L}\p{N}]{0,8}instructions")
+        .expect("compiles")
+});
+
+/// Whether only what opens a line stands before the phrase on it: marks, a
+/// list marker (a lone number or letter) and up
+/// to `SKIPS` tags, back to the line break before it. `before` is the text up
+/// to the phrase and is read backwards, so the cost is what the phrase's line
+/// holds up to its first letter, and never the text before the line (d9: a
+/// megabyte on one line is read once, not once per phrase).
+fn opens_line(before: &str) -> bool {
+    let mut rest = before;
+    let (mut tags, mut marker) = (0, false);
+    while let Some(c) = rest.chars().next_back() {
+        if line_break(c) {
+            return true;
+        }
+        let cut = rest.len() - c.len_utf8();
+        if c == '>' && tags < SKIPS {
+            let open = rest[..cut]
+                .rfind(|d: char| d == '<' || d == '>' || line_break(d))
+                .filter(|&i| rest[i..].starts_with('<'));
+            if let Some(i) = open.filter(|&i| tag_len(&rest[i..]) == Some(rest.len() - i)) {
+                rest = &rest[..i];
+                tags += 1;
+                continue;
+            }
+        }
+        if !marker && c.is_alphanumeric() && !mark(c) {
+            // A lone number or letter is a list marker, however a keycap, a
+            // circle or a bracket wrote it: the folded text has it as one
+            // digit run or one ASCII letter. Read at most ten characters back.
+            let run: String = rest
+                .chars()
+                .rev()
+                .take(10)
+                .take_while(|&d| d.is_alphanumeric())
+                .collect();
+            if run.len() == 1 && run.bytes().all(|b| b.is_ascii_alphabetic())
+                || (run.len() <= 9 && run.bytes().all(|b| b.is_ascii_digit()))
+            {
+                rest = &rest[..rest.len() - run.len()];
+                marker = true;
+                continue;
+            }
+        }
+        if line_mark(c) {
+            rest = &rest[..cut];
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+/// Whether only what closes a line stands after the phrase on it: marks, and
+/// up to `SKIPS` tags or further phrases, to the line break after it, read
+/// forwards from `after` as far as the first letter.
+fn closes_line(after: &str) -> bool {
+    let mut rest = after;
+    let mut skips = 0;
+    while let Some(c) = rest.chars().next() {
+        if line_break(c) {
+            return true;
+        }
+        if skips < SKIPS {
+            let skipped = if c == '<' {
+                tag_len(rest)
+            } else if c.is_alphanumeric() {
+                PHRASE_HERE.find(rest).map(|m| m.end())
+            } else {
+                None
+            };
+            if let Some(n) = skipped {
+                rest = &rest[n..];
+                skips += 1;
+                continue;
+            }
+        }
+        if !line_mark(c) {
+            return false;
+        }
+        rest = &rest[c.len_utf8()..];
+    }
+    true
+}
+
+/// The phrase is its line: nothing on the line but the phrase, the marks
+/// that make it a heading, an emphasis, a quote, a list item or a banner,
+/// and any closing punctuation (#317).
+fn alone_on_line(folded: &str, start: usize, end: usize) -> bool {
+    opens_line(&folded[..start]) && closes_line(&folded[end..])
+}
+
 /// A colon follows the phrase on its line: the first character past `at`
-/// that is a letter, a digit, a colon or a line break is the colon.
+/// that is a letter, a digit, a colon or a line break is the colon. A
+/// combining mark belongs to the letter before it.
 fn colon_follows(folded: &str, at: usize) -> bool {
     for c in folded[at..].chars() {
         match c {
             ':' => return true,
-            '\n' => return false,
-            c if c.is_alphanumeric() => return false,
+            c if line_break(c) => return false,
+            c if c.is_alphanumeric() && !mark(c) => return false,
             _ => {}
         }
     }
     false
 }
 
-/// The phrase ends its line, or the text: only blanks, marks and the
-/// marks of a Markdown heading or emphasis follow it before the line break.
-fn ends_line(folded: &str, at: usize) -> bool {
-    folded[at..]
-        .chars()
-        .take_while(|&c| c != '\n')
-        .all(|c| c.is_whitespace() || mark(c) || "*_#=-~`".contains(c))
+/// What the folded text must show of the `new system instructions` phrase
+/// beyond its letters, given the byte ranges of its three words (#226, #317):
+/// the words are set apart by marks, never by a bar or the end of a clause,
+/// and never across a sentence, and it is followed by a colon on its line or
+/// is its line.
+///
+/// A full stop and a space between the words is the phrase's own spelling
+/// when there is one after every word or the letters are spelled with them
+/// (`new. system. instructions:`, `n. e. w. s. y. s. t. e. m.`): one among
+/// the words is two sentences (`Updated. System instructions: see`).
+fn directive_shows(folded: &str, words: [(usize, usize); 3]) -> bool {
+    let text = |a: usize, b: usize| folded.get(a..b).unwrap_or_default();
+    let gaps = [
+        unwrap_hyphens(text(words[0].1, words[1].0)),
+        unwrap_hyphens(text(words[1].1, words[2].0)),
+    ];
+    if gaps.iter().any(|g| g.contains('|') || clause_break(g)) {
+        return false;
+    }
+    let breaks = gaps.iter().filter(|g| dot_break(g)).count();
+    let spelled = words.iter().any(|&(a, b)| dot_break(text(a, b)));
+    if breaks > 0 && breaks < gaps.len() && !spelled {
+        return false;
+    }
+    let (start, end) = (words[0].0, words[2].1);
+    colon_follows(folded, end) || alone_on_line(folded, start, end)
 }
 
 /// The injection phrases found in the letters-only view of `text`, each
@@ -659,16 +850,11 @@ fn letters_findings(field: &str, text: &str) -> Vec<(usize, Finding)> {
                 Tail::None => true,
                 // `new`, `system` and `instructions` are the three groups.
                 Tail::Directive => {
-                    let gap = |a: Option<regex::Match<'_>>, b: Option<regex::Match<'_>>| {
-                        let (a, b) = (
-                            a.map_or(0, |g| end_of(g.end())),
-                            b.map_or(0, |g| start_of(g.start())),
-                        );
-                        folded.get(a..b).unwrap_or_default().to_owned()
+                    let word = |i: usize| {
+                        let g = caps.get(i).expect("each group takes part in a match");
+                        (start_of(g.start()), end_of(g.end()))
                     };
-                    !sentence_break(&gap(caps.get(1), caps.get(2)))
-                        && !sentence_break(&gap(caps.get(2), caps.get(3)))
-                        && (colon_follows(&folded, end) || ends_line(&folded, end))
+                    directive_shows(&folded, [word(1), word(2), word(3)])
                 }
             };
             if edges && tail_shows {
