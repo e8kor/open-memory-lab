@@ -184,6 +184,7 @@ async fn rig() -> Option<Rig> {
         None,
         None,
         WebClient::new(Some(WEB_CLIENT_SECRET.to_owned()), None),
+        false,
         Some(profiles()),
     )
     .await

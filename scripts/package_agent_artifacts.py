@@ -43,15 +43,15 @@ KIT_README = ROOT / "kit/README.md"
 MARKETPLACE = ROOT / ".claude-plugin/marketplace.json"
 DEFAULT_REPO = "e8kor/open-memory-lab"
 
-# Every configuration names the default server's endpoint literally and reads
-# the key from OML_API_KEY (ADR-0043 d6, amending ADR-0039 d15): DEFAULT_URL,
-# the maintainer's public server and the default of every integration a
-# release ships, which check_agent_kit.py holds equal to DEFAULT_URL in
-# crates/bins/oml-cli/src/setup.rs (ADR-0043 d1). None reads OML_URL, which
-# an unset variable would leave as /mcp; a self-hoster edits the one URL.
+# No configuration names a server (ADR-0076 d7): Cursor and Gemini CLI, which
+# expand a variable inside a URL, read OML_URL in their own syntax; OpenAI
+# Codex CLI, VS Code and Claude Desktop, which document none, carry a
+# placeholder under .invalid, a name that never resolves (RFC 6761 6.4), so an
+# unedited copy sends the key nowhere. Every one reads the key from
+# OML_API_KEY.
 KEY_VAR = "OML_API_KEY"
-DEFAULT_URL = "https://memory.doublegate.io"
-ENDPOINT = f"{DEFAULT_URL}/mcp"
+URL_VAR = "OML_URL"
+PLACEHOLDER = "https://oml-server.invalid/mcp"
 # The stdio bridge Claude Desktop's config file needs for a remote server,
 # pinned to a release older than two weeks on 2026-11-03.
 MCP_REMOTE = "mcp-remote@0.15.2"
@@ -121,19 +121,21 @@ def session_start_command() -> str:
 def kit_configs() -> dict:
     """Each kit path and its text."""
     bearer_env = f"Bearer ${{env:{KEY_VAR}}}"
+    cursor_url = f"${{env:{URL_VAR}}}/mcp"
+    gemini_url = f"${{{URL_VAR}}}/mcp"
     codex = (
         "# OpenAI Codex CLI: add to ~/.codex/config.toml, or to .codex/config.toml in a\n"
         "# trusted project. Codex sends the value of OML_API_KEY as the bearer token.\n"
-        f"# The URL is the maintainer's public server; for your own, replace\n"
-        f"# {DEFAULT_URL} with its address, keeping /mcp.\n"
+        "# Codex expands no variable in url: replace https://oml-server.invalid with\n"
+        "# the address the server that issued your key gave you, keeping /mcp.\n"
         "[mcp_servers.oml]\n"
-        f'url = "{ENDPOINT}"\n'
+        f'url = "{PLACEHOLDER}"\n'
         f'bearer_token_env_var = "{KEY_VAR}"\n'
     )
-    cursor = {"mcpServers": {"oml": {"url": ENDPOINT, "headers": {"Authorization": bearer_env}}}}
+    cursor = {"mcpServers": {"oml": {"url": cursor_url, "headers": {"Authorization": bearer_env}}}}
     gemini = {
         "mcpServers": {
-            "oml": {"httpUrl": ENDPOINT, "headers": {"Authorization": f"Bearer ${{{KEY_VAR}}}"}}
+            "oml": {"httpUrl": gemini_url, "headers": {"Authorization": f"Bearer ${{{KEY_VAR}}}"}}
         },
         "hooks": {
             "SessionStart": [
@@ -150,7 +152,7 @@ def kit_configs() -> dict:
             ]
         },
     }
-    vscode = {"servers": {"oml": {"type": "http", "url": ENDPOINT, "headers": {"Authorization": bearer_env}}}}
+    vscode = {"servers": {"oml": {"type": "http", "url": PLACEHOLDER, "headers": {"Authorization": bearer_env}}}}
     desktop = {
         "mcpServers": {
             "oml": {
@@ -158,7 +160,7 @@ def kit_configs() -> dict:
                 "args": [
                     "-y",
                     MCP_REMOTE,
-                    ENDPOINT,
+                    PLACEHOLDER,
                     "--transport",
                     "http-only",
                     "--header",

@@ -2823,6 +2823,11 @@ where
             let person = person.as_ref().map_or(Value::Null, person_json);
             obj.insert("person".to_owned(), person);
         }
+        if let Some(obj) = body.as_object_mut() {
+            // Whether the server's admins are not the caller's, which
+            // `oml sync` asks consent on (ADR-0076 d9).
+            obj.insert("shared".to_owned(), Value::Bool(st.app.shared()));
+        }
         Ok(json_response(StatusCode::OK, &body))
     }
 

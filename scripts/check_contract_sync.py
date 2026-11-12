@@ -28,7 +28,7 @@ This script extracts each surface and fails with a diff on any disagreement:
     default or const: an unquoted ", " in a flow mapping splits a description
     into a truncated one and a garbage key, which the 3.1 validator accepts
   * a `memory.<field>` read in README.md, an SDK README or a script under
-    scripts/, other than the host of a URL such as https://memory.doublegate.io,
+    scripts/, other than the host of a URL such as https://memory.example.com,
     that names a field the served Memory schema does not declare:
     whatever names a field moves in the step that renames it (ADR-0039 d14)
   * docs/api/mcp-tools.json's tools, in order, other than the tools/list the
@@ -117,8 +117,8 @@ MCP_RS = ROOT / "crates" / "transports" / "oml-transport-http" / "src" / "mcp.rs
 RUST_SDK_RS = ROOT / "sdks" / "rust" / "src" / "lib.rs"
 MEMORY_READERS = [ROOT / "README.md", *sorted((ROOT / "sdks").glob("*/README.md")),
                   *sorted((ROOT / "scripts").glob("*.sh"))]
-# A host such as https://memory.doublegate.io, the default server (ADR-0043
-# d1), is no field read: a match right after `//` is skipped.
+# A host such as https://memory.example.com is no field read: a match right
+# after `//` is skipped.
 MEMORY_READ_RE = re.compile(r"(?<!//)\bmemory\??\.([a-z_]+)\b(?!\.[a-z])")
 CONTRACT_MARKS = {"served", "designed"}
 RETIRED_VERB_RE = re.compile(r"\boml context (?:add|use|list|show|remove)\b")

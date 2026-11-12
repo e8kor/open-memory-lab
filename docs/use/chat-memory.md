@@ -28,7 +28,7 @@ names its source kind (`origin.kind`). You need a person's key and the
 
 **Privacy.** The cache keeps a keyed hash of each prompt, never the prompt. The session id is
 hashed with a salt kept on your machine (`$XDG_CONFIG_HOME/oml/chat-salt`, or `~/.config/oml/chat-salt`; mode 0600), so one person's chat on two
-machines yields two sessions. On a server whose operators read memories, such as
-[the public server](../start/install.md), treat captured facts as readable by them.
+machines yields two sessions. On a server whose operators are not yours, such as one that
+[says it is shared](sync.md), treat captured facts as readable by them.
 
 If capture does nothing, see [client troubleshooting](../help/troubleshooting-client.md).

@@ -265,7 +265,8 @@ an option with no default and no saved value reaches neither. Decided, not built
         over the in-memory app; `server.shared`'s parsing in `oml-server-lead`'s unit tests), and
         `docs/api/openapi.yaml` declares `shared` on `Whoami`, optional; the Python and TypeScript SDK models parse a whoami without it
     17. `the_setup_view_shows_the_servers_own_issuer_and_names_no_other_server`
-        (`oml-transport-http`)
+        (`oml-web`, `src/start.rs` and `tests/web_pages.rs`; the lead's `views.rs` moved there with
+        the console, ADR-0070 d7)
     18. `a_new_key_is_shown_beside_the_apis_issuer_and_with_none_beside_a_named_no_server_line`
         (`oml-web`)
     24. `doctor_with_an_admin_key_warns_server_origin_when_oauth_issuer_is_unset`
@@ -348,7 +349,7 @@ Read on `origin/main` at `694a35d2` (2026-11-11). Frozen ADR copies under
 | `crates/bins/oml-cli/tests/setup_claude_code.rs:330` | asserts the host's absence in one path | d10 tests 4–8 |
 | `crates/bins/oml-cli/tests/sync_git.rs:14, 281-400` | host matching and `true` consent | d10 tests 11–15 |
 | `crates/clients/oml-web/src/keys.rs:36-39, 397-405` | `DEFAULT_SERVER` fallback | d6, d8 |
-| `crates/transports/oml-transport-http/src/web/views.rs:30-32, 318-327` | `DEFAULT_SERVER` and "the plugins' default" line | d6, d8 |
+| `crates/transports/oml-transport-http/src/web/views.rs:30-32, 318-327`, later `crates/clients/oml-web/src/start.rs` | `DEFAULT_SERVER` and "the plugins' default" line | d6, d8 |
 | `crates/oml-app` and `oml-server-lead` whoami; `docs/api/openapi.yaml:4788-4793` | no `shared` | d9; d10 test 16 |
 | `sdks/python/src/oml_sdk/generated/models/whoami.py`, `sdks/typescript/src/generated/schema.ts` | generated from `openapi.yaml` | regenerate (CI: "generated SDK code is current with openapi.yaml") |
 | `plugins/oml/.claude-plugin/plugin.json:13-18` | `url` default | d2 |
@@ -371,6 +372,26 @@ Read on `origin/main` at `694a35d2` (2026-11-11). Frozen ADR copies under
 
 `site/**`, `docs/legal/**` and `scripts/tests/test_site_build.py` also name the hosted service; they
 leave the repository with the landing (#194), not with this record.
+
+### Build notes
+
+Where the build differs from the text above, recorded as fact, not as a decision (2026-11-12):
+
+- **d10 test 1's exclusions.** `scripts/check_no_default_server.py` excludes three paths beyond
+  the list in test 1: `docs/NUMBERS.md` and `docs/reference/design-records.md`, which list ADR
+  titles, and the script itself, which holds the pattern. The red-team corpus under
+  `crates/oml-scan/tests/corpus/` is not excluded; its link twin now names `oml.example.com`.
+- **The page line's wording (d8).** The web setup view and the new-key panel say `This server's
+  address is not configured (no_server: set web.public_url, or oauth.issuer on the lead); ask its
+  operator for the URL to give your agents.`, not the row's `(no_server: set oauth.issuer)`, since
+  `oml-web` falls back to `web.public_url` (d6). The same line stands where the onboarding page
+  would otherwise show an empty URL.
+- **Doctor's line with no pair (d8).** It ends `no server API was called, and the metrics
+  listener is read only where OML_METRICS_URL names it`, not `nothing was probed`, because doctor
+  still reads the metrics listener that variable names. `oml bootstrap claim` with no URL is
+  refused with the same `no_server:` prefix and names the credentials file.
+- **d7's recorded runs.** The build records no run of Cursor or Gemini CLI with `OML_URL` unset,
+  so which of `/mcp` or the unexpanded text each produces stays unverified, as d7 says it is.
 
 ## Rejected alternatives
 

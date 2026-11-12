@@ -49,6 +49,9 @@ class Whoami:
                 profile; null for none (ADR-0030 d8).
             person (None | Unset | WhoamiPerson): The person the key's user root names; null for a tenant key (ADR-0070 d5).
                 Absent with person=false (#286).
+            shared (bool | Unset): Whether the server's admins are not the caller's: true when the operator sets
+                server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always
+                sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9).
     """
 
     key_id: str
@@ -70,6 +73,7 @@ class Whoami:
         | WhoamiProfileType3Type1
     ) = UNSET
     person: None | Unset | WhoamiPerson = UNSET
+    shared: bool | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.whoami_person import WhoamiPerson
@@ -140,6 +144,8 @@ class Whoami:
         else:
             person = self.person
 
+        shared = self.shared
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -162,6 +168,8 @@ class Whoami:
             field_dict["profile"] = profile
         if person is not UNSET:
             field_dict["person"] = person
+        if shared is not UNSET:
+            field_dict["shared"] = shared
 
         return field_dict
 
@@ -327,6 +335,8 @@ class Whoami:
 
         person = _parse_person(d.pop("person", UNSET))
 
+        shared = d.pop("shared", UNSET)
+
         whoami = cls(
             key_id=key_id,
             name=name,
@@ -341,6 +351,7 @@ class Whoami:
             guardrail_scope=guardrail_scope,
             profile=profile,
             person=person,
+            shared=shared,
         )
 
         return whoami

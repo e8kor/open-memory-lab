@@ -18,9 +18,9 @@ Every client needs two settings: the server's address and a key. The server deri
 
 Something failed? Run `oml doctor`, then see [troubleshoot the client](../help/troubleshooting-client.md) or the [FAQ](../faq.md).
 
-## Sign up on the public server: no key yet
+## Sign up on a server: no key yet
 
-Once the operator opens sign-up on the public server ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md), proposed), you need only a Google or GitHub account. Sign in at `https://memory.doublegate.io/web`, accept the terms, and you land on `/web/start`:
+Where a server's operator opens sign-up ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md), proposed), you need only a Google or GitHub account and the server's address. Sign in at `<server>/web`, accept the terms, and you land on `/web/start`:
 
 1. Choose your client: claude.ai, Claude Desktop or the phone app; Claude Code; or another MCP tool.
 2. One button issues the right credential, shown once: a connect code and the connector URL for claude.ai, a key and the plugin's install commands for Claude Code, or the URL and a key for the rest.

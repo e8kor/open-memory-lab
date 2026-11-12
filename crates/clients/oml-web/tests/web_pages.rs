@@ -2342,6 +2342,12 @@ async fn the_setup_page_names_who_and_the_organisation_and_never_the_email() {
         page.contains(ISSUER),
         "the server an agent connects to: {page}"
     );
+    assert!(
+        page.contains("give each agent this URL with its key"),
+        "{page}"
+    );
+    assert!(!page.to_lowercase().contains("default"), "{page}");
+    assert!(!page.contains("doublegate"), "{page}");
 }
 
 #[tokio::test]

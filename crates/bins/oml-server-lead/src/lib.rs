@@ -77,6 +77,10 @@ pub struct Config {
     /// `server.otlp_endpoint`: the collector spans are exported to; unset,
     /// none are (ADR-0042 d13).
     pub otlp_endpoint: Option<otlp::Endpoint>,
+    /// `server.shared`: the server's admins are not its callers', which
+    /// whoami reports so `oml sync` asks consent; `false` when unset
+    /// (ADR-0076 d9).
+    pub shared: bool,
     /// `web.google.client_id` and `web.google.client_secret`: Google
     /// sign-in, on when both are set (ADR-0045 d17).
     pub web_google: Option<ClientCredentials>,
@@ -444,6 +448,7 @@ const KEY_OAUTH_ISSUER: &str = "oauth.issuer";
 const KEY_TRUSTED_PROXIES: &str = "server.trusted_proxies";
 const KEY_METRICS_LISTEN: &str = "server.metrics_listen";
 const KEY_OTLP_ENDPOINT: &str = "server.otlp_endpoint";
+const KEY_SERVER_SHARED: &str = "server.shared";
 const KEY_WEB_GOOGLE_CLIENT_ID: &str = "web.google.client_id";
 const KEY_WEB_GOOGLE_CLIENT_SECRET: &str = "web.google.client_secret";
 const KEY_WEB_GITHUB_CLIENT_ID: &str = "web.github.client_id";
@@ -915,6 +920,17 @@ impl Config {
             })?,
         };
         let signup = signup_policy(&lookup, oauth_issuer.is_some())?;
+        // A hosted server that is not open for sign-up says it is shared
+        // here, in the deploy that upgrades past ADR-0076 (d9).
+        let shared = match lookup(KEY_SERVER_SHARED).as_deref().map(str::trim) {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(other) => {
+                return Err(ConfigError::Invalid(format!(
+                    "{KEY_SERVER_SHARED} {other:?} is not true or false (configuration.md)"
+                )));
+            }
+        };
         let quota_profiles = quota_profiles(&lookup)?;
         // Open sign-up reaches people through a provider's sign-in; with
         // none the pages are off and the policy would silently never apply
@@ -1104,6 +1120,7 @@ impl Config {
             trusted_proxies,
             metrics_listen,
             otlp_endpoint,
+            shared,
             web_google,
             web_github,
             web_client,
@@ -1993,6 +2010,7 @@ pub async fn start_lead_with<F: DocumentFetcher + 'static>(
         reranker,
         None,
         WebClient::default(),
+        false,
         None,
     )
     .await
@@ -2021,6 +2039,7 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     reranker: Option<Arc<dyn oml_app::ports::Reranker>>,
     sparse: Option<Arc<dyn oml_app::ports::SparseEncoder>>,
     web_client: WebClient,
+    shared: bool,
     profiles: Option<oml_app::types::QuotaProfiles>,
 ) -> Result<LeadStart, String> {
     // The retrievers the database can run decide which pipelines may be
@@ -2110,6 +2129,7 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
         Some(issuer) => app.with_oauth_issuer(issuer),
         None => app,
     };
+    let app = app.with_shared(shared);
     // Open sign-up and the quotas of its tenant (ADR-0068 d1): an issuer
     // that is not a live admin key of that tenant stops the start.
     let signup = web.as_ref().and_then(|w| w.signup_policy().cloned());
@@ -2245,6 +2265,33 @@ mod tests {
             .expect("env-over-file config loads");
         assert_eq!(cfg.postgres_url, "postgres://env/db");
         assert_eq!(cfg.listen, "0.0.0.0:9999");
+    }
+
+    /// `server.shared` is false when unset, read as `true` or `false`, and
+    /// anything else stops the start naming the key (ADR-0076 d9).
+    #[test]
+    fn server_shared_is_false_unless_set_true_and_refuses_any_other_value() {
+        let base = [
+            ("OML_POSTGRES__URL", "postgres://env/db"),
+            ("OML_POSTGRES__OWNER_URL", "postgres://owner@env/db"),
+        ];
+        let load = |extra: &[(&str, &str)]| {
+            let env = env_of(&[base.as_slice(), extra].concat());
+            Config::from_sources(None, &|k| env.get(k).cloned())
+        };
+        assert!(!load(&[]).expect("defaults load").shared);
+        assert!(
+            load(&[("OML_SERVER__SHARED", "true")])
+                .expect("loads")
+                .shared
+        );
+        assert!(
+            !load(&[("OML_SERVER__SHARED", "false")])
+                .expect("loads")
+                .shared
+        );
+        let refused = load(&[("OML_SERVER__SHARED", "yes")]).expect_err("refused");
+        assert!(refused.to_string().contains("server.shared"), "{refused}");
     }
 
     /// `search.enabled` and `search.default` default to the gate's choice,

@@ -25,7 +25,7 @@ Settings are on the [settings page](../operations/configuration.md). The request
 
 ## Availability
 
-- One lead, no follower. Every upgrade or restart stops the API until the new instance is ready. The public server's availability target is 99.5% over 30 days, an error budget of 3 h 36 min ([capacity and SLOs](../operations/operating.md)).
+- One lead, no follower. Every upgrade or restart stops the API until the new instance is ready. A single-lead deployment's worked availability target is 99.5% over 30 days, an error budget of 3 h 36 min ([capacity and SLOs](../operations/operating.md)).
 - Writes are signed one after another on a single chain per tenant, so write throughput has a ceiling that we have not measured.
 
 ## Measured capacity
@@ -46,7 +46,7 @@ From the maintainers' own runs on one 8-vCPU host with PostgreSQL:
 
 ## Not verified against a live client
 
-The Claude Code plugin, installed from the plugin marketplace with its URL and key set in the plugin's options, is in daily use against memory.doublegate.io. The CI suites run the rest against test servers only. As of 2026-11-06 we have not completed a run of these against a live client, so their steps follow the vendor's documentation:
+The Claude Code plugin, installed from the plugin marketplace with its URL and key set in the plugin's options, is in daily use against a single-lead production server. The CI suites run the rest against test servers only. As of 2026-11-06 we have not completed a run of these against a live client, so their steps follow the vendor's documentation:
 
 - the `oml setup claude-code` command, which writes the same plugin options for you;
 - the claude.ai and mobile connector flow: the operator verified it up to connecting and listing the three tools (operator, 2026-11-06), with Claude Code and claude.ai connected through a connect code. A remember and recall round trip from claude.ai has not been reported yet, so the steps after the connection follow Anthropic's documentation;
