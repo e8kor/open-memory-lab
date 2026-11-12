@@ -2,7 +2,7 @@
 id: operations/releasing
 tier: engineering
 status: process page
-answers: how a release section of the changelog is assembled, how the SDKs are versioned and published to PyPI and npm, and how the main branch is protected by a merge queue
+answers: how a release section of the changelog is assembled, how the SDKs are versioned and published to PyPI and npm, what a shared server needs before a release, and how the main branch is protected by a merge queue
 -->
 
 # Releasing
@@ -113,6 +113,27 @@ rest is.
 8. **After the first publish.** In the next release pull request, add the registry install lines to
    `docs/engineering/sdks.md` and both SDK READMEs, replace their "Neither package is on PyPI or npm"
    and "chosen when it is first published" sentences, and check the install from a clean environment.
+
+## What a shared server needs before a release that contains X
+
+A server that people other than its operator use, an invitation-only one included, has three things to
+do around an upgrade that a server only you use does not. Each is silent or slow when missed. The
+release notes name the ones a release carries; this list says what each means and where it is
+sourced. The upgrade steps themselves are in [Upgrade OML](../operations/upgrades.md).
+
+| The release contains | Do | If it is missed |
+|---|---|---|
+| ADR-0076: no release names a server, and `oml sync` asks consent of a server that says it is shared ([ADR-0076](../adr/ADR-0076-releases-ship-no-default-server-and-setup-asks-for-the-server-or-reads-it-from-the-key-or-the-environment.md) d9) | Set `server.shared = true` (`OML_SERVER__SHARED`) before the upgrade, or in the same deploy. Open sign-up implies it; a server only you use leaves it `false`. Afterwards `GET /v2/whoami` answers `shared: true`. | Nothing fails and nothing warns. A server that omits `shared`, or answers `false`, gets no consent prompt from a new CLI, so its users' `oml sync` runs with no disclosure, and `oml doctor`'s `sync_shared_server` line cannot appear. |
+| A new scanner rule set (the rule set's name, `oml-scan/<n>.<n>`, moves; the release notes say so, as for `oml-scan/1.2` in #226) | After the upgrade, run `oml admin rescan --record-held` (ADR-0074 d28). | Until it has run, held versions last scanned under the old rule set stay their authors' alone inside in-progress workareas, and `oml doctor` warns `scan_held_unrescanned` and `scan_rescan_due`. Nothing is demoted or deleted, and the findings the old rule set recorded stay on a held version until a reviewer judges it. |
+| A migration that rewrites `memories` (migration 0044, #175, fills `approved_at` and the approver's kind on every promoted row from the journal) | Rehearse the upgrade on a restored copy ([Upgrade OML](../operations/upgrades.md#upgrade-in-order), step 3), read the time the migration took, and schedule the outage for it. Check free disk for the rewritten partition. | The server serves nothing until the migration ends: it runs at start, in one transaction, before the server answers. An older server refuses to start once it has run, so the way back is the dump taken before the upgrade. |
+
+The one measurement of the 0044 fill is from the review of #307, on a throwaway PostgreSQL 18 on a
+loaded shared host, as the non-superuser owner with row security forced: 0.84 to 1.5 seconds at
+10,000 promoted rows and 13.4 to 21.6 seconds at 100,000, and the partition grew from 194 MB to
+333 MB at 100,000 rows until vacuum ([#311](https://github.com/e8kor/open-memory-lab/issues/311)).
+It is one host and not a benchmark, and its publication in the operations docs is still open on
+that issue; a server with more promoted rows than 100,000, or slower disks, should expect more, and
+the rehearsal is what measures yours.
 
 ## Merge queue
 
