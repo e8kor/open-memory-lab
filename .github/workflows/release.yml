@@ -64,7 +64,7 @@ jobs:
       sdk_sdist: ${{ steps.v.outputs.sdk_sdist }}
       sdk_tgz: ${{ steps.v.outputs.sdk_tgz }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # RELEASE-HOLD at the root holds every release; every other job needs
       # this one (scripts/check_release.py holds that).
       - name: no release hold
@@ -124,8 +124,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           target: ${{ matrix.target }}
       - name: musl C toolchain
@@ -153,7 +153,7 @@ jobs:
             tar -C dist -czf "dist/$name.tar.gz" "$name"
           fi
           rm -rf "dist/$name"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: cli-${{ matrix.target }}
           path: dist/
@@ -178,8 +178,8 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           target: ${{ matrix.target }}
       - run: cargo build --release --locked --bin oml-server-lead --target "$TARGET"
@@ -191,7 +191,7 @@ jobs:
           cp -r LICENSES "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           rm -rf "dist/$name"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: server-${{ matrix.target }}
           path: dist/
@@ -216,8 +216,8 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           target: ${{ matrix.target }}
       - run: cargo build --release --locked --bin oml-web --target "$TARGET"
@@ -231,7 +231,7 @@ jobs:
           cp -r LICENSES "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           rm -rf "dist/$name"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: web-${{ matrix.target }}
           path: dist/
@@ -254,8 +254,8 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
           target: ${{ matrix.target }}
       - run: cargo build --release --locked --bin oml-lakewriter --target "$TARGET"
@@ -267,7 +267,7 @@ jobs:
           cp -r LICENSES "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           rm -rf "dist/$name"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lakewriter-${{ matrix.target }}
           path: dist/
@@ -285,8 +285,8 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Package, after the kit check passes
@@ -294,7 +294,7 @@ jobs:
           python scripts/check_agent_kit.py
           python scripts/package_agent_artifacts.py --out dist --version "$VERSION" \
             --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: agents-all
           path: dist/
@@ -312,8 +312,8 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Package, after site/dist is shown to match its sources
@@ -326,7 +326,7 @@ jobs:
           cp LICENSE LICENSE-docs "dist/$name/"
           tar -C dist --sort=name --owner=0 --group=0 --numeric-owner -czf "dist/$name.tar.gz" "$name"
           rm -rf "dist/$name"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: site-all
           path: dist/
@@ -392,13 +392,13 @@ jobs:
       SDK_SDIST: ${{ needs.version.outputs.sdk_sdist }}
       SDK_TGZ: ${{ needs.version.outputs.sdk_tgz }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-cyclonedx
-      - uses: sigstore/cosign-installer@v3
-      - uses: actions/download-artifact@v4
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           pattern: "{cli,server,web,lakewriter,agents,site,sdks}-*"
@@ -448,7 +448,7 @@ jobs:
           for f in *.tar.gz *.zip *.whl *.tgz *.cdx.json oml-marketplace-*.json SHA256SUMS; do
             cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist
           path: dist/
@@ -474,20 +474,20 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: QEMU, only on a runner not native to the platform
         if: runner.arch != matrix.arch
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
         with:
           platforms: linux/amd64,linux/arm64
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.IMAGE }}
       # The image build has no .git, so the commit /readyz reports comes in
@@ -496,7 +496,7 @@ jobs:
         run: echo "time=$(TZ=UTC git show -s --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)" >> "$GITHUB_OUTPUT"
       # Pushed by digest, untagged: the merge job tags the index, never a leg.
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           platforms: ${{ matrix.platform }}
@@ -513,7 +513,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/digests"
           touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: digests-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -534,19 +534,19 @@ jobs:
     outputs:
       digest: ${{ steps.index.outputs.digest }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-*
           merge-multiple: true
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.IMAGE }}
           tags: |
@@ -567,7 +567,7 @@ jobs:
           docker buildx imagetools inspect --raw "$IMAGE@$DIGEST" \
             | jq -e '[.manifests[].platform|select(.os=="linux")|.architecture]|(index("amd64")!=null and index("arm64")!=null)'
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
       # One signature on the index digest, and one on each platform image in it,
       # so the cosign verify of the release notes covers both architectures.
       - name: Sign the index by digest
@@ -589,8 +589,8 @@ jobs:
       SDK_SDIST: ${{ needs.version.outputs.sdk_sdist }}
       SDK_TGZ: ${{ needs.version.outputs.sdk_tgz }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
           path: dist
@@ -739,22 +739,23 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
-          path: dist
+          path: release
       - name: Only files that were signed, each checked by name against SHA256SUMS
         run: |
           set -euo pipefail
-          cd dist
+          cd release
           for f in "$SDK_WHEEL" "$SDK_SDIST"; do
             line="$(awk -v f="./$f" '$2 == f' SHA256SUMS)"
             [ "$(printf '%s\n' "$line" | grep -c .)" = 1 ] || { echo "$f is not listed exactly once in SHA256SUMS" >&2; exit 1; }
             printf '%s\n' "$line" | sha256sum --check --strict -
           done
           cd ..
-          mkdir pypi
-          cp "dist/$SDK_WHEEL" "dist/$SDK_SDIST" pypi/
+          mkdir dist
+          cp "release/$SDK_WHEEL" "release/$SDK_SDIST" dist/
+      # The action uploads dist/, its default, which holds only the two checked files; the job
+      # sets no packages-dir, repository-url or password (scripts/check_release.py).
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
-          packages-dir: pypi
           print-hash: true
 
   publish-sdk-npm:
@@ -823,11 +824,11 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.22.1
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
       - name: The chart's version and appVersion are the tag
         run: |
           chart="$(helm show chart deploy/helm/oml)"
@@ -844,7 +845,7 @@ jobs:
           test -f "chart/oml-${VERSION}.tgz"
       - name: Sign (keyless, bound to this workflow)
         run: cosign sign-blob --yes --bundle "chart/oml-${VERSION}.tgz.sigstore.json" "chart/oml-${VERSION}.tgz"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: chart
           path: chart/
@@ -861,7 +862,7 @@ jobs:
       DIGEST: ${{ needs.merge.outputs.digest }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: chart
           path: chart

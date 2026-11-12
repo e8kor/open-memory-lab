@@ -72,6 +72,19 @@ def render(notes: dict) -> tuple[str, list[str]]:
     for k in keys:
         n = server.get(k, {"default": "", "note": ""})
         out.append(f"| `{k}` | `{env_name(k)}` | {n['default']} | {n['note']} |")
+    out.append("\n## Limits counted per process\n")
+    out.append(
+        "Two limits are counted in the memory of the server process that serves the request, and the processes do not share "
+        "the counts: `quota.requests_per_minute` (120 requests a minute per key; a named profile's is "
+        "`quota.profile.<name>.requests_per_minute`) and `signup.per_ip_per_hour` "
+        "(5 sign-ups an hour per client address). A deployment of N server processes behind one address admits up to N times "
+        "each: up to 120 x N requests a minute for one key, up to 5 x N sign-ups an hour from one address. A restart "
+        "starts the counts at zero. Setting either key to its target divided by N keeps the total at or under the target "
+        "when requests spread evenly, and refuses a key or an address whose requests mostly land on one process before the "
+        "target. The defaults are the operator's choice and unmeasured; "
+        "the thirty-day measurement of [#164](https://github.com/e8kor/open-memory-lab/issues/164) has not been made, "
+        "and the counters are not shared across processes in this build.\n"
+    )
     out.append("\n## Lake writer\n")
     out.append("The `oml-lakewriter` binary takes these as flags or environment variables. See [run the lake writer](lake.md).\n")
     out.append("| Variable | Default | What it does |\n|---|---|---|")

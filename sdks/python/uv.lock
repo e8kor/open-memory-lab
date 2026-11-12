@@ -277,7 +277,7 @@ wheels = [
 ]
 
 [[package]]
-name = "oml-sdk"
+name = "open-memory-lab-sdk"
 version = "0.7.1"
 source = { editable = "." }
 dependencies = [

@@ -4,7 +4,7 @@
     python scripts/check_sdk_versions.py [--root DIR] [--tag X.Y.Z]
 
 Reads the workspace version from Cargo.toml and every place the Python and TypeScript SDKs carry
-their own, and fails naming each place that disagrees: pyproject.toml, the oml-sdk entry of
+their own, and fails naming each place that disagrees: pyproject.toml, the SDK's own entry of
 uv.lock, package.json, both entries of package-lock.json, the User-Agent the TypeScript wrapper
 sends, and the Rust SDK's `version.workspace = true`. With --tag, the tag must be that version too.
 Run by release.yml's version job, so a tag whose SDKs were not bumped publishes nothing, and by
@@ -38,7 +38,7 @@ def read_versions(root: Path) -> dict[str, str]:
     lock = tomllib.loads((py / "uv.lock").read_text())
     name = sdk_names.python_name(root)
     entry = [p for p in lock["package"] if p["name"] == name]
-    found["sdks/python/uv.lock oml-sdk version"] = entry[0]["version"] if entry else f"(no {name} entry)"
+    found["sdks/python/uv.lock version"] = entry[0]["version"] if entry else f"(no {name} entry)"
 
     ts = root / "sdks/typescript"
     found["sdks/typescript/package.json version"] = json.loads((ts / "package.json").read_text())["version"]

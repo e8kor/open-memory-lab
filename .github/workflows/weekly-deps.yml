@@ -1,8 +1,8 @@
 name: Weekly dependency pass
 
-# Once a week: cargo deny, cargo audit, npm audit for the JavaScript that ships, and the
-# scanner's rule tests. The findings go to one issue, opened or updated in place. The job
-# reports and never fails main.
+# Once a week: cargo deny, cargo audit, npm audit for the JavaScript that ships, the scanner's
+# rule tests and the pinned actions that have a newer tag. The findings go to one issue, opened
+# or updated in place. The job reports and never fails main.
 
 on:
   schedule:
@@ -28,16 +28,18 @@ jobs:
     timeout-minutes: 45
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-deny,cargo-audit
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
       - name: Run the checks
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p .tmp/weekly
           run() { # name, command...
@@ -48,6 +50,8 @@ jobs:
           run cargo-audit cargo audit
           # Rules are compiled in; this picks up every test of the scanner by name.
           run scanner-rules cargo test --locked -p oml-domain -p oml-app -p oml-guardrail scan
+          # A pinned action with a newer tag of its own major is a finding; a newer major only prints.
+          run action-pins python3 scripts/check_action_updates.py
           for lock in $(git ls-files '*package-lock.json' | grep -v node_modules); do
             d="$(dirname "$lock")"
             run "npm-audit-$(echo "$d" | tr '/' '-')" bash -c "cd '$d' && npm audit --omit=dev"

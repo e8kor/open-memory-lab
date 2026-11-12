@@ -1,4 +1,4 @@
-// oml-sdk: a TypeScript client for the Open Memory Lab HTTP API.
+// open-memory-lab-sdk: a TypeScript client for the Open Memory Lab HTTP API.
 // src/generated/schema.ts is generated from docs/api/openapi.yaml and never
 // edited; OmlClient is the hand-written wrapper (docs/engineering/sdks.md).
 

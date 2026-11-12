@@ -68,7 +68,7 @@ T = TypeVar("T")
 
 # What every request sends as User-Agent: the server's request log names the
 # client by it (ADR-0042 d9).
-USER_AGENT = f"oml-sdk-python/{importlib.metadata.version('oml-sdk')}"
+USER_AGENT = f"oml-sdk-python/{importlib.metadata.version('open-memory-lab-sdk')}"
 
 RETRY_AFTER_CAP = 30.0  # seconds; the most a Retry-After is waited for
 FIRST_BACKOFF = 0.2  # seconds, doubling per attempt, when no Retry-After is sent
