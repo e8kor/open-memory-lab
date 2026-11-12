@@ -51,8 +51,6 @@ fn entry_json(entry: &WebEntry) -> Value {
     })
 }
 
-/// One person as `GET /v2/web/users` serves them, and as the quota
-/// update answers (ADR-0068 d5; ADR-0070 d5 #8).
 /// A person's counts as the users listing and whoami's `person` serve them
 /// (ADR-0068 d5; ADR-0071 d2): the stocks, and the versions submitted this
 /// UTC month.
@@ -82,6 +80,8 @@ pub(crate) fn limits_json(quotas: &oml_app::domain::signup::Quotas) -> Value {
         .into()
 }
 
+/// One person as `GET /v2/web/users` serves them, and as the quota
+/// update answers (ADR-0068 d5; ADR-0070 d5 #8).
 pub(crate) fn user_row_json(u: &UserRow) -> Value {
     json!({
         "user": u.user.as_str(),
