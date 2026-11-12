@@ -719,7 +719,7 @@ Requires: any live key; it reads only its own record.
 | Parameter | In | Type | Required | Meaning |
 |---|---|---|---|---|
 | `start` | query | boolean | no | true: person carries start, the onboarding status the web console's Start page polls. |
-| `person` | query | boolean | no | false: no person field and none of its reads; the web console's session check asks it on every page, which reads only the key's record (the measurement of 2026-11-11;. true or absent: person as since v0.7.0. |
+| `person` | query | boolean | no | false: no person field and none of its reads, as the web console's session check asks on every page; true or absent: person as since v0.7.0; with start=true, request.validation naming the field person. |
 
 **Responses.** `200` The calling key's own record.; `401` auth.missing or auth.invalid.; `default` Typed error envelope; code is one of ErrorCode (docs/api/errors.md).
 

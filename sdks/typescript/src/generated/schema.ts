@@ -3747,7 +3747,7 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
                 /** @description true: the whole subtree in one answer, up to 2000 nodes, each with counts of its rows by state as the caller's with_own listing shows them, counted up to 2000 rows, and truncated when either stopped there; for the admin key role every row is counted as structure. No crew, no content, and no limit or cursor beside it (ADR-0045 d30; ADR-0070 d5). Since v0.6.4. */
                 counts?: boolean;
-                /** @description true, beside counts=true only: the answer carries offers, the scope's offers exactly as GET /v2/workareas/{workarea}/offers serves them to the same caller, read beside the counts in the same request, so the web console's admin Atlas needs no call of its own for them. A scope the tree refuses names no offers; offers without counts=true is request.validation, details.field offers (ADR-0070, the measurement of 2026-11-11; #286). Since v0.7.1. */
+                /** @description true, beside counts=true only: the answer carries offers, the scope's offers exactly as GET /v2/workareas/{workarea}/offers serves them to the same caller, read beside the counts in the same request, so the web console's admin Atlas needs no call of its own for them. A scope the tree refuses names no offers; offers without counts=true is request.validation, details.field offers (ADR-0070 d8). Since v0.7.1. */
                 offers?: boolean;
             };
             header?: {
@@ -4991,7 +4991,7 @@ export interface operations {
             query?: {
                 /** @description true: person carries start, the onboarding status the web console's Start page polls (ADR-0068 d10; ADR-0070 d5). Since v0.7.0. */
                 start?: boolean;
-                /** @description false: no person field and none of its reads; the web console's session check asks it on every page, which reads only the key's record (ADR-0070, the measurement of 2026-11-11; #286). true or absent: person as since v0.7.0. With start=true it is request.validation, details.field person. Since v0.7.1. */
+                /** @description false: no person field and none of its reads, as the web console's session check asks on every page; true or absent: person as since v0.7.0; with start=true, request.validation naming the field person (ADR-0070 d8). Since v0.7.1. */
                 person?: boolean;
             };
             header?: {
