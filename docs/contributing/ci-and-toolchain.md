@@ -110,8 +110,11 @@ Branch protection on `main` requires five checks, by these names:
 
 `ci ok (ci)` already waits for `crate walls (oml-web)`; requiring the walls by their own name as well
 keeps them named on every pull request and keeps a change to `ci-ok` from dropping them silently.
-A job skipped by its path filter reports success, so each required check reports on every pull
-request. Each of the four workflows also runs on `merge_group`, so the same checks gate a merge
+Each required check reports on every pull request. The `ci ok` jobs always run. `crate walls (oml-web)`
+is a job that always starts and filters its steps, not the job: a job skipped by its own `if` leaves no check
+run, so a required check of its name would wait for ever on a pull request that touches only docs, and a job
+whose steps are all skipped reports success. `test_ci_paths.py` holds the rule: a required check that is a job
+of its own has no job-level `if`, and each of its steps starts with `if: needs.changes.outputs.`. Each of the four workflows also runs on `merge_group`, so the same checks gate a merge
 queue (`scripts/tests/test_ci_paths.py` fails a workflow with a final check that does not).
 
 A new job joins its workflow's `ci-ok` `needs` list, which `test_ci_paths.py` checks, and is then
