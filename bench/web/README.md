@@ -55,6 +55,29 @@ but the Workareas views has more than four calls in flight and those are held to
 pages need no request-rate share of their own, since the Workareas views need fewer calls
 instead.
 
+## Findings of 2026-11-12 (#286)
+
+`oml-web-6` and `oml-web-48` again, at `b3c7a757`, after
+[#286](https://github.com/e8kor/open-memory-lab/issues/286): the session check's `whoami` sends
+`person=false` and resolves its credential once, the text search reads the person's keys beside
+the recall, and the admin Atlas reads the scope's offers in its counted tree. Same seed, same
+host; the one-minute load was 1.92 to 2.35 for the 6-workarea run and 1.1 to 8.67 for the 48-workarea
+run, which another job overlapped at its end. The results files hold these runs; the runs of
+2026-11-11 are in git history and in ADR-0070's table of that date.
+
+1. **The budget is missed on 7 of the 21 pages** at 6 workareas, by +9.1 to +35.7 ms p95, where 16
+   missed; on 9 at 48 workareas, by +5.1 to +61.9 ms, where 15 did.
+2. **The session check costs about half what it did.** Each `whoami` takes 4.9 to 6.8 ms p50 at the
+   lead where it took 7.8 to 17.4; Review, Curate and Setup, which call nothing else, add +3.4 to
+   +5.0 ms p95 at 6 workareas, within the budget, where they added +9.5 to +11.4.
+3. **The text search and the admin Atlas make two rounds.** The search adds +3.8 ms p95 where it
+   added +32.0; the Atlas +9.1 where it added +20.4, its counted tree alone taking 23.0 ms p50 at
+   the lead, the in-process page's whole time.
+4. **What still misses.** The memory page, Keys, Start, People and Users, three calls in two rounds
+   each, pay the session gate's reads twice (+9.5 to +13.4 ms p95); the admin Workareas view keeps
+   its 3 + 3N fan-out (+35.7). The hop outside the lead stays at most 3.7 ms p95 at 6 workareas and
+   4.5 at 48.
+
 ## Files
 
 | file | what it does |

@@ -863,6 +863,30 @@ readings of the measurement, offered for the operator's acceptance; neither is a
 | d2 (the 2026-11-11 table) | 60 requests a minute for a session key, chosen, not measured; whether pages need a rate share of their own (#279) | a reading for the operator's acceptance, not yet a decision: no share of their own. Every page but the Workareas views spends at most 4 requests of any one session key per view, most 1 or 2, so the floor allows 15 views a minute; the user Workareas view spends 2N requests of the review key (96 at 48 workareas) and the admin view 2N + 2 of the admin key over N nodes, so one view passes the floor | a rate share would hide a page that does not scale; the subtree's offers in one call bring the Workareas views to a constant cost, and 60 stays |
 | d8 | `POOL_IDLE_MAX` (32) and `API_TIMEOUT` (10 s), constants of the build, unmeasured | kept: one page keeps at most 8 connections busy, and the slowest call measured, the tree with counts at 240 memories, took 355 to 398 ms p50 | neither bound was reached; both stay constants of the build |
 
+## The re-measurement of 2026-11-12 (#286)
+
+[#286](https://github.com/e8kor/open-memory-lab/issues/286) built the three remedies of the table
+above and ran `bench/web/run.py` again, `oml-web-6` and `oml-web-48` at `b3c7a757`, on the same
+seed, harness and host; the in-process side is the run of 2026-11-11. The one-minute load was 1.92
+at the start of the 6-workarea run and 2.35 at its end, 1.1 and 8.67 for the 48-workarea run,
+which another job on the host overlapped at its end, so its p95s are the noisier.
+
+**The budget still does not hold on every page.** At 6 workareas 7 of the 21 pages with an
+in-process counterpart miss it, by +9.1 to +35.7 ms p95, where 16 did; at 48 workareas 9 of 21,
+by +5.1 to +61.9 ms, where 15 did.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d8 | `GET /v2/whoami` resolved a session key twice and read its grants, the person's limits and their deletion request: 8 to 19 store calls, 7.8 to 17.4 ms p50 at the lead | it resolves the credential once, and `person=false`, which `oml-web`'s session check sends, reads no person block: 9 store calls for a `web` session key and 6 for an `admin` one, the session gate's included, against 15 and more before; 4.9 to 6.8 ms p50 at the lead. The default and `start=true` serve the block as before, so the contract only grows; a key value or a connection now spends one request of its rate where a connection spent two | the person block is read by the Start page alone, which asks for it; `tests/web_console_reads.rs` holds the counts and that the block is refused to every caller refused before |
+| d8 | the text search read the person's keys before the recall: three rounds, +32.0 ms p95 | both in one round: two rounds, +3.8 ms at 6 workareas and -3.8 at 48, within the budget | an author no key of the person's holds is still refused by name, after both reads |
+| d8 | the admin Atlas read the scope's offers after the tree: three rounds, +20.4 ms p95 | `GET /v2/workareas/{workarea}/tree?counts=true&offers=true` carries the scope's offers as the offers operation serves them to the same caller, beside the reviewer key's offers for the mode: two rounds and four calls, +9.1 ms at 6 workareas. A failure of that one call now fails the regions with the transitions' offers; the mode's offers still fail alone | the counted tree takes 23.0 ms p50 at the lead on its own, the in-process page's whole time; the miss left is that read and the session check's round |
+| d8 | missed on 16 of 21 pages at 6 workareas | missed on 7: the admin Workareas view (+35.7), the admin Atlas (+9.1), the memory page (+9.5), Keys (+11.5), Start (+13.4), People (+10.7) and Users (+11.8). Review, Curate, Setup, the guardrails and the text search are within it | the session check is now the floor of every page: a round of two `whoami` calls whose session gate still reads the credential, the key and its access on each, where the in-process page read the session once. The five pages of three calls in two rounds pay it twice. The admin Workareas view is its 3 + 3N fan-out, which #286 did not change: the tree's `offers` serves the scope alone |
+
+Not decided here, and named as what the remaining miss needs: a page whose first read answers who
+its session is, so the session check is no round of its own, or a session gate that resolves a
+capacity credential in fewer reads; and the offers of every node of a subtree in one call for the
+Workareas views.
+
 ## Consequences
 
 - `oml-web`, `oml-page` and `oml-sdk` join the workspace; `oml-transport-http` loses its page
@@ -890,6 +914,10 @@ readings of the measurement, offered for the operator's acceptance; neither is a
   decision of 2026-11-11, and v0.7.1 fixes it with fewer calls per page
   ([#286](https://github.com/e8kor/open-memory-lab/issues/286)). That the per-session in-flight
   cap of d3 and a page rate share are not needed is a reading awaiting the operator's acceptance.
+- [#286](https://github.com/e8kor/open-memory-lab/issues/286) built the three remedies (the table
+  of 2026-11-12): `whoami` takes `person=false` and resolves once, the counted tree takes
+  `offers=true`, and the text search reads the keys beside the recall. The miss falls from 16 to
+  7 of 21 pages at 6 workareas; the session check's round and the Workareas fan-out remain.
 - #163, #166 and #167 land first, on the current design; this change then moves what they
   built, so none of them is rebased onto an unbuilt crate.
 
