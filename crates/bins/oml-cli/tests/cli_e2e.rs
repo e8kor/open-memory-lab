@@ -1842,7 +1842,8 @@ async fn keys_show_names_a_revoked_key_as_revoked_in_its_human_layout() {
 /// under the admin credentials. The key's own holder is refused the verb.
 /// `oml doctor` under the key names the instant it ends; once that has
 /// come, doctor fails naming the date, and `oml keys show` marks the key
-/// expired (cli/reference.md `oml keys`; ADR-0079 d5, d7).
+/// expired and no longer calls it live (cli/reference.md `oml keys`;
+/// ADR-0079 d3, d5, d7).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn keys_limit_moves_a_keys_expiry_and_rate_and_doctor_names_an_expired_key() {
     let Some(lab) = Lab::start().await else {
@@ -1946,7 +1947,11 @@ async fn keys_limit_moves_a_keys_expiry_and_rate_and_doctor_names_an_expired_key
         )],
         "{shown}"
     );
-    assert!(shown.contains("revoked  : no (live)"), "{shown}");
+    assert!(shown.contains("revoked  : no (expired)"), "{shown}");
+    assert!(
+        !shown.contains("(live)"),
+        "an expired key is not live: {shown}"
+    );
     lab.stop().await;
 }
 

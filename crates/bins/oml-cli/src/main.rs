@@ -1635,9 +1635,13 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 }
                 println!("    epoch    : {}", response["epoch"]);
                 // A revoked key's name still resolves, so the read says
-                // whether the key is history (ADR-0026 d10).
+                // whether the key is history (ADR-0026 d10); a key past its
+                // expiry is not revoked and not live either (ADR-0079 d3).
                 match response["revoked_at"].as_str() {
                     Some(at) => println!("    revoked  : {at}"),
+                    None if response["expired"] == true => {
+                        println!("    revoked  : no (expired)");
+                    }
                     None => println!("    revoked  : no (live)"),
                 }
                 // The key's end date, saying when it has passed, and its
