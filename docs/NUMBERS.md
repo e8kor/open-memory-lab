@@ -84,7 +84,7 @@ branch that reserved later renumbers.
 | adr | 0061 | `main` |  | oml sync reads a rust workspace as one claim per crate and one per mod | used |
 | adr | 0062 | `main` |  | oml sync maps a delta lakes tables into anchored claims from the log a | used |
 | adr | 0063 | `main` |  | a chat turn becomes memory only when the agent in it writes the fact a | used |
-| adr | 0064 | `design/adr-0064-on-main` |  | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
+| adr | 0064 | `design/adr-0064-on-main` | #346 | a repositorys knowledge is captured implicitly by git hooks and agent  | open |
 | adr | 0065 | `main` |  | the scan is a versioned compiled in rule set that vetoes leaked keys a | used |
 | adr | 0066 | `docs/restructure` |  | open work is tracked as github issues and the roadmap FR numbers and design draft status lines are retired | reserved |
 | adr | 0067 | `feat/connector-directory` |  | a directory reviewer reaches a demo workarea through a connect code that lives longer, and the tools and instructions describe instead of command | reserved |
