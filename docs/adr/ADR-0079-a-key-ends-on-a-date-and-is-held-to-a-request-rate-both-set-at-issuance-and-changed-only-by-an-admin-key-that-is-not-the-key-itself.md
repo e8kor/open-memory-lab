@@ -180,9 +180,12 @@ deleted silently ([ADR-0001](ADR-0001-the-constitution.md)).
    keep it, since the key can be given a later date and would then pass a quota it never
    counted against.
 5. **The operator role.** The rule and migration 0046's check name the `admin` role alone. No
-   path in this build issues an operator key (an admin asking for one is
-   `access.issuer_ceiling`), and one could not reach the limits route, which takes the admin
-   role exactly, so neither scenario of the review applies today. Recommended: when the
+   path in this build creates the first operator key (an admin asking for one is
+   `access.issuer_ceiling`); an operator key could issue another, and the rule would let it
+   carry a date and a rate. An operator key could not reach the limits route, which takes the
+   admin role exactly, but an admin key could set a date on an operator key, since the route
+   refuses an admin target only. Neither scenario of the review applies while no operator key
+   exists. Recommended: when the
    operator path is built, refuse a date and a rate on every role that can issue an admin key,
    in the use case, both stores and the check, before the first such key is issued.
 
