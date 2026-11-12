@@ -139,6 +139,18 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     lists every account with its profile and meters. The pages read through the same use cases
     as the endpoints.
 
+    **The ledger's consumer is outside this repository.** `GET /v2/admin/usage?period=YYYY-MM` is the
+    whole export: the closed UTC days of one month, one row per account per day, read with an admin
+    key. Add `format=csv` for `text/csv`, whose header is
+    `day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections`. Without it the
+    answer is `{"period", "rows"}`, each row holding `day`, `account`, `user`, `profile` and the six
+    meters under those names. `period` is required and a bad one is refused `validation`. Every value
+    is a count or an id (d7), so the file holds no memory text, query or address. Prices, plans and
+    the billing run that reads this file live in a private repository the operator keeps, and no
+    billing code is in this one. A stock meter is the value at the rollup (d4), so a consumer that
+    totals a month sums the flows (`writes`, `recalls`) and reads the stocks as they stand on
+    each day. (`crates/transports/oml-transport-http/src/metering.rs`, `admin_usage_route`.)
+
 - **d7 — Meters are counts. They never hold text, a query or an address.** `account_meters`,
   `account_activity` and `usage_daily` hold ids, a profile name, dates and integers. A recall
   adds one to a count and records nothing of what was asked. The privacy policy names the

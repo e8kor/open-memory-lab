@@ -1,0 +1,1 @@
+- **The usage ledger's consumer is outside this repository** (ADR-0071 d6, proposed). `GET /v2/admin/usage?period=YYYY-MM[&format=csv]` is the whole export contract: the closed UTC days of one month, one row per account per day, as JSON or as CSV with a fixed header; counts and ids only. Prices, plans and the billing run stay in the operator's private repository (#181).
