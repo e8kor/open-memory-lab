@@ -35,7 +35,7 @@ use oml_app::domain::{
 use oml_app::doubles::FakeSparseEncoder;
 use oml_app::ed25519_dalek::{SigningKey, Verifier as _};
 use oml_app::ports::{
-    AdmissionEnvelope, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen,
+    AdmissionEnvelope, Ceiling, Clock, CommitReceipt, CommitRequest, ConnectionStore, IdGen,
     IdempotencyClaim, IdempotencyPut, IdempotencyRecord, IdempotencyScope, JournalStore,
     KeyringStore, MetadataFold, OutboxRow, Reranker, Retriever, Scanner, Signer, StoreError,
     SubjectRow,
@@ -110,6 +110,36 @@ impl ChainRig {
         self
     }
 
+    /// Another writer on this rig's tenant, as a second process is: the
+    /// same tenant and signing key, event ids of its own, and no head until
+    /// [`Self::follow`] reads the store's.
+    #[must_use]
+    pub fn lane(&self, lane: u64) -> Self {
+        Self {
+            tenant_id: self.tenant_id,
+            tenant_name: self.tenant_name.clone(),
+            key: self.key.clone(),
+            head: None,
+            n: lane * 10_000,
+            partitioned: true,
+            before_approval: self.before_approval,
+        }
+    }
+
+    /// Takes the store's head as this rig's, so its next event extends it.
+    pub async fn follow<S: JournalStore>(&mut self, store: &S) {
+        let head = store
+            .chain_head(self.tenant_id)
+            .await
+            .expect("head")
+            .expect("the tenant has a chain");
+        self.head = store
+            .events_range(self.tenant_id, head.seq, 1)
+            .await
+            .expect("the head event")
+            .pop();
+    }
+
     /// The approval a promotion through this rig carries.
     fn approval(&self) -> Option<Box<Approval>> {
         (!self.before_approval).then(fixture_approval)
@@ -155,6 +185,21 @@ impl ChainRig {
         fold: MetadataFold,
         idempotency: Option<IdempotencyPut>,
     ) -> Result<CommitReceipt, StoreError> {
+        self.commit_charged(store, event_type, payload, fold, idempotency, None)
+            .await
+    }
+
+    /// [`Self::commit`] carrying the ceiling of the account it charges
+    /// (ADR-0071 d3).
+    pub async fn commit_charged<S: JournalStore>(
+        &mut self,
+        store: &S,
+        event_type: &str,
+        payload: Value,
+        fold: MetadataFold,
+        idempotency: Option<IdempotencyPut>,
+        ceiling: Option<Ceiling>,
+    ) -> Result<CommitReceipt, StoreError> {
         if !self.partitioned && event_type == event_types::TENANT_GENESIS {
             store.create_tenant_partitions(self.tenant_id).await?;
             self.partitioned = true;
@@ -170,6 +215,8 @@ impl ChainRig {
                     payload: json!({ "seq": event.envelope.seq }),
                 },
                 idempotency,
+                ceiling,
+                written: None,
             })
             .await;
         match receipt {
@@ -206,6 +253,8 @@ impl ChainRig {
                 event,
                 fold,
                 idempotency: None,
+                ceiling: None,
+                written: None,
             });
         }
         let receipt = store.commit_chain(reqs).await;
@@ -700,6 +749,8 @@ async fn commit_raw<S: JournalStore>(
                 payload: json!({}),
             },
             idempotency: None,
+            ceiling: None,
+            written: None,
         })
         .await
 }
@@ -1943,6 +1994,7 @@ pub async fn a_recording_rescan_adds_only_the_findings_a_held_versions_list_lack
             held_unrescanned: 2,
             rescan_due: 2,
             findings_unlisted: 1,
+            promoted_unapproved: 0,
         }
     );
     let again = finding(
@@ -4732,6 +4784,8 @@ pub async fn a_chain_whose_ratification_loses_the_compare_and_set_journals_no_ve
         event,
         fold: filler_fold.clone(),
         idempotency: None,
+        ceiling: None,
+        written: None,
     };
     let filler = || json!({ "body_digest": "sha256:00" });
     let (a, b) = (
@@ -7586,6 +7640,92 @@ pub async fn a_ratified_edge_between_a_memory_and_a_term_is_absent_from_the_rati
     );
 }
 
+/// The backlog's `promoted_unapproved` counts served tips that carry no
+/// approval, and no version a ratified successor took the tip from: so
+/// superseding such a version and approving its successor, the remedy
+/// `oml doctor` names, brings the count down by one, to zero when each is
+/// done (ADR-0077 d6; #311). No store takes an unapproved promotion through
+/// the port over a schema that keeps the approval, so `forget_approval`
+/// makes one as migration 0044's fill leaves a version it could not match:
+/// each store's suite passes its own, and the law holds the counts equal.
+pub async fn the_unapproved_count_is_of_served_tips_and_a_ratified_successor_brings_it_to_zero<
+    S,
+    F,
+    Fut,
+>(
+    store: &S,
+    forget_approval: F,
+) where
+    S: JournalStore,
+    F: Fn(Uuid, Uuid) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    let mut rig = ChainRig::new(478);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    let memory = |id: u128, claim: &str| MemoryRecord {
+        claim_key: claim.to_owned(),
+        ..held_memory(tenant, wa, Uuid::from_u128(id), "rita", key, claim)
+    };
+    let count = || async {
+        store
+            .scan_backlog(tenant, None)
+            .await
+            .expect("backlog")
+            .promoted_unapproved
+    };
+    let first = memory(0x7801, "the crane lifts ten tonnes");
+    let second = memory(0x7802, "the dock opens at six");
+    let waiting = memory(0x7803, "the gate is manned at night");
+    hold_and_promote(&mut rig, store, first.clone()).await;
+    hold_and_promote(&mut rig, store, second.clone()).await;
+    hold(&mut rig, store, waiting).await.expect("hold");
+    assert_eq!(
+        count().await,
+        0,
+        "every promoted version holds its approval, and a held one is not counted"
+    );
+
+    forget_approval(tenant, first.memory_id).await;
+    forget_approval(tenant, second.memory_id).await;
+    assert_eq!(count().await, 2, "two served tips with no approval");
+
+    // The remedy, once: the successor carries its own approval and takes
+    // the tip, and the version it replaced is no longer counted.
+    supersede(
+        &mut rig,
+        store,
+        &first,
+        Uuid::from_u128(0x7811),
+        "the crane lifts twelve tonnes",
+        false,
+    )
+    .await;
+    assert_eq!(count().await, 1, "the superseded version is not a tip");
+    supersede(
+        &mut rig,
+        store,
+        &second,
+        Uuid::from_u128(0x7812),
+        "the dock opens at five",
+        false,
+    )
+    .await;
+    assert_eq!(count().await, 0, "the remedy leaves nothing to count");
+    assert_eq!(
+        store
+            .memory(tenant, first.memory_id)
+            .await
+            .expect("read")
+            .expect("the replaced version")
+            .approval,
+        None,
+        "the replaced version keeps what it had: no approval"
+    );
+}
+
 /// A promotion stores the approving verdict that ratified the version on
 /// its row, read back exactly, a first version's and a successor's alike;
 /// a held version holds none, a successor's ratification leaves the
@@ -7852,6 +7992,479 @@ pub async fn a_ratified_end_is_written_with_the_tip_move_or_not_at_all<S: Journa
     assert!(tip.is_tip);
 }
 
+// ---------------------------------------------------------------------------
+// Usage metering (ADR-0071)
+// ---------------------------------------------------------------------------
+
+/// A commit whose fold raises one of its account's meters past the ceiling
+/// it carries is refused and writes nothing; the usage the store reads is
+/// what the rows say, through holds, a rejection and a key revocation; and
+/// no counter drifts from its rows (ADR-0071 d2, d3).
+pub async fn a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_rows<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::signup::{Quota, QuotaReached, Quotas};
+    use oml_app::domain::usage::Month;
+    let mut rig = ChainRig::new(70);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0x7010), None, "universe");
+    let root = WorkareaRecord {
+        user_root: true,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0x7011),
+            Some(universe.workarea_id),
+            "ada",
+        )
+    };
+    for w in [universe, root.clone()] {
+        rig.create_workarea(store, w).await;
+    }
+    let account = root.workarea_id;
+    let key_id = Uuid::from_u128(0x7020);
+    rig.issue_key(
+        store,
+        KeyRecord {
+            user: Some(account),
+            ..key_record(t, key_id, Role::Writer, None)
+        },
+    )
+    .await;
+    let ceiling = Ceiling {
+        user_root: account,
+        quotas: Quotas::default()
+            .with(Quota::Memories, 2)
+            .with(Quota::TextBytes, 40),
+    };
+    let memory = |n: u128, body: &str| {
+        held_memory(t, account, Uuid::from_u128(0x7030 + n), "ada", key_id, body)
+    };
+    let at = EventTime::parse("2026-10-29T13:00:00.000000Z").expect("a time");
+    for (n, body) in [(1, "first fact"), (2, "second fact")] {
+        rig.commit_charged(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": memory(n, body).memory_id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: memory(n, body),
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+            Some(ceiling),
+        )
+        .await
+        .expect("within the ceiling");
+    }
+    let head = store.chain_head(t).await.expect("head");
+    let third = memory(3, "third");
+    assert_eq!(
+        rig.commit_charged(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": third.memory_id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: third.clone(),
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+            Some(ceiling),
+        )
+        .await,
+        Err(StoreError::QuotaReached(QuotaReached {
+            quota: Quota::Memories,
+            limit: 2,
+            used: 2,
+        })),
+        "the third live chain passes the memories ceiling"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "nothing journalled"
+    );
+    assert_eq!(
+        store.memory(t, third.memory_id).await.expect("read"),
+        None,
+        "nothing folded"
+    );
+    let usage = store.user_usage(t, account, &at).await.expect("usage");
+    assert_eq!(
+        (usage.memories, usage.text_bytes, usage.writes, usage.keys),
+        (2, 21, 2, 1),
+        "two live chains, their bytes, two writes, one key"
+    );
+    // A rejected chain leaves the memories meter and keeps its bytes.
+    reject(&mut rig, store, memory(1, "first fact").memory_id)
+        .await
+        .expect("reject");
+    let usage = store.user_usage(t, account, &at).await.expect("usage");
+    assert_eq!((usage.memories, usage.text_bytes), (1, 21));
+    // The freed memory admits the third; bytes past their ceiling refuse.
+    rig.commit_charged(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": third.memory_id.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory: third,
+            enqueue: true,
+            findings: Box::default(),
+        },
+        None,
+        Some(ceiling),
+    )
+    .await
+    .expect("one memory free");
+    let long = memory(4, "a body longer than what is left");
+    assert!(matches!(
+        rig.commit_charged(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": long.memory_id.to_string() }),
+            MetadataFold::MemoryHeld {
+                memory: long,
+                enqueue: true,
+                findings: Box::default(),
+            },
+            None,
+            Some(Ceiling {
+                quotas: ceiling.quotas.with(Quota::Memories, 10),
+                ..ceiling
+            }),
+        )
+        .await,
+        Err(StoreError::QuotaReached(QuotaReached {
+            quota: Quota::TextBytes,
+            limit: 40,
+            ..
+        }))
+    ));
+    // A revoked key leaves the keys meter; nothing drifts.
+    rig.revoke_key(store, key_id).await.expect("revoke");
+    let usage = store.user_usage(t, account, &at).await.expect("usage");
+    assert_eq!(
+        (usage.memories, usage.text_bytes, usage.writes, usage.keys),
+        (2, 26, 3, 0)
+    );
+    assert_eq!(
+        store.usage_drift(t, Month::of(&at)).await.expect("drift"),
+        Vec::new()
+    );
+}
+
+/// A version's write is counted on the UTC day of the version's own
+/// `created_at`, the one clock read its row holds, so the month's writes
+/// are the month's stored versions whatever the event's `at` reads, and
+/// nothing drifts across a month's end (ADR-0071 d2, d3).
+pub async fn a_versions_write_is_counted_on_the_day_its_row_was_stored<S: JournalStore>(store: &S) {
+    use oml_app::domain::usage::Month;
+    let mut rig = ChainRig::new(72);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0x7210), None, "universe");
+    let root = WorkareaRecord {
+        user_root: true,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0x7211),
+            Some(universe.workarea_id),
+            "ada",
+        )
+    };
+    for w in [universe, root.clone()] {
+        rig.create_workarea(store, w).await;
+    }
+    let account = root.workarea_id;
+    let key_id = Uuid::from_u128(0x7220);
+    rig.issue_key(
+        store,
+        KeyRecord {
+            user: Some(account),
+            ..key_record(t, key_id, Role::Writer, None)
+        },
+    )
+    .await;
+    // The row's clock read falls in September's last second; the rig's
+    // events are all of 29 October.
+    let stored = EventTime::parse("2026-09-30T23:59:59.000000Z").expect("a time");
+    let events = EventTime::parse("2026-10-29T13:00:00.000000Z").expect("a time");
+    let memory = MemoryRecord {
+        created_at: stored.clone(),
+        ..held_memory(t, account, Uuid::from_u128(0x7230), "ada", key_id, "a fact")
+    };
+    rig.commit(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": memory.memory_id.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory,
+            enqueue: true,
+            findings: Box::default(),
+        },
+        None,
+    )
+    .await
+    .expect("held");
+    assert_eq!(
+        store
+            .user_usage(t, account, &stored)
+            .await
+            .expect("usage")
+            .writes,
+        1,
+        "the write is September's, as its row is"
+    );
+    assert_eq!(
+        store
+            .user_usage(t, account, &events)
+            .await
+            .expect("usage")
+            .writes,
+        0
+    );
+    for month in [Month::of(&stored), Month::of(&events)] {
+        assert_eq!(
+            store.usage_drift(t, month).await.expect("drift"),
+            Vec::new(),
+            "{}",
+            month.as_string()
+        );
+    }
+}
+
+/// A claim_key every version of which was rejected is released, and the
+/// claim captured under it next is a version 1 again (ADR-0025 d18): it
+/// joins the chain the first version 1 started, whose author names the
+/// chain's account. A chain a tenant key started is no account's whoever
+/// revives it, and a chain an account started is that account's again
+/// when a tenant key revives it (ADR-0071 d2).
+pub async fn a_claim_captured_under_a_released_key_counts_on_the_account_that_started_its_chain<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::usage::Month;
+    let mut rig = ChainRig::new(74);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0x7410), None, "universe");
+    let root = WorkareaRecord {
+        user_root: true,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0x7411),
+            Some(universe.workarea_id),
+            "ada",
+        )
+    };
+    for w in [universe, root.clone()] {
+        rig.create_workarea(store, w).await;
+    }
+    let account = root.workarea_id;
+    let (ada_key, tenant_key) = (Uuid::from_u128(0x7420), Uuid::from_u128(0x7421));
+    rig.issue_key(
+        store,
+        KeyRecord {
+            user: Some(account),
+            ..key_record(t, ada_key, Role::Writer, None)
+        },
+    )
+    .await;
+    rig.issue_key(store, key_record(t, tenant_key, Role::Writer, None))
+        .await;
+    let at = fixture_time("2026-10-29T13:00:00.000000Z");
+    // Each claim_key's two versions 1, the first rejected before the second.
+    let stored = |n: u32| fixture_time(&format!("2026-10-29T12:00:{n:02}.000000Z"));
+    let version = |id: u128, claim_key: &str, key: Uuid, n: u32| MemoryRecord {
+        claim_key: claim_key.to_owned(),
+        created_at: stored(n),
+        ..held_memory(
+            t,
+            account,
+            Uuid::from_u128(0x7430 + id),
+            "ada",
+            key,
+            "a fact",
+        )
+    };
+    for (first, second) in [
+        (
+            version(1, "started-by-the-tenant", tenant_key, 1),
+            version(2, "started-by-the-tenant", ada_key, 2),
+        ),
+        (
+            version(3, "started-by-ada", ada_key, 3),
+            version(4, "started-by-ada", tenant_key, 4),
+        ),
+    ] {
+        for (n, memory) in [first, second].into_iter().enumerate() {
+            rig.commit(
+                store,
+                event_types::SUBMISSION_REMEMBER,
+                json!({ "artifact_id": memory.memory_id.to_string() }),
+                MetadataFold::MemoryHeld {
+                    memory: memory.clone(),
+                    enqueue: true,
+                    findings: Box::default(),
+                },
+                None,
+            )
+            .await
+            .expect("held");
+            if n == 0 {
+                reject(&mut rig, store, memory.memory_id)
+                    .await
+                    .expect("reject");
+            }
+        }
+    }
+    let usage = store.user_usage(t, account, &at).await.expect("usage");
+    assert_eq!(
+        (usage.memories, usage.text_bytes, usage.writes),
+        (1, 12, 2),
+        "the chain ada started is hers and live; the one the tenant key started is no account's; her two versions' bytes and writes"
+    );
+    assert_eq!(
+        store.usage_drift(t, Month::of(&at)).await.expect("drift"),
+        Vec::new()
+    );
+}
+
+/// A commit under an idempotency key already recorded writes nothing and
+/// moves no meter, and it is refused as the recorded key it is even where
+/// its fold would pass its account's ceiling: the caller answers the record,
+/// never `limit.quota`, and a replayed write is counted once (ADR-0071 d2,
+/// d3; http-api.md idempotency).
+pub async fn a_commit_under_a_recorded_idempotency_key_moves_no_meter_and_is_refused_as_recorded_before_its_ceiling<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::signup::{Quota, Quotas};
+    use oml_app::domain::usage::Month;
+    let mut rig = ChainRig::new(71);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0x7110), None, "universe");
+    let root = WorkareaRecord {
+        user_root: true,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0x7111),
+            Some(universe.workarea_id),
+            "ada",
+        )
+    };
+    for w in [universe, root.clone()] {
+        rig.create_workarea(store, w).await;
+    }
+    let account = root.workarea_id;
+    let key_id = Uuid::from_u128(0x7120);
+    rig.issue_key(
+        store,
+        KeyRecord {
+            user: Some(account),
+            ..key_record(t, key_id, Role::Writer, None)
+        },
+    )
+    .await;
+    // One memory, one write: the first commit reaches both limits.
+    let ceiling = Ceiling {
+        user_root: account,
+        quotas: Quotas::default()
+            .with(Quota::Memories, 1)
+            .with(Quota::WritesPerMonth, 1),
+    };
+    let scope = IdempotencyScope {
+        tenant_id: t,
+        key_id,
+        workarea_id: account,
+        idem_key: "idem-metered".to_owned(),
+    };
+    let put = |memory: &MemoryRecord| IdempotencyPut {
+        scope: scope.clone(),
+        record: IdempotencyRecord {
+            request_digest: "sha256:aa".to_owned(),
+            response: json!({ "artifact_id": memory.memory_id.to_string() }),
+        },
+    };
+    let held = |memory: MemoryRecord| MetadataFold::MemoryHeld {
+        memory,
+        enqueue: true,
+        findings: Box::default(),
+    };
+    let first = held_memory(
+        t,
+        account,
+        Uuid::from_u128(0x7130),
+        "ada",
+        key_id,
+        "one fact",
+    );
+    rig.commit_charged(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": first.memory_id.to_string() }),
+        held(first.clone()),
+        Some(put(&first)),
+        Some(ceiling),
+    )
+    .await
+    .expect("the first attempt commits at the limit");
+    let at = EventTime::parse("2026-10-29T13:00:00.000000Z").expect("a time");
+    let counted = store.user_usage(t, account, &at).await.expect("usage");
+    assert_eq!(
+        (counted.memories, counted.text_bytes, counted.writes),
+        (1, 8, 1)
+    );
+    let head = store.chain_head(t).await.expect("head");
+    // The attempt that looked the key up before the first committed: a
+    // chain of its own, so nothing but its key and its ceiling refuses it.
+    let twin = MemoryRecord {
+        claim_key: "twin".to_owned(),
+        ..held_memory(
+            t,
+            account,
+            Uuid::from_u128(0x7131),
+            "ada",
+            key_id,
+            "one fact",
+        )
+    };
+    assert_eq!(
+        rig.commit_charged(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": twin.memory_id.to_string() }),
+            held(twin.clone()),
+            Some(put(&twin)),
+            Some(ceiling),
+        )
+        .await,
+        Err(StoreError::IdempotencyRecorded),
+        "the recorded key answers before the ceiling does"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "nothing journalled"
+    );
+    assert_eq!(store.memory(t, twin.memory_id).await.expect("read"), None);
+    assert_eq!(
+        store.user_usage(t, account, &at).await.expect("usage"),
+        counted,
+        "no meter moved"
+    );
+    assert_eq!(
+        store.usage_drift(t, Month::of(&at)).await.expect("drift"),
+        Vec::new()
+    );
+}
+
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -7862,6 +8475,26 @@ where
     // rather than the largest law's state inline, and an unoptimized test
     // build stays inside a test thread's default stack.
     Box::pin(journal_commit_and_head(&new_store().await)).await;
+    Box::pin(
+        a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_rows(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        a_commit_under_a_recorded_idempotency_key_moves_no_meter_and_is_refused_as_recorded_before_its_ceiling(
+            &new_store().await,
+        ),
+    )
+    .await;
+    Box::pin(a_versions_write_is_counted_on_the_day_its_row_was_stored(
+        &new_store().await,
+    ))
+    .await;
+    Box::pin(
+        a_claim_captured_under_a_released_key_counts_on_the_account_that_started_its_chain(
+            &new_store().await,
+        ),
+    )
+    .await;
     Box::pin(journal_commit_refuses_conflicts(&new_store().await)).await;
     Box::pin(journal_events_range_pages(&new_store().await)).await;
     Box::pin(
@@ -10472,6 +11105,84 @@ pub async fn a_registered_client_unconnected_after_24_hours_is_removed<S: Connec
     }
 }
 
+/// The connections meter counts the open connections of an account's live
+/// keys: a revoked key's connection leaves it with the key, and revoking
+/// that connection afterwards takes nothing more off (ADR-0071 d2).
+pub async fn a_revoked_keys_open_connection_leaves_the_connections_meter_with_the_key<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::usage::Month;
+    let mut rig = ChainRig::new(73);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0x7310), None, "universe");
+    let root = WorkareaRecord {
+        user_root: true,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0x7311),
+            Some(universe.workarea_id),
+            "ada",
+        )
+    };
+    for w in [universe, root.clone()] {
+        rig.create_workarea(store, w).await;
+    }
+    let account = root.workarea_id;
+    let at = fixture_time("2026-10-29T13:00:00.000000Z");
+    let (kept, gone) = (
+        KeyRecord {
+            user: Some(account),
+            ..connector_key(t, Uuid::from_u128(0x7320))
+        },
+        KeyRecord {
+            user: Some(account),
+            ..connector_key(t, Uuid::from_u128(0x7321))
+        },
+    );
+    let (kept_connection, gone_connection) = (Uuid::from_u128(0x7340), Uuid::from_u128(0x7341));
+    for (key, code, connection) in [
+        (&kept, Uuid::from_u128(0x7330), kept_connection),
+        (&gone, Uuid::from_u128(0x7331), gone_connection),
+    ] {
+        rig.issue_key(store, key.clone()).await;
+        rig.opened_connection(store, key.key_id, code, connection, None, None)
+            .await;
+    }
+    let held = |usage: oml_app::types::UserUsage| (usage.keys, usage.connections);
+    assert_eq!(
+        held(store.user_usage(t, account, &at).await.expect("usage")),
+        (2, 2)
+    );
+    rig.revoke_key(store, gone.key_id).await.expect("revoke");
+    assert_eq!(
+        held(store.user_usage(t, account, &at).await.expect("usage")),
+        (1, 1),
+        "the revoked key's open connection is no longer one of the account's"
+    );
+    rig.revoke_connection(store, gone_connection, RevokedCause::Admin)
+        .await
+        .expect("revoke the connection");
+    assert_eq!(
+        held(store.user_usage(t, account, &at).await.expect("usage")),
+        (1, 1),
+        "revoking it afterwards takes nothing more off"
+    );
+    rig.revoke_connection(store, kept_connection, RevokedCause::Admin)
+        .await
+        .expect("revoke the live key's connection");
+    assert_eq!(
+        held(store.user_usage(t, account, &at).await.expect("usage")),
+        (1, 0)
+    );
+    assert_eq!(
+        store.usage_drift(t, Month::of(&at)).await.expect("drift"),
+        Vec::new()
+    );
+}
+
 /// Every connection-store law in one call, each against a fresh store.
 pub async fn run_connection_store_suite<S, F, Fut>(new_store: F)
 where
@@ -10487,6 +11198,8 @@ where
     )
     .await;
     key_revoked_voids_the_keys_unredeemed_codes(&new_store().await).await;
+    a_revoked_keys_open_connection_leaves_the_connections_meter_with_the_key(&new_store().await)
+        .await;
     connection_opened_revokes_the_keys_earlier_open_connection_as_replaced(&new_store().await)
         .await;
     a_keys_connections_are_listed_in_every_state_and_no_other_keys(&new_store().await).await;

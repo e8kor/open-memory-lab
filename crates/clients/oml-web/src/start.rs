@@ -36,7 +36,7 @@ use crate::middleware::OwnHeaders;
 use crate::once::{self, Secret};
 use crate::pages::Fields;
 use crate::session::{PageCalls, Session, call, cookie};
-use crate::{Capacity, SESSION_COOKIE, Web, acts, keys, outcome};
+use crate::{Capacity, SESSION_COOKIE, Web, acts, keys, outcome, usage};
 
 /// The onboarding page.
 pub const START_PATH: &str = "/web/start";
@@ -330,29 +330,8 @@ fn render(
         hide(first == Some("promoted")),
         glyph_svg("promoted"),
     );
-    if let (Some(usage), Some(quotas)) = (person.usage, person.quotas) {
-        body.push_str(r#"<section class="card">"#);
-        body.push_str(&head(
-            "Your limits",
-            "h2",
-            "Default limits; an administrator can raise one for you.",
-        ));
-        body.push_str("<table><tr><th>limit</th><th>used</th><th></th></tr>");
-        for (name, used, limit) in [
-            ("Memories", usage.memories, quotas.memories),
-            ("Keys", usage.keys, quotas.keys),
-            ("Connections", usage.connections, quotas.connections),
-        ] {
-            let _ = write!(
-                body,
-                r#"<tr><td>{name}</td><td class="mono">{used} / {limit}</td><td><meter min="0" max="{limit}" value="{used}" aria-label="{name}: {used} of {limit} used"></meter></td></tr>"#
-            );
-        }
-        let _ = write!(
-            body,
-            r#"<tr><td>Requests, per key</td><td class="mono">{} / min</td><td></td></tr></table></section>"#,
-            quotas.requests_per_minute
-        );
+    if let Some(card) = usage::card(person) {
+        body.push_str(&card);
     }
     body.push_str(r#"<section class="card">"#);
     body.push_str(&head(

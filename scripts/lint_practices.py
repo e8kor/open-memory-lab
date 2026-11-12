@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Three repository lints (docs/contributing/review-checklist.md).
+"""Four repository lints (docs/contributing/review-checklist.md).
 
-    python scripts/lint_practices.py migrations|ports|like [--root DIR] [--no-allowlist]
+    python scripts/lint_practices.py migrations|ports|like|actions [--root DIR] [--no-allowlist]
 
 migrations  every migration not in lint_allow/migrations.txt sets lock_timeout, adds CHECK and
             FOREIGN KEY constraints NOT VALID (an inline CHECK on an added column too) and validates them (in that or a later
@@ -10,6 +10,8 @@ migrations  every migration not in lint_allow/migrations.txt sets lock_timeout, 
 ports       no localhost:5432, 127.0.0.1:5432 or PGPORT:-5432 default in tests or scripts.
 like        no LIKE or ILIKE operator in the SQL of crates/adapters/oml-pg/src; row security
             runs a non-leakproof operator before its policy (ADR-0052).
+actions     every `uses:` under .github/ is `owner/repo@<40 hex> # v<tag>`, and one action is one
+            commit in every workflow (docs/contributing/ci-and-toolchain.md "Pinned actions").
 
 An escape is a reasoned line comment: `-- lint:allow <rule> <why>` in SQL,
 `// lint:allow-like <why>` in Rust, `lint:allow-5432 <why>` anywhere on the line.
@@ -148,7 +150,92 @@ def lint_like(root: Path, use_allow: bool = True) -> list[str]:
     return problems
 
 
-LINTS = {"migrations": lint_migrations, "ports": lint_ports, "like": lint_like}
+# ---- actions ----------------------------------------------------------------------------
+
+PIN = re.compile(r"^(?P<action>[\w.-]+/[\w./-]+)@(?P<sha>[0-9a-f]{40})$")
+TAG_COMMENT = re.compile(r"^#\s*v\d\S*(\s|$)")
+
+
+def uses_values(node, seen: set[int]):
+    """Every value of a `uses` key in a composed YAML document, however the key or the value is written: in a flow
+    mapping, quoted, with a space before the colon, on the next line, tagged, anchored, aliased or merged in."""
+    import yaml
+
+    if id(node) in seen:
+        return
+    seen.add(id(node))
+    if isinstance(node, yaml.MappingNode):
+        for key, value in node.value:
+            if isinstance(key, yaml.ScalarNode) and key.value == "uses":
+                yield value
+            yield from uses_values(key, seen)
+            yield from uses_values(value, seen)
+    elif isinstance(node, yaml.SequenceNode):
+        for item in node.value:
+            yield from uses_values(item, seen)
+
+
+def read_uses(root: Path) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Every `uses` value under .github/ as (where, target, what follows it on its line), and a problem for each
+    file that is not YAML and each `uses` that is not a string. scripts/check_action_updates.py reads the pins
+    through this, so the weekly check sees every use the lint sees."""
+    import yaml
+
+    uses, problems = [], []
+    files = sorted((root / ".github").rglob("*.yml")) + sorted((root / ".github").rglob("*.yaml"))
+    for f in files:
+        rel = f.relative_to(root)
+        text = f.read_text()
+        lines = text.splitlines()
+        try:
+            documents = [d for d in yaml.compose_all(text) if d is not None]
+        except yaml.YAMLError as e:
+            problems.append(f"{rel}: is not YAML, so its actions cannot be read ({str(e).splitlines()[0]})")
+            continue
+        visited: set[int] = set()
+        for document in documents:
+            for value in uses_values(document, visited):
+                at = f"{rel}:{value.start_mark.line + 1}"
+                if not isinstance(value, yaml.ScalarNode):
+                    problems.append(f"{at}: `uses` is not a string, so it names no action a pin can be read from")
+                    continue
+                end = value.end_mark
+                rest = lines[end.line][end.column:] if end.line < len(lines) else ""
+                uses.append((at, value.value.strip(), rest.lstrip(" \t\"',}]")))
+    return uses, problems
+
+
+def repository(action: str) -> str:
+    """The repository an action lives in: `actions/cache/restore` is `actions/cache`."""
+    return "/".join(action.lower().split("/")[:2])
+
+
+def lint_actions(root: Path, use_allow: bool = True) -> list[str]:
+    """A tag can be moved to other code; a commit cannot, so a pin names the commit and the comment names the tag a reader can check it against.
+
+    Each workflow is parsed as YAML and every `uses` key is read from the parsed document, so no way of writing the key
+    passes unread; a file that does not parse is a problem, never skipped. One action is one repository: a sub-path of
+    it (`actions/cache/restore`) at another commit is the same action at two commits."""
+    uses, problems = read_uses(root)
+    seen: dict[str, dict[str, str]] = {}
+    for at, target, comment in uses:
+        if target.startswith("./"):
+            continue
+        pin = PIN.match(target)
+        if not pin:
+            problems.append(f"{at}: {target} is not pinned to a 40-hex commit SHA")
+            continue
+        if not TAG_COMMENT.match(comment):
+            problems.append(f"{at}: {target} has no trailing `# v<tag>` comment naming the tag it was resolved from")
+        seen.setdefault(repository(pin["action"]), {}).setdefault(pin["sha"], at)
+    for action, shas in sorted(seen.items()):
+        if len(shas) > 1:
+            where = ", ".join(f"{sha[:12]} at {at}" for sha, at in sorted(shas.items()))
+            problems.append(f".github: {action} is pinned to {len(shas)} different commits ({where}); use one")
+    return problems
+
+
+LINTS = {"migrations": lint_migrations, "ports": lint_ports, "like": lint_like, "actions": lint_actions}
 
 
 def main(argv: list[str] | None = None) -> int:

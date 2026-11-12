@@ -321,6 +321,8 @@ async fn reviewed(db: &str, artifact_id: &str) -> Reviewed {
 
 struct World {
     rig: Rig,
+    /// The tenant's admin key's value.
+    admin: String,
     ann: Key,
     reader: Key,
     eve_agent: Key,
@@ -488,6 +490,7 @@ impl World {
         .await;
         Some(Self {
             rig,
+            admin,
             ann,
             reader,
             eve_agent,
@@ -854,6 +857,149 @@ async fn a_successor_carries_its_own_approval_and_the_version_it_replaced_keeps_
         json!({ "held_by": "agent", "same_user": false }),
         "{replaced}"
     );
+    drop_db(&w.rig.db_name).await;
+}
+
+/// Doctor's count of promoted versions with no approval (#311): the rescan
+/// read an admin key makes carries it, as a count and never a list, and a
+/// key that is not an admin's is refused the read.
+#[tokio::test]
+async fn the_rescan_read_counts_the_promoted_versions_that_carry_no_approval() {
+    let Some(w) = World::boot().await else {
+        return;
+    };
+    let r = &w.rig.router;
+    let count = |answer: &Value| answer["promoted_unapproved"].clone();
+    let before = ok(
+        r,
+        "GET",
+        "/v2/admin/rescan?limit=1",
+        &w.admin,
+        None,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(
+        count(&before),
+        json!(0),
+        "every promoted version holds its approval, and the held ones are not counted: {before}"
+    );
+    // Two promoted versions as they were before the fill, and a held one
+    // that never had an approval.
+    let mut owner = PgConnection::connect(&super_url(&w.rig.db_name))
+        .await
+        .expect("superuser connect");
+    for id in [&w.by_crew, &w.by_person] {
+        sqlx::query(
+            "UPDATE memories SET approver_held_by = NULL, approver_same_user = NULL, \
+             approved_at = NULL WHERE id = $1::uuid",
+        )
+        .bind(id)
+        .execute(&mut owner)
+        .await
+        .expect("clear one approval");
+    }
+    owner.close().await.expect("close");
+    let after = ok(
+        r,
+        "GET",
+        "/v2/admin/rescan?limit=1",
+        &w.admin,
+        None,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(count(&after), json!(2), "{after}");
+    assert!(
+        !after.to_string().contains(&w.by_crew),
+        "a count and never a list of the versions: {after}"
+    );
+    // The fill matches what the journal names, so running it again heals both.
+    run_the_fill(&w.rig.db_name).await;
+    let healed = ok(
+        r,
+        "GET",
+        "/v2/admin/rescan?limit=1",
+        &w.admin,
+        None,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(count(&healed), json!(0), "{healed}");
+    // Only an admin reads it.
+    let (status, refused) = send(
+        r,
+        "GET",
+        "/v2/admin/rescan?limit=1",
+        Some(&w.ann.value),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert!(refused.get("promoted_unapproved").is_none(), "{refused}");
+    drop_db(&w.rig.db_name).await;
+}
+
+/// The remedy doctor names for `approval_unmatched` (#311): supersede the
+/// version and have a reviewer approve the successor. The count is of
+/// served tips, so the remedy brings it to zero; the replaced version
+/// stays readable with no approval.
+#[tokio::test]
+async fn superseding_an_unapproved_version_and_approving_its_successor_brings_the_count_to_zero() {
+    let Some(w) = World::boot().await else {
+        return;
+    };
+    let r = &w.rig.router;
+    let count = |answer: Value| answer["promoted_unapproved"].clone();
+    let read = || {
+        ok(
+            r,
+            "GET",
+            "/v2/admin/rescan?limit=1",
+            &w.admin,
+            None,
+            StatusCode::OK,
+        )
+    };
+    // Review serves the oldest held row first, so the one waiting is
+    // judged before the successor is written.
+    approve(r, &w.reviewers[1], &w.unreviewed).await;
+    let mut owner = PgConnection::connect(&super_url(&w.rig.db_name))
+        .await
+        .expect("superuser connect");
+    sqlx::query(
+        "UPDATE memories SET approver_held_by = NULL, approver_same_user = NULL, \
+         approved_at = NULL WHERE id = $1::uuid",
+    )
+    .bind(&w.by_crew)
+    .execute(&mut owner)
+    .await
+    .expect("clear one approval");
+    owner.close().await.expect("close");
+    assert_eq!(count(read().await), json!(1));
+
+    let successor = ok(
+        r,
+        "POST",
+        &format!("/v1/memories/{}/supersede", w.by_crew),
+        &w.ann.value,
+        Some(json!({ "body": "The gantry crane lifts twelve tonnes.", "expected_version": 1 })),
+        StatusCode::ACCEPTED,
+    )
+    .await["artifact_id"]
+        .as_str()
+        .expect("id")
+        .to_owned();
+    assert_eq!(
+        count(read().await),
+        json!(1),
+        "a held successor changes nothing: the version is still the served tip"
+    );
+    approve(r, &w.reviewers[1], &successor).await;
+    assert_eq!(count(read().await), json!(0), "the remedy is done");
+    let replaced = get(r, &w.reader, &w.by_crew).await;
+    assert_eq!(replaced["tip"], false, "{replaced}");
+    assert_eq!(replaced["approver"], Value::Null, "{replaced}");
     drop_db(&w.rig.db_name).await;
 }
 

@@ -14,6 +14,21 @@ async fn retriever_double_passes_the_suite() {
     contracts::run_retriever_suite(|| async { MemStore::new() }).await;
 }
 
+/// The unapproved count is of served tips, over the double: the same law
+/// the real store passes, so the two agree on a count above zero (#311).
+#[tokio::test]
+async fn the_doubles_unapproved_count_is_of_served_tips_and_the_remedy_brings_it_to_zero() {
+    let store = MemStore::new();
+    contracts::the_unapproved_count_is_of_served_tips_and_a_ratified_successor_brings_it_to_zero(
+        &store,
+        |tenant, memory| {
+            store.forget_approval(tenant, memory);
+            async {}
+        },
+    )
+    .await;
+}
+
 #[test]
 fn signer_double_passes() {
     contracts::signer_contract(&MemSigner::new(contracts::TEST_SEED));

@@ -3008,9 +3008,11 @@ fn anchor_line(anchor: &Value) -> String {
     match anchor["repo"].as_str() {
         Some(repo) => {
             let rev = anchor["rev"].as_str().unwrap_or("");
+            // The rev is the server's text: twelve characters, never a
+            // slice at byte 12, which may fall inside one.
             format!(
                 "{repo} @ {} {}{fragment}",
-                &rev[..rev.len().min(12)],
+                rev.chars().take(12).collect::<String>(),
                 anchor["path"].as_str().unwrap_or("")
             )
         }
@@ -4917,11 +4919,14 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let mut reads_universe: Option<bool> = None;
     let mut admin_emails: Option<(usize, Vec<String>)> = None;
     let mut signup_overview: Option<Value> = None;
-    let mut scan_backlog: Option<Value> = None;
+    // The rescan window an admin key reads: `None` for any other key, and
+    // the reason where an admin's read failed.
+    let mut rescan_read: Option<Result<Value, String>> = None;
     let mut default_node: Option<Value> = None;
     let mut waiting_edges: Option<usize> = None;
     let mut search_settings: Option<Value> = None;
     let mut federation_settings: Option<Value> = None;
+    let mut usage_drift: Option<Result<Value, String>> = None;
     // The chat workarea's path and whether the server takes origin_kinds
     // (ADR-0063 d13).
     let mut chat_server: Vec<String> = Vec::new();
@@ -5006,7 +5011,19 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
                 federation_settings = client.get("/v2/federation").ok().map(|(_, v)| v);
                 // One event's window, read for the counts it carries
                 // (ADR-0074 d28).
-                scan_backlog = client.get("/v2/admin/rescan?limit=1").ok().map(|(_, v)| v);
+                rescan_read = Some(
+                    client
+                        .get("/v2/admin/rescan?limit=1")
+                        .map(|(_, v)| v)
+                        .map_err(unread_reason),
+                );
+                // The usage counters against their rows (ADR-0071 d3, d5).
+                usage_drift = Some(
+                    client
+                        .get("/v2/admin/usage/drift")
+                        .map(|(_, v)| v)
+                        .map_err(unread_reason),
+                );
             }
         }
     }
@@ -5032,9 +5049,14 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
     let telemetry = telemetry_doctor(scrape.as_ref());
     let mut scan = scan_doctor(ready.as_ref(), scrape.as_ref());
-    scan.extend(scan_backlog_doctor(scan_backlog.as_ref()));
+    let scan_backlog = rescan_read.as_ref().and_then(|read| read.as_ref().ok());
+    scan.extend(scan_backlog_doctor(scan_backlog));
     let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
+    let approvals = approval_doctor(rescan_read.as_ref());
+    let approvals_warn = approvals.iter().any(|line| line.starts_with("warn"));
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
+    let usage = usage_doctor(usage_drift.as_ref());
+    let usage_warn = usage.iter().any(|line| line.starts_with("warn"));
     let handlers = handlers_doctor(scrape.as_ref());
     let handlers_warn = handlers.iter().any(|line| line.starts_with("warn"));
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
@@ -5087,10 +5109,12 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || telemetry_warn
         || handlers_warn
         || scan_warn
+        || approvals_warn
         || sync_warn
         || chat_warn
         || sources_warn
         || in_progress_warn
+        || usage_warn
     {
         "warn"
     } else {
@@ -5139,6 +5163,8 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "telemetry": telemetry,
             "handlers": handlers,
             "scan": scan,
+            "usage": usage,
+            "approvals": approvals,
             "sources": sources,
             "in_progress": in_progress,
             "client_version": env!("CARGO_PKG_VERSION"),
@@ -5259,6 +5285,12 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         }
         for line in &scan {
             println!("scan        : {line}");
+        }
+        for line in &usage {
+            println!("usage       : {line}");
+        }
+        for line in &approvals {
+            println!("approvals   : {line}");
         }
         for line in &sync {
             println!("sync        : {line}");
@@ -5633,6 +5665,45 @@ fn scan_backlog_doctor(report: Option<&Value>) -> Vec<String> {
         });
     }
     lines
+}
+
+/// Why a read doctor made was not answered, as its lines name it: the
+/// status and code of a refusal, else the local reason.
+fn unread_reason(e: CliError) -> String {
+    match e {
+        CliError::Refused { status, code, .. } => format!("{status} {code}"),
+        CliError::Local(reason) | CliError::Unanswered(reason) => reason,
+    }
+}
+
+/// The approval line (ADR-0077 d6), from the same one-event rescan window:
+/// how many served versions carry no approval because migration 0044's
+/// fill could not match their verdict. A count, never a list, and no
+/// command lists them. A server
+/// before the count does not report it, and the line is then absent. An
+/// admin key whose read failed is told so with the reason, and a count
+/// that is no unsigned integer is named, never read as zero.
+fn approval_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
+    let report = match read {
+        None => return vec!["approval_unmatched: not read; an admin key reads it".to_owned()],
+        Some(Err(reason)) => return vec![format!("warn approval_unmatched: not read ({reason})")],
+        Some(Ok(report)) => report,
+    };
+    let Some(count) = report.get("promoted_unapproved") else {
+        return Vec::new();
+    };
+    let Some(unmatched) = count.as_u64() else {
+        return vec![format!(
+            "warn approval_unmatched: the server's promoted_unapproved is {count}, not a count"
+        )];
+    };
+    vec![if unmatched > 0 {
+        format!(
+            "warn approval_unmatched: {unmatched} served version(s) carry no approval, because migration 0044 found no verdict for their promotion in the journal; recall serves them with approver and approved_at null, and no command lists which they are; to clear one, supersede it with oml write --replaces, and it is no longer counted once a reviewer approves the successor; or leave it"
+        )
+    } else {
+        "approval_unmatched: 0".to_owned()
+    }]
 }
 
 /// The scan doctor lines (ADR-0065 d11): the rule set `/readyz` names, how
@@ -6031,8 +6102,61 @@ fn web_doctor(
     lines
 }
 
+/// Usage metering's doctor lines (ADR-0071 d3, d5, d8), from
+/// `GET /v2/admin/usage/drift` read by an admin key: the accounts whose
+/// counters differ from their rows, and the accounts on a profile the
+/// configuration does not declare; nothing when neither holds, and
+/// nothing for a key that is no admin's, which does not read it. A read
+/// that fails is a line of its own: the counters are then unchecked.
+fn usage_doctor(report: Option<&Result<Value, String>>) -> Vec<String> {
+    let r = match report {
+        None => return Vec::new(),
+        Some(Err(reason)) => {
+            return vec![format!(
+                "warn usage: the drift report was not read ({reason}); the counters are unchecked against their rows"
+            )];
+        }
+        Some(Ok(r)) => r,
+    };
+    let mut lines = Vec::new();
+    let drift = r["drift"].as_array().map(Vec::as_slice).unwrap_or_default();
+    if !drift.is_empty() {
+        let accounts: std::collections::BTreeSet<&str> =
+            drift.iter().filter_map(|d| d["account"].as_str()).collect();
+        let each: Vec<String> = drift
+            .iter()
+            .map(|d| {
+                format!(
+                    "{} {} counter {} rows {}",
+                    d["user"].as_str().or(d["account"].as_str()).unwrap_or("?"),
+                    d["meter"].as_str().unwrap_or("?"),
+                    d["counter"],
+                    d["rows"]
+                )
+            })
+            .collect();
+        lines.push(format!(
+            "warn usage: {} accounts drift from their rows ({})",
+            accounts.len(),
+            each.join(", ")
+        ));
+    }
+    let mut undeclared: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for u in r["undeclared_profiles"].as_array().into_iter().flatten() {
+        *undeclared
+            .entry(u["profile"].as_str().unwrap_or("?"))
+            .or_default() += 1;
+    }
+    for (profile, n) in undeclared {
+        lines.push(format!(
+            "warn usage: {n} accounts on profile {profile}, which the configuration does not declare; their writes are refused limit.quota until an admin reassigns them or declares it"
+        ));
+    }
+    lines
+}
+
 /// Open sign-up's doctor lines (ADR-0068 d5, d6, d9, d11), from
-/// `GET /v2/web/users` read by an admin key: the people at or above 90% of
+/// `GET /v2/web/users` read by an admin key: the people at or above 80% of
 /// a quota, the pending deletion requests, and an open mode whose sign-ups
 /// share one address bucket because no proxy is trusted.
 fn signup_doctor(overview: Option<&Value>) -> Vec<String> {
@@ -6053,10 +6177,19 @@ fn signup_doctor(overview: Option<&Value>) -> Vec<String> {
             continue;
         }
         let mut hit = false;
-        for quota in ["memories", "keys", "connections"] {
-            let used = u["usage"][quota].as_u64().unwrap_or(0);
-            let limit = u["quotas"][quota].as_u64().unwrap_or(0);
-            if limit > 0 && used.saturating_mul(10) >= limit.saturating_mul(9) {
+        // A null limit is unlimited and never near (ADR-0071 d5).
+        for (quota, used) in [
+            ("memories", "memories"),
+            ("text_bytes", "text_bytes"),
+            ("writes_per_month", "writes"),
+            ("keys", "keys"),
+            ("connections", "connections"),
+        ] {
+            let used = u["usage"][used].as_u64().unwrap_or(0);
+            let Some(limit) = u["quotas"][quota].as_u64() else {
+                continue;
+            };
+            if limit > 0 && used.saturating_mul(10) >= limit.saturating_mul(8) {
                 *near.entry(quota).or_default() += 1;
                 hit = true;
             }
@@ -6066,7 +6199,7 @@ fn signup_doctor(overview: Option<&Value>) -> Vec<String> {
     if people > 0 {
         let by: Vec<String> = near.iter().map(|(q, n)| format!("{q}: {n}")).collect();
         lines.push(format!(
-            "warn quota: {people} users at or above 90% of a quota ({})",
+            "warn quota: {people} users at or above 80% of a quota ({})",
             by.join(", ")
         ));
     }
@@ -6537,6 +6670,65 @@ mod tests {
     }
 
     #[test]
+    fn the_approval_doctor_names_the_count_of_promoted_versions_with_no_approval() {
+        let some = json!({ "scanner_version": "oml-scan/1.2", "promoted_unapproved": 3 });
+        assert_eq!(
+            approval_doctor(Some(&Ok(some))),
+            vec!["warn approval_unmatched: 3 served version(s) carry no approval, because migration 0044 found no verdict for their promotion in the journal; recall serves them with approver and approved_at null, and no command lists which they are; to clear one, supersede it with oml write --replaces, and it is no longer counted once a reviewer approves the successor; or leave it".to_owned()]
+        );
+        let none = json!({ "scanner_version": "oml-scan/1.2", "promoted_unapproved": 0 });
+        assert_eq!(
+            approval_doctor(Some(&Ok(none))),
+            vec!["approval_unmatched: 0".to_owned()]
+        );
+        // A server before the count says nothing, and a key that cannot read
+        // the window says so.
+        assert!(
+            approval_doctor(Some(&Ok(json!({ "scanner_version": "oml-scan/1.2" })))).is_empty()
+        );
+        assert_eq!(
+            approval_doctor(None),
+            vec!["approval_unmatched: not read; an admin key reads it".to_owned()]
+        );
+    }
+
+    #[test]
+    fn the_approval_doctor_warns_when_an_admins_read_fails_and_when_the_count_is_not_a_count() {
+        // The admin's read failed: a warn naming why, not "an admin key
+        // reads it", which this key is.
+        assert_eq!(
+            approval_doctor(Some(&Err("503 unavailable".to_owned()))),
+            vec!["warn approval_unmatched: not read (503 unavailable)".to_owned()]
+        );
+        // The member is there and is no unsigned integer.
+        for odd in [json!("many"), json!(-1), json!(1.5), Value::Null] {
+            let report = json!({ "scanner_version": "oml-scan/1.2", "promoted_unapproved": odd });
+            assert_eq!(
+                approval_doctor(Some(&Ok(report))),
+                vec![format!(
+                    "warn approval_unmatched: the server's promoted_unapproved is {odd}, not a count"
+                )],
+            );
+        }
+    }
+
+    #[test]
+    fn an_anchor_whose_rev_has_a_multibyte_character_across_byte_12_is_one_line_and_no_panic() {
+        // The server's rev is text: `é` is two bytes, at bytes 11 and 12.
+        let odd = "0123456789aébcdef";
+        assert!(!odd.is_char_boundary(12));
+        assert_eq!(
+            anchor_line(&json!({"repo": "r", "rev": odd, "path": "docs/a.md", "fragment": "x"})),
+            "r @ 0123456789aé docs/a.md#x"
+        );
+        assert_eq!(
+            anchor_line(&json!({"repo": "r", "rev": "0123456789abcdef0123", "path": "docs/a.md"})),
+            "r @ 0123456789ab docs/a.md"
+        );
+        assert_eq!(anchor_line(&Value::Null), "none");
+    }
+
+    #[test]
     fn the_web_doctor_reads_failed_exchanges_from_the_metrics_listener() {
         let ready = (200, json!({"web": {"providers": ["google", "github"]}}));
         let scrape = Scrape(
@@ -6583,7 +6775,7 @@ mod tests {
             "address_limit_shared": true,
             "users": [
                 {"user": "ua", "under_quotas": true, "disabled": false,
-                 "usage": {"memories": 950, "keys": 1, "connections": 0},
+                 "usage": {"memories": 850, "keys": 1, "connections": 0},
                  "quotas": {"memories": 1000, "keys": 5, "connections": 5}},
                 {"user": "ub", "under_quotas": true, "disabled": false,
                  "usage": {"memories": 10, "keys": 5, "connections": 0},
@@ -6599,7 +6791,7 @@ mod tests {
             lines,
             vec![
                 "warn signup: open with no server.trusted_proxies; every sign-up shares one address limit",
-                "warn quota: 2 users at or above 90% of a quota (keys: 1, memories: 1)",
+                "warn quota: 2 users at or above 80% of a quota (keys: 1, memories: 1)",
                 "warn signup: 1 deletion requests pending, oldest requested 2026-11-06T10:00:00.000000Z; close each on /web/admin/users",
             ]
         );
@@ -6628,6 +6820,41 @@ mod tests {
             signup_doctor(Some(&overview)),
             vec![
                 "warn keys: admin key stray-admin names the user root of alice, which no verb does; disabling alice is refused until the row's user_root_id is cleared"
+            ]
+        );
+    }
+
+    #[test]
+    fn doctor_names_drifted_counters_and_accounts_on_an_undeclared_profile_and_nothing_when_clean()
+    {
+        let report = serde_json::json!({
+            "drift": [
+                {"account": "a1", "user": "ua", "meter": "memories", "counter": 12, "rows": 11},
+                {"account": "a1", "user": "ua", "meter": "text_bytes", "counter": 40, "rows": 41}
+            ],
+            "undeclared_profiles": [
+                {"account": "a2", "user": "ub", "profile": "pro"},
+                {"account": "a3", "user": "uc", "profile": "pro"}
+            ]
+        });
+        assert_eq!(
+            usage_doctor(Some(&Ok(report))),
+            vec![
+                "warn usage: 1 accounts drift from their rows (ua memories counter 12 rows 11, ua text_bytes counter 40 rows 41)",
+                "warn usage: 2 accounts on profile pro, which the configuration does not declare; their writes are refused limit.quota until an admin reassigns them or declares it",
+            ]
+        );
+        let clean = serde_json::json!({"drift": [], "undeclared_profiles": []});
+        assert!(usage_doctor(Some(&Ok(clean))).is_empty());
+        assert!(usage_doctor(None).is_empty());
+    }
+
+    #[test]
+    fn doctor_says_so_when_the_drift_report_could_not_be_read() {
+        assert_eq!(
+            usage_doctor(Some(&Err("503 store.unavailable".to_owned()))),
+            vec![
+                "warn usage: the drift report was not read (503 store.unavailable); the counters are unchecked against their rows"
             ]
         );
     }

@@ -30,7 +30,7 @@ use oml_sdk::WebEmail;
 
 use crate::pages::{Fields, WalkEnd, refused, walk};
 use crate::session::{PageCalls, Session, call};
-use crate::{Capacity, Web, acts, keys, outcome};
+use crate::{Capacity, Web, acts, keys, outcome, usage};
 
 /// The admin overview: the allowlist and the capacities.
 pub const PEOPLE_PATH: &str = "/web/admin/people";
@@ -49,7 +49,9 @@ pub const PEOPLE_ACTIONS: &[&str] = &[
 /// The users page's acts (ADR-0068 d5, d6, d8).
 pub const USERS_ACTIONS: &[&str] = &["set_quota", "disable_user", "close_deletion"];
 
-/// The quotas a person has (ADR-0068 d5).
+/// The quotas `POST /v2/web/users/{user}/quota` takes (ADR-0068 d5). The
+/// route takes no `text_bytes` or `writes_per_month`, which the account's
+/// profile and its overrides set (ADR-0071 d5), so the form offers neither.
 const QUOTAS: [&str; 4] = ["memories", "keys", "connections", "requests_per_minute"];
 
 /// The allowlist's page size, and how many pages the overview reads.
@@ -473,7 +475,7 @@ pub async fn users_page(
         }
         body.push_str("</table><p class=\"dim\">Closing disables the person and cuts off their keys; their memories stay until they are erased with <code>oml erase</code>.</p>");
     }
-    body.push_str("<h2>People</h2><table><tr><th>user</th><th>memories</th><th>keys</th><th>connections</th><th>requests/min</th><th></th></tr>");
+    body.push_str("<h2>People</h2><p class=\"dim\">Each count against its limit. A mark shows at 80% of a limit and at the limit, on a row whose <code>under_quotas</code> is true. Writes count this UTC month.</p><table><tr><th>user</th><th>memories</th><th>text stored</th><th>writes</th><th>keys</th><th>connections</th><th>requests/min</th><th></th></tr>");
     for u in &listed.users {
         let flags = match (u.signed_up, u.disabled) {
             (_, true) => r#" <span class="tag dim">disabled</span>"#,
@@ -492,22 +494,25 @@ pub async fn users_page(
                 false,
             )
         };
+        let [memories, text_stored, writes, key_count, connections] =
+            usage::cells(&u.usage, &u.quotas, u.under_quotas);
         let _ = write!(
             body,
-            r#"<tr><td class="mono">{}{flags}</td><td>{} / {}</td><td>{} / {}</td><td>{} / {}</td><td>{}</td><td>{disable}</td></tr>"#,
+            r#"<tr><td class="mono">{}{flags}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{disable}</td></tr>"#,
             short(&u.user),
-            u.usage.memories,
-            u.quotas.memories,
-            u.usage.keys,
-            u.quotas.keys,
-            u.usage.connections,
-            u.quotas.connections,
-            u.quotas.requests_per_minute,
+            memories,
+            text_stored,
+            writes,
+            key_count,
+            connections,
+            u.quotas
+                .requests_per_minute
+                .map_or_else(|| "—".to_owned(), |n| n.to_string()),
         );
     }
     body.push_str("</table>");
     let options: Vec<(&str, &str)> = QUOTAS.iter().map(|q| (*q, *q)).collect();
-    body.push_str("<h2>Set a quota</h2>");
+    body.push_str("<h2>Set a quota</h2><p class=\"dim\">Text stored and writes are not set here: they follow the profile of the account, which an admin key sets with <code>PUT /v2/admin/accounts/{account}/profile</code>.</p>");
     body.push_str(&form(
         USERS_PATH,
         "set_quota",

@@ -807,7 +807,10 @@ fn decide(ctx: &Context, claim: &Claim, si: &SourceItem, digest: &str) -> Entry 
         }
         return changed(Some(format!("a revert to version {version}'s source")));
     }
-    let note = tip_hash.map(|h| format!("{}…→{}…", &short(h)[..4], &short(&si.item.hash)[..4]));
+    // The tip's hash is the server's text: its first four characters, or
+    // as many as it has.
+    let head = |digest: &str| short(digest).chars().take(4).collect::<String>();
+    let note = tip_hash.map(|h| format!("{}…→{}…", head(h), head(&si.item.hash)));
     changed(note)
 }
 

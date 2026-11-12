@@ -3,6 +3,7 @@ repository's licence (scripts/check_sdk_versions.py; docs/contributing/releasing
 import io
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import check_sdk_versions as V  # noqa: E402
+import sdk_names as N  # noqa: E402
 
 REPO = V.DEFAULT_ROOT
 FILES = [
@@ -76,7 +78,7 @@ class SdkVersions(unittest.TestCase):
         workspace = V.read_versions(REPO)["Cargo.toml [workspace.package] version"]
         cases = {
             "sdks/python/pyproject.toml": f'version = "{workspace}"',
-            "sdks/python/uv.lock": f'name = "oml-sdk"\nversion = "{workspace}"',
+            "sdks/python/uv.lock": f'name = "{N.python_name(REPO)}"\nversion = "{workspace}"',
             "sdks/typescript/package.json": f'"version": "{workspace}"',
             "sdks/typescript/package-lock.json": f'"version": "{workspace}"',
             "sdks/typescript/src/client.ts": f"oml-sdk-typescript/{workspace}",
@@ -108,6 +110,16 @@ class SdkVersions(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("sdks/typescript/package.json version is 0.0.1", err.getvalue())
         self.assertIn("bump every place in one change", err.getvalue())
+
+    def test_the_sdk_scripts_run_under_python_isolated_mode(self):
+        # -I leaves the script's own directory off the path, so a script that imports its
+        # neighbour sdk_names has to add it itself.
+        for script in ("check_sdk_versions.py", "check_sdk_registry_names.py", "build_sdk_packages.py", "sdk_names.py"):
+            with self.subTest(script):
+                done = subprocess.run(
+                    [sys.executable, "-I", str(REPO / "scripts" / script), "--help"], capture_output=True, text=True
+                )
+                self.assertEqual(done.returncode, 0, done.stderr)
 
     def test_each_package_ships_the_repositorys_licence(self):
         for package in ("sdks/python", "sdks/typescript"):

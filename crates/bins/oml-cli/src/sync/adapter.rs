@@ -149,8 +149,10 @@ impl Kind {
             return Some(Self::Rust);
         }
         if let Some(rest) = key.strip_prefix("adr-") {
-            let num = rest.get(..5)?;
-            return (num[..4].chars().all(|c| c.is_ascii_digit()) && num.ends_with('-'))
+            // Bytes, not a slice of the text: the key is the server's, and a
+            // multi-byte character among the first five must not panic.
+            let num = rest.as_bytes().get(..5)?;
+            return (num[..4].iter().all(u8::is_ascii_digit) && num[4] == b'-')
                 .then_some(Self::Adr);
         }
         let rest = key.strip_prefix("doc/")?;

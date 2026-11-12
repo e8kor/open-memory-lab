@@ -607,7 +607,9 @@ fn guard_rev(
         })
         .filter(|r| !r.is_empty() && *r != loaded.commit)
         .collect();
-    let short = |r: &str| r[..r.len().min(12)].to_owned();
+    // A rev from the server is text, not a hex id: cut it at a character,
+    // never inside one.
+    let short = |r: &str| r.chars().take(12).collect::<String>();
     for rev in &revs {
         if !git.knows(rev) {
             return Err(CliError::local(format!(

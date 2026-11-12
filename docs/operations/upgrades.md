@@ -1,6 +1,6 @@
 ---
 status: Stable
-verified: 2026-11-06
+verified: 2026-11-12
 answers: "how to upgrade an OML server: how migrations run, the upgrade steps in order, what rollback does and does not mean, the upgrade from a pre-0.3.1 install, the v0.5.4 fix, and how to move from v0.3"
 ---
 
@@ -45,6 +45,29 @@ You need a recent backup and the release you are moving to.
 
 One server serves every request, so every upgrade is an outage. The server stops, starts, runs its
 migrations and passes the fork check before it answers. The window is not measured.
+
+## Migration 0044 fills each promoted version's approval
+
+Migration 0044 adds `approver_held_by`, `approver_same_user` and `approved_at` to `memories`, then fills them
+for every version promoted before it, from the verdict the journal's promotion event names. It runs at boot,
+before the server serves, so the window of the outage grows with the number of promoted versions. Measured on a
+loaded shared host with PostgreSQL 18:
+
+| Promoted versions | Fill duration |
+|---|---|
+| 10,000 | 0.84 to 1.5 s |
+| 100,000 | 13.4 to 21.6 s |
+
+The fill rewrites each promoted row once, so `memories` grows by about 70% until vacuum reclaims the old row
+versions. Rehearse on a copy (step 3) to time it on your data.
+
+A version whose promotion event names no verdict the journal holds keeps `approved_at` null. It stays served,
+with `approver` and `approved_at` null. After the upgrade, `oml doctor` run with an admin key names the count
+as `approval_unmatched`: the served versions with no approval. Doctor reads it from `promoted_unapproved` on
+`GET /v2/admin/rescan`, which counts it in the pass that already counts the scan backlog. It is a count; no command lists which versions
+they are. To clear one, supersede it with `oml write --replaces`. Once a reviewer approves the successor, it
+carries its own approval and the version it replaced is no longer counted. Leaving one as it is changes
+nothing else.
 
 ## Roll back
 

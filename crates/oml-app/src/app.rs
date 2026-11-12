@@ -8,6 +8,7 @@
 mod auth;
 mod emails;
 mod federation;
+mod metering;
 mod pages;
 mod rescan;
 mod search;
@@ -17,6 +18,7 @@ mod usage;
 mod widen;
 pub use auth::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
 pub use federation::WideKey;
+pub use metering::{AccountLimits, UsageDriftReport};
 pub use pages::{
     ActClaim, ActTicket, AdminMemory, AdminPage, AdminSearchRequest, Capacity, CapacityGranted,
     OwnKey, QueueRow, REGION_COUNT_MAX, Region, Regions, VerdictTrail, WebListRequest,
@@ -228,6 +230,10 @@ pub struct App<J, S, C, I, Sc> {
     /// The recall telemetry's writer; `None` where the deployment records
     /// no recall (ADR-0054 d2).
     telemetry: Option<Arc<dyn Telemetry>>,
+    /// The recall meter's queue; `None` where nothing writes one, and then
+    /// a recall counts itself through the store before it answers, as the
+    /// in-memory store's cost nothing (ADR-0071 d2, d8).
+    recall_meter: Option<Arc<dyn crate::ports::RecallMeter>>,
     /// Each key's feedback members checked today, by UTC day: the per-key
     /// cap, held before any lookup (ADR-0054 d6, as amended).
     feedback_counts: std::sync::Mutex<BTreeMap<Uuid, (i64, u64)>>,
@@ -248,6 +254,8 @@ pub struct App<J, S, C, I, Sc> {
     /// The widen hint's signals, built off the request path, and the ones
     /// recalls asked for (ADR-0072 d8, as built by #244).
     widen: widen::WidenSignals,
+    /// The deployment's quota profiles (ADR-0071 d5).
+    profiles: Arc<crate::types::QuotaProfiles>,
 }
 
 /// The authenticated key and what its effective access is computed from,
@@ -1228,6 +1236,8 @@ fn commit_request(
         fold,
         outbox,
         idempotency,
+        ceiling: None,
+        written: None,
     }
 }
 
@@ -1442,12 +1452,14 @@ where
             search: SearchConfig::default(),
             reranker: None,
             telemetry: None,
+            recall_meter: None,
             feedback_counts: std::sync::Mutex::default(),
             sparse: None,
             formats: Arc::new(crate::ports::ProseFormats),
             signup: None,
             wide_keys: std::sync::Mutex::default(),
             widen: widen::WidenSignals::default(),
+            profiles: Arc::new(crate::types::QuotaProfiles::default()),
         }
     }
 
@@ -3093,6 +3105,12 @@ where
             Self::key_issued_payload(&record, req.held_by),
         )?;
         let mut last = event.clone();
+        // A key of an account counts on its `keys` meter, a session key
+        // never; the commit holds the account's ceiling (ADR-0071 d2, d3).
+        let charged = record
+            .user
+            .filter(|_| record.credential != Credential::Session);
+        let ceiling = self.ceiling_for(tenant_id, charged).await?;
         if let Some(oauth) = oauth {
             // One chain: a refusal of any link journals none, so no key
             // outlives a failed issuance and none needs revoking.
@@ -3118,7 +3136,12 @@ where
                 code_issued_payload(&code, issuer.key_id, None),
             )?;
             links.push((event, MetadataFold::ConnectCodeIssued { code, voids: None }));
-            self.commit_chain(links).await?;
+            let mut reqs: Vec<CommitRequest> = links
+                .into_iter()
+                .map(|(event, fold)| commit_request(event, fold, None))
+                .collect();
+            reqs[0].ceiling = ceiling;
+            self.commit_requests(reqs).await?;
             return Ok(IssuedKey {
                 key_id,
                 value,
@@ -3140,7 +3163,7 @@ where
             });
         }
         let receipt = self
-            .commit(event, MetadataFold::KeyIssued(record), None)
+            .commit_charged(event, MetadataFold::KeyIssued(record), None, ceiling)
             .await?;
         let mut stored = Vec::with_capacity(grants.len());
         for grant in grants {
@@ -5071,6 +5094,12 @@ where
             });
         }
 
+        // The account's limits, read once and before the head: the check
+        // below and the commit's ceiling hold to the same ones, and nothing
+        // is looked up in the window a conflicting commit reopens
+        // (ADR-0071 d3).
+        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
+
         // The head first, then the node's status, the ancestors' closures,
         // which a claim edge's proposal widens, and the claim_key read: a
         // ratification, an edge proposal or a capture that commits in between
@@ -5162,23 +5191,32 @@ where
             key_ids.extend(m.lineage_key_ids);
         }
 
-        if self
+        let claim_state = self
             .journal
             .claim_key_state(key.tenant_id, workarea_id, &claim_key)
-            .await?
-            .live
-        {
+            .await?;
+        if claim_state.live {
             return Err(AppError::ClaimKeyConflict);
         }
 
         // A person of the sign-up tenant writes at most their memories
-        // quota; nothing is journalled past it. The check follows the
+        // quota, and an account within its bytes and monthly writes;
+        // nothing is journalled past them. The check follows the
         // idempotency replay and the live claim_key refusal, so a retry
         // gets its stored receipt and a write under a live claim is the
         // conflict it was; a new version goes through `supersede`, which
-        // adds no memory (ADR-0068 d5).
-        self.require_quota(key, oml_domain::signup::Quota::Memories)
-            .await?;
+        // adds no memory. This check spares the signature; the commit's
+        // ceiling is the one that holds (ADR-0068 d5; ADR-0071 d3).
+        self.require_within(
+            key.tenant_id,
+            ceiling.as_ref(),
+            &[
+                (oml_domain::signup::Quota::Memories, 1),
+                (oml_domain::signup::Quota::TextBytes, body.len() as u64),
+                (oml_domain::signup::Quota::WritesPerMonth, 1),
+            ],
+        )
+        .await?;
 
         // The similar check, after every other refusal and before the
         // commit: a refusal here journals nothing and claims no idempotency
@@ -5291,7 +5329,7 @@ where
                     .map_err(|e| AppError::StoredResponse(e.to_string()))?,
             },
         });
-        self.commit(
+        self.commit_written(
             event,
             MetadataFold::MemoryHeld {
                 memory,
@@ -5299,6 +5337,11 @@ where
                 findings: findings.into(),
             },
             idempotency,
+            key,
+            // No earlier row carries the claim_key: this version starts
+            // its chain. A key released by a rejection does not.
+            claim_state.greatest_version.is_none(),
+            ceiling,
         )
         .await?;
         // After the commit, off the write's path: the remember side's
@@ -6048,6 +6091,13 @@ where
         let caller = self.authenticate_bearer(bearer.into()).await?;
         let started = std::time::Instant::now();
         let result = self.recall_as(&caller, req).await?;
+        // One recall on the account's meter, and never what was asked,
+        // handed to the meter without waiting. A count that is dropped or
+        // fails to write leaves the recall served: reading never blocks
+        // (ADR-0071 d2, d5, d7, d8).
+        if let Some(root) = caller.key.user {
+            self.count_recall(caller.key.tenant_id, root).await;
+        }
         // The answer's shape and latency, by pipeline, for the metrics
         // listener; then the event, handed to the writer without waiting,
         // so neither sits on the recall's path (ADR-0054 d1, d2).
@@ -7534,6 +7584,9 @@ where
                 replayed: true,
             });
         }
+        // The account's limits, read once and before the head, as a
+        // submit's are (ADR-0071 d3).
+        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
 
         // The head first, then the target, whose closure a claim edge's
         // proposal widens, the ancestors and the ordinal: a commit landing in
@@ -7570,7 +7623,6 @@ where
             self.require_access(&caller, target.workarea_id, Role::Writer, "supersede")
                 .await?;
         }
-
         // Step 5, in its order: the scope is the target's workarea, the
         // target is the served tip, the kind stays in its class and a
         // retirement keeps the target's kind and never retires a term, and
@@ -7731,6 +7783,24 @@ where
                 ))
             })?;
 
+        // A new version charges the account's bytes and monthly writes and
+        // never its memories; nothing is journalled past them. As a
+        // submit's, the check follows every other refusal and the replay
+        // step 5 makes when an attempt under the same key committed since
+        // the lookup, so a retry at the limit gets its stored receipt and a
+        // revision refused for its target is the refusal it was. This check
+        // spares the signature; the commit's ceiling is the one that holds
+        // (ADR-0071 d2, d3).
+        self.require_within(
+            key.tenant_id,
+            ceiling.as_ref(),
+            &[
+                (oml_domain::signup::Quota::TextBytes, body.len() as u64),
+                (oml_domain::signup::Quota::WritesPerMonth, 1),
+            ],
+        )
+        .await?;
+
         // The similar check, as a submit's, never naming a version of the
         // claim this replaces; a retirement states why and is not checked
         // (ADR-0050 d1).
@@ -7853,7 +7923,7 @@ where
             },
         });
         let committed = self
-            .commit(
+            .commit_written(
                 event,
                 MetadataFold::MemoryHeld {
                     memory: successor,
@@ -7861,6 +7931,9 @@ where
                     findings: findings.into(),
                 },
                 idempotency,
+                key,
+                false,
+                ceiling,
             )
             .await;
         if let Err(AppError::Store(StoreError::IdempotencyRecorded)) = committed {
@@ -9809,7 +9882,8 @@ where
                 "replaces_connection_id": replaces.map(|c| c.to_string()),
             }),
         )?;
-        self.commit(
+        let ceiling = self.ceiling_for(key.tenant_id, key.user).await?;
+        self.commit_charged(
             event,
             MetadataFold::ConnectionOpened {
                 connection_id: connection.connection_id,
@@ -9818,6 +9892,7 @@ where
                 tokens,
             },
             None,
+            ceiling,
         )
         .await?;
         Ok(issued)

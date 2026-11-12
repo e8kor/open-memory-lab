@@ -1,4 +1,4 @@
-# oml-sdk — the TypeScript client
+# open-memory-lab-sdk — the TypeScript client
 
 A client for the Open Memory Lab HTTP API: types generated from
 [`docs/api/openapi.yaml`](https://e8kor.github.io/open-memory-lab/api/openapi.yaml) by a pinned `openapi-typescript`,
@@ -9,15 +9,15 @@ Node 24 or later. Each release attaches an npm tarball to its GitHub release; in
 file, or build from a checkout of the repository, then install from that directory:
 
 ```sh
-npm install ./oml-sdk-X.Y.Z.tgz                  # the tarball from a release's files
+npm install ./open-memory-lab-sdk-X.Y.Z.tgz      # the tarball from a release's files
 cd sdks/typescript && npm ci && npm run build
 cd /your/project && npm install /path/to/open-memory-lab/sdks/typescript
 ```
 
-The name this package takes on npm is chosen when it is first published there.
+The package is named `open-memory-lab-sdk` on npm. It is not published there yet; until it is, install from a file or a checkout as above.
 
 ```ts
-import { OmlClient } from "oml-sdk";
+import { OmlClient } from "open-memory-lab-sdk";
 
 // One pair: url and apiKey, else OML_URL and OML_API_KEY; one set alone is refused.
 const oml = new OmlClient();

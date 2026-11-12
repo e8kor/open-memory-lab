@@ -127,7 +127,9 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   names no verdict the journal holds leaves its row unfilled, and the version is served with
   `approver` null, even where an earlier promotion of the version names one. `approver_held_by` is the attestation when the verdict was given; no act
   changes a key's `held_by` after issuance. The cost: three nullable columns, and one update of
-  every promoted row at the upgrade, unmeasured.
+  every promoted row at the upgrade. Measured on a loaded shared host under PostgreSQL 18, the
+  fill took 0.84 to 1.5 s at 10,000 promoted rows and 13.4 to 21.6 s at 100,000, and `memories`
+  grew about 70% until vacuum ([upgrades](../operations/upgrades.md#migration-0044-fills-each-promoted-versions-approval)).
 
 - **d7 — A pseudonymised approver stays pseudonymised in recall, because recall never held
   it.** #146's act erases or pseudonymises the attribution a deployment keeps. This record
@@ -172,8 +174,8 @@ promotion, since ADR-0044 d9's rule for the tail removes key ids and the princip
   none, with `StoreError::ApprovalMissing`, and the commit writes nothing. The application
   always sends one; only a store over a schema before 0044, which the migration laws build,
   takes `None`.
-- The web console's card still says "approved by a key outside its lineage". Showing the kind
-  there is a separate change.
+- The web console's card says when a memory was approved and by what kind of reviewer, and marks
+  a self-review, and the Memories JSON routes carry `approved_at` and `approver` (v0.7.3, #175).
 - Laws, in `crates/bins/oml-server-lead/tests/recall_approver.rs`:
   `a_hit_says_when_it_was_approved_and_whether_a_crew_a_person_or_the_authors_own_person_approved_it`,
   `get_and_recall_serve_the_same_approval_over_http_and_over_mcp`,

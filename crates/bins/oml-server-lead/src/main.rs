@@ -234,6 +234,7 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
         sparse.clone(),
         config.web_client.clone(),
         config.shared,
+        Some(config.quota_profiles.clone()),
     )
     .await?;
     // The encoder drains the queue every write fills, off the commit path
@@ -272,6 +273,16 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
     // else deletes an unused registration, a lapsed authorization or an
     // expired token (ADR-0031 d5, d9, d10).
     let _sweep = oml_server_lead::spawn_connection_sweep(store.clone());
+    // The usage ledger's daily rows and their retention (ADR-0071 d4).
+    let _rollup = oml_server_lead::spawn_usage_rollup(
+        store.clone(),
+        config.signup.as_ref().map(|policy| {
+            (
+                policy.tenant_id,
+                config.quota_profiles.signup_profile.clone(),
+            )
+        }),
+    );
 
     let listener = tokio::net::TcpListener::bind(&config.listen)
         .await
@@ -288,6 +299,20 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
     .with_graceful_shutdown(shutdown_signal())
     .await
     .map_err(|e| format!("serve: {e}"))?;
+    // Every request has been answered: write the recall counts the queue
+    // still holds. The meter's teller logs and counts what it could not
+    // (ADR-0071 d8).
+    match start
+        .recall_meter
+        .flush_at_stop(oml_server_lead::RECALL_FLUSH_AT_STOP)
+        .await
+    {
+        Ok(()) => tracing::info!("recall counts written"),
+        Err(unwritten) => tracing::warn!(
+            unwritten,
+            "the recall meter's writer did not answer before the stop"
+        ),
+    }
     tracing::info!("graceful shutdown complete");
     Ok(())
 }

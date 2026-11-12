@@ -747,52 +747,79 @@ fn an_opt_in_beside_a_recorded_origin_and_a_legacy_true_drops_the_true() {
     assert_eq!(recorded(&dir), [server]);
 }
 
-/// A `git` ahead of the real one on PATH that refuses what git before 2.30
-/// does not know, with git's own words and exit status, and otherwise runs
-/// the real git: `config --fixed-value` and `rev-parse --end-of-options`
-/// arrived in 2.30. Returns the directory to put first on PATH.
+/// The first `git` on PATH.
 #[cfg(unix)]
-fn git_before_2_30(test: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let real = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+fn real_git() -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap())
         .map(|d| d.join("git"))
         .find(|p| p.is_file())
-        .expect("a git on PATH");
-    let bin = scratch(&format!("{test}-bin"));
-    let script = bin.join("git");
-    std::fs::write(
-        &script,
-        format!(
-            "#!/bin/sh\nfor a in \"$@\"; do\n  case \"$a\" in\n    --fixed-value|--end-of-options)\n      echo \"error: unknown option \\`${{a#--}}'\" >&2\n      exit 129;;\n  esac\ndone\nexec {} \"$@\"\n",
-            real.display()
-        ),
+        .expect("a git on PATH")
+}
+
+/// `path` as one word of a `sh` script, so a space or a quote in it runs.
+#[cfg(unix)]
+fn sh_quoted(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
+}
+
+/// The script of a `git` that refuses what git before 2.30 does not know
+/// and otherwise runs `real`. What a real old git does, which this copies:
+/// `config --fixed-value` is an unknown option (error text and exit status
+/// 129), and `rev-parse --verify --end-of-options` is not an option to it
+/// at all, so `--verify` finds no single revision (`fatal: Needed a single
+/// revision`, exit status 128). Both options arrived in git 2.30.
+#[cfg(unix)]
+fn old_git_script(real: &Path) -> String {
+    format!(
+        "#!/bin/sh\nfor a in \"$@\"; do\n  case \"$a\" in\n    --fixed-value)\n      echo \"error: unknown option \\`fixed-value'\" >&2\n      exit 129;;\n    --end-of-options)\n      echo \"fatal: Needed a single revision\" >&2\n      exit 128;;\n  esac\ndone\nexec {} \"$@\"\n",
+        sh_quoted(real)
     )
-    .unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// Writes `script` as an executable `git` into a fresh scratch directory
+/// and returns the directory.
+#[cfg(unix)]
+fn install_git(test: &str, script: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = scratch(&format!("{test}-bin"));
+    let file = bin.join("git");
+    std::fs::write(&file, script).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
     bin
 }
 
-/// `oml sync docs` with `--allow-public-server` against `server`, with `bin`
+/// A `git` ahead of the real one on PATH that refuses what git before 2.30
+/// does not know (see [`old_git_script`]). Returns the directory to put
 /// first on PATH.
 #[cfg(unix)]
-fn opt_in_with_path(dir: &Path, server: &str, bin: &Path) -> (i32, String, String) {
+fn git_before_2_30(test: &str) -> PathBuf {
+    install_git(test, &old_git_script(&real_git()))
+}
+
+/// A `git` ahead of the real one on PATH that appends each call's
+/// arguments, one `[bracketed]` word each, to the returned log, and runs
+/// the real git. Returns the directory to put first on PATH and the log.
+#[cfg(unix)]
+fn git_logging_argv(test: &str) -> (PathBuf, PathBuf) {
+    let log = scratch(&format!("{test}-log")).join("argv.log");
+    let script = format!(
+        "#!/bin/sh\n{{ printf 'git'; for a in \"$@\"; do printf ' [%s]' \"$a\"; done; printf '\\n'; }} >> {}\nexec {} \"$@\"\n",
+        sh_quoted(&log),
+        sh_quoted(&real_git())
+    );
+    (install_git(test, &script), log)
+}
+
+/// `oml` with `args` in `dir`, with `bin` first on PATH.
+#[cfg(unix)]
+fn oml_with_path(dir: &Path, args: &[&str], bin: &Path) -> (i32, String, String) {
     let path = std::env::join_paths(
         std::iter::once(bin.to_path_buf())
             .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
     )
     .unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_oml"))
-        .args([
-            "--url",
-            server,
-            "--api-key",
-            "k",
-            "sync",
-            "docs",
-            "--workarea",
-            "w",
-            "--allow-public-server",
-        ])
+        .args(args)
         .current_dir(dir)
         .env("PATH", path)
         .env("OML_CLI_CREDENTIALS", dir.join("no-credentials.toml"))
@@ -807,39 +834,101 @@ fn opt_in_with_path(dir: &Path, server: &str, bin: &Path) -> (i32, String, Strin
     )
 }
 
+/// `oml sync docs` with `--allow-public-server` against `server`, with `bin`
+/// first on PATH.
+#[cfg(unix)]
+fn opt_in_with_path(dir: &Path, server: &str, bin: &Path) -> (i32, String, String) {
+    oml_with_path(
+        dir,
+        &[
+            "--url",
+            server,
+            "--api-key",
+            "k",
+            "sync",
+            "docs",
+            "--workarea",
+            "w",
+            "--allow-public-server",
+        ],
+        bin,
+    )
+}
+
 /// The wrapper is the honest stand-in for git 2.25: it must refuse the two
-/// options, or the tests below prove nothing.
+/// options as a real old git does, or the tests below prove nothing.
 #[cfg(unix)]
 #[test]
 fn the_stand_in_for_an_old_git_refuses_what_git_before_2_30_does_not_know() {
     let dir = docs_clone("old-git-stand-in");
     let bin = git_before_2_30("old-git-stand-in");
-    for args in [
-        [
-            "config",
-            "--local",
-            "--fixed-value",
-            "--unset-all",
-            "a.b",
-            "c",
-        ],
-        [
-            "rev-parse",
-            "--verify",
-            "--end-of-options",
-            "HEAD",
-            "x",
-            "y",
-        ],
-    ] {
+    let cases: [(&[&str], i32, &str); 2] = [
+        (
+            &[
+                "config",
+                "--local",
+                "--fixed-value",
+                "--unset-all",
+                "a.b",
+                "c",
+            ],
+            129,
+            "unknown option",
+        ),
+        (
+            &[
+                "rev-parse",
+                "--verify",
+                "--end-of-options",
+                "HEAD",
+                "x",
+                "y",
+            ],
+            128,
+            "Needed a single revision",
+        ),
+    ];
+    for (args, code, words) in cases {
         let out = Command::new(bin.join("git"))
             .arg("-C")
             .arg(&dir)
             .args(args)
             .output()
             .unwrap();
-        assert_eq!(out.status.code(), Some(129), "{args:?}");
+        assert_eq!(out.status.code(), Some(code), "{args:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(words), "{args:?}: {err}");
     }
+}
+
+/// A real git whose path holds a space and a quote must still run behind
+/// the stand-in.
+#[cfg(unix)]
+#[test]
+fn the_stand_in_for_an_old_git_runs_a_real_git_whose_path_needs_quoting() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = docs_clone("old-git-quoted");
+    let odd = scratch("old-git-quoted-real").join("it's a dir");
+    std::fs::create_dir_all(&odd).unwrap();
+    let real = odd.join("git");
+    std::fs::write(
+        &real,
+        format!("#!/bin/sh\nexec {} \"$@\"\n", sh_quoted(&real_git())),
+    )
+    .unwrap();
+    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let bin = install_git("old-git-quoted", &old_git_script(&real));
+    let out = Command::new(bin.join("git"))
+        .arg("-C")
+        .arg(&dir)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[cfg(unix)]
@@ -941,16 +1030,124 @@ fn unsetting_a_value_matches_it_literally_and_not_as_a_pattern() {
     assert_eq!(source.config_all("oml.sample"), ["axb", "a.b.c", "a"]);
 }
 
+/// Behind a `git` that logs its argv, `--rev` values git could read as an
+/// option never reach a `rev-parse`: the refusal is ours, not git's (git
+/// rejects these itself, so the answer alone does not show it).
+#[cfg(unix)]
 #[test]
 fn a_rev_that_looks_like_an_option_is_refused_before_git_sees_it() {
     let dir = docs_clone("rev-option");
-    let git = oml_cli::sync::source::Git::at(&dir).unwrap();
-    assert!(git.commit("HEAD").is_ok());
+    let (bin, log) = git_logging_argv("rev-option");
+    let (code, _, err) = oml_with_path(&dir, &["anchor", "docs/a.md", "--rev=HEAD"], &bin);
+    assert_eq!(code, 0, "{err}");
+    let control = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        control
+            .lines()
+            .any(|l| l.contains("[rev-parse]") && l.contains("[HEAD^{commit}]")),
+        "the log shows the rev-parse a good rev gets: {control}"
+    );
+    std::fs::remove_file(&log).unwrap();
     for rev in ["--abbrev-ref", "-n1", "--output=x"] {
-        let err = git.commit(rev).unwrap_err();
+        let (code, _, err) = oml_with_path(
+            &dir,
+            &["anchor", "docs/a.md", &format!("--rev={rev}")],
+            &bin,
+        );
+        assert_eq!(code, 2, "{rev}: {err}");
         assert!(err.contains("is not a commit"), "{rev}: {err}");
     }
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        calls.lines().any(|l| l.contains("[--show-toplevel]")),
+        "git ran for the clone: {calls}"
+    );
+    assert!(
+        !calls.lines().any(|l| l.contains("rev-parse")
+            && (l.contains("abbrev-ref") || l.contains("-n1") || l.contains("output=x"))),
+        "no rev-parse carries the rev: {calls}"
+    );
     assert!(!dir.join("x").exists());
+}
+
+#[test]
+fn a_negated_rev_is_refused_by_name_and_never_becomes_a_commit() {
+    let dir = docs_clone("rev-negated");
+    let source = oml_cli::sync::source::Git::at(&dir).unwrap();
+    let head = source.commit("HEAD").unwrap();
+    assert_eq!(
+        head,
+        git(&dir, &["rev-parse", "HEAD"]),
+        "a good rev is the bare id"
+    );
+    for rev in ["^HEAD", "^HEAD~0", "HEAD..HEAD"] {
+        let err = source.commit(rev).unwrap_err();
+        assert!(
+            err.contains("did not resolve to one commit id") || err.contains("is not a commit"),
+            "{rev}: {err}"
+        );
+        assert!(!err.contains(&head[..12]), "{rev}: {err}");
+    }
+    let (code, _, err) = oml(&dir, &["anchor", "docs/a.md", "--rev=^HEAD"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("did not resolve to one commit id"), "{err}");
+    assert!(!err.contains(&format!("^{}", &head[..12])), "{err}");
+    assert!(!err.contains("is not a file at"), "{err}");
+}
+
+#[test]
+fn a_config_value_with_a_line_break_in_it_is_one_value() {
+    let dir = docs_clone("value-with-newline");
+    git(
+        &dir,
+        &[
+            "config",
+            "--local",
+            "--add",
+            "oml.allowPublicServer",
+            "https://one.example\nhttps://two.example",
+        ],
+    );
+    git(
+        &dir,
+        &[
+            "config",
+            "--local",
+            "--add",
+            "oml.allowPublicServer",
+            "https://three.example",
+        ],
+    );
+    let source = oml_cli::sync::source::Git::at(&dir).unwrap();
+    // Read line by line, the first value would be two origins the person
+    // never allowed apart.
+    assert_eq!(
+        source.config_all(ALLOW_PUBLIC_CONFIG),
+        [
+            "https://one.example\nhttps://two.example",
+            "https://three.example"
+        ]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_config_value_keeps_the_space_git_holds_and_is_not_the_legacy_true() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(false));
+    let dir = docs_clone("true-with-space");
+    git(
+        &dir,
+        &["config", "--local", "oml.allowPublicServer", "true "],
+    );
+    let source = oml_cli::sync::source::Git::at(&dir).unwrap();
+    assert_eq!(source.config_all(ALLOW_PUBLIC_CONFIG), ["true "]);
+    let (_, out, _) = oml(&dir, &["--url", &server, "--api-key", "k", "doctor"]);
+    runtime.shutdown_background();
+    assert!(
+        !out.contains("sync_consent_unbound"),
+        "`true ` is not the literal legacy value, and the opt-in could never remove it: {out}"
+    );
 }
 
 #[test]

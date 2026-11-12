@@ -60,6 +60,12 @@ Find the slow or failing calls with `jq`:
 journalctl -u oml-server -o cat | jq -c 'select(.event=="http_request" and .status>=500)'
 ```
 
+### Read the usage rollup
+
+The lead's hourly usage rollup (at its start, then every hour) writes `event` `usage_rollup` with the `tenants` it rolled up and the ledger `rows` it appended. A pass that fails writes `usage_rollup_failed` with its `reason`, stops neither the lead nor the next pass, and the next pass appends the closed days it missed, up to 62 days back ([ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d4). No account is ever a metric label: the per-account record is the ledger.
+
+A recall hands its count to a queue and never waits for the write. Counts the queue dropped because it was full, or that the store refused, write `event` `usage_recall_counts_lost` with their `count` and the `reason`, and add to `oml_usage_recall_counts_lost_total` on the metrics listener. The month's `recalls` meter then reads low by that count, and nothing recomputes it (ADR-0071 d8). A graceful stop (`SIGTERM`, `SIGINT`) writes the counts the queue still holds after the last request is answered, waiting up to five seconds for the writer; counts it has to leave are logged and counted the same way. A killed process loses what its queue held, and logs nothing.
+
 ### What logs never hold
 
 No log line holds a memory body, a recall query, an API key, a token or an authorization code. Logs carry ids and digests. They do hold `client_ip`, `key_name` and `user_agent`, which are personal data.
@@ -92,6 +98,8 @@ It checks, among other things:
 - held memories that cannot be reviewed, and in-progress workareas with unreviewed memories;
 - search: the pipeline, reranker skips, and postings completeness;
 - the scan rule set and findings since start;
+- usage, with an admin key: accounts whose counters differ from their rows, and accounts on a profile the configuration does not declare;
+- approvals, with an admin key: served versions with no approval (`approval_unmatched`);
 - sign-in providers and OAuth discovery when `oauth.issuer` is set;
 - recall telemetry: dropped events, queue depth and a purge that is behind.
 

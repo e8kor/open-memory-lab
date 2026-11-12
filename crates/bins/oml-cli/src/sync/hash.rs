@@ -43,11 +43,17 @@ pub fn text_digest(text: &str) -> String {
     sha256(nfc(text).as_bytes())
 }
 
-/// The first 16 hex digits of a `sha256:` digest, for idempotency keys.
+/// The first 16 hex digits of a `sha256:` digest, for idempotency keys. A
+/// digest the server supplies is text: one that is not hex is cut at the
+/// last character that ends by byte 16, never inside one.
 #[must_use]
 pub fn short(digest: &str) -> &str {
     let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
-    &hex[..hex.len().min(16)]
+    let mut end = hex.len().min(16);
+    while !hex.is_char_boundary(end) {
+        end -= 1;
+    }
+    &hex[..end]
 }
 
 /// The hasher of a module's doc block (ADR-0061 d7).

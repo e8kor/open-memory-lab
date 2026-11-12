@@ -31,7 +31,7 @@ use oml_sdk::{ListedKey, encode};
 use crate::once::{self, ONCE_COOKIE, Secret};
 use crate::pages::{Fields, WalkEnd, refused, walk};
 use crate::session::{PageCalls, Session, call, cookie};
-use crate::{Capacity, Web, acts, outcome};
+use crate::{Capacity, Web, acts, outcome, usage};
 
 /// The user page's acts, each the act of one documented operation.
 pub const USER_ACTIONS: &[&str] = &["issue_key", "connect_key", "connect_code", "cut_off"];
@@ -379,14 +379,31 @@ async fn user_view(
             calls,
         );
     };
-    let listed = match keys(web, &session.credential(Capacity::Web), calls, None, next).await {
+    // The person's usage is the page's secondary call, read beside the key
+    // list in the same round (ADR-0070 d8): a failure marks the card
+    // unavailable and the keys are shown.
+    let credential = session.credential(Capacity::Web);
+    let usage_ids = calls.next_ids();
+    let usage_call = call(&credential, &usage_ids);
+    let (listed, person) = tokio::join!(
+        keys(web, &credential, calls, None, next),
+        web.api.whoami_person(&usage_call),
+    );
+    let listed = match listed {
         Ok(listed) => listed,
         Err(response) => return *response,
     };
+    let card = match person {
+        Ok(found) => found.person.as_ref().and_then(usage::card),
+        Err(_) => Some(usage::unavailable(
+            usage_ids.request_id.as_deref().unwrap_or_default(),
+        )),
+    };
     let csrf = session.csrf();
     let mut body = format!(
-        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}"#,
+        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}"#,
         short(&user),
+        card.unwrap_or_default(),
         table(&listed, Side::User, &csrf, "")
     );
     let prefix = format!("{user}-");

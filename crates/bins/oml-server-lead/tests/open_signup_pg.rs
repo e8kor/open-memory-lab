@@ -229,6 +229,7 @@ async fn rig(open: Option<fn(SignupPolicy) -> SignupPolicy>) -> Option<Rig> {
         None,
         WebClient::new(Some(WEB_CLIENT_SECRET.to_owned()), None),
         false,
+        None,
     )
     .await
     .expect("the lead starts")
