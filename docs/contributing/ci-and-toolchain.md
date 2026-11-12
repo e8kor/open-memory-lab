@@ -170,7 +170,13 @@ use of that action in one pull request, with the same resolve step. A newer majo
 job log, which the step prints whatever the check returned, and is not a finding, because a major
 can change inputs, the runner's Node version or defaults, and gets its own reviewed pull request. A
 comment that names a major alone (`# v4`) is checked against that tag and the newest release of the
-major. No bot opens these pull requests; the
+major.
+
+One pin is held back on purpose. `sigstore/cosign-installer` is pinned to v3.9.1, the commit the
+v0.7.1 release ran (its log names `398d4b0e` and cosign v2.5.2), so the next release signs with the
+cosign whose signatures the published verify steps were written against. The weekly check reports
+it as behind v3.10.1; that finding is expected until a pull request moves the pin and reruns the
+verify steps of [releasing](releasing.md) against a signed build. No bot opens these pull requests; the
 weekly issue is the reminder.
 
 ## Release artifacts: SBOM, signing, provenance

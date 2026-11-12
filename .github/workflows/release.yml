@@ -397,7 +397,7 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-cyclonedx
-      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
@@ -567,7 +567,7 @@ jobs:
           docker buildx imagetools inspect --raw "$IMAGE@$DIGEST" \
             | jq -e '[.manifests[].platform|select(.os=="linux")|.architecture]|(index("amd64")!=null and index("arm64")!=null)'
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
-      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
       # One signature on the index digest, and one on each platform image in it,
       # so the cosign verify of the release notes covers both architectures.
       - name: Sign the index by digest
@@ -829,7 +829,7 @@ jobs:
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.22.1
-      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
       - name: The chart's version and appVersion are the tag
         run: |
           chart="$(helm show chart deploy/helm/oml)"

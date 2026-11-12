@@ -474,7 +474,7 @@ jobs:
       OML_SMOKE_VERSION: 0.3.1
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
         if: matrix.cosign
       - name: shellcheck install.sh
         if: runner.os == 'Linux' && !matrix.cosign
