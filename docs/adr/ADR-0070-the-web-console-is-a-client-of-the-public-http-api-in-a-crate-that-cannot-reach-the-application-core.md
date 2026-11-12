@@ -1011,7 +1011,7 @@ one key's record on one operation; no operation and no page call was added.
 
 | Decision | Was | Is | Why |
 |---|---|---|---|
-| d2 | the Keys page and the Start page showed the refusal by its code and message under its status | for a person whose `<user>-web` carries a denial, the Keys page draws no **Issue key**, **Issue connector key**, **New connect code** or **Cut off**, and the Start page no **Issue my credential**; each draws one sentence in their place. An act posted anyway is still answered the refusal by its code and message. The admin's pages are unchanged | the refusal is permanent, so each form failed every time it was pressed |
+| d2 | the Keys page and the Start page showed the refusal by its code and message under its status | for a person whose `<user>-web` carries a denial, the Keys page draws no **Issue key**, **Issue connector key**, **New connect code** or **Cut off**, and the Start page no **Issue my credential**; each draws one sentence in their place, of at most 25 words: "Your web session is restricted: you cannot issue keys, get connect codes or cut off keys. An administrator can do these for you." A muted line under it says that the export, the deletion request and sign-out still work. On the Keys page the sentence is the first thing under the heading, above the table, and the row of the session's own key, `<user>-web`, is marked `restricted`, the sentence's word, where it read `live` for a denial that is not on `universe`; no other key's row gains a state. An act posted anyway is still answered the refusal by its code and message. The admin's pages are unchanged | the refusal is permanent, so each form failed every time it was pressed |
 | d5 | `GET /v2/whoami` served nothing of a key's denials ([ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d15) | the record of a `<user>-web` session key carries `denied`, a boolean: whether the key holds a denial in force on any workarea. It names no workarea, no count, no author and no time. The member is absent on every other key: `<user>-review`, `<user>-curate` and `<user>-admin`, and every key with a value or a connection. The key is the one the web capacity names for its user, `<user>-web`, and the value is the test the three key acts make, whether the key's access holds a denial | `GET /v2/keys` serves `cut_off` for a denial on `universe` only, so no served member said that a denial elsewhere refuses the acts. The flag tells a person nothing the refusal of a key act does not already tell them. Rejected: keeping the forms; a member on the session key's listing item, which is still a new member, costs the listing's 12 store calls, and is no use to the Start page, which makes no listing call; and widening `cut_off` to any denial, which changes a served member's meaning |
 | d8 | (silent) | no read gained a store call: the flag is read off the access the gate already read. The five calls the two pages make cost 2, 2, 12, 4 and 8 store calls with and without a denial on the key | `whoami_names_a_denied_session_key_in_the_store_calls_it_already_makes` in `crates/bins/oml-server-lead/tests/web_console_reads.rs` holds the counts equal before and after a denial |
 
@@ -1025,8 +1025,9 @@ person's root, on a workarea inside it and on one outside it: `false` and an iss
 `201` before the denial, `true` and `session_key_denied` after). Through `oml-web`, in
 `crates/clients/oml-web/tests/web_pages.rs`:
 `a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key_forms`, which holds the
-page equal to the API's answer: each act posted anyway is the `403` the page drew no form for.
-The pages were not looked at in a browser.
+page equal to the API's answer: each act posted anyway is the `403` the page drew no form for;
+it also holds the sentence to 25 words, above the table on the Keys page, and the one row
+marked `restricted`. The pages were not looked at in a browser.
 
 ## Consequences
 

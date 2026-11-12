@@ -72,17 +72,38 @@ impl Side {
 /// What the Keys page and the Start page say to a person whose session key
 /// carries a denial, in place of the forms for the three acts that key is
 /// refused for good: issuing a key, minting a connect code and cutting off a
-/// key (`access.verb_ceiling`, reason `session_key_denied`; ADR-0070 d2). The
-/// export, the deletion request and sign-out read nothing of the key, so
-/// they still work and the sentence says so.
-pub(crate) const DENIED_SESSION: &str = "This session is refused issuing a key, minting a connect code and cutting off a key because its key carries a denial; an administrator can issue, connect and cut off keys for you, and exporting your memories, requesting deletion and signing out still work.";
+/// key (`access.verb_ceiling`, reason `session_key_denied`; ADR-0070 d2).
+/// Only an admin key denies a session key, and an admin key still does the
+/// three for the person.
+pub(crate) const DENIED_SESSION: &str = "Your web session is restricted: you cannot issue keys, get connect codes or cut off keys. An administrator can do these for you.";
 
-/// The sentence as the pages draw it.
+/// The muted line under it: the export, the deletion request and sign-out
+/// read nothing of the key, so they still work (#335).
+const DENIED_STILL_WORKS: &str =
+    "Exporting your memories, requesting deletion and signing out still work.";
+
+/// The word [`DENIED_SESSION`] uses, which marks the session's own key in
+/// the table.
+const RESTRICTED: &str = "restricted";
+
+/// The sentence and its muted line as the pages draw them.
 pub(crate) fn denied_notice() -> String {
     format!(
-        r#"<p class="notice" role="status">{}</p>"#,
-        text(DENIED_SESSION)
+        r#"<p class="notice" role="status">{}</p><p class="desc">{}</p>"#,
+        text(DENIED_SESSION),
+        text(DENIED_STILL_WORKS)
     )
+}
+
+/// A served instant to the second, in UTC by name, inside a `<time>` whose
+/// `datetime` is the instant as served: `2026-10-29 12:30:00 UTC`. An
+/// instant in any other shape is shown as served.
+fn instant(at: &str) -> String {
+    let shown = match unix_of(at) {
+        Some(_) => format!("{} {} UTC", &at[..10], &at[11..19]),
+        None => at.to_owned(),
+    };
+    format!(r#"<time datetime="{}">{}</time>"#, attr(at), short(&shown))
 }
 
 /// Whether the session's key carries a denial, as `GET /v2/whoami` says of
@@ -159,8 +180,10 @@ pub(crate) async fn keys(
 /// session key and is neither revoked nor cut off can be cut off, and on the
 /// user page such a connector key gets a new connect code unless it has
 /// expired. On the admin page the cut-off carries the
-/// listed `user`, so the act lands back on the same list.
-fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: bool) -> String {
+/// listed `user`, so the act lands back on the same list. `denied` is the id
+/// of the session's own key where that key carries a denial: no row then
+/// offers an act, and that key's row is marked.
+fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: Option<&str>) -> String {
     let name = key.name.as_deref().unwrap_or("");
     let access: Vec<String> = key
         .grants
@@ -181,18 +204,31 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: bool) -> Str
     if key.expired {
         marks.push("expired");
     }
+    // The session's own key, where it carries a denial, in the word the
+    // page's sentence uses: `GET /v2/keys` says `cut_off` for a denial on
+    // `universe` alone, so the row would read live under that sentence
+    // (#343). The page knows it of this one key and marks no other.
+    if denied == Some(key.id.as_str()) {
+        marks.push(RESTRICTED);
+    }
     let working = !key.revoked && !key.cut_off;
     if marks.is_empty() {
         marks.push("live");
     }
-    let marks: String = marks.into_iter().map(state_tag).collect();
+    // Apart in the markup and to a reader that speaks it: "cut off,
+    // expired", never one word.
+    let marks = marks
+        .into_iter()
+        .map(state_tag)
+        .collect::<Vec<_>>()
+        .join(r#"<span class="sr-only">,</span> "#);
     let mut limits = String::new();
     if let Some(at) = &key.expiry {
         let verb = if key.expired { "expired" } else { "expires" };
         let _ = write!(
             limits,
             r#"<br><span class="dim">{verb} {}</span>"#,
-            short(at)
+            instant(at)
         );
     }
     if let Some(n) = key.requests_per_minute {
@@ -203,7 +239,7 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: bool) -> Str
         );
     }
     let mut acts = String::new();
-    if key.credential != "session" && working && !denied {
+    if key.credential != "session" && working && denied.is_none() {
         if key.credential == "connection" && side == Side::User {
             if key.expired {
                 acts.push_str(
@@ -245,14 +281,15 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: bool) -> Str
     )
 }
 
-/// The keys as a table. `denied`: the session's own key carries a denial,
-/// so no row offers an act that key is refused.
+/// The keys as a table. `denied`: the id of the session's own key where it
+/// carries a denial, so no row offers an act that key is refused and its
+/// own row says so.
 pub(crate) fn table(
     keys: &[ListedKey],
     side: Side,
     csrf: &str,
     user: &str,
-    denied: bool,
+    denied: Option<&str>,
 ) -> String {
     let mut out = String::from(
         "<table><tr><th>Key</th><th>Role</th><th>Access</th><th>State</th><th></th></tr>",
@@ -478,16 +515,18 @@ async fn user_view(
         )),
     };
     let csrf = session.csrf();
+    // For a session whose key carries a denial the page opens on the
+    // sentence, above the table, and draws none of the three forms: the API
+    // refuses each one for this session's key, now and for good.
+    let denied = denied(session).then_some(session.whoami.key_id.as_str());
     let mut body = format!(
-        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}"#,
+        r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}{}"#,
         short(&user),
+        denied.map(|_| denied_notice()).unwrap_or_default(),
         card.unwrap_or_default(),
-        table(&listed, Side::User, &csrf, "", denied(session))
+        table(&listed, Side::User, &csrf, "", denied)
     );
-    if denied(session) {
-        // The three forms are not drawn: the API refuses each one for this
-        // session's key, now and for good.
-        body.push_str(&denied_notice());
+    if denied.is_some() {
         return outcome::html(StatusCode::OK, user_shell(session, fields, &body));
     }
     let prefix = format!("{user}-");
@@ -568,7 +607,7 @@ pub async fn admin_page(
             Ok(listed) => listed,
             Err(response) => return *response,
         };
-        body.push_str(&table(&listed, Side::Admin, &session.csrf(), user, false));
+        body.push_str(&table(&listed, Side::Admin, &session.csrf(), user, None));
     }
     outcome::html(
         StatusCode::OK,

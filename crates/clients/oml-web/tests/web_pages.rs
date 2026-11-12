@@ -5232,20 +5232,46 @@ fn row_of<'a>(page: &'a str, name: &str) -> &'a str {
     &page[start..start + page[start..].find("</tr>").expect("a row end")]
 }
 
+/// Markup as its text alone: every tag dropped, nothing put in its place.
+fn plain(markup: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in markup.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// A mark the page draws in the place it marks `revoked` and `cut off`.
 fn marked(row: &str, mark: &str) -> bool {
     row.contains(&format!(r#"oml-chip is-quiet">{mark}</span>"#))
 }
 
 /// The page holds each key's row equal to the API's fields for it: its
-/// expiry as served, an expired mark exactly where `expired` is true, its
-/// rate in words, and none of the three for a key that carries none.
+/// expiry to the second in UTC, with the instant as served in the `<time>`
+/// element's `datetime`, an expired mark exactly where `expired` is true,
+/// its rate in words, and none of the three for a key that carries none.
 fn assert_rows_equal_the_api(page: &str, items: &[Value]) {
     for item in items {
         let name = item["name"].as_str().expect("a name");
         let row = row_of(page, name);
         match item["expiry"].as_str() {
-            Some(expiry) => assert!(row.contains(expiry), "{name}: the date {expiry}: {row}"),
+            // To the second and in UTC by name, the instant as served in
+            // the element's `datetime`.
+            Some(expiry) => {
+                let shown = format!(
+                    r#"<time datetime="{expiry}">{} {} UTC</time>"#,
+                    &expiry[..10],
+                    &expiry[11..19]
+                );
+                assert!(row.contains(&shown), "{name}: {shown}: {row}");
+                assert_eq!(row.matches(expiry).count(), 1, "{name}: {row}");
+            }
             None => assert!(
                 !row.contains("expires") && !row.contains("expired"),
                 "{name}: no date: {row}"
@@ -5376,6 +5402,35 @@ async fn the_keys_pages_show_a_keys_expiry_expired_mark_and_rate_as_the_api_serv
         }
     }
     assert!(checked >= 14, "both pages checked every key: {checked}");
+    // A key that is cut off and expired carries two marks, apart in the
+    // markup and read as two: "cut off, expired".
+    let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+    rig.app
+        .deny_key(
+            &rig.boot.admin_key.value,
+            name("alice-lapsed"),
+            name("universe"),
+        )
+        .await
+        .expect("the admin cuts alice-lapsed off");
+    for (path, cookie) in [
+        ("/web/keys", &cookie),
+        ("/web/admin/keys?user=alice", &admin),
+    ] {
+        let (_, _, page) = send(&rig.router, get(path, Some(cookie))).await;
+        let lapsed = row_of(&page, "alice-lapsed");
+        assert!(
+            lapsed.contains(
+                r#"cut off</span><span class="sr-only">,</span> <span class="tag oml-chip is-quiet">expired</span>"#
+            ),
+            "{path}: {lapsed}"
+        );
+        assert!(
+            plain(lapsed).contains("cut off, expired"),
+            "{path}: read as two marks: {}",
+            plain(lapsed)
+        );
+    }
     // An admin key carries neither limit: the admin's own `boss-admin`, which
     // the API lists on the admin's page of their keys, is drawn with none.
     let items = api_keys(&rig, &admin, "web", "").await;
@@ -5393,8 +5448,10 @@ async fn the_keys_pages_show_a_keys_expiry_expired_mark_and_rate_as_the_api_serv
 }
 
 /// The sentence the Keys and Start pages draw for a person whose session
-/// key carries a denial.
-const DENIED_SESSION: &str = "This session is refused issuing a key, minting a connect code and cutting off a key because its key carries a denial; an administrator can issue, connect and cut off keys for you, and exporting your memories, requesting deletion and signing out still work.";
+/// key carries a denial, and the muted line beneath it.
+const DENIED_SESSION: &str = "Your web session is restricted: you cannot issue keys, get connect codes or cut off keys. An administrator can do these for you.";
+const DENIED_STILL_WORKS: &str =
+    "Exporting your memories, requesting deletion and signing out still work.";
 
 /// The forms the Keys page and the Start page draw for the three acts a
 /// denied session key is refused.
@@ -5582,6 +5639,12 @@ async fn a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key
             );
         }
         assert!(!keys.contains(DENIED_SESSION) && !start.contains(DENIED_SESSION));
+        assert!(DENIED_SESSION.split_whitespace().count() <= 25);
+        let web = row_of(&keys, "alice-web");
+        assert!(
+            marked(web, "live") && !marked(web, "restricted"),
+            "{target}: before a denial the session's own key is live: {web}"
+        );
         let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
         rig.app
             .deny_key(&rig.boot.admin_key.value, name("alice-web"), name(target))
@@ -5595,8 +5658,39 @@ async fn a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key
             4,
             "{target}: the sentence is on the Start page with no client and with each"
         );
+        // On the Keys page the sentence comes first, above the table.
+        assert!(
+            keys.find(DENIED_SESSION) < keys.find("<table>"),
+            "{target}: {keys}"
+        );
+        // The session's own key is the one row marked, in the sentence's
+        // word, and never `live`; a denial on `universe` is `cut off` too.
+        // No other key's row gains a state.
+        let web = row_of(&keys, "alice-web");
+        assert!(
+            marked(web, "restricted") && !marked(web, "live"),
+            "{target}: {web}"
+        );
+        assert_eq!(
+            marked(web, "cut off"),
+            target == "universe",
+            "{target}: {web}"
+        );
+        assert_eq!(
+            keys.matches(">restricted</span>").count(),
+            1,
+            "{target}: {keys}"
+        );
+        for other in ["alice-laptop", "alice-phone", "alice-review"] {
+            let row = row_of(&keys, other);
+            assert!(marked(row, "live"), "{target}: {other}: {row}");
+        }
         for (page, body) in [("keys", &keys), ("start", &start)] {
             assert!(body.contains(DENIED_SESSION), "{target}: {page}: {body}");
+            assert!(
+                body.contains(DENIED_STILL_WORKS),
+                "{target}: {page}: {body}"
+            );
             for form in KEY_FORMS {
                 assert!(
                     !body.contains(form),

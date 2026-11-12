@@ -276,7 +276,7 @@ async fn removal_confirmation(
             keys::Side::Admin,
             &csrf,
             &entry.user,
-            false,
+            None,
         ));
     } else {
         body.push_str("<p>The user keeps another address on the list, so they still sign in.</p>");
