@@ -5,18 +5,15 @@ A client for the Open Memory Lab HTTP API: a layer generated from
 thin hand-written wrapper over it. What the wrapper covers, the pins and the regeneration rule are
 decided in [docs/engineering/sdks.md](https://e8kor.github.io/open-memory-lab/engineering/sdks/).
 
-Install it from PyPI, Python 3.11 or later:
+Python 3.11 or later. Each release attaches a wheel and an sdist to its GitHub release; install
+the wheel from the file, or install from a checkout of the repository:
 
 ```sh
-pip install oml-sdk             # or: uv add oml-sdk
+pip install ./oml_sdk-X.Y.Z-py3-none-any.whl     # the wheel from a release's files
+uv add ./sdks/python                              # or: pip install ./sdks/python, from a checkout
 ```
 
-From a checkout of the repository, which is how to install it until the first release is on
-PyPI and how to try a change that is not released:
-
-```sh
-uv add ./sdks/python            # or: pip install ./sdks/python
-```
+The name this package takes on PyPI is chosen when it is first published there.
 
 ```python
 from oml_sdk import OmlClient

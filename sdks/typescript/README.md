@@ -5,19 +5,16 @@ A client for the Open Memory Lab HTTP API: types generated from
 `openapi-fetch` typed by them, and a thin hand-written wrapper. What the wrapper covers, the pins
 and the regeneration rule are decided in [docs/engineering/sdks.md](https://e8kor.github.io/open-memory-lab/engineering/sdks/).
 
-Install it from npm, Node 24 or later:
+Node 24 or later. Each release attaches an npm tarball to its GitHub release; install it from the
+file, or build from a checkout of the repository, then install from that directory:
 
 ```sh
-npm install oml-sdk
-```
-
-From a checkout of the repository, which is how to install it until the first release is on npm
-and how to try a change that is not released, build it, then install it from that directory:
-
-```sh
+npm install ./oml-sdk-X.Y.Z.tgz                  # the tarball from a release's files
 cd sdks/typescript && npm ci && npm run build
 cd /your/project && npm install /path/to/open-memory-lab/sdks/typescript
 ```
+
+The name this package takes on npm is chosen when it is first published there.
 
 ```ts
 import { OmlClient } from "oml-sdk";

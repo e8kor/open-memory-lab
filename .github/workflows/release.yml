@@ -30,13 +30,15 @@ name: Release
 #     signed with the archives above;
 #   - oml-site-X.Y.Z.tar.gz, the landing site as static files (site/README.md),
 #     built by site/build.py and summed and signed with the archives above;
-#   - the Python and TypeScript SDKs at the same version: oml_sdk-X.Y.Z-py3-none-any.whl,
-#     oml_sdk-X.Y.Z.tar.gz and oml-sdk-X.Y.Z.tgz, built and smoke-tested from a
-#     clean install by scripts/build_sdk_packages.py, summed and signed with the
-#     archives above. They reach PyPI (trusted publishing) and npm (provenance)
-#     only when the repository variable PUBLISH_SDKS is `true`, from the signed
-#     bytes, after the GitHub release exists (docs/contributing/releasing.md,
-#     "Publishing the SDKs").
+#   - the Python and TypeScript SDKs at the same version (a wheel, an sdist and an
+#     npm tarball, named by scripts/sdk_names.py from their manifests), built and
+#     smoke-tested from a clean install by scripts/build_sdk_packages.py, summed
+#     and signed with the archives above. They reach PyPI (trusted publishing) and
+#     npm (provenance) only when the repository variable PUBLISH_SDKS is `true`
+#     (GitHub compares case-insensitively, so `True` also turns it on) and
+#     sdks/REGISTRY-NAMES.toml records the operator's choice of registry names,
+#     from the signed bytes, after the GitHub release exists
+#     (docs/contributing/releasing.md, "Publishing the SDKs").
 # The verification command the release notes carry is the one that page
 # states; this file's path is the identity it pins.
 
@@ -58,6 +60,9 @@ jobs:
     timeout-minutes: 10
     outputs:
       version: ${{ steps.v.outputs.version }}
+      sdk_wheel: ${{ steps.v.outputs.sdk_wheel }}
+      sdk_sdist: ${{ steps.v.outputs.sdk_sdist }}
+      sdk_tgz: ${{ steps.v.outputs.sdk_tgz }}
     steps:
       - uses: actions/checkout@v4
       # RELEASE-HOLD at the root holds every release; every other job needs
@@ -76,6 +81,8 @@ jobs:
           # The SDKs are published at the server's version, so a tag whose
           # SDK manifests were not bumped with it stops here.
           python3 scripts/check_sdk_versions.py --tag "$tag"
+          # The SDK file names, from the manifests, for every job that names them.
+          python3 scripts/sdk_names.py --version "$tag" >> "$GITHUB_OUTPUT"
           echo "version=$tag" >> "$GITHUB_OUTPUT"
 
   # The runner labels are the ones GitHub lists for public repositories
@@ -381,6 +388,9 @@ jobs:
       SERVER_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
       WEB_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
       LAKEWRITER_TARGETS: x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+      SDK_WHEEL: ${{ needs.version.outputs.sdk_wheel }}
+      SDK_SDIST: ${{ needs.version.outputs.sdk_sdist }}
+      SDK_TGZ: ${{ needs.version.outputs.sdk_tgz }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -409,7 +419,7 @@ jobs:
           want="$want oml-agent-kit-${VERSION}.tar.gz oml-agent-kit-${VERSION}.zip"
           want="$want oml-marketplace-${VERSION}.json"
           want="$want oml-site-${VERSION}.tar.gz"
-          want="$want oml_sdk-${VERSION}-py3-none-any.whl oml_sdk-${VERSION}.tar.gz oml-sdk-${VERSION}.tgz"
+          want="$want $SDK_WHEEL $SDK_SDIST $SDK_TGZ"
           diff <(printf '%s\n' $want | sort) <(ls dist | sort)
       - name: One SBOM per archive, for its own target's dependency graph
         run: |
@@ -575,7 +585,9 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       DIGEST: ${{ needs.merge.outputs.digest }}
-      PUBLISH_SDKS: ${{ vars.PUBLISH_SDKS }}
+      SDK_WHEEL: ${{ needs.version.outputs.sdk_wheel }}
+      SDK_SDIST: ${{ needs.version.outputs.sdk_sdist }}
+      SDK_TGZ: ${{ needs.version.outputs.sdk_tgz }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -584,11 +596,6 @@ jobs:
           path: dist
       - name: Release notes
         run: |
-          if [ "$PUBLISH_SDKS" = "true" ]; then
-            sdk_registries="The same files are published as \`oml-sdk\` ${VERSION} on PyPI (\`pip install oml-sdk==${VERSION}\`) and on npm (\`npm install oml-sdk@${VERSION}\`)."
-          else
-            sdk_registries="This release is not published to PyPI or npm; install the files below."
-          fi
           identity='^https://github.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/tags/.*$'
           cat > notes.md <<EOF
           ## Install
@@ -651,9 +658,9 @@ jobs:
           aarch64-unknown-linux-gnu.
           The landing site, static files for a web server (site/README.md):
           \`oml-site-${VERSION}.tar.gz\`.
-          The Python and TypeScript SDKs: \`oml_sdk-${VERSION}-py3-none-any.whl\` and
-          \`oml_sdk-${VERSION}.tar.gz\` (\`pip install ./oml_sdk-${VERSION}-py3-none-any.whl\`), and
-          \`oml-sdk-${VERSION}.tgz\` (\`npm install ./oml-sdk-${VERSION}.tgz\`). ${sdk_registries}
+          The Python and TypeScript SDKs, installed from the files here: \`${SDK_WHEEL}\` and
+          \`${SDK_SDIST}\` (\`pip install ./${SDK_WHEEL}\`), and \`${SDK_TGZ}\`
+          (\`npm install ./${SDK_TGZ}\`).
 
           ## Verify
 
@@ -700,14 +707,18 @@ jobs:
 
   # Publishing the SDKs is an outward act and belongs to the operator, so both
   # jobs below are skipped unless the repository variable PUBLISH_SDKS is `true`
-  # (Settings, Secrets and variables, Actions, Variables). Each runs only after
-  # the signed GitHub release exists, uploads the exact files that were summed
-  # and signed (checked against SHA256SUMS first), and holds `id-token: write`
-  # alone among a job's permissions beyond a read of the repository. Their
-  # actions are pinned by commit. The registry-side set-up and the order the
-  # operator does it in are in docs/contributing/releasing.md, "Publishing the
-  # SDKs". A published version cannot be replaced, so a rerun after a partial
-  # publish fails at the file the registry already holds.
+  # (Settings, Secrets and variables, Actions, Variables; GitHub compares
+  # case-insensitively, so `True` turns it on too), and each stops at its first
+  # step while sdks/REGISTRY-NAMES.toml does not record the operator's choice of
+  # registry names. Each runs only after the signed GitHub release exists, then
+  # checks every file it uploads, by name, against the signed SHA256SUMS, and
+  # uploads those bytes. A job holds `id-token: write` beyond a read of the
+  # repository, and its actions are pinned by commit. scripts/check_release.py
+  # holds all of this (no continue-on-error, no `|| true`, the environment kept).
+  # The registry-side set-up and the order the operator does it in are in
+  # docs/contributing/releasing.md, "Publishing the SDKs". A published version
+  # cannot be replaced, so a rerun after a partial publish fails at the file the
+  # registry already holds.
   publish-sdk-pypi:
     name: Python SDK to PyPI (trusted publishing)
     needs: [version, binaries, publish]
@@ -719,17 +730,28 @@ jobs:
       contents: read
       id-token: write
     env:
-      VERSION: ${{ needs.version.outputs.version }}
+      SDK_WHEEL: ${{ needs.version.outputs.sdk_wheel }}
+      SDK_SDIST: ${{ needs.version.outputs.sdk_sdist }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: The registry name is decided
+        run: python3 scripts/check_sdk_registry_names.py
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
           path: dist
-      - name: Only the files that were signed, checked against SHA256SUMS
+      - name: Only files that were signed, each checked by name against SHA256SUMS
         run: |
-          (cd dist && sha256sum --check --ignore-missing SHA256SUMS)
+          set -euo pipefail
+          cd dist
+          for f in "$SDK_WHEEL" "$SDK_SDIST"; do
+            line="$(awk -v f="./$f" '$2 == f' SHA256SUMS)"
+            [ "$(printf '%s\n' "$line" | grep -c .)" = 1 ] || { echo "$f is not listed exactly once in SHA256SUMS" >&2; exit 1; }
+            printf '%s\n' "$line" | sha256sum --check --strict -
+          done
+          cd ..
           mkdir pypi
-          cp "dist/oml_sdk-${VERSION}-py3-none-any.whl" "dist/oml_sdk-${VERSION}.tar.gz" pypi/
+          cp "dist/$SDK_WHEEL" "dist/$SDK_SDIST" pypi/
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: pypi
@@ -746,8 +768,11 @@ jobs:
       contents: read
       id-token: write
     env:
-      VERSION: ${{ needs.version.outputs.version }}
+      SDK_TGZ: ${{ needs.version.outputs.sdk_tgz }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: The registry name is decided
+        run: python3 scripts/check_sdk_registry_names.py
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
@@ -755,8 +780,15 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
-      - name: Only the file that was signed, checked against SHA256SUMS
-        run: (cd dist && sha256sum --check --ignore-missing SHA256SUMS)
+      - name: Only the file that was signed, checked by name against SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          for f in "$SDK_TGZ"; do
+            line="$(awk -v f="./$f" '$2 == f' SHA256SUMS)"
+            [ "$(printf '%s\n' "$line" | grep -c .)" = 1 ] || { echo "$f is not listed exactly once in SHA256SUMS" >&2; exit 1; }
+            printf '%s\n' "$line" | sha256sum --check --strict -
+          done
       # Trusted publishing (no token) needs npm 11.5.1 or later
       # (docs.npmjs.com/trusted-publishers, fetched 2026-11-12), which Node 24 ships.
       - name: npm is new enough to sign a provenance statement over OIDC
@@ -773,8 +805,9 @@ jobs:
           if [ -n "$NPM_TOKEN" ]; then
             npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"
           fi
+      # ./ matters: npm reads a bare dist/x.tgz as the GitHub repository dist/x.tgz.
       - name: Publish with provenance
-        run: npm publish "dist/oml-sdk-${VERSION}.tgz" --provenance --access public
+        run: npm publish "./dist/$SDK_TGZ" --provenance --access public
 
   # The Helm chart (docs/adr/ADR-0033-interim-helm-chart.md d10): packaged at
   # the tag's version, signed keyless like every other artifact here, and

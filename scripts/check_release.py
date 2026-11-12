@@ -577,12 +577,16 @@ def check_chart(errors: list[str], jobs: dict) -> None:
             errors.append(f"job {name}: uploads the chart archive without its signature bundle")
 
 
-SDK_FILES = (
-    "oml_sdk-${VERSION}-py3-none-any.whl",
-    "oml_sdk-${VERSION}.tar.gz",
-    "oml-sdk-${VERSION}.tgz",
-)
-SDK_PUBLISHERS = {"publish-sdk-pypi", "publish-sdk-npm"}
+# The file names come from scripts/sdk_names.py through the version job's outputs, as env vars.
+SDK_FILES = ("SDK_WHEEL", "SDK_SDIST", "SDK_TGZ")
+# Each publish job, the environment it must keep and the files it uploads.
+SDK_PUBLISHERS = {
+    "publish-sdk-pypi": ("pypi", ("SDK_WHEEL", "SDK_SDIST")),
+    "publish-sdk-npm": ("npm", ("SDK_TGZ",)),
+}
+NPM_PUBLISH_FROM_A_PATH = re.compile(r'\bnpm\s+publish\s+"?\./')
+NPM_PUBLISH = re.compile(r"\bnpm\s+publish\b")
+OR_TRUE = re.compile(r"\|\|\s*true\b")
 PINNED_BY_COMMIT = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}(\s|$)")
 UPLOADS_TO_A_REGISTRY = re.compile(r"\bnpm\s+publish\b|\btwine\s+upload\b|\buv\s+publish\b")
 
@@ -607,14 +611,18 @@ def check_sdks(errors: list[str], jobs: dict) -> None:
         script = "\n".join(runs(jobs[name]))
         if "scripts/check_sdk_versions.py" not in script or '--tag "$tag"' not in script:
             errors.append(f"job {name}: does not run scripts/check_sdk_versions.py with the tag")
+        if "scripts/sdk_names.py" not in script:
+            errors.append(f"job {name}: does not write the SDK file names with scripts/sdk_names.py")
     signers = {name: job for name, job in jobs.items() if any(SIGN_EVERY_BLOB.search(r) for r in runs(job))}
     for name, job in signers.items():
         if not set(builders) <= ancestors(jobs, name):
             errors.append(f"job {name}: signs without needing the job that builds the SDK packages")
         script = "\n".join(runs(job))
         for file in SDK_FILES:
-            if file not in script:
-                errors.append(f"job {name}: does not require {file} among the files it signs")
+            if f"${file}" not in script:
+                errors.append(f"job {name}: does not require ${file} among the files it signs")
+            if job.get("env", {}).get(file) != f"${{{{ needs.version.outputs.{file.lower()} }}}}":
+                errors.append(f"job {name}: {file} is not the version job's {file.lower()} output")
     for name, job in jobs.items():
         uploads = any(
             UPLOADS_TO_A_REGISTRY.search(r) or "gh-action-pypi-publish" in str(s.get("uses", ""))
@@ -623,21 +631,49 @@ def check_sdks(errors: list[str], jobs: dict) -> None:
         if uploads and name not in SDK_PUBLISHERS:
             errors.append(f"job {name}: uploads to PyPI or npm; only {sorted(SDK_PUBLISHERS)} may")
     release_creators = [n for n, j in jobs.items() if step_matching(j, RELEASE_CREATE) is not None]
-    for name in sorted(SDK_PUBLISHERS):
+    for name, (environment, files) in sorted(SDK_PUBLISHERS.items()):
         job = jobs.get(name)
         if job is None:
             errors.append(f"no job {name}")
             continue
         if str(job.get("if", "")).replace(" ", "") != "vars.PUBLISH_SDKS=='true'":
             errors.append(f"job {name}: is not gated on vars.PUBLISH_SDKS == 'true', so a release would publish by surprise")
+        if job.get("environment") != environment:
+            errors.append(f"job {name}: does not run in the {environment!r} environment, which holds the registry's trust and the reviewer")
         upstream = ancestors(jobs, name)
         if not versions <= upstream or not set(release_creators) <= upstream:
             errors.append(f"job {name}: does not need the version job and the job that creates the GitHub release")
-        if "sha256sum --check" not in "\n".join(runs(job)):
-            errors.append(f"job {name}: uploads files it did not check against SHA256SUMS")
-        if job.get("permissions", {}).get("id-token") != "write":
-            errors.append(f"job {name}: has no id-token: write, so it has no identity to publish under")
-    for name in sorted(SDK_PUBLISHERS | set(builders)):
+        script = "\n".join(runs(job))
+        guard = step_index(job, "scripts/check_sdk_registry_names.py")
+        upload = next(
+            (i for i, st in enumerate(steps(job))
+             if "gh-action-pypi-publish" in str(st.get("uses", "")) or NPM_PUBLISH.search(str(st.get("run", "")))),
+            None,
+        )
+        if guard is None:
+            errors.append(f"job {name}: does not run scripts/check_sdk_registry_names.py, so an undecided registry name could publish")
+        elif upload is not None and guard >= upload:
+            errors.append(f"job {name}: runs scripts/check_sdk_registry_names.py after the upload")
+        if guard is not None and any(runs(job)[i] for i in range(guard)):
+            errors.append(f"job {name}: runs another command before scripts/check_sdk_registry_names.py")
+        if "--ignore-missing" in script:
+            errors.append(f"job {name}: checks with --ignore-missing, which passes a file SHA256SUMS does not list")
+        if "sha256sum --check --strict -" not in script or "awk" not in script:
+            errors.append(f"job {name}: does not pull each file's own line out of SHA256SUMS and check it with sha256sum --check --strict -")
+        if "set -euo pipefail" not in script:
+            errors.append(f"job {name}: the checksum step does not run under set -euo pipefail")
+        for file in files:
+            if f'"${file}"' not in script:
+                errors.append(f"job {name}: does not check ${file} by name against SHA256SUMS")
+        if job.get("continue-on-error") or any(st.get("continue-on-error") for st in steps(job)):
+            errors.append(f"job {name}: has continue-on-error, so a failed check would not stop the upload")
+        if OR_TRUE.search(script):
+            errors.append(f"job {name}: has a command ending in || true, which hides a failed check")
+        if name == "publish-sdk-npm":
+            for run in runs(job):
+                if NPM_PUBLISH.search(run) and not NPM_PUBLISH_FROM_A_PATH.search(run):
+                    errors.append(f"job {name}: npm publish does not start its argument with ./, so npm reads it as a GitHub repository")
+    for name in sorted(set(SDK_PUBLISHERS) | set(builders)):
         for step in steps(jobs.get(name, {})):
             uses = str(step.get("uses", ""))
             if uses and not PINNED_BY_COMMIT.match(uses):

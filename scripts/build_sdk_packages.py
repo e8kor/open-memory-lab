@@ -3,8 +3,8 @@
 
     python scripts/build_sdk_packages.py --out dist-sdks
 
-writes dist-sdks/python/ (oml_sdk-X-py3-none-any.whl, oml_sdk-X.tar.gz) and
-dist-sdks/typescript/ (oml-sdk-X.tgz), where X is the workspace version, then for each
+writes dist-sdks/python/ (a wheel and an sdist) and dist-sdks/typescript/ (an npm tarball), named
+by scripts/sdk_names.py from the manifests, at the workspace version, then for each
 package:
 
 - reads the published metadata back out of the built file and fails on a name, version,
@@ -35,6 +35,8 @@ import tempfile
 import tomllib
 import zipfile
 from pathlib import Path
+
+import sdk_names
 
 ROOT = Path(__file__).resolve().parents[1]
 PY = ROOT / "sdks" / "python"
@@ -74,13 +76,15 @@ def forbidden(names: list[str], what: str) -> None:
 
 
 def metadata_checks(meta: email.message.Message, version: str, what: str) -> None:
-    if meta["Name"] != "oml-sdk":
-        fail(f"{what}: Name is {meta['Name']!r}, not 'oml-sdk'")
+    if meta["Name"] != sdk_names.python_name():
+        fail(f"{what}: Name is {meta['Name']!r}, the manifest says {sdk_names.python_name()!r}")
     if meta["Version"] != version:
         fail(f"{what}: Version is {meta['Version']!r}, the workspace is {version!r}")
     if meta["License-Expression"] != "Apache-2.0":
         fail(f"{what}: License-Expression is {meta['License-Expression']!r}, not 'Apache-2.0'")
-    if not (meta.get_payload() or "").strip().startswith("# oml-sdk"):
+    # The README's heading up to its first non-ASCII character: the email parser hands the body back decoded as latin-1.
+    heading = re.match(r"[ -~]+", (PY / "README.md").read_text(encoding="utf-8").splitlines()[0]).group(0).strip()
+    if not (meta.get_payload() or "").strip().startswith(heading):
         fail(f"{what}: the long description is not the README")
     if meta["Description-Content-Type"] != "text/markdown":
         fail(f"{what}: Description-Content-Type is {meta['Description-Content-Type']!r}")
@@ -133,13 +137,15 @@ def python_package(out: Path, scratch: Path, version: str) -> None:
         fail(f"python: expected one wheel and one sdist, found {[p.name for p in out.iterdir()]}")
         return
     wheel, sdist = wheels[0], sdists[0]
-    if wheel.name != f"oml_sdk-{version}-py3-none-any.whl" or sdist.name != f"oml_sdk-{version}.tar.gz":
-        fail(f"python: built {wheel.name} and {sdist.name}, not the workspace version {version}")
+    want_wheel, want_sdist = sdk_names.wheel_filename(ROOT, version), sdk_names.sdist_filename(ROOT, version)
+    if wheel.name != want_wheel or sdist.name != want_sdist:
+        fail(f"python: built {wheel.name} and {sdist.name}, not {want_wheel} and {want_sdist}")
 
     with zipfile.ZipFile(wheel) as z:
         names = z.namelist()
         forbidden(names, wheel.name)
-        info = f"oml_sdk-{version}.dist-info"
+        stem = sdk_names.python_stem(sdk_names.python_name())
+        info = f"{stem}-{version}.dist-info"
         if f"{info}/METADATA" in names:
             metadata_checks(email.message_from_bytes(z.read(f"{info}/METADATA")), version, wheel.name)
         else:
@@ -156,7 +162,7 @@ def python_package(out: Path, scratch: Path, version: str) -> None:
 
     with tarfile.open(sdist) as t:
         members = {m.name: m for m in t.getmembers() if m.isfile()}
-        stem = f"oml_sdk-{version}"
+        stem = f"{sdk_names.python_stem(sdk_names.python_name())}-{version}"
         forbidden(list(members), sdist.name)
         for needed in ("PKG-INFO", "pyproject.toml", "README.md", "LICENSE"):
             if f"{stem}/{needed}" not in members:
@@ -180,8 +186,8 @@ def typescript_package(out: Path, scratch: Path, version: str) -> None:
     )
     result = json.loads(packed.stdout)[0]
     tgz = out / result["filename"]
-    if tgz.name != f"oml-sdk-{version}.tgz":
-        fail(f"typescript: packed {tgz.name}, not oml-sdk-{version}.tgz")
+    if tgz.name != sdk_names.tgz_filename(ROOT, version):
+        fail(f"typescript: packed {tgz.name}, not {sdk_names.tgz_filename(ROOT, version)}")
     names = [f["path"] for f in result["files"]]
     forbidden(names, tgz.name)
     for needed in ("package.json", "README.md", "LICENSE", "dist/index.js", "dist/index.d.ts"):
@@ -198,7 +204,7 @@ def typescript_package(out: Path, scratch: Path, version: str) -> None:
     if "../../" in readme:
         fail(f"{tgz.name}: the README links a repository-relative path, which no registry page resolves")
     expected = {
-        "name": "oml-sdk",
+        "name": sdk_names.npm_name(),
         "version": version,
         "license": "Apache-2.0",
     }
@@ -216,7 +222,7 @@ def typescript_package(out: Path, scratch: Path, version: str) -> None:
     (project / "package.json").write_text('{"name": "smoke", "private": true, "type": "module"}\n')
     run(["npm", "install", "--no-audit", "--no-fund", "--fetch-retries", "5", str(tgz)], project)
     program = f"""
-import {{ OmlClient, USER_AGENT }} from "oml-sdk";
+import {{ OmlClient, USER_AGENT }} from "{sdk_names.npm_name()}";
 import {{ realpathSync }} from "node:fs";
 const seen = [];
 const fetcher = async (request) => {{
@@ -231,7 +237,7 @@ if (seen.length !== 1) throw new Error("expected one request, saw " + seen.lengt
 if (seen[0].headers.get("user-agent") !== "oml-sdk-typescript/{version}") throw new Error("user-agent " + seen[0].headers.get("user-agent"));
 if (USER_AGENT !== "oml-sdk-typescript/{version}") throw new Error("USER_AGENT " + USER_AGENT);
 if (seen[0].headers.get("authorization") !== "Bearer smoke-key") throw new Error("authorization");
-const where = realpathSync(new URL(import.meta.resolve("oml-sdk")).pathname);
+const where = realpathSync(new URL(import.meta.resolve("{sdk_names.npm_name()}")).pathname);
 if (!where.includes("node_modules")) throw new Error("not imported from node_modules: " + where);
 console.log("typescript smoke ok:", where);
 """

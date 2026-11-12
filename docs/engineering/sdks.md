@@ -14,21 +14,22 @@ repository's contributor docs.
 ## Before you start
 
 You need a server address and an agent key (see [Run your own server](../start/run-your-own.md)
-or the public server ([install](../start/install.md))). Neither package is on PyPI or npm yet.
-Both install from a checkout of the repository, at the server's version: the two SDKs and the
-server share one version number, and a test fails if they diverge.
+or the public server ([install](../start/install.md))). Neither package is on PyPI or npm. Both install from a checkout of the repository or from the files
+a release attaches, at the server's version: the two SDKs and the server share one version number,
+and a test fails if they diverge.
 
 | | Python | TypeScript |
 |---|---|---|
 | Package | `oml-sdk`, imported as `oml_sdk` | `oml-sdk`, ES modules only |
 | Floor | Python 3.11 | Node 24 |
-| Install, today | `uv add ./sdks/python` | `cd sdks/typescript && npm ci && npm run build`, then `npm install /path/to/open-memory-lab/sdks/typescript` |
-| Install, after the first publish | `pip install oml-sdk` or `uv add oml-sdk` | `npm install oml-sdk` |
+| Install | `uv add ./sdks/python`, or `pip install` the wheel a release attaches | `cd sdks/typescript && npm ci && npm run build`, then `npm install /path/to/open-memory-lab/sdks/typescript`, or `npm install` the tarball a release attaches |
 
-The last row works once a release has been published to the two registries; until then use the row above it, or the wheel and tarball each release attaches to its GitHub release
-(`pip install ./oml_sdk-X.Y.Z-py3-none-any.whl`, `npm install ./oml-sdk-X.Y.Z.tgz`). The switch is
-the repository variable `PUBLISH_SDKS`, and the steps are in
-[Releasing](../contributing/releasing.md#publishing-the-sdks).
+Each release builds both packages at its own version and attaches them to its GitHub release; the
+file names carry the package names above, which are what the manifests say today. Neither is on a
+registry, and the name each takes on PyPI and npm is chosen when it is first published there, so
+this page carries no registry install line yet. Publishing is switched on by the repository
+variable `PUBLISH_SDKS` and a recorded choice of names; the steps are in
+[Releasing](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/releasing.md#publishing-the-sdks).
 
 ## Write and read
 

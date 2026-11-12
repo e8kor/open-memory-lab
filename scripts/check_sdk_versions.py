@@ -20,6 +20,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+import sdk_names
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -34,8 +36,9 @@ def read_versions(root: Path) -> dict[str, str]:
         (py / "pyproject.toml").read_text()
     )["project"]["version"]
     lock = tomllib.loads((py / "uv.lock").read_text())
-    entry = [p for p in lock["package"] if p["name"] == "oml-sdk"]
-    found["sdks/python/uv.lock oml-sdk version"] = entry[0]["version"] if entry else "(no oml-sdk entry)"
+    name = sdk_names.python_name(root)
+    entry = [p for p in lock["package"] if p["name"] == name]
+    found["sdks/python/uv.lock oml-sdk version"] = entry[0]["version"] if entry else f"(no {name} entry)"
 
     ts = root / "sdks/typescript"
     found["sdks/typescript/package.json version"] = json.loads((ts / "package.json").read_text())["version"]

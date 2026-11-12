@@ -32,11 +32,11 @@ The landing footer and install command name the workspace version, so the same p
 
 ## Publishing the SDKs
 
-The Python and TypeScript SDKs (`sdks/python`, `sdks/typescript`, both named `oml-sdk`) carry the
-server's version, and the release builds them from the tag. Publishing them to PyPI and npm is an
-outward act, so it is the operator's, behind one switch: the repository variable `PUBLISH_SDKS`.
-Without it, a release builds, smoke-tests, signs and attaches the packages to the GitHub release
-and uploads nothing.
+The Python and TypeScript SDKs (`sdks/python`, `sdks/typescript`) carry the server's version, and
+the release builds them from the tag. Publishing them to PyPI and npm is an outward act, so it is the
+operator's, behind two switches that are both off: the repository variable `PUBLISH_SDKS`, and
+`decided` in `sdks/REGISTRY-NAMES.toml`. Without both, a release builds, smoke-tests, signs and
+attaches the packages to the GitHub release and uploads nothing.
 
 **The version bump.** The release pull request that bumps the workspace version bumps these places
 in the same change, and `scripts/check_sdk_versions.py` (run by `scripts/tests/` on every pull
@@ -49,45 +49,68 @@ request and by the release's `version` job with the tag) fails naming each one t
 
 **What the release does.** `release.yml` job `sdks` runs `scripts/build_sdk_packages.py`, which
 builds the wheel, the sdist and the npm tarball, checks their metadata and file lists, and installs
-each into a fresh virtual environment or node project to import it. The three files are summed and
-signed with the other archives. When `PUBLISH_SDKS` is `true`, job `publish-sdk-pypi` and job
-`publish-sdk-npm` each run after the GitHub release exists, check the downloaded files against the
-signed `SHA256SUMS` and upload them. A published version cannot be replaced or reused, so a rerun
-after a partial publish fails at the file the registry already holds.
+each into a fresh virtual environment or node project to import it. The file names come from the
+manifests (`scripts/sdk_names.py`). The three files are summed and signed with the other archives.
+When `PUBLISH_SDKS` is `true` (GitHub compares case-insensitively, so `True` counts; any other value,
+or no variable, is off), job `publish-sdk-pypi` and job `publish-sdk-npm` each run after the GitHub
+release exists. Each stops at its first step unless `sdks/REGISTRY-NAMES.toml` says `decided = true`
+with the names of the manifests, checks each file it uploads, by name, against the signed
+`SHA256SUMS` (a file `SHA256SUMS` does not list fails), and uploads it. `scripts/check_release.py`
+holds those steps, and refuses `continue-on-error`, `|| true` and a removed `environment` on them.
+A published version cannot be replaced or reused, so a rerun after a partial publish fails at the
+file the registry already holds. The release notes name the files and do not claim a registry
+publication.
+
+**The registry names are not decided.** The manifests say `oml-sdk` for both packages. That is
+what the packages are called today, not a name a registry has accepted. PyPI refuses a name whose
+ultra-normalised form (`.-_` removed, `l` and `i` read as `1`, `o` as `0`) is an existing project's,
+and `oml-sdk` becomes `0m1sdk`, the form of the existing `omi-sdk`; npm refuses a name that differs
+from an existing one only by `.`, `-` or `_`, and `oml_sdk` exists. A 404 from `pip index versions`
+or `npm view` shows that nothing has that exact name, not that a registry will accept it. The
+pull request that introduced this section lists candidate names with both checks done; the choice
+is the operator's.
 
 **The operator's steps, in order.** Nothing below has been done; the workflow cannot publish until
 all of it is.
 
-1. **PyPI: a pending trusted publisher.** Sign in at pypi.org, open Your account, Publishing,
-   and add a GitHub pending publisher with these fields: PyPI project name `oml-sdk`; owner
-   `e8kor`; repository name `open-memory-lab`; workflow name `release.yml`; environment name
-   `pypi`. A pending publisher creates the project at the first upload and stores no token. It
-   does not reserve the name before then, and a name another user registers first invalidates it
+1. **Choose the names**, one for PyPI and one for npm (an npm name may be scoped, `@scope/name`,
+   which needs the scope's account or organisation on npm first). Check each: on PyPI, that its
+   ultra-normalised form is no existing project's (the simple index at `https://pypi.org/simple/`
+   lists them); on npm, that no existing package differs from it only by `.-_`.
+2. **Record the choice in one reviewed change:** set `[project] name` in `sdks/python/pyproject.toml`
+   and `name` in `sdks/typescript/package.json`; change the name in `sdks/python/uv.lock` and
+   `package-lock.json` (two entries) to match, and the one `importlib.metadata.version('<name>')`
+   in `sdks/python/src/oml_sdk/client.py`; then write both names and `decided = true` in
+   `sdks/REGISTRY-NAMES.toml`. The Python import name stays `oml_sdk`. Tests fail while any of
+   these disagree.
+3. **PyPI: a pending trusted publisher.** Sign in at pypi.org, open Your account, Publishing, and add
+   a GitHub pending publisher with these fields: PyPI project name the Python name chosen in step 1;
+   owner `e8kor`; repository name `open-memory-lab`; workflow name `release.yml`; environment name
+   `pypi`. A pending publisher creates the project at the first upload and stores no token. It does
+   not reserve the name before then, and a name another user registers first invalidates it
    ([PyPI: creating a project through OIDC](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)).
-2. **npm: the account and the first publish.** The package `oml-sdk` is free on npm as of
-   2026-11-12. npm configures a trusted publisher in the settings of a package that exists, so
-   the first publish needs a token:
-   create a granular access token with read and write on packages, that expires in a week or less,
-   for the account that will own `oml-sdk` (with the option to bypass two-factor authentication
-   if the account requires it for writes, since a workflow cannot type a code), and store it as the repository secret `NPM_TOKEN`
-   (Settings, Secrets and variables, Actions, Secrets). The job passes `--provenance`, so the
-   first version carries provenance too. After the first publish, open the package's Settings on
+4. **npm: the account and the first publish.** npm configures a trusted publisher in the settings
+   of a package that exists, so the first publish needs a token: create a granular access token with
+   read and write on packages, that expires in a week or less, for the account that will own the
+   package (with the option to bypass two-factor authentication if the account requires it for
+   writes, since a workflow cannot type a code), and store it as the repository secret `NPM_TOKEN`
+   (Settings, Secrets and variables, Actions, Secrets). The job passes `--provenance`, so the first
+   version carries provenance too. After the first publish, open the package's Settings on
    npmjs.com, add a Trusted Publisher of type GitHub Actions with organization or user `e8kor`,
    repository `open-memory-lab`, workflow filename `release.yml` and environment `npm`, then delete
    `NPM_TOKEN` and revoke the token; later releases publish over OIDC without one
    ([npm: trusted publishers](https://docs.npmjs.com/trusted-publishers)). A trusted-publisher
    configuration that is not used within two days expires.
-3. **GitHub environments (recommended).** Settings, Environments: create `pypi` and `npm` and
+5. **GitHub environments (recommended).** Settings, Environments: create `pypi` and `npm` and
    add yourself as a required reviewer, so each upload waits for a click. A job that names an
    environment that does not exist creates it without a reviewer.
-4. **Set the switch.** Settings, Secrets and variables, Actions, Variables: create `PUBLISH_SDKS`
+6. **Set the switch.** Settings, Secrets and variables, Actions, Variables: create `PUBLISH_SDKS`
    with the value `true`. Delete it, or set it to anything else, to turn publishing off again.
-5. **Cut a release.** Tag `vX.Y.Z` as usual. Watch jobs `publish-sdk-pypi` and `publish-sdk-npm`;
-   approve each if step 3 put a reviewer on it.
-6. **After the first publish.** In the next release pull request, edit
-   `docs/engineering/sdks.md` (the "Neither package is on PyPI or npm" sentence and the install
-   table's "today" and "after the first publish" rows) so the published lines are the primary install, and
-   check `pip install oml-sdk==X.Y.Z` and `npm install oml-sdk@X.Y.Z` from a clean environment.
+7. **Cut a release.** Tag `vX.Y.Z` as usual. Watch jobs `publish-sdk-pypi` and `publish-sdk-npm`;
+   approve each if step 5 put a reviewer on it.
+8. **After the first publish.** In the next release pull request, add the registry install lines to
+   `docs/engineering/sdks.md` and both SDK READMEs, replace their "Neither package is on PyPI or npm"
+   and "chosen when it is first published" sentences, and check the install from a clean environment.
 
 ## Merge queue
 
