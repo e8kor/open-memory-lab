@@ -1,4 +1,4 @@
-//! Test 7 of federated recall's phase 1 (ADR-0072 d6, d13) on PostgreSQL,
+//! Tests 7 and 4 of federated recall's phase 1 (ADR-0072 d6, d13) on PostgreSQL,
 //! in a binary of its own: an unreadable workarea of many rows matching
 //! every query changes no wide answer (gating), and moves neither p50 nor
 //! p95 of a wide recall (a measurement, `--ignored`: wall-clock quantiles
@@ -80,7 +80,7 @@ async fn unreadable_rows_move_no_timing(copies: u32) {
     for search in SEARCHES {
         without.insert(search, timing_sample(&t, search, 40).await);
     }
-    copy_into_w(&db, &t, 1..=copies).await;
+    copy_into_w(&db, t.world.tenant, &t.templates, 1..=copies).await;
     for search in SEARCHES {
         let with = timing_sample(&t, search, 40).await;
         assert_within_noise(without.remove(search).expect("sampled"), with);
@@ -110,7 +110,7 @@ async fn unreadable_rows_move_no_answer(copies: u32) {
     let half = copies / 2;
     let mut work = BTreeMap::new();
     for range in [1..=half, half + 1..=copies] {
-        copy_into_w(&db, &t, range).await;
+        copy_into_w(&db, t.world.tenant, &t.templates, range).await;
         for search in SEARCHES {
             // A warm-up: a first recall's one-off reads are not its work.
             let _ = answer_sample(&t, search).await;
@@ -131,6 +131,79 @@ async fn unreadable_rows_move_no_answer(copies: u32) {
         }
     }
     drop(pool);
+    drop_db(&db).await;
+}
+
+/// Test 4 on PostgreSQL, its deterministic half: a list naming an
+/// unreadable workarea that holds 5,000 matching rows, analyzed, is refused
+/// with the same bytes and the same work as one naming an absent name: the
+/// tuples the statements read from the memories and search tables are the
+/// same count. A recall that does read is counted by the same meter, so
+/// equal counts are not a meter that counts nothing (ADR-0072 d6, d13;
+/// #295).
+#[tokio::test]
+async fn a_lists_unreadable_name_refusal_reads_the_tuples_an_absent_names_refusal_reads() {
+    use oml_port_contracts::federation::{refusal_sample, refusal_world};
+    let Some((db, store)) = fresh_store_on_one_connection().await else {
+        return;
+    };
+    let pool = store.pool().clone();
+    let t = refusal_world(store).await;
+    copy_into_w(&db, t.world.tenant, &[t.secret], 1..=5_000).await;
+    let work = |names: [&'static str; 2]| {
+        let (t, pool) = (&t, &pool);
+        async move {
+            // A warm-up: a first refusal's one-off reads are not its work.
+            refusal_sample(t, names, 1).await;
+            let read = tuples_read(pool).await;
+            let refused = refusal_sample(t, names, 20).await;
+            (refused, tuples_read(pool).await - read)
+        }
+    };
+    let (unreadable, unreadable_tuples) = work(["legal", "secret"]).await;
+    let (absent, absent_tuples) = work(["legal", "nowhere"]).await;
+    assert_eq!(unreadable, absent, "the two refusals differ");
+    assert_eq!(
+        unreadable_tuples, absent_tuples,
+        "an unreadable name's refusal read tuples an absent name's did not"
+    );
+    // The meter counts a recall that reads: a list naming a readable
+    // workarea reads its rows.
+    let read = tuples_read(&pool).await;
+    t.world
+        .recall(
+            &t.key,
+            "invoice",
+            "home",
+            Some(oml_app::federation::Sources::List(vec!["legal".to_owned()])),
+            "bm25",
+            10,
+        )
+        .await
+        .expect("a readable list is answered");
+    assert!(tuples_read(&pool).await > read, "the meter counts reads");
+    drop(pool);
+    drop_db(&db).await;
+}
+
+/// Test 4 on PostgreSQL, its timing half, a measurement run by hand or by
+/// the weekly bench (`--ignored`): an unreadable name's refusal and an
+/// absent one's take the same median time within noise, with 5,000 rows in
+/// the unreadable workarea. Wall-clock times move with the host's load, so
+/// it gates no change (#295).
+#[tokio::test]
+#[ignore = "a measurement: wall-clock times, run by the weekly bench"]
+async fn a_lists_unreadable_name_refusal_takes_the_time_of_an_absent_names_refusal() {
+    use oml_port_contracts::federation::{
+        assert_refusals_within_noise, refusal_timings, refusal_world,
+    };
+    let Some((db, store)) = fresh_store().await else {
+        return;
+    };
+    let t = refusal_world(store).await;
+    copy_into_w(&db, t.world.tenant, &[t.secret], 1..=5_000).await;
+    let (unreadable, absent) = refusal_timings(&t, 44).await;
+    assert_refusals_within_noise(unreadable, absent);
     drop_db(&db).await;
 }
 
@@ -189,12 +262,13 @@ async fn tuples_read(pool: &sqlx::PgPool) -> i64 {
 /// The pipelines test 7 reads under.
 const SEARCHES: [&str; 2] = ["bm25-postings", "bm25"];
 
-/// Copies each of `t`'s templates `copies` times into its own unreadable
-/// workarea, by SQL as the owner through the postings and similar-key
-/// triggers, then analyzes the tables a recall reads.
+/// Copies each of `templates` `copies` times into its own workarea, by SQL
+/// as the owner through the postings and similar-key triggers, then analyzes
+/// the tables a recall reads.
 async fn copy_into_w(
     db: &str,
-    t: &oml_port_contracts::federation::TimingWorld<PgStore>,
+    tenant: uuid::Uuid,
+    templates: &[uuid::Uuid],
     copies: std::ops::RangeInclusive<u32>,
 ) {
     let mut owner = PgConnection::connect(&owner_url(db))
@@ -229,13 +303,13 @@ async fn copy_into_w(
         names.iter().map(|c| pick(c)).collect::<Vec<_>>().join(", "),
     );
     sqlx::query("SELECT set_config('oml.tenant_id', $1, false)")
-        .bind(t.world.tenant.to_string())
+        .bind(tenant.to_string())
         .execute(&mut owner)
         .await
         .expect("tenant");
-    for template in t.templates {
+    for template in templates {
         sqlx::query(&sql)
-            .bind(t.world.tenant)
+            .bind(tenant)
             .bind(template)
             .bind(i32::try_from(*copies.start()).expect("copies fit an int4"))
             .bind(i32::try_from(*copies.end()).expect("copies fit an int4"))
