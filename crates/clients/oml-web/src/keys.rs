@@ -120,9 +120,10 @@ pub(crate) async fn keys(
     })
 }
 
-/// One key's row, with the acts the page allows on it: a live key that is
-/// not a session key can be cut off, and on the user page a live connector
-/// key gets a new connect code. On the admin page the cut-off carries the
+/// One key's row, with the acts the page allows on it: a key that is not a
+/// session key and is neither revoked nor cut off can be cut off, and on the
+/// user page such a connector key gets a new connect code unless it has
+/// expired. On the admin page the cut-off carries the
 /// listed `user`, so the act lands back on the same list.
 fn row(key: &ListedKey, side: Side, csrf: &str, user: &str) -> String {
     let name = key.name.as_deref().unwrap_or("");
@@ -131,24 +132,58 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str) -> String {
         .iter()
         .map(|g| format!("{} on {}", g.role, short(&g.path)))
         .collect();
-    let state = if key.revoked {
-        "revoked"
+    // The marks a key carries, in the place and style of `revoked` and `cut
+    // off`; a key with none is live. An expired key stays cut-off-able (a
+    // denial is not refused on it) and takes no new connect code, which the
+    // API refuses with `oauth.connect_refused` and reason `expired`
+    // (ADR-0079 d2, d3).
+    let mut marks = Vec::new();
+    if key.revoked {
+        marks.push("revoked");
     } else if key.cut_off {
-        "cut off"
-    } else {
-        "live"
-    };
+        marks.push("cut off");
+    }
+    if key.expired {
+        marks.push("expired");
+    }
+    let working = !key.revoked && !key.cut_off;
+    if marks.is_empty() {
+        marks.push("live");
+    }
+    let marks: String = marks.into_iter().map(state_tag).collect();
+    let mut limits = String::new();
+    if let Some(at) = &key.expiry {
+        let verb = if key.expired { "expired" } else { "expires" };
+        let _ = write!(
+            limits,
+            r#"<br><span class="dim">{verb} {}</span>"#,
+            short(at)
+        );
+    }
+    if let Some(n) = key.requests_per_minute {
+        let _ = write!(
+            limits,
+            r#"<br><span class="dim">{n} {} a minute</span>"#,
+            if n == 1 { "request" } else { "requests" }
+        );
+    }
     let mut acts = String::new();
-    if key.credential != "session" && state == "live" {
+    if key.credential != "session" && working {
         if key.credential == "connection" && side == Side::User {
-            acts.push_str(&form(
-                side.path(),
-                "connect_code",
-                csrf,
-                &format!("{}{}", hidden("key", name), acts::nonce_field()),
-                "New connect code",
-                false,
-            ));
+            if key.expired {
+                acts.push_str(
+                    r#"<p class="dim">Expired: no new connect code until an admin sets a later date.</p>"#,
+                );
+            } else {
+                acts.push_str(&form(
+                    side.path(),
+                    "connect_code",
+                    csrf,
+                    &format!("{}{}", hidden("key", name), acts::nonce_field()),
+                    "New connect code",
+                    false,
+                ));
+            }
         }
         let listed = if side == Side::Admin {
             hidden("user", user)
@@ -165,13 +200,12 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str) -> String {
         ));
     }
     format!(
-        r#"<tr><td class="mono">{}</td><td>{}<br><span class="dim">{} · {}</span></td><td>{}</td><td>{}</td><td>{}</td></tr>"#,
+        r#"<tr><td class="mono">{}</td><td>{}<br><span class="dim">{} · {}</span>{limits}</td><td>{}</td><td>{marks}</td><td>{}</td></tr>"#,
         short(name),
         attr(&key.role),
         attr(&key.credential),
         attr(&key.held_by),
         access.join("<br>"),
-        state_tag(state),
         acts
     )
 }

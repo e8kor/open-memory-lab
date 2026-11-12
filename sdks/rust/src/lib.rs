@@ -863,6 +863,17 @@ pub struct ListedKey {
     pub credential: String,
     pub revoked: bool,
     pub cut_off: bool,
+    /// The instant from which the key authenticates nothing; `None` for a
+    /// key that does not expire (ADR-0079 d3).
+    #[serde(default)]
+    pub expiry: Option<String>,
+    /// Whether the expiry has come on the server's clock (ADR-0079 d3).
+    #[serde(default)]
+    pub expired: bool,
+    /// The key's own requests per UTC minute; `None` for none of its own
+    /// (ADR-0079 d4).
+    #[serde(default)]
+    pub requests_per_minute: Option<u32>,
     pub grants: Vec<ListedGrant>,
 }
 
