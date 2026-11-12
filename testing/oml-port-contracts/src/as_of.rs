@@ -390,6 +390,8 @@ async fn issue<S: JournalStore + Clone>(
             connect_code: false,
             user: None,
             guardrail_scope: None,
+            expiry: None,
+            requests_per_minute: None,
         },
     )
     .await

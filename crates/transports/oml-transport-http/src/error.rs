@@ -291,6 +291,30 @@ pub enum ErrorContext {
 pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
     match err {
         AppError::Unauthorized => ApiError::auth_invalid("unknown"),
+        // Told only to a caller that presented the key's own credential
+        // (ADR-0079 d2).
+        AppError::KeyExpired { expiry } => ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "auth.invalid",
+            "From its expiry on a key authenticates nothing; its row stays, and an admin key may move the date (ADR-0079 d2, d5).",
+            format!("this key expired at {}", expiry.as_str()),
+        )
+        .with_details(json!({ "reason": "expired", "expiry": expiry.as_str() })),
+        AppError::KeyLimits(refusal) => {
+            let mut details = serde_json::Map::new();
+            if let Some(field) = refusal.field() {
+                details.insert("field".to_owned(), json!(field));
+            }
+            if let Some(reason) = refusal.reason() {
+                details.insert("reason".to_owned(), json!(reason));
+            }
+            let refused = ApiError::validation(refusal.message());
+            if details.is_empty() {
+                refused
+            } else {
+                refused.with_details(Value::Object(details))
+            }
+        }
         AppError::VerbCeiling { role, verb } => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.verb_ceiling",
@@ -969,7 +993,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         } => ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "limit.rate",
-            "A key of a person who signed up makes at most its requests per minute (ADR-0068 d5).",
+            "A key makes at most its requests per minute: its own rate, and its account's (ADR-0068 d5; ADR-0079 d4).",
             format!("this key made {limit} requests this minute, its limit"),
         )
         .with_details(json!({ "quota": "requests_per_minute", "limit": limit }))

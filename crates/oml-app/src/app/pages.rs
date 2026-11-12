@@ -488,6 +488,8 @@ where
             grants,
             connect_code: connector,
             user: Some(user_name),
+            expiry: None,
+            requests_per_minute: None,
         };
         self.issue_key_by(&web.key, &req, Issuance::PersonsOwn)
             .await
@@ -697,6 +699,8 @@ where
             ],
             connect_code: false,
             user: None,
+            expiry: None,
+            requests_per_minute: None,
         };
         let issued = self
             .issue_key_by(&admin.key, &req, Issuance::Session(user))

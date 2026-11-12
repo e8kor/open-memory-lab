@@ -131,6 +131,8 @@ async fn key(app: &TestApp, boot: &BootstrapResult, name: &str, connector: bool)
             connect_code: connector,
             user: None,
             guardrail_scope: None,
+            expiry: None,
+            requests_per_minute: None,
         },
     )
     .await

@@ -72,10 +72,10 @@ use oml_app::types::{
     AnchorFilter, AppError, Bearer, BootstrapRequest, BriefEdgeView, ClaimEdgeProposal,
     ClaimEdgeQuery, ConnectCodeIssued, ConnectionRecord, CrewCreateRequest, CrewRecord, CrewUpdate,
     EdgeRatification, GrantRecord, GrantRequest, GuardrailRequest, GuardrailSet, IssueKeyRequest,
-    IssuedKey, KeyDetail, ListRequest, MemoryRecord, NamedServe, OnSimilar, ProposeBriefEdge,
-    ProposeClaimEdge, RecallRequest, ServedMemory, SimilarItem, SourceCheck, SourceCheckRequest,
-    SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict, VerdictRequest, Whoami,
-    WorkareaInfo, WorkareaRecord,
+    IssuedKey, KeyDetail, KeyLimitsChange, ListRequest, MemoryRecord, NamedServe, OnSimilar,
+    ProposeBriefEdge, ProposeClaimEdge, RecallRequest, ServedMemory, SimilarItem, SourceCheck,
+    SourceCheckRequest, SubmitRequest, SubmitVerb, SupersedeRequest, TailedEvent, Verdict,
+    VerdictRequest, Whoami, WorkareaInfo, WorkareaRecord,
 };
 use oml_app::types::{
     BulkItem, BulkVerdictRequest, HELD_PAGE_DEFAULT, HeldListingRequest, HeldPage,
@@ -114,6 +114,7 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("POST", "/v2/keys"),
     ("GET", "/v2/keys/{key}"),
     ("POST", "/v2/keys/{key}/denials"),
+    ("POST", "/v2/keys/{key}/limits"),
     ("POST", "/v2/keys/{key}/connect-codes"),
     ("POST", "/v2/keys/{key}/connections/{connection_id}/revoke"),
     ("GET", "/v2/whoami"),
@@ -354,6 +355,7 @@ where
             ("POST", "/v2/keys") => post(Self::issue_key),
             ("GET", "/v2/keys/{key}") => get(Self::get_key),
             ("POST", "/v2/keys/{key}/denials") => post(Self::deny_key),
+            ("POST", "/v2/keys/{key}/limits") => post(Self::set_key_limits),
             ("POST", "/v2/keys/{key}/connect-codes") => post(Self::mint_connect_code),
             ("POST", "/v2/keys/{key}/connections/{connection_id}/revoke") => {
                 post(Self::revoke_connection)
@@ -1710,14 +1712,10 @@ where
         if let Some(caller) = session::session_caller() {
             return Self::issue_key_as_session(st, caller, &req, &name, &idem, body).await;
         }
-        // Issued keys do not expire yet: a requested expiry is refused by
-        // name, since minting the key without it would leave the key its
-        // access past the issuer's date (ADR-0025 d2, d16).
-        if req.expiry.is_some() {
-            return Err(ApiError::validation(
-                "expiry on key issuance is not built: an issued key does not expire, so the field is refused, never dropped",
-            ));
-        }
+        // The key's expiry, an RFC 3339 instant, and its own rate; the use
+        // case refuses an instant that is not later than now and a rate
+        // outside its bound (ADR-0079 d1, d4).
+        let expiry = req.expiry.as_deref().map(expiry_instant).transpose()?;
         if req.tenant.is_some() {
             return Err(ApiError::validation(
                 "tenant on key issuance (operator first-admin-key path) is outside the PoC slice",
@@ -1783,6 +1781,8 @@ where
             user,
             guardrail_scope: parse_guardrail_scope(req.guardrail_scope.as_deref())?,
             profile: parse_profile(req.profile.as_deref())?,
+            expiry,
+            requests_per_minute: req.requests_per_minute,
         };
         // A resubmission under the same key and body replays the answer
         // without the value or the connect code, which are shown once, and
@@ -1857,6 +1857,59 @@ where
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
         Ok(json_response(StatusCode::CREATED, &denial_json(&denial)))
+    }
+
+    async fn set_key_limits(
+        State(st): State<Self>,
+        rid: Rid,
+        Path(key_id): Path<String>,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Response {
+        finish(
+            &rid,
+            Self::set_key_limits_inner(&st, &key_id, &headers, &body).await,
+        )
+    }
+
+    /// `POST /v2/keys/{key}/limits`: the key's expiry, its requests per
+    /// minute or both, replaced or cleared by an admin key that is not the
+    /// key itself; one journalled `key.limits_set`, and the key's limits as
+    /// they stand answered (ADR-0079 d5).
+    async fn set_key_limits_inner(
+        st: &Self,
+        key_id: &str,
+        headers: &HeaderMap,
+        body: &Bytes,
+    ) -> Result<Response, ApiError> {
+        st.require_writes_open()?;
+        let acting = acting(headers, None)?;
+        idempotency_key(headers)?;
+        let key = reference("key", key_id)?;
+        let req: KeyLimitsBody = parse_json(headers, body)?;
+        let change = KeyLimitsChange {
+            expiry: req
+                .expiry
+                .map(|sent| sent.as_deref().map(expiry_instant).transpose())
+                .transpose()?,
+            requests_per_minute: req.requests_per_minute,
+        };
+        let set = retry_chain(|| {
+            st.app
+                .set_key_limits(acting.bearer(), key.clone(), change.clone())
+        })
+        .await
+        .map_err(|e| map_app_error(e, ErrorContext::Write))?;
+        Ok(json_response(
+            StatusCode::OK,
+            &json!({
+                "key_id": set.key_id,
+                "name": set.name.as_ref().map(Name::as_str),
+                "expiry": set.expiry.as_ref().map(|at| at.as_str()),
+                "expired": st.app.key_expired(&set),
+                "requests_per_minute": set.requests_per_minute,
+            }),
+        ))
     }
 
     async fn create_workarea(
@@ -2647,7 +2700,7 @@ where
             .live_connect_code(&token, Reference::Id(detail.key.key_id))
             .await
             .map_err(|e| map_app_error(e, ErrorContext::Write))?;
-        let mut view = key_json(&detail, &connections);
+        let mut view = key_json(&detail, &connections, st.app.key_expired(&detail.key));
         view["live_connect_code"] = live_code.map_or(Value::Null, |c| {
             json!({
                 "code_id": c.code_id.to_string(),
@@ -3531,9 +3584,12 @@ struct KeyIssueBody {
     grants: Vec<GrantBody>,
     label: Option<String>,
     principal: Option<String>,
-    /// Parsed only to be refused while key expiry is unbuilt (ADR-0025 d16).
+    /// The instant the key stops authenticating (ADR-0079 d1).
     #[serde(default)]
     expiry: Option<String>,
+    /// The key's own requests per minute (ADR-0079 d4).
+    #[serde(default)]
+    requests_per_minute: Option<u32>,
     held_by: Option<String>,
     default_workarea: Option<String>,
     /// The key's crew record, by id or name (ADR-0026 d8).
@@ -3573,6 +3629,37 @@ struct ConnectCodeBody {
 #[serde(deny_unknown_fields)]
 struct ConnectionRevokeBody {
     reason: Option<String>,
+}
+
+/// openapi.yaml `KeyLimitsRequest`, closed: a member sent replaces the
+/// value, `null` clears it, and one not sent keeps it (ADR-0079 d5).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KeyLimitsBody {
+    #[serde(default, deserialize_with = "sent")]
+    expiry: Option<Option<String>>,
+    #[serde(default, deserialize_with = "sent")]
+    requests_per_minute: Option<Option<u32>>,
+}
+
+/// A member sent as `null` is `Some(None)`; one not sent is `None`.
+fn sent<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
+/// A key's `expiry` as the instant it names: RFC 3339 with its offset, so
+/// a bare date, which names no instant, is refused (ADR-0079 d1).
+fn expiry_instant(sent: &str) -> Result<EventTime, ApiError> {
+    parse_date_time(sent).ok_or_else(|| {
+        ApiError::validation(
+            "expiry is an RFC 3339 instant with its offset, such as 2026-12-01T17:00:00Z",
+        )
+        .with_details(json!({ "field": "/expiry" }))
+    })
 }
 
 /// openapi.yaml `DenialRequest`, closed, so a v0.3.0 spelling is refused
@@ -4035,7 +4122,8 @@ fn key_issued_json(issued: &IssuedKey, label: Option<&str>) -> Value {
         "held_by": issued.held_by.map(HeldBy::as_str),
         "guardrail_scope": issued.guardrail_scope.as_str(),
         "label": label,
-        "expiry": Value::Null,
+        "expiry": issued.expiry.as_ref().map(|at| at.as_str()),
+        "requests_per_minute": issued.requests_per_minute,
         "revoked_at": Value::Null,
         "rotated_from": Value::Null,
         "grants": grants,
@@ -4115,11 +4203,12 @@ fn grant_json(g: &GrantRecord) -> Value {
 /// its permission epoch, and never the value (ADR-0025 d2; ADR-0026 d8, d9).
 /// `revoked_at` is the row's, the `at` of the key's `key.revoked`, and null
 /// for a live key, so a revoked key, whose name still resolves, reads as
-/// history and never as live (ADR-0026 d10). Expiry and rotation are
-/// unbuilt, so `expiry` and `rotated_from` are null. Nothing stores the
-/// label, so the read omits `label` rather than serve a value it has not
-/// read.
-fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord]) -> Value {
+/// history and never as live (ADR-0026 d10). `expiry` is the row's and
+/// `expired` whether it has come, so an expired key reads as that and
+/// never as live (ADR-0079 d3). Rotation is unbuilt, so `rotated_from` is
+/// null. Nothing stores the label, so the read omits `label` rather than
+/// serve a value it has not read.
+fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord], expired: bool) -> Value {
     let key = &detail.key;
     json!({
         "key_id": key.key_id,
@@ -4134,7 +4223,9 @@ fn key_json(detail: &KeyDetail, connections: &[ConnectionRecord]) -> Value {
         "held_by": detail.held_by.map(HeldBy::as_str),
         "guardrail_scope": detail.guardrail_scope.as_str(),
         "profile": key.profile.map(KeyProfile::as_str),
-        "expiry": Value::Null,
+        "expiry": key.expiry.as_ref().map(|at| at.as_str()),
+        "expired": expired,
+        "requests_per_minute": key.requests_per_minute,
         "revoked_at": key.revoked_at.as_ref().map(|at| at.as_str()),
         "rotated_from": Value::Null,
         "grants": detail.access.grants.iter().map(grant_json).collect::<Vec<_>>(),
@@ -4207,6 +4298,10 @@ fn whoami_json(whoami: &Whoami) -> Value {
         "guardrail_scope": key.guardrail_scope.as_str(),
         // The key's profile, null for none (ADR-0030 d8).
         "profile": key.profile.map(KeyProfile::as_str),
+        // When the key stops authenticating and the rate it is held to,
+        // each null for none (ADR-0079 d3, d4).
+        "expiry": key.expiry.as_ref().map(|at| at.as_str()),
+        "requests_per_minute": key.requests_per_minute,
     })
 }
 

@@ -2490,13 +2490,16 @@ fn workarea_from_row(row: &PgRow) -> Result<WorkareaRecord, StoreError> {
     })
 }
 
-/// The `api_keys` columns a key read selects. `revoked_at` comes back
-/// through `to_char` in the fixed-width signed form, as a memory's
-/// `promoted_at` does, so `EventTime` round-trips exactly.
+/// The `api_keys` columns a key read selects. `revoked_at` and
+/// `expires_at` come back through `to_char` in the fixed-width signed form,
+/// as a memory's `promoted_at` does, so `EventTime` round-trips exactly.
 const KEY_COLUMNS: &str = "id, tenant_id, role, principal, held_by, default_workarea_id, \
      issued_by, hash, credential, name, crew_id, user_root_id, session_for, guardrail_scope, \
-     profile, to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
-     AS revoked_at_signed";
+     profile, requests_per_minute, \
+     to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     AS revoked_at_signed, \
+     to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+     AS expires_at_signed";
 
 /// A claim edge's columns, `e` the edge and `k` its proposer's key row;
 /// `created_at` comes back through `to_char` in the fixed-width signed
@@ -2579,6 +2582,8 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
     let stored_hash: Option<Vec<u8>> = row.try_get("hash").map_err(backend)?;
     let credential: String = row.try_get("credential").map_err(backend)?;
     let revoked: Option<String> = row.try_get("revoked_at_signed").map_err(backend)?;
+    let expires: Option<String> = row.try_get("expires_at_signed").map_err(backend)?;
+    let rate: Option<i32> = row.try_get("requests_per_minute").map_err(backend)?;
     let scope: String = row.try_get("guardrail_scope").map_err(backend)?;
     Ok(KeyRecord {
         key_id: row.try_get("id").map_err(backend)?,
@@ -2613,6 +2618,12 @@ fn key_from_row(row: &PgRow) -> Result<KeyRecord, StoreError> {
                     .ok_or_else(|| StoreError::Backend(format!("unknown key profile {p:?}")))
             })
             .transpose()?,
+        expiry: expires
+            .as_deref()
+            .map(EventTime::parse)
+            .transpose()
+            .map_err(backend)?,
+        requests_per_minute: rate.map(u32::try_from).transpose().map_err(backend)?,
     })
 }
 
@@ -3829,33 +3840,47 @@ async fn apply_fold(
                     })
                 })
                 .transpose()?;
-            sqlx::query(
-                // A connector key has no hash, which
-                // api_keys_connector_has_no_hash holds (0012; ADR-0031 d7).
+            // A connector key has no hash, which
+            // api_keys_connector_has_no_hash holds (0012; ADR-0031 d7). A
+            // key with no limit names neither limit column, so a schema
+            // before 0046 still takes it (ADR-0079 d1, d4).
+            let limited = k.expiry.is_some() || k.requests_per_minute.is_some();
+            let insert = if limited {
+                "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
+                 held_by, default_workarea_id, issued_by, issued_seq, name, crew_id, \
+                 user_root_id, session_for, guardrail_scope, profile, expires_at, \
+                 requests_per_minute) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, \
+                 ($17)::timestamptz, $18)"
+            } else {
                 "INSERT INTO api_keys (id, tenant_id, hash, credential, role, principal, \
                  held_by, default_workarea_id, issued_by, issued_seq, name, crew_id, \
                  user_root_id, session_for, guardrail_scope, profile) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
-            )
-            .bind(k.key_id)
-            .bind(k.tenant_id)
-            .bind(hash)
-            .bind(k.credential.as_str())
-            .bind(k.role.as_str())
-            .bind(&k.principal)
-            .bind(k.held_by.as_str())
-            .bind(k.default_workarea)
-            .bind(k.issued_by)
-            .bind(seq)
-            .bind(k.name.as_ref().map(Name::as_str))
-            .bind(k.crew_id)
-            .bind(k.user)
-            .bind(k.session_user.as_ref().map(Name::as_str))
-            .bind(k.guardrail_scope.as_str())
-            .bind(k.profile.map(KeyProfile::as_str))
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| match &k.name {
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)"
+            };
+            let mut insert = sqlx::query(insert)
+                .bind(k.key_id)
+                .bind(k.tenant_id)
+                .bind(hash)
+                .bind(k.credential.as_str())
+                .bind(k.role.as_str())
+                .bind(&k.principal)
+                .bind(k.held_by.as_str())
+                .bind(k.default_workarea)
+                .bind(k.issued_by)
+                .bind(seq)
+                .bind(k.name.as_ref().map(Name::as_str))
+                .bind(k.crew_id)
+                .bind(k.user)
+                .bind(k.session_user.as_ref().map(Name::as_str))
+                .bind(k.guardrail_scope.as_str())
+                .bind(k.profile.map(KeyProfile::as_str));
+            if limited {
+                insert = insert
+                    .bind(k.expiry.as_ref().map(EventTime::as_str))
+                    .bind(k.requests_per_minute.map(i64::from));
+            }
+            insert.execute(&mut **tx).await.map_err(|e| match &k.name {
                 Some(name) => {
                     name_taken_or_backend(e, "api_keys_tenant_id_name", NamedKind::Key, name)
                 }
@@ -3960,6 +3985,33 @@ async fn apply_fold(
             .execute(&mut **tx)
             .await
             .map_err(backend)?;
+        }
+        MetadataFold::KeyLimitsSet {
+            key_id,
+            expiry,
+            requests_per_minute,
+        } => {
+            // Both limits take the event's values. The guard matches only a
+            // live bearer or connector key of this tenant, so a change of
+            // anything else aborts the commit rather than journalling a
+            // change of nothing (ADR-0079 d5).
+            let set = sqlx::query(
+                "UPDATE api_keys SET expires_at = ($3)::timestamptz, requests_per_minute = $4 \
+                 WHERE tenant_id = $1 AND id = $2 AND revoked_at IS NULL \
+                 AND credential <> 'session'",
+            )
+            .bind(tenant_id)
+            .bind(key_id)
+            .bind(expiry.as_ref().map(EventTime::as_str))
+            .bind(requests_per_minute.map(i64::from))
+            .execute(&mut **tx)
+            .await
+            .map_err(backend)?;
+            if set.rows_affected() != 1 {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live bearer or connector key of this tenant"
+                )));
+            }
         }
         MetadataFold::ConnectCodeIssued { code, voids } => {
             fold_code_issued(tx, tenant_id, seq, code, voids).await?;
@@ -4804,6 +4856,9 @@ async fn meter_plan(
         | MetadataFold::GrantIssued { .. }
         | MetadataFold::KeyDenied { .. }
         | MetadataFold::KeyDenialLifted { .. }
+        // An expired key stays on its account's keys meter: its date can
+        // be moved later (ADR-0079 d3).
+        | MetadataFold::KeyLimitsSet { .. }
         | MetadataFold::ConnectCodeIssued { .. }
         | MetadataFold::VerdictRecorded { .. }
         | MetadataFold::SourceChecked { .. }
@@ -9852,24 +9907,29 @@ impl ConnectionStore for PgStore {
         .fetch_one(&mut *tx)
         .await
         .map_err(backend)?;
-        let live: bool = sqlx::query_scalar(
-            "SELECT revoked_at IS NULL FROM api_keys WHERE tenant_id = $1 AND id = $2",
+        // The key's state at `at`: revoked, else past its expiry, else
+        // active; a key the tenant does not hold reads as revoked
+        // (ADR-0031 d11; ADR-0079 d2).
+        let key: Option<(bool, bool)> = sqlx::query_as(
+            "SELECT revoked_at IS NOT NULL, \
+                    expires_at IS NOT NULL AND expires_at <= ($3)::timestamptz \
+               FROM api_keys WHERE tenant_id = $1 AND id = $2",
         )
         .bind(tenant_id)
         .bind(connection.key_id)
+        .bind(at.as_str())
         .fetch_optional(&mut *tx)
         .await
-        .map_err(backend)?
-        .unwrap_or(false);
+        .map_err(backend)?;
         let facts = RefreshFacts {
             connection_id,
             connection: connection.state,
             client_id: connection.client_id,
             resource: connection.resource,
-            key: if live {
-                KeyState::Active
-            } else {
-                KeyState::Revoked
+            key: match key {
+                Some((false, false)) => KeyState::Active,
+                Some((false, true)) => KeyState::Expired,
+                Some((true, _)) | None => KeyState::Revoked,
             },
             rotated,
             expired,

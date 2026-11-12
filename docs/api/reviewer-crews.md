@@ -155,7 +155,7 @@ There is no path to make a stale judgment count. The crew re-serves and reviews 
 measured basis, so poll at the rate your review deadline implies.
 
 - A `204` costs one request. Back off on repeated `204`s and tighten when held memories pile up.
-- This build sets no per-key rate limit. Poll at the rate your review deadline implies.
+- A key has no rate limit unless its administrator set one (`oml keys issue --requests-per-minute`); past it a request answers `429 limit.rate` with `Retry-After`. Poll at the rate your review deadline implies.
 
 ## Errors the loop meets
 

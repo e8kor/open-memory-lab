@@ -8,6 +8,7 @@
 mod auth;
 mod emails;
 mod federation;
+mod key_limits;
 mod metering;
 mod pages;
 mod rescan;
@@ -237,6 +238,10 @@ pub struct App<J, S, C, I, Sc> {
     /// Each key's feedback members checked today, by UTC day: the per-key
     /// cap, held before any lookup (ADR-0054 d6, as amended).
     feedback_counts: std::sync::Mutex<BTreeMap<Uuid, (i64, u64)>>,
+    /// Each key's requests in its UTC minute under the key's own rate, for
+    /// the keys that carry one: counted in this process alone, forgotten at
+    /// a restart (ADR-0079 d4, d6).
+    key_windows: std::sync::Mutex<BTreeMap<Uuid, (i64, u64)>>,
     /// The learned sparse encoder the sparse pipelines read the query with
     /// and the encoder task writes kind 2 with; `None` where the deployment
     /// serves no sparse pipeline (ADR-0052 d14, d16).
@@ -1454,6 +1459,7 @@ where
             telemetry: None,
             recall_meter: None,
             feedback_counts: std::sync::Mutex::default(),
+            key_windows: std::sync::Mutex::default(),
             sparse: None,
             formats: Arc::new(crate::ports::ProseFormats),
             signup: None,
@@ -1669,14 +1675,17 @@ where
     }
 
     /// The live key the value names; a value that names no live key is
-    /// `Unauthorized`.
+    /// `Unauthorized`, and one that names a key past its expiry is told so
+    /// (ADR-0079 d2).
     async fn key_of_value(&self, api_key: &str) -> Result<KeyRecord, AppError> {
         let hash = sha256_digest_string(api_key.as_bytes());
         let key = self.journal.key_by_hash(&hash).await;
         if let Ok(found) = &key {
             self.observer.credential(found.as_ref(), None);
         }
-        key?.ok_or(AppError::Unauthorized)
+        let key = key?.ok_or(AppError::Unauthorized)?;
+        self.require_unexpired(&key)?;
+        Ok(key)
     }
 
     /// `key`'s access as stored, `None` for a provider-level key.
@@ -2411,6 +2420,8 @@ where
             guardrail_scope: req
                 .guardrail_scope
                 .unwrap_or(GuardrailScope::ISSUANCE_DEFAULT),
+            expiry: req.expiry.clone(),
+            requests_per_minute: req.requests_per_minute,
         };
         (record, value)
     }
@@ -2423,7 +2434,7 @@ where
             "role": record.role.as_str(),
             "principal": record.principal,
             "issued_by_key_id": record.issued_by.map(|k| k.to_string()),
-            "expiry": Value::Null,
+            "expiry": record.expiry.as_ref().map(EventTime::as_str),
             "value_disclosed": false,
             "held_by": held_by.map(HeldBy::as_str),
             "default_workarea_id": record.default_workarea.map(|w| w.to_string()),
@@ -2442,6 +2453,10 @@ where
         // The profile, absent for a key with none (ADR-0030 d8).
         if let (Some(profile), Some(obj)) = (record.profile, payload.as_object_mut()) {
             obj.insert("profile".to_owned(), json!(profile.as_str()));
+        }
+        // The key's own rate, absent for a key with none (ADR-0079 d4).
+        if let (Some(rate), Some(obj)) = (record.requests_per_minute, payload.as_object_mut()) {
+            obj.insert("requests_per_minute".to_owned(), json!(rate));
         }
         payload
     }
@@ -2809,6 +2824,8 @@ where
             user: None,
             connect_code: false,
             guardrail_scope: None,
+            expiry: None,
+            requests_per_minute: None,
         };
         let (record, value) =
             self.mint_key(tenant_id, &issue, Some(root_workarea_id), None, None, None);
@@ -2840,6 +2857,8 @@ where
                 crew_id: None,
                 user: None,
                 guardrail_scope,
+                expiry: None,
+                requests_per_minute: None,
                 access: KeyAccess {
                     issued_seq: receipt.seq,
                     grants: Vec::new(),
@@ -2902,6 +2921,9 @@ where
         req: &IssueKeyRequest,
         how: Issuance<'_>,
     ) -> Result<IssuedKey, AppError> {
+        // An expiry later than now and a rate within its bound, checked
+        // with the rest of the body, before any lookup (ADR-0079 d1, d4).
+        self.check_key_limits(req.expiry.as_ref(), req.requests_per_minute)?;
         let issuer = issuer.clone();
         let tenant_id = issuer.tenant_id;
         // The person the key acts for, and the root its references resolve
@@ -3153,6 +3175,8 @@ where
                 crew_id,
                 user: user_ref.clone(),
                 guardrail_scope,
+                expiry: req.expiry.clone(),
+                requests_per_minute: req.requests_per_minute,
                 access: KeyAccess {
                     issued_seq,
                     grants: stored,
@@ -3192,6 +3216,8 @@ where
             crew_id,
             user: user_ref.clone(),
             guardrail_scope,
+            expiry: req.expiry.clone(),
+            requests_per_minute: req.requests_per_minute,
             access: KeyAccess {
                 issued_seq: receipt.seq,
                 grants: stored,
@@ -8987,8 +9013,7 @@ where
     /// one live code; the code is returned once, after that commit (http-api.md
     /// `POST /v2/keys/{key_id}/connect-codes`; ADR-0031 d7, d8).
     ///
-    /// Keys carry no expiry in this build (`key.issued.expiry` is null), so
-    /// `expired` is never the answer here.
+    /// A key past its expiry is refused as `expired` (ADR-0079 d2).
     pub async fn mint_connect_code(
         &self,
         api_key: &str,
@@ -9060,6 +9085,9 @@ where
         }
         if target.revoked_at.is_some() {
             return Err(connect_refused(ConnectRefused::Revoked));
+        }
+        if target.expired_at(&self.clock.now()) {
+            return Err(connect_refused(ConnectRefused::Expired));
         }
         let oauth = self
             .oauth_issuer
@@ -9415,8 +9443,7 @@ where
     /// A code entry spent: the code's tenant, row and key, or `None` for
     /// every entry that is not a correct code of a live key — malformed,
     /// unknown, expired, voided, spent, a revoked key's, or one a racing
-    /// entry spent first (ADR-0031 d8). Keys carry no expiry in this build
-    /// (`key.issued.expiry` is null), so a key is active or revoked.
+    /// entry spent first, or an expired key's (ADR-0031 d8; ADR-0079 d2).
     async fn spend_entry(
         &self,
         entry: &str,
@@ -9432,20 +9459,15 @@ where
         else {
             return Ok(None);
         };
-        let key = self
-            .journal
-            .key(found.tenant_id, found.row.key_id)
-            .await?
-            .filter(|key| key.revoked_at.is_none());
+        let key = self.journal.key(found.tenant_id, found.row.key_id).await?;
         let row = CodeRow {
             redeemed: found.row.redeemed_at.is_some(),
             voided: found.row.voided_seq.is_some(),
             expired: now.unix_micros() >= found.row.expires_at.unix_micros(),
-            key: if key.is_some() {
-                KeyState::Active
-            } else {
-                KeyState::Revoked
-            },
+            // A key its tenant no longer holds reads as revoked.
+            key: key
+                .as_ref()
+                .map_or(KeyState::Revoked, |key| key.state_at(now)),
         };
         let Some(key) = key.filter(|_| check_code_entry(Some(&row)).is_ok()) else {
             return Ok(None);
@@ -9743,7 +9765,9 @@ where
     /// its connection open and bound to the current `<issuer>/mcp`, and its
     /// key neither revoked nor expired; the caller is then exactly the one
     /// the key's own authentication builds (roles-and-keys.md connections;
-    /// ADR-0031 d10, d11). Anything else is [`AppError::Unauthorized`].
+    /// ADR-0031 d10, d11). A key past its expiry is
+    /// [`AppError::KeyExpired`] (ADR-0079 d2); anything else is
+    /// [`AppError::Unauthorized`].
     pub async fn resolve_access_token(&self, token: &str) -> Result<Caller, AppError> {
         let issuer = self.oauth_issuer.as_ref().ok_or(AppError::Unauthorized)?;
         if token_kind(token) != Some(TokenKind::Access) {
@@ -9770,7 +9794,11 @@ where
             .filter(|k| k.revoked_at.is_none());
         self.observer
             .credential(key.as_ref(), Some(connection.connection_id));
-        self.caller_of(key.ok_or(AppError::Unauthorized)?).await
+        let key = key.ok_or(AppError::Unauthorized)?;
+        // The token is the key's own credential, so its holder is told the
+        // key expired (ADR-0079 d2).
+        self.require_unexpired(&key)?;
+        self.caller_of(key).await
     }
 
     /// `POST /oauth/register` (http-api.md; RFC 7591; ADR-0031 d5): the body
@@ -9824,10 +9852,9 @@ where
             .is_none_or(|c| c.voided_seq.is_some());
         let facts = ExchangeFacts {
             connection: connection.clone(),
-            key: match &key {
-                Some(k) if k.revoked_at.is_none() => KeyState::Active,
-                _ => KeyState::Revoked,
-            },
+            key: key
+                .as_ref()
+                .map_or(KeyState::Revoked, |key| key.state_at(now)),
             code_expired: connection
                 .auth_code_expires_at
                 .as_ref()

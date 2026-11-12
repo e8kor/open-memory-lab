@@ -2736,10 +2736,13 @@ async fn poc_rows(conn: &mut PgConnection, tenant: Uuid, renamed: bool) -> Vec<S
             // finds (ADR-0044 d12); 0015 adds session_for, null for every
             // key it finds (ADR-0045 d6); 0016 adds guardrail_scope, folded
             // as ancestors (proposed ADR-0037 d4); 0028 adds profile, null
-            // for every key it finds (ADR-0030 d14).
+            // for every key it finds (ADR-0030 d14); 0046 adds expires_at
+            // and requests_per_minute, null for every key it finds
+            // (ADR-0079).
             (true, "api_keys") => {
                 "to_jsonb(t) - 'name' - 'crew_id' - 'credential' - 'user_root_id' \
-                 - 'session_for' - 'guardrail_scope' - 'profile'"
+                 - 'session_for' - 'guardrail_scope' - 'profile' - 'expires_at' \
+                 - 'requests_per_minute'"
             }
             // 0014 adds covers, subtree for every grant it finds (ADR-0044
             // d12).
@@ -6065,7 +6068,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 45, "every migration through 0045_usage_metering");
+    assert_eq!(applied, 46, "every migration through 0046_key_limits");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -6400,6 +6403,8 @@ async fn dreamer_pg(
                 deny: Vec::new(),
                 covers: oml_app::domain::access::Covers::Subtree,
             }],
+            expiry: None,
+            requests_per_minute: None,
         },
     )
     .await
@@ -7514,7 +7519,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 45, "every migration through 0045_usage_metering");
+    assert_eq!(applied, 46, "every migration through 0046_key_limits");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8392,7 +8397,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 45, "every migration through 0045_usage_metering");
+    assert_eq!(applied, 46, "every migration through 0046_key_limits");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;

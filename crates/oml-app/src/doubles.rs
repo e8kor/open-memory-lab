@@ -968,6 +968,8 @@ fn fold_poc_event(
                     // before guardrails holds the issuance default
                     // (proposed ADR-0037 d4).
                     guardrail_scope: oml_domain::guardrail::GuardrailScope::ISSUANCE_DEFAULT,
+                    expiry: None,
+                    requests_per_minute: None,
                 },
             );
         }
@@ -1633,6 +1635,26 @@ fn apply_fold(
                 },
             );
             state.keys.insert(key.key_id, key);
+        }
+        // Both limits take the event's values; a key the tenant does not
+        // hold, a revoked key and a session key are refused, as the
+        // store's guarded update refuses them (ADR-0079 d5).
+        MetadataFold::KeyLimitsSet {
+            key_id,
+            expiry,
+            requests_per_minute,
+        } => {
+            let Some(key) = state
+                .keys
+                .get_mut(&key_id)
+                .filter(|k| k.revoked_at.is_none() && k.credential != Credential::Session)
+            else {
+                return Err(StoreError::Backend(format!(
+                    "key {key_id} is not a live bearer or connector key of this tenant"
+                )));
+            };
+            key.expiry = expiry;
+            key.requests_per_minute = requests_per_minute;
         }
         MetadataFold::GrantIssued { key_id, grant } => {
             require_held(state, key_id, grant.node)?;
@@ -4708,10 +4730,10 @@ impl ConnectionStore for MemStore {
             .filter(|t| t.kind == TokenKind::Refresh)
             .and_then(|token| {
                 let connection = state.connections.get(&token.connection_id)?;
-                let key = match state.keys.get(&connection.key_id) {
-                    Some(k) if k.revoked_at.is_none() => KeyState::Active,
-                    _ => KeyState::Revoked,
-                };
+                let key = state
+                    .keys
+                    .get(&connection.key_id)
+                    .map_or(KeyState::Revoked, |key| key.state_at(at));
                 Some(RefreshFacts {
                     connection_id: connection.connection_id,
                     connection: connection.state,

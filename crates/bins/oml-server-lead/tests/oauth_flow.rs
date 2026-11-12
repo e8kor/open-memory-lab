@@ -228,6 +228,8 @@ async fn run_flow(db: &str) -> Option<Flow> {
                 connect_code: true,
                 user: None,
                 guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
             },
         )
         .await

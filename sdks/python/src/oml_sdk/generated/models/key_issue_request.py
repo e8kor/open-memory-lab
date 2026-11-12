@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
@@ -57,6 +58,12 @@ class KeyIssueRequest:
         connect_code (bool | Unset): Issue a connector key (ADR-0031 d7): no bearer value is minted, and the 201 carries
             connect_code in place of value. Refused with 422 oauth.connect_refused for an admin or operator role (role),
             held_by service (held_by_service), or a deployment without oauth.issuer (not_configured). Default: False.
+        expiry (datetime.datetime | Unset): The instant from which the key authenticates nothing: RFC 3339 with its
+            offset, later than the server's clock. Omitted, the key does not expire. A connector key's expiry is its
+            connection's (ADR-0079 d1, d2; since v0.7.3).
+        requests_per_minute (int | Unset): The requests the key may make in one UTC minute, its own rate beside any
+            quota of its account; the request past it is 429 limit.rate. Omitted, the key has none of its own (ADR-0079 d4;
+            since v0.7.3).
     """
 
     role: Role
@@ -71,6 +78,8 @@ class KeyIssueRequest:
     guardrail_scope: GuardrailScope | Unset = UNSET
     profile: KeyIssueRequestProfile | Unset = UNSET
     connect_code: bool | Unset = False
+    expiry: datetime.datetime | Unset = UNSET
+    requests_per_minute: int | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         role = self.role.value
@@ -116,6 +125,12 @@ class KeyIssueRequest:
 
         connect_code = self.connect_code
 
+        expiry: str | Unset = UNSET
+        if not isinstance(self.expiry, Unset):
+            expiry = self.expiry.isoformat()
+
+        requests_per_minute = self.requests_per_minute
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -144,6 +159,10 @@ class KeyIssueRequest:
             field_dict["profile"] = profile
         if connect_code is not UNSET:
             field_dict["connect_code"] = connect_code
+        if expiry is not UNSET:
+            field_dict["expiry"] = expiry
+        if requests_per_minute is not UNSET:
+            field_dict["requests_per_minute"] = requests_per_minute
 
         return field_dict
 
@@ -208,6 +227,15 @@ class KeyIssueRequest:
 
         connect_code = d.pop("connect_code", UNSET)
 
+        _expiry = d.pop("expiry", UNSET)
+        expiry: datetime.datetime | Unset
+        if isinstance(_expiry, Unset):
+            expiry = UNSET
+        else:
+            expiry = datetime.datetime.fromisoformat(_expiry)
+
+        requests_per_minute = d.pop("requests_per_minute", UNSET)
+
         key_issue_request = cls(
             role=role,
             name=name,
@@ -221,6 +249,8 @@ class KeyIssueRequest:
             guardrail_scope=guardrail_scope,
             profile=profile,
             connect_code=connect_code,
+            expiry=expiry,
+            requests_per_minute=requests_per_minute,
         )
 
         return key_issue_request

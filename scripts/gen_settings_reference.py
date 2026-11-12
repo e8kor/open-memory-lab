@@ -82,7 +82,9 @@ def render(notes: dict) -> tuple[str, list[str]]:
         "starts the counts at zero. Setting either key to its target divided by N keeps the total at or under the target "
         "when requests spread evenly, and refuses a key or an address whose requests mostly land on one process before the "
         "target. A person's console session keys keep a floor of 60 requests a minute whatever the quota, so a "
-        "`quota.requests_per_minute` under 60 binds agent keys alone, and a session key gets up to 60 x N. The defaults are the operator's choice and unmeasured; "
+        "`quota.requests_per_minute` under 60 binds agent keys alone, and a session key gets up to 60 x N. "
+        "A key's own rate, set with `oml keys issue --requests-per-minute` or `oml keys limit`, is counted the same way: "
+        "a key held to n requests a minute makes up to n x N. The defaults are the operator's choice and unmeasured; "
         "the thirty-day measurement of [#164](https://github.com/e8kor/open-memory-lab/issues/164) has not been made, "
         "and the counters are not shared across processes in this build.\n"
     )

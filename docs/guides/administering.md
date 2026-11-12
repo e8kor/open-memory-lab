@@ -78,6 +78,8 @@ A key's role fixes its grants: `writer` takes `reader` and `writer`, `dreamer` t
 
 **A reviewer.** `oml keys issue --role dreamer --grant <workarea>:dreamer` with a principal no writer there uses, plus `--grant <workarea>:reader`, or the reviewer sees a held memory without its sources ([reviewing](reviewing.md)).
 
+**A key for someone outside your team**, such as a reviewer of a demo workarea. Add `--expires <instant>` and `--requests-per-minute <n>` to either issuing verb: from that instant the key, and the connection of a connector key, authenticates nothing, and the request past the rate answers `429` until the next minute. The instant is RFC 3339 with its offset, such as `2026-12-01T17:00:00Z`.
+
 **Another admin.** `--role admin --held-by human`, no `--grant`; a dreamer grant is refused as `access.role_exclusive`. **A reader or service:** `--role reader --held-by service --grant <workarea>:reader`.
 
 ## Deny, cut off, replace, disconnect
@@ -92,7 +94,8 @@ It is journaled as `key.denied`; on an admin key it is refused.
 
 - **Cut off or end every connection:** `oml deny set <key> universe`.
 - **Rotate:** issue a successor under a new name, move the holder, deny the old key `universe`.
-- **Read one key:** `oml keys show <key>` shows grants, denials, crew, epoch and connections, never the value.
+- **Read one key:** `oml keys show <key>` shows grants, denials, crew, epoch, expiry, rate and connections, never the value.
+- **Move or clear a key's expiry or rate:** `oml keys limit <key> --expires <instant>` or `--no-expiry`, `--requests-per-minute <n>` or `--no-rate-limit`, with an admin key other than the key itself. An expired key whose date is moved later works again.
 - **End one connection:** `oml keys disconnect <key> <connection-id> [--reason <text>]`.
 
 An admin key cannot be cut off today: keep the admin credentials file on one machine. Deny a key whose value you lost and replace it.

@@ -571,7 +571,7 @@ export interface paths {
         put?: never;
         /**
          * Issue a key under the issuer ceiling; the value appears exactly once, here.
-         * @description A person's web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>), role (reader or writer) and connect_code only; the key names their user and holds writer or reader on their root alone, any other field is request.validation naming it, and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again, without value and without connect_code.code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
+         * @description A person's web session key (<user>-web, through its capacity credential) issues their own key: send name (<user>-<name>), role (reader or writer) and connect_code only; the key names their user and holds writer or reader on their root alone, any other field is request.validation naming it, and any other capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d2, d5; ADR-0045 d9, d16). Otherwise requires: admin key role; operator key role only for an operator key, sent without tenant, or a tenant's first admin key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key authenticates nothing, later than the server's clock, and requests_per_minute the key's own rate, from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing is journalled (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's subtree_node_id) is refused with request.validation naming its successor in details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown once, in the value's place; an admin or operator role, held_by service and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again, without value and without connect_code.code, which the first answer alone carries; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since v0.7.0).
          */
         post: operations["issueKey"];
         delete?: never;
@@ -634,6 +634,26 @@ export interface paths {
          * @description A person's session key cuts a key off on universe alone, workarea universe, the key by name: <user>-web one of their own keys, <user>-admin any key of the tenant, never a session key; another capacity is access.verb_ceiling with details.reason session_capacity (ADR-0070 d5; ADR-0045 d9, d13). As a session key, a resubmission under the same Idempotency-Key and body answers the recorded denial with Idempotency-Replay: true and cuts nothing off again; the same key with another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5 s, then is idempotency.in_progress (ADR-0070 d3 layer 4; since v0.6.4). Otherwise requires: admin key role, and the Idempotency-Key is required but no outcome is recorded under it: only a session key claims it, so a resubmission by any other key denies again. Distinct from a per-grant deny mask. Journalled as key.denied; the denial's epoch is that event's journal seq. workarea takes an id or a name, and workarea_node_id, the v0.3.0 spelling, is refused with request.validation, details.renamed_to /workarea (ADR-0039 d7). A denial on an admin key is refused with request.validation, details.field key: denials attenuate grants, and an admin key carries none (docs/architecture/roles-and-keys.md, permission matrix footnote 6; ADR-0026 d15).
          */
         post: operations["addDenial"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/keys/{key}/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set or clear a key's expiry and its requests per minute.
+         * @description Requires: admin key role, in the key's own tenant; any other role is access.verb_ceiling, and no MCP tool reaches the route. A member sent replaces the value, null clears it, and a member not sent keeps it; a body that names neither is request.validation. expiry is later than the server's clock (details.field /expiry) and requests_per_minute from 1 to 1000000 (details.field /requests_per_minute). The key is never the calling key, a session key or a revoked key: request.validation with details.field key and details.reason own_key, session_key or revoked, so no key moves its own date or raises its own rate. Journalled as key.limits_set with both values as they stand after the change; the Idempotency-Key is required and not replayed, so a request sent twice journals two events that leave the same limits. Moving an expired key's expiry later makes it authenticate again; the rate holds from the key's next request (ADR-0079 d5; since v0.7.3).
+         */
+        post: operations["setKeyLimits"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2614,6 +2634,33 @@ export interface components {
              * @default false
              */
             connect_code?: boolean;
+            /**
+             * Format: date-time
+             * @description The instant from which the key authenticates nothing: RFC 3339 with its offset, later than the server's clock. Omitted, the key does not expire. A connector key's expiry is its connection's (ADR-0079 d1, d2; since v0.7.3).
+             */
+            expiry?: string;
+            /** @description The requests the key may make in one UTC minute, its own rate beside any quota of its account; the request past it is 429 limit.rate. Omitted, the key has none of its own (ADR-0079 d4; since v0.7.3). */
+            requests_per_minute?: number;
+        };
+        /** @description A member sent replaces the value, null clears it, and a member not sent keeps it (ADR-0079 d5). */
+        KeyLimitsRequest: {
+            /**
+             * Format: date-time
+             * @description The instant from which the key authenticates nothing, later than the server's clock; null: the key does not expire.
+             */
+            expiry?: string | null;
+            /** @description The key's own requests per UTC minute; null: none of its own. */
+            requests_per_minute?: number | null;
+        };
+        /** @description A key's limits as they stand (ADR-0079 d5). */
+        KeyLimits: {
+            key_id: string;
+            name: string | null;
+            /** Format: date-time */
+            expiry: string | null;
+            /** @description Whether the expiry has come on the server's clock. */
+            expired: boolean;
+            requests_per_minute: number | null;
         };
         Key: {
             key_id: string;
@@ -2633,8 +2680,15 @@ export interface components {
              */
             held_by: "agent" | "human" | "service" | null;
             label?: string;
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description The instant from which the key authenticates nothing; null for a key that does not expire. The key's row, grants and name stay past it (ADR-0079 d1, d3).
+             */
             expiry?: string | null;
+            /** @description Whether the expiry has come on the server's clock; the key read serves it, the issuance answer does not (ADR-0079 d3; since v0.7.3). */
+            expired?: boolean;
+            /** @description The key's own requests per UTC minute; null for none of its own (ADR-0079 d4; since v0.7.3). */
+            requests_per_minute?: number | null;
             /** Format: date-time */
             revoked_at?: string | null;
             /** @description The key_id this key succeeded by rotation, if any (key.rotated links the two). */
@@ -2788,6 +2842,13 @@ export interface components {
              * @enum {string|null}
              */
             profile?: "curator" | null;
+            /**
+             * Format: date-time
+             * @description The instant from which this key authenticates nothing; null for a key that does not expire (ADR-0079 d3; since v0.7.3).
+             */
+            expiry?: string | null;
+            /** @description This key's own requests per UTC minute; null for none of its own (ADR-0079 d4; since v0.7.3). */
+            requests_per_minute?: number | null;
             /** @description The person the key's user root names; null for a tenant key (ADR-0070 d5). Absent with person=false (#286). */
             person?: components["schemas"]["WhoamiPerson"] | null;
             /** @description Whether the server's admins are not the caller's: true when the operator sets server.shared or opens sign-up. oml sync asks consent of a shared server; a server from this release always sends it; optional here so a client reads an answer without it, from an older server, as false (ADR-0076 d9). */
@@ -2842,6 +2903,15 @@ export interface components {
             revoked: boolean;
             /** @description A denial on universe cuts the key off (ADR-0045 d9). */
             cut_off: boolean;
+            /**
+             * Format: date-time
+             * @description The instant from which the key authenticates nothing; null for a key that does not expire (ADR-0079 d3; since v0.7.3).
+             */
+            expiry?: string | null;
+            /** @description Whether the expiry has come on the server's clock (ADR-0079 d3; since v0.7.3). */
+            expired?: boolean;
+            /** @description The key's own requests per UTC minute; null for none of its own (ADR-0079 d4; since v0.7.3). */
+            requests_per_minute?: number | null;
             grants: {
                 role: components["schemas"]["Role"];
                 /** Format: uuid */
@@ -5158,6 +5228,9 @@ export interface operations {
                      *           "user_root_id": "fbbb41c5-9630-4274-ae53-166f562f5286",
                      *           "revoked": false,
                      *           "cut_off": false,
+                     *           "expiry": null,
+                     *           "expired": false,
+                     *           "requests_per_minute": null,
                      *           "grants": [
                      *             {
                      *               "role": "writer",
@@ -5445,6 +5518,62 @@ export interface operations {
                     "application/json": components["schemas"]["Denial"];
                 };
             };
+            415: components["responses"]["UnsupportedMedia"];
+            default: components["responses"]["Error"];
+        };
+    };
+    setKeyLimits: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description A request id the caller chose: honoured when it is one instance of 1 to 128 characters from A-Z, a-z, 0-9, '-', '_', '.' and ':'; otherwise replaced by a minted one, and the request goes on. Never an idempotency key nor an input to any decision (ADR-0042 d4, d5). */
+                "X-Request-Id"?: components["parameters"]["XRequestId"];
+                /** @description A task id grouping several requests, under the X-Request-Id rule; absent or not admitted, the correlation id is the request id (ADR-0042 d6). */
+                "X-Correlation-Id"?: components["parameters"]["XCorrelationId"];
+                /** @description W3C Trace Context, version 00, read only while the deployment exports traces (server.otlp_endpoint): a valid value makes the server's span its child, an invalid one starts a new trace. tracestate is not read, and no response carries traceparent (ADR-0042 d13). */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Claims an idempotency record (key_id, workarea, idem_key) before side effects. On the provider ring the workarea component is the RESOLVED target — the body's workarea, else the key's default_workarea (ADR-0039 d7); for supersede the workarea component is the fixed nil value (ADR-0025 d10), and the record is looked up after step 1 of the supersede rule and before step 2, so a committed supersession always replays, and claimed only after step 2 passes. The request digest is SHA-256 over the RFC 8785 JSON of {method, route, path_params, body} (docs/api/http-api.md, Idempotency). Replay of the same request returns the stored response with header Idempotency-Replay: true; the same key with a different request digest is refused (idempotency.digest_mismatch). A committed record is retained for at least 24 hours — the replay-window setting may only raise that floor — and after it expires the same key is processed as a fresh request (expiry-then-reprocess is documented behavior, not a defect). */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                key: components["parameters"]["KeyId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "expiry": "2026-12-01T17:00:00Z",
+                 *       "requests_per_minute": 60
+                 *     }
+                 */
+                "application/json": components["schemas"]["KeyLimitsRequest"];
+            };
+        };
+        responses: {
+            /** @description The key's limits as they stand. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    "X-Correlation-Id": components["headers"]["XCorrelationId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "key_id": "d405428e-4c99-426d-8826-76d28436e423",
+                     *       "name": "directory-reviewer",
+                     *       "expiry": "2026-12-01T17:00:00.000000Z",
+                     *       "expired": false,
+                     *       "requests_per_minute": 60
+                     *     }
+                     */
+                    "application/json": components["schemas"]["KeyLimits"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             415: components["responses"]["UnsupportedMedia"];
             default: components["responses"]["Error"];
         };

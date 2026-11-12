@@ -2347,7 +2347,10 @@ async fn get_v2_keys_by_name_answers_the_key() {
             "user": null,
             "default_workarea_id": quarter,
             "held_by": "agent",
+            // Issued with neither limit (ADR-0079 d1, d3, d4).
             "expiry": null,
+            "expired": false,
+            "requests_per_minute": null,
             "revoked_at": null,
             "rotated_from": null,
             "grants": issued["grants"],
@@ -3103,35 +3106,87 @@ async fn a_key_issuance_without_a_name_is_request_validation_naming_name_and_jou
     drop_db(&rig.db_name).await;
 }
 
+/// A key's expiry and its own rate are stored with `key.issued` and served
+/// by the key read; from the expiry on the key's request is `auth.invalid`
+/// with `reason: expired` and the read says `expired`, the row and its
+/// grants still there; an admin key then moves the date and the key
+/// authenticates again (ADR-0079 d1, d2, d3, d5).
 #[tokio::test]
-async fn an_issuance_expiry_is_refused_by_name_while_unbuilt() {
+async fn a_key_issued_with_an_expiry_is_refused_as_expired_from_that_instant_until_an_admin_moves_it()
+ {
     let Some(rig) = fresh_rig().await else {
         return;
     };
     let router = &rig.router;
     let (admin, tenant, crew) = crew_tenant(router).await;
-    let head = head_seq(&rig, tenant).await;
+    // Two seconds from now on the server's clock.
+    let expiry = oml_transport_http::time::system_event_time_plus(2);
 
-    // Issued keys do not expire yet, so a requested expiry is refused by
-    // name: a key minted without the expiry its issuer set would hold its
-    // access longer than meant (ADR-0025 d2, d16).
-    let (status, _, refused) = send(
+    let (status, _, issued) = send(
         router,
         "POST",
         "/v2/keys",
         Call::auth(&admin).idem("expiring").body(json!({
-            "role": "writer",
+            "role": "reader",
             "name": "expiring",
-            "grants": [{ "workarea": crew, "role": "writer" }],
-            "expiry": "2027-01-01T00:00:00Z",
+            "grants": [{ "workarea": crew, "role": "reader" }],
+            "expiry": expiry.as_str(),
+            "requests_per_minute": 600,
         })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
-    assert_envelope(&refused, "request.validation");
-    let message = refused["error"]["message"].as_str().expect("message");
-    assert!(message.contains("expiry"), "{refused}");
-    assert_eq!(head_seq(&rig, tenant).await, head, "nothing journalled");
+    assert_eq!(status, StatusCode::CREATED, "{issued}");
+    assert_eq!(issued["expiry"], expiry.as_str());
+    assert_eq!(issued["requests_per_minute"], 600);
+    let key = issued["value"].as_str().expect("a value").to_owned();
+    let events = rig
+        .store
+        .events_range(tenant, 1, 100)
+        .await
+        .expect("journal");
+    let journalled = events
+        .iter()
+        .find(|e| e.envelope.payload["key_id"] == issued["key_id"])
+        .expect("key.issued");
+    assert_eq!(journalled.envelope.payload["expiry"], expiry.as_str());
+    assert_eq!(journalled.envelope.payload["requests_per_minute"], 600);
+    let (status, _, me) = send(router, "GET", "/v2/whoami", Call::auth(&key)).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(me["expiry"], expiry.as_str());
+
+    tokio::time::sleep(std::time::Duration::from_millis(2_100)).await;
+
+    let (status, _, refused) = send(router, "GET", "/v2/whoami", Call::auth(&key)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{refused}");
+    assert_envelope(&refused, "auth.invalid");
+    assert_eq!(
+        refused["error"]["details"],
+        json!({ "reason": "expired", "expiry": expiry.as_str() })
+    );
+    let (status, _, read) = send(router, "GET", "/v2/keys/expiring", Call::auth(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(read["expired"], true);
+    assert_eq!(read["revoked_at"], Value::Null);
+    assert_eq!(read["grants"].as_array().map(Vec::len), Some(1));
+    let head = head_seq(&rig, tenant).await;
+
+    let (status, _, set) = send(
+        router,
+        "POST",
+        "/v2/keys/expiring/limits",
+        Call::auth(&admin)
+            .idem("move-the-date")
+            .body(json!({ "expiry": "2999-01-01T00:00:00Z", "requests_per_minute": null })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{set}");
+    assert_eq!(set["expiry"], "2999-01-01T00:00:00.000000Z");
+    assert_eq!(set["expired"], false);
+    assert_eq!(set["requests_per_minute"], Value::Null);
+    assert_eq!(head_seq(&rig, tenant).await, head + 1, "one key.limits_set");
+    let (status, _, me) = send(router, "GET", "/v2/whoami", Call::auth(&key)).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    assert_eq!(me["requests_per_minute"], Value::Null);
 
     drop_db(&rig.db_name).await;
 }
@@ -7494,6 +7549,9 @@ async fn whoami_answers_any_live_key_with_its_tenant_role_name_and_default_worka
             // Sent none, the issuance default (proposed ADR-0037 d4, d5).
             "guardrail_scope": "ancestors",
             "profile": null,
+            // Issued with neither limit (ADR-0079 d3, d4).
+            "expiry": null,
+            "requests_per_minute": null,
             // A tenant key names no person (ADR-0070 d5).
             "person": null,
             // No server.shared and no open sign-up (ADR-0076 d9).
@@ -7816,8 +7874,8 @@ async fn the_served_openapi_document_declares_exactly_the_routed_operations_and_
     );
     assert_eq!(
         declared.len(),
-        80,
-        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5) and usage metering's six (ADR-0071 d5, d6)"
+        81,
+        "the source check (ADR-0057 d5), the workarea mode (ADR-0030 d1), the rescan and its recording form (ADR-0065 d13, d15), the 42 routed operations, the bulk review pair among them (ADR-0055), whoami, the guardrail read, the users listing (ADR-0068 d11), the six OAuth operations, the four web routes the lead keeps (ADR-0045 d25; its two JSON routes are oml-web's, ADR-0070 d7 (b), and GET and POST /web/admin are deleted, ADR-0070 \"The old URLs deleted\"), open sign-up's one the lead keeps, POST /web/sign-up (ADR-0068 d10; the onboarding and users pages are oml-web's, ADR-0070 d7 (b)), the web console's ten (ADR-0070 d5), the sign-in page oml-web sends to (ADR-0070 d4) , federation's three (ADR-0072 d5), usage metering's six (ADR-0071 d5, d6) and a key's limits (ADR-0079 d5)"
     );
     assert_eq!(oauth.len(), 6, "the six OAuth operations");
 
@@ -7979,22 +8037,18 @@ async fn a_designed_field_sent_to_a_served_operation_answers_its_v0_3_0_code() {
     assert_envelope(&revised, "submission.tip_conflict");
 }
 
-/// `expiry` and `tenant` on key issuance and `workarea` on the review
-/// serve are designed fields: openapi-designed.yaml declares them for
-/// issueKey and reviewNext under `x-oml-designed-fields`, the served
-/// openapi.yaml declares them on neither request, and each sent still
-/// answers its v0.3.0 `request.validation`, where the same call without it
-/// passes that check: the issuance is created, and the serve finds an
-/// empty queue (ADR-0039 d9).
+/// `tenant` on key issuance and `workarea` on the review serve are designed
+/// fields: openapi-designed.yaml declares them for issueKey and reviewNext
+/// under `x-oml-designed-fields`, the served openapi.yaml declares them on
+/// neither request, and each sent still answers its v0.3.0
+/// `request.validation`, where the same call without it passes that check:
+/// the issuance is created, and the serve finds an empty queue (ADR-0039
+/// d9). `expiry` left that list when it was built (ADR-0079 d1).
 #[tokio::test]
 async fn an_unbuilt_issuance_or_review_field_is_designed_and_answers_request_validation() {
     let designed = designed_openapi();
     let fields = block(&designed, 0, "x-oml-designed-fields").join("\n");
-    for (operation, field) in [
-        ("issueKey", "expiry"),
-        ("issueKey", "tenant"),
-        ("reviewNext", "workarea"),
-    ] {
+    for (operation, field) in [("issueKey", "tenant"), ("reviewNext", "workarea")] {
         let request = block(&fields, 2, operation).join("\n");
         assert!(
             block(&request, 4, "request")
@@ -8004,14 +8058,12 @@ async fn an_unbuilt_issuance_or_review_field_is_designed_and_answers_request_val
         );
     }
     let served = served_openapi();
-    for field in ["expiry", "tenant"] {
-        assert!(
-            !block(&served, 4, "KeyIssueRequest")
-                .iter()
-                .any(|l| l.trim_start().starts_with(&format!("{field}:"))),
-            "openapi.yaml KeyIssueRequest serves no {field}"
-        );
-    }
+    assert!(
+        !block(&served, 4, "KeyIssueRequest")
+            .iter()
+            .any(|l| l.trim_start().starts_with("tenant:")),
+        "openapi.yaml KeyIssueRequest serves no tenant"
+    );
     assert!(
         !block(&served, 2, "/v2/review/next")
             .iter()
@@ -8021,29 +8073,20 @@ async fn an_unbuilt_issuance_or_review_field_is_designed_and_answers_request_val
 
     let router = &doubles_router();
     let (admin, _, root) = bootstrap(router).await;
-    for (n, (field, value)) in [
-        ("expiry", json!("2027-01-01T00:00:00Z")),
-        ("tenant", json!("test-tenant")),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let mut body = json!({
+    let (status, _, refused) = send(
+        router,
+        "POST",
+        "/v2/keys",
+        Call::auth(&admin).idem("designed-tenant").body(json!({
             "role": "reader",
-            "name": format!("designed-{n}"),
+            "name": "designed-tenant",
             "grants": [{ "workarea": root, "role": "reader" }],
-        });
-        body[field] = value;
-        let (status, _, refused) = send(
-            router,
-            "POST",
-            "/v2/keys",
-            Call::auth(&admin).idem(&format!("designed-{n}")).body(body),
-        )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {refused}");
-        assert_envelope(&refused, "request.validation");
-    }
+            "tenant": "test-tenant",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "tenant: {refused}");
+    assert_envelope(&refused, "request.validation");
     let dreamer = issue_key(router, &admin, "dreamer", "agent/designed", root).await;
     let (status, _, refused) = send(
         router,
