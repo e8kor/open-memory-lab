@@ -308,9 +308,12 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
         .await
     {
         Ok(()) => tracing::info!("recall counts written"),
-        Err(unwritten) => tracing::warn!(
-            unwritten,
-            "the recall meter's writer did not answer before the stop"
+        // `Err(n)` is only what the stop itself told as lost: counts the
+        // writer told earlier, as dropped or refused, are in the
+        // `usage_recall_counts_lost` events and the metric, not in `n`.
+        Err(told_lost_at_stop) => tracing::warn!(
+            told_lost_at_stop,
+            "the recall meter's writer did not answer before the stop: the stop told this many more counts as lost; earlier ones are in the usage_recall_counts_lost events and oml_usage_recall_counts_lost_total"
         ),
     }
     tracing::info!("graceful shutdown complete");

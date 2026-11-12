@@ -212,6 +212,8 @@ async fn tenant(app: &TestApp, name: &str, canary: &str, n: usize) -> (Uuid, Vec
         connect_code: false,
         user: None,
         guardrail_scope: None,
+        expiry: None,
+        requests_per_minute: None,
     };
     let writer = app
         .issue_key(

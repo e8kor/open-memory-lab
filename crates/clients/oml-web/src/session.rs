@@ -9,7 +9,7 @@
 //! so one filter finds the page's line and its API lines.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::extract::{Request, State};
 use axum::middleware::Next;
@@ -45,6 +45,17 @@ pub struct PageCalls {
     made: Mutex<Vec<String>>,
     acting: Mutex<Option<String>>,
     action: Mutex<Option<String>>,
+    csrf: OnceLock<Csrf>,
+}
+
+/// The CSRF token of the session a request's cookie names.
+struct Csrf(String);
+
+/// No debug output prints the token.
+impl std::fmt::Debug for Csrf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<redacted>")
+    }
 }
 
 /// The ids of one API call.
@@ -64,6 +75,7 @@ impl PageCalls {
             made: Mutex::new(Vec::new()),
             acting: Mutex::new(None),
             action: Mutex::new(None),
+            csrf: OnceLock::new(),
         }
     }
 
@@ -115,6 +127,19 @@ impl PageCalls {
     #[must_use]
     pub fn action(&self) -> Option<String> {
         self.action.lock().expect("unpoisoned").clone()
+    }
+
+    /// Records the session cookie the request carries, so a refusal page
+    /// answered to it draws that session's sign-out control (#327).
+    pub fn carries_session(&self, token: &str) {
+        let _ = self.csrf.set(Csrf(oml_web_credential::csrf_token(token)));
+    }
+
+    /// The CSRF token of the session the request's cookie names; `None`
+    /// where the request carries no session cookie.
+    #[must_use]
+    pub fn csrf(&self) -> Option<&str> {
+        self.csrf.get().map(|csrf| csrf.0.as_str())
     }
 }
 
@@ -190,7 +215,11 @@ pub fn call<'a>(credential: &'a str, ids: &'a CallIds) -> Call<'a> {
 /// Layer 3: the cookie's `web` credential checked by `GET /v2/whoami`, and
 /// beside it the `admin` credential's, which resolves only for an admin's
 /// entry; both in one round trip. No cookie, or `auth.invalid`, is the
-/// `303` to sign in; any other failure is the page of layer 7.
+/// `303` to sign in; any other failure is the page of layer 7. From the
+/// cookie on, every refusal page the request is answered carries the
+/// sign-out control under the cookie's CSRF token, the page of a check
+/// that had no answer included: the lead's act decides whether a session
+/// stands behind it (#327).
 pub async fn load(State(web): State<Web>, mut req: Request, next: Next) -> Response {
     let calls = req
         .extensions()
@@ -204,9 +233,10 @@ pub async fn load(State(web): State<Web>, mut req: Request, next: Next) -> Respo
     let Some(token) = cookie(req.headers(), SESSION_COOKIE) else {
         return outcome::sign_in(&page);
     };
+    calls.carries_session(&token);
     let session = match resolve(&web, &calls, token).await {
         Ok(session) => session,
-        Err(e) => return outcome::page(&e, calls.page_id(), &page),
+        Err(e) => return outcome::page(&e, &calls, &page),
     };
     req.extensions_mut().insert(session);
     next.run(req).await

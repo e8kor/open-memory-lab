@@ -12,6 +12,7 @@
 
 pub mod as_of;
 pub mod federation;
+pub mod user_roots;
 
 use core::future::{Future, poll_fn};
 use core::pin::pin;
@@ -698,6 +699,8 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         user: None,
         session_user: None,
         guardrail_scope: GuardrailScope::Ancestors,
+        expiry: None,
+        requests_per_minute: None,
     }
 }
 
@@ -2417,6 +2420,8 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         user: None,
         session_user: None,
         guardrail_scope: GuardrailScope::Ancestors,
+        expiry: None,
+        requests_per_minute: None,
     };
     rig.commit(
         store,
@@ -2492,6 +2497,198 @@ pub async fn a_revoked_key_no_longer_resolves_by_its_hash<S: JournalStore>(store
         Some(head),
         "a refused revocation commits nothing"
     );
+}
+
+/// A key's expiry and its requests per minute fold in with `key.issued`
+/// and read back exactly; `key.limits_set` replaces both, `None` clearing
+/// one. A key past its expiry still resolves by its hash, since the use
+/// case names why it authenticates nothing. A change on a key the tenant
+/// does not hold, a revoked key or a session key is refused and commits
+/// nothing (event-catalog.md `key.limits_set`; ADR-0079 d1, d3, d5).
+pub async fn a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits_set<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(23);
+    rig.seed_chain(store, 0).await;
+    let at = |value: &str| EventTime::parse(value).expect("a fixture instant");
+    // Earlier than every fixture event: the row is past its expiry.
+    let lapsed = at("2020-01-01T00:00:00.000000Z");
+    let later = at("2030-06-01T12:30:00.250000Z");
+    let key = KeyRecord {
+        expiry: Some(lapsed.clone()),
+        requests_per_minute: Some(30),
+        ..key_record(rig.tenant_id, Uuid::from_u128(0xE0), Role::Reader, None)
+    };
+    rig.issue_key(store, key.clone()).await;
+    let hash = key.key_hash.clone().expect("a bearer key");
+    assert_eq!(
+        store.key_by_hash(&hash).await.expect("lookup"),
+        Some(key.clone()),
+        "an expired key's row still resolves, with its limits"
+    );
+
+    let set = |key_id, expiry: Option<EventTime>, requests_per_minute| {
+        (
+            event_types::KEY_LIMITS_SET,
+            json!({ "key_id": key_id }),
+            MetadataFold::KeyLimitsSet {
+                key_id,
+                expiry,
+                requests_per_minute,
+            },
+        )
+    };
+    let (event_type, payload, fold) = set(key.key_id, Some(later.clone()), None);
+    rig.commit(store, event_type, payload, fold, None)
+        .await
+        .expect("the limits are set");
+    let stored = store
+        .key(rig.tenant_id, key.key_id)
+        .await
+        .expect("read")
+        .expect("the key");
+    assert_eq!(stored.expiry, Some(later));
+    assert_eq!(stored.requests_per_minute, None, "None clears the rate");
+    let (event_type, payload, fold) = set(key.key_id, None, Some(1_000_000));
+    rig.commit(store, event_type, payload, fold, None)
+        .await
+        .expect("the limits are set again");
+    let stored = store
+        .key_by_hash(&hash)
+        .await
+        .expect("lookup")
+        .expect("the key");
+    assert_eq!(
+        (stored.expiry, stored.requests_per_minute),
+        (None, Some(1_000_000))
+    );
+
+    let revoked = key_record(rig.tenant_id, Uuid::from_u128(0xE1), Role::Reader, None);
+    rig.issue_key(store, revoked.clone()).await;
+    rig.revoke_key(store, revoked.key_id).await.expect("revoke");
+    let session = KeyRecord {
+        credential: Credential::Session,
+        key_hash: None,
+        name: Some(name("alice-web")),
+        session_user: Some(name("alice")),
+        ..key_record(rig.tenant_id, Uuid::from_u128(0xE2), Role::Writer, None)
+    };
+    rig.issue_key(store, session.clone()).await;
+    let head = store
+        .chain_head(rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("chain");
+    for key_id in [Uuid::from_u128(0xE9), revoked.key_id, session.key_id] {
+        let (event_type, payload, fold) = set(key_id, None, Some(5));
+        let refused = rig.commit(store, event_type, payload, fold, None).await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "{key_id}: {refused:?}"
+        );
+    }
+    assert_eq!(
+        store.chain_head(rig.tenant_id).await.expect("head"),
+        Some(head),
+        "a refused change commits nothing"
+    );
+}
+
+/// An admin key is stored with no limit and takes none: `key.issued` for
+/// an admin key that carries an expiry, a rate or both is refused, as is
+/// `key.limits_set` naming an admin key, whether it sets a limit or clears
+/// both. Each refusal commits nothing, and the admin key reads back with
+/// neither limit (migration 0046 `api_keys_admin_key_has_no_limits`;
+/// event-catalog.md `key.limits_set`; ADR-0079 d1, d5).
+pub async fn an_admin_key_is_stored_with_no_limit_and_takes_none_from_key_limits_set<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(24);
+    rig.seed_chain(store, 0).await;
+    let later = EventTime::parse("2030-06-01T12:30:00.250000Z").expect("a fixture instant");
+    let admin = key_record(rig.tenant_id, Uuid::from_u128(0xF0), Role::Admin, None);
+    rig.issue_key(store, admin.clone()).await;
+    let head = store
+        .chain_head(rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("chain");
+
+    for (id, expiry, requests_per_minute) in [
+        (0xF1, Some(later.clone()), Some(30)),
+        (0xF2, Some(later.clone()), None),
+        (0xF3, None, Some(30)),
+    ] {
+        let limited = KeyRecord {
+            expiry,
+            requests_per_minute,
+            ..key_record(
+                rig.tenant_id,
+                Uuid::from_u128(id),
+                Role::Admin,
+                Some(admin.key_id),
+            )
+        };
+        let refused = rig
+            .commit(
+                store,
+                event_types::KEY_ISSUED,
+                json!({ "key_id": limited.key_id.to_string(), "role": "admin" }),
+                MetadataFold::KeyIssued(limited.clone()),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "an admin key issued with a limit: {refused:?}"
+        );
+        assert_eq!(
+            store
+                .key(rig.tenant_id, limited.key_id)
+                .await
+                .expect("read"),
+            None
+        );
+    }
+    for (expiry, requests_per_minute) in [
+        (Some(later.clone()), None),
+        (None, Some(5)),
+        (Some(later), Some(5)),
+        (None, None),
+    ] {
+        let refused = rig
+            .commit(
+                store,
+                event_types::KEY_LIMITS_SET,
+                json!({ "key_id": admin.key_id }),
+                MetadataFold::KeyLimitsSet {
+                    key_id: admin.key_id,
+                    expiry,
+                    requests_per_minute,
+                },
+                None,
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "limits set on an admin key: {refused:?}"
+        );
+    }
+    assert_eq!(
+        store.chain_head(rig.tenant_id).await.expect("head"),
+        Some(head),
+        "a refused issuance or change commits nothing"
+    );
+    let stored = store
+        .key(rig.tenant_id, admin.key_id)
+        .await
+        .expect("read")
+        .expect("the admin key");
+    assert_eq!((stored.expiry, stored.requests_per_minute), (None, None));
 }
 
 /// The idempotency record rides the commit and reads back whole; an absent
@@ -7641,10 +7838,11 @@ pub async fn a_ratified_edge_between_a_memory_and_a_term_is_absent_from_the_rati
 }
 
 /// The backlog's `promoted_unapproved` counts served tips that carry no
-/// approval, and no version a ratified successor took the tip from: so
+/// approval, and no version a ratified successor took the tip from, and no
+/// retirement tip, which recall does not serve: so
 /// superseding such a version and approving its successor, the remedy
 /// `oml doctor` names, brings the count down by one, to zero when each is
-/// done (ADR-0077 d6; #311). No store takes an unapproved promotion through
+/// done (ADR-0077 d6; #311, #332). No store takes an unapproved promotion through
 /// the port over a schema that keeps the approval, so `forget_approval`
 /// makes one as migration 0044's fill leaves a version it could not match:
 /// each store's suite passes its own, and the law holds the counts equal.
@@ -7723,6 +7921,20 @@ pub async fn the_unapproved_count_is_of_served_tips_and_a_ratified_successor_bri
             .approval,
         None,
         "the replaced version keeps what it had: no approval"
+    );
+
+    // A retirement version is a tip too, and recall never serves it, so an
+    // unapproved one is not counted: the count is of what recall serves
+    // (#332).
+    let third = memory(0x7804, "the quay closes at nine");
+    hold_and_promote(&mut rig, store, third.clone()).await;
+    let retired = Uuid::from_u128(0x7813);
+    supersede(&mut rig, store, &third, retired, "retired", true).await;
+    forget_approval(tenant, retired).await;
+    assert_eq!(
+        count().await,
+        0,
+        "an unapproved retirement tip is not a served version"
     );
 }
 
@@ -8241,7 +8453,11 @@ pub async fn a_versions_write_is_counted_on_the_day_its_row_was_stored<S: Journa
 /// joins the chain the first version 1 started, whose author names the
 /// chain's account. A chain a tenant key started is no account's whoever
 /// revives it, and a chain an account started is that account's again
-/// when a tenant key revives it (ADR-0071 d2).
+/// when a tenant key revives it (ADR-0071 d2). The store holds such chains
+/// from builds before v0.7.3, where a tenant key started a claim in a
+/// person's root; the application now refuses that new memory (ADR-0044
+/// d16; [`user_roots`]), so the folds here are the store's alone, and this
+/// is the accounting those rows keep (ADR-0071 d3).
 pub async fn a_claim_captured_under_a_released_key_counts_on_the_account_that_started_its_chain<
     S: JournalStore,
 >(
@@ -8561,6 +8777,14 @@ where
     Box::pin(a_revoked_key_no_longer_resolves_by_its_hash(
         &new_store().await,
     ))
+    .await;
+    Box::pin(
+        a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits_set(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        an_admin_key_is_stored_with_no_limit_and_takes_none_from_key_limits_set(&new_store().await),
+    )
     .await;
     Box::pin(journal_idempotency_roundtrip(&new_store().await)).await;
     Box::pin(
@@ -10469,6 +10693,135 @@ pub async fn an_expired_refresh_token_is_not_rotated_and_is_not_reuse<S: Connect
     );
 }
 
+/// A refresh reads its connection's key as expired from the key's expiry
+/// on: before it the token rotates; at the instant and after, the rule is
+/// handed `KeyState::Expired`, answers `oauth.refresh_invalid` (key ended)
+/// and rotates and mints nothing, and the connection stays open; once
+/// `key.limits_set` moves the date later, the same token rotates again
+/// (postgres-schema.md, redemption and rotation are conditional updates;
+/// ADR-0031 d11; ADR-0079 d2, d5).
+pub async fn a_refresh_reads_its_connections_key_as_expired_from_the_keys_expiry_on_and_rotates_nothing<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(352);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let expiry = fixture_time("2026-10-29T13:05:00.000000Z");
+    let key = KeyRecord {
+        expiry: Some(expiry.clone()),
+        ..connector_key(t, Uuid::from_u128(0xD3520))
+    };
+    rig.issue_key(store, key.clone()).await;
+    let connection = Uuid::from_u128(0xE3520);
+    rig.opened_connection(
+        store,
+        key.key_id,
+        Uuid::from_u128(0xC3520),
+        connection,
+        None,
+        None,
+    )
+    .await;
+
+    let first = token_pair(Uuid::from_u128(0xF3521));
+    let before = store
+        .rotate_refresh(
+            t,
+            &token_pair(connection).refresh.token_hash,
+            first.clone(),
+            &fixture_time("2026-10-29T13:04:59.999999Z"),
+            fixture_refresh_rule,
+        )
+        .await
+        .expect("refresh");
+    assert_eq!(
+        before.decision,
+        RefreshDecision::Rotate,
+        "before its expiry the key is active"
+    );
+    assert_eq!(before.facts.map(|facts| facts.key), Some(KeyState::Active));
+
+    let presented = first.refresh.token_hash;
+    for (n, at) in [
+        (0xF3522_u128, expiry.clone()),
+        (0xF3523, fixture_time("2026-10-29T13:30:00.000000Z")),
+    ] {
+        let next = token_pair(Uuid::from_u128(n));
+        let outcome = store
+            .rotate_refresh(t, &presented, next.clone(), &at, fixture_refresh_rule)
+            .await
+            .expect("refresh");
+        assert_eq!(
+            outcome.decision,
+            RefreshDecision::Refuse(RefreshInvalid::KeyEnded),
+            "at {at:?}"
+        );
+        let facts = outcome.facts.expect("the row was read");
+        assert_eq!(
+            (facts.key, facts.rotated, facts.expired),
+            (KeyState::Expired, false, false),
+            "the key reads as expired, not revoked, at {at:?}"
+        );
+        assert_eq!(
+            store
+                .token_by_hash(&presented, TokenKind::Refresh)
+                .await
+                .expect("lookup")
+                .map(|r| r.row.rotated_at),
+            Some(None),
+            "the presented token is not rotated"
+        );
+        assert_eq!(
+            store
+                .token_by_hash(&next.refresh.token_hash, TokenKind::Refresh)
+                .await
+                .expect("lookup"),
+            None,
+            "no pair is minted"
+        );
+    }
+    assert_eq!(
+        store
+            .connection(t, connection)
+            .await
+            .expect("read")
+            .map(|c| c.state),
+        Some(ConnectionState::Open),
+        "an expiry revokes nothing"
+    );
+
+    rig.commit(
+        store,
+        event_types::KEY_LIMITS_SET,
+        json!({ "key_id": key.key_id }),
+        MetadataFold::KeyLimitsSet {
+            key_id: key.key_id,
+            expiry: Some(fixture_time("2026-10-29T14:00:00.000000Z")),
+            requests_per_minute: None,
+        },
+        None,
+    )
+    .await
+    .expect("the date is moved");
+    let moved = store
+        .rotate_refresh(
+            t,
+            &presented,
+            token_pair(Uuid::from_u128(0xF3524)),
+            &fixture_time("2026-10-29T13:31:00.000000Z"),
+            fixture_refresh_rule,
+        )
+        .await
+        .expect("refresh");
+    assert_eq!(
+        moved.decision,
+        RefreshDecision::Rotate,
+        "the refused refreshes rotated nothing, so the token still rotates"
+    );
+}
+
 /// At `/mcp`-kind lookup a refresh token's digest finds nothing, and at a
 /// refresh an access token's digest finds nothing: each digest finds its
 /// row only under its own kind (roles-and-keys.md connections; ADR-0031
@@ -11227,6 +11580,10 @@ where
     two_racing_refreshes_with_one_token_mint_exactly_one_new_pair(&new_store().await).await;
     a_rotated_refresh_token_keeps_its_row_until_its_own_expiry(&new_store().await).await;
     an_expired_refresh_token_is_not_rotated_and_is_not_reuse(&new_store().await).await;
+    a_refresh_reads_its_connections_key_as_expired_from_the_keys_expiry_on_and_rotates_nothing(
+        &new_store().await,
+    )
+    .await;
     at_mcp_kind_lookup_a_refresh_tokens_digest_finds_nothing(&new_store().await).await;
     connect_after_cancel_finds_no_authorization_row(&new_store().await).await;
     the_sweep_removes_a_lapsed_authorized_connection_and_a_request_a_day_after_it_lapses(

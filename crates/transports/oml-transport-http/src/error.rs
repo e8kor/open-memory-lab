@@ -291,6 +291,30 @@ pub enum ErrorContext {
 pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
     match err {
         AppError::Unauthorized => ApiError::auth_invalid("unknown"),
+        // Told only to a caller that presented the key's own credential
+        // (ADR-0079 d2).
+        AppError::KeyExpired { expiry } => ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "auth.invalid",
+            "From its expiry on a key authenticates nothing; its row stays, and an admin key may move the date (ADR-0079 d2, d5).",
+            format!("this key expired at {}", expiry.as_str()),
+        )
+        .with_details(json!({ "reason": "expired", "expiry": expiry.as_str() })),
+        AppError::KeyLimits(refusal) => {
+            let mut details = serde_json::Map::new();
+            if let Some(field) = refusal.field() {
+                details.insert("field".to_owned(), json!(field));
+            }
+            if let Some(reason) = refusal.reason() {
+                details.insert("reason".to_owned(), json!(reason));
+            }
+            let refused = ApiError::validation(refusal.message());
+            if details.is_empty() {
+                refused
+            } else {
+                refused.with_details(Value::Object(details))
+            }
+        }
         AppError::VerbCeiling { role, verb } => ApiError::new(
             StatusCode::FORBIDDEN,
             "access.verb_ceiling",
@@ -298,6 +322,21 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             format!("{verb} is outside the {} verb ceiling", role.as_str()),
         )
         .with_details(json!({ "verb": verb, "role": role.as_str() })),
+        // A denial wins over every grant, so a session key that carries
+        // one hands on no access (ADR-0070 d2; #325).
+        AppError::SessionKeyDenied { role, verb } => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "access.verb_ceiling",
+            "A session key an admin denied runs none of its key acts: it issues no key, mints no connect code and cuts off no key (ADR-0070 d2).",
+            format!(
+                "{verb} is refused: an admin denied this session key, so it issues no key, mints no connect code and cuts off no key; signing out still works"
+            ),
+        )
+        .with_details(json!({
+            "verb": verb,
+            "role": role.as_str(),
+            "reason": "session_key_denied",
+        })),
         AppError::IssuerCeiling {
             role,
             admissible,
@@ -359,6 +398,12 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             "submission.universe_refused",
             "Universe holds only curated claims: a curator writes there and a second identity reviews it; a user key reads it and never writes it (ADR-0044 d7).",
             "universe is curated: a user key never writes there",
+        ),
+        AppError::UserRootRefused => ApiError::new(
+            StatusCode::CONFLICT,
+            "submission.user_root_refused",
+            "A memory is started in a user root by its own user's keys only: a new memory, or a successor of a ratified retirement, which puts the claim back in service. A key granted there reads, reviews and proposes a successor or a retirement of a served memory (ADR-0044 d16).",
+            "this workarea lies in a user's root: only that user's keys start a memory there",
         ),
         AppError::UserRootInvalid => ApiError::auth_invalid("user_root"),
         AppError::RoleExclusive => ApiError::new(
@@ -969,7 +1014,7 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
         } => ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "limit.rate",
-            "A key of a person who signed up makes at most its requests per minute (ADR-0068 d5).",
+            "A key makes at most its requests per minute: its own rate, and its account's (ADR-0068 d5; ADR-0079 d4).",
             format!("this key made {limit} requests this minute, its limit"),
         )
         .with_details(json!({ "quota": "requests_per_minute", "limit": limit }))

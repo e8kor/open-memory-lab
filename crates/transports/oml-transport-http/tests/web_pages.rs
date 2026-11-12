@@ -5,6 +5,7 @@
 
 mod support;
 
+use std::future::Future;
 use std::sync::Arc;
 
 use axum::Router;
@@ -744,11 +745,53 @@ async fn a_post_from_another_origin_is_refused_before_the_session_is_read() {
     }
 }
 
+/// The status `GET /v2/whoami` answers the session's `capacity` credential
+/// as `oml-web` presents it: whether the credential still names a session.
+async fn credential_status(rig: &Rig, cookie: &str, capacity: &str) -> StatusCode {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let credential = oml_app::domain::web::capacity_credential(token, capacity);
+    let request = Request::get("/v2/whoami")
+        .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+        .header("oml-web-client", WEB_CLIENT_SECRET)
+        .body(Body::empty())
+        .expect("a request");
+    send(&rig.router, request).await.0
+}
+
+/// The post the console's header sends (#327): the session row ends, so
+/// its capacity credentials resolve to nothing at the API, and the cookie
+/// is cleared with the attributes the sign-in set it with (ADR-0045 d5;
+/// ADR-0070 d2).
 #[tokio::test]
 async fn sign_out_ends_the_session_and_clears_the_cookie() {
     let rig = rig().await;
-    let (_, token, _) = sign_in_google(&rig, "sub-1", EMAIL).await;
-    let cookie = format!("{SESSION_COOKIE}={}", token.expect("a session"));
+    let (location, sealed) = start(&rig, Provider::Google).await;
+    let state = query_param(&location, "state").expect("a state");
+    let nonce = query_param(&location, "nonce").expect("a nonce");
+    rig.providers.answer(
+        Provider::Google,
+        Ok(ProviderAnswer::GoogleIdToken(google_token(
+            &nonce, "sub-1", EMAIL, true,
+        ))),
+    );
+    let (status, headers, body) = callback(
+        &rig,
+        Provider::Google,
+        "the-code-4711",
+        &state,
+        &format!("{SIGN_IN_COOKIE}={sealed}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let (token, set) = set_cookie(&headers, SESSION_COOKIE).expect("the session cookie");
+    let cookie = format!("{SESSION_COOKIE}={token}");
+    for capacity in ["web", "review"] {
+        assert_eq!(
+            credential_status(&rig, &cookie, capacity).await,
+            StatusCode::OK,
+            "{capacity}: live before the sign-out"
+        );
+    }
     let csrf = csrf_for(&cookie);
     let (status, headers, _) = send(
         &rig.router,
@@ -761,8 +804,29 @@ async fn sign_out_ends_the_session_and_clears_the_cookie() {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(headers[header::LOCATION], "/web");
-    let (_, cleared) = set_cookie(&headers, SESSION_COOKIE).expect("cleared");
-    assert!(cleared.contains("Max-Age=0"));
+    let (value, cleared) = set_cookie(&headers, SESSION_COOKIE).expect("cleared");
+    assert_eq!(value, "", "{cleared}");
+    let attributes = |whole: &str| -> Vec<String> {
+        whole
+            .split("; ")
+            .skip(1)
+            .filter(|a| !a.starts_with("Max-Age="))
+            .map(str::to_owned)
+            .collect()
+    };
+    assert!(cleared.split("; ").any(|a| a == "Max-Age=0"), "{cleared}");
+    assert_eq!(attributes(&cleared), attributes(&set));
+    assert_eq!(
+        attributes(&set),
+        ["Path=/", "Secure", "HttpOnly", "SameSite=Lax"]
+    );
+    for capacity in ["web", "review"] {
+        assert_eq!(
+            credential_status(&rig, &cookie, capacity).await,
+            StatusCode::UNAUTHORIZED,
+            "{capacity}: the credential ended with the session"
+        );
+    }
     let (_, _, page) = send(&rig.router, get("/web", Some(&cookie))).await;
     assert!(page.contains("Sign in with Google"));
     // A POST after the session ended is session_expired on the sign-in page.
@@ -777,6 +841,77 @@ async fn sign_out_ends_the_session_and_clears_the_cookie() {
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(body.contains("session has ended"), "{body}");
+}
+
+/// The lead's own refusal page carries the sign-out control wherever the
+/// cookie names a live session: an old `?view=` URL, and a form the act
+/// refuses once it has read the session, one without the session's CSRF
+/// token included, since the cookie names the session and the control's
+/// token is that session's. A refusal answered before the session is read,
+/// and the sign-in page a dead cookie gets, carry none (ADR-0070 d2;
+/// ADR-0045 d5, d8; #327).
+#[tokio::test]
+async fn the_leads_refusal_page_draws_the_sign_out_control_for_a_live_session_and_for_no_one_else()
+{
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let csrf = csrf_for(&cookie);
+    let control = format!(
+        r#"<form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="{csrf}"><button type="submit" class="linkish">Sign out</button></form></div></header>"#
+    );
+    let (status, _, page) = send(&rig.router, get("/web?view=keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
+    assert!(page.contains(&control), "{page}");
+    for fields in [
+        vec![("action", "sign_out")],
+        vec![("action", "sign_out"), ("csrf_token", "0000")],
+        vec![("action", "issue_key"), ("csrf_token", csrf.as_str())],
+        vec![
+            ("action", "sign_out"),
+            ("csrf_token", csrf.as_str()),
+            ("next", "/web"),
+        ],
+    ] {
+        let (status, _, page) = send(&rig.router, post("/web", &fields, Some(&cookie))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{fields:?}: {page}");
+        assert!(page.contains(&control), "{fields:?}: {page}");
+    }
+    // Before the session is read: another origin's form, and an unknown
+    // provider's callback.
+    let request = Request::post("/web")
+        .header(header::CONTENT_TYPE, FORM)
+        .header("sec-fetch-site", "cross-site")
+        .header(header::COOKIE, &cookie)
+        .body(Body::from(form(&[
+            ("action", "sign_out"),
+            ("csrf_token", csrf.as_str()),
+        ])))
+        .expect("a request");
+    let (status, _, page) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
+    assert!(!page.contains("sign_out"), "{page}");
+    let (status, _, page) = send(&rig.router, get("/web/callback/nowhere", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
+    assert!(!page.contains("sign_out"), "{page}");
+    // The control as drawn ends the session, and a cookie that names none
+    // gets the sign-in page, which draws no control.
+    let (status, _, _) = send(
+        &rig.router,
+        post(
+            "/web",
+            &[("action", "sign_out"), ("csrf_token", &csrf)],
+            Some(&cookie),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let (status, _, page) = send(
+        &rig.router,
+        post("/web", &[("action", "issue_key")], Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{page}");
+    assert!(!page.contains("sign_out"), "{page}");
 }
 
 #[tokio::test]
@@ -1079,6 +1214,8 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
             },
         )
         .await
@@ -1420,6 +1557,49 @@ async fn a_session_key_has_no_value_and_no_connect_code() {
         .await
         .expect_err("a session key holds no connection");
     assert!(format!("{refused:?}").contains("SessionKey"), "{refused:?}");
+}
+
+/// A person's own issuance sets no limit: `POST /v2/keys` as `<user>-web`
+/// with `expiry` or `requests_per_minute` is `request.validation` naming
+/// the member, journals nothing and issues no key; a date or a rate on a
+/// person's key is an admin key's to set (ADR-0079 d1, open question 3;
+/// ADR-0045 d9).
+#[tokio::test]
+async fn a_persons_own_issuance_takes_no_expiry_and_no_rate() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let head = rig.head().await;
+    for (member, value) in [
+        ("expiry", json!("2999-01-01T00:00:00Z")),
+        ("requests_per_minute", json!(60)),
+    ] {
+        let mut body = json!({"name": "alice-laptop", "role": "writer", "connect_code": false});
+        body[member] = value;
+        let (status, answer) = as_web(&rig, &cookie, "web", "/v2/keys", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{member}: {answer}");
+        assert_eq!(answer["error"]["code"], "request.validation", "{answer}");
+        assert_eq!(
+            answer["error"]["details"],
+            json!({ "field": format!("/{member}") }),
+            "{answer}"
+        );
+    }
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    let named = rig
+        .store
+        .resolve_name(
+            rig.boot.tenant_id,
+            oml_app::domain::name::NamedKind::Key,
+            &Name::parse("alice-laptop").expect("a name"),
+        )
+        .await
+        .expect("a lookup");
+    assert_eq!(named, None, "no key was issued");
+
+    // The same issuance without a limit is the person's to make.
+    let _ = issued(&rig, &cookie, "laptop").await;
+    let key = key_named(&rig, "alice-laptop").await;
+    assert_eq!((key.expiry, key.requests_per_minute), (None, None));
 }
 
 #[tokio::test]
@@ -1806,6 +1986,8 @@ async fn stray_admin_under_alice(rig: &Rig) -> uuid::Uuid {
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
             },
         )
         .await
@@ -1972,4 +2154,380 @@ async fn the_users_listing_names_an_admin_key_whose_row_names_a_persons_root() {
     assert_eq!(listed().await["admin_keys"], json!([]));
     let _ = stray_admin_under_alice(&rig).await;
     assert_eq!(listed().await["admin_keys"], json!(["stray-admin"]));
+}
+
+// ---------------------------------------------------------------------------
+// #325: a session key an admin denied runs none of its key acts
+// ---------------------------------------------------------------------------
+
+/// alice signed in, with a writer key and a connector key of her own and
+/// the workarea `notes` in her root, and then denied: the admin denied
+/// `alice-web` on `workarea`, `notes` standing for that workarea's id.
+async fn alice_denied_on(rig: &Rig, workarea: &str) -> String {
+    let cookie = signed_in(rig, "sub-1", EMAIL).await;
+    let _ = issued(rig, &cookie, "laptop").await;
+    let (status, notes) = as_web(
+        rig,
+        &cookie,
+        "web",
+        "/v2/workareas",
+        json!({"name": "notes"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{notes}");
+    let workarea = match workarea {
+        "notes" => notes["id"].as_str().expect("an id"),
+        named => named,
+    };
+    let (status, phone) = as_web(
+        rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({"name": "alice-phone", "role": "writer", "connect_code": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{phone}");
+    let (status, denial) = as_admin(
+        rig,
+        "/v2/keys/alice-web/denials",
+        "deny-alice-web",
+        json!({"workarea": workarea}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+    cookie
+}
+
+/// The refusal a denied session key's key act answers: `access.verb_ceiling`
+/// naming the verb, `details.reason: session_key_denied`.
+fn assert_session_key_denied(status: StatusCode, answer: &Value, verb: &str) {
+    assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+    assert_eq!(answer["error"]["code"], "access.verb_ceiling", "{answer}");
+    assert_eq!(
+        answer["error"]["details"]["reason"], "session_key_denied",
+        "{answer}"
+    );
+    assert_eq!(answer["error"]["details"]["verb"], verb, "{answer}");
+}
+
+/// A `<user>-web` key an admin cut off issues no key: the answer names the
+/// denial, nothing is journalled and no key exists; a denial on the person's
+/// root, or on a workarea inside it, refuses the same way, since the key it
+/// would issue holds the whole root (ADR-0070 d2; ADR-0045 d16; #325).
+#[tokio::test]
+async fn a_cut_off_session_key_issues_no_key() {
+    for workarea in ["universe", "alice", "notes"] {
+        let rig = rig().await;
+        let cookie = alice_denied_on(&rig, workarea).await;
+        let head = rig.head().await;
+        for (name, connect_code) in [("alice-tablet", false), ("alice-watch", true)] {
+            let (status, answer) = as_web(
+                &rig,
+                &cookie,
+                "web",
+                "/v2/keys",
+                json!({"name": name, "role": "writer", "connect_code": connect_code}),
+            )
+            .await;
+            assert_session_key_denied(status, &answer, "issue_key");
+            let named = rig
+                .store
+                .resolve_name(
+                    rig.boot.tenant_id,
+                    oml_app::domain::name::NamedKind::Key,
+                    &Name::parse(name).expect("a name"),
+                )
+                .await
+                .expect("a lookup");
+            assert_eq!(named, None, "{workarea}: no key {name}");
+        }
+        assert_eq!(rig.head().await, head, "{workarea}: nothing journalled");
+    }
+}
+
+/// A `<user>-web` key an admin cut off mints no connect code for the
+/// person's connector key (ADR-0070 d2; #325).
+#[tokio::test]
+async fn a_cut_off_session_key_mints_no_connect_code() {
+    let rig = rig().await;
+    let cookie = alice_denied_on(&rig, "universe").await;
+    let head = rig.head().await;
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys/alice-phone/connect-codes",
+        json!({}),
+    )
+    .await;
+    assert_session_key_denied(status, &answer, "mint_connect_code");
+    assert_eq!(rig.head().await, head, "nothing journalled");
+}
+
+/// A `<user>-web` key an admin cut off cuts off none of the person's keys
+/// (ADR-0070 d2; #325).
+#[tokio::test]
+async fn a_cut_off_session_key_cuts_off_no_key() {
+    let rig = rig().await;
+    let cookie = alice_denied_on(&rig, "universe").await;
+    let head = rig.head().await;
+    let (status, answer) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys/alice-laptop/denials",
+        json!({"workarea": "universe"}),
+    )
+    .await;
+    assert_session_key_denied(status, &answer, "deny_key");
+    let laptop = key_named(&rig, "alice-laptop").await;
+    assert!(!denied(&rig, laptop.key_id).await, "the key is not cut off");
+    assert_eq!(rig.head().await, head, "nothing journalled");
+}
+
+/// The refusal is permanent, and any denial brings it: `alice-web` denied on
+/// a workarea outside alice's root, where the key holds no grant, runs none
+/// of its key acts, and it runs none after the admin removes alice's entry,
+/// adds it back and she signs in again, since no route lifts a denial and a
+/// sign-in finds the session key by its name and issues no other (ADR-0070
+/// d2; ADR-0045 d6; #325).
+#[tokio::test]
+async fn a_denied_session_key_is_still_refused_after_its_entry_is_removed_added_back_and_signed_in_again()
+ {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let _ = issued(&rig, &cookie, "laptop").await;
+    let (status, phone) = as_web(
+        &rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({"name": "alice-phone", "role": "writer", "connect_code": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{phone}");
+    let (status, team) = as_admin(
+        &rig,
+        "/v2/workareas",
+        "team",
+        json!({"name": "team", "parent": "universe"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{team}");
+    let (status, denial) = as_admin(
+        &rig,
+        "/v2/keys/alice-web/denials",
+        "deny-alice-web-on-team",
+        json!({"workarea": "team"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{denial}");
+    let refused = |cookie: String, tablet: &'static str| {
+        let rig = &rig;
+        async move {
+            for (path, body, verb) in [
+                (
+                    "/v2/keys",
+                    json!({"name": tablet, "role": "writer", "connect_code": false}),
+                    "issue_key",
+                ),
+                (
+                    "/v2/keys/alice-phone/connect-codes",
+                    json!({}),
+                    "mint_connect_code",
+                ),
+                (
+                    "/v2/keys/alice-laptop/denials",
+                    json!({"workarea": "universe"}),
+                    "deny_key",
+                ),
+            ] {
+                let (status, answer) = as_web(rig, &cookie, "web", path, body).await;
+                assert_session_key_denied(status, &answer, verb);
+            }
+        }
+    };
+    let head = rig.head().await;
+    refused(cookie.clone(), "alice-tablet").await;
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    let web = key_named(&rig, "alice-web").await.key_id;
+    let issued_before = journalled(&rig, "key.issued").await;
+    // The entry removed and added back: the session ends, and the next
+    // sign-in opens a new one on the same key.
+    rig.app
+        .remove_web_email(&rig.boot.admin_key.value, &Email::parse(EMAIL).unwrap())
+        .await
+        .expect("removed");
+    assert_eq!(
+        credential_status(&rig, &cookie, "web").await,
+        StatusCode::UNAUTHORIZED,
+        "the old session ended with the entry"
+    );
+    rig.allow(EMAIL, "alice", false).await;
+    let again = signed_in(&rig, "sub-1", EMAIL).await;
+    assert_ne!(again, cookie, "a new session");
+    assert_eq!(
+        credential_status(&rig, &again, "web").await,
+        StatusCode::OK,
+        "the denial refuses no sign-in"
+    );
+    assert_eq!(
+        key_named(&rig, "alice-web").await.key_id,
+        web,
+        "the same session key"
+    );
+    assert_eq!(
+        journalled(&rig, "key.issued").await,
+        issued_before,
+        "the sign-in issued no key"
+    );
+    assert!(denied(&rig, web).await, "the denial stands");
+    let head = rig.head().await;
+    refused(again, "alice-slate").await;
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    let laptop = key_named(&rig, "alice-laptop").await;
+    assert!(!denied(&rig, laptop.key_id).await, "no key was cut off");
+}
+
+/// alice signed in, with a writer key and a connector key of her own.
+async fn alice_with_a_connector(rig: &Rig) -> String {
+    let cookie = signed_in(rig, "sub-1", EMAIL).await;
+    let _ = issued(rig, &cookie, "laptop").await;
+    let (status, phone) = as_web(
+        rig,
+        &cookie,
+        "web",
+        "/v2/keys",
+        json!({"name": "alice-phone", "role": "writer", "connect_code": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{phone}");
+    cookie
+}
+
+/// The three key acts of a session key: path, body and verb.
+fn session_key_acts() -> [(&'static str, Value, &'static str); 3] {
+    [
+        (
+            "/v2/keys",
+            json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+            "issue_key",
+        ),
+        (
+            "/v2/keys/alice-phone/connect-codes",
+            json!({}),
+            "mint_connect_code",
+        ),
+        (
+            "/v2/keys/alice-laptop/denials",
+            json!({"workarea": "universe"}),
+            "deny_key",
+        ),
+    ]
+}
+
+/// The admin's denial of `alice-web` on `universe`, as a concurrent
+/// request commits it.
+fn denying_alice_web(rig: &Rig) -> impl Future<Output = ()> + Send + 'static {
+    let (app, admin) = (rig.app.clone(), rig.boot.admin_key.value.clone());
+    async move {
+        let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+        app.deny_key(admin.as_str(), name("alice-web"), name("universe"))
+            .await
+            .expect("the admin denies alice-web");
+    }
+}
+
+/// The types of the tenant's events after `seq`, oldest first.
+async fn journalled_after(rig: &Rig, seq: u64) -> Vec<String> {
+    rig.store
+        .events_range(rig.boot.tenant_id, seq + 1, 1000)
+        .await
+        .expect("the chain")
+        .into_iter()
+        .map(|e| e.envelope.event_type)
+        .collect()
+}
+
+/// A denial that commits while a session key's act runs is never followed
+/// in the journal by that key's act. Each of the three reads the chain head
+/// before the key's access and seals its commit on that head: a denial
+/// committed before the head read is in the access the act reads, so the
+/// act is refused, and one committed after it moves the head, so the
+/// commit conflicts and the retry reads the denial (ADR-0070 d2, d8; #325).
+#[tokio::test]
+async fn a_denial_committed_before_a_session_keys_act_reads_the_chain_head_refuses_the_act() {
+    for (path, body, verb) in session_key_acts() {
+        let rig = rig().await;
+        let cookie = alice_with_a_connector(&rig).await;
+        let head = rig.head().await;
+        rig.store.before_next_head_read(denying_alice_web(&rig));
+        let (status, answer) = as_web(&rig, &cookie, "web", path, body).await;
+        assert_session_key_denied(status, &answer, verb);
+        assert_eq!(
+            journalled_after(&rig, head).await,
+            ["key.denied"],
+            "{verb}: the denial alone, and nothing by the denied key after it"
+        );
+    }
+}
+
+/// The head a session key's act seals on is the one it read before the
+/// key's access: the act reads the head once, so nothing commits between
+/// the access it decided on and a later head read. A denial armed for a
+/// second head read lands only after the act (ADR-0070 d2, d8; #325).
+#[tokio::test]
+async fn a_session_keys_act_reads_the_chain_head_once_before_its_access() {
+    for (path, body, verb) in session_key_acts() {
+        let rig = rig().await;
+        let cookie = alice_with_a_connector(&rig).await;
+        let web = key_named(&rig, "alice-web").await.key_id;
+        let head = rig.head().await;
+        let (store, denial) = (rig.store.clone(), denying_alice_web(&rig));
+        rig.store
+            .before_next_head_read(async move { store.before_next_head_read(denial) });
+        let (status, answer) = as_web(&rig, &cookie, "web", path, body).await;
+        assert_eq!(status, StatusCode::CREATED, "{verb}: {answer}");
+        let acted = rig
+            .store
+            .events_range(rig.boot.tenant_id, head + 1, 1000)
+            .await
+            .expect("the chain");
+        assert!(!acted.is_empty(), "{verb}: the act is journalled");
+        assert!(
+            !denied(&rig, web).await,
+            "{verb}: no denial of alice-web landed inside the act"
+        );
+        // The next head read is the one the denial was armed for.
+        let _ = rig.head().await;
+        assert!(denied(&rig, web).await, "{verb}: the denial was armed");
+    }
+}
+
+/// A cut-off session key still ends its session, and every credential of
+/// the session ends with it: refusing the sign-out would keep the session
+/// of a key an admin cut off (ADR-0070 d2, d5 #5; #325).
+#[tokio::test]
+async fn a_cut_off_session_key_still_ends_its_session() {
+    let rig = rig().await;
+    let cookie = alice_denied_on(&rig, "universe").await;
+    let whoami = || async {
+        let token = cookie.split_once('=').expect("a session cookie").1;
+        let credential = oml_app::domain::web::capacity_credential(token, "web");
+        let request = Request::get("/v2/whoami")
+            .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+            .header("oml-web-client", WEB_CLIENT_SECRET)
+            .body(Body::empty())
+            .expect("a request");
+        send(&rig.router, request).await.0
+    };
+    assert_eq!(whoami().await, StatusCode::OK, "the session is live");
+    let (status, answer) = as_web(&rig, &cookie, "web", "/v2/web/session/end", json!({})).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{answer}");
+    assert_eq!(
+        whoami().await,
+        StatusCode::UNAUTHORIZED,
+        "the session ended"
+    );
 }

@@ -134,16 +134,22 @@ jobs:
   # no application crate (dependencies.rs), and the lead serves no page route
   # outside oml-web and the auth context (lead_routes.rs). Neither starts
   # Postgres; job test runs both again inside the workspace run.
+  # The job starts on every pull request and each step is filtered, not the
+  # job: a job skipped by its own `if` leaves no check run, so a required
+  # check of this name would wait for ever on a docs-only pull request
+  # (#331). A job whose steps are all skipped reports success.
   web-walls:
     name: crate walls (oml-web)
     needs: changes
-    if: needs.changes.outputs.cargo == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-      - run: cargo test --locked -p oml-web --test dependencies --test lead_routes
+      - if: needs.changes.outputs.cargo == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - if: needs.changes.outputs.cargo == 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+      - if: needs.changes.outputs.cargo == 'true'
+        run: cargo test --locked -p oml-web --test dependencies --test lead_routes
 
   # What a change to docs/ or eval/ alone still owes the Rust tests: the
   # targets that read those files, and nothing else. The full workspace run

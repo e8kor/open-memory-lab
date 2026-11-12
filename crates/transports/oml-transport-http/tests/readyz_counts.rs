@@ -105,6 +105,8 @@ async fn unauthenticated_readyz_carries_no_per_pipeline_or_per_tenant_count() {
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
             },
         )
         .await

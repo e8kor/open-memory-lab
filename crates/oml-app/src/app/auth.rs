@@ -364,6 +364,8 @@ where
                 grants,
                 connect_code: false,
                 user,
+                expiry: None,
+                requests_per_minute: None,
             };
             self.issue_key_by(&issuer, &req, Issuance::Session(&entry.user))
                 .await?;

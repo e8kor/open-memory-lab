@@ -14,7 +14,7 @@ use oml_domain::name::{Name, NamedKind, Reference, UNIVERSE};
 use oml_domain::signup::{QUOTA_LIMIT_MAX, Quota, Quotas};
 use oml_domain::{Role, event_types};
 
-use super::{App, Caller, require_role};
+use super::{App, Caller, Head, require_role};
 use crate::ports::{
     Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, StoreError, WebStore,
 };
@@ -405,7 +405,12 @@ where
                 // and kept in `keys_skipped`, which the HTTP answer does not
                 // carry; `oml doctor` names the second (#277).
                 match later_step(|| {
-                    self.deny_key_by(&admin.key, Reference::Id(key.key_id), universe.clone())
+                    self.deny_key_by(
+                        &admin.key,
+                        Reference::Id(key.key_id),
+                        universe.clone(),
+                        Head::AtSeal,
+                    )
                 })
                 .await
                 {
@@ -825,7 +830,11 @@ where
     /// nothing reaches, so its later requests of the minute read nothing
     /// either (ADR-0071 d5). Every key of an account is recorded, which is
     /// the onboarding page's "connected" (d10).
+    ///
+    /// A key that carries a rate of its own is held to that first, whatever
+    /// its account, so the lower of the two refuses (ADR-0079 d4).
     pub(crate) async fn admit_request(&self, key: &KeyRecord) -> Result<(), AppError> {
+        self.admit_under_key_rate(key)?;
         let Some(state) = self.signup.as_deref() else {
             return Ok(());
         };

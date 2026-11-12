@@ -664,6 +664,11 @@ where
                 "user_root_id": k.key.user,
                 "revoked": k.key.revoked_at.is_some(),
                 "cut_off": k.cut_off,
+                // The key's end date and whether it has come, and its own
+                // rate (ADR-0079 d3, d4).
+                "expiry": k.key.expiry.as_ref().map(|at| at.as_str()),
+                "expired": st.app.key_expired(&k.key),
+                "requests_per_minute": k.key.requests_per_minute,
                 "grants": grants,
             }));
         }
@@ -1247,7 +1252,7 @@ where
             Claimed::Replayed(replayed) => return Ok(replayed),
             Claimed::Act(claim) => claim,
         };
-        let set: [(&str, bool); 9] = [
+        let set: [(&str, bool); 11] = [
             ("/grants", !req.grants.is_empty()),
             ("/label", req.label.is_some()),
             ("/principal", req.principal.is_some()),
@@ -1256,10 +1261,9 @@ where
             ("/crew", req.crew.is_some()),
             ("/user", req.user.is_some()),
             ("/guardrail_scope", req.guardrail_scope.is_some()),
-            (
-                "/profile",
-                req.profile.is_some() || req.expiry.is_some() || req.tenant.is_some(),
-            ),
+            ("/profile", req.profile.is_some() || req.tenant.is_some()),
+            ("/expiry", req.expiry.is_some()),
+            ("/requests_per_minute", req.requests_per_minute.is_some()),
         ];
         if let Some((field, _)) = set.iter().find(|(_, set)| *set) {
             return Err(ApiError::validation(format!(

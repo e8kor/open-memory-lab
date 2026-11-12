@@ -95,9 +95,13 @@ def sync_detailed(
     submission, held like any write.
 
      Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility
-    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal.
-    The target must be the current served tip: submission.tip_conflict, with details.current_tip when
-    the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
+    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. A
+    target that is a ratified retirement in a user's root takes a successor, which would put the claim
+    back in service, from that user's keys alone: any other key that reads the target is 409
+    submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and
+    access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The
+    target must be the current served tip: submission.tip_conflict, with details.current_tip when the
+    caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
     ordinal, competing-successor, retirement and retired-claim rules are declared in
     docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal
     the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-
@@ -165,9 +169,13 @@ def sync(
     submission, held like any write.
 
      Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility
-    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal.
-    The target must be the current served tip: submission.tip_conflict, with details.current_tip when
-    the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
+    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. A
+    target that is a ratified retirement in a user's root takes a successor, which would put the claim
+    back in service, from that user's keys alone: any other key that reads the target is 409
+    submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and
+    access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The
+    target must be the current served tip: submission.tip_conflict, with details.current_tip when the
+    caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
     ordinal, competing-successor, retirement and retired-claim rules are declared in
     docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal
     the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-
@@ -230,9 +238,13 @@ async def asyncio_detailed(
     submission, held like any write.
 
      Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility
-    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal.
-    The target must be the current served tip: submission.tip_conflict, with details.current_tip when
-    the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
+    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. A
+    target that is a ratified retirement in a user's root takes a successor, which would put the claim
+    back in service, from that user's keys alone: any other key that reads the target is 409
+    submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and
+    access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The
+    target must be the current served tip: submission.tip_conflict, with details.current_tip when the
+    caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
     ordinal, competing-successor, retirement and retired-claim rules are declared in
     docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal
     the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-
@@ -298,9 +310,13 @@ async def asyncio(
     submission, held like any write.
 
      Requires: the supersede rule declared in docs/architecture/roles-and-keys.md (Grant admissibility
-    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal.
-    The target must be the current served tip: submission.tip_conflict, with details.current_tip when
-    the caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
+    and refusal order) — a writer on a target version it authored, a dreamer through edit-as-proposal. A
+    target that is a ratified retirement in a user's root takes a successor, which would put the claim
+    back in service, from that user's keys alone: any other key that reads the target is 409
+    submission.user_root_refused, answered after step 2 of that rule and ahead of access.author_only and
+    access.grant_refused; every other successor there is under the supersede rule (ADR-0044 d16). The
+    target must be the current served tip: submission.tip_conflict, with details.current_tip when the
+    caller can read it. The tip moves only at ratification, by compare-and-set; the tip, version-
     ordinal, competing-successor, retirement and retired-claim rules are declared in
     docs/architecture/audit-and-lineage.md (ADR-0025 d10, d11). The body's workarea, if sent, must equal
     the target's workarea (request.validation, details.field /workarea, otherwise), and an X-OML-

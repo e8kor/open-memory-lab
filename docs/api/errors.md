@@ -45,7 +45,7 @@ Every request except `/healthz`, `/readyz`, the discovery documents and the OAut
 | Code | HTTP | Fires when |
 |---|---|---|
 | `auth.missing` | 401 | No `Authorization: Bearer` header. |
-| `auth.invalid` | 401 | The key or token is unknown, malformed, expired or denied. `details.reason` is `unknown` for keys, and for a capacity credential (`omls_`) whose web session has ended. It is `session_outside_web` for a capacity credential on `/mcp`, or on `/v1` and `/v2` without `oml-web`'s client identity, or beside a client certificate a gateway forwarded. On web pages it also carries `not_allowed`, `email_unverified`, `state_mismatch`, `identity_changed`, `provider_refused` and `session_expired`. |
+| `auth.invalid` | 401 | The key or token is unknown, malformed, expired or denied. `details.reason` is `unknown` for keys, and for a capacity credential (`omls_`) whose web session has ended. A key presented at or after its expiry, by its value or by its connection's access token, is `expired`, with `details.expiry` the instant; only a caller holding that key's own credential is told ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d2). It is `session_outside_web` for a capacity credential on `/mcp`, or on `/v1` and `/v2` without `oml-web`'s client identity, or beside a client certificate a gateway forwarded. On web pages it also carries `not_allowed`, `email_unverified`, `state_mismatch`, `identity_changed`, `provider_refused` and `session_expired`. |
 
 ## `oauth` — connections
 
@@ -58,9 +58,9 @@ The refusals of the connection flow for claude.ai and phone apps. At `POST /oaut
 | `oauth.pkce_required` | 400 | The authorize request has no `code_challenge`, or its method is not `S256`. |
 | `oauth.resource_mismatch` | 400 | `resource` is not exactly `<issuer>/mcp`. |
 | `oauth.authorization_expired` | 400 | The request outlived ten minutes or spent five attempts, or its handle names no live request. |
-| `oauth.connect_code_invalid` | 400 | The connect code is unknown, expired, voided, used, or belongs to a denied key. One answer for all five. |
-| `oauth.authorization_code_invalid` | 400 | The authorization code is unknown, expired, already redeemed, issued to another client, or its PKCE verifier does not match. |
-| `oauth.refresh_invalid` | 400 | The refresh token is unknown, expired, already rotated (which ends the connection), or issued to another client. |
+| `oauth.connect_code_invalid` | 400 | The connect code is unknown, expired, voided, used, or belongs to a key that is denied or past its expiry. One answer for all six. |
+| `oauth.authorization_code_invalid` | 400 | The authorization code is unknown, expired, already redeemed, issued to another client, its PKCE verifier does not match, or its key is past its expiry. The expired key's code is not spent, and redeems if an admin moves the key's date before the code lapses ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d2, d5). |
+| `oauth.refresh_invalid` | 400 | The refresh token is unknown, expired, already rotated (which ends the connection), issued to another client, or its key is past its expiry. An expired key ends no connection and rotates nothing, so the token works again if an admin moves the key's date ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d2, d5). |
 | `oauth.origin_refused` | 403 | A `POST /oauth/authorize` came from another origin. It uses no attempt. |
 | `oauth.attach_refused` | 403 | Reserved. This build does not return it. |
 | `oauth.connect_refused` | 422 | The key cannot hold a connection. `details.reason` is `role`, `held_by_service`, `bearer_key`, `revoked`, `expired`, `not_configured`, `connector_key`, `session_key` or `not_confined`; the last is a code that lives past ten minutes asked for a key that reaches more than one workarea, the universe or a user root. |
@@ -71,7 +71,7 @@ A key's role, grants and denials decide these. Reads fail closed as absence.
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `access.verb_ceiling` | 403 | The key's role never calls this verb, whatever its grants. Examples: an agent key calling an admin verb, an admin key posting a verdict or reading memory text, a `held_by: service` key reviewing, any web-page request carrying an `Authorization` header. `details.reason` `session_key_only`: a person's own act (listing their keys, ending their session, the export, the deletion request) sent by any key but their web session key, an agent's key naming them included. `details.reason` `session_capacity`: a key operation sent as a person's session key of another capacity than the one it serves, such as `POST /v2/keys` as `<user>-admin`. `details.reason` `federation_is_human_only`: a workarea's federation field set by a key other than a person's reviewer key or an admin key. |
+| `access.verb_ceiling` | 403 | The key's role never calls this verb, whatever its grants. Examples: an agent key calling an admin verb, an admin key posting a verdict or reading memory text, a `held_by: service` key reviewing, any web-page request carrying an `Authorization` header. `details.reason` `session_key_only`: a person's own act (listing their keys, ending their session, the export, the deletion request) sent by any key but their web session key, an agent's key naming them included. `details.reason` `session_capacity`: a key operation sent as a person's session key of another capacity than the one it serves, such as `POST /v2/keys` as `<user>-admin`. `details.reason` `session_key_denied`: `POST /v2/keys`, `POST /v2/keys/{key}/connect-codes` or `POST /v2/keys/{key}/denials` sent as a person's session key that carries a denial, on any workarea; such a key issues no key, mints no connect code and cuts off no key, and still ends its session. `details.reason` `federation_is_human_only`: a workarea's federation field set by a key other than a person's reviewer key or an admin key. |
 | `access.grant_refused` | 403 | The key can read the workarea, but its effective access does not confer the verb's role there. `details`: `workarea_id`, `needed_role`. |
 | `access.not_found` | 404 | The thing does not exist, or is outside the key's read scope. The two cases look the same. Also answers a name that resolves to nothing the key may see. |
 | `access.author_only` | 403 | A writer key tried to supersede a version it did not author. |
@@ -85,7 +85,7 @@ Malformed or unsupported requests. `details.field` names the refused value: a pa
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `request.validation` | 400 | Malformed JSON, a missing or mistyped field, an unknown field or enum value, a stale cursor. A renamed field also carries `details.renamed_to`. |
+| `request.validation` | 400 | Malformed JSON, a missing or mistyped field, an unknown field or enum value, a stale cursor. A renamed field also carries `details.renamed_to`. A key's limits asked for a key that takes none carry `details.reason`: on `POST /v2/keys/{key}/limits`, `own_key`, `session_key`, `revoked` or `admin_key` with `details.field: key`; on `POST /v2/keys` for an admin key, `admin_key` with `details.field` the limit sent, since an admin key carries no expiry and no rate ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d1, d5). |
 | `request.idempotency_key_required` | 400 | A state-creating `POST` has no `Idempotency-Key`. |
 | `request.payload_too_large` | 413 | The body exceeds the admitted size. See [limits](../reference/limits.md). |
 | `request.unsupported_media` | 415 | The `Content-Type` is not supported. `details.supported` names what is. |
@@ -116,6 +116,7 @@ Refusals at write time. A refused write stores nothing.
 | `submission.claim_key_conflict` | 409 | A new memory would put a second live version under one `claim_key` in the workarea. |
 | `submission.similar_exists` | 409 | The write sent `on_similar: refuse` and a readable memory already says the same. `details.similar` lists up to three. Resend with `hold`. |
 | `submission.universe_refused` | 409 | A write addressed the tenant's `universe` root from a key that may not write there. |
+| `submission.user_root_refused` | 409 | A new memory addressed a user's root, or a workarea beneath it, from a key that is not that user's; or such a key proposed a successor of a ratified retirement there, which would put the claim back in service. Answered where the key reads the workarea or the target; a key that reads neither gets `access.not_found`. |
 
 ## `name` — unique names
 
@@ -188,7 +189,7 @@ Reserved. This build serves no attachment uploads.
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `limit.rate` | 429 | Unused OAuth client registrations passed 10,000, or a read's `feedback` would pass 1,000 labels in a UTC day. A key of a person of the sign-up tenant past its requests per minute is `limit.rate` with `details.quota: requests_per_minute`; sign-ups from one client address past the hour's limit are `limit.rate` too ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d5, d9). Retryable, with `Retry-After`. |
+| `limit.rate` | 429 | Unused OAuth client registrations passed 10,000, or a read's `feedback` would pass 1,000 labels in a UTC day. A key past its requests per minute is `limit.rate` with `details: {quota: "requests_per_minute", limit}`, whether the rate is its account's quota or the key's own ([ADR-0079](../adr/ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d4); sign-ups from one client address past the hour's limit are `limit.rate` too ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d5, d9). Retryable, with `Retry-After`. |
 | `limit.quota` | 429 | A person of the sign-up tenant is past a quota of memories, keys or connections, with `details: {quota, limit, used}`. Nothing is journaled, and an admin raises the limit on `/web/admin/users` ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d5). Any account on a quota profile past `memories`, `text_bytes`, `writes_per_month`, `keys` or `connections` is refused by the write's own commit, so two writers at the limit never both pass ([ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d3, d5). |
 
 ## `export` and `settings`
@@ -218,7 +219,7 @@ Review unavailability is not an API error. When no reviewer can approve, writes 
 | 401 | `auth.missing`, `auth.invalid` |
 | 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
 | 404 | `access.not_found` |
-| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `name.taken`, `workarea.frozen`, `workarea.transition_refused`, `workarea.in_progress_refused`, `workarea.held_remaining`, `workarea.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
+| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `submission.user_root_refused`, `name.taken`, `workarea.frozen`, `workarea.transition_refused`, `workarea.in_progress_refused`, `workarea.held_remaining`, `workarea.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
 | 410 | `lifecycle.erased` |
 | 413 | `request.payload_too_large` |
 | 415 | `request.unsupported_media` |

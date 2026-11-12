@@ -123,6 +123,141 @@ pub struct KeyRecord {
     /// The key's profile, fixed at issuance: `curator` narrows inside an
     /// in-progress scope and never widens (ADR-0030 d8); `None` otherwise.
     pub profile: Option<KeyProfile>,
+    /// The instant from which the key authenticates nothing, set at
+    /// issuance or by `key.limits_set`; `None` for a key that does not
+    /// expire. The row stays past it (postgres `api_keys.expires_at`;
+    /// ADR-0079 d1, d3).
+    pub expiry: Option<EventTime>,
+    /// The requests the key may make in one UTC minute, its own rate
+    /// beside any its account's quota sets; `None` for none of its own
+    /// (postgres `api_keys.requests_per_minute`; ADR-0079 d4).
+    pub requests_per_minute: Option<u32>,
+}
+
+impl KeyRecord {
+    /// Whether the key's expiry has come at `now`: a key lives while its
+    /// expiry is later than the instant (ADR-0079 d2).
+    #[must_use]
+    pub fn expired_at(&self, now: &EventTime) -> bool {
+        self.expiry
+            .as_ref()
+            .is_some_and(|expiry| expiry.unix_micros() <= now.unix_micros())
+    }
+
+    /// The key's state at `now` as every lookup reads it: revoked, else
+    /// expired, else active (ADR-0031 d11; ADR-0079 d2).
+    #[must_use]
+    pub fn state_at(&self, now: &EventTime) -> KeyState {
+        if self.revoked_at.is_some() {
+            KeyState::Revoked
+        } else if self.expired_at(now) {
+            KeyState::Expired
+        } else {
+            KeyState::Active
+        }
+    }
+}
+
+/// The most requests a minute a key's own rate may name, the bound a
+/// quota's limit has (ADR-0079 d4; ADR-0068 d5).
+pub const KEY_REQUESTS_PER_MINUTE_MAX: u32 = 1_000_000;
+
+/// Why a request that sets a key's limits is refused, each
+/// `request.validation` (ADR-0079 d1, d4, d5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyLimitsRefusal {
+    /// The `expiry` is not later than the lead's clock.
+    ExpiryNotLater,
+    /// The `requests_per_minute` is outside 1 to
+    /// [`KEY_REQUESTS_PER_MINUTE_MAX`].
+    RateOutOfRange,
+    /// A change that names neither limit.
+    Empty,
+    /// The key to change is the calling key: no key sets its own limits.
+    OwnKey,
+    /// A session key ends with its web session and has no rate of its own.
+    SessionKey,
+    /// A revoked key authenticates nothing, whatever its limits.
+    Revoked,
+    /// The key to change is an admin key: limits are for the other roles,
+    /// so no key that can change a limit carries one, and no admin key ends
+    /// another by a date (ADR-0079 d1, d5).
+    AdminKey,
+    /// An admin key issued with an `expiry`.
+    AdminKeyExpiry,
+    /// An admin key issued with a `requests_per_minute`.
+    AdminKeyRate,
+}
+
+impl KeyLimitsRefusal {
+    /// `details.field`: the body member as its JSON pointer, `key` for the
+    /// path's key, and none for a body that names no limit.
+    #[must_use]
+    pub fn field(self) -> Option<&'static str> {
+        match self {
+            KeyLimitsRefusal::ExpiryNotLater | KeyLimitsRefusal::AdminKeyExpiry => Some("/expiry"),
+            KeyLimitsRefusal::RateOutOfRange | KeyLimitsRefusal::AdminKeyRate => {
+                Some("/requests_per_minute")
+            }
+            KeyLimitsRefusal::Empty => None,
+            KeyLimitsRefusal::OwnKey
+            | KeyLimitsRefusal::SessionKey
+            | KeyLimitsRefusal::Revoked
+            | KeyLimitsRefusal::AdminKey => Some("key"),
+        }
+    }
+
+    /// `details.reason`, for a refusal of the key the request names, and of
+    /// a limit asked for an admin key.
+    #[must_use]
+    pub fn reason(self) -> Option<&'static str> {
+        match self {
+            KeyLimitsRefusal::OwnKey => Some("own_key"),
+            KeyLimitsRefusal::SessionKey => Some("session_key"),
+            KeyLimitsRefusal::Revoked => Some("revoked"),
+            KeyLimitsRefusal::AdminKey
+            | KeyLimitsRefusal::AdminKeyExpiry
+            | KeyLimitsRefusal::AdminKeyRate => Some("admin_key"),
+            KeyLimitsRefusal::ExpiryNotLater
+            | KeyLimitsRefusal::RateOutOfRange
+            | KeyLimitsRefusal::Empty => None,
+        }
+    }
+
+    /// The sentence the refusal answers.
+    #[must_use]
+    pub fn message(self) -> &'static str {
+        match self {
+            KeyLimitsRefusal::ExpiryNotLater => {
+                "expiry is an instant later than now; to end a key now, deny it or end its connection"
+            }
+            KeyLimitsRefusal::RateOutOfRange => {
+                "requests_per_minute is a whole number from 1 to 1000000"
+            }
+            KeyLimitsRefusal::Empty => "send at least one of expiry and requests_per_minute",
+            KeyLimitsRefusal::OwnKey => {
+                "a key's limits are set by another admin key, never by the key itself"
+            }
+            KeyLimitsRefusal::SessionKey => {
+                "a session key ends with its web session and takes no limits"
+            }
+            KeyLimitsRefusal::Revoked => "a revoked key takes no limits",
+            KeyLimitsRefusal::AdminKey
+            | KeyLimitsRefusal::AdminKeyExpiry
+            | KeyLimitsRefusal::AdminKeyRate => {
+                "an admin key carries no expiry and no rate of its own"
+            }
+        }
+    }
+}
+
+/// A change to a key's limits (`POST /v2/keys/{key}/limits`; ADR-0079 d5):
+/// for each member `None` keeps the value, `Some(None)` clears it and
+/// `Some(Some(_))` replaces it. A change that names neither is refused.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeyLimitsChange {
+    pub expiry: Option<Option<EventTime>>,
+    pub requests_per_minute: Option<Option<u32>>,
 }
 
 /// A connect code as `connection.code_issued` mints it, for the commit's
@@ -1423,6 +1558,12 @@ pub struct IssuedKey {
     pub user: Option<NamedRef>,
     /// The guardrail scope as journalled (proposed ADR-0037 d4).
     pub guardrail_scope: GuardrailScope,
+    /// The key's expiry as journalled; `None` for a key that does not
+    /// expire (ADR-0079 d1).
+    pub expiry: Option<EventTime>,
+    /// The key's own requests per minute as journalled; `None` for none
+    /// (ADR-0079 d4).
+    pub requests_per_minute: Option<u32>,
     pub access: KeyAccess,
     /// A connector key's connect code, returned only after the key's last
     /// `grant.issued` and its `connection.code_issued` committed; `None` for
@@ -1491,6 +1632,14 @@ pub struct IssueKeyRequest {
     pub guardrail_scope: Option<GuardrailScope>,
     /// `profile: "curator"` (ADR-0030 d8); `None` for every other key.
     pub profile: Option<KeyProfile>,
+    /// The instant the key stops authenticating, later than the lead's
+    /// clock at issuance; `None` issues a key that does not expire, and an
+    /// admin key takes no other (ADR-0079 d1).
+    pub expiry: Option<EventTime>,
+    /// The key's own requests per UTC minute, from 1 to
+    /// [`KEY_REQUESTS_PER_MINUTE_MAX`]; `None` gives it none, and an admin
+    /// key takes no other (ADR-0079 d4).
+    pub requests_per_minute: Option<u32>,
 }
 
 /// One requested grant: a role over the subtree of `node`, less the
@@ -2829,6 +2978,17 @@ pub enum AppError {
     SignupRateLimited { retry_after_secs: u64 },
     #[error("unknown api key (reads fail closed — http-api.md authentication)")]
     Unauthorized,
+    /// The presented key, or the key of the presented connection, is past
+    /// its expiry (`auth.invalid`, `details: {reason: "expired", expiry}`;
+    /// ADR-0079 d2). Only a caller holding the key's own credential is
+    /// answered it.
+    #[error("this key expired at {expiry}")]
+    KeyExpired { expiry: EventTime },
+    /// A request that sets a key's expiry or its requests per minute is
+    /// refused for what it names (`request.validation`; ADR-0079 d1, d4,
+    /// d5).
+    #[error("{}", .0.message())]
+    KeyLimits(KeyLimitsRefusal),
     #[error(
         "{verb} is outside the {role:?} verb ceiling (roles-and-keys.md permission matrix, R1)"
     )]
@@ -2878,6 +3038,23 @@ pub enum AppError {
         "universe holds only claims its curators write; a user key never writes there (ADR-0044 d7, submission.universe_refused)"
     )]
     UniverseRefused,
+    /// A person's session key that carries a denial runs none of its key
+    /// acts: it issues no key, mints no connect code and cuts off no key
+    /// (ADR-0070 d2; #325; access.verb_ceiling, reason session_key_denied).
+    #[error(
+        "{verb} is refused: this session key carries a denial (ADR-0070 d2, access.verb_ceiling)"
+    )]
+    SessionKeyDenied { role: Role, verb: &'static str },
+    /// A new memory, or a successor of a ratified retirement, addresses a
+    /// user root or a workarea beneath one with a key that is not that
+    /// user's: answered where the key reads the node or the target, in
+    /// place of `access.grant_refused` and `access.author_only`; a key that
+    /// reads neither keeps `access.not_found` (ADR-0044 d16; errors.md
+    /// `submission.user_root_refused`).
+    #[error(
+        "a memory is started in a user root by its own user's keys only; this key is not one of them (ADR-0044 d16, submission.user_root_refused)"
+    )]
+    UserRootRefused,
     /// The key names a user root that is not one: the lead serves it
     /// nothing (ADR-0044 d14; auth.invalid, reason user_root).
     #[error("the key's user root is not a user root (ADR-0044 d14, auth.invalid)")]

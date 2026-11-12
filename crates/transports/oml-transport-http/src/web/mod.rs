@@ -39,7 +39,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oml_app::app::{Callback, CallbackRefusal, WEB_SESSION_TTL_SECS};
-use oml_app::domain::web::{Provider, SignInRefusal, SignInState, csrf_matches};
+use oml_app::domain::web::{Provider, SignInRefusal, SignInState, csrf_matches, csrf_token};
 use oml_app::ports::{
     Clock, ConnectionStore, IdGen, JournalStore, Scanner, SignInExchange, Signer, WebStore,
 };
@@ -315,7 +315,18 @@ where
     }
 
     fn refused(&self, error: &ApiError, line: WebLine) -> Answer {
-        let mut response = self.refusal_page(error);
+        self.refused_with(self.refusal_page(error), error, line)
+    }
+
+    /// A refusal answered once the cookie named the live session `token`
+    /// opens: the page carries that session's sign-out control, so a
+    /// person a page refuses still ends their session (ADR-0070 d2; #327).
+    fn refused_in_session(&self, error: &ApiError, line: WebLine, token: &str) -> Answer {
+        let html = page::refusal_page(error.code, &error.message, None, Some(&csrf_token(token)));
+        self.refused_with(self.page(error.status, html), error, line)
+    }
+
+    fn refused_with(&self, mut response: Response, error: &ApiError, line: WebLine) -> Answer {
         error.mark_quota(&mut response);
         Answer {
             response,
@@ -392,7 +403,7 @@ where
                 error_code: None,
                 line,
             },
-            Ok(Some((_, session))) => {
+            Ok(Some((token, session))) => {
                 line.session(&session);
                 // The page's default view, Keys, is oml-web's: a signed-in
                 // `GET /web` naming no view is a 303 to its fixed path,
@@ -408,7 +419,7 @@ where
                 }
                 // Every view the page had is oml-web's (ADR-0070 d7 (b)),
                 // and an old `?view=` URL no longer redirects there.
-                self.refused(&ApiError::not_found(), line)
+                self.refused_in_session(&ApiError::not_found(), line, &token)
             }
         }
     }
@@ -471,10 +482,13 @@ where
             .find(|(name, _)| name == "csrf_token")
             .map(|(_, v)| v.as_str());
         if !sent.is_some_and(|sent| csrf_matches(&token, sent)) {
-            return self.refused(
+            // The cookie names the session and the form came from this
+            // origin, so the page still carries the session's own control.
+            return self.refused_in_session(
                 &ApiError::validation("the form's csrf_token is absent or not this session's")
                     .with_details(json!({"field": "csrf_token"})),
                 line,
+                &token,
             );
         }
         let Some(action) = fields
@@ -482,10 +496,11 @@ where
             .find(|(name, _)| name == "action")
             .and_then(|(_, v)| USER_ACTIONS.iter().find(|a| **a == v.as_str()).copied())
         else {
-            return self.refused(
+            return self.refused_in_session(
                 &ApiError::validation("action is not one of this page's actions")
                     .with_details(json!({"field": "action"})),
                 line,
+                &token,
             );
         };
         line.action = Some(action);
@@ -494,14 +509,15 @@ where
             .iter()
             .find(|(name, _)| name != "action" && name != "csrf_token")
         {
-            return self.refused(
+            return self.refused_in_session(
                 &ApiError::validation(format!("sign_out takes no field {name}"))
                     .with_details(json!({"field": name})),
                 line,
+                &token,
             );
         }
         if let Err(e) = self.app.web_sign_out(&session).await {
-            return self.refused(&map_app_error(e, ErrorContext::Write), line);
+            return self.refused_in_session(&map_app_error(e, ErrorContext::Write), line, &token);
         }
         Answer {
             response: self.redirect("/web", Some(clear_cookie(SESSION_COOKIE))),

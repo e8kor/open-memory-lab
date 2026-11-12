@@ -130,6 +130,8 @@ async fn world() -> World {
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
             },
         )
         .await
@@ -322,6 +324,8 @@ async fn world_at_one_request_a_minute() -> World {
         connect_code: false,
         user: Some(name("ann")),
         guardrail_scope: None,
+        expiry: None,
+        requests_per_minute: None,
     };
     // The first key naming ann creates her root (ADR-0044 d3).
     let first = app

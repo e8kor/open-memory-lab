@@ -110,7 +110,7 @@ pub async fn user_page(
     let ids = calls.next_ids();
     let memory = match web.api.get_memory(&call(&credential, &ids), id).await {
         Ok(memory) => memory,
-        Err(e) => return outcome::page(&e, calls.page_id(), USER_MEMORY_PATH),
+        Err(e) => return outcome::page(&e, &calls, USER_MEMORY_PATH),
     };
     let drawing = render::drawing(
         web.layers.public_origin.as_deref(),
@@ -128,6 +128,7 @@ pub async fn user_page(
         shell(
             "Your page",
             &session.who(),
+            Some(&session.csrf()),
             &user_tabs(session.admin),
             USER_MEMORIES_PATH,
             None,
@@ -286,7 +287,7 @@ pub async fn admin_page(
     };
     let read = match admin_read(&web, &session, &calls, id).await {
         Ok(read) => read,
-        Err(e) => return outcome::page(&e, calls.page_id(), ADMIN_MEMORY_PATH),
+        Err(e) => return outcome::page(&e, &calls, ADMIN_MEMORY_PATH),
     };
     let csrf = session.csrf();
     let drawing = render::drawing(
@@ -331,6 +332,7 @@ pub async fn admin_page(
         shell(
             "Administration",
             &session.who(),
+            Some(&session.csrf()),
             &ADMIN_TABS,
             ADMIN_MEMORIES_PATH,
             notice(&fields),
@@ -359,7 +361,7 @@ fn curator_refused(e: &Error, calls: &PageCalls, next: &str) -> Response {
             "you hold no curate key on this session; a curator designation takes effect at your next sign-in",
             calls,
         ),
-        _ => outcome::page(e, calls.page_id(), next),
+        _ => outcome::page(e, calls, next),
     }
 }
 
@@ -405,7 +407,7 @@ pub async fn admin_act(
     let _in_flight = acts::hold(&key).await;
     let read = match admin_read(&web, &session, &calls, &target).await {
         Ok(read) => read,
-        Err(e) => return outcome::page(&e, calls.page_id(), ADMIN_MEMORY_PATH),
+        Err(e) => return outcome::page(&e, &calls, ADMIN_MEMORY_PATH),
     };
     // No page supersedes or retires a guardrail: it is written with its
     // severity and rule on the API or the command line (ADR-0037 d17).
@@ -425,7 +427,7 @@ pub async fn admin_act(
     let own = match web.api.whoami(&call(&curate, &ids)).await {
         Ok(curator) => curator.name.is_some() && curator.name == read.key,
         Err(Error::Api(e)) if e.code == "auth.invalid" => false,
-        Err(e) => return outcome::page(&e, calls.page_id(), ADMIN_MEMORY_PATH),
+        Err(e) => return outcome::page(&e, &calls, ADMIN_MEMORY_PATH),
     };
     let credential = if own {
         curate
@@ -449,7 +451,7 @@ pub async fn admin_act(
             &format!("{ADMIN_MEMORY_PATH}?id={target}&done=proposed"),
             &[],
         ),
-        Err(e) => outcome::page(&e, calls.page_id(), ADMIN_MEMORY_PATH),
+        Err(e) => outcome::page(&e, &calls, ADMIN_MEMORY_PATH),
     }
 }
 
@@ -475,7 +477,7 @@ pub async fn curate_page(
                 source = read.artifact_id;
                 prefill = read.text;
             }
-            Err(e) => return outcome::page(&e, calls.page_id(), ADMIN_CURATE_PATH),
+            Err(e) => return outcome::page(&e, &calls, ADMIN_CURATE_PATH),
         }
     }
     let mut body = String::from(
@@ -500,6 +502,7 @@ pub async fn curate_page(
         shell(
             "Administration",
             &session.who(),
+            Some(&session.csrf()),
             &ADMIN_TABS,
             ADMIN_CURATE_PATH,
             notice(&fields),

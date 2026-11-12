@@ -156,7 +156,7 @@ async fn served(
         .api
         .review_named(&call(&credential, &ids), &[memory_id])
         .await
-        .map_err(|e| Box::new(outcome::page(&e, view.calls.page_id(), view.side.path())))?;
+        .map_err(|e| Box::new(outcome::page(&e, view.calls, view.side.path())))?;
     let Some(item) = named.items.into_iter().find_map(|n| n.item) else {
         return Ok((
             r#"<p class="desc">That memory is no longer held, or not yours to judge.</p>"#
@@ -204,7 +204,7 @@ async fn queue(view: &ViewCtx<'_>) -> Result<String, Refusal> {
         .api
         .review_queue(&call(&credential, &ids))
         .await
-        .map_err(|e| Box::new(outcome::page(&e, view.calls.page_id(), view.side.path())))?;
+        .map_err(|e| Box::new(outcome::page(&e, view.calls, view.side.path())))?;
     let mut body = String::from(
         r#"<h2>Queue</h2><p class="desc">Held memories per workarea.</p><table><tr><th>Workarea</th><th>Held</th><th>Oldest since</th></tr>"#,
     );
@@ -245,7 +245,7 @@ async fn held(view: &ViewCtx<'_>, fields: &Fields) -> Result<String, Refusal> {
             fields.given("cursor"),
         )
         .await
-        .map_err(|e| Box::new(outcome::page(&e, view.calls.page_id(), page)))?;
+        .map_err(|e| Box::new(outcome::page(&e, view.calls, page)))?;
     let all = fields.get("select") == Some("all");
     let value = |name: &str| fields.given(name).unwrap_or("");
     let kept: String = filters
@@ -387,6 +387,7 @@ async fn view(
         shell(
             title(side),
             &session.who(),
+            Some(&session.csrf()),
             &tabs(&session, side),
             page,
             notice(&fields).as_deref(),
@@ -504,7 +505,7 @@ async fn act(
             match web.api.review_next(&call(&credential, &ids), &key).await {
                 Ok(Some(serve)) => acts::see_other(&served_location(page, &serve), &[]),
                 Ok(None) => acts::see_other(&format!("{page}?done=empty"), &[]),
-                Err(e) => outcome::page(&e, calls.page_id(), page),
+                Err(e) => outcome::page(&e, &calls, page),
             }
         }
         "verdict" => {
@@ -533,7 +534,7 @@ async fn act(
                 .await
             {
                 Ok(recorded) => recorded,
-                Err(e) => return outcome::page(&e, calls.page_id(), page),
+                Err(e) => return outcome::page(&e, &calls, page),
             };
             let state = match recorded.state.as_str() {
                 s @ ("promoted" | "held" | "rejected") => s,
@@ -605,7 +606,7 @@ async fn act(
                         &[],
                     )
                 }
-                Err(e) => outcome::page(&e, calls.page_id(), page),
+                Err(e) => outcome::page(&e, &calls, page),
             }
         }
     }
@@ -652,7 +653,7 @@ async fn bulk_confirm(
         .await
     {
         Ok(named) => named,
-        Err(e) => return outcome::page(&e, calls.page_id(), page),
+        Err(e) => return outcome::page(&e, calls, page),
     };
     let mut body = format!(
         r#"<h1>{} {} memories?</h1><p class="desc">One verdict each. Any no longer held is skipped.</p><table><tr><th>Claim key</th><th>First line</th><th>Artifact</th></tr>"#,
@@ -719,6 +720,7 @@ async fn bulk_confirm(
         shell(
             "Bulk review",
             &session.who(),
+            Some(&session.csrf()),
             &tabs(session, side),
             page,
             None,

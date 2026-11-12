@@ -566,13 +566,13 @@ async fn confirmation(
                 .await
             {
                 Ok(view) => (view.id, view.path),
-                Err(e) => return Err(Box::new(outcome::page(&e, calls.page_id(), page))),
+                Err(e) => return Err(Box::new(outcome::page(&e, calls, page))),
             }
         }
     };
     let offers = offers_of(&web.api, credentials, calls, &id)
         .await
-        .map_err(|(_, e)| Box::new(outcome::page(&e, calls.page_id(), page)))?;
+        .map_err(|(_, e)| Box::new(outcome::page(&e, calls, page)))?;
     let grammar = || {
         Box::new(refused(
             StatusCode::BAD_REQUEST,
@@ -661,7 +661,7 @@ async fn view(
     // its secondary ones (ADR-0070 d8).
     let nodes = match tree(&web, &reader, &calls, &root).await {
         Ok(nodes) => nodes,
-        Err((_, Some(e))) => return outcome::page(&e, calls.page_id(), next),
+        Err((_, Some(e))) => return outcome::page(&e, &calls, next),
         Err((request_id, None)) => {
             return refused(
                 StatusCode::BAD_GATEWAY,
@@ -734,6 +734,7 @@ async fn view(
         shell(
             title,
             &session.who(),
+            Some(&session.csrf()),
             &tabs,
             page,
             notice(fields.get("done")),
@@ -948,7 +949,7 @@ async fn act(
             }
             response
         }
-        Err(e) => outcome::page(&e, calls.page_id(), page),
+        Err(e) => outcome::page(&e, &calls, page),
     }
 }
 
