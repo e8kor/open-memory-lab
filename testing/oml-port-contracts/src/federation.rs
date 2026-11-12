@@ -636,15 +636,22 @@ pub async fn a_scope_reader_never_meets_an_unreadable_workarea<S: JournalStore +
     assert!(!body.contains(&legal.to_string()) && !body.contains("legal"));
 }
 
-/// Test 4: an unreadable name in a list is refused exactly as an absent
-/// one, at its index; a list with one unusable name is refused whole; the
-/// two refusals' latencies are compared over many runs; and the shape
-/// refusals come in d5's order: the list's shape, federation on, a `Cc`
-/// pipeline, then the names.
-pub async fn a_list_is_answered_whole_or_refused_in_d5s_order<S: JournalStore + Clone>(store: S) {
+/// Test 4's world: a key reading `crew`, `legal`, `product` and `drafts`
+/// and denied `secret`, `secret-dev` and `secret-declining`, three
+/// unreadable workareas the read check must refuse before a status or a
+/// policy is looked at, and a declining node inside the scope.
+pub struct RefusalWorld<S: JournalStore> {
+    pub world: FedWorld<S>,
+    pub key: IssuedKey,
+    /// The one promoted row of `secret`, which a caller may copy into it.
+    pub secret: Uuid,
+}
+
+/// Test 4, the world.
+pub async fn refusal_world<S: JournalStore + Clone>(store: S) -> RefusalWorld<S> {
     let mut w = FedWorld::seeded(store).await;
     w.create("secret", "crew").await;
-    w.promote("secret", "invoice retry policy").await;
+    let secret = w.promote("secret", "invoice retry policy").await;
     w.commit("secret").await;
     // Unreadable nodes a status or a policy would refuse if it were read
     // before the read check: a `development` one and a declining one.
@@ -674,6 +681,86 @@ pub async fn a_list_is_answered_whole_or_refused_in_d5s_order<S: JournalStore + 
             &["secret", "secret-dev", "secret-declining"],
         )
         .await;
+    RefusalWorld {
+        world: w,
+        key,
+        secret,
+    }
+}
+
+/// Test 4, one sample: `runs` recalls of the list `names`, each refused,
+/// the refusal of each the same bytes, returned. The work these reads do is
+/// what the caller counts (#295).
+pub async fn refusal_sample<S: JournalStore + Clone>(
+    t: &RefusalWorld<S>,
+    names: [&str; 2],
+    runs: usize,
+) -> String {
+    let list = Some(Sources::List(
+        names.iter().map(|n| (*n).to_owned()).collect(),
+    ));
+    let mut first: Option<String> = None;
+    for _ in 0..runs {
+        let refused = match t
+            .world
+            .recall(&t.key, "invoice", "home", list.clone(), "bm25", 10)
+            .await
+        {
+            Ok(answer) => panic!("answered: {}", fingerprint(&answer)),
+            Err(e) => format!("{e:?}"),
+        };
+        assert_eq!(
+            first.get_or_insert_with(|| refused.clone()),
+            &refused,
+            "a list's refusal changed between runs"
+        );
+    }
+    first.expect("at least one run")
+}
+
+/// Test 4's timing half: wall times of `runs` refusals of a list naming an
+/// unreadable workarea and of one naming an absent name, interleaved after
+/// four warm-ups of each, so neither pays the other's cold caches. A
+/// measurement run weekly by the bench workflow, not by the gating suite
+/// (#295).
+pub async fn refusal_timings<S: JournalStore + Clone>(
+    t: &RefusalWorld<S>,
+    runs: usize,
+) -> (Vec<f64>, Vec<f64>) {
+    let (mut unreadable, mut absent) = (Vec::with_capacity(runs), Vec::with_capacity(runs));
+    for i in 0..runs + 4 {
+        for (names, into) in [
+            (["legal", "secret"], &mut unreadable),
+            (["legal", "nowhere"], &mut absent),
+        ] {
+            let started = Instant::now();
+            refusal_sample(t, names, 1).await;
+            if i >= 4 {
+                into.push(started.elapsed().as_secs_f64());
+            }
+        }
+    }
+    (unreadable, absent)
+}
+
+/// Test 4's comparison: an unreadable name's refusal and an absent one's
+/// take the same median time within noise, a factor of 3 and 2 ms.
+pub fn assert_refusals_within_noise(unreadable: Vec<f64>, absent: Vec<f64>) {
+    let (a, b) = (quantile(unreadable, 0.5), quantile(absent, 0.5));
+    assert!(
+        a <= b * 3.0 + 0.002 && b <= a * 3.0 + 0.002,
+        "an unreadable name's refusal took {a}s against an absent one's {b}s"
+    );
+}
+
+/// Test 4: an unreadable name in a list is refused exactly as an absent
+/// one, at its index; a list with one unusable name is refused whole; and
+/// the shape refusals come in d5's order: the list's shape, federation on,
+/// a `Cc` pipeline, then the names. The two refusals' work, which a
+/// latency would show, is counted by each store's own test, not timed here
+/// (#295).
+pub async fn a_list_is_answered_whole_or_refused_in_d5s_order<S: JournalStore + Clone>(store: S) {
+    let RefusalWorld { world: w, key, .. } = refusal_world(store).await;
     let list = |names: &[&str]| {
         Some(Sources::List(
             names.iter().map(|n| (*n).to_owned()).collect(),
@@ -806,30 +893,6 @@ pub async fn a_list_is_answered_whole_or_refused_in_d5s_order<S: JournalStore + 
     assert!(
         untrusted.contains("SourceRefused { index: 1, reason: Untrusted }"),
         "{untrusted}"
-    );
-    // The inherited channel, measured: an unreadable name's refusal and an
-    // absent one's take the same time within noise.
-    // The two are interleaved, after a warm-up of each, so neither pays
-    // the other's cold caches.
-    let (mut unreadable_t, mut absent_t) = (Vec::new(), Vec::new());
-    for i in 0..44 {
-        for (names, into) in [
-            (["legal", "secret"], &mut unreadable_t),
-            (["legal", "nowhere"], &mut absent_t),
-        ] {
-            let started = Instant::now();
-            let _ = w
-                .recall(&key, "invoice", "home", list(&names), "bm25", 10)
-                .await;
-            if i >= 4 {
-                into.push(started.elapsed().as_secs_f64());
-            }
-        }
-    }
-    let (a, b) = (quantile(unreadable_t, 0.5), quantile(absent_t, 0.5));
-    assert!(
-        a <= b * 3.0 + 0.002 && b <= a * 3.0 + 0.002,
-        "an unreadable name's refusal took {a}s against an absent one's {b}s"
     );
     // d5's order.
     let empty = refusal(
