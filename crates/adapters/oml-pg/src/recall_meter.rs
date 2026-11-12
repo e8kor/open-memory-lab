@@ -93,7 +93,9 @@ impl PgRecallMeter {
     /// of a refused sum as it fails, so those are not counted again here.
     ///
     /// # Errors
-    /// The number of counts left unwritten.
+    /// The number of counts this stop told as lost. It is not the run's
+    /// total: counts the writer told earlier, as dropped by a full queue or
+    /// refused by the store, were told then and are not in it.
     pub async fn flush_at_stop(&self, within: Duration) -> Result<(), u64> {
         let (done, wait) = oneshot::channel();
         let written = tokio::time::timeout(within, async {
