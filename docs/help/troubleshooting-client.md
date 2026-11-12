@@ -45,6 +45,8 @@ The other lines that name a missing or shared server:
 
 The key is a typo, comes from another server, or was denied. Log in again with the right key.
 
+When the answer's `details.reason` is `expired`, the key reached the end date its administrator set, and `oml doctor` prints `fail expired` with the date. The key and its memories are still there: the administrator moves the date with `oml keys limit <key> --expires <instant>`, or issues another key.
+
 ```bash
 oml login <url>
 ```
@@ -91,7 +93,7 @@ The CLI prints the code, a message and a `rule:` line, then exits `1`. Branch on
 | `submission.scan_veto` | The scan refused the write. `details.finding` names the rule class. | Remove what it names. Nothing was stored. |
 | `review.author_in_lineage` | The reviewer wrote the memory or one it derives from. | Review with a different identity. |
 | `review.serve_invalid` | The served item expired, was used, or changed. | Run `oml review next` again. |
-| `limit.rate` | A cap was reached: unused client registrations, or recall feedback labels for the day. | Retry after `Retry-After` seconds. |
+| `limit.rate` | A cap was reached: unused client registrations, recall feedback labels for the day, or the key's requests per minute. | Retry after `Retry-After` seconds. |
 
 ## My memory does not appear when I recall
 

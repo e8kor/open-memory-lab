@@ -1692,6 +1692,119 @@ async fn keys_show_names_a_revoked_key_as_revoked_in_its_human_layout() {
     lab.stop().await;
 }
 
+/// `oml keys issue --expires --requests-per-minute` sets both limits,
+/// `oml keys show` prints them, and `oml keys limit` moves and clears them
+/// under the admin credentials. The key's own holder is refused the verb.
+/// `oml doctor` under the key names the instant it ends; once that has
+/// come, doctor fails naming the date, and `oml keys show` marks the key
+/// expired (cli/reference.md `oml keys`; ADR-0079 d5, d7).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_limit_moves_a_keys_expiry_and_rate_and_doctor_names_an_expired_key() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("metals");
+    let issued = lab.issue(
+        "reviewer",
+        &[
+            "--role",
+            "reader",
+            "--principal",
+            "directory/reviewer",
+            "--grant",
+            &format!("{wa}:reader"),
+            "--expires",
+            "2999-01-01T00:00:00Z",
+            "--requests-per-minute",
+            "600",
+        ],
+    );
+    assert_eq!(issued["expiry"], "2999-01-01T00:00:00.000000Z");
+    assert_eq!(issued["requests_per_minute"], 600);
+    let reviewer = issued["value"].as_str().expect("a value").to_owned();
+    let limit_lines = |stdout: &str| -> Vec<String> {
+        stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("expiry") || l.starts_with("rate"))
+            .map(ToOwned::to_owned)
+            .collect()
+    };
+    let (code, shown, stderr) = lab.text(&["keys", "show", "reviewer"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        limit_lines(&shown),
+        [
+            "expiry   : 2999-01-01T00:00:00.000000Z",
+            "rate     : 600 requests per minute"
+        ],
+        "{shown}"
+    );
+
+    // The key's holder cannot move its own date (R1).
+    let (code, refused, log) = lab.json(
+        Some(&reviewer),
+        &["keys", "limit", "reviewer", "--no-expiry"],
+    );
+    assert_ne!(code, 0, "{log}");
+    assert!(
+        format!("{refused}{log}").contains("access.verb_ceiling"),
+        "{refused} {log}"
+    );
+
+    // Two seconds from now on the server's clock, and no rate.
+    let soon = oml_transport_http::time::system_event_time_plus(2);
+    let (code, set, log) = lab.json(
+        None,
+        &[
+            "keys",
+            "limit",
+            "reviewer",
+            "--expires",
+            soon.as_str(),
+            "--no-rate-limit",
+        ],
+    );
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(set["expiry"], soon.as_str(), "{log}");
+    assert_eq!(set["requests_per_minute"], Value::Null, "{log}");
+    let (code, doctor, log) = lab.json(Some(&reviewer), &["doctor"]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(
+        doctor["key_limits"],
+        json!([format!(
+            "ok expiry: this key ends at {soon}; an admin moves its date with `oml keys limit \
+             <key> --expires <instant>`"
+        )]),
+        "{log}"
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(2_200)).await;
+
+    let (code, doctor, log) = lab.json(Some(&reviewer), &["doctor"]);
+    assert_ne!(code, 0, "an expired key fails doctor: {log}");
+    assert_eq!(doctor["verdict"], "fail", "{log}");
+    let key_lines = doctor["key_limits"].as_array().expect("key lines");
+    assert_eq!(key_lines.len(), 1, "{doctor}");
+    assert!(
+        key_lines[0].as_str().is_some_and(
+            |l| l.starts_with("fail expired: this key ended at ") && l.contains(soon.as_str())
+        ),
+        "{doctor}"
+    );
+    let (code, shown, stderr) = lab.text(&["keys", "show", "reviewer"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        limit_lines(&shown),
+        [format!(
+            "expiry   : {soon} (expired: the key authenticates nothing)"
+        )],
+        "{shown}"
+    );
+    assert!(shown.contains("revoked  : no (live)"), "{shown}");
+    lab.stop().await;
+}
+
 /// `oml workareas crew set <workarea> --crew <crew>` points a workarea at a
 /// crew record, each by id or name sent as typed, in one `POST
 /// /v2/workareas/{workarea_id}/crew {crew}`, and the workarea read then

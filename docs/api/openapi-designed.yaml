@@ -1740,7 +1740,6 @@ x-oml-designed-fields:
       prefix: { type: string, description: 'Registers the node as a vocabulary workarea (ADR-0021): tenant-unique and permanent, never reused or reassigned. Conflict answers 409 vocab.prefix_conflict. A create carrying prefix requires crew — a vocabulary needs a named curator crew record.' }
   issueKey:
     request:
-      expiry: { type: string, format: date-time, description: 'When the issued key stops authenticating. Refused with request.validation until key expiry is built: a key minted without it would keep its access past the issuer''s date (ADR-0025 d2, d16).' }
       tenant: { $ref: 'openapi.yaml#/components/schemas/TenantRef', description: "Present if and only if an operator key issues an admin key, the tenant's first; the tenant by id or name, resolved first, in the deployment. The key's name, its crew and every other reference of the body then resolve in that tenant, and a tenant that already holds a key of any role is access.issuer_ceiling. An operator key's operator key carries no tenant, and its name is in the provider's namespace (ADR-0026 d4, d5). Refused with request.validation until the first-admin-key path is built." }
   reviewNext:
     request:

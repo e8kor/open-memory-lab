@@ -47,6 +47,9 @@ pub mod event_types {
     /// A key's revocation; journalled for a key whose issuance failed after
     /// its `key.issued` (ADR-0025 d2, reason `issuance_incomplete`).
     pub const KEY_REVOKED: &str = "key.revoked";
+    /// An admin key set another key's expiry and request rate: both values
+    /// as they stand after the change (ADR-0079 d5).
+    pub const KEY_LIMITS_SET: &str = "key.limits_set";
     /// A writer submits a memory; held on arrival.
     pub const SUBMISSION_REMEMBER: &str = "submission.remember";
     /// A derived claim with its lineage; a supersession whose successor is

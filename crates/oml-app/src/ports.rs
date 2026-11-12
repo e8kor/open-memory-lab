@@ -269,6 +269,16 @@ pub enum MetadataFold {
     KeyRevoked {
         key_id: Uuid,
     },
+    /// `key.limits_set`: the key's expiry and its requests per minute become
+    /// these two values, `None` clearing one, from this commit on. The
+    /// store refuses a key it does not hold, a revoked key and a session
+    /// key, which carries neither (event-catalog.md `key.limits_set`;
+    /// ADR-0079 d5).
+    KeyLimitsSet {
+        key_id: Uuid,
+        expiry: Option<EventTime>,
+        requests_per_minute: Option<u32>,
+    },
     /// `connection.code_issued`: the code's row, its `issued_seq` this
     /// commit's seq. The commit voids every code of the key from which no
     /// connection has opened, spent or not, their `voided_seq` this seq.

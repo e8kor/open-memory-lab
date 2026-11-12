@@ -4966,6 +4966,8 @@ async fn other_tenant_writes(rig: &Rig, body: &str) {
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
             },
         )
         .await
@@ -5006,6 +5008,8 @@ async fn the_user_page_never_lists_another_authors_held_row_outside_in_progress_
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
             },
         )
         .await
@@ -5508,6 +5512,8 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
             },
         )
         .await

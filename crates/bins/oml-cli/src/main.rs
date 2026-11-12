@@ -368,6 +368,26 @@ enum KeysCommand {
         #[arg(long, value_name = "DURATION")]
         ttl: Option<String>,
     },
+    /// Set or clear a key's expiry and its requests per minute; needs an admin
+    /// key other than the key itself, and journals key.limits_set.
+    Limit {
+        /// Key id or name.
+        #[arg(value_name = "KEY")]
+        key_ref: String,
+        /// Instant the key stops authenticating, RFC 3339 with its offset, such
+        /// as 2026-12-01T17:00:00Z; must be later than now.
+        #[arg(long, value_name = "INSTANT", conflicts_with = "no_expiry")]
+        expires: Option<String>,
+        /// Clear the expiry, so the key does not expire.
+        #[arg(long)]
+        no_expiry: bool,
+        /// Requests the key may make in one UTC minute, from 1 to 1000000.
+        #[arg(long, value_name = "N", conflicts_with = "no_rate_limit")]
+        requests_per_minute: Option<u32>,
+        /// Clear the key's own rate, leaving any quota of its account.
+        #[arg(long)]
+        no_rate_limit: bool,
+    },
     /// Revoke one connector-key connection and journal connection.revoked.
     Disconnect {
         /// Connector key id or name.
@@ -423,6 +443,34 @@ struct KeysIssueArgs {
     /// in-progress workarea and never promotes.
     #[arg(long, value_parser = ["curator"])]
     profile: Option<String>,
+    #[command(flatten)]
+    limits: KeyLimitArgs,
+}
+
+/// The limits an issuing verb may set on the key it issues.
+#[derive(Args)]
+struct KeyLimitArgs {
+    /// Instant the key stops authenticating, RFC 3339 with its offset, such as
+    /// 2026-12-01T17:00:00Z; must be later than now. Omitted, the key does not
+    /// expire.
+    #[arg(long, value_name = "INSTANT")]
+    expires: Option<String>,
+    /// Requests the key may make in one UTC minute, from 1 to 1000000. Omitted,
+    /// the key has no rate of its own.
+    #[arg(long, value_name = "N")]
+    requests_per_minute: Option<u32>,
+}
+
+impl KeyLimitArgs {
+    /// Adds the limits the verb was given to an issuance body.
+    fn add_to(&self, body: &mut Value) {
+        if let Some(expires) = &self.expires {
+            body["expiry"] = json!(expires);
+        }
+        if let Some(rate) = self.requests_per_minute {
+            body["requests_per_minute"] = json!(rate);
+        }
+    }
 }
 
 #[derive(Args)]
@@ -461,6 +509,8 @@ struct IssueAgentArgs {
     /// ancestors also loads every readable ancestor. Defaults to ancestors.
     #[arg(long, value_parser = ["workarea", "ancestors"])]
     guardrail_scope: Option<String>,
+    #[command(flatten)]
+    limits: KeyLimitArgs,
 }
 
 #[derive(Subcommand)]
@@ -1510,6 +1560,7 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
             if let Some(scope) = &args.guardrail_scope {
                 body["guardrail_scope"] = json!(scope);
             }
+            args.limits.add_to(&mut body);
             let (_, response) = client.post("/v2/keys", &body, &write_opts())?;
             if cli.json {
                 print_json(&response);
@@ -1523,6 +1574,9 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 println!("    default: {}", field(&response, "default_workarea_id"));
                 if response["user"].is_object() {
                     println!("    user   : {}", field(&response["user"], "name"));
+                }
+                for line in key_limit_lines(&response) {
+                    println!("    {line}");
                 }
                 if let Some(grants) = response["grants"].as_array() {
                     for g in grants {
@@ -1585,6 +1639,11 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                     Some(at) => println!("    revoked  : {at}"),
                     None => println!("    revoked  : no (live)"),
                 }
+                // The key's end date, saying when it has passed, and its
+                // own rate (ADR-0079 d3, d4).
+                for line in key_limit_lines(&response) {
+                    println!("    {line}");
+                }
                 println!("    credential: {}", field(&response, "credential"));
                 // The one connect code that can still open a connection,
                 // named and never shown; a reviewer code says so (ADR-0067 d3).
@@ -1635,6 +1694,50 @@ fn run(cli: &Cli) -> Result<ExitCode, CliError> {
                 eprintln!("{line}");
             }
             Ok(ExitCode::from(printed.exit))
+        }
+
+        Command::Keys {
+            command:
+                KeysCommand::Limit {
+                    key_ref,
+                    expires,
+                    no_expiry,
+                    requests_per_minute,
+                    no_rate_limit,
+                },
+        } => {
+            let body = key_limits_body(
+                expires.as_deref(),
+                *no_expiry,
+                *requests_per_minute,
+                *no_rate_limit,
+            )
+            .map_err(CliError::Local)?;
+            let client = resolve(cli, &stored)?;
+            let (_, response) = client.post(
+                &format!("/v2/keys/{}/limits", segment(key_ref)?),
+                &body,
+                &write_opts(),
+            )?;
+            if cli.json {
+                print_json(&response);
+            } else {
+                println!(
+                    "limits journalled — key {} ({})",
+                    field(&response, "name"),
+                    field(&response, "key_id")
+                );
+                for line in key_limit_lines(&response) {
+                    println!("    {line}");
+                }
+                if response["expiry"].is_null() {
+                    println!("    expiry   : none (the key does not expire)");
+                }
+                if response["requests_per_minute"].is_null() {
+                    println!("    rate     : none of its own");
+                }
+            }
+            Ok(ExitCode::SUCCESS)
         }
 
         Command::Keys {
@@ -3229,6 +3332,7 @@ fn run_issue_agent(
     if let Some(scope) = &args.guardrail_scope {
         body["guardrail_scope"] = json!(scope);
     }
+    args.limits.add_to(&mut body);
     let (response, replayed) = match client.post_replayable("/v2/keys", &body, &write_opts()) {
         Ok(answer) => answer,
         Err(failure) => {
@@ -4862,6 +4966,106 @@ fn user_root_writes_doctor(
     })
 }
 
+/// The body `oml keys limit` sends: each limit it was told to set or to
+/// clear, and nothing for one it was not told about, which the server then
+/// keeps (ADR-0079 d5). No flag at all is refused here, before anything is
+/// sent.
+fn key_limits_body(
+    expires: Option<&str>,
+    no_expiry: bool,
+    requests_per_minute: Option<u32>,
+    no_rate_limit: bool,
+) -> Result<Value, String> {
+    let mut body = serde_json::Map::new();
+    match (expires, no_expiry) {
+        (Some(instant), _) => {
+            body.insert("expiry".to_owned(), json!(instant));
+        }
+        (None, true) => {
+            body.insert("expiry".to_owned(), Value::Null);
+        }
+        (None, false) => {}
+    }
+    match (requests_per_minute, no_rate_limit) {
+        (Some(rate), _) => {
+            body.insert("requests_per_minute".to_owned(), json!(rate));
+        }
+        (None, true) => {
+            body.insert("requests_per_minute".to_owned(), Value::Null);
+        }
+        (None, false) => {}
+    }
+    if body.is_empty() {
+        return Err(
+            "refused: name a limit to set or clear with --expires, --no-expiry, \
+             --requests-per-minute or --no-rate-limit; nothing was sent"
+                .to_owned(),
+        );
+    }
+    Ok(Value::Object(body))
+}
+
+/// A key's limits as the key verbs print them: its expiry, marked once the
+/// server says it has passed, and its own rate; no line for a limit the key
+/// does not carry (ADR-0079 d3, d4).
+fn key_limit_lines(key: &Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(expiry) = key["expiry"].as_str() {
+        lines.push(if key["expired"] == true {
+            format!("expiry   : {expiry} (expired: the key authenticates nothing)")
+        } else {
+            format!("expiry   : {expiry}")
+        });
+    }
+    if let Some(rate) = key["requests_per_minute"].as_u64() {
+        lines.push(format!("rate     : {rate} requests per minute"));
+    }
+    lines
+}
+
+/// The key lines (ADR-0079 d7), for the key doctor runs under: that the
+/// server refused it as expired or past its rate; else, from `whoami`, the
+/// instant it ends and the rate it is held to. A key with neither limit,
+/// and a refusal for any other reason, print nothing here.
+fn key_doctor(me: Option<&Result<Value, CliError>>) -> Vec<String> {
+    let mut lines = Vec::new();
+    match me {
+        Some(Err(CliError::Refused { envelope, .. })) => {
+            let error = &envelope["error"];
+            if error["code"] == "auth.invalid" && error["details"]["reason"] == "expired" {
+                lines.push(format!(
+                    "fail expired: this key ended at {}; an admin moves its date with `oml keys \
+                     limit <key> --expires <instant>`, or issues another key",
+                    error["details"]["expiry"].as_str().unwrap_or("its expiry")
+                ));
+            }
+            if error["code"] == "limit.rate" {
+                lines.push(format!(
+                    "warn rate: this key reached its {} requests per minute; the next minute \
+                     admits it again",
+                    error["details"]["limit"]
+                ));
+            }
+        }
+        Some(Ok(me)) => {
+            if let Some(expiry) = me["expiry"].as_str() {
+                lines.push(format!(
+                    "ok expiry: this key ends at {expiry}; an admin moves its date with `oml \
+                     keys limit <key> --expires <instant>`"
+                ));
+            }
+            if let Some(rate) = me["requests_per_minute"].as_u64() {
+                lines.push(format!(
+                    "ok rate: this key is held to {rate} requests per minute, counted by each \
+                     server process alone"
+                ));
+            }
+        }
+        _ => {}
+    }
+    lines
+}
+
 /// Whether this key may review in bulk, for a dreamer key only (ADR-0055
 /// d1, d13): a key a person holds may; one held by an agent or a service is
 /// refused, which a person holding such a key otherwise learns mid-import,
@@ -5109,6 +5313,10 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let telemetry_warn = telemetry.iter().any(|line| line.starts_with("warn"));
     let usage = usage_doctor(usage_drift.as_ref());
     let usage_warn = usage.iter().any(|line| line.starts_with("warn"));
+    // The calling key's expiry and rate; an expired key already fails the
+    // whoami line (ADR-0079 d7).
+    let key_limits = key_doctor(me.as_ref());
+    let key_limits_warn = key_limits.iter().any(|line| line.starts_with("warn"));
     let handlers = handlers_doctor(scrape.as_ref());
     let handlers_warn = handlers.iter().any(|line| line.starts_with("warn"));
     // The sync failures of ADR-0057 d17 that the clone alone answers; the
@@ -5168,6 +5376,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
         || sources_warn
         || in_progress_warn
         || usage_warn
+        || key_limits_warn
     {
         "warn"
     } else {
@@ -5218,6 +5427,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             "handlers": handlers,
             "scan": scan,
             "usage": usage,
+            "key_limits": key_limits,
             "approvals": approvals,
             "sources": sources,
             "in_progress": in_progress,
@@ -5259,6 +5469,9 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
             ),
             Some(Err(e)) => println!("whoami      : fail ({})", refusal(e)),
             None => println!("whoami      : not called (no key with this URL)"),
+        }
+        for line in &key_limits {
+            println!("key         : {line}");
         }
         if let Some(Ok(v)) = &me {
             match v["user"]["name"].as_str() {
@@ -6956,6 +7169,109 @@ mod tests {
         let clean = serde_json::json!({"drift": [], "undeclared_profiles": []});
         assert!(usage_doctor(Some(&Ok(clean))).is_empty());
         assert!(usage_doctor(None).is_empty());
+    }
+
+    /// The server's refusal of a key as doctor's whoami reads it.
+    fn refused(status: u16, code: &str, details: Value) -> CliError {
+        CliError::Refused {
+            status,
+            code: code.to_owned(),
+            message: String::new(),
+            rule: String::new(),
+            envelope: serde_json::json!({ "error": { "code": code, "details": details } }),
+        }
+    }
+
+    #[test]
+    fn doctor_fails_an_expired_key_with_its_date_and_warns_of_a_key_past_its_rate() {
+        let expired = refused(
+            401,
+            "auth.invalid",
+            serde_json::json!({ "reason": "expired", "expiry": "2026-12-01T17:00:00.000000Z" }),
+        );
+        assert_eq!(
+            key_doctor(Some(&Err(expired))),
+            vec![
+                "fail expired: this key ended at 2026-12-01T17:00:00.000000Z; an admin moves its date with `oml keys limit <key> --expires <instant>`, or issues another key"
+            ]
+        );
+        let limited = refused(
+            429,
+            "limit.rate",
+            serde_json::json!({ "quota": "requests_per_minute", "limit": 60 }),
+        );
+        assert_eq!(
+            key_doctor(Some(&Err(limited))),
+            vec![
+                "warn rate: this key reached its 60 requests per minute; the next minute admits it again"
+            ]
+        );
+        // A key the server does not know is the whoami line's alone.
+        let unknown = refused(
+            401,
+            "auth.invalid",
+            serde_json::json!({ "reason": "unknown" }),
+        );
+        assert!(key_doctor(Some(&Err(unknown))).is_empty());
+    }
+
+    #[test]
+    fn doctor_names_the_instant_a_key_ends_and_its_rate_and_nothing_for_a_key_with_neither() {
+        let limited = serde_json::json!({
+            "expiry": "2026-12-01T17:00:00.000000Z",
+            "requests_per_minute": 60,
+        });
+        assert_eq!(
+            key_doctor(Some(&Ok(limited))),
+            vec![
+                "ok expiry: this key ends at 2026-12-01T17:00:00.000000Z; an admin moves its date with `oml keys limit <key> --expires <instant>`",
+                "ok rate: this key is held to 60 requests per minute, counted by each server process alone",
+            ]
+        );
+        let plain = serde_json::json!({ "expiry": null, "requests_per_minute": null });
+        assert!(key_doctor(Some(&Ok(plain))).is_empty());
+        assert!(key_doctor(None).is_empty());
+    }
+
+    #[test]
+    fn keys_limit_sends_only_the_limits_it_was_told_to_set_or_clear_and_refuses_none() {
+        assert_eq!(
+            key_limits_body(Some("2026-12-01T17:00:00Z"), false, None, false),
+            Ok(serde_json::json!({ "expiry": "2026-12-01T17:00:00Z" }))
+        );
+        assert_eq!(
+            key_limits_body(None, true, Some(60), false),
+            Ok(serde_json::json!({ "expiry": null, "requests_per_minute": 60 }))
+        );
+        assert_eq!(
+            key_limits_body(None, false, None, true),
+            Ok(serde_json::json!({ "requests_per_minute": null }))
+        );
+        let refused = key_limits_body(None, false, None, false).expect_err("no limit named");
+        assert!(refused.contains("nothing was sent"), "{refused}");
+    }
+
+    #[test]
+    fn a_key_read_prints_its_expiry_marked_once_it_has_passed_and_its_rate() {
+        let live = serde_json::json!({
+            "expiry": "2026-12-01T17:00:00.000000Z", "expired": false, "requests_per_minute": 60,
+        });
+        assert_eq!(
+            key_limit_lines(&live),
+            vec![
+                "expiry   : 2026-12-01T17:00:00.000000Z",
+                "rate     : 60 requests per minute",
+            ]
+        );
+        let ended = serde_json::json!({
+            "expiry": "2026-12-01T17:00:00.000000Z", "expired": true, "requests_per_minute": null,
+        });
+        assert_eq!(
+            key_limit_lines(&ended),
+            vec!["expiry   : 2026-12-01T17:00:00.000000Z (expired: the key authenticates nothing)"]
+        );
+        let plain = serde_json::json!({ "expiry": null, "requests_per_minute": null });
+        assert!(key_limit_lines(&plain).is_empty());
     }
 
     #[test]

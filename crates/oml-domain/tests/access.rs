@@ -845,6 +845,7 @@ fn review_and_key_events_are_never_visible_on_the_content_tail() {
         "key.rotated",
         "key.denied",
         "key.denial_lifted",
+        "key.limits_set",
         "grant.issued",
         "grant.revoked",
         "tenant.created",

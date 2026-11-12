@@ -95,6 +95,8 @@ fn user_req(role: Role, user: &str, principal: &str, grants: Vec<GrantRequest>) 
         user: Some(name(user)),
         connect_code: false,
         guardrail_scope: None,
+        expiry: None,
+        requests_per_minute: None,
     }
 }
 

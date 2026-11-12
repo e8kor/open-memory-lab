@@ -1142,6 +1142,8 @@ async fn the_allowlist_routes_take_an_admin_key_and_the_email_only_in_a_body() {
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
             },
         )
         .await
@@ -1869,6 +1871,8 @@ async fn stray_admin_under_alice(rig: &Rig) -> uuid::Uuid {
                 connect_code: false,
                 user: None,
                 guardrail_scope: None,
+                expiry: None,
+                requests_per_minute: None,
             },
         )
         .await

@@ -699,6 +699,8 @@ pub fn key_record(tenant_id: Uuid, key_id: Uuid, role: Role, issued_by: Option<U
         user: None,
         session_user: None,
         guardrail_scope: GuardrailScope::Ancestors,
+        expiry: None,
+        requests_per_minute: None,
     }
 }
 
@@ -2418,6 +2420,8 @@ pub async fn journal_key_lookup_by_hash<S: JournalStore>(store: &S) {
         user: None,
         session_user: None,
         guardrail_scope: GuardrailScope::Ancestors,
+        expiry: None,
+        requests_per_minute: None,
     };
     rig.commit(
         store,
@@ -2492,6 +2496,103 @@ pub async fn a_revoked_key_no_longer_resolves_by_its_hash<S: JournalStore>(store
         store.chain_head(rig.tenant_id).await.expect("head"),
         Some(head),
         "a refused revocation commits nothing"
+    );
+}
+
+/// A key's expiry and its requests per minute fold in with `key.issued`
+/// and read back exactly; `key.limits_set` replaces both, `None` clearing
+/// one. A key past its expiry still resolves by its hash, since the use
+/// case names why it authenticates nothing. A change on a key the tenant
+/// does not hold, a revoked key or a session key is refused and commits
+/// nothing (event-catalog.md `key.limits_set`; ADR-0079 d1, d3, d5).
+pub async fn a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits_set<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(23);
+    rig.seed_chain(store, 0).await;
+    let at = |value: &str| EventTime::parse(value).expect("a fixture instant");
+    // Earlier than every fixture event: the row is past its expiry.
+    let lapsed = at("2020-01-01T00:00:00.000000Z");
+    let later = at("2030-06-01T12:30:00.250000Z");
+    let key = KeyRecord {
+        expiry: Some(lapsed.clone()),
+        requests_per_minute: Some(30),
+        ..key_record(rig.tenant_id, Uuid::from_u128(0xE0), Role::Reader, None)
+    };
+    rig.issue_key(store, key.clone()).await;
+    let hash = key.key_hash.clone().expect("a bearer key");
+    assert_eq!(
+        store.key_by_hash(&hash).await.expect("lookup"),
+        Some(key.clone()),
+        "an expired key's row still resolves, with its limits"
+    );
+
+    let set = |key_id, expiry: Option<EventTime>, requests_per_minute| {
+        (
+            event_types::KEY_LIMITS_SET,
+            json!({ "key_id": key_id }),
+            MetadataFold::KeyLimitsSet {
+                key_id,
+                expiry,
+                requests_per_minute,
+            },
+        )
+    };
+    let (event_type, payload, fold) = set(key.key_id, Some(later.clone()), None);
+    rig.commit(store, event_type, payload, fold, None)
+        .await
+        .expect("the limits are set");
+    let stored = store
+        .key(rig.tenant_id, key.key_id)
+        .await
+        .expect("read")
+        .expect("the key");
+    assert_eq!(stored.expiry, Some(later));
+    assert_eq!(stored.requests_per_minute, None, "None clears the rate");
+    let (event_type, payload, fold) = set(key.key_id, None, Some(1_000_000));
+    rig.commit(store, event_type, payload, fold, None)
+        .await
+        .expect("the limits are set again");
+    let stored = store
+        .key_by_hash(&hash)
+        .await
+        .expect("lookup")
+        .expect("the key");
+    assert_eq!(
+        (stored.expiry, stored.requests_per_minute),
+        (None, Some(1_000_000))
+    );
+
+    let revoked = key_record(rig.tenant_id, Uuid::from_u128(0xE1), Role::Reader, None);
+    rig.issue_key(store, revoked.clone()).await;
+    rig.revoke_key(store, revoked.key_id).await.expect("revoke");
+    let session = KeyRecord {
+        credential: Credential::Session,
+        key_hash: None,
+        name: Some(name("alice-web")),
+        session_user: Some(name("alice")),
+        ..key_record(rig.tenant_id, Uuid::from_u128(0xE2), Role::Writer, None)
+    };
+    rig.issue_key(store, session.clone()).await;
+    let head = store
+        .chain_head(rig.tenant_id)
+        .await
+        .expect("head")
+        .expect("chain");
+    for key_id in [Uuid::from_u128(0xE9), revoked.key_id, session.key_id] {
+        let (event_type, payload, fold) = set(key_id, None, Some(5));
+        let refused = rig.commit(store, event_type, payload, fold, None).await;
+        assert!(
+            matches!(refused, Err(StoreError::Backend(_))),
+            "{key_id}: {refused:?}"
+        );
+    }
+    assert_eq!(
+        store.chain_head(rig.tenant_id).await.expect("head"),
+        Some(head),
+        "a refused change commits nothing"
     );
 }
 
@@ -8581,6 +8682,10 @@ where
     Box::pin(a_revoked_key_no_longer_resolves_by_its_hash(
         &new_store().await,
     ))
+    .await;
+    Box::pin(
+        a_keys_limits_fold_with_its_issuance_and_are_replaced_by_key_limits_set(&new_store().await),
+    )
     .await;
     Box::pin(journal_idempotency_roundtrip(&new_store().await)).await;
     Box::pin(

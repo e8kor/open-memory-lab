@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
@@ -47,6 +48,10 @@ class Whoami:
                 /guardrail_scope (ADR-0037 d4; since v0.5.1).
             profile (None | Unset | WhoamiProfileType1 | WhoamiProfileType2Type1 | WhoamiProfileType3Type1): The key's
                 profile; null for none (ADR-0030 d8).
+            expiry (datetime.datetime | None | Unset): The instant from which this key authenticates nothing; null for a key
+                that does not expire (ADR-0079 d3; since v0.7.3).
+            requests_per_minute (int | None | Unset): This key's own requests per UTC minute; null for none of its own
+                (ADR-0079 d4; since v0.7.3).
             person (None | Unset | WhoamiPerson): The person the key's user root names; null for a tenant key (ADR-0070 d5).
                 Absent with person=false (#286).
             shared (bool | Unset): Whether the server's admins are not the caller's: true when the operator sets
@@ -72,6 +77,8 @@ class Whoami:
         | WhoamiProfileType2Type1
         | WhoamiProfileType3Type1
     ) = UNSET
+    expiry: datetime.datetime | None | Unset = UNSET
+    requests_per_minute: int | None | Unset = UNSET
     person: None | Unset | WhoamiPerson = UNSET
     shared: bool | Unset = UNSET
 
@@ -136,6 +143,20 @@ class Whoami:
         else:
             profile = self.profile
 
+        expiry: None | str | Unset
+        if isinstance(self.expiry, Unset):
+            expiry = UNSET
+        elif isinstance(self.expiry, datetime.datetime):
+            expiry = self.expiry.isoformat()
+        else:
+            expiry = self.expiry
+
+        requests_per_minute: int | None | Unset
+        if isinstance(self.requests_per_minute, Unset):
+            requests_per_minute = UNSET
+        else:
+            requests_per_minute = self.requests_per_minute
+
         person: dict[str, Any] | None | Unset
         if isinstance(self.person, Unset):
             person = UNSET
@@ -166,6 +187,10 @@ class Whoami:
             field_dict["guardrail_scope"] = guardrail_scope
         if profile is not UNSET:
             field_dict["profile"] = profile
+        if expiry is not UNSET:
+            field_dict["expiry"] = expiry
+        if requests_per_minute is not UNSET:
+            field_dict["requests_per_minute"] = requests_per_minute
         if person is not UNSET:
             field_dict["person"] = person
         if shared is not UNSET:
@@ -318,6 +343,34 @@ class Whoami:
 
         profile = _parse_profile(d.pop("profile", UNSET))
 
+        def _parse_expiry(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                expiry_type_0 = datetime.datetime.fromisoformat(data)
+
+                return expiry_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        expiry = _parse_expiry(d.pop("expiry", UNSET))
+
+        def _parse_requests_per_minute(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        requests_per_minute = _parse_requests_per_minute(
+            d.pop("requests_per_minute", UNSET)
+        )
+
         def _parse_person(data: object) -> None | Unset | WhoamiPerson:
             if data is None:
                 return data
@@ -350,6 +403,8 @@ class Whoami:
             grants=grants,
             guardrail_scope=guardrail_scope,
             profile=profile,
+            expiry=expiry,
+            requests_per_minute=requests_per_minute,
             person=person,
             shared=shared,
         )

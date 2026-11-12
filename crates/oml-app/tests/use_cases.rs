@@ -149,6 +149,8 @@ fn issue_req(role: Role, principal: &str, grants: Vec<GrantRequest>) -> IssueKey
         connect_code: false,
         user: None,
         guardrail_scope: None,
+        expiry: None,
+        requests_per_minute: None,
     }
 }
 
@@ -6267,6 +6269,8 @@ async fn operator_key(store: &MemStore, tenant: Uuid) -> String {
         user: None,
         session_user: None,
         guardrail_scope: GuardrailScope::Ancestors,
+        expiry: None,
+        requests_per_minute: None,
     };
     seal_onto(
         store,
@@ -8894,6 +8898,605 @@ async fn the_app_tells_its_observer_the_key_a_credential_named_and_the_workarea_
             "no key".to_owned(),
         ]
     );
+}
+
+// ---------------------------------------------------------------------------
+// Key limits (ADR-0079): a key's expiry and its own request rate
+// ---------------------------------------------------------------------------
+
+use oml_app::types::{Bearer, KeyLimitsChange, KeyLimitsRefusal};
+
+/// Ten minutes after the fixed clock's noon.
+const KEY_EXPIRY: &str = "2026-10-29T12:10:00.000000Z";
+/// Forty minutes after it.
+const KEY_EXPIRY_LATER: &str = "2026-10-29T12:40:00.000000Z";
+
+/// An issuance that sets the key's expiry, its rate or both.
+fn limited_req(
+    role: Role,
+    principal: &str,
+    grants: Vec<GrantRequest>,
+    expiry: Option<&str>,
+    requests_per_minute: Option<u32>,
+) -> IssueKeyRequest {
+    IssueKeyRequest {
+        expiry: expiry.map(at),
+        requests_per_minute,
+        ..issue_req(role, principal, grants)
+    }
+}
+
+/// A change that sets the expiry and leaves the rate.
+fn expiry_change(expiry: Option<&str>) -> KeyLimitsChange {
+    KeyLimitsChange {
+        expiry: Some(expiry.map(at)),
+        requests_per_minute: None,
+    }
+}
+
+/// The refusal of a limits change, else `None`.
+fn limits_refused(err: &AppError) -> Option<KeyLimitsRefusal> {
+    match err {
+        AppError::KeyLimits(refusal) => Some(*refusal),
+        _ => None,
+    }
+}
+
+/// A key issued with an expiry works until that instant. From it on its
+/// value is refused as expired, naming the date, where a value no key has
+/// is refused as unknown; the lapse journals nothing (ADR-0079 d1, d2).
+#[tokio::test]
+async fn a_key_authenticates_until_its_expiry_and_from_it_on_is_refused_as_expired_not_as_unknown()
+{
+    let store = MemStore::new();
+    let (app, clock) = oauth_app_with_clock(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let key = app
+        .issue_key(
+            boot.admin_key.value.as_str(),
+            &limited_req(
+                Role::Writer,
+                "reviewer",
+                vec![grant(crew, Role::Writer)],
+                Some(KEY_EXPIRY),
+                None,
+            ),
+        )
+        .await
+        .expect("a key with an expiry");
+    assert_eq!(key.expiry, Some(at(KEY_EXPIRY)));
+    let tail = journal(&store, boot.tenant_id).await;
+    let issued = &tail[usize::try_from(key.access.issued_seq - 1).expect("seq")].envelope;
+    assert_eq!(issued.event_type, event_types::KEY_ISSUED);
+    assert_eq!(issued.payload["expiry"], KEY_EXPIRY);
+
+    app.caller(Bearer::Key(&key.value))
+        .await
+        .expect("before its expiry the key authenticates");
+    clock.advance(599);
+    app.caller(Bearer::Key(&key.value))
+        .await
+        .expect("a second before its expiry the key authenticates");
+    clock.advance(1);
+
+    let err = app.caller(Bearer::Key(&key.value)).await.unwrap_err();
+    assert!(
+        matches!(&err, AppError::KeyExpired { expiry } if *expiry == at(KEY_EXPIRY)),
+        "{err:?}"
+    );
+    let unknown = app
+        .caller(Bearer::Key("oml_no-such-key"))
+        .await
+        .unwrap_err();
+    assert!(matches!(unknown, AppError::Unauthorized), "{unknown:?}");
+    assert_eq!(
+        journal(&store, boot.tenant_id).await.len(),
+        tail.len(),
+        "the lapse journals nothing"
+    );
+}
+
+/// An expired key is history, not gone: its name still resolves, its row
+/// reads back with its expiry and its grants, and it is not revoked
+/// (ADR-0079 d3; ADR-0026 d10; R4).
+#[tokio::test]
+async fn an_expired_key_is_kept_and_reads_back_as_expired_with_its_grants() {
+    let (app, clock) = oauth_app_with_clock(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let key = app
+        .issue_key(
+            admin,
+            &limited_req(
+                Role::Reader,
+                "reviewer",
+                vec![grant(crew, Role::Reader)],
+                Some(KEY_EXPIRY),
+                Some(30),
+            ),
+        )
+        .await
+        .expect("a key with an expiry");
+    let before = app
+        .key(admin, Reference::Name(key.name.clone()))
+        .await
+        .expect("the key reads");
+    assert!(!app.key_expired(&before.key));
+    clock.advance(600);
+
+    let after = app
+        .key(admin, Reference::Name(key.name.clone()))
+        .await
+        .expect("an expired key's name still resolves");
+    assert_eq!(after.key.key_id, key.key_id);
+    assert_eq!(after.key.expiry, Some(at(KEY_EXPIRY)));
+    assert_eq!(after.key.requests_per_minute, Some(30));
+    assert!(app.key_expired(&after.key));
+    assert_eq!(after.key.revoked_at, None, "expired is not revoked");
+    assert_eq!(after.access.grants, before.access.grants);
+}
+
+/// An expiry that is not later than now, and a rate outside 1 to 1,000,000,
+/// are refused by the field they name before anything is journalled
+/// (ADR-0079 d1, d4).
+#[tokio::test]
+async fn an_issuance_with_a_past_expiry_or_a_rate_out_of_bound_is_refused_and_journals_nothing() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let head = journal(&store, boot.tenant_id).await.len();
+    for (expiry, rate, refusal) in [
+        (
+            Some("2026-10-29T11:59:59.000000Z"),
+            None,
+            KeyLimitsRefusal::ExpiryNotLater,
+        ),
+        (None, Some(0), KeyLimitsRefusal::RateOutOfRange),
+        (None, Some(1_000_001), KeyLimitsRefusal::RateOutOfRange),
+    ] {
+        let err = app
+            .issue_key(
+                boot.admin_key.value.as_str(),
+                &limited_req(
+                    Role::Reader,
+                    "reviewer",
+                    vec![grant(crew, Role::Reader)],
+                    expiry,
+                    rate,
+                ),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(limits_refused(&err), Some(refusal), "{err:?}");
+    }
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+/// A key held to two requests a minute makes two, is refused the third as
+/// `limit.rate` with the seconds left in the minute, and is admitted again
+/// in the next minute; a key with no rate of its own is not counted
+/// (ADR-0079 d4).
+#[tokio::test]
+async fn a_key_held_to_a_rate_is_refused_past_it_and_admitted_again_the_next_minute() {
+    let (app, clock) = oauth_app_with_clock(MemStore::new());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let key = app
+        .issue_key(
+            admin,
+            &limited_req(
+                Role::Reader,
+                "reviewer",
+                vec![grant(crew, Role::Reader)],
+                None,
+                Some(2),
+            ),
+        )
+        .await
+        .expect("a key with a rate");
+    assert_eq!(key.requests_per_minute, Some(2));
+    clock.advance(10);
+
+    for request in 1..=2 {
+        app.caller(Bearer::Key(&key.value))
+            .await
+            .unwrap_or_else(|e| panic!("request {request} is within the rate: {e:?}"));
+    }
+    for _ in 0..2 {
+        let err = app.caller(Bearer::Key(&key.value)).await.unwrap_err();
+        let AppError::KeyRateLimited {
+            limit,
+            retry_after_secs,
+        } = err
+        else {
+            panic!("the request past the rate is limit.rate: {err:?}");
+        };
+        assert_eq!(limit, 2);
+        assert_eq!(retry_after_secs, 50, "the seconds left in the minute");
+    }
+    for _ in 0..5 {
+        app.caller(Bearer::Key(admin))
+            .await
+            .expect("a key with no rate of its own is not limited");
+    }
+    clock.advance(50);
+    app.caller(Bearer::Key(&key.value))
+        .await
+        .expect("the next minute admits the key again");
+}
+
+/// An admin key moves another key's expiry later, and the expired key
+/// authenticates again; `key.limits_set` journals both limits as they stand
+/// after the change, a member not named keeps its value, and `null` clears
+/// one (ADR-0079 d5).
+#[tokio::test]
+async fn an_admin_key_moves_an_expired_keys_date_later_and_the_key_authenticates_again() {
+    let store = MemStore::new();
+    let (app, clock) = oauth_app_with_clock(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let key = app
+        .issue_key(
+            admin,
+            &limited_req(
+                Role::Reader,
+                "reviewer",
+                vec![grant(crew, Role::Reader)],
+                Some(KEY_EXPIRY),
+                Some(30),
+            ),
+        )
+        .await
+        .expect("a key with both limits");
+    clock.advance(600);
+    let err = app.caller(Bearer::Key(&key.value)).await.unwrap_err();
+    assert!(matches!(err, AppError::KeyExpired { .. }), "{err:?}");
+
+    let moved = app
+        .set_key_limits(
+            admin,
+            Reference::Name(key.name.clone()),
+            expiry_change(Some(KEY_EXPIRY_LATER)),
+        )
+        .await
+        .expect("the admin moves the date");
+    assert_eq!(moved.expiry, Some(at(KEY_EXPIRY_LATER)));
+    assert_eq!(moved.requests_per_minute, Some(30), "the rate is kept");
+    let tail = journal(&store, boot.tenant_id).await;
+    let set = &tail.last().expect("an event").envelope;
+    assert_eq!(set.event_type, event_types::KEY_LIMITS_SET);
+    assert_eq!(set.api_key_id, Some(boot.admin_key.key_id));
+    assert_eq!(
+        set.payload,
+        json!({
+            "key_id": key.key_id.to_string(),
+            "set_by_key_id": boot.admin_key.key_id.to_string(),
+            "expiry": KEY_EXPIRY_LATER,
+            "requests_per_minute": 30,
+        })
+    );
+    app.caller(Bearer::Key(&key.value))
+        .await
+        .expect("the key authenticates again");
+
+    let cleared = app
+        .set_key_limits(
+            admin,
+            Reference::Id(key.key_id),
+            KeyLimitsChange {
+                expiry: Some(None),
+                requests_per_minute: Some(None),
+            },
+        )
+        .await
+        .expect("the admin clears both");
+    assert_eq!((cleared.expiry, cleared.requests_per_minute), (None, None));
+    let stored = app
+        .key(admin, Reference::Id(key.key_id))
+        .await
+        .expect("the key reads");
+    assert_eq!(
+        (stored.key.expiry, stored.key.requests_per_minute),
+        (None, None)
+    );
+}
+
+/// R1 for a key's limits: a reader, a writer and a dreamer key cannot set
+/// any key's limits, their own included, and an admin key, whoever holds
+/// it, cannot set its own. Each refusal journals nothing and leaves the
+/// limits as they were (ADR-0079 d5).
+#[tokio::test]
+async fn no_key_extends_its_own_expiry_or_raises_its_own_rate() {
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let wider = KeyLimitsChange {
+        expiry: Some(Some(at(KEY_EXPIRY_LATER))),
+        requests_per_minute: Some(Some(1_000)),
+    };
+    let mut agents = Vec::new();
+    for role in [Role::Reader, Role::Writer, Role::Dreamer] {
+        agents.push(
+            app.issue_key(
+                admin,
+                &limited_req(
+                    role,
+                    role.as_str(),
+                    vec![grant(crew, role)],
+                    Some(KEY_EXPIRY),
+                    Some(30),
+                ),
+            )
+            .await
+            .expect("an agent key with both limits"),
+        );
+    }
+    let agent_admin = app
+        .issue_key(
+            admin,
+            &limited_req(
+                Role::Admin,
+                "agent-admin",
+                Vec::new(),
+                Some(KEY_EXPIRY),
+                Some(30),
+            ),
+        )
+        .await
+        .expect("an admin key an agent holds");
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    for agent in &agents {
+        for target in [&agent.key_id, &agents[0].key_id, &boot.admin_key.key_id] {
+            let err = app
+                .set_key_limits(agent.value.as_str(), Reference::Id(*target), wider.clone())
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    AppError::VerbCeiling {
+                        verb: "set_key_limits",
+                        ..
+                    }
+                ),
+                "{:?} on {target}: {err:?}",
+                agent.role
+            );
+        }
+    }
+    for (value, own) in [
+        (agent_admin.value.as_str(), agent_admin.key_id),
+        (admin, boot.admin_key.key_id),
+    ] {
+        let err = app
+            .set_key_limits(value, Reference::Id(own), wider.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            limits_refused(&err),
+            Some(KeyLimitsRefusal::OwnKey),
+            "{err:?}"
+        );
+    }
+
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+    for key in agents.iter().chain([&agent_admin]) {
+        let stored = app
+            .key(admin, Reference::Id(key.key_id))
+            .await
+            .expect("the key reads");
+        assert_eq!(stored.key.expiry, Some(at(KEY_EXPIRY)));
+        assert_eq!(stored.key.requests_per_minute, Some(30));
+    }
+}
+
+/// A limits change names a live bearer or connector key of the tenant and
+/// at least one limit: a session key, a revoked key, a key the tenant does
+/// not hold, an empty change and a date that is not later than now are each
+/// refused by name and journal nothing (ADR-0079 d5).
+#[tokio::test]
+async fn a_limits_change_on_a_session_key_a_revoked_key_or_no_key_is_refused_by_name() {
+    use oml_app::domain::web::Email;
+    use oml_app::types::WebEmailRequest;
+    let store = MemStore::new();
+    let app = app_over(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let (entry, _) = app
+        .allow_web_email(
+            admin,
+            &WebEmailRequest {
+                email: Email::parse("alice@example.com").expect("an email"),
+                user: name("alice"),
+                admin: false,
+            },
+        )
+        .await
+        .expect("the entry is added");
+    app.web_ensure_keys(&entry).await.expect("the session keys");
+    let revoked = issue(&app, admin, Role::Reader, "gone", crew).await;
+    revoke_key(&store, boot.tenant_id, revoked.key_id).await;
+    let live = issue(&app, admin, Role::Reader, "live", crew).await;
+    let head = journal(&store, boot.tenant_id).await.len();
+
+    for (target, change, refusal) in [
+        (
+            by_name("alice-web"),
+            expiry_change(Some(KEY_EXPIRY)),
+            KeyLimitsRefusal::SessionKey,
+        ),
+        (
+            Reference::Id(revoked.key_id),
+            expiry_change(Some(KEY_EXPIRY)),
+            KeyLimitsRefusal::Revoked,
+        ),
+        (
+            Reference::Id(live.key_id),
+            KeyLimitsChange::default(),
+            KeyLimitsRefusal::Empty,
+        ),
+        (
+            Reference::Id(live.key_id),
+            expiry_change(Some("2026-10-29T11:00:00.000000Z")),
+            KeyLimitsRefusal::ExpiryNotLater,
+        ),
+        (
+            Reference::Id(live.key_id),
+            KeyLimitsChange {
+                expiry: None,
+                requests_per_minute: Some(Some(0)),
+            },
+            KeyLimitsRefusal::RateOutOfRange,
+        ),
+    ] {
+        let err = app.set_key_limits(admin, target, change).await.unwrap_err();
+        assert_eq!(limits_refused(&err), Some(refusal), "{err:?}");
+    }
+    let absent = app
+        .set_key_limits(
+            admin,
+            Reference::Id(Uuid::from_u128(0xDEAD)),
+            expiry_change(Some(KEY_EXPIRY)),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(absent, AppError::NotFound), "{absent:?}");
+    assert_eq!(journal(&store, boot.tenant_id).await.len(), head);
+}
+
+/// A connection is exactly its key: from the connector key's expiry on its
+/// access token is told the key expired, its refresh is `invalid_grant`
+/// and rotates nothing, and no connect code is minted for it; once an
+/// admin moves the date the same token works again (ADR-0079 d2, d5;
+/// ADR-0031 d11).
+#[tokio::test]
+async fn an_expired_connector_keys_token_refresh_and_new_code_are_refused_until_its_date_is_moved()
+{
+    let store = MemStore::new();
+    let (app, clock) = oauth_app_with_clock(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let admin = boot.admin_key.value.as_str();
+    let issued = app
+        .issue_key(
+            admin,
+            &IssueKeyRequest {
+                expiry: Some(at(KEY_EXPIRY)),
+                ..connector_req("crew/claude-mobile", vec![grant(crew, Role::Writer)])
+            },
+        )
+        .await
+        .expect("a connector key with an expiry");
+    let code = issued
+        .connect_code
+        .as_ref()
+        .and_then(|c| c.code.clone())
+        .expect("a fresh answer carries the code");
+    let tokens = app
+        .exchange(exchange_form(&connect_with(&app, &code).await))
+        .await
+        .expect("the exchange");
+    app.resolve_access_token(tokens.access_token.as_str())
+        .await
+        .expect("before the expiry the token is the key");
+    clock.advance(600);
+
+    let err = app
+        .resolve_access_token(tokens.access_token.as_str())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, AppError::KeyExpired { expiry } if *expiry == at(KEY_EXPIRY)),
+        "{err:?}"
+    );
+    let err = app
+        .refresh(refresh_form(&tokens.refresh_token))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        refresh_invalid(&err),
+        Some(RefreshInvalid::KeyEnded),
+        "{err:?}"
+    );
+    let err = app
+        .mint_connect_code(admin, Reference::Id(issued.key_id))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        connect_refused(&err),
+        Some(ConnectRefused::Expired),
+        "{err:?}"
+    );
+    assert_eq!(
+        only_connection(&store, boot.tenant_id, issued.key_id)
+            .await
+            .state,
+        ConnectionState::Open,
+        "the connection stays open with no event"
+    );
+
+    app.set_key_limits(
+        admin,
+        Reference::Id(issued.key_id),
+        expiry_change(Some(KEY_EXPIRY_LATER)),
+    )
+    .await
+    .expect("the admin moves the date");
+    app.resolve_access_token(tokens.access_token.as_str())
+        .await
+        .expect("the same token is the key again");
+    app.refresh(refresh_form(&tokens.refresh_token))
+        .await
+        .expect("the refresh the expiry refused rotated nothing");
+}
+
+/// The code of an expired key answers what any code that is not valid
+/// answers, and is not spent (ADR-0031 d8; ADR-0079 d2).
+#[tokio::test]
+async fn an_expired_keys_code_answers_connect_code_invalid() {
+    let store = MemStore::new();
+    let (app, clock) = oauth_app_with_clock(store.clone());
+    let (boot, crew) = tenant(&app).await;
+    let issued = app
+        .issue_key(
+            boot.admin_key.value.as_str(),
+            &IssueKeyRequest {
+                // Inside the code's ten minutes, so the code itself is live.
+                expiry: Some(at("2026-10-29T12:05:00.000000Z")),
+                ..connector_req("crew/claude-mobile", vec![grant(crew, Role::Writer)])
+            },
+        )
+        .await
+        .expect("a connector key with an expiry");
+    let code = issued
+        .connect_code
+        .as_ref()
+        .and_then(|c| c.code.clone())
+        .expect("a fresh answer carries the code");
+    let page = code_page(&app).await;
+    clock.advance(300);
+
+    let outcome = app
+        .enter_code(&page, &code, &PlainSealer)
+        .await
+        .expect("code entry is answered");
+
+    assert!(
+        matches!(
+            outcome,
+            CodeEntryOutcome::WrongCode {
+                attempts_left: 4,
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    let codes = store
+        .connect_codes(boot.tenant_id, issued.key_id)
+        .await
+        .expect("codes");
+    assert!(codes[0].redeemed_at.is_none(), "the code is not spent");
 }
 
 // ---------------------------------------------------------------------------

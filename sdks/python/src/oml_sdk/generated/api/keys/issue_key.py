@@ -96,27 +96,30 @@ def sync_detailed(
     carries a denial, on any workarea, issues nothing: access.verb_ceiling with details.reason
     session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key
     role; operator key role only for an operator key, sent without tenant, or a tenant's first admin
-    key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields
-    (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is
-    built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-
-    value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-
-    keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default
-    workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every
-    workarea, crew and tenant reference takes an id or a name, and the response carries ids under their
-    v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id,
-    a deny entry's subtree_node_id) is refused with request.validation naming its successor in
-    details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked
-    after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the
-    grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
-    seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201
-    carries connect_code, shown once, in the value's place; an admin or operator role, held_by service
-    and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason.
-    The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the
-    same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again,
-    without value and without connect_code.code, which the first answer alone carries; the same key with
-    another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the
-    key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer
-    4, d5; since v0.7.0).
+    key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-
+    designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an
+    operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key
+    authenticates nothing, later than the server's clock, and requests_per_minute the key's own rate,
+    from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing
+    is journalled (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once
+    ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant
+    admissibility and refusal order), which also fixes grant admissibility, the default workarea, when
+    the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and
+    tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a
+    v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's
+    subtree_node_id) is refused with request.validation naming its successor in details.renamed_to
+    (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other
+    check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The
+    response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true
+    issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown
+    once, in the value's place; an admin or operator role, held_by service and a deployment without
+    oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is
+    claimed for the calling key before the issuance: a resubmission under the same key and body answers
+    the first 201 with Idempotency-Replay: true and issues nothing again, without value and without
+    connect_code.code, which the first answer alone carries; the same key with another body is
+    idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
+    s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since
+    v0.7.0).
 
     Args:
         x_request_id (str | Unset):
@@ -167,27 +170,30 @@ def sync(
     carries a denial, on any workarea, issues nothing: access.verb_ceiling with details.reason
     session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key
     role; operator key role only for an operator key, sent without tenant, or a tenant's first admin
-    key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields
-    (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is
-    built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-
-    value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-
-    keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default
-    workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every
-    workarea, crew and tenant reference takes an id or a name, and the response carries ids under their
-    v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id,
-    a deny entry's subtree_node_id) is refused with request.validation naming its successor in
-    details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked
-    after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the
-    grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
-    seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201
-    carries connect_code, shown once, in the value's place; an admin or operator role, held_by service
-    and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason.
-    The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the
-    same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again,
-    without value and without connect_code.code, which the first answer alone carries; the same key with
-    another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the
-    key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer
-    4, d5; since v0.7.0).
+    key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-
+    designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an
+    operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key
+    authenticates nothing, later than the server's clock, and requests_per_minute the key's own rate,
+    from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing
+    is journalled (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once
+    ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant
+    admissibility and refusal order), which also fixes grant admissibility, the default workarea, when
+    the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and
+    tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a
+    v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's
+    subtree_node_id) is refused with request.validation naming its successor in details.renamed_to
+    (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other
+    check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The
+    response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true
+    issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown
+    once, in the value's place; an admin or operator role, held_by service and a deployment without
+    oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is
+    claimed for the calling key before the issuance: a resubmission under the same key and body answers
+    the first 201 with Idempotency-Replay: true and issues nothing again, without value and without
+    connect_code.code, which the first answer alone carries; the same key with another body is
+    idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
+    s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since
+    v0.7.0).
 
     Args:
         x_request_id (str | Unset):
@@ -233,27 +239,30 @@ async def asyncio_detailed(
     carries a denial, on any workarea, issues nothing: access.verb_ceiling with details.reason
     session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key
     role; operator key role only for an operator key, sent without tenant, or a tenant's first admin
-    key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields
-    (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is
-    built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-
-    value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-
-    keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default
-    workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every
-    workarea, crew and tenant reference takes an id or a name, and the response carries ids under their
-    v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id,
-    a deny entry's subtree_node_id) is refused with request.validation naming its successor in
-    details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked
-    after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the
-    grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
-    seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201
-    carries connect_code, shown once, in the value's place; an admin or operator role, held_by service
-    and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason.
-    The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the
-    same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again,
-    without value and without connect_code.code, which the first answer alone carries; the same key with
-    another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the
-    key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer
-    4, d5; since v0.7.0).
+    key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-
+    designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an
+    operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key
+    authenticates nothing, later than the server's clock, and requests_per_minute the key's own rate,
+    from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing
+    is journalled (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once
+    ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant
+    admissibility and refusal order), which also fixes grant admissibility, the default workarea, when
+    the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and
+    tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a
+    v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's
+    subtree_node_id) is refused with request.validation naming its successor in details.renamed_to
+    (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other
+    check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The
+    response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true
+    issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown
+    once, in the value's place; an admin or operator role, held_by service and a deployment without
+    oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is
+    claimed for the calling key before the issuance: a resubmission under the same key and body answers
+    the first 201 with Idempotency-Replay: true and issues nothing again, without value and without
+    connect_code.code, which the first answer alone carries; the same key with another body is
+    idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
+    s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since
+    v0.7.0).
 
     Args:
         x_request_id (str | Unset):
@@ -302,27 +311,30 @@ async def asyncio(
     carries a denial, on any workarea, issues nothing: access.verb_ceiling with details.reason
     session_key_denied, nothing journalled (ADR-0070 d2; since v0.7.3). Otherwise requires: admin key
     role; operator key role only for an operator key, sent without tenant, or a tenant's first admin
-    key, sent with tenant (step 0 of the issuance order). expiry and tenant are designed fields
-    (openapi-designed.yaml x-oml-designed-fields), each refused with request.validation until it is
-    built, so an operator key issues operator keys only (ADR-0039 d9). Journalled as issued-without-
-    value (show-once ceremony). Validated in the issuance order declared in docs/architecture/roles-and-
-    keys.md (Grant admissibility and refusal order), which also fixes grant admissibility, the default
-    workarea, when the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every
-    workarea, crew and tenant reference takes an id or a name, and the response carries ids under their
-    v0.3.0 names; a v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id,
-    a deny entry's subtree_node_id) is refused with request.validation naming its successor in
-    details.renamed_to (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked
-    after every other check, before key.issued commits — ADR-0026 d5). The server takes exactly the
-    grants it is sent. The response echoes each stored grant_id and epoch (its grant.issued journal
-    seq). connect_code: true issues a connector key (ADR-0031 d7): no value is minted, and the 201
-    carries connect_code, shown once, in the value's place; an admin or operator role, held_by service
-    and a deployment without oauth.issuer are refused with 422 oauth.connect_refused and details.reason.
-    The Idempotency-Key is claimed for the calling key before the issuance: a resubmission under the
-    same key and body answers the first 201 with Idempotency-Replay: true and issues nothing again,
-    without value and without connect_code.code, which the first answer alone carries; the same key with
-    another body is idempotency.digest_mismatch, and a resubmission while the first attempt holds the
-    key waits up to 5 s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer
-    4, d5; since v0.7.0).
+    key, sent with tenant (step 0 of the issuance order). tenant is a designed field (openapi-
+    designed.yaml x-oml-designed-fields), refused with request.validation until it is built, so an
+    operator key issues operator keys only (ADR-0039 d9). expiry is the instant from which the key
+    authenticates nothing, later than the server's clock, and requests_per_minute the key's own rate,
+    from 1 to 1000000; either outside that is request.validation naming it in details.field, and nothing
+    is journalled (ADR-0079 d1, d4; since v0.7.3). Journalled as issued-without-value (show-once
+    ceremony). Validated in the issuance order declared in docs/architecture/roles-and-keys.md (Grant
+    admissibility and refusal order), which also fixes grant admissibility, the default workarea, when
+    the value is disclosed and what a part-way failure leaves (ADR-0025 d2). Every workarea, crew and
+    tenant reference takes an id or a name, and the response carries ids under their v0.3.0 names; a
+    v0.3.0 request spelling (default_workarea_id, tenant_id, a grant's workarea_node_id, a deny entry's
+    subtree_node_id) is refused with request.validation naming its successor in details.renamed_to
+    (ADR-0039 d7); name must be unique in the namespace (409 name.taken, checked after every other
+    check, before key.issued commits — ADR-0026 d5). The server takes exactly the grants it is sent. The
+    response echoes each stored grant_id and epoch (its grant.issued journal seq). connect_code: true
+    issues a connector key (ADR-0031 d7): no value is minted, and the 201 carries connect_code, shown
+    once, in the value's place; an admin or operator role, held_by service and a deployment without
+    oauth.issuer are refused with 422 oauth.connect_refused and details.reason. The Idempotency-Key is
+    claimed for the calling key before the issuance: a resubmission under the same key and body answers
+    the first 201 with Idempotency-Replay: true and issues nothing again, without value and without
+    connect_code.code, which the first answer alone carries; the same key with another body is
+    idempotency.digest_mismatch, and a resubmission while the first attempt holds the key waits up to 5
+    s for its answer, then is idempotency.in_progress (ADR-0031 d7; ADR-0070 d3 layer 4, d5; since
+    v0.7.0).
 
     Args:
         x_request_id (str | Unset):
