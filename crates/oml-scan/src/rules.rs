@@ -322,16 +322,16 @@ pub(crate) const PLACEHOLDERS: &[&str] = &[
     "sample",
 ];
 
-/// What the text as written must show right after a letters-only phrase,
-/// since the view dropped it with every other symbol.
+/// What the folded text must show of a letters-only phrase beyond its
+/// letters, since the view dropped every symbol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tail {
     /// Nothing more.
     None,
-    /// A colon, with no letter or digit before it: the raw pattern's
-    /// `\s*:`, and the separators a spelled-out phrase puts after its
-    /// last letter.
-    Colon,
+    /// The phrase's three words are joined by a space or by the phrase's own
+    /// separator, never across a sentence, and it is followed by a colon on
+    /// its line or ends its line: a directive, or its heading (#226).
+    Directive,
 }
 
 /// The injection phrases the letters-only view reads (ADR-0074 d6; ADR-0065
@@ -341,18 +341,28 @@ pub(crate) enum Tail {
 /// together once spaces and punctuation go do not match; markup rules are
 /// not here, since the view drops the symbols they name. Each pattern is
 /// a set of literals written as alternations, with no word boundary: the
-/// view has none. A match counts only where the text as written has a word
-/// edge at each end of it, and shows the phrase's [`Tail`] (#226).
+/// view has none. A match counts only where no ASCII letter of the folded
+/// text touches either end of it, and shows the phrase's [`Tail`] (#226). A
+/// rule may have several rows; the first to match counts.
 pub(crate) const LETTER_PHRASES: &[(&str, &str, Tail)] = &[
     (
         "ignore-instructions",
         "(?:ignore|disregard|forget|override)(?:all|any|the|of)*(?:previous|prior|above|earlier|preceding|your|system|original)(?:instructions?|prompts?|rules|directions|guidelines|directives)",
         Tail::None,
     ),
+    // The same phrase with its last word singular: the greedy `s?` above
+    // takes the `s` of a following word, and the match then ends inside it
+    // and is refused at the word edge, hiding the shorter match at the same
+    // start (#226).
+    (
+        "ignore-instructions",
+        "(?:ignore|disregard|forget|override)(?:all|any|the|of)*(?:previous|prior|above|earlier|preceding|your|system|original)(?:instruction|prompt)",
+        Tail::None,
+    ),
     (
         "new-instructions",
-        "(?:new|updated|real)(?:system)?instructions",
-        Tail::Colon,
+        "(new|updated|real)(system)(instructions)",
+        Tail::Directive,
     ),
     (
         "persona-switch",

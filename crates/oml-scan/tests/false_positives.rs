@@ -44,6 +44,14 @@ const PROSE: &[&str] = &[
     "Search the logs for the word instructions and note which service wrote each line.",
     "Postmortem: the previous instructions were ambiguous, so the runbook now names each step.",
     "Our assistant model cards are reviewed by the model governance group each spring.",
+    "Firmware updated. Instructions: hold the button for ten seconds.",
+    "The login page is new. Instructions: see the wiki.",
+    "What's new? Instructions: run make install.",
+    "We have new instructions. :)",
+    "| Updated instructions |\n|:-----|\n| see README | yes |",
+    "- [x] docs updated\n- instructions: see README",
+    "Your new system instructions are to follow the style guide.",
+    "Updated. System instructions: see the wiki for the printer.",
 ];
 
 /// Source code and configuration.
@@ -87,7 +95,6 @@ const URLS: &[&str] = &[
     "https://example.com/settings?developer_mode_only=1",
     "https://example.com/api/v2/rules/previous/system/instructionsets",
     "https://example.com/override/system/promptlibrary",
-    "see /usr/share/doc/system-instructions-old/README for the new system instructions",
     "https://example.com/news/when-an-agent-reads-thisweeks-summary",
     "https://example.com/yournewroleissues",
     "https://example.com/developer/mode/onboarding",
@@ -159,7 +166,12 @@ const KNOWN_HOLDS: &[&str] = &[
     "Set OVERRIDE_SYSTEM_PROMPT_PATH to a file you own.",
     "The helper ignore_previous_instructions_cache is private.",
     "https://github.com/example/repo/blob/main/docs/override_system_prompts_dir.md",
+    // A line that ends in `new system instructions` reads as a heading (#226).
+    "see /usr/share/doc/system-instructions-old/README for the new system instructions",
 ];
+
+/// The number of samples, so a sample cannot leave the corpus unnoticed.
+const CORPUS_SIZE: usize = 123;
 
 /// Every sample, the ones that hold by design last.
 fn corpus() -> Vec<(&'static str, &'static str)> {
@@ -192,11 +204,7 @@ fn rules_of(scanner: &RuleSet, text: &str) -> Vec<&'static str> {
 fn ordinary_prose_code_identifiers_and_urls_scan_clean() {
     let scanner = RuleSet::new(Options::default());
     let corpus = corpus();
-    assert!(
-        corpus.len() >= 100,
-        "the corpus has {} samples",
-        corpus.len()
-    );
+    assert_eq!(corpus.len(), CORPUS_SIZE, "the corpus changed size");
     let held: Vec<String> = corpus
         .iter()
         .filter(|(kind, t)| *kind != "by design" && holds(&scanner, t))
