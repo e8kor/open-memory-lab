@@ -59,10 +59,12 @@ class RustSdk(unittest.TestCase):
         problems = C.rust_sdk_problems(spec)
         self.assertEqual(
             problems,
-            # Both entries that read whoami's answer, the plain one and the
-            # one with start=true, report it.
+            # Every entry that reads whoami's answer reports it: the one with
+            # person=false, the one with start=true and the one with no query,
+            # which reads the person block.
             [
                 "whoami: the schema Whoami reads declares no fields, so its shape cannot be checked",
+                "whoami: the schema Onboarding reads declares no fields, so its shape cannot be checked",
                 "whoami: the schema Onboarding reads declares no fields, so its shape cannot be checked",
             ],
         )
