@@ -1692,6 +1692,109 @@ async fn oml_write_with_retirement_true_proposes_retiring_the_target() {
     drop_db(&db).await;
 }
 
+/// `oml_write` reaches the same check in each of its modes (ADR-0044 d16):
+/// a tenant key's new memory in a user's root, and a tenant reviewer's
+/// successor and retirement of a memory there, are
+/// `submission.user_root_refused`, and the user's own key writes.
+#[tokio::test]
+async fn oml_write_into_a_users_root_by_a_tenant_key_is_user_root_refused_in_every_mode() {
+    let Some((router, db)) = fresh_router().await else {
+        return;
+    };
+    let (_, admin) = crew_and_admin(&router, &["writer"]).await;
+    let mut keys = Vec::new();
+    for (name, role, user, workarea) in [
+        ("alice-laptop", "writer", Some("alice"), "alice"),
+        ("alice-review", "dreamer", Some("alice"), "alice"),
+        ("crew-loader", "writer", None, "universe"),
+        ("crew-editor", "dreamer", None, "universe"),
+    ] {
+        let mut body = json!({
+            "role": role, "name": name, "principal": name,
+            "grants": [
+                {"workarea": workarea, "role": role},
+                {"workarea": workarea, "role": "reader"},
+            ],
+        });
+        if let Some(user) = user {
+            body["user"] = json!(user);
+        }
+        let (status, key) = send(
+            &router,
+            "POST",
+            "/v2/keys",
+            Some(&admin),
+            Some(&format!("issue-{name}")),
+            Some(&body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{key}");
+        keys.push(key["value"].as_str().expect("show-once value").to_owned());
+    }
+    let [alice, alice_review, crew_loader, crew_editor] = &keys[..] else {
+        panic!("four keys");
+    };
+
+    // Alice's own key writes in her root, its default workarea.
+    let own = call_tool(
+        &router,
+        alice,
+        1,
+        "oml_write",
+        json!({"claim_key": "relay", "text": "The relay closes at noon.",
+               "idempotency_key": "alice-1"}),
+    )
+    .await;
+    assert_eq!(own["isError"], false, "{own}");
+    let v1 = own["structuredContent"]["artifact_id"]
+        .as_str()
+        .expect("artifact id")
+        .to_owned();
+    approve_as(&router, alice_review, "alice-v1").await;
+
+    let new_memory = call_tool(
+        &router,
+        crew_loader,
+        2,
+        "oml_write",
+        json!({"claim_key": "pump", "text": "The pump runs at night.",
+               "workarea": "alice", "idempotency_key": "crew-1"}),
+    )
+    .await;
+    assert_eq!(refusal_code(&new_memory), "submission.user_root_refused");
+    for (id, retirement) in [(3, false), (4, true)] {
+        let successor = call_tool(
+            &router,
+            crew_editor,
+            id,
+            "oml_write",
+            json!({"replaces": v1, "expected_version": 1,
+                   "text": "The relay closes at one.", "retirement": retirement,
+                   "idempotency_key": format!("crew-edit-{id}")}),
+        )
+        .await;
+        assert_eq!(
+            refusal_code(&successor),
+            "submission.user_root_refused",
+            "retirement {retirement}"
+        );
+    }
+
+    // The tenant key still reads the row it may not replace.
+    let read = call_tool(
+        &router,
+        crew_loader,
+        5,
+        "oml_read",
+        json!({"artifact_id": v1}),
+    )
+    .await;
+    assert_eq!(read["isError"], false, "{read}");
+    assert_eq!(read["structuredContent"]["items"][0]["artifact_id"], v1);
+
+    drop_db(&db).await;
+}
+
 #[tokio::test]
 async fn oml_write_refuses_retirement_without_replaces_naming_retirement() {
     let Some((router, db)) = fresh_router().await else {

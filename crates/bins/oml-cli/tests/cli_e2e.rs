@@ -4608,6 +4608,71 @@ async fn doctor_warns_when_a_user_key_does_not_read_universe() {
     drop_db(&db_name).await;
 }
 
+/// ADR-0044 d16 through the real lead: a tenant writer key whose default
+/// workarea lies in a user's root is told by `oml doctor` that its writes
+/// there are refused and which key to issue instead, and the write it was
+/// warned about answers `submission.user_root_refused`; the user's own key
+/// is told nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_warns_when_a_tenant_writer_keys_default_workarea_lies_in_a_users_root() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let (code, alice, log) = lab.json(
+        None,
+        &[
+            "keys",
+            "issue-agent",
+            "alice-laptop",
+            "--principal",
+            "alice/laptop",
+            "--user",
+            "alice",
+        ],
+    );
+    assert_eq!(code, 0, "issue-agent --user: {log}");
+    let alice_key = alice["value"].as_str().expect("value").to_owned();
+    let (code, _, log) = lab.json(
+        Some(&alice_key),
+        &["workareas", "create", "alice", "project"],
+    );
+    assert_eq!(code, 0, "a user key creates under its root: {log}");
+    let (code, doctor, log) = lab.json(Some(&alice_key), &["doctor"]);
+    assert_eq!(code, 0, "doctor: {log}");
+    assert_eq!(doctor["user_root_writes"], Value::Null, "{log}");
+
+    let (code, loader, log) = lab.json(
+        None,
+        &[
+            "keys",
+            "issue-agent",
+            "crew-loader",
+            "--principal",
+            "crew/loader",
+            "--workarea",
+            "alice.project",
+        ],
+    );
+    assert_eq!(code, 0, "issue-agent on a workarea in alice's root: {log}");
+    assert_eq!(loader["user"], Value::Null, "{log}");
+    let loader_key = loader["value"].as_str().expect("value").to_owned();
+    let (code, doctor, log) = lab.json(Some(&loader_key), &["doctor"]);
+    assert_eq!(code, 0, "a warning is not a failure: {log}");
+    assert_eq!(doctor["verdict"], "warn", "{log}");
+    assert_eq!(
+        doctor["user_root_writes"],
+        "warn: the default workarea universe.alice.project lies in the root of user alice, where only alice's keys write memories; this tenant key's writes there are refused (submission.user_root_refused); issue the agent a key with --user alice",
+        "{log}"
+    );
+    let (code, refused, log) = lab.json(Some(&loader_key), &["write", "The loader ran at noon."]);
+    assert_eq!(code, 1, "{log}");
+    assert_eq!(
+        refused["error"]["code"], "submission.user_root_refused",
+        "{log}"
+    );
+    lab.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn doctor_prints_role_tenant_and_default_workarea_from_whoami() {
     let (url, seen, task) = doctor_stub().await;

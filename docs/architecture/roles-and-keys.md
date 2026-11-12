@@ -138,6 +138,7 @@ A key with the field `user` (the person an admin attests it acts for) is a **use
 - **Grants stay inside the user's root.** Any other grant is refused with `access.issuer_ceiling`. Issuance adds one reader grant on the `universe` node only.
 - A user key's bare workarea names resolve in its root; tenant keys use `<user>.<name>`.
 - **Writes into `universe` are refused** (`submission.universe_refused`). Only a curator writes there: a tenant writer key granted writer on `universe`, reviewed by a dreamer outside the memory's lineage.
+- **A user's root takes memories from that user's keys only.** A tenant key's new memory, successor or retirement in `universe.<user>` or below it is refused with `submission.user_root_refused`, whatever writer or dreamer grant it holds there. Its reads, recall and verdicts there are unchanged, and `my_effective_verbs` still lists what its grants confer. A key that cannot read the workarea gets `access.not_found`.
 
 ## Session keys
 

@@ -494,6 +494,13 @@ async fn a_scope_recall_makes_no_federation_read() {
     );
 }
 
+/// Who writes in a user root, over the double (ADR-0044 d16): that user's
+/// keys alone, with reads, recall and review there unchanged.
+#[tokio::test]
+async fn user_root_writes_double_passes_the_suite() {
+    contracts::user_roots::run_user_root_write_suite(|| async { MemStore::new() }).await;
+}
+
 /// As-of reads' laws over the double (ADR-0059 d21): the tip and existence
 /// at an instant, everything else today's.
 #[tokio::test]
