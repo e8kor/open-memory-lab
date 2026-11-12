@@ -1272,3 +1272,107 @@ async fn a_write_over_any_quota_is_refused_as_limit_quota_naming_it_and_journals
     assert_eq!(drift(&rig).await["drift"], json!([]));
     drop_db(&rig.db).await;
 }
+
+/// [`issue_key`] under the caller's own idempotency key: the status, whether
+/// the answer is a replay, and the body.
+async fn issue_key_under(
+    rig: &Rig,
+    cookie: &str,
+    idem: &str,
+    suffix: &str,
+) -> (StatusCode, bool, Value) {
+    let user = whoami(rig, cookie).await["person"]["user"]
+        .as_str()
+        .expect("the person's user")
+        .to_owned();
+    let mut request = as_web(
+        cookie,
+        "web",
+        "POST",
+        "/v2/keys",
+        Some(json!({"name": format!("{user}-{suffix}"), "role": "writer"})),
+    );
+    request
+        .headers_mut()
+        .insert("idempotency-key", idem.parse().expect("a header value"));
+    let (status, headers, body) = json(rig, request).await;
+    let replayed = headers
+        .get("idempotency-replay")
+        .is_some_and(|v| v == "true");
+    (status, replayed, body)
+}
+
+/// A key issuance claims its idempotency key before it acts (#259), and the
+/// keys meter holds under it: two sends at once of the issuance that
+/// reaches the limit are one key, a later send answers its record at the
+/// limit and never `limit.quota`, and an issuance past the limit is
+/// refused naming the quota, counts nothing and releases its claim, so the
+/// same key acts once the limit is raised (ADR-0071 d2, d3; http-api.md
+/// idempotency).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_key_issuance_sent_again_under_its_claim_is_one_key_at_the_limit_and_a_refused_one_holds_no_claim()
+ {
+    let Some(rig) = rig().await else { return };
+    let ada = sign_up(&rig, 12, "ada@example.com").await;
+    let key = agent_key(&rig, &ada).await;
+    let account = own_usage(&rig, &key).await["account"]
+        .as_str()
+        .expect("an account")
+        .to_owned();
+    for n in 0..3 {
+        let (status, body) = issue_key(&rig, &ada, &format!("agent-{n}")).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+    assert_eq!(used(&rig, &key).await[4], 4);
+    // The fifth key reaches the limit: two sends at once issue it once.
+    let ((s1, r1, a1), (s2, r2, a2)) = tokio::join!(
+        issue_key_under(&rig, &ada, "fifth", "agent-3"),
+        issue_key_under(&rig, &ada, "fifth", "agent-3"),
+    );
+    assert_eq!(
+        (s1, s2),
+        (StatusCode::CREATED, StatusCode::CREATED),
+        "{a1} {a2}"
+    );
+    assert!(r1 != r2, "one send acts and the other replays it");
+    assert_eq!(a1["key_id"], a2["key_id"]);
+    assert_eq!(used(&rig, &key).await[4], 5);
+    // Sent again at the limit: the record answers, not limit.quota.
+    let (status, replayed, again) = issue_key_under(&rig, &ada, "fifth", "agent-3").await;
+    assert_eq!(status, StatusCode::CREATED, "{again}");
+    assert!(replayed, "{again}");
+    assert_eq!(again["key_id"], a1["key_id"]);
+    assert_eq!(used(&rig, &key).await[4], 5);
+
+    // A sixth is refused naming the quota, twice under one key, and counts
+    // nothing.
+    for _ in 0..2 {
+        let (status, replayed, body) = issue_key_under(&rig, &ada, "sixth", "agent-4").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+        assert!(!replayed, "a refusal records nothing: {body}");
+        assert_eq!(body["error"]["code"], "limit.quota", "{body}");
+        assert_eq!(
+            body["error"]["details"],
+            json!({"quota": "keys", "limit": 5, "used": 5})
+        );
+    }
+    assert_eq!(used(&rig, &key).await[4], 5);
+    // The refusal released its claim: once an admin raises the limit the
+    // same key acts, once.
+    set_profile(
+        &rig,
+        &account,
+        json!({"profile": "free", "overrides": {"keys": 6}}),
+    )
+    .await;
+    let (status, replayed, sixth) = issue_key_under(&rig, &ada, "sixth", "agent-4").await;
+    assert_eq!(status, StatusCode::CREATED, "{sixth}");
+    assert!(!replayed, "{sixth}");
+    let (status, replayed, again) = issue_key_under(&rig, &ada, "sixth", "agent-4").await;
+    assert_eq!(status, StatusCode::CREATED, "{again}");
+    assert!(replayed, "{again}");
+    assert_eq!(again["key_id"], sixth["key_id"]);
+    assert_eq!(used(&rig, &key).await[4], 6);
+    assert_eq!(drift(&rig).await["drift"], json!([]));
+    drop_db(&rig.db).await;
+}
