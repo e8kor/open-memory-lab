@@ -45,6 +45,15 @@ disagreement found:
 - a job needing the version job runs `python site/build.py --check` and packs
   site/dist as oml-site-${VERSION}.tar.gz, and the signing job needs it and
   requires that archive among the files it sums and signs (site/README.md);
+- a job needing the version job runs scripts/build_sdk_packages.py and uploads the
+  SDK packages, and the signing job needs it and requires oml_sdk-${VERSION}-py3-none-any.whl,
+  oml_sdk-${VERSION}.tar.gz and oml-sdk-${VERSION}.tgz among the files it sums and
+  signs; the version job runs scripts/check_sdk_versions.py with the tag; the only
+  jobs that upload to PyPI or npm are publish-sdk-pypi and publish-sdk-npm, each
+  skipped unless vars.PUBLISH_SDKS is 'true', each needing the version job and the
+  GitHub release job, each checking the files against SHA256SUMS first and holding
+  `id-token: write`; every action in those three jobs is pinned by commit (docs/contributing/releasing.md,
+  "Publishing the SDKs");
 - ci.yml job cli-matrix runs on the same target and runner pairs and, on each,
   runs `oml --version` and the CLI's unit tests, so a broken platform fails a
   pull request before a tag (docs/engineering/ci-and-toolchain.md "Release
@@ -110,10 +119,10 @@ WEB_ARCHIVE = "oml-web-${VERSION}-${TARGET}"
 CARGO_BUILD = re.compile(r"\bcargo\s+build\b[^\n]*--bin\s+(\S+)")
 CYCLONEDX = re.compile(r"\bcargo\s+cyclonedx\b[^\n]*--target\b")
 SHA256SUMS = re.compile(
-    r"\bsha256sum\b[^\n]*\*\.tar\.gz[^\n]*\*\.zip[^\n]*\*\.cdx\.json[^\n]*oml-marketplace-\*\.json[^\n]*>\s*SHA256SUMS"
+    r"\bsha256sum\b[^\n]*\*\.tar\.gz[^\n]*\*\.zip[^\n]*\*\.whl[^\n]*\*\.tgz[^\n]*\*\.cdx\.json[^\n]*oml-marketplace-\*\.json[^\n]*>\s*SHA256SUMS"
 )
 SIGN_EVERY_BLOB = re.compile(
-    r"for\s+f\s+in\s+\*\.tar\.gz\s+\*\.zip\s+\*\.cdx\.json\s+oml-marketplace-\*\.json\s+SHA256SUMS;"
+    r"for\s+f\s+in\s+\*\.tar\.gz\s+\*\.zip\s+\*\.whl\s+\*\.tgz\s+\*\.cdx\.json\s+oml-marketplace-\*\.json\s+SHA256SUMS;"
     r"[^\n]*\n[^\n]*cosign\s+sign-blob\b"
 )
 PACKAGE_AGENTS = re.compile(r"\bscripts/package_agent_artifacts\.py\b")
@@ -214,6 +223,7 @@ def main() -> int:
     check_binaries(errors, jobs)
     check_agents(errors, jobs)
     check_site(errors, jobs)
+    check_sdks(errors, jobs)
     check_cli_matrix(errors, jobs)
     check_installers(errors, jobs)
     check_installer_lines(errors)
@@ -567,6 +577,109 @@ def check_chart(errors: list[str], jobs: dict) -> None:
             errors.append(f"job {name}: uploads the chart archive without its signature bundle")
 
 
+# The file names come from scripts/sdk_names.py through the version job's outputs, as env vars.
+SDK_FILES = ("SDK_WHEEL", "SDK_SDIST", "SDK_TGZ")
+# Each publish job, the environment it must keep and the files it uploads.
+SDK_PUBLISHERS = {
+    "publish-sdk-pypi": ("pypi", ("SDK_WHEEL", "SDK_SDIST")),
+    "publish-sdk-npm": ("npm", ("SDK_TGZ",)),
+}
+NPM_PUBLISH_FROM_A_PATH = re.compile(r'\bnpm\s+publish\s+"?\./')
+NPM_PUBLISH = re.compile(r"\bnpm\s+publish\b")
+OR_TRUE = re.compile(r"\|\|\s*true\b")
+PINNED_BY_COMMIT = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}(\s|$)")
+UPLOADS_TO_A_REGISTRY = re.compile(r"\bnpm\s+publish\b|\btwine\s+upload\b|\buv\s+publish\b")
+
+
+def check_sdks(errors: list[str], jobs: dict) -> None:
+    """The SDK packages are built at the tag's version and signed with everything else; publishing
+    them is two gated jobs and nothing else (docs/contributing/releasing.md, "Publishing the SDKs")."""
+    versions = {name for name, job in jobs.items() if "version" in job.get("outputs", {})}
+    builders = {
+        name: job for name, job in jobs.items()
+        if any("scripts/build_sdk_packages.py" in r for r in runs(job))
+    }
+    if len(builders) != 1:
+        errors.append(f"{len(builders)} jobs run scripts/build_sdk_packages.py, not exactly one")
+    for name, job in builders.items():
+        if not set(needs(job)) & versions:
+            errors.append(f"job {name}: builds the SDK packages without needing the job that reads the tag's version")
+        if any(UPLOADS_TO_A_REGISTRY.search(r) or "gh-action-pypi-publish" in str(s.get("uses", ""))
+               for r, s in zip(runs(job), steps(job))):
+            errors.append(f"job {name}: builds the SDK packages and uploads them to a registry")
+    for name in versions:
+        script = "\n".join(runs(jobs[name]))
+        if "scripts/check_sdk_versions.py" not in script or '--tag "$tag"' not in script:
+            errors.append(f"job {name}: does not run scripts/check_sdk_versions.py with the tag")
+        if "scripts/sdk_names.py" not in script:
+            errors.append(f"job {name}: does not write the SDK file names with scripts/sdk_names.py")
+    signers = {name: job for name, job in jobs.items() if any(SIGN_EVERY_BLOB.search(r) for r in runs(job))}
+    for name, job in signers.items():
+        if not set(builders) <= ancestors(jobs, name):
+            errors.append(f"job {name}: signs without needing the job that builds the SDK packages")
+        script = "\n".join(runs(job))
+        for file in SDK_FILES:
+            if f"${file}" not in script:
+                errors.append(f"job {name}: does not require ${file} among the files it signs")
+            if job.get("env", {}).get(file) != f"${{{{ needs.version.outputs.{file.lower()} }}}}":
+                errors.append(f"job {name}: {file} is not the version job's {file.lower()} output")
+    for name, job in jobs.items():
+        uploads = any(
+            UPLOADS_TO_A_REGISTRY.search(r) or "gh-action-pypi-publish" in str(s.get("uses", ""))
+            for r, s in zip(runs(job), steps(job))
+        )
+        if uploads and name not in SDK_PUBLISHERS:
+            errors.append(f"job {name}: uploads to PyPI or npm; only {sorted(SDK_PUBLISHERS)} may")
+    release_creators = [n for n, j in jobs.items() if step_matching(j, RELEASE_CREATE) is not None]
+    for name, (environment, files) in sorted(SDK_PUBLISHERS.items()):
+        job = jobs.get(name)
+        if job is None:
+            errors.append(f"no job {name}")
+            continue
+        if str(job.get("if", "")).replace(" ", "") != "vars.PUBLISH_SDKS=='true'":
+            errors.append(f"job {name}: is not gated on vars.PUBLISH_SDKS == 'true', so a release would publish by surprise")
+        if job.get("environment") != environment:
+            errors.append(f"job {name}: does not run in the {environment!r} environment, which holds the registry's trust and the reviewer")
+        upstream = ancestors(jobs, name)
+        if not versions <= upstream or not set(release_creators) <= upstream:
+            errors.append(f"job {name}: does not need the version job and the job that creates the GitHub release")
+        script = "\n".join(runs(job))
+        guard = step_index(job, "scripts/check_sdk_registry_names.py")
+        upload = next(
+            (i for i, st in enumerate(steps(job))
+             if "gh-action-pypi-publish" in str(st.get("uses", "")) or NPM_PUBLISH.search(str(st.get("run", "")))),
+            None,
+        )
+        if guard is None:
+            errors.append(f"job {name}: does not run scripts/check_sdk_registry_names.py, so an undecided registry name could publish")
+        elif upload is not None and guard >= upload:
+            errors.append(f"job {name}: runs scripts/check_sdk_registry_names.py after the upload")
+        if guard is not None and any(runs(job)[i] for i in range(guard)):
+            errors.append(f"job {name}: runs another command before scripts/check_sdk_registry_names.py")
+        if "--ignore-missing" in script:
+            errors.append(f"job {name}: checks with --ignore-missing, which passes a file SHA256SUMS does not list")
+        if "sha256sum --check --strict -" not in script or "awk" not in script:
+            errors.append(f"job {name}: does not pull each file's own line out of SHA256SUMS and check it with sha256sum --check --strict -")
+        if "set -euo pipefail" not in script:
+            errors.append(f"job {name}: the checksum step does not run under set -euo pipefail")
+        for file in files:
+            if f'"${file}"' not in script:
+                errors.append(f"job {name}: does not check ${file} by name against SHA256SUMS")
+        if job.get("continue-on-error") or any(st.get("continue-on-error") for st in steps(job)):
+            errors.append(f"job {name}: has continue-on-error, so a failed check would not stop the upload")
+        if OR_TRUE.search(script):
+            errors.append(f"job {name}: has a command ending in || true, which hides a failed check")
+        if name == "publish-sdk-npm":
+            for run in runs(job):
+                if NPM_PUBLISH.search(run) and not NPM_PUBLISH_FROM_A_PATH.search(run):
+                    errors.append(f"job {name}: npm publish does not start its argument with ./, so npm reads it as a GitHub repository")
+    for name in sorted(set(SDK_PUBLISHERS) | set(builders)):
+        for step in steps(jobs.get(name, {})):
+            uses = str(step.get("uses", ""))
+            if uses and not PINNED_BY_COMMIT.match(uses):
+                errors.append(f"job {name}: {uses} is not pinned by commit")
+
+
 def step_matching(job: dict, pattern: re.Pattern) -> int | None:
     return next((i for i, run in enumerate(runs(job)) if pattern.search(run)), None)
 
@@ -629,7 +742,8 @@ def report(errors: list[str]) -> int:
             "release check: release.yml builds, merges and signs one index for linux/amd64 and linux/arm64,"
             " attaches the signed chart, builds, sums and signs the CLI, server and oml-web archives of every"
             " target, which ci.yml's cli-matrix builds and tests first, and sums and signs the Claude Code"
-            " plugin archive, the pinned marketplace, the agent kit and the landing site; the installers fetch only the"
+            " plugin archive, the pinned marketplace, the agent kit, the landing site and the SDK packages, which only two"
+            " jobs gated on PUBLISH_SDKS publish; the installers fetch only the"
             " signed CLI archive, SHA256SUMS and its bundle, and ci.yml's install-smoke runs them"
         )
     return 1 if errors else 0

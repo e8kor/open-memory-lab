@@ -958,12 +958,34 @@ jobs:
         working-directory: sdks/typescript
       - run: python scripts/generate_sdks.py --check
 
+  # The packages a release would publish (release.yml job sdks runs the same
+  # script): both built from this checkout, what they ship checked, and each
+  # installed into a fresh environment and imported. Nothing is uploaded.
+  sdk-packages:
+    name: SDK packages build, ship the right files and install
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.6"  # the version m0-spikes.yml pins
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: python scripts/build_sdk_packages.py --out sdk-dist
+
   # The one check to require: it succeeds when every job above succeeded or was
   # skipped by the filter, and fails when one failed or was cancelled.
   ci-ok:
     name: ci ok (ci)
     if: always()
-    needs: [changes, lint, test, web-walls, docs-reading-tests, e2e, compose, image, cli-matrix, install-smoke, deny, plugin, recall-eval, recall-eval-data, chart, sdk-python, sdk-typescript, sdk-generated]
+    needs: [changes, lint, test, web-walls, docs-reading-tests, e2e, compose, image, cli-matrix, install-smoke, deny, plugin, recall-eval, recall-eval-data, chart, sdk-python, sdk-typescript, sdk-generated, sdk-packages]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

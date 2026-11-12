@@ -1400,10 +1400,17 @@ mod tests {
         );
     }
 
+    /// Three missed deadlines end per-turn recall for the session, and the
+    /// call after them sends nothing. A miss is counted before a request is
+    /// sent and the clock starts before the cache write (ADR-0063 d10), so
+    /// on a runner slow enough to spend the budget first, a counted miss
+    /// has no request: requests are at most one per miss, not exactly one
+    /// (#312). The test asserts what the design fixes, the misses and the
+    /// quiet after them, and no count that depends on the runner.
     #[test]
     fn per_turn_recall_is_skipped_on_timeout_and_stops_after_three_misses() {
-        // The stub answers long after the 100 ms budget, so an answer in
-        // time is impossible however loaded the machine is.
+        // The stub answers long after the budget, so an answer in time is
+        // impossible however loaded the machine is.
         let (url, seen) = stub_seen(
             Duration::from_secs(5),
             json!([hit("a1", "promoted", "doc")]),
@@ -1415,6 +1422,7 @@ mod tests {
             ("OML_API_KEY", "oml_test_key"),
         ]);
         let var = env.var();
+        let sent = |seen: &Seen| seen.lock().expect("lock").len();
         for n in 1..=MISSES_MAX {
             let started = Instant::now();
             let out = user_prompt(&var, &mut &prompt("s3", "postgres replication lag")[..]);
@@ -1430,21 +1438,32 @@ mod tests {
                 n
             );
         }
-        // Each miss sent its one request; wait until the stub has read all of them.
-        let sent = |seen: &Seen| seen.lock().expect("lock").len();
+        // Wait until the stub has read every request that was sent: the
+        // count has stopped changing for a while.
+        let mut settled = (sent(&seen), Instant::now());
         let deadline = Instant::now() + Duration::from_secs(10);
-        while sent(&seen) < MISSES_MAX as usize && Instant::now() < deadline {
+        while settled.1.elapsed() < Duration::from_millis(500) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
+            let now = sent(&seen);
+            if now != settled.0 {
+                settled = (now, Instant::now());
+            }
         }
-        assert_eq!(sent(&seen), MISSES_MAX as usize, "one request per miss");
+        let before = settled.0;
+        assert!(
+            before <= MISSES_MAX as usize,
+            "at most one request per miss, got {before}"
+        );
         assert_eq!(
             user_prompt(&var, &mut &prompt("s3", "postgres replication lag")[..]),
             Err(None),
             "off for the session"
         );
         // A request sent now would have missed the budget and answered
-        // Err(Some(..)); the count and the cache say none was sent.
-        assert_eq!(sent(&seen), MISSES_MAX as usize, "no request sent");
+        // Err(Some(..)); the cache says no attempt began, and the stub, given
+        // the time a request needs on loopback, has read no new one.
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(sent(&seen), before, "the off-for-session call sent nothing");
         assert_eq!(
             ChatCache::load(&chat_cache_path(&var, "s3").expect("p")).misses,
             MISSES_MAX

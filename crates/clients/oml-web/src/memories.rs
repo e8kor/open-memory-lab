@@ -29,7 +29,7 @@ use oml_sdk::{AdminMemory, AdminSearch, CountedNode, Memory, MemoryQuery, Recall
 use serde_json::{Value, json};
 
 use crate::atlas::{Counts, Tile, legend, lifebar, svg};
-use crate::pages::{Fields, refused};
+use crate::pages::{Fields, WalkEnd, refused, walk};
 use crate::session::{PageCalls, Session, call, cookie};
 use crate::workareas::{
     Credentials, NodeOffers, Side as ActSide, mode_offers, offers_of, transitions_offers,
@@ -487,41 +487,37 @@ impl From<oml_sdk::Error> for Failed {
 /// (#281): a list cut short would leave rows without their kind and send
 /// an author search to `access.not_found` for a key the person holds.
 async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kinds, Failed> {
-    let mut kinds = Vec::new();
-    let mut cursor: Option<String> = None;
-    let mut seen = std::collections::HashSet::new();
-    for _ in 0..KEY_PAGES_MAX {
+    walk(KEY_PAGES_MAX, |cursor| async move {
         let ids = calls.next_ids();
         let page = web
             .api
             .list_keys(&call(credential, &ids), None, PAGE_MAX, cursor.as_deref())
             .await?;
-        kinds.extend(
-            page.items
-                .into_iter()
-                .map(|k| (k.id, k.name, kind_word(&k.held_by))),
-        );
-        match page.next_cursor {
-            None => return Ok(kinds),
-            Some(next) if !seen.insert(next.clone()) => {
-                return Err(Failed::Refused(
-                    StatusCode::BAD_GATEWAY,
-                    "unavailable",
-                    "the server repeated a cursor of your key list, so the list cannot be read whole; try again"
-                        .to_owned(),
-                ));
-            }
-            Some(next) => cursor = Some(next),
-        }
-    }
-    Err(Failed::Refused(
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "limit.list_too_long",
-        format!(
-            "you hold more keys than this page reads ({} pages of {PAGE_MAX}); use the API or the command line",
-            KEY_PAGES_MAX
+        let kinds: Kinds = page
+            .items
+            .into_iter()
+            .map(|k| (k.id, k.name, kind_word(&k.held_by)))
+            .collect();
+        Ok((kinds, page.next_cursor))
+    })
+    .await
+    .map_err(|end| match end {
+        WalkEnd::Failed(e) => Failed::Api(e),
+        WalkEnd::Repeated => Failed::Refused(
+            StatusCode::BAD_GATEWAY,
+            "unavailable",
+            "the server repeated a cursor of your key list, so the list cannot be read whole; try again"
+                .to_owned(),
         ),
-    ))
+        WalkEnd::TooLong => Failed::Refused(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "limit.list_too_long",
+            format!(
+                "you hold more keys than this page reads ({} pages of {PAGE_MAX}); use the API or the command line",
+                KEY_PAGES_MAX
+            ),
+        ),
+    })
 }
 
 /// The user page's page of the list, as `<user>-web`: the merged listing,

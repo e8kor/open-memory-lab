@@ -153,6 +153,7 @@ nav:
       - Storage: architecture/storage.md
       - Audit and lineage: architecture/audit-and-lineage.md
       - Retrieval: architecture/retrieval.md
+      - When a recall repeats: architecture/repeatable-recall.md
       - Compliance: product/compliance.md
   - Benchmarks:
       - benchmarks/index.md

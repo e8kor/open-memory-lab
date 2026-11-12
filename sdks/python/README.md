@@ -1,15 +1,19 @@
 # oml-sdk — the Python client
 
 A client for the Open Memory Lab HTTP API: a layer generated from
-[`docs/api/openapi.yaml`](../../docs/api/openapi.yaml) by a pinned `openapi-python-client`, and a
+[`docs/api/openapi.yaml`](https://e8kor.github.io/open-memory-lab/api/openapi.yaml) by a pinned `openapi-python-client`, and a
 thin hand-written wrapper over it. What the wrapper covers, the pins and the regeneration rule are
-decided in [docs/engineering/sdks.md](../../docs/engineering/sdks.md).
+decided in [docs/engineering/sdks.md](https://e8kor.github.io/open-memory-lab/engineering/sdks/).
 
-It is not released to PyPI. Install it from a checkout, Python 3.11 or later:
+Python 3.11 or later. Each release attaches a wheel and an sdist to its GitHub release; install
+the wheel from the file, or install from a checkout of the repository:
 
 ```sh
-uv add ./sdks/python            # or: pip install ./sdks/python
+pip install ./oml_sdk-X.Y.Z-py3-none-any.whl     # the wheel from a release's files
+uv add ./sdks/python                              # or: pip install ./sdks/python, from a checkout
 ```
+
+The name this package takes on PyPI is chosen when it is first published there.
 
 ```python
 from oml_sdk import OmlClient
@@ -39,7 +43,7 @@ Seven verbs: `write`, `read`, `workarea`, `events`, `review_next`, `approve` and
 `write`'s arguments choose a submission or, with `replaces`, a supersession; `read`'s choose a
 fetch (`artifact_id`), a recall (`query`) or the listing (neither), as `oml_write` and
 `oml_read` do. Every refusal raises `oml_sdk.ApiError` carrying the envelope of
-[errors.md](../../docs/api/errors.md) — `code`, `message`, `rule`, `retryable`, `details`,
+[errors.md](https://e8kor.github.io/open-memory-lab/api/errors/) — `code`, `message`, `rule`, `retryable`, `details`,
 `request_id` — and `status`, as the subclass of the code's family; an argument outside its mode
 is refused the same way before anything is sent.
 
