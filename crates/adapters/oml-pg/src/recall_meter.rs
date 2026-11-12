@@ -14,7 +14,9 @@
 //! Every count handed to the meter is one of three things: written, told
 //! as lost, or still `unaccounted`. A stop that cannot wait for the writer
 //! tells what is still unaccounted, so the lost counts it and the writer
-//! have told sum to what was accepted and never written, none twice.
+//! have told sum to at least what was accepted and never written, none
+//! twice: a writer still mid-write at the stop can commit rows the stop
+//! has already told as lost.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

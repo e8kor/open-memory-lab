@@ -481,8 +481,9 @@ edits by proposal there. Asked "Which rule do you want?" the same day, the opera
       still decide. `<user>-review` and `<user>-admin` are refused a new memory by their role
       (`access.verb_ceiling`) wherever it is addressed, so the review key meets the rule on a
       successor of a ratified retirement only. `<user>-curate` holds writer on the `universe`
-      node alone, so its new memory in its own person's root is `access.grant_refused`, and in
-      another person's root it reads, `submission.user_root_refused`. The first build of this
+      node alone, so its new memory in its own person's root is `access.grant_refused` where it
+      reads that root and `access.not_found` where it does not, and in another person's root it
+      reads, `submission.user_root_refused`. The first build of this
       amendment compared the key's `user` with the root: it refused a person's own
       `<user>-review` the successor of a ratified retirement in their root, so an admin who
       retired a memory of their own on the admin page could not put it back. The review of
