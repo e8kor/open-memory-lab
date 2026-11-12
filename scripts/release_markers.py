@@ -59,11 +59,14 @@ def git(root: Path, *args: str) -> str:
 
 
 def ruleset_at(root: Path, rev: str) -> str | None:
-    """The scanner's rule set at `rev`; None when the file or the constant is not there."""
-    try:
-        return ruleset_of(git(root, "show", f"{rev}:{SCANNER_SOURCE}"))
-    except RuntimeError:
+    """The scanner's rule set at `rev`; None when the file or the constant is not there.
+
+    Raises RuntimeError, with git's message, when git itself fails (an unknown revision, no
+    repository, an unreadable object): that is not the same as the rule set being undeclared."""
+    git(root, "rev-parse", "--verify", f"{rev}^{{commit}}")
+    if not git(root, "ls-tree", "--name-only", rev, "--", SCANNER_SOURCE).strip():
         return None
+    return ruleset_of(git(root, "show", f"{rev}:{SCANNER_SOURCE}"))
 
 
 def required(root: Path, tag: str) -> list[tuple[str, str]]:

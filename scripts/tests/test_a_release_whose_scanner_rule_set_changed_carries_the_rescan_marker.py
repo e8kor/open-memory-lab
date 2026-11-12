@@ -115,6 +115,31 @@ class Markers(unittest.TestCase):
         with d:
             self.assertEqual(run(root, "list", "--tag", "v0.7.2")[1].strip(), MARKER)
 
+    def test_a_file_or_constant_absent_at_a_tag_is_not_declared_and_a_git_failure_is_an_error(self):
+        d, root = repo([("v0.7.1", ""), ("v0.7.2", "oml-scan/1.2")])
+        with d:
+            self.assertIsNone(M.ruleset_at(root, "v0.7.1"))  # the file holds no constant
+            self.assertEqual(M.ruleset_at(root, "v0.7.2"), "oml-scan/1.2")
+            (root / M.SCANNER_SOURCE).unlink()
+            subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "gone"], check=True)
+            self.assertIsNone(M.ruleset_at(root, "HEAD"))  # the file is not there
+            with self.assertRaises(RuntimeError) as e:
+                M.ruleset_at(root, "v9.9.9")  # git cannot resolve the revision
+            self.assertIn("v9.9.9", str(e.exception))
+
+    def test_a_git_failure_reading_the_previous_tag_fails_by_name_and_demands_no_marker(self):
+        d, root = repo([("v0.7.1", "oml-scan/1.1"), ("v0.7.2", "oml-scan/1.2")])
+        with d:
+            # The previous tag's commit object is gone: git cannot read it, which is not "not declared".
+            tag_commit = subprocess.run(["git", "-C", str(root), "rev-parse", "v0.7.1^{commit}"], capture_output=True, text=True, check=True).stdout.strip()
+            obj = root / ".git" / "objects" / tag_commit[:2] / tag_commit[2:]
+            obj.chmod(0o644)
+            obj.unlink()
+            code, out, err = run(root, "list", "--tag", "v0.7.2")
+            self.assertEqual((code, out), (1, ""))
+            self.assertIn("release markers: git", err)
+            self.assertNotIn("not declared", err)
+
 
 class Workflow(unittest.TestCase):
     jobs = yaml.safe_load(R.WORKFLOW.read_text())["jobs"]
