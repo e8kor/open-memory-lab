@@ -15,14 +15,17 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use oml_app::App;
+use oml_app::app::{Caller, Capacity};
 use oml_app::domain::access::{Covers, Grant};
-use oml_app::domain::name::{Name, Reference};
+use oml_app::domain::name::{Name, NamedKind, Reference};
+use oml_app::domain::web::Email;
 use oml_app::domain::{EventTime, HeldBy, MemoryKind, MemoryStatus, Role};
 use oml_app::doubles::{FixedClock, MarkerScanner, MemSigner, SeqIdGen};
-use oml_app::ports::JournalStore;
+use oml_app::ports::{ConnectionStore, JournalStore, WebStore};
 use oml_app::types::{
-    AnchorFilter, AppError, BootstrapRequest, GrantRequest, IssueKeyRequest, IssuedKey,
-    RecallRequest, SubmitRequest, SupersedeRequest, Verdict,
+    AnchorFilter, AppError, Bearer, BootstrapRequest, GrantRequest, IssueKeyRequest, IssuedKey,
+    KeyRecord, RecallRequest, SubmitRequest, SupersedeRequest, Verdict, WebEmailRequest,
+    WebSessionRecord,
 };
 use uuid::Uuid;
 
@@ -221,9 +224,22 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
         claim_key: Option<&str>,
         body: &str,
     ) -> Result<Uuid, AppError> {
+        self.submit_as(key.value.as_str(), workarea, claim_key, body)
+            .await
+    }
+
+    /// [`Self::submit_claim`] as any caller: a bearer key's value, or a
+    /// session key a person's request resolved.
+    pub async fn submit_as<'a>(
+        &self,
+        bearer: impl Into<Bearer<'a>>,
+        workarea: impl Into<Reference>,
+        claim_key: Option<&str>,
+        body: &str,
+    ) -> Result<Uuid, AppError> {
         self.app
             .submit_memory(
-                key.value.as_str(),
+                bearer,
                 &SubmitRequest {
                     origin: None,
                     on_similar: Default::default(),
@@ -256,9 +272,22 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
         expected: u32,
         retirement: bool,
     ) -> Result<Uuid, AppError> {
+        self.supersede_as(key.value.as_str(), target, expected, retirement)
+            .await
+    }
+
+    /// [`Self::supersede`] as any caller: a bearer key's value, or a
+    /// session key a person's request resolved.
+    pub async fn supersede_as<'a>(
+        &self,
+        bearer: impl Into<Bearer<'a>>,
+        target: Uuid,
+        expected: u32,
+        retirement: bool,
+    ) -> Result<Uuid, AppError> {
         self.app
             .supersede(
-                key.value.as_str(),
+                bearer,
                 &SupersedeRequest {
                     idempotency_key: self.next_idem(),
                     on_similar: Default::default(),
@@ -421,6 +450,80 @@ impl<S: JournalStore + Clone> RootsWorld<S> {
             .iter()
             .map(|h| h.served.memory.memory_id)
             .collect()
+    }
+}
+
+impl<S: WebStore + ConnectionStore + Clone> RootsWorld<S> {
+    /// `user` on the web allowlist and signed in once: the session keys the
+    /// first sign-in ensures, `<user>-web`, `<user>-review` and, for an
+    /// admin, `<user>-admin` (ADR-0045 d6), and a live session of theirs.
+    pub async fn signed_in(&self, user: &str, admin: bool) -> WebSessionRecord {
+        let (entry, _) = self
+            .app
+            .allow_web_email(
+                self.admin.as_str(),
+                &WebEmailRequest {
+                    email: Email::parse(&format!("{user}@example.com")).expect("an email"),
+                    user: Name::parse(user).expect("a user name"),
+                    admin,
+                },
+            )
+            .await
+            .expect("the entry is added");
+        self.app
+            .web_ensure_keys(&entry)
+            .await
+            .expect("the session keys");
+        let token = self
+            .app
+            .web_session_open(&entry, 3600, None)
+            .await
+            .expect("the session opens")
+            .token;
+        self.app
+            .web_session(&token)
+            .await
+            .expect("a read")
+            .expect("a live session")
+    }
+
+    /// The session key of `capacity` serving the session's person, as a
+    /// request of theirs resolves it: its grants are read now.
+    pub async fn session_key(&self, session: &WebSessionRecord, capacity: Capacity) -> Caller {
+        self.app
+            .web_caller(session, capacity)
+            .await
+            .expect("the person's session key")
+    }
+
+    /// The session's person proposes a successor of `target` as their
+    /// `<user>-review`, the key the review and admin pages act as.
+    pub async fn review_key_supersedes(
+        &self,
+        session: &WebSessionRecord,
+        target: Uuid,
+        expected: u32,
+        retirement: bool,
+    ) -> Result<Uuid, AppError> {
+        let review = self.session_key(session, Capacity::Review).await;
+        self.supersede_as(Bearer::Session(&review), target, expected, retirement)
+            .await
+    }
+
+    /// The stored key `name` names.
+    pub async fn key_named(&self, name: &str) -> KeyRecord {
+        let name = Name::parse(name).expect("a key name");
+        let id = self
+            .store
+            .resolve_name(self.tenant, NamedKind::Key, &name)
+            .await
+            .expect("a lookup")
+            .unwrap_or_else(|| panic!("no key {}", name.as_str()));
+        self.store
+            .key(self.tenant, id)
+            .await
+            .expect("a read")
+            .expect("the key")
     }
 }
 
@@ -962,10 +1065,137 @@ pub async fn a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_s
     );
 }
 
+/// A person's session review key is that person's key (ADR-0044 d16;
+/// ADR-0045 d6). `<user>-review`, as the first sign-in issues it, names its
+/// person by its session user and carries no user root. In that person's
+/// own root it proposes a retirement and, once another key ratifies it,
+/// the successor that puts the claim back in service and on the person's
+/// `memories`. The same kind of key, designated for review on another
+/// person's root by an admin, still proposes an ordinary successor and a
+/// retirement there, and is refused the put-back as a tenant key is: a
+/// session key of one person is never read as another's. A root its
+/// person was not designated on stays `access.not_found` to it.
+pub async fn a_persons_session_review_key_puts_a_retired_claim_back_in_its_own_root_and_in_no_other_persons<
+    S: WebStore + ConnectionStore + Clone,
+>(
+    store: S,
+) {
+    let w = RootsWorld::new(store).await;
+    let ada = w.signed_in("ada", false).await;
+    let bo = w.signed_in("bo", true).await;
+    for (key, person) in [("ada-review", "ada"), ("bo-review", "bo")] {
+        let stored = w.key_named(key).await;
+        assert_eq!(stored.user, None, "{key} carries no user root");
+        assert_eq!(
+            stored.session_user.as_ref().map(Name::as_str),
+            Some(person),
+            "{key} names its person by its session user"
+        );
+    }
+    // Bo, an admin, designates himself for review on ada's root: his
+    // review key gains dreamer and reader there (ADR-0045 d10).
+    let bo_admin = w.session_key(&bo, Capacity::Admin).await;
+    w.app
+        .grant_review_capacity(
+            &bo_admin,
+            &Name::parse("bo").expect("a name"),
+            w.root.into(),
+        )
+        .await
+        .expect("the designation");
+    let mut rows = Vec::new();
+    for body in [
+        "the relay closes at noon",
+        "the pump runs at night",
+        "the valve is green",
+    ] {
+        rows.push(w.adas_promoted(w.project, body).await);
+    }
+    assert_eq!(w.adas_memories().await, 3);
+
+    // Ada's own review key retires her claim, and a tenant reviewer
+    // ratifies the retirement.
+    let retirement = w
+        .review_key_supersedes(&ada, rows[0], 1, true)
+        .await
+        .expect("ada's review key proposes a retirement in her root");
+    assert_eq!(
+        w.approve(&w.tenant_reviewer, retirement).await,
+        MemoryStatus::Promoted
+    );
+    assert_eq!(w.adas_memories().await, 2);
+
+    // Neither bo's review key nor a tenant reviewer puts it back.
+    let head = w.head().await;
+    for retire_again in [false, true] {
+        refused(
+            w.review_key_supersedes(&bo, retirement, 2, retire_again)
+                .await,
+            "another person's session review key, designated on the root",
+        );
+        refused(
+            w.supersede(&w.tenant_reviewer, retirement, 2, retire_again)
+                .await,
+            "a tenant reviewer, which names no person",
+        );
+    }
+    assert_eq!(w.head().await, head, "a refused write journals nothing");
+    assert_eq!(w.adas_memories().await, 2);
+    // Bo's review key still edits by proposal and proposes a retirement
+    // of a served memory there.
+    w.review_key_supersedes(&bo, rows[1], 1, false)
+        .await
+        .expect("a designated reviewer's ordinary successor");
+    w.review_key_supersedes(&bo, rows[2], 1, true)
+        .await
+        .expect("a designated reviewer's retirement proposal");
+
+    // Ada's own review key puts her claim back.
+    let back = w
+        .review_key_supersedes(&ada, retirement, 2, false)
+        .await
+        .expect("ada's review key proposes the successor of the ratified retirement");
+    assert_eq!(
+        w.approve(&w.tenant_reviewer, back).await,
+        MemoryStatus::Promoted
+    );
+    assert_eq!(w.adas_memories().await, 3, "the claim is back in service");
+
+    // Bo's root, where ada was designated for nothing: her review key
+    // reads no row of it, a ratified retirement included.
+    let bo_web = w.session_key(&bo, Capacity::Web).await;
+    let bos = w
+        .submit_as(
+            Bearer::Session(&bo_web),
+            Reference::parse("bo").expect("a reference"),
+            None,
+            "the gauge reads low in winter",
+        )
+        .await
+        .expect("bo's web key starts a memory in his own root");
+    assert_eq!(
+        w.approve(&w.tenant_reviewer, bos).await,
+        MemoryStatus::Promoted
+    );
+    let bos_retirement = w
+        .review_key_supersedes(&bo, bos, 1, true)
+        .await
+        .expect("bo's review key retires his own claim");
+    assert_eq!(
+        w.approve(&w.tenant_reviewer, bos_retirement).await,
+        MemoryStatus::Promoted
+    );
+    not_found(
+        w.review_key_supersedes(&ada, bos_retirement, 2, false)
+            .await,
+        "a root the key's person was not designated on",
+    );
+}
+
 /// Every law of who starts a memory in a user root.
 pub async fn run_user_root_write_suite<S, F, Fut>(make: F)
 where
-    S: JournalStore + Clone,
+    S: WebStore + ConnectionStore + Clone,
     F: Fn() -> Fut,
     Fut: core::future::Future<Output = S>,
 {
@@ -980,6 +1210,10 @@ where
     a_successor_proposed_while_a_retirement_is_held_is_never_ratified_after_it(make().await).await;
     a_tenant_key_reads_recalls_and_reviews_in_a_users_root_as_before(make().await).await;
     a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_served_and_its_author_still_revises_it(
+        make().await,
+    )
+    .await;
+    a_persons_session_review_key_puts_a_retired_claim_back_in_its_own_root_and_in_no_other_persons(
         make().await,
     )
     .await;

@@ -1903,10 +1903,13 @@ where
 
     /// A memory is started in a user root by its own user's keys only
     /// (ADR-0044 d16): `submission.user_root_refused` when `node` is a user
-    /// root or lies beneath one and `key` does not name that root, so a
-    /// tenant key and another user's key are refused alike, whatever
-    /// writer or dreamer grant reaches the node. The two acts that start
-    /// one call it: a new memory, and a successor of a ratified
+    /// root or lies beneath one and `key` does not act for that root's
+    /// user, so a tenant key and another person's key are refused alike,
+    /// whatever writer or dreamer grant reaches the node. The person a key
+    /// acts for is read as `same_user` reads it, by [`Self::person_of`]: a
+    /// user key's root, or a session key's `session_user`, which is how
+    /// `<user>-review` names its person (ADR-0045 d6). The two acts that
+    /// start a memory call it: a new memory, and a successor of a ratified
     /// retirement. It reads the node's ancestry and nothing of the key's
     /// grants. A caller runs it only once the key is known to read the
     /// node or the row it writes against, so the answer confirms no root
@@ -1919,11 +1922,12 @@ where
             .await?
             .unwrap_or_default()
             .into_iter()
-            .find(|w| w.user_root)
-            .map(|w| w.workarea_id);
-        match root {
-            Some(root) if key.user != Some(root) => Err(AppError::UserRootRefused),
-            _ => Ok(()),
+            .find(|w| w.user_root);
+        let Some(root) = root else { return Ok(()) };
+        if same_user(self.person_of(key).await?.as_ref(), Some(&root.name)) {
+            Ok(())
+        } else {
+            Err(AppError::UserRootRefused)
         }
     }
 

@@ -465,11 +465,28 @@ edits by proposal there. Asked "Which rule do you want?" the same day, the opera
       released included (ADR-0025 d18). It is the use case `submit_memory`, the one that writes a
       version 1, and a version 1 is what begins a chain and names its account (ADR-0071 d2, d3).
     - **The test.** The workarea lies in a user root when that root is the workarea or one of
-      its ancestors. The write is admitted when the key's `user` is that root. A tenant key
-      names no user and is refused. Another person's key is refused the same way. d3 keeps a
-      user key's grants inside its own root at issuance, but an admin's review designation gives
-      a person's review key dreamer and reader on another person's root (ADR-0045 d10), so the
-      rule compares the key's `user` with the root and does not rest on d3.
+      its ancestors. The write is admitted when the key acts for that root's user. The person a
+      key acts for is read the one way `same_user` reads it
+      ([ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5-2-inside-user-roots-with-no-new-tool.md)
+      d2): a session key's `session_user`, else the name of the root a user key's `user` names;
+      a key with neither acts for no one. That name is compared with the root's. So a person's
+      keys are their user keys, `<user>-web` among them, and the session keys that serve
+      them: `<user>-review` and `<user>-curate` carry no `user` and name their person by
+      `session_user` (ADR-0045 d6, d10). A tenant key that serves no session is refused.
+      Another person's key is refused the same way, their session keys included: an admin's
+      review designation gives a person's `<user>-review` dreamer and reader on another
+      person's root (ADR-0045 d10), where it is still its own person's key, so the rule reads
+      the key's person and does not rest on d3, which keeps a user key's grants inside its own
+      root at issuance. The rule admits a key and confers nothing; the role and the grants
+      still decide. `<user>-review` and `<user>-admin` are refused a new memory by their role
+      (`access.verb_ceiling`) wherever it is addressed, so the review key meets the rule on a
+      successor of a ratified retirement only. `<user>-curate` holds writer on the `universe`
+      node alone, so its new memory in its own person's root is `access.grant_refused`, and in
+      another person's root it reads, `submission.user_root_refused`. The first build of this
+      amendment compared the key's `user` with the root: it refused a person's own
+      `<user>-review` the successor of a ratified retirement in their root, so an admin who
+      retired a memory of their own on the admin page could not put it back. The review of
+      the build found it on 2026-11-12.
     - **A successor or a retirement of a served memory is unchanged.**
       `POST /v1/memories/{artifact_id}/supersede` and `oml_write` with `replaces` are admitted as
       ADR-0025 d10 and d11 have them: from a writer on a version it wrote, and from a dreamer
@@ -544,12 +561,19 @@ edits by proposal there. Asked "Which rule do you want?" the same day, the opera
     `a_reviewer_granted_in_a_users_root_proposes_a_successor_and_a_retirement_there`,
     `a_successor_of_a_ratified_retirement_in_a_users_root_is_the_users_keys_alone`,
     `a_successor_proposed_while_a_retirement_is_held_is_never_ratified_after_it`,
-    `a_tenant_key_reads_recalls_and_reviews_in_a_users_root_as_before` and
-    `a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_served_and_its_author_still_revises_it`;
+    `a_tenant_key_reads_recalls_and_reviews_in_a_users_root_as_before`,
+    `a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_served_and_its_author_still_revises_it`
+    and, with the session keys a first sign-in issues,
+    `a_persons_session_review_key_puts_a_retired_claim_back_in_its_own_root_and_in_no_other_persons`;
+    over the application,
+    `each_session_key_of_a_person_is_read_in_a_user_root_as_that_persons_key_and_no_one_elses`;
     over HTTP and `/mcp`,
     `a_tenant_keys_write_into_a_users_root_is_user_root_refused_and_her_own_key_still_writes`
     and
-    `oml_write_by_a_tenant_key_starts_no_memory_in_a_users_root_and_its_reviewer_still_edits_by_proposal`.
+    `oml_write_by_a_tenant_key_starts_no_memory_in_a_users_root_and_its_reviewer_still_edits_by_proposal`;
+    on the admin memory page,
+    `an_admin_retires_his_own_memory_and_puts_it_back_on_the_admin_memory_page` and
+    `the_admin_memory_page_refuses_putting_another_persons_retired_memory_back`.
 
 ### Rejected alternatives of the amendment
 

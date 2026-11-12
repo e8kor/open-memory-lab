@@ -847,21 +847,26 @@ async fn agent_writes_in(rig: &Rig, value: &str, body: &str, workarea: &str) -> 
 /// key that is not alice's starts no memory in her root (ADR-0044 d16), so
 /// what it holds there is a successor it proposed.
 async fn reviewer_in_alices_root(rig: &Rig) -> oml_app::types::IssuedKey {
+    tenant_reviewer_in(rig, "helper", "alice").await
+}
+
+/// The tenant reviewer `name`, dreamer and reader on `user`'s root.
+async fn tenant_reviewer_in(rig: &Rig, name: &str, user: &str) -> oml_app::types::IssuedKey {
     rig.app
         .issue_key(
             &rig.boot.admin_key.value,
             &IssueKeyRequest {
                 profile: None,
                 role: Role::Dreamer,
-                name: Name::parse("helper").expect("a name"),
-                principal: "helper".to_owned(),
+                name: Name::parse(name).expect("a name"),
+                principal: name.to_owned(),
                 held_by: Some(HeldBy::Agent),
                 default_workarea: None,
                 crew: None,
                 grants: [Role::Dreamer, Role::Reader]
                     .into_iter()
                     .map(|role| GrantRequest {
-                        node: Name::parse("alice").expect("a name").into(),
+                        node: Name::parse(user).expect("a name").into(),
                         role,
                         deny: Vec::new(),
                         covers: oml_app::domain::access::Covers::Subtree,
@@ -875,7 +880,7 @@ async fn reviewer_in_alices_root(rig: &Rig) -> oml_app::types::IssuedKey {
             },
         )
         .await
-        .expect("a tenant reviewer on alice's root")
+        .expect("a tenant reviewer on the root")
 }
 
 /// The reviewer approves `target`, a row alice's agent wrote, and proposes
@@ -2339,6 +2344,172 @@ async fn a_supersession_runs_as_the_curator_on_its_own_claim_and_as_the_reviewer
     assert_ne!(
         author_of(&rig, "the release train leaves on thursdays").await,
         curate
+    );
+}
+
+/// Every memory whose text is `text`, by the admin read.
+async fn memories_reading(rig: &Rig, text: &str) -> Vec<uuid::Uuid> {
+    rig.app
+        .admin_search(
+            rig.boot.admin_key.value.as_str(),
+            Some(text),
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("the admin reads")
+        .items
+        .iter()
+        .filter(|m| m.memory.body == text)
+        .map(|m| m.memory.memory_id)
+        .collect()
+}
+
+/// The admin retires `target`, a served version 1, on the admin memory
+/// page, and `reviewer` ratifies the retirement: the retirement's id.
+async fn retired_on_the_admin_page(
+    rig: &Rig,
+    admin: &str,
+    target: uuid::Uuid,
+    text: &str,
+    reviewer: &str,
+) -> uuid::Uuid {
+    let (status, _, body) = act(
+        rig,
+        admin,
+        "/web/admin/memory",
+        &[
+            ("action", "supersede"),
+            ("memory", &target.to_string()),
+            ("expected_version", "1"),
+            ("text", text),
+            ("retirement", "yes"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let [retirement] = memories_reading(rig, text).await[..] else {
+        panic!("one memory reading {text}");
+    };
+    let verdict = rig
+        .app
+        .post_verdict(reviewer, retirement, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("a reviewer ratifies the retirement");
+    assert_eq!(verdict.state, oml_app::domain::MemoryStatus::Promoted);
+    retirement
+}
+
+/// An admin retires a memory of his own on the admin memory page, a
+/// reviewer ratifies the retirement, and he puts the claim back on the
+/// same page. Both acts run as his `<user>-review`, a session key that is
+/// his though it carries no user root, so the successor of the ratified
+/// retirement in his own root is proposed and the act lands on the memory
+/// (ADR-0044 d16; ADR-0045 d6, d12).
+#[tokio::test]
+async fn an_admin_retires_his_own_memory_and_puts_it_back_on_the_admin_memory_page() {
+    let rig = rig().await;
+    rig.allow("boss@example.com", "boss", true).await;
+    let (boss, agent) = person_with_agent(&rig, "sub-boss", "boss@example.com").await;
+    let own = agent_writes(&rig, &agent, "the pump runs at night").await;
+    let ratifier = tenant_reviewer_in(&rig, "ratifier", "boss").await;
+    rig.app
+        .post_verdict(&ratifier.value, own, oml_app::types::Verdict::Approve, None)
+        .await
+        .expect("a reviewer approves his agent's write");
+    let retirement =
+        retired_on_the_admin_page(&rig, &boss, own, "the pump was removed", &ratifier.value).await;
+
+    let (status, headers, body) = act(
+        &rig,
+        &boss,
+        "/web/admin/memory",
+        &[
+            ("action", "supersede"),
+            ("memory", &retirement.to_string()),
+            ("expected_version", "2"),
+            ("text", "the pump runs at night again"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let location = headers[header::LOCATION].to_str().expect("ASCII");
+    assert_eq!(
+        location,
+        format!("/web/admin/memory?id={retirement}&done=proposed")
+    );
+    let (status, _, _) = send(&rig.router, get(location, Some(&boss))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        author_of(&rig, "the pump runs at night again").await,
+        key_named(&rig, "boss-review").await.key_id
+    );
+}
+
+/// An admin designated for review on another person's root retires a
+/// memory of theirs on the admin memory page, and once the retirement is
+/// ratified his put-back is refused by its code: his `<user>-review` is his
+/// key, never read as theirs, and only their keys put their claim back in
+/// service (ADR-0044 d16; ADR-0045 d10). Nothing is written.
+#[tokio::test]
+async fn the_admin_memory_page_refuses_putting_another_persons_retired_memory_back() {
+    let rig = rig().await;
+    let (_, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
+    let alices = agent_writes(&rig, &agent, "the relay closes at noon").await;
+    let ratifier = tenant_reviewer_in(&rig, "ratifier", "alice").await;
+    rig.app
+        .post_verdict(
+            &ratifier.value,
+            alices,
+            oml_app::types::Verdict::Approve,
+            None,
+        )
+        .await
+        .expect("a reviewer approves alice's agent's write");
+    rig.allow("boss@example.com", "boss", true).await;
+    let boss = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    let (status, _, body) = act(
+        &rig,
+        &boss,
+        "/web/admin/people",
+        &[
+            ("action", "grant_review"),
+            ("user", "boss"),
+            ("workarea", "alice"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let retirement = retired_on_the_admin_page(
+        &rig,
+        &boss,
+        alices,
+        "the relay was removed",
+        &ratifier.value,
+    )
+    .await;
+
+    let (status, _, body) = act(
+        &rig,
+        &boss,
+        "/web/admin/memory",
+        &[
+            ("action", "supersede"),
+            ("memory", &retirement.to_string()),
+            ("expected_version", "2"),
+            ("text", "the relay closes at noon again"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(body.contains("submission.user_root_refused"));
+    assert!(
+        memories_reading(&rig, "the relay closes at noon again")
+            .await
+            .is_empty(),
+        "a refused put-back writes no version"
     );
 }
 
