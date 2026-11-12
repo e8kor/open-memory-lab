@@ -1692,12 +1692,15 @@ async fn oml_write_with_retirement_true_proposes_retiring_the_target() {
     drop_db(&db).await;
 }
 
-/// `oml_write` reaches the same check in each of its modes (ADR-0044 d16):
-/// a tenant key's new memory in a user's root is
-/// `submission.user_root_refused`; a tenant reviewer granted there proposes
-/// a successor and a retirement of a served memory, each held, and is
-/// refused a successor of the ratified retirement with the same code; the
-/// user's own keys write and put the retired claim back.
+/// `oml_write` reaches the same check in the three kinds of write this
+/// test sends (ADR-0044 d16): a tenant key's new memory in a user's root,
+/// under a `claim_key`, is `submission.user_root_refused`; a tenant
+/// reviewer granted there proposes a successor and a retirement of a served
+/// memory, each held; and it is refused a successor of the ratified
+/// retirement with the same code. The user's own keys write and put the
+/// retired claim back. A new memory with no `claim_key`, and one under a
+/// `claim_key` a rejected write released, are not sent here: the port
+/// contracts' user-root suite refuses them over the application.
 #[tokio::test]
 async fn oml_write_by_a_tenant_key_starts_no_memory_in_a_users_root_and_its_reviewer_still_edits_by_proposal()
  {
