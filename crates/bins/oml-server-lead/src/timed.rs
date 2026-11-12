@@ -20,7 +20,8 @@ use oml_app::domain::web::Provider;
 use oml_app::domain::{ChainHead, EventTime, Sha256Hash, SignedEnvelope};
 use oml_app::ports::{
     CommitReceipt, CommitRequest, ConnectionStore, IdempotencyClaim, IdempotencyPut,
-    IdempotencyRecord, IdempotencyScope, JournalStore, Retriever, StoreError, TailScan, WebStore,
+    IdempotencyRecord, IdempotencyScope, JournalStore, Retriever, SessionKeyName, StoreError,
+    TailScan, WebStore,
 };
 use oml_app::search::{CandidateScope, RetrievalQuery, Retrieved, RetrieverKind};
 use oml_app::types::{
@@ -29,7 +30,8 @@ use oml_app::types::{
     ConnectOutcome, ConnectionRecord, CrewRecord, DocumentCaching, HeldFilter, HeldRow, KeyAccess,
     KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord, OAuthClientRecord,
     PinOutcome, QueueDepth, RefreshFacts, RefreshOutcome, SweepReport, TenantRow, TokenPair,
-    TokenRecord, TransitionRecord, UnnamedRows, WebEntry, WebSessionRecord, WorkareaRecord,
+    TokenRecord, TransitionRecord, UnnamedRows, WebCredentialRows, WebEntry, WebSessionRecord,
+    WorkareaRecord,
 };
 use oml_transport_http::traffic::store_call;
 
@@ -983,6 +985,17 @@ impl<J: WebStore> WebStore for Timed<J> {
         timed(
             "web_session_credential",
             self.inner.web_session_credential(credential_hash),
+        )
+    }
+
+    fn web_credential_rows(
+        &self,
+        credential_hash: &Sha256Hash,
+        key_name: SessionKeyName,
+    ) -> impl Future<Output = Result<Option<WebCredentialRows>, StoreError>> + Send {
+        timed(
+            "web_credential_rows",
+            self.inner.web_credential_rows(credential_hash, key_name),
         )
     }
 

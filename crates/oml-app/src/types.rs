@@ -2623,7 +2623,9 @@ pub enum Bearer<'a> {
     /// A caller already resolved and admitted on this request: a session
     /// key's, from a live web session (ADR-0045 d6), or the caller a console
     /// act resolved before claiming its idempotency key. Its grants are read
-    /// again; its request rate is not charged again (#253).
+    /// again, but by the first resolution of the caller the session gate
+    /// made for a request without a body, which decides on the access the
+    /// gate read (#297); its request rate is not charged again (#253).
     Session(&'a crate::app::Caller),
 }
 
@@ -3291,6 +3293,32 @@ pub struct WebSessionRecord {
     pub admin: bool,
     pub created_at: EventTime,
     pub expires_at: EventTime,
+}
+
+/// The rows the session gate decides one capacity credential on, as
+/// [`crate::ports::WebStore::web_credential_rows`] reads them in one
+/// transaction (ADR-0070 d2, d8; #297): the live session and the capacity
+/// its credential names, and the key the tenant holds under that
+/// capacity's name for the session's user, `None` when no row holds the
+/// name. The rows decide nothing; every check is the gate's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebCredentialRows {
+    pub session: WebSessionRecord,
+    pub capacity: String,
+    pub key: Option<WebCredentialKey>,
+}
+
+/// The session key's rows of [`WebCredentialRows`]: its row, a revoked
+/// key's included; its access, `None` for a key the tenant does not hold;
+/// and, for a key that names a user root, that root's row, `None` when
+/// the tenant holds no such node, and the keys naming it, revoked ones
+/// included, in name order. A key that names no root has neither.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebCredentialKey {
+    pub key: KeyRecord,
+    pub access: Option<KeyAccess>,
+    pub user_root: Option<WorkareaRecord>,
+    pub own_keys: Vec<KeyRecord>,
 }
 
 /// A session just opened: the token the cookie carries, shown to the
