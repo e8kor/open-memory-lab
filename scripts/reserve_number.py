@@ -4,10 +4,17 @@
     python scripts/reserve_number.py adr|migration --branch <b> --title <t>
     python scripts/reserve_number.py --rebuild          # rescan main and the open branches
 
-The next number is one above the highest used on main, on any remote branch, or reserved in
-the registry here or on any remote branch. It fails if that number turns out to be used on a
-remote branch. The registry is written under a file lock and replaced atomically; commit and
-push the reservation before writing the file that uses the number.
+The next number is one above the highest used on main, reserved in the registry on any
+unmerged remote branch (with or without a pull request), or introduced by a branch with an
+open pull request. A reservation counts while its branch exists on the remote (or, until it is
+pushed, in this clone) and is not merged into main; deleting the branch releases it. It fails if that number turns out to be
+used on a remote branch.
+
+Every remote head is fetched first, in one pass. When the fetch fails (no network, no such
+remote) nothing is reserved and the exit code is 1, because a number that could not be
+checked against the remote branches could collide; --no-fetch reserves against the refs
+already here and says so. The registry is written under a file lock and replaced atomically;
+commit and push the reservation before writing the file that uses the number.
 """
 from __future__ import annotations
 
@@ -39,9 +46,11 @@ git add docs/NUMBERS.md && git commit -m "chore: reserve ADR-nnnn" && git push
 ```
 
 `scripts/check_numbers.py` fails a pull request that introduces a number the registry assigns
-to another branch, or does not list. `python scripts/reserve_number.py --rebuild` rescans main
-and the unmerged remote branches and keeps the reservations. A number listed for two branches
-is a collision: the branch that reserved later renumbers.
+to another branch, or does not list. A reservation pushed on any unmerged remote branch holds its
+number, whether or not the branch has a pull request yet; delete a dead branch to release its
+numbers. `python scripts/reserve_number.py --rebuild` rescans main and the unmerged remote
+branches and keeps the reservations. A number listed for two branches is a collision: the
+branch that reserved later renumbers.
 
 """
 
@@ -67,12 +76,24 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(a.root).resolve()
     reg = root / N.REGISTRY
     if not a.no_fetch:
-        N.git(root, "fetch", "--prune", a.remote, check=False)
+        err = N.fetch_heads(root, a.remote)
+        if err:
+            print(f"cannot read the remote branches: {err}\nnothing was reserved: a number that could not be "
+                  f"checked against every remote branch could collide. Reconnect and retry, or pass --no-fetch "
+                  f"to use the refs already here (a branch pushed since the last fetch will not be seen).",
+                  file=sys.stderr)
+            return 1
+    else:
+        print("numbers: --no-fetch, using the remote refs already here", file=sys.stderr)
     lock = open(reg.with_suffix(".lock"), "w")
     fcntl.flock(lock, fcntl.LOCK_EX)
     try:
         local = N.parse_registry(reg.read_text()) if reg.exists() else []
         scanned = N.scan_rows(root, a.remote)
+        main_numbers = N.numbers_on(root, f"{a.remote}/main")
+        # a branch of this clone that is not pushed yet still holds the numbers it reserved
+        keep = set(N.git(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/").split()) | {a.branch or ""}
+        local = N.drop_stale(local, N.live_branches(root, a.remote), keep, main_numbers)
         if a.rebuild:
             keep = [r for r in local if r["state"] == "reserved"
                     and not any(s["kind"] == r["kind"] and s["number"] == r["number"] for s in scanned)]

@@ -38,7 +38,8 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # check_numbers.py lists open pull requests with gh, so a closed PR's branch holds no numbers
+    # check_numbers.py lists open pull requests with gh: a closed PR's branch holds no numbers it
+    # introduces, but a reservation holds its number on any unmerged remote branch
     permissions:
       contents: read
       pull-requests: read

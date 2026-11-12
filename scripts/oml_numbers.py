@@ -7,6 +7,7 @@ Standard library only.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -63,6 +64,23 @@ def remote_branches(root: Path, remote: str = "origin", main: str = "main") -> l
     return [r for r in refs if r not in skip]
 
 
+def fetch_heads(root: Path, remote: str = "origin", timeout: int = 120) -> str | None:
+    """Refresh every head of `remote` in one pass, pruning the ones deleted there. Returns None
+    on success and the reason on failure (no network, no such remote, a timeout), so a caller can
+    refuse rather than work from refs it could not refresh."""
+    try:
+        r = subprocess.run(["git", "fetch", "--prune", "--no-tags", remote, f"+refs/heads/*:refs/remotes/{remote}/*"],
+                           cwd=root, capture_output=True, text=True, timeout=timeout,
+                           env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    except subprocess.TimeoutExpired:
+        return f"git fetch {remote} timed out after {timeout}s"
+    except OSError as e:
+        return f"git fetch {remote}: {e}"
+    if r.returncode != 0:
+        return f"git fetch {remote} failed: {(r.stderr.strip().splitlines() or ['no output'])[-1]}"
+    return None
+
+
 def merged_into(root: Path, ref: str, base: str) -> bool:
     """True when every commit of `ref` is already in `base`."""
     return subprocess.run(["git", "merge-base", "--is-ancestor", ref, base], cwd=root, capture_output=True).returncode == 0
@@ -110,25 +128,46 @@ def render_rows(rows: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def scan_rows(root: Path, remote: str = "origin", main: str = "main") -> list[dict]:
-    """Rows for everything on main and on every unmerged remote branch."""
-    prs = open_prs(root)
+def reservations_on(root: Path, ref: str, name: str) -> list[dict]:
+    """The reservations a branch's own registry holds for itself."""
+    return [r for r in registry_at(root, ref) if r["state"] == "reserved" and r["branch"] == name]
+
+
+def live_branches(root: Path, remote: str = "origin", main: str = "main") -> dict[str, str]:
+    """Branch name -> remote ref for every remote branch not yet merged into main. A reservation
+    counts only while its branch is in this map: deleting the branch releases the number."""
+    return {b.split("/", 1)[1]: b for b in remote_branches(root, remote, main)
+            if not merged_into(root, b, f"{remote}/{main}")}
+
+
+def scan_rows(root: Path, remote: str = "origin", main: str = "main",
+              prs: dict[str, int] | None = None) -> list[dict]:
+    """Rows for everything on main and on every unmerged remote branch.
+
+    A reservation in a branch's NUMBERS.md holds its number on any unmerged remote branch, with or
+    without a pull request (the flow is reserve, push, then open the pull request). A number the
+    branch's files introduce holds it only while the branch has an open pull request, as before. A
+    reservation whose number is already used on main holds nothing."""
+    prs = open_prs(root) if prs is None else prs
     on_main = numbers_on(root, f"{remote}/{main}")
     rows = [{"kind": k, "number": n, "branch": main, "pr": "", "title": t, "state": "used"}
             for (k, n), t in on_main.items()]
-    for b in remote_branches(root, remote, main):
-        name = b.split("/", 1)[1]
-        if prs and name not in prs:
-            continue  # only branches with an open pull request hold numbers
+    for name, b in live_branches(root, remote, main).items():
         pr = f"#{prs[name]}" if name in prs else ""
-        for (k, n), t in numbers_added(root, f"{remote}/{main}", b).items():
-            if on_main.get((k, n)) == t:
-                continue  # already merged: the branch only needs a rebase
-            rows.append({"kind": k, "number": n, "branch": name, "pr": pr, "title": t, "state": "open"})
-        for r in registry_at(root, b):
-            if r["state"] == "reserved" and r["branch"] == name:
-                rows.append(r)
+        if not prs or name in prs:  # no PR list at all (gh unavailable) counts every branch
+            for (k, n), t in numbers_added(root, f"{remote}/{main}", b).items():
+                if on_main.get((k, n)) == t:
+                    continue  # already merged: the branch only needs a rebase
+                rows.append({"kind": k, "number": n, "branch": name, "pr": pr, "title": t, "state": "open"})
+        rows += [r for r in reservations_on(root, b, name) if (r["kind"], r["number"]) not in on_main]
     return stacked(rows)
+
+
+def drop_stale(local: list[dict], live: dict[str, str], keep: set[str], on_main: dict) -> list[dict]:
+    """Reserved rows in the checked-out registry whose branch is gone, merged, or whose number main
+    now uses; `keep` names the branches of this clone, pushed or not."""
+    return [r for r in local if r["state"] != "reserved"
+            or (r["branch"] in live or r["branch"] in keep) and (r["kind"], r["number"]) not in on_main]
 
 
 def stacked(rows: list[dict]) -> list[dict]:
