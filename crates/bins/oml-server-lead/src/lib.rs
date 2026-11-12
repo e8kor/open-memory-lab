@@ -1976,7 +1976,15 @@ pub struct LeadStart {
     /// whose fork check passed (deployment.md bootstrap).
     pub enrollment_token: Option<String>,
     pub router: Router,
+    /// The recall meter's queue, which `main` writes out at a graceful stop
+    /// (ADR-0071 d8).
+    pub recall_meter: Arc<oml_pg::recall_meter::PgRecallMeter>,
 }
+
+/// How long a graceful stop waits for the recall meter's writer: the
+/// operator's choice, unmeasured. Past it the counts left are told of as
+/// lost and the process ends.
+pub const RECALL_FLUSH_AT_STOP: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The lead's start over a migrated store, `main`'s and the tests' alike:
 /// enumerate the tenants, run the fork check, then name every row that
@@ -2159,7 +2167,7 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
             );
         }),
     );
-    let app = app.with_recall_meter(recall_meter);
+    let app = app.with_recall_meter(Arc::clone(&recall_meter) as _);
     let app = match sparse {
         Some(sparse) => app.with_sparse_encoder(sparse),
         None => app,
@@ -2217,6 +2225,7 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
         names,
         enrollment_token,
         router,
+        recall_meter,
     })
 }
 

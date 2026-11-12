@@ -265,6 +265,114 @@ async fn the_unapproved_count_is_of_served_tips_and_the_remedy_brings_it_to_zero
     drop_dbs(&created).await;
 }
 
+/// What the recall meter's writer told of lost counts, as the lead's
+/// teller logs and counts them.
+type Told = std::sync::Arc<Mutex<Vec<(u64, String)>>>;
+
+fn recall_meter(store: &PgStore) -> (std::sync::Arc<oml_pg::recall_meter::PgRecallMeter>, Told) {
+    let told: Told = std::sync::Arc::default();
+    let heard = std::sync::Arc::clone(&told);
+    let (meter, _writer) = oml_pg::recall_meter::PgRecallMeter::spawn(
+        store.clone(),
+        std::sync::Arc::new(move |count, reason| {
+            heard
+                .lock()
+                .expect("told lock")
+                .push((count, reason.to_owned()));
+        }),
+    );
+    (meter, told)
+}
+
+/// A graceful stop writes the recall counts the queue still holds before
+/// the process ends, and tells of the ones the store refused (ADR-0071 d8).
+#[tokio::test]
+async fn a_stop_writes_the_recall_counts_still_queued_and_tells_of_the_ones_the_store_refused() {
+    use oml_app::ports::RecallMeter as _;
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut rig = ChainRig::new(591);
+    rig.seed_chain(&store, 0).await;
+    let account = Uuid::from_u128(0xACC0);
+    let at = oml_app::domain::EventTime::parse("2026-11-12T10:00:00.000000Z").expect("a time");
+    let (meter, told) = recall_meter(&store);
+    for _ in 0..3 {
+        meter.count(rig.tenant_id, account, &at);
+    }
+    // A tenant the store does not hold: its count cannot be written.
+    meter.count(Uuid::from_u128(0xDEAD_0000), account, &at);
+    assert_eq!(
+        meter
+            .flush_at_stop(std::time::Duration::from_secs(20))
+            .await,
+        Ok(())
+    );
+    // A superuser reads the row past the tenant's row security.
+    let db: String = sqlx::query_scalar("SELECT current_database()::text")
+        .fetch_one(store.pool())
+        .await
+        .expect("database name");
+    let mut admin = admin_in(&db).await;
+    let written: i64 = sqlx::query_scalar(
+        "SELECT recalls FROM account_activity WHERE tenant_id = $1 AND user_root = $2",
+    )
+    .bind(rig.tenant_id)
+    .bind(account)
+    .fetch_one(&mut admin)
+    .await
+    .expect("the day's row");
+    assert_eq!(written, 3, "the queued counts are written before the stop");
+    let told = told.lock().expect("told lock").clone();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0].0, 1, "the one count the store refused: {told:?}");
+    drop_dbs(&created).await;
+}
+
+/// A stop that cannot wait for the writer tells how many counts were handed
+/// over and not written, and does not hang (ADR-0071 d8).
+#[tokio::test]
+async fn a_stop_the_writer_does_not_answer_in_time_tells_how_many_counts_it_leaves_unwritten() {
+    use oml_app::ports::RecallMeter as _;
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut rig = ChainRig::new(592);
+    rig.seed_chain(&store, 0).await;
+    let account = Uuid::from_u128(0xACC1);
+    let at = oml_app::domain::EventTime::parse("2026-11-12T10:00:00.000000Z").expect("a time");
+    // The day's table is locked, as a long maintenance statement holds it:
+    // the writer's statement waits.
+    let mut owner = owner_conn(&store).await;
+    owner.execute("BEGIN").await.expect("begin");
+    owner
+        .execute("LOCK TABLE account_activity IN ACCESS EXCLUSIVE MODE")
+        .await
+        .expect("lock");
+    let (meter, told) = recall_meter(&store);
+    meter.count(rig.tenant_id, account, &at);
+    meter.count(rig.tenant_id, account, &at);
+    assert_eq!(
+        meter
+            .flush_at_stop(std::time::Duration::from_millis(300))
+            .await,
+        Err(2)
+    );
+    assert_eq!(
+        told.lock().expect("told lock").clone(),
+        vec![(
+            2,
+            "the lead stopped before the writer had written them".to_owned()
+        )]
+    );
+    owner.execute("ROLLBACK").await.expect("release the lock");
+    drop_dbs(&created).await;
+}
+
 /// The connection laws the double proves, against the real store: the
 /// connection folds run inside the commit's transaction under the tenant's
 /// `oml.tenant_id`, and a refused fold commits nothing (postgres-schema.md

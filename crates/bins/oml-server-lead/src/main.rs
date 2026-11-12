@@ -299,6 +299,20 @@ async fn run(config: Result<Config, BootError>, export: Option<&Export>) -> Resu
     .with_graceful_shutdown(shutdown_signal())
     .await
     .map_err(|e| format!("serve: {e}"))?;
+    // Every request has been answered: write the recall counts the queue
+    // still holds. The meter's teller logs and counts what it could not
+    // (ADR-0071 d8).
+    match start
+        .recall_meter
+        .flush_at_stop(oml_server_lead::RECALL_FLUSH_AT_STOP)
+        .await
+    {
+        Ok(()) => tracing::info!("recall counts written"),
+        Err(unwritten) => tracing::warn!(
+            unwritten,
+            "the recall meter's writer did not answer before the stop"
+        ),
+    }
     tracing::info!("graceful shutdown complete");
     Ok(())
 }
