@@ -11,6 +11,9 @@ ADR-0066 retired the roadmap and its FR and RS numbers. Each open row became par
 issues (a 60th, on simulations and the reconciler, holds none); rows that described shipped behaviour closed without an issue. References in older
 commits, pull requests and branches to `FR-n` or `RS-n` resolve here. A few numbers never had a
 row (FR-37 to FR-43, FR-46 to FR-49, FR-95 to FR-99, RS-2) and map nowhere.
+FR-170 to FR-176 are the rows ADR-0064 opened on its branch on 2026-11-05, the day before the
+roadmap was retired, so they were never among those rows: the tracking issue of ADR-0064's build,
+#344, holds them until each is an issue of its own.
 
 | Former id | Issue | Title |
 |---|---|---|
@@ -134,6 +137,13 @@ row (FR-37 to FR-43, FR-46 to FR-49, FR-95 to FR-99, RS-2) and map nowhere.
 | FR-162 | [#111](https://github.com/e8kor/open-memory-lab/issues/111) | Chat memory evals: agent extraction against turn storage |
 | FR-163 | [#139](https://github.com/e8kor/open-memory-lab/issues/139) | Chat memory follow-ups: sessions ending between captures, two machines |
 | FR-164 | [#111](https://github.com/e8kor/open-memory-lab/issues/111) | Chat memory evals: agent extraction against turn storage |
+| FR-170 | [#344](https://github.com/e8kor/open-memory-lab/issues/344) | Tracking: implicit capture of a repository's knowledge (ADR-0064), re-ported from #97 |
+| FR-171 | [#344](https://github.com/e8kor/open-memory-lab/issues/344) | Tracking: implicit capture of a repository's knowledge (ADR-0064), re-ported from #97 |
+| FR-172 | [#344](https://github.com/e8kor/open-memory-lab/issues/344) | Tracking: implicit capture of a repository's knowledge (ADR-0064), re-ported from #97 |
+| FR-173 | [#344](https://github.com/e8kor/open-memory-lab/issues/344) | Tracking: implicit capture of a repository's knowledge (ADR-0064), re-ported from #97 |
+| FR-174 | [#344](https://github.com/e8kor/open-memory-lab/issues/344) | Tracking: implicit capture of a repository's knowledge (ADR-0064), re-ported from #97 |
+| FR-175 | [#344](https://github.com/e8kor/open-memory-lab/issues/344) | Tracking: implicit capture of a repository's knowledge (ADR-0064), re-ported from #97 |
+| FR-176 | [#344](https://github.com/e8kor/open-memory-lab/issues/344) | Tracking: implicit capture of a repository's knowledge (ADR-0064), re-ported from #97 |
 | FR-180 | [#140](https://github.com/e8kor/open-memory-lab/issues/140) | Scanner: personal-data rules, rescan window and veto evidence |
 | FR-181 | [#140](https://github.com/e8kor/open-memory-lab/issues/140) | Scanner: personal-data rules, rescan window and veto evidence |
 | RS-1 | [#153](https://github.com/e8kor/open-memory-lab/issues/153) | Choose the embedding model and where it runs |
