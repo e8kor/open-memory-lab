@@ -81,14 +81,6 @@ impl Side {
         }
     }
 
-    /// The lead's page, the JSON's `base` as it always was.
-    fn lead(self) -> &'static str {
-        match self {
-            Self::User => "/web",
-            Self::Admin => "/web/admin",
-        }
-    }
-
     fn acts(self) -> ActSide {
         match self {
             Self::User => ActSide::User,
@@ -488,10 +480,10 @@ impl From<oml_sdk::Error> for Failed {
 
 /// The person's own keys, each with its kind (ADR-0045 d32), through
 /// `GET /v2/keys` as `<user>-web`, a page at a time; past
-/// [`KEY_PAGES_MAX`] pages, or at a cursor the API repeats, the page is
-/// refused by name, since a list cut short would leave rows without their
-/// kind and send an author search to `access.not_found` for a key the
-/// person holds.
+/// [`KEY_PAGES_MAX`] pages the page is refused `limit.list_too_long`, and
+/// at a cursor the API repeats, the API's fault, `unavailable` with 502
+/// (#281): a list cut short would leave rows without their kind and send
+/// an author search to `access.not_found` for a key the person holds.
 async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kinds, Failed> {
     let mut kinds = Vec::new();
     let mut cursor: Option<String> = None;
@@ -509,7 +501,14 @@ async fn own_kinds(web: &Web, credential: &str, calls: &PageCalls) -> Result<Kin
         );
         match page.next_cursor {
             None => return Ok(kinds),
-            Some(next) if !seen.insert(next.clone()) => break,
+            Some(next) if !seen.insert(next.clone()) => {
+                return Err(Failed::Refused(
+                    StatusCode::BAD_GATEWAY,
+                    "unavailable",
+                    "the server repeated a cursor of your key list, so the list cannot be read whole; try again"
+                        .to_owned(),
+                ));
+            }
             Some(next) => cursor = Some(next),
         }
     }
@@ -1243,7 +1242,6 @@ async fn data(
     {
         scope["offers_unavailable"] = json!(true);
     }
-    answer["base"] = json!(side.lead());
     axum::Json(answer).into_response()
 }
 

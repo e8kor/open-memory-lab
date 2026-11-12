@@ -5993,6 +5993,17 @@ fn signup_doctor(overview: Option<&Value>) -> Vec<String> {
             by.join(", ")
         ));
     }
+    // An admin key whose row names a person's root: no verb makes one, and
+    // the person's disable refuses until it is gone (ADR-0068 d8, d11; #277).
+    for u in o["users"].as_array().into_iter().flatten() {
+        let user = u["user"].as_str().unwrap_or("?");
+        for key in u["admin_keys"].as_array().into_iter().flatten() {
+            lines.push(format!(
+                "warn keys: admin key {} names the user root of {user}, which no verb does; disabling {user} is refused until the row's user_root_id is cleared",
+                key.as_str().unwrap_or("?")
+            ));
+        }
+    }
     if let Some(pending) = o["deletions"].as_array().filter(|d| !d.is_empty()) {
         lines.push(format!(
             "warn signup: {} deletion requests pending, oldest requested {}; close each on /web/admin/users",
@@ -6518,6 +6529,30 @@ mod tests {
         let quiet = serde_json::json!({"mode": "allowlist", "address_limit_shared": true, "users": [], "deletions": []});
         assert!(signup_doctor(Some(&quiet)).is_empty());
         assert!(signup_doctor(None).is_empty());
+    }
+
+    #[test]
+    fn doctor_warns_for_an_admin_key_whose_row_names_a_persons_root() {
+        let overview = serde_json::json!({
+            "mode": "allowlist",
+            "address_limit_shared": false,
+            "users": [
+                {"user": "alice", "under_quotas": false, "disabled": false,
+                 "admin_keys": ["stray-admin"],
+                 "usage": {}, "quotas": {}},
+                {"user": "bob", "under_quotas": false, "disabled": false,
+                 "admin_keys": [], "usage": {}, "quotas": {}},
+                {"user": "carol", "under_quotas": false, "disabled": false,
+                 "usage": {}, "quotas": {}}
+            ],
+            "deletions": []
+        });
+        assert_eq!(
+            signup_doctor(Some(&overview)),
+            vec![
+                "warn keys: admin key stray-admin names the user root of alice, which no verb does; disabling alice is refused until the row's user_root_id is cleared"
+            ]
+        );
     }
 
     #[test]

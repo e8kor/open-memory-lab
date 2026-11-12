@@ -135,6 +135,7 @@ Refusals from the workarea tree and its status ladder.
 | `workarea.transition_refused` | 409 | The status change skips a rung, goes backward, or breaks a rule such as a child not being validated. |
 | `workarea.in_progress_refused` | 409 | The in-progress mode or change conflicts with the node's subtree, ancestors or status. `details.reason` says which. |
 | `workarea.held_remaining` | 409 | The commit of an in-progress workarea was asked while a version in its subtree is held. |
+| `workarea.admin_key_under_root` | 409 | A person's disable, or the deletion close that disables them, met a live admin key whose row names their user root. No verb issues one and no denial cuts one off, so nothing is journalled. `details`: `user`, `key`. Clear the key row's `user_root_id`, then send again ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d8). |
 
 ## `review` — independence and the serve binding
 
@@ -217,7 +218,7 @@ Review unavailability is not an API error. When no reviewer can approve, writes 
 | 401 | `auth.missing`, `auth.invalid` |
 | 403 | `oauth.origin_refused`, `oauth.attach_refused`, `access.verb_ceiling`, `access.grant_refused`, `access.author_only`, `access.issuer_ceiling`, `access.role_exclusive`, `access.banned`, `review.author_in_lineage`, `review.ratifier_is_proposer`, `simulation.audience_refused` |
 | 404 | `access.not_found` |
-| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `name.taken`, `workarea.frozen`, `workarea.transition_refused`, `workarea.in_progress_refused`, `workarea.held_remaining`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
+| 409 | `idempotency.in_progress`, `idempotency.digest_mismatch`, `submission.tip_conflict`, `submission.version_conflict`, `submission.claim_key_conflict`, `submission.similar_exists`, `submission.universe_refused`, `name.taken`, `workarea.frozen`, `workarea.transition_refused`, `workarea.in_progress_refused`, `workarea.held_remaining`, `workarea.admin_key_under_root`, `review.serve_invalid`, `simulation.ended`, `simulation.taint_refused`, `simulation.tip_refused`, `vocab.cycle_refused`, `vocab.prefix_conflict`, `upload.session_invalid`, `export.not_ready` |
 | 410 | `lifecycle.erased` |
 | 413 | `request.payload_too_large` |
 | 415 | `request.unsupported_media` |

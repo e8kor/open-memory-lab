@@ -61,6 +61,7 @@ class ErrorCode(StrEnum):
     VOCAB_INACTIVE_CURIE = "vocab.inactive_curie"
     VOCAB_PREFIX_CONFLICT = "vocab.prefix_conflict"
     VOCAB_UNKNOWN_CURIE = "vocab.unknown_curie"
+    WORKAREA_ADMIN_KEY_UNDER_ROOT = "workarea.admin_key_under_root"
     WORKAREA_FROZEN = "workarea.frozen"
     WORKAREA_HELD_REMAINING = "workarea.held_remaining"
     WORKAREA_IN_PROGRESS_REFUSED = "workarea.in_progress_refused"

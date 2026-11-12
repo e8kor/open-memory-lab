@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.web_user_quotas import WebUserQuotas
@@ -25,6 +27,9 @@ class WebUser:
         under_quotas (bool):
         usage (WebUserUsage):
         quotas (WebUserQuotas):
+        admin_keys (list[str] | Unset): Each live admin key whose row names the person's user root, by name: a row no
+            verb makes, which refuses the person's disable with workarea.admin_key_under_root and which oml doctor warns
+            about (ADR-0068 d8, d11). Since v0.7.1.
     """
 
     user: str
@@ -33,6 +38,7 @@ class WebUser:
     under_quotas: bool
     usage: WebUserUsage
     quotas: WebUserQuotas
+    admin_keys: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,6 +54,10 @@ class WebUser:
 
         quotas = self.quotas.to_dict()
 
+        admin_keys: list[str] | Unset = UNSET
+        if not isinstance(self.admin_keys, Unset):
+            admin_keys = self.admin_keys
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -60,6 +70,8 @@ class WebUser:
                 "quotas": quotas,
             }
         )
+        if admin_keys is not UNSET:
+            field_dict["admin_keys"] = admin_keys
 
         return field_dict
 
@@ -81,6 +93,8 @@ class WebUser:
 
         quotas = WebUserQuotas.from_dict(d.pop("quotas"))
 
+        admin_keys = cast(list[str], d.pop("admin_keys", UNSET))
+
         web_user = cls(
             user=user,
             signed_up=signed_up,
@@ -88,6 +102,7 @@ class WebUser:
             under_quotas=under_quotas,
             usage=usage,
             quotas=quotas,
+            admin_keys=admin_keys,
         )
 
         web_user.additional_properties = d

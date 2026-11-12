@@ -70,6 +70,7 @@ pub(crate) fn user_row_json(u: &UserRow) -> Value {
             "connections": u.quotas.connections,
             "requests_per_minute": u.quotas.requests_per_minute,
         },
+        "admin_keys": u.admin_keys,
     })
 }
 
