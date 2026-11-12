@@ -1096,6 +1096,42 @@ fn a_negated_rev_is_refused_by_name_and_never_becomes_a_commit() {
 }
 
 #[test]
+fn a_config_value_with_a_line_break_in_it_is_one_value() {
+    let dir = docs_clone("value-with-newline");
+    git(
+        &dir,
+        &[
+            "config",
+            "--local",
+            "--add",
+            "oml.allowPublicServer",
+            "https://one.example\nhttps://two.example",
+        ],
+    );
+    git(
+        &dir,
+        &[
+            "config",
+            "--local",
+            "--add",
+            "oml.allowPublicServer",
+            "https://three.example",
+        ],
+    );
+    let source = oml_cli::sync::source::Git::at(&dir).unwrap();
+    // Read line by line, the first value would be two origins the person
+    // never allowed apart.
+    assert_eq!(
+        source.config_all(ALLOW_PUBLIC_CONFIG),
+        [
+            "https://one.example\nhttps://two.example",
+            "https://three.example"
+        ]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_config_value_keeps_the_space_git_holds_and_is_not_the_legacy_true() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = whoami_fixture(&runtime, Some(false));

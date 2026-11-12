@@ -189,11 +189,12 @@ impl Git {
 
     /// Every value of a multi-valued local git config entry of this clone,
     /// as git holds it (a value `"true "` keeps its space and is not
-    /// `true`); empty when it is unset.
+    /// `true`); empty when it is unset. Read with `-z`, so git ends each
+    /// value with a NUL and a value with a line break in it is one value.
     #[must_use]
     pub fn config_all(&self, name: &str) -> Vec<String> {
-        self.run(&["config", "--local", "--get-all", name])
-            .map(|s| s.lines().map(ToOwned::to_owned).collect())
+        self.run(&["config", "--local", "--get-all", "-z", name])
+            .map(|s| s.split_terminator('\0').map(ToOwned::to_owned).collect())
             .unwrap_or_default()
     }
 

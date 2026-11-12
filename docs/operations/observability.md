@@ -98,6 +98,8 @@ It checks, among other things:
 - held memories that cannot be reviewed, and in-progress workareas with unreviewed memories;
 - search: the pipeline, reranker skips, and postings completeness;
 - the scan rule set and findings since start;
+- usage, with an admin key: accounts whose counters differ from their rows, and accounts on a profile the configuration does not declare;
+- approvals, with an admin key: served versions with no approval (`approval_unmatched`);
 - sign-in providers and OAuth discovery when `oauth.issuer` is set;
 - recall telemetry: dropped events, queue depth and a purge that is behind.
 
