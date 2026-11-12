@@ -6432,7 +6432,7 @@ mod tests {
     #[test]
     fn the_scan_doctor_warns_of_held_versions_whose_finding_the_findings_list_lacks() {
         let report = json!({
-            "scanner_version": "oml-scan/1.1", "held_unrescanned": 0, "rescan_due": 0,
+            "scanner_version": "oml-scan/1.2", "held_unrescanned": 0, "rescan_due": 0,
             "findings_unlisted": 2,
         });
         assert_eq!(
@@ -6440,7 +6440,7 @@ mod tests {
             "warn scan_findings_unlisted: 2 held version(s) carry a scan finding the findings list lacks, written by a server older than migration 0043; the review card shows only the stored summary for them; run oml admin rescan --record-held"
         );
         let clear = json!({
-            "scanner_version": "oml-scan/1.1", "held_unrescanned": 0, "rescan_due": 0,
+            "scanner_version": "oml-scan/1.2", "held_unrescanned": 0, "rescan_due": 0,
             "findings_unlisted": 0,
         });
         assert_eq!(
@@ -6468,7 +6468,7 @@ mod tests {
         findings.push(json!({"artifact_id": id(99), "version": 2, "class": "secret.api_token", "rule": "github-token", "action": "veto", "origin": "web", "at": "/body line 1"}));
         let by_origin =
             std::collections::BTreeMap::from([("chat".to_owned(), 10_u64), ("web".to_owned(), 1)]);
-        let report = rescan_rates(Some("oml-scan/1.1"), 11, &by_origin, &findings);
+        let report = rescan_rates(Some("oml-scan/1.2"), 11, &by_origin, &findings);
         assert_eq!(
             report["classes"],
             json!([
@@ -6508,17 +6508,17 @@ mod tests {
     #[test]
     fn the_scan_doctor_warns_of_held_versions_and_versions_an_older_rule_set_scanned() {
         let due = json!({
-            "scanner_version": "oml-scan/1.1", "held_unrescanned": 4, "rescan_due": 9,
+            "scanner_version": "oml-scan/1.2", "held_unrescanned": 4, "rescan_due": 9,
         });
         assert_eq!(
             scan_backlog_doctor(Some(&due)),
             vec![
-                "warn scan_held_unrescanned: 4 held version(s) were scanned under an older rule set than oml-scan/1.1, and stay their authors' alone in in-progress workareas; run oml admin rescan --record-held".to_owned(),
-                "warn scan_rescan_due: 9 stored version(s) were scanned under an older rule set than oml-scan/1.1; oml admin rescan reports what it finds in them".to_owned(),
+                "warn scan_held_unrescanned: 4 held version(s) were scanned under an older rule set than oml-scan/1.2, and stay their authors' alone in in-progress workareas; run oml admin rescan --record-held".to_owned(),
+                "warn scan_rescan_due: 9 stored version(s) were scanned under an older rule set than oml-scan/1.2; oml admin rescan reports what it finds in them".to_owned(),
             ]
         );
         let clear = json!({
-            "scanner_version": "oml-scan/1.1", "held_unrescanned": 0, "rescan_due": 0,
+            "scanner_version": "oml-scan/1.2", "held_unrescanned": 0, "rescan_due": 0,
         });
         assert_eq!(
             scan_backlog_doctor(Some(&clear)),

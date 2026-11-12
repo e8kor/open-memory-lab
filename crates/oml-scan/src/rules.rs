@@ -1,4 +1,4 @@
-//! The `oml-scan/1.1` rule table (ADR-0065 d2–d5). Each rule names its
+//! The `oml-scan/1.2` rule table (ADR-0065 d2–d5). Each rule names its
 //! finding class, its action and one pattern; a rule whose match needs a
 //! second look (an entropy floor, a placeholder password) names that check.
 //!
@@ -88,8 +88,8 @@ const fn pii(rule: Rule) -> Rule {
     Rule { pii: true, ..rule }
 }
 
-/// The rules, in reporting order. Ids are stable within `oml-scan/1.1`; a
-/// changed pattern or a new rule is a new name, `oml-scan/1.2` for a fix (ADR-0065 d1; ADR-0074 d21).
+/// The rules, in reporting order. Ids are stable within `oml-scan/1.2`; a
+/// changed pattern or a new rule is a new name, `oml-scan/1.3` for a fix (ADR-0065 d1; ADR-0074 d21).
 pub(crate) const RULES: &[Rule] = &[
     // ---- d3: secrets, veto -------------------------------------------------
     veto(
@@ -322,6 +322,18 @@ pub(crate) const PLACEHOLDERS: &[&str] = &[
     "sample",
 ];
 
+/// What the folded text must show of a letters-only phrase beyond its
+/// letters, since the view dropped every symbol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tail {
+    /// Nothing more.
+    None,
+    /// The phrase's three words are joined by a space or by the phrase's own
+    /// separator, never across a sentence, and it is followed by a colon on
+    /// its line or ends its line: a directive, or its heading (#226).
+    Directive,
+}
+
 /// The injection phrases the letters-only view reads (ADR-0074 d6; ADR-0065
 /// d14 as amended 2026-11-10): each rule's phrase with every separator
 /// removed, matched against the field's letters and digits alone, lower
@@ -329,23 +341,42 @@ pub(crate) const PLACEHOLDERS: &[&str] = &[
 /// together once spaces and punctuation go do not match; markup rules are
 /// not here, since the view drops the symbols they name. Each pattern is
 /// a set of literals written as alternations, with no word boundary: the
-/// view has none.
-pub(crate) const LETTER_PHRASES: &[(&str, &str)] = &[
+/// view has none. A match counts only where no ASCII letter of the folded
+/// text touches either end of it, and shows the phrase's [`Tail`] (#226). A
+/// rule may have several rows; the first to match counts.
+pub(crate) const LETTER_PHRASES: &[(&str, &str, Tail)] = &[
     (
         "ignore-instructions",
         "(?:ignore|disregard|forget|override)(?:all|any|the|of)*(?:previous|prior|above|earlier|preceding|your|system|original)(?:instructions?|prompts?|rules|directions|guidelines|directives)",
+        Tail::None,
     ),
-    ("new-instructions", "(?:new|updated|real)systeminstructions"),
+    // The same phrase with its last word singular: the greedy `s?` above
+    // takes the `s` of a following word, and the match then ends inside it
+    // and is refused at the word edge, hiding the shorter match at the same
+    // start (#226).
+    (
+        "ignore-instructions",
+        "(?:ignore|disregard|forget|override)(?:all|any|the|of)*(?:previous|prior|above|earlier|preceding|your|system|original)(?:instruction|prompt)",
+        Tail::None,
+    ),
+    (
+        "new-instructions",
+        "(new|updated|real)(system)(instructions)",
+        Tail::Directive,
+    ),
     (
         "persona-switch",
         "youarenow(?:a|an|in)(?:unrestricted|jailbroken|uncensored|new|different|developer|dan)|yournew(?:role|persona|instructions)(?:is|are)|developermode(?:enabled|on)",
+        Tail::None,
     ),
     (
         "reader-trigger",
         "(?:when|if|after|once)(?:an?(?:ai|agent|assistant|model|llm)|you)(?:reads?|recalls?|retrieves?|loads?|process(?:es)?)this",
+        Tail::None,
     ),
     (
         "covert-action",
         "without(?:telling|informing|asking|notifying)theuser|donot(?:tell|inform|mention(?:this)?to)theuser",
+        Tail::None,
     ),
 ];

@@ -21,7 +21,7 @@ class ScanFinding:
             rule (str): The rule id, ignore-instructions.
             verdict (ScanFindingVerdict): refuse appears only on a finding a recording rescan made on a version already
                 stored (ADR-0074 d14).
-            rule_set (None | str): The rule set it was found under, oml-scan/1.1.
+            rule_set (None | str): The rule set it was found under, oml-scan/1.2.
             field (None | str): /body, /title, or /body/ and a decoded view's path; null on a finding migrated from the
                 single stored finding.
             line (int | None): The 1-based line of the field the match starts on.

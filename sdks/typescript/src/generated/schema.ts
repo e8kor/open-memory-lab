@@ -2053,7 +2053,7 @@ export interface components {
              * @enum {string}
              */
             verdict: "refuse" | "hold" | "annotate";
-            /** @description The rule set it was found under, oml-scan/1.1. */
+            /** @description The rule set it was found under, oml-scan/1.2. */
             rule_set: string | null;
             /** @description /body, /title, or /body/ and a decoded view's path; null on a finding migrated from the single stored finding. */
             field: string | null;
@@ -7066,7 +7066,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "scanner_version": "oml-scan/1.1",
+                     *       "scanner_version": "oml-scan/1.2",
                      *       "scanned": 2,
                      *       "findings": [
                      *         {

@@ -47,7 +47,7 @@ The reviewer is never the author. The server checks the reviewing key and its pe
 
 The scan runs inside the write call, before the transaction. It returns before the call does. A veto refuses the write and journals nothing. The scan is a set of rules, not a model. The same input gives the same verdict, which is why a scan result carries no sampling caveat. It catches what its rules name and nothing else. Judgment belongs to review, so the scan can veto but never approve.
 
-The rule set is `oml-scan/1.1` (`oml-scan/1` before the 2026-11-10 amendment of ADR-0065). Its findings fall into two actions:
+The rule set is `oml-scan/1.2` (`oml-scan/1.1` before the letters-only view was anchored to word edges, #226; `oml-scan/1` before the 2026-11-10 amendment of ADR-0065). Its findings fall into two actions:
 
 | Action | Findings | Result |
 |---|---|---|
