@@ -1,11 +1,11 @@
-redteam: oml-scan/1.2 over the corpus of ADR-0074 d15, 860 samples
+redteam: oml-scan/1.2 over the corpus of ADR-0074 d15, 874 samples
 a rate needs 50 malicious samples and 50 twins in its family (d15); below that only counts print
 
 family     malicious  twins  caught  exact   recall   twin-fp  precision
 encoding          50     50      20     20    40.0%      0.0%     100.0%
 exec              10     10       0      0     n<50      n<50       n<50
 exfil             10     10       0      0     n<50      n<50       n<50
-injection        129    129      72     72    55.8%      0.0%     100.0%
+injection        136    136      79     79    58.1%      0.0%     100.0%
 phish             10     10       0      0     n<50      n<50       n<50
 poison            10     10       0      0     n<50      n<50       n<50
 secret            70     70      70     70   100.0%      0.0%     100.0%
@@ -24,29 +24,29 @@ held-out benign: 56 samples, 0 flagged, 0.0% [Wilson 95%: 0.0%-6.4%]
 hidden by Markdown, caught: 6 of 6
 benign security prose, flagged: 0 of 20
 
-mutations over 359 malicious samples; plain recall 59.1% (212 caught); invariance asks each transform for at least the plain recall less 5 points (d15)
-  zero-width-in-word        80.5%  +21.4 points  holds
-  fullwidth                 59.1%  +0.0 points  holds
-  mixed-case                45.4%  -13.6 points  below
-  homoglyph                 22.0%  -37.0 points  below
-  joined-underscore         54.9%  -4.2 points  holds
-  joined-slash              54.9%  -4.2 points  holds
-  letters-dash              25.6%  -33.4 points  below
-  letters-dot               25.3%  -33.7 points  below
-  letters-space             25.6%  -33.4 points  below
-  title-body-split          56.0%  -3.1 points  holds
-  base64-depth-1             6.7%  -52.4 points  below
-  base64-depth-2            10.3%  -48.7 points  below
-  base64-depth-3            12.8%  -46.2 points  below
-  base64-zero-width-split   60.4%  +1.4 points  holds
-  base64-entity-split        0.0%  -59.1 points  below
-  base64-fullwidth           6.7%  -52.4 points  below
-  percent-fullwidth          0.0%  -59.1 points  below
-  percent-double             0.0%  -59.1 points  below
-  entity-double              0.0%  -59.1 points  below
-  partial-percent           20.1%  -39.0 points  below
-  partial-entity            17.8%  -41.2 points  below
-  budget-padding             6.7%  -52.4 points  below
+mutations over 366 malicious samples; plain recall 59.8% (219 caught); invariance asks each transform for at least the plain recall less 5 points (d15)
+  zero-width-in-word        80.9%  +21.0 points  holds
+  fullwidth                 59.8%  +0.0 points  holds
+  mixed-case                46.4%  -13.4 points  below
+  homoglyph                 22.7%  -37.2 points  below
+  joined-underscore         55.7%  -4.1 points  holds
+  joined-slash              55.7%  -4.1 points  holds
+  letters-dash              26.5%  -33.3 points  below
+  letters-dot               26.5%  -33.3 points  below
+  letters-space             26.2%  -33.6 points  below
+  title-body-split          56.0%  -3.8 points  holds
+  base64-depth-1             6.6%  -53.3 points  below
+  base64-depth-2            10.1%  -49.7 points  below
+  base64-depth-3            12.6%  -47.3 points  below
+  base64-zero-width-split   59.6%  -0.3 points  holds
+  base64-entity-split        0.0%  -59.8 points  below
+  base64-fullwidth           6.6%  -53.3 points  below
+  percent-fullwidth          0.0%  -59.8 points  below
+  percent-double             0.0%  -59.8 points  below
+  entity-double              0.0%  -59.8 points  below
+  partial-percent           19.7%  -40.2 points  below
+  partial-entity            17.5%  -42.3 points  below
+  budget-padding             6.6%  -53.3 points  below
 
 per sample: id expected actual rules
 prose-own-001 pass pass -
@@ -589,6 +589,20 @@ inj-edge-028 hold hold new-instructions
 inj-edge-028-twin pass pass -
 inj-edge-029 hold hold new-instructions
 inj-edge-029-twin pass pass -
+inj-edge-030 hold hold new-instructions
+inj-edge-030-twin pass pass -
+inj-edge-031 hold hold new-instructions
+inj-edge-031-twin pass pass -
+inj-edge-032 hold hold new-instructions
+inj-edge-032-twin pass pass -
+inj-edge-033 hold hold new-instructions
+inj-edge-033-twin pass pass -
+inj-edge-034 hold hold new-instructions
+inj-edge-034-twin pass pass -
+inj-edge-035 hold hold new-instructions
+inj-edge-035-twin pass pass -
+inj-edge-036 hold hold new-instructions
+inj-edge-036-twin pass pass -
 phish-001 hold pass -
 phish-001-twin pass pass -
 phish-002 hold pass -

@@ -538,38 +538,37 @@ flowchart TD
     and a match refused at its edge is retried at the same start with the singular, so the `s` of
     the next word does not hide the phrase. `new-instructions`, which the raw rules read as two
     words with a colon, reads three in this view, `(new|updated|real)(system)(instructions)`, since
-    only phrases of three words or more read it (ADR-0065 d14). Its words are set apart by a space,
-    an underscore, a hyphen, a full stop, a slash, an invisible character or a combining mark and
-    by nothing else (`new | system | instructions:` passes), and never across a sentence: a line
-    break, or a full stop, comma, colon, semicolon, question or exclamation mark and a space, between
-    two of the words ends the phrase (`Updated. System instructions: see the wiki` is two sentences),
-    unless every word ends in one or the letters are spelled with them (`new. system. instructions:`,
-    `n. e. w. s. y. s. t. e. m. i. n. s. t. r. u. c. t. i. o. n. s:`), which is the phrase's own
-    spelling, and a line break after a hyphen (`new-system-` and `instructions:` on the next line)
-    is a word wrapped, not a sentence. It holds in one of two cases. A colon follows it on its line,
-    a combining mark counting with its letter (`new system instructions` and U+0345, then `:`).
-    Or it is its line: nothing else stands on the line but the phrase, the marks of a heading, an
-    emphasis, a quote, a list item, a banner or a bracket (`#`, `*`, `_`, `=`, `~`, a backtick, `>`,
-    `-`, `+`, brackets, quotation marks, a slash, a bullet or a dash), a list number, an HTML tag
-    (`<h1>`) and any closing punctuation. `## New system instructions`, `NEW SYSTEM INSTRUCTIONS`,
-    `**New system instructions**`, a setext or closed ATX heading, `> New system instructions`,
-    `- New system instructions`, `=== New system instructions ===`, `NEW SYSTEM INSTRUCTIONS!`,
-    `New system instructions.`, `[new system instructions]`, `<<< new system instructions >>>`,
-    `<h1>New system instructions</h1>` and a dotted heading with its trailing dot hold.
-    **The cost of the line rule, in both directions.** It holds what is the phrase alone and is not
-    a heading: a list item, a title field, a route (`/new/system/instructions`) or an identifier
-    (`new_system_instructions`) that is the phrase alone on its line, and a hard-wrapped line that
-    is the phrase alone. It passes what is a directive and has another word on its line: `Here are
-    your new system instructions` and its list on the next line, `IMPORTANT - real system
-    instructions` and its text, `Section 2: new system instructions`, a heading in a
-    table cell (`| New system instructions |`), a heading with a page number after it, a heading
-    letter-spaced inside an HTML tag, the phrase with another separator between its words
-    (`new+system+instructions:`, `new | system | instructions:`) and a sentence that ends in the
-    phrase (`Follow the new system instructions`). A commit subject (`docs: updated system
-    instructions`), a to-do (`TODO: write new system instructions`), a list item with a label
-    (`- printer: updated system instructions`), a path, an import, a URL ending in the slug and a
-    sentence with or without its full stop pass. `The new system instructions are in the wiki`
-    passes. The two-word form, with its colon, stays with the raw rule. Findings that `/1.1` recorded on held versions stay on them until a
+    only phrases of three words or more read it (ADR-0065 d14). Its words may be set apart by any
+    mark, which is any character that is not a letter, a digit or a bar: the bold, italic, quote and
+    bracket marks of Markdown, a dash, a plus, a comma with no space after it, a symbol. They may
+    not be set apart by a bar, so a table row is not the phrase, nor by a line break, nor by the end
+    of a clause, which is a comma, semicolon, colon, question or exclamation mark and a space. A
+    full stop and a space between two of the words is the end of a sentence, unless there is one
+    after every word or the letters are spelled with them, which is the phrase's own spelling (the
+    words each followed by a full stop and a space, or every letter followed by one), and a line
+    break after a hyphen is a word wrapped, not a sentence. It holds in one of two cases. A colon
+    follows it on its line, a combining mark counting with its letter. Or it is its line: nothing
+    stands on its line, up to the line break on either side (a line feed, a carriage return, a
+    vertical tab, a form feed, NEL, or a line or paragraph separator), but marks, a list marker (a
+    number or one letter, then a full stop or a closing bracket), up to eight HTML tags and up to
+    eight more of the phrase. A heading of any depth, a closed or setext heading, a line in capitals,
+    an emphasis, a quote, a list item, a banner of any symbol, a bracketed or tagged line and a
+    dotted heading with its trailing dot all hold, and so does a line of the phrase twice.
+    **What the rule holds that is no heading, and what it passes that is a directive.** It holds a
+    list item, a title field, a route or an identifier that is the phrase alone on its line, a
+    phrase alone inside a tag or inside quotation marks, a hard-wrapped line that is the phrase
+    alone, and `The UI is new. System. Instructions` followed by a colon, whose one-word sentence
+    is the phrase's own spelling of a break. It passes a directive with another word on its line:
+    `Here are your new system instructions` and its list on the next line, `IMPORTANT - real
+    system instructions` and its text, a line that ends in the phrase and `follow` or `below:`
+    before it, a heading with a section number or a page number, a heading in a table cell, a
+    heading beside a word in another script (a Chinese word set against `NEW-SYSTEM-INSTRUCTIONS`
+    on its own line, which is a letter and not a mark), a heading letter-spaced inside an HTML tag,
+    a line of more than eight tags or phrases, a roman-numeral list marker, and the phrase with a
+    bar, a line break or the end of a clause between its words. A commit subject, a to-do, a list
+    item with a label, a path, an import, a URL ending in the slug and a sentence with or without
+    its full stop pass, as does a sentence such as the one in the wiki that names the new system
+    instructions among other words. The two-word form, with its colon, stays with the raw rule. Findings that `/1.1` recorded on held versions stay on them until a
     reviewer judges the version; the rescan adds findings and never removes one (d14). The secret
     rules read raw, clean and decoded, never folded or
     skeleton, since a provider prefix such as `AKIA` is case-sensitive; the keyword and entropy

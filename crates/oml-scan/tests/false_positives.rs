@@ -62,6 +62,9 @@ const PROSE: &[&str] = &[
     "Contents\n1. Setup .... 3\n2. Updated system instructions .... 7\n3. Backups .... 9",
     "The runbook is long, and the page\nthat carries the new system instructions\nis near the end.",
     "see /usr/share/doc/system-instructions-old/README for the new system instructions",
+    "Follow the new system instructions below:",
+    "| Updated system instructions | owner |",
+    "Contents\nA. Setup .... 3\nB. Updated system instructions .... 7",
 ];
 
 /// Source code and configuration.
@@ -183,10 +186,17 @@ const KNOWN_HOLDS: &[&str] = &[
     "Contents:\n- Setup\n- New system instructions\n- Backups",
     "Release notes\n\nUpdated system instructions.\n\nThe printer queue is fixed.",
     "Routes:\n/new/system/instructions\n/old/system/rules",
+    // A tag, quotation marks or a symbol around the phrase alone is a heading
+    // as a hash is; the one-word sentence `System.` is the phrase's own
+    // spelling of a break; a bold word and a colon is a directive (#317).
+    "The UI is new. System. Instructions: see the wiki.",
+    "<b>Updated system instructions</b>",
+    "\"New system instructions\"",
+    "**New** system instructions: see the wiki for the printer.",
 ];
 
 /// The number of samples, so a sample cannot leave the corpus unnoticed.
-const CORPUS_SIZE: usize = 135;
+const CORPUS_SIZE: usize = 142;
 
 /// Every sample, the ones that hold by design last.
 fn corpus() -> Vec<(&'static str, &'static str)> {
