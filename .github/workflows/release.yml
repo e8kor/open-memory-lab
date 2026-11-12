@@ -589,7 +589,10 @@ jobs:
       SDK_SDIST: ${{ needs.version.outputs.sdk_sdist }}
       SDK_TGZ: ${{ needs.version.outputs.sdk_tgz }}
     steps:
+      # Every tag, so the markers below can compare this release with the previous one.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
@@ -696,6 +699,13 @@ jobs:
 
           Each binary has a CycloneDX SBOM (\`*.cdx.json\`), generated from the committed Cargo.lock.
           EOF
+      # A release whose scanner rule set differs from the previous tag's carries the
+      # line an installer reads to run `oml admin rescan --record-held`
+      # (scripts/release_markers.py; docs/contributing/releasing.md).
+      - name: The release notes carry the markers an installer may read
+        run: |
+          python3 scripts/release_markers.py append --tag "$GITHUB_REF_NAME" notes.md
+          python3 scripts/release_markers.py check --tag "$GITHUB_REF_NAME" notes.md
       - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

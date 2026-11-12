@@ -5049,8 +5049,7 @@ fn run_doctor(cli: &Cli, stored: &Credentials) -> Result<ExitCode, CliError> {
     let in_progress_warn = in_progress.iter().any(|line| line.starts_with("warn"));
     let telemetry = telemetry_doctor(scrape.as_ref());
     let mut scan = scan_doctor(ready.as_ref(), scrape.as_ref());
-    let scan_backlog = rescan_read.as_ref().and_then(|read| read.as_ref().ok());
-    scan.extend(scan_backlog_doctor(scan_backlog));
+    scan.extend(scan_backlog_doctor(rescan_read.as_ref()));
     let scan_warn = scan.iter().any(|line| line.starts_with("warn"));
     let approvals = approval_doctor(rescan_read.as_ref());
     let approvals_warn = approvals.iter().any(|line| line.starts_with("warn"));
@@ -5625,12 +5624,23 @@ fn telemetry_doctor(scrape: Option<&Scrape>) -> Vec<String> {
 /// The rescan backlog lines (ADR-0074 d28), from an admin key's one-event
 /// rescan window: held versions an older rule set scanned, which stay their
 /// authors' alone in in-progress workareas until `--record-held` reads
-/// them, and every stored version an older rule set scanned.
-fn scan_backlog_doctor(report: Option<&Value>) -> Vec<String> {
-    let Some(r) = report else {
-        return vec![
-            "scan_held_unrescanned, scan_rescan_due: not read; an admin key reads them".to_owned(),
-        ];
+/// them, and every stored version an older rule set scanned. A key that is
+/// no admin's is told an admin key reads them; an admin key whose read
+/// failed is told the reason, as the usage and approval lines are.
+fn scan_backlog_doctor(read: Option<&Result<Value, String>>) -> Vec<String> {
+    let r = match read {
+        None => {
+            return vec![
+                "scan_held_unrescanned, scan_rescan_due: not read; an admin key reads them"
+                    .to_owned(),
+            ];
+        }
+        Some(Err(reason)) => {
+            return vec![format!(
+                "warn scan_held_unrescanned, scan_rescan_due: not read ({reason})"
+            )];
+        }
+        Some(Ok(report)) => report,
     };
     let version = r["scanner_version"]
         .as_str()
@@ -6569,7 +6579,7 @@ mod tests {
             "findings_unlisted": 2,
         });
         assert_eq!(
-            scan_backlog_doctor(Some(&report))[2],
+            scan_backlog_doctor(Some(&Ok(report)))[2],
             "warn scan_findings_unlisted: 2 held version(s) carry a scan finding the findings list lacks, written by a server older than migration 0043; the review card shows only the stored summary for them; run oml admin rescan --record-held"
         );
         let clear = json!({
@@ -6577,7 +6587,7 @@ mod tests {
             "findings_unlisted": 0,
         });
         assert_eq!(
-            scan_backlog_doctor(Some(&clear))[2],
+            scan_backlog_doctor(Some(&Ok(clear)))[2],
             "scan_findings_unlisted: 0"
         );
     }
@@ -6644,7 +6654,7 @@ mod tests {
             "scanner_version": "oml-scan/1.2", "held_unrescanned": 4, "rescan_due": 9,
         });
         assert_eq!(
-            scan_backlog_doctor(Some(&due)),
+            scan_backlog_doctor(Some(&Ok(due))),
             vec![
                 "warn scan_held_unrescanned: 4 held version(s) were scanned under an older rule set than oml-scan/1.2, and stay their authors' alone in in-progress workareas; run oml admin rescan --record-held".to_owned(),
                 "warn scan_rescan_due: 9 stored version(s) were scanned under an older rule set than oml-scan/1.2; oml admin rescan reports what it finds in them".to_owned(),
@@ -6654,7 +6664,7 @@ mod tests {
             "scanner_version": "oml-scan/1.2", "held_unrescanned": 0, "rescan_due": 0,
         });
         assert_eq!(
-            scan_backlog_doctor(Some(&clear)),
+            scan_backlog_doctor(Some(&Ok(clear))),
             vec![
                 "scan_held_unrescanned: 0".to_owned(),
                 "scan_rescan_due: 0".to_owned(),
@@ -6664,6 +6674,19 @@ mod tests {
             scan_backlog_doctor(None),
             vec![
                 "scan_held_unrescanned, scan_rescan_due: not read; an admin key reads them"
+                    .to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn the_scan_doctor_names_why_an_admins_failed_read_is_not_read() {
+        // The admin's read failed: a warn naming why, not "an admin key
+        // reads them", which this key is.
+        assert_eq!(
+            scan_backlog_doctor(Some(&Err("503 unavailable".to_owned()))),
+            vec![
+                "warn scan_held_unrescanned, scan_rescan_due: not read (503 unavailable)"
                     .to_owned()
             ]
         );

@@ -652,6 +652,34 @@ fn copy_orders(name: &str) -> PathBuf {
     dir
 }
 
+/// A tip's stored hash is the server's text: a short one, an empty one and
+/// one with a multi-byte character are each a changed claim with a note,
+/// never a panic (#332; the same cut `sync/plan.rs` got in #320).
+#[test]
+fn a_tip_whose_stored_hash_is_short_empty_or_multibyte_is_changed_without_a_panic() {
+    for stored in ["sha256:ab", "", "sha256:\u{65e5}\u{672c}\u{8a9e}\u{65e5}"] {
+        let fake = Fake::new();
+        run(&fake, &opts(Some(3)));
+        fake.clear_calls();
+        for v in fake.versions.borrow_mut().iter_mut() {
+            if v.claim_key == "delta/sales/orders/col/col-6f1a" {
+                v.anchor["hash"] = json!(stored);
+            }
+        }
+        // Version 5 edits that column's comment, so its claim is changed.
+        let r = run(&fake, &opts(Some(5)));
+        let item = r.json["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["claim_key"] == "delta/sales/orders/col/col-6f1a")
+            .unwrap_or_else(|| panic!("{stored:?}: {}", r.json));
+        assert_eq!(item["outcome"], "changed", "{stored:?}: {item}");
+        let note = item["note"].as_str().unwrap_or_default();
+        assert!(note.contains("…→"), "{stored:?}: {item}");
+    }
+}
+
 #[test]
 fn a_dropped_column_retires_its_claim_and_its_source_check_says_removed() {
     let dir = copy_orders("dropped");

@@ -30,6 +30,17 @@ request does not conflict on it.
 The landing footer and install command name the workspace version, so the same pull request runs
 `python site/build.py` after the bump; CI's `site/build.py --check` fails it otherwise.
 
+## Markers in the release notes
+
+A release's notes can carry a line written for a program to read, not a person: an HTML comment,
+`<!-- oml-deployer: post-step <name> -->`, which GitHub does not display. It is a marker an installer
+may read. One is defined: `admin-rescan-record-held`, present when the scanner's rule set (`RULESET` in
+`crates/oml-scan/src/lib.rs`) differs from the previous stable tag's, since versions held under the old rule set
+stay their authors' alone until `oml admin rescan --record-held` reads them
+([upgrades](../operations/upgrades.md)). The release's publish job runs `scripts/release_markers.py append`
+and then `check` on the notes before it creates the release, and `scripts/check_release.py` holds those steps.
+When the check fails, it names the line to add to the notes' source, the notes step of `release.yml`.
+
 ## Publishing the SDKs
 
 The Python and TypeScript SDKs (`sdks/python`, `sdks/typescript`) carry the server's version, and

@@ -7641,10 +7641,11 @@ pub async fn a_ratified_edge_between_a_memory_and_a_term_is_absent_from_the_rati
 }
 
 /// The backlog's `promoted_unapproved` counts served tips that carry no
-/// approval, and no version a ratified successor took the tip from: so
+/// approval, and no version a ratified successor took the tip from, and no
+/// retirement tip, which recall does not serve: so
 /// superseding such a version and approving its successor, the remedy
 /// `oml doctor` names, brings the count down by one, to zero when each is
-/// done (ADR-0077 d6; #311). No store takes an unapproved promotion through
+/// done (ADR-0077 d6; #311, #332). No store takes an unapproved promotion through
 /// the port over a schema that keeps the approval, so `forget_approval`
 /// makes one as migration 0044's fill leaves a version it could not match:
 /// each store's suite passes its own, and the law holds the counts equal.
@@ -7723,6 +7724,20 @@ pub async fn the_unapproved_count_is_of_served_tips_and_a_ratified_successor_bri
             .approval,
         None,
         "the replaced version keeps what it had: no approval"
+    );
+
+    // A retirement version is a tip too, and recall never serves it, so an
+    // unapproved one is not counted: the count is of what recall serves
+    // (#332).
+    let third = memory(0x7804, "the quay closes at nine");
+    hold_and_promote(&mut rig, store, third.clone()).await;
+    let retired = Uuid::from_u128(0x7813);
+    supersede(&mut rig, store, &third, retired, "retired", true).await;
+    forget_approval(tenant, retired).await;
+    assert_eq!(
+        count().await,
+        0,
+        "an unapproved retirement tip is not a served version"
     );
 }
 
