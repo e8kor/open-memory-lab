@@ -102,7 +102,7 @@ def sync_detailed(
     as the hourly rollup read them after the day closed and that day's flows; profile is the one the
     account was on when the day closed: the one an admin assigned, else the sign-up profile in the sign-
     up tenant, and null for an account under no limits. Rows are kept 25 months. Counts only (d7).
-    Journals nothing. Proposed.
+    Journals nothing.
 
     Args:
         period (str):
@@ -152,7 +152,7 @@ def sync(
     as the hourly rollup read them after the day closed and that day's flows; profile is the one the
     account was on when the day closed: the one an admin assigned, else the sign-up profile in the sign-
     up tenant, and null for an account under no limits. Rows are kept 25 months. Counts only (d7).
-    Journals nothing. Proposed.
+    Journals nothing.
 
     Args:
         period (str):
@@ -197,7 +197,7 @@ async def asyncio_detailed(
     as the hourly rollup read them after the day closed and that day's flows; profile is the one the
     account was on when the day closed: the one an admin assigned, else the sign-up profile in the sign-
     up tenant, and null for an account under no limits. Rows are kept 25 months. Counts only (d7).
-    Journals nothing. Proposed.
+    Journals nothing.
 
     Args:
         period (str):
@@ -245,7 +245,7 @@ async def asyncio(
     as the hourly rollup read them after the day closed and that day's flows; profile is the one the
     account was on when the day closed: the one an admin assigned, else the sign-up profile in the sign-
     up tenant, and null for an account under no limits. Rows are kept 25 months. Counts only (d7).
-    Journals nothing. Proposed.
+    Journals nothing.
 
     Args:
         period (str):

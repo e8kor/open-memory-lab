@@ -82,7 +82,7 @@ def sync_detailed(
     belongs to no account, answers access.not_found. Each meter carries its count, its limit (null where
     none holds), the whole percentage and its state: warning at 80% of the limit, reached at it
     (ADR-0071 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses
-    this or any other read. Proposed.
+    this or any other read.
 
     Args:
         x_request_id (str | Unset):
@@ -124,7 +124,7 @@ def sync(
     belongs to no account, answers access.not_found. Each meter carries its count, its limit (null where
     none holds), the whole percentage and its state: warning at 80% of the limit, reached at it
     (ADR-0071 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses
-    this or any other read. Proposed.
+    this or any other read.
 
     Args:
         x_request_id (str | Unset):
@@ -161,7 +161,7 @@ async def asyncio_detailed(
     belongs to no account, answers access.not_found. Each meter carries its count, its limit (null where
     none holds), the whole percentage and its state: warning at 80% of the limit, reached at it
     (ADR-0071 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses
-    this or any other read. Proposed.
+    this or any other read.
 
     Args:
         x_request_id (str | Unset):
@@ -201,7 +201,7 @@ async def asyncio(
     belongs to no account, answers access.not_found. Each meter carries its count, its limit (null where
     none holds), the whole percentage and its state: warning at 80% of the limit, reached at it
     (ADR-0071 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses
-    this or any other read. Proposed.
+    this or any other read.
 
     Args:
         x_request_id (str | Unset):

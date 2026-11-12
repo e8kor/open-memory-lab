@@ -137,7 +137,7 @@ export interface paths {
         };
         /**
          * The calling key's own account's meters against its limits this UTC month.
-         * @description Requires: any key of an account, a user root's key (ADR-0071 d1, d6). The account is the key's own and no parameter names another, so no request reads another account's usage; a tenant key, which belongs to no account, answers access.not_found. Each meter carries its count, its limit (null where none holds), the whole percentage and its state: warning at 80% of the limit, reached at it (ADR-0071 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses this or any other read. Proposed.
+         * @description Requires: any key of an account, a user root's key (ADR-0071 d1, d6). The account is the key's own and no parameter names another, so no request reads another account's usage; a tenant key, which belongs to no account, answers access.not_found. Each meter carries its count, its limit (null where none holds), the whole percentage and its state: warning at 80% of the limit, reached at it (ADR-0071 d5). Counts only, never content or query text (d7). Reading never blocks: no quota refuses this or any other read.
          */
         get: operations["getAccountUsage"];
         put?: never;
@@ -1331,7 +1331,7 @@ export interface paths {
         };
         /**
          * One account's meters against its limits this UTC month.
-         * @description Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the root workarea's id or the user's name, in the admin's tenant; anything else answers access.not_found. The same shape as GET /v1/account/usage. Journals nothing. Proposed.
+         * @description Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the root workarea's id or the user's name, in the admin's tenant; anything else answers access.not_found. The same shape as GET /v1/account/usage. Journals nothing.
          */
         get: operations["adminAccountUsage"];
         put?: never;
@@ -1352,7 +1352,7 @@ export interface paths {
         get?: never;
         /**
          * Set an account's quota profile and its overrides, replacing the ones it had.
-         * @description Requires: admin key role (ADR-0071 d5, d6). profile names a profile the configuration declares, or request.validation with details.field profile; overrides maps a quota to its limit, each from 0 to that quota's maximum (1,000,000, or 1,000,000,000,000 for text_bytes), and an unknown quota is request.validation with details.field overrides. Omitted overrides clear the account's. Journalled as account.profile_set; the new limits hold from the next write. Answers the account's usage under them. Idempotent by its replace semantics; no Idempotency-Key. Proposed.
+         * @description Requires: admin key role (ADR-0071 d5, d6). profile names a profile the configuration declares, or request.validation with details.field profile; overrides maps a quota to its limit, each from 0 to that quota's maximum (1,000,000, or 1,000,000,000,000 for text_bytes), and an unknown quota is request.validation with details.field overrides. Omitted overrides clear the account's. Journalled as account.profile_set; the new limits hold from the next write. Answers the account's usage under them. Idempotent by its replace semantics; no Idempotency-Key.
          */
         put: operations["setAccountProfile"];
         post?: never;
@@ -1375,7 +1375,7 @@ export interface paths {
         };
         /**
          * The usage ledger of one UTC month, every account, one row per account per closed day, as JSON or CSV.
-         * @description Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is json, the default, or csv, whose header is day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks as the hourly rollup read them after the day closed and that day's flows; profile is the one the account was on when the day closed: the one an admin assigned, else the sign-up profile in the sign-up tenant, and null for an account under no limits. Rows are kept 25 months. Counts only (d7). Journals nothing. Proposed.
+         * @description Requires: admin key role (ADR-0071 d4, d6). period is the month, YYYY-MM, and required; format is json, the default, or csv, whose header is day,account,user,profile,memories,text_bytes,writes,recalls,keys,connections. A row holds the stocks as the hourly rollup read them after the day closed and that day's flows; profile is the one the account was on when the day closed: the one an admin assigned, else the sign-up profile in the sign-up tenant, and null for an account under no limits. Rows are kept 25 months. Counts only (d7). Journals nothing.
          */
         get: operations["adminUsageLedger"];
         put?: never;
@@ -1395,7 +1395,7 @@ export interface paths {
         };
         /**
          * Each account whose counters differ from the rows they count, and each account on a profile the configuration does not declare.
-         * @description Requires: admin key role (ADR-0071 d3, d5). Recomputes every account's stocks from the stored rows by ADR-0071 d2's definitions, and this month's writes from its held versions, in one snapshot, and lists each meter that differs. Repairs nothing. oml doctor reads it for its usage lines. Journals nothing. Proposed.
+         * @description Requires: admin key role (ADR-0071 d3, d5). Recomputes every account's stocks from the stored rows by ADR-0071 d2's definitions, and this month's writes from its held versions, in one snapshot, and lists each meter that differs. Repairs nothing. oml doctor reads it for its usage lines. Journals nothing.
          */
         get: operations["adminUsageDrift"];
         put?: never;

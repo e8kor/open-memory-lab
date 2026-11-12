@@ -76,7 +76,7 @@ def sync_detailed(
      Requires: admin key role (ADR-0071 d3, d5). Recomputes every account's stocks from the stored rows
     by ADR-0071 d2's definitions, and this month's writes from its held versions, in one snapshot, and
     lists each meter that differs. Repairs nothing. oml doctor reads it for its usage lines. Journals
-    nothing. Proposed.
+    nothing.
 
     Args:
         x_request_id (str | Unset):
@@ -117,7 +117,7 @@ def sync(
      Requires: admin key role (ADR-0071 d3, d5). Recomputes every account's stocks from the stored rows
     by ADR-0071 d2's definitions, and this month's writes from its held versions, in one snapshot, and
     lists each meter that differs. Repairs nothing. oml doctor reads it for its usage lines. Journals
-    nothing. Proposed.
+    nothing.
 
     Args:
         x_request_id (str | Unset):
@@ -153,7 +153,7 @@ async def asyncio_detailed(
      Requires: admin key role (ADR-0071 d3, d5). Recomputes every account's stocks from the stored rows
     by ADR-0071 d2's definitions, and this month's writes from its held versions, in one snapshot, and
     lists each meter that differs. Repairs nothing. oml doctor reads it for its usage lines. Journals
-    nothing. Proposed.
+    nothing.
 
     Args:
         x_request_id (str | Unset):
@@ -192,7 +192,7 @@ async def asyncio(
      Requires: admin key role (ADR-0071 d3, d5). Recomputes every account's stocks from the stored rows
     by ADR-0071 d2's definitions, and this month's writes from its held versions, in one snapshot, and
     lists each meter that differs. Repairs nothing. oml doctor reads it for its usage lines. Journals
-    nothing. Proposed.
+    nothing.
 
     Args:
         x_request_id (str | Unset):

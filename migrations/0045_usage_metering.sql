@@ -20,10 +20,10 @@
 -- runs it at start, before it serves, so the wait is the upgrade's. The
 -- time is the index build's and the fill's, both in step with the
 -- versions stored. Measured on PostgreSQL 18 over one tenant of 100
--- accounts, three runs each (2026-11-12): 70 to 89 ms with 10,000
--- versions stored, the build 19 to 26 ms of it and the fill 39 to 47 ms;
--- 563 to 630 ms with 100,000, the build 150 to 184 ms and the fill 366 to
--- 419 ms. A lock is waited for at most 5 s, then the migration fails and
+-- accounts, three runs each (2026-11-12): 85 to 97 ms with 10,000
+-- versions stored, the build 23 to 31 ms of it and the fill 40 to 46 ms;
+-- 550 to 634 ms with 100,000, the build 138 to 197 ms and the fill 387 to
+-- 427 ms. A lock is waited for at most 5 s, then the migration fails and
 -- is run again in a quieter moment.
 
 SET LOCAL lock_timeout = '5s';

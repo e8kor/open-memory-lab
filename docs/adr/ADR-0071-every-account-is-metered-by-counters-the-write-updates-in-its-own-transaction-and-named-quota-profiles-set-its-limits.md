@@ -1,13 +1,15 @@
 <!--
 id: adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits
 tier: engineering
-status: proposed
+status: accepted design · 2026-11-12
 answers: what an account is and which column names it; the six meters and exactly what each counts; how a quota check stays exact when two writers race at the limit; how doctor finds a counter that drifted from its source; the daily usage ledger, its retention and why no meter is a per-account metric label; named quota profiles, an account's profile and overrides, the 80% warning and the 100% refusal; the endpoints that read usage and set a profile; what the pages show; what the counts never hold; what it amends in ADR-0068
 -->
 
 # ADR-0071 — Every account is metered by counters the write updates in its own transaction, and named quota profiles set its limits
 
-**Status:** proposed · 2026-11-06
+**Status:** accepted design · 2026-11-12, by the operator, for usage metering; proposed 2026-11-06. d5's un-assigning, written on 2026-11-12 after the review of the port, is marked proposed where it stands.
+
+**Release:** v0.7.3, the release `openapi.yaml` names for the new members
 
 **Amends:** ADR-0068 (d5: the `memories` quota counts live chains, not every state; two quotas join; the
 doctor threshold moves from 90% to 80%; usage is read from counters, not counted at each check)
@@ -67,15 +69,19 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
   `account_activity` holds one row per account per UTC day with its two flows. The commit that
   folds a metered event updates them in its own transaction, under the tenant's chain lock
   (ADR-0002 d3). The events are a held version, a promotion, a rejection, a supersession, a key
-  issued or revoked, and a connection opened or revoked. A first version of a claim starts its
-  chain, which is its author's account's and live once held, so that commit reads nothing. For
-  any other memory fold the store reads the chain's account and whether the chain is live before
-  the fold, and whether it is live after, and moves `memories` by the difference. Each read is an
+  issued or revoked, and a connection opened or revoked. A version captured under a
+  `claim_key` no row carries starts its chain, which is its author's account's and live once
+  held, so that commit reads nothing. A chain's first version is its earliest version 1: a
+  `claim_key` whose every version was rejected is released, and the claim captured under it
+  next is a version 1 that joins the chain (ADR-0025 d18). For that write and any other memory
+  fold the store reads the chain's account and whether the chain is live before the fold, and
+  whether it is live after, and moves `memories` by the difference. Each read is an
   index probe on the chain: `memories_chain_first` for the account, `memories_claim_version` and
   `memories_served_tip` for the liveness. A chain that is no account's is read once and no meter
   moves. An account's stocks move in one statement and its day's writes in another, so inside
-  the lock a new memory by an account key costs two statements, a revision four, a promotion or
-  a rejection two or three, and a tenant key's new claim none. The application reads the
+  the lock a new memory by an account key costs two statements, a revision or a claim under a
+  released key four, a promotion or a rejection two or three, one on a chain that is no
+  account's, and a tenant key's new claim none. The application reads the
   account's limits once, before the head, and the commit carries them. When a meter the commit raises passes
   its limit, the store refuses the commit with `quota_reached`, and the transaction rolls back
   with the journal row. The client gets `429 limit.quota`
@@ -209,15 +215,15 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
 ## Consequences
 
 - Migration 0045 adds `account_meters`, `account_activity`, `usage_daily` and `account_profiles`
-  under the tenant RLS of 0004, and the index `memories_chain_first` on every tenant's
-  partition of `memories`. It widens the `user_quotas` check to six quotas and sets the
+  under the tenant RLS of 0004, and the index `memories_chain_first`, each chain's versions 1
+  by when they were stored, on every tenant's partition of `memories`. It widens the `user_quotas` check to six quotas and sets the
   serving grants (`usage_daily`: SELECT, INSERT and DELETE for the 25-month retention, no UPDATE).
   It fills `account_meters` and `account_activity` from the rows already stored, so a live
   database starts with no drift: each account's `memories`, `text_bytes`, `keys` and
   `connections` by d2's definitions, and its `writes` per day for the last 62 days from each
   stored version's `created_at`. `recalls` starts at zero, since nothing stored counts them. It
   assigns no profile and adds no limit. The migration's header names the locks it holds and its
-  measured time, the index build's and the fill's: 563 to 630 ms with 100,000 versions stored.
+  measured time, the index build's and the fill's: 550 to 634 ms with 100,000 versions stored.
   It runs at the lead's start, so that time is the upgrade's.
 - Two things a deployment with open sign-up sees change, beside the meters. An admin key that
   issues a key naming a person is now held to that person's `keys` quota by the commit's

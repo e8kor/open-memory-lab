@@ -84,7 +84,7 @@ def sync_detailed(
 
      Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the
     root workarea's id or the user's name, in the admin's tenant; anything else answers
-    access.not_found. The same shape as GET /v1/account/usage. Journals nothing. Proposed.
+    access.not_found. The same shape as GET /v1/account/usage. Journals nothing.
 
     Args:
         account (str):
@@ -126,7 +126,7 @@ def sync(
 
      Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the
     root workarea's id or the user's name, in the admin's tenant; anything else answers
-    access.not_found. The same shape as GET /v1/account/usage. Journals nothing. Proposed.
+    access.not_found. The same shape as GET /v1/account/usage. Journals nothing.
 
     Args:
         account (str):
@@ -163,7 +163,7 @@ async def asyncio_detailed(
 
      Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the
     root workarea's id or the user's name, in the admin's tenant; anything else answers
-    access.not_found. The same shape as GET /v1/account/usage. Journals nothing. Proposed.
+    access.not_found. The same shape as GET /v1/account/usage. Journals nothing.
 
     Args:
         account (str):
@@ -203,7 +203,7 @@ async def asyncio(
 
      Requires: admin key role (ADR-0071 d6); every other role answers access.verb_ceiling. account is the
     root workarea's id or the user's name, in the admin's tenant; anything else answers
-    access.not_found. The same shape as GET /v1/account/usage. Journals nothing. Proposed.
+    access.not_found. The same shape as GET /v1/account/usage. Journals nothing.
 
     Args:
         account (str):

@@ -99,7 +99,7 @@ def sync_detailed(
     that quota's maximum (1,000,000, or 1,000,000,000,000 for text_bytes), and an unknown quota is
     request.validation with details.field overrides. Omitted overrides clear the account's. Journalled
     as account.profile_set; the new limits hold from the next write. Answers the account's usage under
-    them. Idempotent by its replace semantics; no Idempotency-Key. Proposed.
+    them. Idempotent by its replace semantics; no Idempotency-Key.
 
     Args:
         account (str):
@@ -147,7 +147,7 @@ def sync(
     that quota's maximum (1,000,000, or 1,000,000,000,000 for text_bytes), and an unknown quota is
     request.validation with details.field overrides. Omitted overrides clear the account's. Journalled
     as account.profile_set; the new limits hold from the next write. Answers the account's usage under
-    them. Idempotent by its replace semantics; no Idempotency-Key. Proposed.
+    them. Idempotent by its replace semantics; no Idempotency-Key.
 
     Args:
         account (str):
@@ -190,7 +190,7 @@ async def asyncio_detailed(
     that quota's maximum (1,000,000, or 1,000,000,000,000 for text_bytes), and an unknown quota is
     request.validation with details.field overrides. Omitted overrides clear the account's. Journalled
     as account.profile_set; the new limits hold from the next write. Answers the account's usage under
-    them. Idempotent by its replace semantics; no Idempotency-Key. Proposed.
+    them. Idempotent by its replace semantics; no Idempotency-Key.
 
     Args:
         account (str):
@@ -236,7 +236,7 @@ async def asyncio(
     that quota's maximum (1,000,000, or 1,000,000,000,000 for text_bytes), and an unknown quota is
     request.validation with details.field overrides. Omitted overrides clear the account's. Journalled
     as account.profile_set; the new limits hold from the next write. Answers the account's usage under
-    them. Idempotent by its replace semantics; no Idempotency-Key. Proposed.
+    them. Idempotent by its replace semantics; no Idempotency-Key.
 
     Args:
         account (str):
