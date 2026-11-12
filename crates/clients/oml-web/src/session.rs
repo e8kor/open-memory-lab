@@ -308,6 +308,7 @@ mod tests {
                 role: "user".to_owned(),
                 tenant: None,
                 user: None,
+                denied: None,
             },
             admin: false,
         };

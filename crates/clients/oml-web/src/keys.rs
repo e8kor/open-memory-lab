@@ -69,6 +69,29 @@ impl Side {
     }
 }
 
+/// What the Keys page and the Start page say to a person whose session key
+/// carries a denial, in place of the forms for the three acts that key is
+/// refused for good: issuing a key, minting a connect code and cutting off a
+/// key (`access.verb_ceiling`, reason `session_key_denied`; ADR-0070 d2). The
+/// export, the deletion request and sign-out read nothing of the key, so
+/// they still work and the sentence says so.
+pub(crate) const DENIED_SESSION: &str = "This session is refused issuing a key, minting a connect code and cutting off a key because its key carries a denial; an administrator can issue, connect and cut off keys for you, and exporting your memories, requesting deletion and signing out still work.";
+
+/// The sentence as the pages draw it.
+pub(crate) fn denied_notice() -> String {
+    format!(
+        r#"<p class="notice" role="status">{}</p>"#,
+        text(DENIED_SESSION)
+    )
+}
+
+/// Whether the session's key carries a denial, as `GET /v2/whoami` says of
+/// a session key; the admin's page is never drawn for one, since an admin key
+/// takes no denial.
+pub(crate) fn denied(session: &Session) -> bool {
+    session.whoami.denied == Some(true)
+}
+
 /// The notice a `done` the view's own acts name shows; any other is none.
 fn notice(done: Option<&str>) -> Option<&'static str> {
     match done? {
@@ -125,7 +148,7 @@ pub(crate) async fn keys(
 /// user page such a connector key gets a new connect code unless it has
 /// expired. On the admin page the cut-off carries the
 /// listed `user`, so the act lands back on the same list.
-fn row(key: &ListedKey, side: Side, csrf: &str, user: &str) -> String {
+fn row(key: &ListedKey, side: Side, csrf: &str, user: &str, denied: bool) -> String {
     let name = key.name.as_deref().unwrap_or("");
     let access: Vec<String> = key
         .grants
@@ -168,7 +191,7 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str) -> String {
         );
     }
     let mut acts = String::new();
-    if key.credential != "session" && working {
+    if key.credential != "session" && working && !denied {
         if key.credential == "connection" && side == Side::User {
             if key.expired {
                 acts.push_str(
@@ -210,12 +233,20 @@ fn row(key: &ListedKey, side: Side, csrf: &str, user: &str) -> String {
     )
 }
 
-pub(crate) fn table(keys: &[ListedKey], side: Side, csrf: &str, user: &str) -> String {
+/// The keys as a table. `denied`: the session's own key carries a denial,
+/// so no row offers an act that key is refused.
+pub(crate) fn table(
+    keys: &[ListedKey],
+    side: Side,
+    csrf: &str,
+    user: &str,
+    denied: bool,
+) -> String {
     let mut out = String::from(
         "<table><tr><th>Key</th><th>Role</th><th>Access</th><th>State</th><th></th></tr>",
     );
     for key in keys {
-        out.push_str(&row(key, side, csrf, user));
+        out.push_str(&row(key, side, csrf, user, denied));
     }
     out.push_str("</table>");
     out
@@ -439,8 +470,14 @@ async fn user_view(
         r#"<h1>Keys</h1><p class="desc">Keys acting for <code>{}</code>.</p>{}{}"#,
         short(&user),
         card.unwrap_or_default(),
-        table(&listed, Side::User, &csrf, "")
+        table(&listed, Side::User, &csrf, "", denied(session))
     );
+    if denied(session) {
+        // The three forms are not drawn: the API refuses each one for this
+        // session's key, now and for good.
+        body.push_str(&denied_notice());
+        return outcome::html(StatusCode::OK, user_shell(session, fields, &body));
+    }
     let prefix = format!("{user}-");
     let issue = |action: &str, button: &str, primary: bool| {
         form(
@@ -467,17 +504,19 @@ async fn user_view(
         issue("issue_key", "Issue key", true),
         issue("connect_key", "Issue connector key", false)
     );
-    outcome::html(
-        StatusCode::OK,
-        shell(
-            "Your page",
-            &session.who(),
-            Some(&session.csrf()),
-            &user_tabs(session.admin),
-            USER_KEYS_PATH,
-            notice(fields.get("done")),
-            &body,
-        ),
+    outcome::html(StatusCode::OK, user_shell(session, fields, &body))
+}
+
+/// The user page's frame around `body`.
+fn user_shell(session: &Session, fields: &Fields, body: &str) -> String {
+    shell(
+        "Your page",
+        &session.who(),
+        Some(&session.csrf()),
+        &user_tabs(session.admin),
+        USER_KEYS_PATH,
+        notice(fields.get("done")),
+        body,
     )
 }
 
@@ -517,7 +556,7 @@ pub async fn admin_page(
             Ok(listed) => listed,
             Err(response) => return *response,
         };
-        body.push_str(&table(&listed, Side::Admin, &session.csrf(), user));
+        body.push_str(&table(&listed, Side::Admin, &session.csrf(), user, false));
     }
     outcome::html(
         StatusCode::OK,

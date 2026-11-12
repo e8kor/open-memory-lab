@@ -84,16 +84,18 @@ def sync_detailed(
     traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | Whoami]:
     """The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its
-    denials or deny masks.
+    denials or deny masks; a session key is told only whether it carries a denial.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
     workarea carries its derived path. person names the user a key names, with its sign-up usage and
     limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
     d10); with person=false it is absent and unread. The credential is resolved once, so a key value or
     a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny
-    masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads
-    no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md,
-    Whoami; ADR-0039 d15).
+    masks, which name subtrees it may not read, are omitted, except that a session key's record carries
+    denied, whether the key holds a denial on any workarea, which refuses it issuing a key, minting a
+    connect code and cutting off a key for good (ADR-0070 d2; since v0.7.3); the read journals nothing,
+    since it reads no claim. A revoked or unknown key answers auth.invalid as on every route
+    (docs/api/http-api.md, Whoami; ADR-0039 d15).
 
     Args:
         start (bool | Unset):
@@ -135,16 +137,18 @@ def sync(
     traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | Whoami | None:
     """The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its
-    denials or deny masks.
+    denials or deny masks; a session key is told only whether it carries a denial.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
     workarea carries its derived path. person names the user a key names, with its sign-up usage and
     limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
     d10); with person=false it is absent and unread. The credential is resolved once, so a key value or
     a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny
-    masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads
-    no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md,
-    Whoami; ADR-0039 d15).
+    masks, which name subtrees it may not read, are omitted, except that a session key's record carries
+    denied, whether the key holds a denial on any workarea, which refuses it issuing a key, minting a
+    connect code and cutting off a key for good (ADR-0070 d2; since v0.7.3); the read journals nothing,
+    since it reads no claim. A revoked or unknown key answers auth.invalid as on every route
+    (docs/api/http-api.md, Whoami; ADR-0039 d15).
 
     Args:
         start (bool | Unset):
@@ -181,16 +185,18 @@ async def asyncio_detailed(
     traceparent: str | Unset = UNSET,
 ) -> Response[ErrorEnvelope | Whoami]:
     """The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its
-    denials or deny masks.
+    denials or deny masks; a session key is told only whether it carries a denial.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
     workarea carries its derived path. person names the user a key names, with its sign-up usage and
     limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
     d10); with person=false it is absent and unread. The credential is resolved once, so a key value or
     a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny
-    masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads
-    no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md,
-    Whoami; ADR-0039 d15).
+    masks, which name subtrees it may not read, are omitted, except that a session key's record carries
+    denied, whether the key holds a denial on any workarea, which refuses it issuing a key, minting a
+    connect code and cutting off a key for good (ADR-0070 d2; since v0.7.3); the read journals nothing,
+    since it reads no claim. A revoked or unknown key answers auth.invalid as on every route
+    (docs/api/http-api.md, Whoami; ADR-0039 d15).
 
     Args:
         start (bool | Unset):
@@ -230,16 +236,18 @@ async def asyncio(
     traceparent: str | Unset = UNSET,
 ) -> ErrorEnvelope | Whoami | None:
     """The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its
-    denials or deny masks.
+    denials or deny masks; a session key is told only whether it carries a denial.
 
      Requires: any live key; it reads only its own record. Each reference is {id, name} and the default
     workarea carries its derived path. person names the user a key names, with its sign-up usage and
     limits and its pending deletion request, and is null for a tenant key (ADR-0070 d5; ADR-0068 d5, d6,
     d10); with person=false it is absent and unread. The credential is resolved once, so a key value or
     a connection spends one request of its rate (#286). The key's denials and its grants' per-grant deny
-    masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads
-    no claim. A revoked or unknown key answers auth.invalid as on every route (docs/api/http-api.md,
-    Whoami; ADR-0039 d15).
+    masks, which name subtrees it may not read, are omitted, except that a session key's record carries
+    denied, whether the key holds a denial on any workarea, which refuses it issuing a key, minting a
+    connect code and cutting off a key for good (ADR-0070 d2; since v0.7.3); the read journals nothing,
+    since it reads no claim. A revoked or unknown key answers auth.invalid as on every route
+    (docs/api/http-api.md, Whoami; ADR-0039 d15).
 
     Args:
         start (bool | Unset):

@@ -5392,6 +5392,166 @@ async fn the_keys_pages_show_a_keys_expiry_expired_mark_and_rate_as_the_api_serv
     assert_rows_equal_the_api(&page, &items);
 }
 
+/// The sentence the Keys and Start pages draw for a person whose session
+/// key carries a denial.
+const DENIED_SESSION: &str = "This session is refused issuing a key, minting a connect code and cutting off a key because its key carries a denial; an administrator can issue, connect and cut off keys for you, and exporting your memories, requesting deletion and signing out still work.";
+
+/// The forms the Keys page and the Start page draw for the three acts a
+/// denied session key is refused.
+const KEY_FORMS: [&str; 7] = [
+    r#"value="issue_key""#,
+    r#"value="connect_key""#,
+    r#"value="connect_code""#,
+    r#"value="cut_off""#,
+    r#"value="issue_claude_ai""#,
+    r#"value="issue_claude_code""#,
+    r#"value="issue_other""#,
+];
+
+/// The Start page as it is drawn with no client chosen and for each of its
+/// three clients, one after another.
+async fn start_pages(rig: &Rig, cookie: &str) -> String {
+    let mut pages = String::new();
+    for query in [
+        "",
+        "?client=claude-ai",
+        "?client=claude-code",
+        "?client=other",
+    ] {
+        let (status, _, page) = send(
+            &rig.router,
+            get(&format!("/web/start{query}"), Some(cookie)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        pages.push_str(&page);
+    }
+    pages
+}
+
+/// A person whose `<user>-web` key carries a denial, on `universe`, on their
+/// root or on a workarea outside it, is told so on the Keys page and the
+/// Start page and is drawn none of the forms for the three acts the API
+/// refuses that key for good; a person whose key carries none sees the
+/// forms. The page's state is the API's answer: each act posted anyway is
+/// the 403 `session_key_denied` the page drew no form for, and the export and
+/// the deletion request stay drawn (ADR-0070 d2; #343, #335).
+#[tokio::test]
+async fn a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key_forms() {
+    for target in ["universe", "alice", "team"] {
+        let rig = rig().await;
+        let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+        laptop_key(&rig, &cookie).await;
+        act_and_follow(
+            &rig,
+            &cookie,
+            "/web/keys",
+            &[
+                ("action", "connect_key"),
+                ("name", "phone"),
+                ("role", "writer"),
+            ],
+        )
+        .await;
+        issuer_app(&rig)
+            .create_workarea(
+                &rig.boot.admin_key.value,
+                &Name::parse("team").expect("a name"),
+                Some(rig.boot.root_workarea_id.into()),
+                None,
+            )
+            .await
+            .expect("a workarea outside alice's root");
+        let (_, _, keys) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+        let start = start_pages(&rig, &cookie).await;
+        for form in KEY_FORMS {
+            assert!(
+                keys.contains(form) || start.contains(form),
+                "{target}: before a denial the pages draw {form}"
+            );
+        }
+        assert!(!keys.contains(DENIED_SESSION) && !start.contains(DENIED_SESSION));
+        let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+        rig.app
+            .deny_key(&rig.boot.admin_key.value, name("alice-web"), name(target))
+            .await
+            .expect("the admin denies alice-web");
+        let (status, _, keys) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{target}: {keys}");
+        let start = start_pages(&rig, &cookie).await;
+        assert_eq!(
+            start.matches(DENIED_SESSION).count(),
+            4,
+            "{target}: the sentence is on the Start page with no client and with each"
+        );
+        for (page, body) in [("keys", &keys), ("start", &start)] {
+            assert!(body.contains(DENIED_SESSION), "{target}: {page}: {body}");
+            for form in KEY_FORMS {
+                assert!(
+                    !body.contains(form),
+                    "{target}: {page} draws {form}: {body}"
+                );
+            }
+        }
+        assert!(
+            keys.contains("alice-laptop"),
+            "{target}: the keys are still listed"
+        );
+        // The export and the deletion request stay open to the person.
+        assert!(
+            start.contains(r#"href="/web/start/export""#),
+            "{target}: {start}"
+        );
+        assert!(
+            start.contains(r#"value="request_deletion""#),
+            "{target}: {start}"
+        );
+        // The API refuses each act the page no longer draws a form for.
+        for (api_path, body, fields) in [
+            (
+                "/v2/keys",
+                json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+                vec![
+                    ("action", "issue_key"),
+                    ("name", "tablet"),
+                    ("role", "writer"),
+                ],
+            ),
+            (
+                "/v2/keys/alice-phone/connect-codes",
+                json!({}),
+                vec![("action", "connect_code"), ("key", "alice-phone")],
+            ),
+            (
+                "/v2/keys/alice-laptop/denials",
+                json!({"workarea": "universe"}),
+                vec![
+                    ("action", "cut_off"),
+                    ("key", "alice-laptop"),
+                    ("confirm", "yes"),
+                ],
+            ),
+        ] {
+            let (status, refusal) = api_as_web(&rig, &cookie, api_path, body).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{target}: {api_path}: {refusal}"
+            );
+            assert_eq!(
+                refusal["error"]["details"]["reason"], "session_key_denied",
+                "{target}: {refusal}"
+            );
+            let (status, _, page) = act(&rig, &cookie, "/web/keys", &fields).await;
+            assert_eq!(
+                status,
+                StatusCode::FORBIDDEN,
+                "{target}: {fields:?}: {page}"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn the_old_review_and_keys_urls_are_not_found_and_their_acts_run_nothing() {
     // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,

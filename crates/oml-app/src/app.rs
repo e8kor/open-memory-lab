@@ -3930,8 +3930,10 @@ where
                 crew: None,
                 user: None,
                 grants: Vec::new(),
+                denied: None,
             });
         };
+        let denied = (key.credential == Credential::Session).then_some(!access.denials.is_empty());
         // The key read above holds the row: a tenant whose references read
         // nothing for it has lost it since, so fail closed.
         let references = self
@@ -3946,6 +3948,7 @@ where
             crew: references.crew,
             user: references.user,
             grants: access.grants,
+            denied,
         })
     }
 

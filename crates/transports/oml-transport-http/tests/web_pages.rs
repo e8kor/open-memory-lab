@@ -2531,3 +2531,97 @@ async fn a_cut_off_session_key_still_ends_its_session() {
         "the session ended"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #343, #335: what a session key an admin denied is told and still does
+// ---------------------------------------------------------------------------
+
+/// `GET path` as `oml-web` makes it for the session `cookie` names, under the
+/// `web` credential.
+async fn get_as_web(rig: &Rig, cookie: &str, path: &str) -> (StatusCode, Value) {
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let credential = oml_app::domain::web::capacity_credential(token, "web");
+    let request = Request::get(path)
+        .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+        .header("oml-web-client", WEB_CLIENT_SECRET)
+        .body(Body::empty())
+        .expect("a request");
+    let (status, _, answer) = send(&rig.router, request).await;
+    (status, serde_json::from_str(&answer).unwrap_or(Value::Null))
+}
+
+/// alice signed in with a connector key, a writer key and one memory her
+/// agent wrote, and the workarea `notes` in her root: her cookie and the
+/// agent key's value.
+async fn alice_with_a_memory(rig: &Rig) -> (String, String) {
+    let cookie = alice_with_a_connector(rig).await;
+    let (status, notes) = as_web(
+        rig,
+        &cookie,
+        "web",
+        "/v2/workareas",
+        json!({"name": "notes"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{notes}");
+    let laptop = issued(rig, &cookie, "agent").await;
+    let value = value_of(&laptop);
+    agent_writes(rig, &value, "alice keeps her export").await;
+    (cookie, value)
+}
+
+/// A session key's whoami says whether the key carries a denial, on any
+/// workarea, and no other key's whoami says anything of its denials: the
+/// Keys and Start pages draw their forms from it (ADR-0070 d2; ADR-0039 d15;
+/// #343).
+#[tokio::test]
+async fn whoami_tells_a_session_key_whether_it_carries_a_denial_and_no_other_key() {
+    for workarea in ["universe", "alice", "team"] {
+        let rig = rig().await;
+        let (cookie, agent) = alice_with_a_memory(&rig).await;
+        let (status, me) = get_as_web(&rig, &cookie, "/v2/whoami?person=false").await;
+        assert_eq!(status, StatusCode::OK, "{me}");
+        assert_eq!(me["denied"], false, "{workarea}: none yet: {me}");
+        let (status, team) = as_admin(
+            &rig,
+            "/v2/workareas",
+            "team",
+            json!({"name": "team", "parent": "universe"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{team}");
+        let (status, denial) = as_admin(
+            &rig,
+            "/v2/keys/alice-web/denials",
+            "deny-alice-web",
+            json!({"workarea": workarea}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{workarea}: {denial}");
+        let (status, me) = get_as_web(&rig, &cookie, "/v2/whoami?person=false").await;
+        assert_eq!(status, StatusCode::OK, "{me}");
+        assert_eq!(me["denied"], true, "{workarea}: {me}");
+        // A key with a value, denied too, learns nothing of it, and neither
+        // does an admin key.
+        let (status, denial) = as_admin(
+            &rig,
+            "/v2/keys/alice-agent/denials",
+            "deny-alice-agent",
+            json!({"workarea": "universe"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{denial}");
+        for value in [agent.as_str(), rig.boot.admin_key.value.as_str()] {
+            let whoami = Request::get("/v2/whoami")
+                .header(header::AUTHORIZATION, format!("Bearer {value}"))
+                .body(Body::empty())
+                .expect("a request");
+            let (status, _, me) = send(&rig.router, whoami).await;
+            let me: Value = serde_json::from_str(&me).expect("JSON");
+            assert!(
+                status == StatusCode::OK && me.get("denied").is_none(),
+                "{workarea}: {status} {me}"
+            );
+        }
+    }
+}

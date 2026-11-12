@@ -2451,8 +2451,9 @@ pub struct KeyReferences {
 
 /// `GET /v2/whoami`: the calling key's own record, the references it names
 /// and its stored grants, never its denials, which name subtrees it may not
-/// read (ADR-0039 d15). A provider-level key names no tenant, workarea or
-/// crew and holds no grant.
+/// read (ADR-0039 d15); a session key's record also says whether it carries
+/// any. A provider-level key names no tenant, workarea or crew and holds no
+/// grant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Whoami {
     pub key: KeyRecord,
@@ -2463,6 +2464,11 @@ pub struct Whoami {
     /// root; `None` for a tenant key (ADR-0044 d11).
     pub user: Option<NamedRef>,
     pub grants: Vec<GrantRecord>,
+    /// For a session key alone: whether it carries a denial on any
+    /// workarea, which refuses it three key acts for good (ADR-0070 d2;
+    /// #343). `None` for every other key, so an agent's key learns nothing
+    /// of its denials (ADR-0039 d15).
+    pub denied: Option<bool>,
 }
 
 /// `POST /v1/memories/{artifact_id}/supersede` (http-api.md supersede;

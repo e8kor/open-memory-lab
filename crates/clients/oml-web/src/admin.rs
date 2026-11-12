@@ -271,7 +271,13 @@ async fn removal_confirmation(
             .into_iter()
             .filter(|k| k.credential != "session")
             .collect();
-        body.push_str(&keys::table(&agents, keys::Side::Admin, &csrf, &entry.user));
+        body.push_str(&keys::table(
+            &agents,
+            keys::Side::Admin,
+            &csrf,
+            &entry.user,
+            false,
+        ));
     } else {
         body.push_str("<p>The user keeps another address on the list, so they still sign in.</p>");
     }

@@ -1462,7 +1462,7 @@ paths:
         - { $ref: '#/components/parameters/Traceparent' }
         - { name: start, in: query, required: false, schema: { type: boolean }, description: "true: person carries start, the onboarding status the web console's Start page polls (ADR-0068 d10; ADR-0070 d5). Since v0.7.0." }
         - { name: person, in: query, required: false, schema: { type: boolean }, description: "false: no person field and none of its reads, as the web console's session check asks on every page; true or absent: person as since v0.7.0; with start=true, request.validation naming the field person (ADR-0070 d8). Since v0.7.1." }
-      summary: The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its denials or deny masks.
+      summary: The calling key's own record — role, name, tenant, default workarea, crew and grants. Never its denials or deny masks; a session key is told only whether it carries a denial.
       description: >-
         Requires: any live key; it reads only its own record. Each reference is {id, name} and the
         default workarea carries its derived path. person names the user a key names, with its
@@ -1470,7 +1470,10 @@ paths:
         (ADR-0070 d5; ADR-0068 d5, d6, d10); with person=false it is absent and unread. The
         credential is resolved once, so a key value or a connection spends one request of its rate
         (#286). The key's denials and its grants' per-grant deny
-        masks, which name subtrees it may not read, are omitted; the read journals nothing, since it reads no claim. A revoked or
+        masks, which name subtrees it may not read, are omitted, except that a session key's record
+        carries denied, whether the key holds a denial on any workarea, which refuses it issuing a
+        key, minting a connect code and cutting off a key for good (ADR-0070 d2; since v0.7.3); the
+        read journals nothing, since it reads no claim. A revoked or
         unknown key answers auth.invalid as on every route (docs/api/http-api.md, Whoami;
         ADR-0039 d15).
       responses:
@@ -4951,7 +4954,7 @@ components:
       type: object
       description: >-
         The calling key's own record (GET /v2/whoami): everything a client derives from its URL
-        and key alone. Never the key's value, its denials or its grants' deny masks (ADR-0039 d15).
+        and key alone. Never the key's value, its denials or its grants' deny masks (ADR-0039 d15); a session key's record carries denied, whether it holds a denial.
       required: [key_id, name, role, principal, held_by, tenant, default_workarea, crew, user, grants]
       additionalProperties: false
       properties:
@@ -4985,6 +4988,7 @@ components:
         profile: { type: [string, 'null'], enum: [curator, null], description: "The key's profile; null for none (ADR-0030 d8)." }
         expiry: { type: [string, 'null'], format: date-time, description: "The instant from which this key authenticates nothing; null for a key that does not expire (ADR-0079 d3; since v0.7.3)." }
         requests_per_minute: { type: [integer, 'null'], description: "This key's own requests per UTC minute; null for none of its own (ADR-0079 d4; since v0.7.3)." }
+        denied: { type: boolean, description: "A session key's alone, absent on every other key: whether the key carries a denial on any workarea, which refuses it the three key acts (issue a key, mint a connect code, cut off a key) for good, as access.verb_ceiling with details.reason session_key_denied. The web console draws no form for those acts when it is true (ADR-0070 d2; since v0.7.3)." }
         person:
           description: The person the key's user root names; null for a tenant key (ADR-0070 d5). Absent with person=false (#286).
           oneOf:

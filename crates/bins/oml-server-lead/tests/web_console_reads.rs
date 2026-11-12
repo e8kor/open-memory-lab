@@ -270,6 +270,57 @@ async fn a_session_keys_read_resolves_its_caller_on_the_gates_access_once_and_a_
     );
 }
 
+/// A session key's `whoami` says whether the key carries a denial, from the
+/// access the gate already read: the calls the Keys page and the Start page
+/// make cost the store calls they cost before the field, and a denial on
+/// the key changes none of them (ADR-0070 d2, d8; #343).
+#[tokio::test]
+async fn whoami_names_a_denied_session_key_in_the_store_calls_it_already_makes() {
+    let rig = rig().await;
+    let calls = [
+        ("/v2/whoami?person=false", "web"),
+        ("/v2/whoami?person=false", "admin"),
+        ("/v2/keys", "web"),
+        ("/v2/whoami", "web"),
+        ("/v2/whoami?start=true", "web"),
+    ];
+    let mut before = Vec::new();
+    for (path, capacity) in calls {
+        let answer = get(&rig.router, path, &web(&rig.alice, capacity), true).await;
+        assert_eq!(answer.status, StatusCode::OK, "{path}: {}", answer.body);
+        if path.starts_with("/v2/whoami") {
+            assert_eq!(answer.body["denied"], false, "{path}: {}", answer.body);
+        }
+        before.push(answer.store_calls());
+    }
+    let denial = send(
+        &rig.router,
+        Request::post("/v2/keys/alice-web/denials").header("idempotency-key", "deny-alice-web"),
+        r#"{"workarea":"universe"}"#,
+        &rig.admin,
+        false,
+    )
+    .await;
+    assert_eq!(denial.status, StatusCode::CREATED, "{}", denial.body);
+    let mut after = Vec::new();
+    for (path, capacity) in calls {
+        let answer = get(&rig.router, path, &web(&rig.alice, capacity), true).await;
+        assert_eq!(answer.status, StatusCode::OK, "{path}: {}", answer.body);
+        if path.starts_with("/v2/whoami") {
+            // Only the denied key is told: `alice-admin` carries none.
+            assert_eq!(
+                answer.body["denied"],
+                capacity == "web",
+                "{path} as {capacity}: {}",
+                answer.body
+            );
+        }
+        after.push(answer.store_calls());
+    }
+    println!("store calls per call {calls:?}: before {before:?}, after {after:?}");
+    assert_eq!(after, before, "a denial adds no store call to any read");
+}
+
 /// A key value's `whoami` without the person block: the key's lookup, its
 /// access, and the record's references, one read each (#286).
 #[tokio::test]

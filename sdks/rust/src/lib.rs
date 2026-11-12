@@ -180,6 +180,11 @@ pub struct Whoami {
     pub tenant: Option<NamedRef>,
     /// The key's user root; `None` for a tenant key.
     pub user: Option<NamedRef>,
+    /// Whether a session key carries a denial on any workarea, which
+    /// refuses it issuing a key, minting a connect code and cutting off a
+    /// key for good; absent for every other key (ADR-0070 d2).
+    #[serde(default)]
+    pub denied: Option<bool>,
 }
 
 /// One verdict on a guardrail.
