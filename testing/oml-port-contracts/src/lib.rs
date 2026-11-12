@@ -7827,6 +7827,137 @@ pub async fn a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_
     );
 }
 
+/// A commit under an idempotency key already recorded writes nothing and
+/// moves no meter, and it is refused as the recorded key it is even where
+/// its fold would pass its account's ceiling: the caller answers the record,
+/// never `limit.quota`, and a replayed write is counted once (ADR-0071 d2,
+/// d3; http-api.md idempotency).
+pub async fn a_commit_under_a_recorded_idempotency_key_moves_no_meter_and_is_refused_as_recorded_before_its_ceiling<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::signup::{Quota, Quotas};
+    use oml_app::domain::usage::Month;
+    let mut rig = ChainRig::new(71);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0x7110), None, "universe");
+    let root = WorkareaRecord {
+        user_root: true,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0x7111),
+            Some(universe.workarea_id),
+            "ada",
+        )
+    };
+    for w in [universe, root.clone()] {
+        rig.create_workarea(store, w).await;
+    }
+    let account = root.workarea_id;
+    let key_id = Uuid::from_u128(0x7120);
+    rig.issue_key(
+        store,
+        KeyRecord {
+            user: Some(account),
+            ..key_record(t, key_id, Role::Writer, None)
+        },
+    )
+    .await;
+    // One memory, one write: the first commit reaches both limits.
+    let ceiling = Ceiling {
+        user_root: account,
+        quotas: Quotas::default()
+            .with(Quota::Memories, 1)
+            .with(Quota::WritesPerMonth, 1),
+    };
+    let scope = IdempotencyScope {
+        tenant_id: t,
+        key_id,
+        workarea_id: account,
+        idem_key: "idem-metered".to_owned(),
+    };
+    let put = |memory: &MemoryRecord| IdempotencyPut {
+        scope: scope.clone(),
+        record: IdempotencyRecord {
+            request_digest: "sha256:aa".to_owned(),
+            response: json!({ "artifact_id": memory.memory_id.to_string() }),
+        },
+    };
+    let held = |memory: MemoryRecord| MetadataFold::MemoryHeld {
+        memory,
+        enqueue: true,
+        findings: Box::default(),
+    };
+    let first = held_memory(
+        t,
+        account,
+        Uuid::from_u128(0x7130),
+        "ada",
+        key_id,
+        "one fact",
+    );
+    rig.commit_charged(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": first.memory_id.to_string() }),
+        held(first.clone()),
+        Some(put(&first)),
+        Some(ceiling),
+    )
+    .await
+    .expect("the first attempt commits at the limit");
+    let at = EventTime::parse("2026-10-29T13:00:00.000000Z").expect("a time");
+    let counted = store.user_usage(t, account, &at).await.expect("usage");
+    assert_eq!(
+        (counted.memories, counted.text_bytes, counted.writes),
+        (1, 8, 1)
+    );
+    let head = store.chain_head(t).await.expect("head");
+    // The attempt that looked the key up before the first committed: a
+    // chain of its own, so nothing but its key and its ceiling refuses it.
+    let twin = MemoryRecord {
+        claim_key: "twin".to_owned(),
+        ..held_memory(
+            t,
+            account,
+            Uuid::from_u128(0x7131),
+            "ada",
+            key_id,
+            "one fact",
+        )
+    };
+    assert_eq!(
+        rig.commit_charged(
+            store,
+            event_types::SUBMISSION_REMEMBER,
+            json!({ "artifact_id": twin.memory_id.to_string() }),
+            held(twin.clone()),
+            Some(put(&twin)),
+            Some(ceiling),
+        )
+        .await,
+        Err(StoreError::IdempotencyRecorded),
+        "the recorded key answers before the ceiling does"
+    );
+    assert_eq!(
+        store.chain_head(t).await.expect("head"),
+        head,
+        "nothing journalled"
+    );
+    assert_eq!(store.memory(t, twin.memory_id).await.expect("read"), None);
+    assert_eq!(
+        store.user_usage(t, account, &at).await.expect("usage"),
+        counted,
+        "no meter moved"
+    );
+    assert_eq!(
+        store.usage_drift(t, Month::of(&at)).await.expect("drift"),
+        Vec::new()
+    );
+}
+
 pub async fn run_journal_store_suite<S, F, Fut>(new_store: F)
 where
     S: JournalStore,
@@ -7839,6 +7970,12 @@ where
     Box::pin(journal_commit_and_head(&new_store().await)).await;
     Box::pin(
         a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_rows(&new_store().await),
+    )
+    .await;
+    Box::pin(
+        a_commit_under_a_recorded_idempotency_key_moves_no_meter_and_is_refused_as_recorded_before_its_ceiling(
+            &new_store().await,
+        ),
     )
     .await;
     Box::pin(journal_commit_refuses_conflicts(&new_store().await)).await;
