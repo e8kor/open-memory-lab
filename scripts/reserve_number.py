@@ -7,8 +7,9 @@
 The next number is one above the highest used on main, reserved in the registry on any
 unmerged remote branch (with or without a pull request), or introduced by a branch with an
 open pull request. A reservation counts while its branch exists on the remote (or, until it is
-pushed, in this clone) and is not merged into main; deleting the branch releases it. It fails if that number turns out to be
-used on a remote branch.
+pushed, in this clone) and is not merged into main (every commit already in main; a squash-merged branch holds an
+unused number until it is deleted). Deleting the branch releases it. It fails if that number
+turns out to be used on a remote branch, and when another branch's registry cannot be read.
 
 Every remote head is fetched first, in one pass. When the fetch fails (no network, no such
 remote) nothing is reserved and the exit code is 1, because a number that could not be
