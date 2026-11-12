@@ -1,4 +1,4 @@
--- 0044_usage_metering — per-account usage meters (ADR-0071): the counter row
+-- 0045_usage_metering — per-account usage meters (ADR-0071): the counter row
 -- each metered commit moves in its own transaction, the per-day flows, the
 -- append-only daily ledger, an account's quota profile, and the one
 -- definition of every stock meter that the fill below and the drift report

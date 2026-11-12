@@ -1666,9 +1666,9 @@ pub struct PgStore {
     /// each migration: the trigram retriever is served only then (ADR-0049
     /// d8). Shared by every clone of the store, as the database is.
     trigram: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// Whether the database holds 0044's meters, once a commit found them:
-    /// a database not yet migrated to 0044, which only an upgrade test
-    /// writes to, commits unmetered and is filled by 0044 (ADR-0071
+    /// Whether the database holds 0045's meters, once a commit found them:
+    /// a database not yet migrated to 0045, which only an upgrade test
+    /// writes to, commits unmetered and is filled by 0045 (ADR-0071
     /// Consequences). Shared by every clone, as the database is.
     metered: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// The constants `bm25_postings` prunes by (ADR-0052 d6).
@@ -4389,7 +4389,7 @@ async fn key_account(
 }
 
 /// Whether the chain is live by ADR-0071 d2, through the one SQL
-/// definition 0044 holds.
+/// definition 0045 holds.
 async fn chain_live(
     tx: &mut Transaction<'_, Postgres>,
     tenant_id: Uuid,
@@ -6524,7 +6524,7 @@ impl JournalStore for PgStore {
         // Each link extends the one before it, under the one lock; a
         // refused link returns before COMMIT, so the transaction rolls back
         // every earlier link with it (ADR-0025 d10).
-        // The meters exist from 0044 on; once found they stay (ADR-0071).
+        // The meters exist from 0045 on; once found they stay (ADR-0071).
         let metered = self.metered.load(std::sync::atomic::Ordering::Relaxed) || {
             let found: bool = sqlx::query_scalar("SELECT to_regproc('oml_chain_live') IS NOT NULL")
                 .fetch_one(&mut *tx)

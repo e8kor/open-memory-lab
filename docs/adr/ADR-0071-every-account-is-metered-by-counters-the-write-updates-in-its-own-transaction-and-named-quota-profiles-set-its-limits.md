@@ -182,7 +182,7 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
 
 ## Consequences
 
-- Migration 0044 adds `account_meters`, `account_activity`, `usage_daily` and `account_profiles`
+- Migration 0045 adds `account_meters`, `account_activity`, `usage_daily` and `account_profiles`
   under the tenant RLS of 0004. It widens the `user_quotas` check to six quotas and sets the
   serving grants (`usage_daily`: SELECT, INSERT and DELETE for the 25-month retention, no UPDATE).
   It fills `account_meters` and `account_activity` from the rows already stored, so a live

@@ -278,4 +278,4 @@ is a collision: the branch that reserved later renumbers.
 | migration | 0041 | `feat/as-of-reads` |  | as of tips | reserved |
 | migration | 0042 | `fix/idempotency-atomic` | #233 | idempotency claims | reserved |
 | migration | 0043 | `feat/scan-phase1` |  | scan findings | reserved |
-| migration | 0044 | `feat/usage-metering-main` |  | usage metering | reserved |
+| migration | 0045 | `feat/usage-metering-main` |  | usage metering | reserved |

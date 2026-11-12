@@ -5910,7 +5910,7 @@ async fn a_v0_5_1_database_whose_root_is_stored_development_upgrades_through_001
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 44, "every migration through 0044_usage_metering");
+    assert_eq!(applied, 45, "every migration through 0045_usage_metering");
     drop(conn);
     drop_dbs(&created).await;
 }
@@ -7357,7 +7357,7 @@ async fn a_v0_5_4_database_with_memories_migrates_through_0020_storing_every_row
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 44, "every migration through 0044_usage_metering");
+    assert_eq!(applied, 45, "every migration through 0045_usage_metering");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -8233,7 +8233,7 @@ async fn a_v0_5_5_database_migrated_through_0021_ranks_as_one_written_after_it()
             .await
             .expect("versions");
     // The ledger's highest version is read (ADR-0030 d14).
-    assert_eq!(applied, 44, "every migration through 0044_usage_metering");
+    assert_eq!(applied, 45, "every migration through 0045_usage_metering");
     drop(conn);
 
     let fresh = fresh_search_store(&created).await;
@@ -10641,10 +10641,10 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
 }
 
 // ---------------------------------------------------------------------------
-// Usage metering's fill (migration 0044; ADR-0071)
+// Usage metering's fill (migration 0045; ADR-0071)
 // ---------------------------------------------------------------------------
 
-/// 0044 fills each account's counters from the rows a database at 0043
+/// 0045 fills each account's counters from the rows a database at 0043
 /// stored, by ADR-0071 d2's definitions: live chains it started, a rejected
 /// one left out; the bytes of every version it wrote, the rejected one's
 /// included; its live keys, a revoked one left out; its open connections;
@@ -10653,7 +10653,7 @@ async fn migration_0043_places_every_finding_of_a_stored_text_and_a_recording_re
 /// the filled counters, and a commit past a limit the stored rows already
 /// reach is refused (ADR-0071 d3, Consequences).
 #[tokio::test]
-async fn migration_0044_fills_each_accounts_meters_from_the_rows_stored_before_it_and_leaves_no_drift()
+async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_it_and_leaves_no_drift()
  {
     use oml_app::domain::signup::{Quota, QuotaReached, Quotas};
     use oml_app::domain::usage::Month;
@@ -10804,7 +10804,7 @@ async fn migration_0044_fills_each_accounts_meters_from_the_rows_stored_before_i
     store
         .migrate(&owner_url(&db))
         .await
-        .expect("0044 applies over a database at 0043");
+        .expect("0045 applies over a database at 0043");
 
     let usage = store.user_usage(t, account, &now).await.expect("usage");
     assert_eq!(
