@@ -1,11 +1,18 @@
 # oml-sdk — the TypeScript client
 
 A client for the Open Memory Lab HTTP API: types generated from
-[`docs/api/openapi.yaml`](../../docs/api/openapi.yaml) by a pinned `openapi-typescript`,
+[`docs/api/openapi.yaml`](https://e8kor.github.io/open-memory-lab/api/openapi.yaml) by a pinned `openapi-typescript`,
 `openapi-fetch` typed by them, and a thin hand-written wrapper. What the wrapper covers, the pins
-and the regeneration rule are decided in [docs/engineering/sdks.md](../../docs/engineering/sdks.md).
+and the regeneration rule are decided in [docs/engineering/sdks.md](https://e8kor.github.io/open-memory-lab/engineering/sdks/).
 
-It is not released to npm. Build it from a checkout, then install it from that directory:
+Install it from npm, Node 24 or later:
+
+```sh
+npm install oml-sdk
+```
+
+From a checkout of the repository, which is how to install it until the first release is on npm
+and how to try a change that is not released, build it, then install it from that directory:
 
 ```sh
 cd sdks/typescript && npm ci && npm run build
@@ -41,7 +48,7 @@ Seven verbs: `write`, `read`, `workarea`, `events`, `reviewNext`, `approve` and 
 `write`'s fields choose a submission or, with `replaces`, a supersession; `read`'s fields choose
 a fetch (`artifact_id`), a recall (`query`) or the listing (neither), as `oml_write` and
 `oml_read` do. Every refusal rejects with `ApiError` carrying the envelope of
-[errors.md](../../docs/api/errors.md) — `code`, `message`, `rule`, `retryable`, `details`,
+[errors.md](https://e8kor.github.io/open-memory-lab/api/errors/) — `code`, `message`, `rule`, `retryable`, `details`,
 `requestId` — and `status`, as the subclass of the code's family; a field outside its mode is
 refused the same way before anything is sent.
 
