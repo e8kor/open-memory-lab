@@ -12,12 +12,15 @@ use axum::http::{HeaderMap, Request, StatusCode, header};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
+use oml_app::domain::Sha256Hash;
 use oml_app::domain::name::Name;
 use oml_app::domain::oauth::Issuer;
 use oml_app::domain::web::{GitHubEmail, Provider, capacity_credential};
 use oml_app::doubles::MemSignIn;
 use oml_app::ed25519_dalek::SigningKey;
-use oml_app::ports::{IdGen as _, JournalStore as _};
+use oml_app::ports::{
+    IdGen as _, JournalStore as _, SessionKeyName, WebStore as _, web_credential_rows_read_apart,
+};
 use oml_app::types::{BootstrapRequest, BootstrapResult, ProviderAnswer};
 use oml_fetch::PinnedFetcher;
 use oml_pg::PgStore;
@@ -71,10 +74,16 @@ async fn send(router: &Router, request: Request<Body>) -> (StatusCode, HeaderMap
 }
 
 fn json_post(path: &str, admin: &str, body: Value) -> Request<Body> {
+    json_post_under("k", path, admin, body)
+}
+
+/// [`json_post`] under the idempotency key `idem`, for a test that makes
+/// more than one act.
+fn json_post_under(idem: &str, path: &str, admin: &str, body: Value) -> Request<Body> {
     Request::post(path)
         .header(header::AUTHORIZATION, format!("Bearer {admin}"))
         .header(header::CONTENT_TYPE, "application/json")
-        .header("idempotency-key", "k")
+        .header("idempotency-key", idem)
         .body(Body::from(body.to_string()))
         .expect("a request")
 }
@@ -311,6 +320,183 @@ async fn the_first_admin_email_is_added_under_an_admin_key_and_signs_in_through_
         .await
         .expect("the sweep runs over the web sessions too");
     assert_eq!(sweep.web_sessions_removed, 0);
+    drop_db(&db).await;
+}
+
+/// The session key `capacity` names for `user`, as the session gate
+/// names it for the store.
+fn session_key_name(user: &Name, capacity: &str) -> Option<Name> {
+    Name::parse(&format!("{}-{capacity}", user.as_str())).ok()
+}
+
+/// The session gate's rows, which Postgres reads in one transaction under
+/// one snapshot, are the rows its separate reads return (ADR-0070 d8,
+/// #297): for each capacity of a session, for a capacity the session
+/// never reached, a digest no session holds, a name that is no key's, a
+/// key cut off since, and a session that ended.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_gates_rows_read_in_one_transaction_are_the_rows_its_separate_reads_return() {
+    let db = fresh_name();
+    if !mint_database(&db).await {
+        return;
+    }
+    let store = serving_store(&db).await;
+    let key = SigningKey::from_bytes(&OsIds.new_secret());
+    let boot = tenant(&store, &key, "oml").await;
+    let providers = MemSignIn::new();
+    let router = lead(&store, &key, &providers).await;
+    for (email, user, admin) in [
+        ("alice@example.com", "alice", true),
+        ("bob@example.com", "bob", false),
+    ] {
+        let (status, _, body) = send(
+            &router,
+            json_post_under(
+                user,
+                "/v2/web/emails",
+                &boot.admin_key.value,
+                json!({"email": email, "user": user, "admin": admin}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let (_, alice) = sign_in(&router, &providers, 7, "alice@example.com").await;
+    let (_, bob) = sign_in(&router, &providers, 8, "bob@example.com").await;
+    let (alice, bob) = (alice.expect("a session"), bob.expect("a session"));
+    let digest = |token: &str, capacity: &str| {
+        Sha256Hash::digest(capacity_credential(token, capacity).as_bytes())
+    };
+    let nameless: SessionKeyName = |_, _| None;
+    let unheld: SessionKeyName = |_, _| Name::parse("no-such-key").ok();
+
+    let mut resolved = 0;
+    for token in [&alice, &bob] {
+        for capacity in ["web", "review", "curate", "admin"] {
+            let digest = digest(token, capacity);
+            let names: [(SessionKeyName, bool); 3] =
+                [(session_key_name, true), (nameless, false), (unheld, false)];
+            for (key_name, names_a_key) in names {
+                let merged = store
+                    .web_credential_rows(&digest, key_name)
+                    .await
+                    .expect("the merged read");
+                let apart = web_credential_rows_read_apart(&store, &digest, key_name)
+                    .await
+                    .expect("the separate reads");
+                assert_eq!(merged, apart, "{capacity}");
+                if let Some(rows) = &merged {
+                    // A row past the name lookup only under the gate's name.
+                    assert_eq!(rows.key.is_some(), names_a_key, "{capacity}");
+                }
+            }
+            let rows = store
+                .web_credential_rows(&digest, session_key_name)
+                .await
+                .expect("the merged read");
+            let reached = capacity != "curate" && (capacity != "admin" || token == &alice);
+            assert_eq!(rows.is_some(), reached, "{capacity}");
+            let Some(rows) = rows else { continue };
+            resolved += 1;
+            let key = rows.key.expect("the session key");
+            assert_eq!(rows.capacity, capacity);
+            assert_eq!(
+                key.key.name.as_ref().map(Name::as_str),
+                Some(format!("{}-{capacity}", rows.session.user.as_str()).as_str())
+            );
+            assert!(key.access.is_some(), "{capacity}");
+            // Only the web key names the person's root, and owns its keys.
+            assert_eq!(key.user_root.is_some(), capacity == "web", "{capacity}");
+            assert_eq!(
+                key.own_keys.iter().any(|k| k.key_id == key.key.key_id),
+                capacity == "web",
+                "{capacity}"
+            );
+        }
+    }
+    assert_eq!(resolved, 5, "alice's three capacities and bob's two");
+
+    // A digest no session holds.
+    let unknown = Sha256Hash::digest(b"omls_no-session-holds-this");
+    assert_eq!(
+        store
+            .web_credential_rows(&unknown, session_key_name)
+            .await
+            .expect("the merged read"),
+        None
+    );
+    assert_eq!(
+        web_credential_rows_read_apart(&store, &unknown, session_key_name)
+            .await
+            .expect("the separate reads"),
+        None
+    );
+
+    // A key cut off since: both reads carry the denial.
+    let (status, _, body) = send(
+        &router,
+        json_post_under(
+            "the-denial",
+            "/v2/keys/bob-web/denials",
+            &boot.admin_key.value,
+            json!({"workarea": "universe"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let bob_web = digest(&bob, "web");
+    let merged = store
+        .web_credential_rows(&bob_web, session_key_name)
+        .await
+        .expect("the merged read");
+    let apart = web_credential_rows_read_apart(&store, &bob_web, session_key_name)
+        .await
+        .expect("the separate reads");
+    assert_eq!(merged, apart);
+    let denials = merged
+        .and_then(|rows| rows.key)
+        .and_then(|key| key.access)
+        .map(|access| access.denials.len());
+    assert_eq!(denials, Some(1));
+    // The gate refuses nothing for a denial: the verb does, as before.
+    let (status, _, body) = send(
+        &router,
+        as_web(&format!("s={bob}"), "web", "GET", "/v2/whoami", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // A session that ended names no rows, read either way.
+    let (status, _, body) = send(
+        &router,
+        json_post_under(
+            "the-removal",
+            "/v2/web/emails/remove",
+            &boot.admin_key.value,
+            json!({"email": "bob@example.com"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        store
+            .web_credential_rows(&bob_web, session_key_name)
+            .await
+            .expect("the merged read"),
+        None
+    );
+    assert_eq!(
+        web_credential_rows_read_apart(&store, &bob_web, session_key_name)
+            .await
+            .expect("the separate reads"),
+        None
+    );
+    let (status, _, body) = send(
+        &router,
+        as_web(&format!("s={bob}"), "web", "GET", "/v2/whoami", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
     drop_db(&db).await;
 }
 
