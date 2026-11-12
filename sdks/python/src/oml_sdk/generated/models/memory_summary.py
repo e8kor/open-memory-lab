@@ -16,6 +16,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.anchor import Anchor
+    from ..models.approver import Approver
     from ..models.attachment_descriptor import AttachmentDescriptor
     from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
     from ..models.origin import Origin
@@ -87,6 +88,12 @@ class MemorySummary:
             own rows in any state, promoted rows within its reader effective access (ADR-0025 d3); the lineage read shows
             the full closure, elided where unreadable.
         attachments (list[AttachmentDescriptor] | Unset):
+        approved_at (datetime.datetime | None | Unset): When the approving verdict that ratified the version was given:
+            the verdict's own time, at or just before promoted_at. Null on a version that is not promoted, wherever
+            principal is null (ADR-0044 d9), and on a version ratified before the journal named its verdict (ADR-0077 d1,
+            d3, d4). Since v0.7.2.
+        approver (Approver | None | Unset): What kind of reviewer gave the approving verdict that ratified the version,
+            never who; null wherever approved_at is (ADR-0077 d2, d4). Since v0.7.2.
         origin (None | Origin | Unset): What kind of source the version's text came from, as signed; null on versions
             written before ADR-0063 (d1-d3).
         valid_from (None | str | Unset): When the version says it begins to hold, as signed: a period (YYYY, YYYY-MM,
@@ -135,6 +142,8 @@ class MemorySummary:
     plaintext_digest: str | Unset = UNSET
     derives_from: list[str] | Unset = UNSET
     attachments: list[AttachmentDescriptor] | Unset = UNSET
+    approved_at: datetime.datetime | None | Unset = UNSET
+    approver: Approver | None | Unset = UNSET
     origin: None | Origin | Unset = UNSET
     valid_from: None | str | Unset = UNSET
     valid_until: None | str | Unset = UNSET
@@ -146,6 +155,7 @@ class MemorySummary:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.anchor import Anchor
+        from ..models.approver import Approver
         from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
         from ..models.origin import Origin
         from ..models.source_checked import SourceChecked
@@ -270,6 +280,22 @@ class MemorySummary:
                 attachments_item = attachments_item_data.to_dict()
                 attachments.append(attachments_item)
 
+        approved_at: None | str | Unset
+        if isinstance(self.approved_at, Unset):
+            approved_at = UNSET
+        elif isinstance(self.approved_at, datetime.datetime):
+            approved_at = self.approved_at.isoformat()
+        else:
+            approved_at = self.approved_at
+
+        approver: dict[str, Any] | None | Unset
+        if isinstance(self.approver, Unset):
+            approver = UNSET
+        elif isinstance(self.approver, Approver):
+            approver = self.approver.to_dict()
+        else:
+            approver = self.approver
+
         origin: dict[str, Any] | None | Unset
         if isinstance(self.origin, Unset):
             origin = UNSET
@@ -352,6 +378,10 @@ class MemorySummary:
             field_dict["derives_from"] = derives_from
         if attachments is not UNSET:
             field_dict["attachments"] = attachments
+        if approved_at is not UNSET:
+            field_dict["approved_at"] = approved_at
+        if approver is not UNSET:
+            field_dict["approver"] = approver
         if origin is not UNSET:
             field_dict["origin"] = origin
         if valid_from is not UNSET:
@@ -372,6 +402,7 @@ class MemorySummary:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.anchor import Anchor
+        from ..models.approver import Approver
         from ..models.attachment_descriptor import AttachmentDescriptor
         from ..models.memory_summary_replaces_type_0 import MemorySummaryReplacesType0
         from ..models.origin import Origin
@@ -581,6 +612,40 @@ class MemorySummary:
 
                 attachments.append(attachments_item)
 
+        def _parse_approved_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                approved_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return approved_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        approved_at = _parse_approved_at(d.pop("approved_at", UNSET))
+
+        def _parse_approver(data: object) -> Approver | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                approver_type_0 = Approver.from_dict(data)
+
+                return approver_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(Approver | None | Unset, data)
+
+        approver = _parse_approver(d.pop("approver", UNSET))
+
         def _parse_origin(data: object) -> None | Origin | Unset:
             if data is None:
                 return data
@@ -663,6 +728,8 @@ class MemorySummary:
             plaintext_digest=plaintext_digest,
             derives_from=derives_from,
             attachments=attachments,
+            approved_at=approved_at,
+            approver=approver,
             origin=origin,
             valid_from=valid_from,
             valid_until=valid_until,

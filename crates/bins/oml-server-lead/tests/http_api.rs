@@ -4749,7 +4749,7 @@ async fn a_held_version_scanned_under_an_older_rule_set_is_author_only_in_progre
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{recorded}");
-    assert_eq!(recorded["scanner_version"], "oml-scan/1.1", "{recorded}");
+    assert_eq!(recorded["scanner_version"], "oml-scan/1.2", "{recorded}");
     assert_eq!(recorded["recorded"], 4, "held versions alone: {recorded}");
     let (status, _, after) = send(
         router,
@@ -4815,7 +4815,7 @@ async fn a_held_version_scanned_under_an_older_rule_set_is_author_only_in_progre
         stored(&kept).await,
         (
             Some("test.marker: marker-hold at /body line 1".to_owned()),
-            Some("oml-scan/1.1".to_owned())
+            Some("oml-scan/1.2".to_owned())
         ),
         "a finding already on the row is kept"
     );
@@ -4838,7 +4838,7 @@ async fn a_held_version_scanned_under_an_older_rule_set_is_author_only_in_progre
         .expect("journalled as scan.findings_recorded")
         .envelope
         .payload;
-    assert_eq!(event["scanned_under"], "oml-scan/1.1", "{event}");
+    assert_eq!(event["scanned_under"], "oml-scan/1.2", "{event}");
     let versions = event["versions"].as_array().expect("versions");
     let of = |id: &str| {
         versions

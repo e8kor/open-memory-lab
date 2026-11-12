@@ -839,7 +839,7 @@ async fn the_rule_set_vetoes_credential_files_and_secrets_and_holds_injections_n
     assert_eq!(submitted["payload"]["scan"]["result"], "hold");
     assert_eq!(
         submitted["payload"]["scan"]["scanner_version"],
-        "oml-scan/1.1"
+        "oml-scan/1.2"
     );
     assert_eq!(
         submitted["payload"]["scan"]["finding"],
@@ -849,7 +849,7 @@ async fn the_rule_set_vetoes_credential_files_and_secrets_and_holds_injections_n
     // /readyz names the rule set for doctor's scan line (d11).
     let (status, ready) = send(&w.rig.router, "GET", "/readyz", None, None, None).await;
     assert_eq!(status, StatusCode::OK, "{ready}");
-    assert_eq!(ready["scan"]["version"], "oml-scan/1.1");
+    assert_eq!(ready["scan"]["version"], "oml-scan/1.2");
     assert_eq!(ready["scan"]["pii"], false);
     assert!(
         ready["scan"]["rules"].as_u64().is_some_and(|n| n > 30),

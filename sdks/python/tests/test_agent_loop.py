@@ -22,6 +22,8 @@ def test_a_written_memory_is_held_recalled_by_its_author_alone_and_promoted_by_a
     assert [(h.memory.artifact_id, h.memory.state) for h in own.hits] == [
         (held.artifact_id, "held")
     ]
+    # Nobody has approved a held memory (ADR-0077 d5).
+    assert (own.hits[0].memory.approver, own.hits[0].memory.approved_at) == (None, None)
     assert agent.read(query=marker, workarea=review).hits == []
 
     serve = reviewer.review_next()
@@ -34,7 +36,15 @@ def test_a_written_memory_is_held_recalled_by_its_author_alone_and_promoted_by_a
     assert [(h.memory.artifact_id, h.memory.state) for h in recalled.hits] == [
         (held.artifact_id, "promoted")
     ]
-    assert agent.read(held.artifact_id).state == "promoted"
+    # The hit says a person approved it, and when; the read by id says the
+    # same (ADR-0077 d1, d2). The fixture's reviewer key is held by a human
+    # and acts for no user.
+    approved = recalled.hits[0].memory
+    assert (approved.approver.held_by.value, approved.approver.same_user) == ("human", False)
+    assert approved.approved_at <= approved.promoted_at
+    fetched = agent.read(held.artifact_id)
+    assert (fetched.approver, fetched.approved_at) == (approved.approver, approved.approved_at)
+    assert fetched.state == "promoted"
     assert reviewer.review_next() is None
 
 

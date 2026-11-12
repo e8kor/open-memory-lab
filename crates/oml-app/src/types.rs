@@ -1084,6 +1084,11 @@ pub struct MemoryRecord {
     /// The version's latest source check, kept only on a promoted version
     /// (ADR-0057 d5, d18); `stale` is computed from it alone.
     pub source_check: Option<Box<SourceCheck>>,
+    /// The approving verdict that ratified the version, set by its
+    /// promotion; `None` until then, and on a version ratified before the
+    /// journal named its verdict (ADR-0077 d3, d6). Boxed: every fold
+    /// carries the record.
+    pub approval: Option<Box<Approval>>,
     /// The version's format, title and derived search text (ADR-0056 d1, d2,
     /// d4). Boxed: every row carries it, and every fold carries the record.
     pub format: Box<FormatFields>,
@@ -1123,6 +1128,23 @@ impl MemoryRecord {
     pub fn searched(&self) -> &str {
         self.format.search_text.as_deref().unwrap_or(&self.body)
     }
+}
+
+/// The approving verdict that ratified a version, as stored on its row:
+/// the verdict the promotion's `ratification_event_id` names, which under
+/// the one built policy, k = 1, is the version's only approving verdict
+/// (ADR-0012 d3; ADR-0077 d3, d6). It names no key and no principal: who
+/// reviewed stays in the journal's review events (ADR-0025 d15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Approval {
+    /// The reviewing key's attestation at the verdict.
+    pub held_by: HeldBy,
+    /// Whether the reviewing key and the authoring key act for one person,
+    /// as the promotion's event marks it (ADR-0055 d7); `None` on a version
+    /// ratified before the mark.
+    pub same_user: Option<bool>,
+    /// The verdict's `at`.
+    pub at: EventTime,
 }
 
 /// A source check as stored on its version: the latest `source.checked`

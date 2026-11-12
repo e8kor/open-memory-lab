@@ -877,6 +877,11 @@ pub fn map_app_error(err: AppError, ctx: ErrorContext) -> ApiError {
             ApiError::unavailable("partition_lock_timeout")
         }
         AppError::Store(StoreError::Partition(e)) => ApiError::internal(e),
+        // The application always sends the approval; a promotion without
+        // one is a defect, committed nowhere (ADR-0077 d6).
+        AppError::Store(e @ StoreError::ApprovalMissing { .. }) => {
+            ApiError::internal(e.to_string())
+        }
         // The unique index refused a creation's name; nothing was
         // journalled (errors.md `name.taken`; ADR-0026 d5). The application
         // answers a store's refusal as `AppError::NameTaken`.

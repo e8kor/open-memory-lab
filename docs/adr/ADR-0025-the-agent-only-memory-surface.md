@@ -7,7 +7,7 @@ answers: how one agent key both writes and recalls through grants; what an agent
 
 # ADR-0025 — One key writes and recalls through grants, and an agent reads back, budgets, supersedes and retires its own memory only through admission
 
-**Status:** accepted design · 2026-10-31 · amended by [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md)
+**Status:** accepted design · 2026-10-31 · amended by [ADR-0026](ADR-0026-names-are-keys.md), [ADR-0031](ADR-0031-oauth-connections-by-connect-code.md), [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md), [ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md), [ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md), [ADR-0037](ADR-0037-a-guardrail-is-a-reviewed-rule-loaded-at-session-start-and-checked-at-the-tool-call.md), [ADR-0077](ADR-0077-a-served-memory-says-when-it-was-approved-and-by-what-kind-of-reviewer-and-never-names-the-reviewer.md)
 
 **Release:** partly in v0.2.0; the rest not built ([releases](../changelog.md))
 
