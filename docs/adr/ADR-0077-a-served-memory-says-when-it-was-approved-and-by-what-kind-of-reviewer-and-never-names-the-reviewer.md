@@ -179,8 +179,8 @@ promotion, since ADR-0044 d9's rule for the tail removes key ids and the princip
   none, with `StoreError::ApprovalMissing`, and the commit writes nothing. The application
   always sends one; only a store over a schema before 0044, which the migration laws build,
   takes `None`.
-- The web console's card still says "approved by a key outside its lineage". Showing the kind
-  there is a separate change.
+- The web console's card says when a memory was approved and by what kind of reviewer, and marks
+  a self-review, and the Memories JSON routes carry `approved_at` and `approver` (v0.7.3, #175).
 - Laws, in `crates/bins/oml-server-lead/tests/recall_approver.rs`:
   `a_hit_says_when_it_was_approved_and_whether_a_crew_a_person_or_the_authors_own_person_approved_it`,
   `get_and_recall_serve_the_same_approval_over_http_and_over_mcp`,

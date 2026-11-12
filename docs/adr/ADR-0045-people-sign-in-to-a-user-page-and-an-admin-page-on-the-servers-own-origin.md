@@ -694,7 +694,7 @@ Decided; introduced in v0.5.0 demotion (d12) followed in v0.6.0 with its verb.
     `memory.admin_read` of d24 for the page it serves. Each answers `{items, next_cursor,
     workareas, base}`, every item holding only fields the card shows (`artifact_id`, `state`,
     `workarea`, `version`, `title`, `text`, `claim_key`, `author`, `author_kind`, `anchor`,
-    `format`, `valid`), with `author` null wherever the card shows the shared area, and
+    `format`, `valid`, and since v0.7.3 `approved_at` and `approver`, ADR-0077 d2), with `author` null wherever the card shows the shared area, and
     `workareas` the regions of d30, each with its counts, and the scope node alone with its dropdown's offers (one offer is several store reads, so a region is zoomed to for its own; the Workareas table computes one per listed node, at most 200, which is a scaling limit to batch if a tenant's tree grows past it). The Atlas page itself reads no memory, only counts, so it
     journals nothing. The routes take the session cookie alone: an `Authorization` header is
     `access.verb_ceiling` `web_is_human_only` (d7), no session is `access.not_found` as JSON,
