@@ -956,6 +956,151 @@ async fn issue_agent_prints_exactly_the_oml_url_and_oml_api_key_lines() {
     lab.stop().await;
 }
 
+/// `oml keys issue-agent --expires --requests-per-minute` sends both limits
+/// and prints both beside the key it names, on stderr, so stdout stays the
+/// two export lines; the key then carries them (cli/reference.md `oml
+/// keys`; ADR-0079 d7).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_issue_agent_with_an_expiry_and_a_rate_prints_both_limits_and_the_key_carries_them() {
+    let Some(lab) = Lab::start().await else {
+        return;
+    };
+    let wa = lab.workarea("metals");
+
+    let (code, stdout, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "agent-7",
+        "--principal",
+        "crew/agent-7",
+        "--workarea",
+        &wa,
+        "--expires",
+        "2999-01-01T00:00:00Z",
+        "--requests-per-minute",
+        "600",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    let exports: Vec<&str> = stdout.lines().collect();
+    assert_eq!(exports.len(), 2, "the two export lines alone: {stdout}");
+    assert!(exports[0].starts_with("export OML_URL="), "{stdout}");
+    assert!(exports[1].starts_with("export OML_API_KEY="), "{stdout}");
+    let limit_lines = |text: &str| -> Vec<String> {
+        text.lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("expiry") || l.starts_with("rate"))
+            .map(ToOwned::to_owned)
+            .collect()
+    };
+    let limits = [
+        "expiry   : 2999-01-01T00:00:00.000000Z",
+        "rate     : 600 requests per minute",
+    ];
+    assert_eq!(limit_lines(&stderr), limits, "{stderr}");
+
+    let (code, shown, log) = lab.text(&["keys", "show", "agent-7"]);
+    assert_eq!(code, 0, "{log}");
+    assert_eq!(limit_lines(&shown), limits, "{shown}");
+
+    // A key issued with neither limit prints neither line.
+    let (code, _, stderr) = lab.text(&[
+        "keys",
+        "issue-agent",
+        "agent-8",
+        "--principal",
+        "crew/agent-8",
+        "--workarea",
+        &wa,
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(limit_lines(&stderr).is_empty(), "{stderr}");
+    lab.stop().await;
+}
+
+/// `oml keys issue-agent --connect-code --expires --requests-per-minute`
+/// sends both limits in its one `POST /v2/keys` and prints both beside the
+/// connector key it names, on stderr; stdout stays the connector URL and
+/// the code. The lead is a stub that answers the `201` openapi.yaml shapes,
+/// since the lab's lead sets no `oauth.issuer` (ADR-0079 d7; ADR-0031 d7).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn keys_issue_agent_connect_code_with_an_expiry_and_a_rate_prints_both_limits() {
+    let seen: Recorder = Arc::new(Mutex::new(Vec::new()));
+    let router = axum::Router::new()
+        .route(
+            "/v2/keys",
+            axum::routing::post(|| async {
+                (
+                    axum::http::StatusCode::CREATED,
+                    axum::Json(json!({
+                        "key_id": "00000000-0000-4000-8000-0000000000c7",
+                        "name": "claude-mobile",
+                        "role": "writer",
+                        "principal": "crew/claude-mobile",
+                        "default_workarea_id": "00000000-0000-4000-8000-000000000007",
+                        "expiry": "2999-01-01T00:00:00.000000Z",
+                        "requests_per_minute": 600,
+                        "grants": [],
+                        "connect_code": {
+                            "code_id": "00000000-0000-4000-8000-0000000000cc",
+                            "code": "7KQ2-M9XD-4TPA",
+                            "expires_at": "2026-11-04T10:10:00Z",
+                            "connector_url": "https://oml.example.com/mcp",
+                        },
+                    })),
+                )
+            }),
+        )
+        .layer(middleware::from_fn_with_state(seen.clone(), record));
+    let (server, task) = serve_stub(router).await;
+    let (dir, _) = stub_paths("connect-code-limits");
+
+    let (code, stdout, stderr) = stub_text(
+        &server,
+        &dir,
+        &[
+            "keys",
+            "issue-agent",
+            "claude-mobile",
+            "--principal",
+            "crew/claude-mobile",
+            "--workarea",
+            "00000000-0000-4000-8000-000000000007",
+            "--connect-code",
+            "--expires",
+            "2999-01-01T00:00:00Z",
+            "--requests-per-minute",
+            "600",
+        ],
+    );
+    assert_eq!(code, 0, "{stdout}{stderr}");
+    assert_eq!(
+        stdout, "https://oml.example.com/mcp\n7KQ2-M9XD-4TPA\n",
+        "the connector URL and the code alone"
+    );
+    let limits: Vec<&str> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("expiry") || l.starts_with("rate"))
+        .collect();
+    assert_eq!(
+        limits,
+        [
+            "expiry   : 2999-01-01T00:00:00.000000Z",
+            "rate     : 600 requests per minute"
+        ],
+        "{stderr}"
+    );
+    let sent = seen.lock().expect("recorder").clone();
+    let posts: Vec<&Seen> = sent.iter().filter(|s| s.path == "/v2/keys").collect();
+    assert_eq!(posts.len(), 1, "one POST /v2/keys");
+    assert_eq!(posts[0].body["connect_code"], true);
+    assert_eq!(posts[0].body["expiry"], "2999-01-01T00:00:00Z");
+    assert_eq!(posts[0].body["requests_per_minute"], 600);
+
+    task.abort();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn write_reads_a_diagram_from_standard_input_and_signs_its_format() {
     let Some(lab) = Lab::start().await else {

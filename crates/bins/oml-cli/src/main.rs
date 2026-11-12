@@ -22,8 +22,8 @@ use oml_cli::creds::{self, Credentials};
 use oml_cli::discovery;
 use oml_cli::hook;
 use oml_cli::issue::{
-    KeyFile, configure_line, connect_code_printed, minted_code_printed, parse_ttl, setup_line,
-    sh_quote, with_reader_beside_writers,
+    KeyFile, configure_line, connect_code_printed, key_limit_lines, minted_code_printed, parse_ttl,
+    setup_line, sh_quote, with_reader_beside_writers,
 };
 use oml_cli::verify::parse_verifying_key;
 
@@ -3433,6 +3433,11 @@ fn run_issue_agent(
         granted.join(", "),
         field(&response, "default_workarea_id"),
     );
+    // The limits the key was issued with (ADR-0079 d7); stdout stays the
+    // lines a shell evaluates.
+    for line in key_limit_lines(&response) {
+        eprintln!("    {line}");
+    }
     match &args.out {
         Some(_) => eprintln!(
             "the value is only in the key file (0600); delete it once `claude plugin \
@@ -5004,24 +5009,6 @@ fn key_limits_body(
         );
     }
     Ok(Value::Object(body))
-}
-
-/// A key's limits as the key verbs print them: its expiry, marked once the
-/// server says it has passed, and its own rate; no line for a limit the key
-/// does not carry (ADR-0079 d3, d4).
-fn key_limit_lines(key: &Value) -> Vec<String> {
-    let mut lines = Vec::new();
-    if let Some(expiry) = key["expiry"].as_str() {
-        lines.push(if key["expired"] == true {
-            format!("expiry   : {expiry} (expired: the key authenticates nothing)")
-        } else {
-            format!("expiry   : {expiry}")
-        });
-    }
-    if let Some(rate) = key["requests_per_minute"].as_u64() {
-        lines.push(format!("rate     : {rate} requests per minute"));
-    }
-    lines
 }
 
 /// The key lines (ADR-0079 d7), for the key doctor runs under: that the
