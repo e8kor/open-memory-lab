@@ -73,16 +73,17 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   d8) reads `same_user: true`. No reader is shown a person's name as an approver, since no
   reader is shown one today. The cost is ADR-0037 d5's, now on every memory: each reader of a
   memory learns whether an agent or a person reviewed it, and whether that was the author's
-  own person. `same_user` is already theirs to read on the events tail; `held_by` on a memory
+  own person. `same_user` is already theirs to read on `GET /v2/events`; `held_by` on a memory
   is new.
 
 - **d3 — The approver is the approving verdict that ratified the version.** A promotion's
   event names it as `ratification_event_id`. Under the one policy built, k = 1
   ([admission](../architecture/admission.md)), that is the version's only approving verdict.
   `approved_at` is that verdict's own `at`, which is at or just before `promoted_at`: the two
-  events are sealed in one commit. ADR-0012 d3 lets a policy require more than one verdict and
-  no record says which of them a reader is shown; this record does not decide it (Open
-  questions, 2).
+  events are sealed in one commit. ADR-0012 d3 lets a policy require more than one verdict, and
+  no record says which of them a reader is shown. This record's reading is the last, whose
+  arrival met the policy. No such policy is built, and the reading waits for the operator
+  (Open questions, 2).
 
 - **d4 — An anonymous `universe` row carries neither, and a federated hit carries its own
   row's.** ADR-0044 d9 lists what stays on a `universe` version served to a key outside its
@@ -122,7 +123,8 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   it.** #146's act erases or pseudonymises the attribution a deployment keeps. This record
   adds none: `memories` gains no reviewer key or principal (d6), and no read of a memory
   serves one (d2). The reviewer's identity is where it was, in the envelope of the
-  `review.approve` event, which #146's inventory covers with every other journalled actor.
+  `review.approve` event, which #146 has to cover with every other journalled actor whatever
+  this record does.
   `held_by` and `same_user` name no one. If a later record serves a reviewer's identity (Open
   questions, 1), it names the field it reads, and that field joins #146's inventory with it.
 
@@ -134,9 +136,9 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
    would amend both and ADR-0044 d9's sentence, and needs its own rule for MCP, whose claim
    item names no author. It would be one more member of `approver` and a stored field for it
    to read, which d6 leaves out.
-2. **Which verdict is the approver under a policy with k > 1?** d3 reads it as the ratifying
-   verdict. The alternative is every approving verdict, as ADR-0037 d5 serves a guardrail's.
-   Decided with the build of such a policy.
+2. **Which verdict is the approver under a policy with k > 1?** d3 reads it as the last, whose
+   arrival met the policy. The alternative is every approving verdict, as ADR-0037 d5 serves a
+   guardrail's. Decided with the build of such a policy.
 3. **Is `held_by` on every memory acceptable?** d2 extends ADR-0037 d5's disclosure from
    guardrails to memories. Without it, `approver` is `{same_user}` and a crew's reviewer cannot
    be told from a person.
