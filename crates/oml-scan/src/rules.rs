@@ -330,7 +330,9 @@ pub(crate) enum Tail {
     None,
     /// The phrase's three words are joined by a space or by the phrase's own
     /// separator, never across a sentence, and it is followed by a colon on
-    /// its line or ends its line: a directive, or its heading (#226).
+    /// its line or is its line, alone inside the marks of a heading, an
+    /// emphasis, a quote, a list item or a bracket: a directive, or its
+    /// heading (#226, #317).
     Directive,
 }
 
