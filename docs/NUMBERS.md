@@ -99,7 +99,7 @@ branch that reserved later renumbers.
 | adr | 0076 | `main` |  | releases ship no default server and setup asks for the server or reads | used |
 | adr | 0077 | `main` |  | a served memory says when it was approved and by what kind of reviewer | used |
 | adr | 0078 | `design/recall-improvement` |  | better recall combines cross-encoder reranking with an optional learned sparse retrieval stage measured against OML's standing eval | reserved |
-| adr | 0079 | `bulk73b/keys` |  | a key ends on a date and is held to a request rate, both set at issuance and changed only by an admin key that is not the key itself | reserved |
+| adr | 0079 | `bulk/v0.7.3b` |  | a key ends on a date and is held to a request rate, both set at issuance and changed only by an admin key that is not the key itself | reserved |
 | migration | 0001 | `main` |  | init | used |
 | migration | 0002 | `main` |  | poc adapter | used |
 | migration | 0003 | `main` |  | lead startup | used |
@@ -142,4 +142,4 @@ branch that reserved later renumbers.
 | migration | 0043 | `main` |  | scan findings | used |
 | migration | 0044 | `main` |  | memory approval | used |
 | migration | 0045 | `main` |  | usage metering | used |
-| migration | 0046 | `bulk73b/keys` |  | key limits | reserved |
+| migration | 0046 | `bulk/v0.7.3b` |  | key limits | reserved |
