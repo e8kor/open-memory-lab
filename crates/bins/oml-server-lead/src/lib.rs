@@ -2156,9 +2156,12 @@ pub async fn start_lead_with_models<F: DocumentFetcher + 'static>(
     let app = app.with_telemetry(telemetry);
     // A recall hands its count to this queue and never waits on its
     // account's counter row (ADR-0071 d2, d8).
+    // Lost counts are a log event and a metric (ADR-0071 d8).
+    let lost_metric = Arc::clone(traffic.metrics());
     let (recall_meter, _counts) = oml_pg::recall_meter::PgRecallMeter::spawn(
         store.clone(),
-        Arc::new(|count, reason| {
+        Arc::new(move |count, reason| {
+            lost_metric.recall_counts_lost(count);
             tracing::warn!(
                 event = EVENT_RECALL_COUNTS_LOST,
                 count,

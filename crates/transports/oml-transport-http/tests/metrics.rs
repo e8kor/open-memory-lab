@@ -159,6 +159,26 @@ async fn the_metrics_listener_serves_the_four_families_with_closed_labels_and_no
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// Recall counts the meter's queue dropped or could not write are a metric
+/// as well as a log event, so an alert can read them (ADR-0071 d8).
+#[tokio::test]
+async fn recall_counts_that_were_lost_are_counted_on_the_metrics_listener() {
+    let traffic = Traffic::new(TrustedProxies::default());
+    let scrape = metrics::router(Arc::clone(traffic.metrics()));
+    let (_, text) = get(&scrape, "/metrics").await;
+    assert!(
+        text.contains("oml_usage_recall_counts_lost_total 0"),
+        "{text}"
+    );
+    traffic.metrics().recall_counts_lost(3);
+    traffic.metrics().recall_counts_lost(2);
+    let (_, text) = get(&scrape, "/metrics").await;
+    assert!(
+        text.contains("oml_usage_recall_counts_lost_total 5"),
+        "{text}"
+    );
+}
+
 /// A web console act that committed and whose outcome was not recorded is
 /// answered and counted in `oml_idempotency_unsettled_total`, the count
 /// doctor's `handlers` line warns on (#233).

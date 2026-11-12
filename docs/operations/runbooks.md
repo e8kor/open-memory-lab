@@ -191,7 +191,7 @@ Use this when `oml doctor` under an admin key prints `warn usage: <n> accounts d
 
 6. Read the report once more. It lists nothing for that account's stocks.
 
-A drift on `writes` is the month's alone and ends with the month. `recalls` has no rows to compare with: a count the queue dropped, the store refused or a stop left unwritten is logged as `usage_recall_counts_lost` and stays lost.
+A drift on `writes` is the month's alone and ends with the month. `recalls` has no rows to compare with: a count the queue dropped, the store refused or a stop left unwritten is logged as `usage_recall_counts_lost`, counted in `oml_usage_recall_counts_lost_total`, and stays lost.
 
 ## Rotate a signing key or a keyring
 

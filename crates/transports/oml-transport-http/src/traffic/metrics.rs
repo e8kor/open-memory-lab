@@ -183,6 +183,7 @@ pub struct Metrics {
     federated_hits: Counter,
     handler_panics: Counter,
     idempotency_unsettled: Counter,
+    recall_counts_lost: Counter,
     mode_changes: Family<ModeLabels, Counter>,
     curation_acts: Family<ActLabels, Counter>,
     source_checks: Family<BulkLabels, Counter>,
@@ -335,6 +336,7 @@ impl Default for Metrics {
         let federated_hits = Counter::default();
         let handler_panics = Counter::default();
         let idempotency_unsettled = Counter::default();
+        let recall_counts_lost = Counter::default();
         let mode_changes = Family::<ModeLabels, Counter>::default();
         let curation_acts = Family::<ActLabels, Counter>::default();
         let source_checks = Family::<BulkLabels, Counter>::default();
@@ -367,6 +369,11 @@ impl Default for Metrics {
             "oml_idempotency_unsettled",
             "web console acts whose Idempotency-Key claim was left unsettled: an outcome not recorded after the act committed, or a refused act's claim not released",
             idempotency_unsettled.clone(),
+        );
+        registry.register(
+            "oml_usage_recall_counts_lost",
+            "recall counts the usage meter's queue dropped, the store refused, or a stop left unwritten: the month's recalls meter reads low by them",
+            recall_counts_lost.clone(),
         );
         registry.register(
             "oml_oauth_token_requests",
@@ -489,6 +496,7 @@ impl Default for Metrics {
             federated_hits,
             handler_panics,
             idempotency_unsettled,
+            recall_counts_lost,
             mode_changes,
             curation_acts,
             source_checks,
@@ -561,6 +569,13 @@ impl Metrics {
     /// One handler panic the panic guard answered.
     pub(crate) fn handler_panicked(&self) {
         self.handler_panics.inc();
+    }
+
+    /// `n` recall counts the usage meter lost: dropped by its full queue,
+    /// refused by the store, or left unwritten by a stop (ADR-0071 d8). The
+    /// lead's teller calls it beside the `usage_recall_counts_lost` event.
+    pub fn recall_counts_lost(&self, n: u64) {
+        self.recall_counts_lost.inc_by(n);
     }
 
     /// One web console act whose claim on its `Idempotency-Key` was left

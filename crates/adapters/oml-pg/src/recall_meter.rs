@@ -6,8 +6,9 @@
 //! security. So no recall sits behind its account's counter row, and
 //! recalls that arrive together are one write. A full queue or a store
 //! error loses the counts it names, told to the caller's [`Lost`], which
-//! the lead logs as `usage_recall_counts_lost`; the month's `recalls` then
-//! reads low and nothing recomputes it. A graceful stop writes what the queue still holds first
+//! the lead logs as `usage_recall_counts_lost` and counts on its metrics
+//! listener; the month's `recalls` then reads low and nothing recomputes
+//! it. A graceful stop writes what the queue still holds first
 //! ([`PgRecallMeter::flush_at_stop`]) and tells of what it had to leave.
 
 use std::collections::BTreeMap;
