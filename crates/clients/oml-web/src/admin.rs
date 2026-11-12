@@ -107,7 +107,7 @@ async fn entries(
     .await
     .map_err(|end| {
         Box::new(match end {
-            WalkEnd::Failed(e) => outcome::page(&e, calls.page_id(), PEOPLE_PATH),
+            WalkEnd::Failed(e) => outcome::page(&e, calls, PEOPLE_PATH),
             WalkEnd::Repeated => refused(
                 StatusCode::BAD_GATEWAY,
                 "unavailable",
@@ -423,7 +423,7 @@ pub async fn people_act(
     };
     match done {
         Ok(done) => acts::see_other(&format!("{PEOPLE_PATH}?done={done}"), &[]),
-        Err(e) => outcome::page(&e, calls.page_id(), PEOPLE_PATH),
+        Err(e) => outcome::page(&e, &calls, PEOPLE_PATH),
     }
 }
 
@@ -455,7 +455,7 @@ pub async fn users_page(
     let ids = calls.next_ids();
     let listed = match web.api.list_web_users(&call(&credential, &ids)).await {
         Ok(listed) => listed,
-        Err(e) => return outcome::page(&e, calls.page_id(), USERS_PATH),
+        Err(e) => return outcome::page(&e, &calls, USERS_PATH),
     };
     let csrf = session.csrf();
     let mut body = String::from(
@@ -671,7 +671,7 @@ pub async fn users_act(
     };
     match done {
         Ok(done) => acts::see_other(&format!("{USERS_PATH}?done={done}"), &[]),
-        Err(e) => outcome::page(&e, calls.page_id(), USERS_PATH),
+        Err(e) => outcome::page(&e, &calls, USERS_PATH),
     }
 }
 

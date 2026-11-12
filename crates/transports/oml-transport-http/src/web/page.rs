@@ -21,7 +21,7 @@ use axum::response::Response;
 use oml_app::domain::web::Provider;
 
 use oml_page::escape;
-pub use oml_page::web::{STYLESHEET, attr, brand, document, refusal, shell, short};
+pub use oml_page::web::{STYLESHEET, attr, brand, document, refusal, refusal_page, shell, short};
 
 /// The pages' `Content-Security-Policy`: nothing loads but the one
 /// stylesheet, forms post only to the page and redirect only to the

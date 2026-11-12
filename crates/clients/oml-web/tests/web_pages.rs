@@ -1673,6 +1673,155 @@ async fn every_signed_in_page_draws_the_sign_out_control_in_its_header() {
     assert!(!page.contains("sign_out"), "{page}");
 }
 
+/// A refusal page drawn for a signed-in person carries the same sign-out
+/// control: a page not found, a query or a form refused, a conflict, the
+/// refusal of a cut-off key's act and every page a cut-off person is
+/// refused, from `oml-web` and from the lead, and the control on it ends
+/// the session. A refusal answered before the session is read, or for no
+/// one, draws none (ADR-0070 d2; ADR-0045 d5, d8; #325, #327).
+#[tokio::test]
+async fn every_refusal_page_of_a_signed_in_person_draws_the_sign_out_control_in_its_header() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    laptop_key(&rig, &cookie).await;
+    let token = cookie.split_once('=').expect("a session cookie").1;
+    let csrf = oml_web_credential::csrf_token(token);
+    let expected = SignOutForm {
+        method: "post".to_owned(),
+        action: "/web".to_owned(),
+        fields: vec![
+            ("action".to_owned(), "sign_out".to_owned()),
+            ("csrf_token".to_owned(), csrf.clone()),
+        ],
+    };
+    let drawn =
+        |what: &str, want: StatusCode, (status, _, page): (StatusCode, HeaderMap, String)| {
+            assert_eq!(status, want, "{what}: {page}");
+            assert!(page.contains("This cannot continue"), "{what}: {page}");
+            assert_eq!(sign_out_form(&page).as_ref(), Some(&expected), "{what}");
+            page
+        };
+    // Not found: an admin page for a person who is not an admin, on
+    // `oml-web`, and an old URL, on the lead.
+    for url in ["/web/admin/keys?user=alice", "/web?view=guardrails"] {
+        drawn(
+            url,
+            StatusCode::NOT_FOUND,
+            send(&rig.router, get(url, Some(&cookie))).await,
+        );
+    }
+    // Refused as sent: a query that names a field twice, a form naming no
+    // action of its page, on `oml-web` and on the lead, and on the lead a
+    // form without the session's CSRF token, since the cookie names a live
+    // session there.
+    drawn(
+        "a repeated field",
+        StatusCode::BAD_REQUEST,
+        send(
+            &rig.router,
+            get("/web/guardrails?workarea=a&workarea=b", Some(&cookie)),
+        )
+        .await,
+    );
+    for path in ["/web/keys", "/web"] {
+        drawn(
+            path,
+            StatusCode::BAD_REQUEST,
+            act(&rig, &cookie, path, &[("action", "no_such_act")]).await,
+        );
+    }
+    drawn(
+        "the lead's form without the token",
+        StatusCode::BAD_REQUEST,
+        send(
+            &rig.router,
+            post("/web", &[("action", "sign_out")], Some(&cookie)),
+        )
+        .await,
+    );
+    // A conflict: a workarea name the namespace already holds.
+    let create = [("action", "create_workarea"), ("name", "once")];
+    let (status, _, page) = act(&rig, &cookie, "/web/workareas", &create).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    drawn(
+        "a name taken",
+        StatusCode::CONFLICT,
+        act(&rig, &cookie, "/web/workareas", &create).await,
+    );
+    // Cut off: the key acts are refused on the Keys page, and so is every
+    // page that reads under the key's grants.
+    let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+    rig.app
+        .deny_key(
+            &rig.boot.admin_key.value,
+            name("alice-web"),
+            name("universe"),
+        )
+        .await
+        .expect("the admin cuts alice-web off");
+    let page = drawn(
+        "a cut-off key's act",
+        StatusCode::FORBIDDEN,
+        act(
+            &rig,
+            &cookie,
+            "/web/keys",
+            &[
+                ("action", "issue_key"),
+                ("name", "tablet"),
+                ("role", "writer"),
+            ],
+        )
+        .await,
+    );
+    assert!(page.contains("signing out still works"), "{page}");
+    for path in [
+        "/web/guardrails",
+        "/web/workareas",
+        "/web/memories",
+        "/web/atlas",
+    ] {
+        drawn(
+            path,
+            StatusCode::NOT_FOUND,
+            send(&rig.router, get(path, Some(&cookie))).await,
+        );
+    }
+    // Before the session is read, and for no one, there is no control: the
+    // lead's refusal of another origin's form and of an unknown provider,
+    // and `oml-web`'s refusal of a form without the token, which is no page.
+    let request = Request::post("/web")
+        .header(header::CONTENT_TYPE, FORM)
+        .header("sec-fetch-site", "cross-site")
+        .header(header::ORIGIN, "https://evil.example")
+        .header(header::COOKIE, &cookie)
+        .body(Body::from(form(&[
+            ("action", "sign_out"),
+            ("csrf_token", csrf.as_str()),
+        ])))
+        .expect("a request");
+    let (status, _, refused) = send(&rig.router, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    assert_eq!(sign_out_form(&refused), None, "{refused}");
+    let (status, _, refused) = send(&rig.router, get("/web/callback/nowhere", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{refused}");
+    assert_eq!(sign_out_form(&refused), None, "{refused}");
+    let (status, _, refused) = send(
+        &rig.router,
+        post("/web/keys", &[("action", "issue_key")], Some(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert!(!refused.contains("<header"), "no page: {refused}");
+    // The control on a refusal page ends the session.
+    let (status, _, body) = sign_out_from(&rig, &cookie, &page).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        credential_status(&rig, &cookie, "web").await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
 /// The control ends the session on the server: after its post no capacity
 /// credential of the session resolves at the API, the cookie opens no page,
 /// and a second post finds no session (ADR-0045 d5; ADR-0070 d2; #327).

@@ -1053,7 +1053,7 @@ fn page(side: Side, session: &Session, active: &str, body: &str) -> Response {
 
 fn failed_page(failed: Failed, calls: &PageCalls, next: &str) -> Response {
     match failed {
-        Failed::Api(e) => outcome::page(&e, calls.page_id(), next),
+        Failed::Api(e) => outcome::page(&e, calls, next),
         Failed::Refused(status, code, message) => refused(status, code, &message, calls),
     }
 }
@@ -1130,7 +1130,7 @@ async fn atlas_page(
     let (counts, offers) = regions(&web, &session, &calls, side, &scope).await;
     let counts = match counts {
         Ok(counts) => counts,
-        Err(e) => return outcome::page(&e, calls.page_id(), next),
+        Err(e) => return outcome::page(&e, &calls, next),
     };
     let Some(drawn) = atlas_view(side, &counts.items, counts.truncated, &offers) else {
         return refused(

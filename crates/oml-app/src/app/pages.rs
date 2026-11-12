@@ -17,9 +17,9 @@ use uuid::Uuid;
 use oml_domain::access::{Covers, check_issuance};
 use oml_domain::name::{Name, NamedKind, Reference, UNIVERSE};
 use oml_domain::web::SESSION_KEY_SUFFIXES;
-use oml_domain::{EventTime, HeldBy, Role, Sha256Hash, event_types};
+use oml_domain::{EventTime, HeldBy, Role, Sha256Hash, SignedEnvelope, event_types};
 
-use super::{App, Caller, Issuance, issuance_refusal, require_role};
+use super::{App, Caller, Head, Issuance, issuance_refusal, require_role};
 use crate::ports::{Clock, ConnectionStore, IdGen, MetadataFold, Scanner, Signer, WebStore};
 use oml_domain::in_progress::WorkareaMode;
 use oml_domain::origin::OriginKind;
@@ -403,11 +403,19 @@ where
     /// each hands on access the key no longer holds whole: a key it issues
     /// is granted the person's whole root, a connect code opens a
     /// connection, and a cut-off is journalled under it
-    /// ([`AppError::SessionKeyDenied`]; ADR-0070 d2; #325).
-    async fn undenied(&self, gate: &Caller, verb: &'static str) -> Result<Caller, AppError> {
+    /// ([`AppError::SessionKeyDenied`]; ADR-0070 d2; #325). With the
+    /// caller comes the chain head, read before the access, for the act to
+    /// seal on ([`Head::BeforeAccess`]): no denial of the key commits
+    /// between the access the act decided on and the act's own commit.
+    async fn undenied(
+        &self,
+        gate: &Caller,
+        verb: &'static str,
+    ) -> Result<(Caller, Option<SignedEnvelope>), AppError> {
+        let head = self.head_event(gate.key.tenant_id).await?;
         let now = self.authenticate_bearer(Bearer::Session(gate)).await?;
         if now.denials.is_empty() {
-            Ok(now)
+            Ok((now, head))
         } else {
             Err(AppError::SessionKeyDenied {
                 role: now.key.role,
@@ -465,7 +473,7 @@ where
         role: Role,
         connector: bool,
     ) -> Result<IssuedKey, AppError> {
-        let web = &self.undenied(web, "issue_key").await?;
+        let (web, head) = &self.undenied(web, "issue_key").await?;
         let user_name = self.web_user_of(web).await?;
         // A person of the sign-up tenant holds at most their keys quota
         // (ADR-0068 d5).
@@ -512,7 +520,7 @@ where
             expiry: None,
             requests_per_minute: None,
         };
-        self.issue_key_by(&web.key, &req, Issuance::PersonsOwn)
+        self.issue_key_by(&web.key, &req, Issuance::PersonsOwn(head))
             .await
     }
 
@@ -524,10 +532,14 @@ where
         web: &Caller,
         key: &Name,
     ) -> Result<ConnectCodeIssued, AppError> {
-        let web = &self.undenied(web, "mint_connect_code").await?;
+        let (web, head) = &self.undenied(web, "mint_connect_code").await?;
         let target = self.own_key(web, key).await?;
-        self.mint_connect_code_by(&web.key, Reference::Id(target.key_id))
-            .await
+        self.mint_connect_code_by(
+            &web.key,
+            Reference::Id(target.key_id),
+            Head::BeforeAccess(head),
+        )
+        .await
     }
 
     /// `POST /v2/keys/{key}/denials` as `<user>-web` or `<user>-admin`
@@ -537,7 +549,7 @@ where
     /// is not built. A session key is never cut off here, and one that
     /// carries a denial cuts nothing off (#325).
     pub async fn cut_off_key(&self, acting: &Caller, key: &Name) -> Result<DenialRecord, AppError> {
-        let acting = &self.undenied(acting, "deny_key").await?;
+        let (acting, head) = &self.undenied(acting, "deny_key").await?;
         let target = match acting.key.role {
             Role::Admin => self.named_key(acting.key.tenant_id, key).await?,
             _ => self.own_key(acting, key).await?,
@@ -552,8 +564,13 @@ where
             return Err(field("key", "an admin key carries no grant to cut off"));
         }
         let universe = Reference::Name(Name::parse(UNIVERSE).expect("universe is a name"));
-        self.deny_key_by(&acting.key, Reference::Id(target.key_id), universe)
-            .await
+        self.deny_key_by(
+            &acting.key,
+            Reference::Id(target.key_id),
+            universe,
+            Head::BeforeAccess(head),
+        )
+        .await
     }
 
     /// The user page's user: the name of the root `<user>-web` names.

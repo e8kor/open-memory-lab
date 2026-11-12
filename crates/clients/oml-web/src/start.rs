@@ -370,7 +370,7 @@ async fn person(web: &Web, session: &Session, calls: &PageCalls) -> Result<Perso
                 calls,
             ))
         }),
-        Err(e) => Err(Box::new(outcome::page(&e, calls.page_id(), START_PATH))),
+        Err(e) => Err(Box::new(outcome::page(&e, calls, START_PATH))),
     }
 }
 
@@ -481,7 +481,7 @@ pub async fn act(
             .await
         {
             Ok(_) => acts::see_other(&format!("{START_PATH}?done=requested"), &[]),
-            Err(e) => outcome::page(&e, calls.page_id(), START_PATH),
+            Err(e) => outcome::page(&e, &calls, START_PATH),
         };
     }
     let Some(client) = Client::of_action(action) else {
@@ -532,7 +532,7 @@ pub async fn act(
                 return acts::see_other(&target, &[once::set_cookie(&sealed)]);
             }
             Err(Error::Api(e)) if e.code == "name.taken" => {}
-            Err(e) => return outcome::page(&e, calls.page_id(), START_PATH),
+            Err(e) => return outcome::page(&e, &calls, START_PATH),
         }
     }
     acts::invalid(
