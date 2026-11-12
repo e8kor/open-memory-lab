@@ -326,8 +326,9 @@ A release is not a tag; it is a set of verifiable artifacts. Per release:
   every pull request that touches `sdks/`. `scripts/check_release.py` fails the pull request if the
   files stop being built, summed or signed, if a publish job loses its gate, its name guard, its
   per-file checksum check, its environment or its commit-pinned actions, gains `continue-on-error`,
-  `|| true` or a step-level `if:`, uploads before it checks, sets `packages-dir`, `repository-url` or
-  `password` on the PyPI action, checks out anything but the tag, or publishes an npm path without
+  `|| true` or a step-level `if:`, uploads before it checks, gives the PyPI action any input but
+  `print-hash`, writes its name guard or its checksum line any way but whole, fills `dist/` in the
+  PyPI job by anything but the copy of the two checked files, checks out anything but the tag, or publishes an npm path without
   `./`, or if any other job uploads to a registry (`npm`, `pnpm` or `yarn` publish in any spelling,
   `twine upload`, `uv publish`). No
   tag has run these jobs yet.

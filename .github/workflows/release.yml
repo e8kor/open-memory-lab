@@ -753,7 +753,8 @@ jobs:
           mkdir dist
           cp "release/$SDK_WHEEL" "release/$SDK_SDIST" dist/
       # The action uploads dist/, its default, which holds only the two checked files; the job
-      # sets no packages-dir, repository-url or password (scripts/check_release.py).
+      # gives the action print-hash and no other input, and fills dist/ by the two lines above
+      # alone (scripts/check_release.py).
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           print-hash: true

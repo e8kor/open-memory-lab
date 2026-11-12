@@ -54,9 +54,10 @@ disagreement found:
   GitHub release job, each checking the files against SHA256SUMS first and holding
   `id-token: write`; every action in those three jobs is pinned by commit, the publish
   jobs have no step-level `if:`, run the checksum step before the upload (any `npm`,
-  `pnpm`, `yarn`, `twine` or `uv` publish, with flags or through npx), set no
-  `packages-dir`, `repository-url` or `password` on the PyPI action and check out
-  only the tag (docs/contributing/releasing.md, "Publishing the SDKs");
+  `pnpm`, `yarn`, `twine` or `uv` publish, with flags or through npx), give the
+  PyPI action `print-hash` and no other input, write the name guard and the
+  checksum line whole, fill dist/ in the PyPI job with the two checked files alone
+  and check out only the tag (docs/contributing/releasing.md, "Publishing the SDKs");
 - ci.yml job cli-matrix runs on the same target and runner pairs and, on each,
   runs `oml --version` and the CLI's unit tests, so a broken platform fails a
   pull request before a tag (docs/engineering/ci-and-toolchain.md "Release
@@ -593,8 +594,17 @@ NPM_PUBLISH = re.compile(r"\b(?:npm|pnpm|yarn)\b[^\n;&|]*?\bpublish\b")
 PUBLISH_FROM_A_PATH = re.compile(r'\bpublish\s+"?\./')
 # A publish job's checkout is the tag that triggered the release, whichever way it is written.
 TAG_REFS = {"${{github.ref_name}}", "${{github.ref}}", "refs/tags/${{github.ref_name}}"}
-# Inputs that point the PyPI action at other files, another index or a stored credential.
-PYPI_INPUTS_REFUSED = ("packages-dir", "repository-url", "password")
+# The one input a publish job may give the PyPI action. Every other one is refused, by whichever of its
+# spellings (the action reads `packages_dir` as it reads `packages-dir`): it can point the action at other
+# files, another index or a stored credential, or change what a rerun or an attestation does.
+PYPI_INPUTS_ALLOWED = ("print-hash",)
+# The two commands a publish job stops on, as each must be written, whole: a `||`, a `&`, a pipe after
+# it, an `if` or an `echo` around it would let the job carry on past a failure.
+NAME_GUARD = "python3 scripts/check_sdk_registry_names.py"
+CHECKSUM_LINE = "printf '%s\\n' \"$line\" | sha256sum --check --strict -"
+# How the PyPI job fills dist/, the directory the action uploads: these two lines and nothing else.
+PYPI_DIST_LINES = ("mkdir dist", 'cp "release/$SDK_WHEEL" "release/$SDK_SDIST" dist/')
+MENTIONS_DIST = re.compile(r"(?<![\w./-])dist(?![\w.-])")
 OR_TRUE = re.compile(r"\|\|\s*true\b")
 PINNED_BY_COMMIT = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}(\s|$)")
 UPLOADS_TO_A_REGISTRY = re.compile(NPM_PUBLISH.pattern + r"|\btwine\s+upload\b|\buv\s+publish\b")
@@ -667,9 +677,9 @@ def check_sdks(errors: list[str], jobs: dict) -> None:
         for st in steps(job):
             uses, given = str(st.get("uses", "")), st.get("with") or {}
             if "gh-action-pypi-publish" in uses:
-                for key in PYPI_INPUTS_REFUSED:
-                    if key in given:
-                        errors.append(f"job {name}: sets {key} on the PyPI action, which points it away from the checked files, the trusted index or the OIDC identity")
+                for key in given:
+                    if key not in PYPI_INPUTS_ALLOWED:
+                        errors.append(f"job {name}: sets {key} on the PyPI action, which may take print-hash alone: any other input can point it away from the checked files, the trusted index or the OIDC identity")
             if uses.startswith("actions/checkout@") and "ref" in given:
                 if str(given["ref"]).replace(" ", "") not in TAG_REFS:
                     errors.append(f"job {name}: checks out {given['ref']!r}, not the tag that triggered the release")
@@ -679,6 +689,19 @@ def check_sdks(errors: list[str], jobs: dict) -> None:
             errors.append(f"job {name}: runs scripts/check_sdk_registry_names.py after the upload")
         if guard is not None and any(runs(job)[i] for i in range(guard)):
             errors.append(f"job {name}: runs another command before scripts/check_sdk_registry_names.py")
+        if guard is not None and runs(job)[guard].strip() != NAME_GUARD:
+            errors.append(f"job {name}: the registry-name step is not exactly `{NAME_GUARD}`, so its failure might not stop the job")
+        if any("sha256sum --check --strict -" in line and line.strip() != CHECKSUM_LINE for line in script.splitlines()):
+            errors.append(f"job {name}: a line that runs sha256sum --check --strict - is not exactly `{CHECKSUM_LINE}`, so a mismatch might not stop the job")
+        if name == "publish-sdk-pypi":
+            filled = [line.strip() for line in script.splitlines() if MENTIONS_DIST.search(line)]
+            if sorted(filled) != sorted(PYPI_DIST_LINES):
+                errors.append(
+                    f"job {name}: fills dist/ other than by `{PYPI_DIST_LINES[0]}` and `{PYPI_DIST_LINES[1]}`, once each "
+                    f"({'; '.join(filled) or 'no such line'}): the action uploads every file in it"
+                )
+            if checksum is not None and upload is not None and upload - checksum > 1:
+                errors.append(f"job {name}: has a step between the checksum step and the upload, which can add files to dist/")
         if "--ignore-missing" in script:
             errors.append(f"job {name}: checks with --ignore-missing, which passes a file SHA256SUMS does not list")
         if "sha256sum --check --strict -" not in script or "awk" not in script:

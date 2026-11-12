@@ -199,6 +199,90 @@ class SdkPublishing(unittest.TestCase):
                 self.assertEqual(len(errors), 1, errors)
                 self.assertTrue(errors[0].startswith(f"job publish-sdk-pypi: sets {key} on the PyPI action"), errors)
 
+    def test_the_pypi_action_takes_print_hash_and_no_other_input(self):
+        # The action reads `packages_dir` as it reads `packages-dir`, and `user`, `skip-existing`
+        # and `attestations` each change what is uploaded, as whom, or what a rerun does.
+        inputs = (
+            ("packages_dir", "release"), ("repository_url", "https://example.org/legacy/"), ("user", "someone"),
+            ("skip-existing", True), ("skip_existing", True), ("attestations", False), ("verbose", True),
+        )
+        for key, value in inputs:
+            with self.subTest(key):
+                jobs = copy.deepcopy(JOBS)
+                action = next(s for s in jobs["publish-sdk-pypi"]["steps"] if "gh-action-pypi-publish" in str(s.get("uses", "")))
+                action["with"][key] = value
+                errors = problems(jobs)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertTrue(errors[0].startswith(f"job publish-sdk-pypi: sets {key} on the PyPI action"), errors)
+        with self.subTest("no with at all"):
+            jobs = copy.deepcopy(JOBS)
+            action = next(s for s in jobs["publish-sdk-pypi"]["steps"] if "gh-action-pypi-publish" in str(s.get("uses", "")))
+            del action["with"]
+            self.assertEqual(problems(jobs), [])
+
+    def test_a_name_guard_that_cannot_stop_the_job_is_named(self):
+        guard = "python3 scripts/check_sdk_registry_names.py"
+        for written in (f"{guard} || echo undecided", f"{guard} &", f'echo "{guard}"', f"{guard}; true", f"if {guard}; then :; fi"):
+            for name in sorted(R.SDK_PUBLISHERS):
+                with self.subTest(written, job=name):
+                    jobs = copy.deepcopy(JOBS)
+                    for step in jobs[name]["steps"]:
+                        if "check_sdk_registry_names" in str(step.get("run", "")):
+                            step["run"] = written
+                    self.assertEqual(
+                        problems(jobs),
+                        [f"job {name}: the registry-name step is not exactly `{guard}`, so its failure might not stop the job"],
+                    )
+
+    def test_a_checksum_command_that_cannot_stop_the_job_is_named(self):
+        check = "printf '%s\\n' \"$line\" | sha256sum --check --strict -"
+        for written in (f"{check} || echo mismatch", f"{check} &", f"echo \"{check}\"", f"{check} | cat"):
+            for name in sorted(R.SDK_PUBLISHERS):
+                with self.subTest(written, job=name):
+                    jobs = copy.deepcopy(JOBS)
+                    for step in jobs[name]["steps"]:
+                        run = str(step.get("run", ""))
+                        if check in run:
+                            step["run"] = run.replace(check, written)
+                    self.assertEqual(
+                        problems(jobs),
+                        [f"job {name}: a line that runs sha256sum --check --strict - is not exactly `{check}`, so a mismatch might not stop the job"],
+                    )
+
+    def test_anything_but_the_two_checked_files_reaching_dist_in_the_pypi_job_is_named(self):
+        copy_line = 'cp "release/$SDK_WHEEL" "release/$SDK_SDIST" dist/'
+        edits = {
+            "a glob": lambda run: run.replace(copy_line, "cp release/* dist/"),
+            "mkdir -p": lambda run: run.replace("mkdir dist", "mkdir -p dist"),
+            "one more file": lambda run: run + "cp release/SHA256SUMS dist/\n",
+            "a move into it": lambda run: run + 'mv "release/extra.whl" dist/\n',
+        }
+        for how, edit in edits.items():
+            with self.subTest(how):
+                jobs = copy.deepcopy(JOBS)
+                for step in jobs["publish-sdk-pypi"]["steps"]:
+                    if "sha256sum" in str(step.get("run", "")):
+                        step["run"] = edit(step["run"])
+                errors = problems(jobs)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn("job publish-sdk-pypi: fills dist/ other than by", errors[0])
+        with self.subTest("a later step"):
+            jobs = copy.deepcopy(JOBS)
+            steps = jobs["publish-sdk-pypi"]["steps"]
+            upload = next(i for i, s in enumerate(steps) if "gh-action-pypi-publish" in str(s.get("uses", "")))
+            steps.insert(upload, {"run": "curl -sSfo dist/extra.whl https://example.org/extra.whl"})
+            errors = problems(jobs)
+            self.assertIn("job publish-sdk-pypi: has a step between the checksum step and the upload, which can add files to dist/", errors)
+        with self.subTest("a later step that names no dist"):
+            jobs = copy.deepcopy(JOBS)
+            steps = jobs["publish-sdk-pypi"]["steps"]
+            upload = next(i for i, s in enumerate(steps) if "gh-action-pypi-publish" in str(s.get("uses", "")))
+            steps.insert(upload, {"uses": "actions/download-artifact@" + "d" * 40, "with": {"path": "."}})
+            self.assertEqual(
+                problems(jobs),
+                ["job publish-sdk-pypi: has a step between the checksum step and the upload, which can add files to dist/"],
+            )
+
     def test_a_publish_job_that_checks_out_anything_but_the_tag_is_named(self):
         for name in sorted(R.SDK_PUBLISHERS):
             for ref in ("main", "${{ github.event.repository.default_branch }}", "refs/heads/main", "${{ github.sha }}"):
