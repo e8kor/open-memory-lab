@@ -529,7 +529,10 @@ edits by proposal there. Asked "Which rule do you want?" the same day, the opera
       before the build stay as journalled: served, reviewable, attributed to their authors,
       and under the accounting ADR-0071 d3 states for them. No migration, fold or backfill
       reads them. Their author still proposes a successor or a retirement of one, as a writer
-      does of a version it wrote.
+      does of a version it wrote. A held successor of a ratified retirement that a key not the
+      user's proposed there before the build is one of them: the rule is checked at the
+      proposal, so it can still be ratified, and its ratification puts the claim back on the
+      user's `memories` under no ceiling, as the user's own does (#340).
     - **Replays.** A retried new memory answers this refusal, since the access step precedes
       the idempotency lookup there, as it does for a revoked grant. A retried successor answers
       its record, since that verb's lookup precedes every target check.
@@ -562,7 +565,8 @@ edits by proposal there. Asked "Which rule do you want?" the same day, the opera
     `a_successor_of_a_ratified_retirement_in_a_users_root_is_the_users_keys_alone`,
     `a_successor_proposed_while_a_retirement_is_held_is_never_ratified_after_it`,
     `a_tenant_key_reads_recalls_and_reviews_in_a_users_root_as_before`,
-    `a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_served_and_its_author_still_revises_it`
+    `a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_served_and_its_author_still_revises_it`,
+    `a_held_put_back_another_key_proposed_before_the_rule_is_still_ratified_after_it`
     and, with the session keys a first sign-in issues,
     `a_persons_session_review_key_puts_a_retired_claim_back_in_its_own_root_and_in_no_other_persons`;
     over the application,

@@ -29,7 +29,7 @@ use oml_app::types::{
 };
 use uuid::Uuid;
 
-use crate::{ChainRig, TEST_SEED, held_memory, hold};
+use crate::{ChainRig, TEST_SEED, held_memory, hold, successor_of};
 
 /// The app every law runs.
 pub type RootsApp<S> = App<S, MemSigner, FixedClock, SeqIdGen, MarkerScanner>;
@@ -1065,6 +1065,79 @@ pub async fn a_memory_a_tenant_key_wrote_in_a_users_root_before_the_rule_stays_s
     );
 }
 
+/// A held successor of a ratified retirement that a key not the user's
+/// proposed in a user's root before the rule is kept as it is (ADR-0044
+/// d16, "Nothing already written is touched"). The rule is checked at the
+/// proposal and never at the ratification, so the user's reviewer key
+/// still ratifies it, and the claim is back in service and on the user's
+/// `memories`, under no ceiling, as any ratification is (#340). The same
+/// key proposes no such successor now.
+pub async fn a_held_put_back_another_key_proposed_before_the_rule_is_still_ratified_after_it<
+    S: JournalStore + Clone,
+>(
+    store: S,
+) {
+    let w = RootsWorld::new(store).await;
+    let row = w.adas_promoted(w.project, "the relay closes at noon").await;
+    let retirement = w
+        .supersede(&w.tenant_reviewer, row, 1, true)
+        .await
+        .expect("a tenant reviewer proposes the retirement");
+    assert_eq!(
+        w.approve(&w.ada_reviewer, retirement).await,
+        MemoryStatus::Promoted
+    );
+    assert_eq!(w.adas_memories().await, 0);
+    // The put-back as a build before the rule journalled it: held,
+    // authored by the tenant reviewer, replacing the ratified retirement.
+    // The application no longer writes one, so the store takes it directly.
+    let retired = w
+        .store
+        .memory(w.tenant, retirement)
+        .await
+        .expect("a read")
+        .expect("the retirement");
+    let earlier = Uuid::from_u128(0x0329_0002);
+    let author = &w.tenant_reviewer;
+    let mut lineage_principals = retired.lineage_principals.clone();
+    lineage_principals.push(author.principal.clone());
+    let mut lineage_key_ids = retired.lineage_key_ids.clone();
+    lineage_key_ids.push(author.key_id);
+    let mut rig = ChainRig::new(0);
+    rig.tenant_id = w.tenant;
+    let mut rig = rig.lane(340);
+    rig.follow(&w.store).await;
+    hold(
+        &mut rig,
+        &w.store,
+        oml_app::types::MemoryRecord {
+            status: MemoryStatus::Held,
+            is_tip: false,
+            promoted_at: None,
+            approval: None,
+            author_principal: author.principal.clone(),
+            author_key_id: author.key_id,
+            lineage_principals,
+            lineage_key_ids,
+            ..successor_of(&retired, earlier, "the relay closes at noon again", false)
+        },
+    )
+    .await
+    .expect("the store holds the earlier put-back");
+    let head = w.head().await;
+    refused(
+        w.supersede(author, retirement, 2, false).await,
+        "the same key's put-back, proposed now",
+    );
+    assert_eq!(w.head().await, head);
+    assert_eq!(
+        w.approve(&w.ada_reviewer, earlier).await,
+        MemoryStatus::Promoted,
+        "a put-back held before the rule is ratified after it"
+    );
+    assert_eq!(w.adas_memories().await, 1, "the claim is back in service");
+}
+
 /// A person's session review key is that person's key (ADR-0044 d16;
 /// ADR-0045 d6). `<user>-review`, as the first sign-in issues it, names its
 /// person by its session user and carries no user root. In that person's
@@ -1217,4 +1290,6 @@ where
         make().await,
     )
     .await;
+    a_held_put_back_another_key_proposed_before_the_rule_is_still_ratified_after_it(make().await)
+        .await;
 }

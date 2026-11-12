@@ -103,7 +103,9 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
   never starts a chain or changes its account. One raises `memories` when it is ratified, the
   successor of a ratified retirement, which makes the chain live again: in a person's root d16
   refuses it from any key but theirs, and from their own keys it is held to no ceiling, since a
-  ratification's commit carries none (#340).
+  ratification's commit carries none (#340). One that another key proposed there before v0.7.3
+  and that is still held can be ratified after it and raises the person's `memories` the same
+  way, since d16 is checked at the proposal and touches nothing already written (#340).
 
     Counters can drift from their rows only through a bug or a hand edit. `GET
     /v2/admin/usage/drift` recomputes every account's stocks from the rows, by the definitions
