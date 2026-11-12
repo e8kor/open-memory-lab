@@ -20,15 +20,14 @@ and a test fails if they diverge.
 
 | | Python | TypeScript |
 |---|---|---|
-| Package | `oml-sdk`, imported as `oml_sdk` | `oml-sdk`, ES modules only |
+| Package | `open-memory-lab-sdk`, imported as `oml_sdk` | `open-memory-lab-sdk`, ES modules only |
 | Floor | Python 3.11 | Node 24 |
 | Install | `uv add ./sdks/python`, or `pip install` the wheel a release attaches | `cd sdks/typescript && npm ci && npm run build`, then `npm install /path/to/open-memory-lab/sdks/typescript`, or `npm install` the tarball a release attaches |
 
 Each release builds both packages at its own version and attaches them to its GitHub release; the
-file names carry the package names above, which are what the manifests say today. Neither is on a
-registry, and the name each takes on PyPI and npm is chosen when it is first published there, so
-this page carries no registry install line yet. Publishing is switched on by the repository
-variable `PUBLISH_SDKS` and a recorded choice of names; the steps are in
+file names carry the package names above, which are the names chosen for PyPI and npm
+(`sdks/REGISTRY-NAMES.toml`). Neither is on a registry yet, so this page carries no registry install
+line. Publishing is switched on by the repository variable `PUBLISH_SDKS`; the steps are in
 [Releasing](https://github.com/e8kor/open-memory-lab/blob/main/docs/contributing/releasing.md#publishing-the-sdks).
 
 ## Write and read
@@ -44,7 +43,7 @@ with OmlClient() as oml:   # url= and api_key=, else OML_URL and OML_API_KEY
 ```
 
 ```ts
-import { OmlClient } from "oml-sdk";
+import { OmlClient } from "open-memory-lab-sdk";
 
 const oml = new OmlClient();
 const written = await oml.write({ text: "The canary stage must drain before the next one starts." });

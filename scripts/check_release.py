@@ -46,8 +46,8 @@ disagreement found:
   site/dist as oml-site-${VERSION}.tar.gz, and the signing job needs it and
   requires that archive among the files it sums and signs (site/README.md);
 - a job needing the version job runs scripts/build_sdk_packages.py and uploads the
-  SDK packages, and the signing job needs it and requires oml_sdk-${VERSION}-py3-none-any.whl,
-  oml_sdk-${VERSION}.tar.gz and oml-sdk-${VERSION}.tgz among the files it sums and
+  SDK packages, and the signing job needs it and requires open_memory_lab_sdk-${VERSION}-py3-none-any.whl,
+  open_memory_lab_sdk-${VERSION}.tar.gz and open-memory-lab-sdk-${VERSION}.tgz among the files it sums and
   signs; the version job runs scripts/check_sdk_versions.py with the tag; the only
   jobs that upload to PyPI or npm are publish-sdk-pypi and publish-sdk-npm, each
   skipped unless vars.PUBLISH_SDKS is 'true', each needing the version job and the

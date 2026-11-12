@@ -34,8 +34,8 @@ The landing footer and install command name the workspace version, so the same p
 
 The Python and TypeScript SDKs (`sdks/python`, `sdks/typescript`) carry the server's version, and
 the release builds them from the tag. Publishing them to PyPI and npm is an outward act, so it is the
-operator's, behind two switches that are both off: the repository variable `PUBLISH_SDKS`, and
-`decided` in `sdks/REGISTRY-NAMES.toml`. Without both, a release builds, smoke-tests, signs and
+operator's, behind two switches: the repository variable `PUBLISH_SDKS`, which is off until the operator sets
+it, and `decided` in `sdks/REGISTRY-NAMES.toml`, which is `true`. Without both, a release builds, smoke-tests, signs and
 attaches the packages to the GitHub release and uploads nothing.
 
 **The version bump.** The release pull request that bumps the workspace version bumps these places
@@ -43,7 +43,7 @@ in the same change, and `scripts/check_sdk_versions.py` (run by `scripts/tests/`
 request and by the release's `version` job with the tag) fails naming each one that disagrees:
 
 - `Cargo.toml`, `[workspace.package] version`, the one number; `sdks/rust` follows it;
-- `sdks/python/pyproject.toml` and the `oml-sdk` entry of `sdks/python/uv.lock`;
+- `sdks/python/pyproject.toml` and the `open-memory-lab-sdk` entry of `sdks/python/uv.lock`;
 - `sdks/typescript/package.json`, both version lines of `package-lock.json`, and the `USER_AGENT`
   constant in `sdks/typescript/src/client.ts`, which a unit test already holds to `package.json`.
 
@@ -51,8 +51,8 @@ request and by the release's `version` job with the tag) fails naming each one t
 builds the wheel, the sdist and the npm tarball, checks their metadata and file lists, and installs
 each into a fresh virtual environment or node project to import it. The file names come from the
 manifests (`scripts/sdk_names.py`). The three files are summed and signed with the other archives.
-When `PUBLISH_SDKS` is `true` (GitHub compares case-insensitively, so `True` counts; any other value,
-or no variable, is off), job `publish-sdk-pypi` and job `publish-sdk-npm` each run after the GitHub
+When `PUBLISH_SDKS` is `true` (GitHub compares case-insensitively, so `True` and `TRUE` count; any
+other value, or no variable, is off), job `publish-sdk-pypi` and job `publish-sdk-npm` each run after the GitHub
 release exists. Each stops at its first step unless `sdks/REGISTRY-NAMES.toml` says `decided = true`
 with the names of the manifests, checks each file it uploads, by name, against the signed
 `SHA256SUMS` (a file `SHA256SUMS` does not list fails), and uploads it. `scripts/check_release.py`
@@ -61,23 +61,22 @@ A published version cannot be replaced or reused, so a rerun after a partial pub
 file the registry already holds. The release notes name the files and do not claim a registry
 publication.
 
-**The registry names are not decided.** The manifests say `oml-sdk` for both packages. That is
-what the packages are called today, not a name a registry has accepted. PyPI refuses a name whose
-ultra-normalised form (`.-_` removed, `l` and `i` read as `1`, `o` as `0`) is an existing project's,
-and `oml-sdk` becomes `0m1sdk`, the form of the existing `omi-sdk`; npm refuses a name that differs
-from an existing one only by `.`, `-` or `_`, and `oml_sdk` exists. A 404 from `pip index versions`
-or `npm view` shows that nothing has that exact name, not that a registry will accept it. The
-pull request that introduced this section lists candidate names with both checks done; the choice
-is the operator's.
+**The registry names.** The operator chose `open-memory-lab-sdk` for both PyPI and npm on
+2026-11-12. The Python import name stays `oml_sdk`. `oml-sdk` could not be used: PyPI refuses a
+name whose ultra-normalised form (`.-_` removed, `l` and `i` read as `1`, `o` as `0`) is an existing
+project's, and `oml-sdk` becomes `0m1sdk`, the form of the existing `omi-sdk`; npm refuses a name
+that differs from an existing one only by `.`, `-` or `_`, and `oml_sdk` exists. A 404 from
+`pip index versions` or `npm view` shows that nothing has that exact name, not that a registry will
+accept it, and neither registry reserves a name before the first upload.
 
-**The operator's steps, in order.** Nothing below has been done; the workflow cannot publish until
-all of it is.
+**The operator's steps, in order.** Steps 1 and 2 are done. The workflow does not publish until the
+rest is.
 
-1. **Choose the names**, one for PyPI and one for npm (an npm name may be scoped, `@scope/name`,
+1. **Choose the names** (done: `open-memory-lab-sdk` on both), one for PyPI and one for npm (an npm name may be scoped, `@scope/name`,
    which needs the scope's account or organisation on npm first). Check each: on PyPI, that its
    ultra-normalised form is no existing project's (the simple index at `https://pypi.org/simple/`
    lists them); on npm, that no existing package differs from it only by `.-_`.
-2. **Record the choice in one reviewed change:** set `[project] name` in `sdks/python/pyproject.toml`
+2. **Record the choice in one reviewed change** (done): set `[project] name` in `sdks/python/pyproject.toml`
    and `name` in `sdks/typescript/package.json`; change the name in `sdks/python/uv.lock` and
    `package-lock.json` (two entries) to match, and the one `importlib.metadata.version('<name>')`
    in `sdks/python/src/oml_sdk/client.py`; then write both names and `decided = true` in

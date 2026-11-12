@@ -1,4 +1,4 @@
-# oml-sdk — the Python client
+# open-memory-lab-sdk — the Python client
 
 A client for the Open Memory Lab HTTP API: a layer generated from
 [`docs/api/openapi.yaml`](https://e8kor.github.io/open-memory-lab/api/openapi.yaml) by a pinned `openapi-python-client`, and a
@@ -9,11 +9,11 @@ Python 3.11 or later. Each release attaches a wheel and an sdist to its GitHub r
 the wheel from the file, or install from a checkout of the repository:
 
 ```sh
-pip install ./oml_sdk-X.Y.Z-py3-none-any.whl     # the wheel from a release's files
+pip install ./open_memory_lab_sdk-X.Y.Z-py3-none-any.whl  # the wheel from a release's files
 uv add ./sdks/python                              # or: pip install ./sdks/python, from a checkout
 ```
 
-The name this package takes on PyPI is chosen when it is first published there.
+The package is named `open-memory-lab-sdk` on PyPI and is imported as `oml_sdk`. It is not published there yet; until it is, install from a file or a checkout as above.
 
 ```python
 from oml_sdk import OmlClient

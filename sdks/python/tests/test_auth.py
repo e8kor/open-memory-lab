@@ -84,5 +84,5 @@ def test_every_request_names_the_sdk_and_its_version_in_user_agent():
         pytest.raises(ApiError),
     ):
         client.read(limit=1)
-    version = importlib.metadata.version("oml-sdk")
+    version = importlib.metadata.version("open-memory-lab-sdk")
     assert requests and requests[0].headers["user-agent"] == f"oml-sdk-python/{version}"
