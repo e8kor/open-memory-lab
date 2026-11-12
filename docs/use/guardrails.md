@@ -12,7 +12,7 @@ It is a memory of kind `guardrail`. Agents or people write it, and it applies on
 different identity approves it.
 
 - **Where it applies.** From the agent's workarea and, as an administrator sets on its key, the
-  workareas above it. Each rule is shown with where it was set and who approved it. On the web,
+  workareas above it. Each rule is shown with where it was set, when it was approved and whether a person's key or a reviewer agent's key approved it. On the web,
   Guardrails lets you choose a workarea and shows whether the key reads that workarea alone or its
   readable parents too.
 - **Loaded at the start.** The plugin's session-start hook puts the rules in front of the agent

@@ -9,7 +9,7 @@ answers: what a served memory says about its approval over HTTP, MCP and the SDK
 
 **Status:** proposed · 2026-11-12, with #175
 
-**Release:** not assigned; proposed for v0.7.2
+**Release:** v0.7.2, the release `openapi.yaml` names for the two new members; the operator accepts this record before it is cut
 
 **Amends:** ADR-0025 (d12: the claim item gains `approved_at` and `approver`)
 
@@ -22,8 +22,8 @@ lineage" (`crates/clients/oml-web/src/memories.rs`). #175 asks that each hit car
 and the approval time beside the author, over HTTP, MCP and both SDKs, with a crew's or a
 self-review's approval shown as that.
 
-Three accepted decisions already say who may see a reviewer's identity, and all three say no
-reader of a memory may:
+Two accepted decisions already say who may see a reviewer's identity, and both say no reader
+of a memory may; a third, ADR-0044 d9, says it of `universe` claims alone:
 
 - **[ADR-0025](ADR-0025-the-agent-only-memory-surface.md) d15.** The events tail shows
   `review.*` events to no key, and serves every other event to a key outside its actor's key
@@ -36,9 +36,11 @@ reader of a memory may:
   served: ADR-0025 d15 keeps review events in the evidence export. The cost: every reader in
   scope learns how many reviewers ratified a rule and how many of them were human."
 - **[ADR-0044](ADR-0044-every-user-works-under-a-root-of-their-own-and-universe-serves-curated-claims-without-their-source.md)
-  d9.** "The journal keeps every attribution field in the clear — … the reviewer in the review
-  events — and the evidence export carries them." The only read that names a reviewer is the
-  admin read ([ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
+  d9.** It governs a `universe` claim served to a key outside its authoring key set, and says
+  nothing of a reviewer on any other memory. It is cited below for that and for nothing wider.
+  The reading that no read of a memory names its reviewer rests on ADR-0025 d15 and ADR-0037
+  d5. The only read that names a reviewer is the admin read
+  ([ADR-0045](ADR-0045-people-sign-in-to-a-user-page-and-an-admin-page-on-the-servers-own-origin.md)
   d21), and each one is journalled.
 
 What a reader can already learn of an approval through another call: its time (`promoted_at`),
@@ -74,7 +76,14 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   reader is shown one today. The cost is ADR-0037 d5's, now on every memory: each reader of a
   memory learns whether an agent or a person reviewed it, and whether that was the author's
   own person. `same_user` is already theirs to read on `GET /v2/events`; `held_by` on a memory
-  is new.
+  is new. Three things a reader can still learn from `held_by` and `same_user`, which the
+  decision accepts and a later record may narrow:
+    - Where a workarea has exactly one human reviewer, `held_by: "human"` names that person to
+      anyone who knows the staffing.
+    - `held_by` is the issuing admin's attestation, unverified. A key issued with no attestation
+      is stored as `agent`, so `agent` can mean "never attested" and not "an agent reviewed it".
+    - `same_user: true` beside the served `principal` identifies the reviewer's person as the
+      author's person. It is readable already on `GET /v2/events`.
 
 - **d3 — The approver is the approving verdict that ratified the version.** A promotion's
   event names it as `ratification_event_id`. Under the one policy built, k = 1
@@ -83,7 +92,8 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   events are sealed in one commit. ADR-0012 d3 lets a policy require more than one verdict, and
   no record says which of them a reader is shown. This record's reading is the last, whose
   arrival met the policy. No such policy is built, and the reading waits for the operator
-  (Open questions, 2).
+  (Open questions, 2). At k > 1 a later build adds a list of the approving verdicts beside
+  `approver` and leaves `approver`'s meaning as it is, so the contract is additive.
 
 - **d4 — An anonymous `universe` row carries neither, and a federated hit carries its own
   row's.** ADR-0044 d9 lists what stays on a `universe` version served to a key outside its
@@ -115,7 +125,7 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   journal: each version's latest promotion event and the verdict it names, as
   `ratification_event_id` or, as v0.1.0 wrote it, `verdict_event_id`. A promotion whose event
   names no verdict the journal holds leaves its row unfilled, and the version is served with
-  `approver` null. `approver_held_by` is the attestation when the verdict was given; no act
+  `approver` null, even where an earlier promotion of the version names one. `approver_held_by` is the attestation when the verdict was given; no act
   changes a key's `held_by` after issuance. The cost: three nullable columns, and one update of
   every promoted row at the upgrade, unmeasured.
 
@@ -133,7 +143,7 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
 1. **Should a reader who is shown the author be shown the reviewer's principal too?** #175's
    outcome says "the reviewer identity … so a reader sees who approved a memory". ADR-0025 d15
    and ADR-0037 d5 withhold it from every reader, and this record keeps to them. Serving it
-   would amend both and ADR-0044 d9's sentence, and needs its own rule for MCP, whose claim
+   would amend both, and needs its own rule for MCP, whose claim
    item names no author. It would be one more member of `approver` and a stored field for it
    to read, which d6 leaves out.
 2. **Which verdict is the approver under a policy with k > 1?** d3 reads it as the last, whose
@@ -142,6 +152,13 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
 3. **Is `held_by` on every memory acceptable?** d2 extends ADR-0037 d5's disclosure from
    guardrails to memories. Without it, `approver` is `{same_user}` and a crew's reviewer cannot
    be told from a person.
+
+4. **Should the events tail stop serving `same_user` on a `universe` promotion?** The read of a
+   memory hides the whole `approver` on an anonymous `universe` row (d4), but
+   `GET /v2/events` still serves the `lifecycle.promote` payload's `same_user` for a
+   `universe` promotion, since ADR-0044 d9's rule for the tail removes key ids and the
+   principal and `same_user` is neither. This record changes no behaviour; it records the
+   inconsistency for the operator.
 
 ## Consequences
 
@@ -152,6 +169,10 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   run, as after any migration ([upgrades](../operations/upgrades.md)).
 - `MetadataFold::MemoryPromoted` and `MetadataFold::TipSuperseded` carry the approval, so both
   stores write it in the promotion's own commit; a port law holds them equal.
+- A store whose schema keeps the approval refuses a promotion or a ratification that carries
+  none, with `StoreError::ApprovalMissing`, and the commit writes nothing. The application
+  always sends one; only a store over a schema before 0044, which the migration laws build,
+  takes `None`.
 - The web console's card still says "approved by a key outside its lineage". Showing the kind
   there is a separate change.
 - Laws, in `crates/bins/oml-server-lead/tests/recall_approver.rs`:
@@ -163,7 +184,8 @@ the reviewer is never the author, and R3, the gate changes visibility and not ra
   `an_unreviewed_hit_carries_no_approval_and_gains_one_when_it_is_approved`,
   `a_successor_carries_its_own_approval_and_the_version_it_replaced_keeps_its_own`,
   `migration_0044_fills_from_the_journal_exactly_what_a_promotion_stores` and
-  `migration_0044_reads_a_promotion_that_names_its_verdict_as_v0_1_0_did`; and, for every
+  `migration_0044_reads_a_promotion_that_names_its_verdict_as_v0_1_0_did` and
+  `migration_0044_leaves_a_version_null_when_its_latest_promotion_names_an_unknown_verdict`; and, for every
   journal store,
   `a_promotion_stores_the_approving_verdict_on_its_row_and_a_held_version_holds_none`.
 
