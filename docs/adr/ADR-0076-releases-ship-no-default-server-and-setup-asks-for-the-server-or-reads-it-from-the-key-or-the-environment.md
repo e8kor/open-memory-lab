@@ -373,6 +373,26 @@ Read on `origin/main` at `694a35d2` (2026-11-11). Frozen ADR copies under
 `site/**`, `docs/legal/**` and `scripts/tests/test_site_build.py` also name the hosted service; they
 leave the repository with the landing (#194), not with this record.
 
+### Build notes
+
+Where the build differs from the text above, recorded as fact, not as a decision (2026-11-12):
+
+- **d10 test 1's exclusions.** `scripts/check_no_default_server.py` excludes three paths beyond
+  the list in test 1: `docs/NUMBERS.md` and `docs/reference/design-records.md`, which list ADR
+  titles, and the script itself, which holds the pattern. The red-team corpus under
+  `crates/oml-scan/tests/corpus/` is not excluded; its link twin now names `oml.example.com`.
+- **The page line's wording (d8).** The web setup view and the new-key panel say `This server's
+  address is not configured (no_server: set web.public_url, or oauth.issuer on the lead); ask its
+  operator for the URL to give your agents.`, not the row's `(no_server: set oauth.issuer)`, since
+  `oml-web` falls back to `web.public_url` (d6). The same line stands where the onboarding page
+  would otherwise show an empty URL.
+- **Doctor's line with no pair (d8).** It ends `no server API was called, and the metrics
+  listener is read only where OML_METRICS_URL names it`, not `nothing was probed`, because doctor
+  still reads the metrics listener that variable names. `oml bootstrap claim` with no URL is
+  refused with the same `no_server:` prefix and names the credentials file.
+- **d7's recorded runs.** The build records no run of Cursor or Gemini CLI with `OML_URL` unset,
+  so which of `/mcp` or the unexpanded text each produces stays unverified, as d7 says it is.
+
 ## Rejected alternatives
 
 | Alternative | Why not |

@@ -1165,10 +1165,11 @@ impl Source<'_> {
     }
 }
 
-/// Doctor's `url` line when no source names a server: it fails, and nothing
-/// is probed (ADR-0076 d8).
+/// Doctor's `url` line when no source names a server: it fails, and no
+/// server API is called (ADR-0076 d8).
 const NO_SERVER_DOCTOR: &str = "fail no_server: no server URL is configured (--url, OML_URL or \
-                                the credentials file); nothing was probed";
+                                the credentials file); no server API was called, and the \
+                                metrics listener is read only where OML_METRICS_URL names it";
 
 /// Doctor's line for an admin on a lead that sets no `oauth.issuer`
 /// (ADR-0076 d6, d8).
@@ -1249,7 +1250,16 @@ fn resolve_url(cli: &Cli, stored: &Credentials) -> Result<Client, CliError> {
         .clone()
         .or_else(|| cli.start.env_url.clone())
         .or_else(|| stored.url.clone())
-        .ok_or_else(|| missing("no URL: pass --url or set OML_URL"))?;
+        .ok_or_else(|| {
+            let file = creds::path().map_or_else(
+                |_| "the credentials file".to_owned(),
+                |p| format!("the credentials file {}", p.display()),
+            );
+            missing(&format!(
+                "no_server: no URL: pass --url, set OML_URL, or have {file} name one (oml login \
+                 <server> writes it)"
+            ))
+        })?;
     Ok(Client::new(url, None))
 }
 

@@ -25,7 +25,8 @@ fingerprint of the span it came from.
    that server need no flag, and another shared server asks again. A source outside a git clone
    needs the flag each run. A server older than this release does not say, and is not asked
    about. A clone that recorded `oml.allowPublicServer=true` before must opt in once more:
-   `oml doctor` names it as `sync_consent_unbound`. The server's admins can read submitted
+   `oml doctor` names it as `sync_consent_unbound`, and one `--allow-public-server` run against the
+   server you mean records its origin and removes the old value. The server's admins can read submitted
    memories. Supersession or retirement does not erase submitted text or anchors.
 5. **Review in bulk.** A person reads the batch with `oml review list --author-key <sync key>` and
    approves it with `oml review approve --ids -`.

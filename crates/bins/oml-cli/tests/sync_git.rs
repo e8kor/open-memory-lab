@@ -526,7 +526,19 @@ fn a_rust_source_loads_rs_files_and_manifests_only_when_the_rust_adapter_is_name
 /// the field absent, as a server older than ADR-0076 answers), every other
 /// path 404; its URL. It serves until `runtime` shuts down.
 fn whoami_fixture(runtime: &tokio::runtime::Runtime, shared: Option<bool>) -> String {
+    whoami_fixture_counting(runtime, shared).0
+}
+
+/// [`whoami_fixture`], and the number of requests it has had for any path
+/// but `/v2/whoami`: what a refusal must leave at zero.
+fn whoami_fixture_counting(
+    runtime: &tokio::runtime::Runtime,
+    shared: Option<bool>,
+) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
     use axum::routing::get;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let others = std::sync::Arc::new(AtomicUsize::new(0));
+    let counted = others.clone();
     let listener = runtime
         .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
         .expect("a listener on an ephemeral port");
@@ -539,17 +551,22 @@ fn whoami_fixture(runtime: &tokio::runtime::Runtime, shared: Option<bool>) -> St
     if let Some(shared) = shared {
         me["shared"] = serde_json::Value::Bool(shared);
     }
-    let router = axum::Router::new().route(
-        "/v2/whoami",
-        get(move || {
-            let me = me.clone();
-            async move { axum::Json(me) }
-        }),
-    );
+    let router = axum::Router::new()
+        .route(
+            "/v2/whoami",
+            get(move || {
+                let me = me.clone();
+                async move { axum::Json(me) }
+            }),
+        )
+        .fallback(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            async { axum::http::StatusCode::NOT_FOUND }
+        });
     runtime.spawn(async move {
         axum::serve(listener, router).await.expect("serve");
     });
-    server
+    (server, others)
 }
 
 /// A clone with one committed document under `docs/`.
@@ -599,11 +616,16 @@ const DISCLOSURE: &str = "superseding or retiring a memory does not erase";
 #[test]
 fn sync_to_a_server_that_declares_itself_shared_is_refused_without_consent() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let server = whoami_fixture(&runtime, Some(true));
+    let (server, others) = whoami_fixture_counting(&runtime, Some(true));
     let dir = docs_clone("shared-refused");
     let (code, _, err) = sync_to(&dir, &server, false);
     runtime.shutdown_background();
     assert_eq!(code, 2, "{err}");
+    assert_eq!(
+        others.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a refused sync sends the server nothing but the whoami it asked"
+    );
     assert!(
         err.contains("--allow-public-server") && err.contains(DISCLOSURE),
         "{err}"
@@ -680,7 +702,6 @@ fn a_recorded_true_is_not_consent_and_doctor_names_it() {
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("--allow-public-server"), "{err}");
     let (_, out, _) = oml(&dir, &["--url", &server, "--api-key", "k", "doctor"]);
-    runtime.shutdown_background();
     assert!(
         out.contains(
             "warn sync_consent_unbound: oml.allowPublicServer=true names no server and is no \
@@ -688,6 +709,42 @@ fn a_recorded_true_is_not_consent_and_doctor_names_it() {
         ),
         "{out}"
     );
+    // The remedy the line names clears it: the opt-in records the origin and
+    // drops the legacy value, so the line is gone and the origin is consent.
+    let _ = sync_to(&dir, &server, true);
+    assert_eq!(
+        recorded(&dir),
+        std::slice::from_ref(&server),
+        "the origin replaces the legacy true"
+    );
+    let (_, out, _) = oml(&dir, &["--url", &server, "--api-key", "k", "doctor"]);
+    runtime.shutdown_background();
+    assert!(!out.contains("sync_consent_unbound"), "{out}");
+    assert!(!out.contains("sync_shared_server"), "{out}");
+}
+
+#[test]
+fn an_opt_in_beside_a_recorded_origin_and_a_legacy_true_drops_the_true() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let server = whoami_fixture(&runtime, Some(true));
+    let dir = docs_clone("legacy-true-and-origin");
+    git(
+        &dir,
+        &["config", "--local", "oml.allowPublicServer", "true"],
+    );
+    git(
+        &dir,
+        &[
+            "config",
+            "--local",
+            "--add",
+            "oml.allowPublicServer",
+            &server,
+        ],
+    );
+    let _ = sync_to(&dir, &server, true);
+    runtime.shutdown_background();
+    assert_eq!(recorded(&dir), [server]);
 }
 
 #[test]

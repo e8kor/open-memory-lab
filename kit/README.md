@@ -41,7 +41,7 @@ the key, and the server's address without `/mcp`, in the shell that starts the t
 
 ```sh
 export OML_API_KEY=oml_...                  # this agent's one key
-export OML_URL=https://oml.example.com      # the server that issued it, without /mcp
+export OML_URL=<server>                          # the server that issued it, without /mcp
 ```
 
 Cursor and Gemini CLI read `OML_URL` from that shell: Cursor as `${env:OML_URL}/mcp`, Gemini CLI
@@ -62,7 +62,7 @@ only when the server accepts the key; the `oml` CLI and the Gemini CLI session-s
 the same `OML_URL`:
 
 ```sh
-oml login https://oml.example.com          # once: paste the key; nothing is stored on a refusal
+oml login <server>          # once: paste the key; nothing is stored on a refusal
 ```
 
 Give each agent its own key. Attribution, and the rule that a reviewer never reviews their own

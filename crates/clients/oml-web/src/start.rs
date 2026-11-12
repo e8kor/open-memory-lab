@@ -181,19 +181,30 @@ fn credential_card(client: Client, secret: &Secret, server: &str) -> String {
         }
         (Client::ClaudeCode, Secret::Key { value, .. }) => {
             out.push_str(&copy_block("cred-key", "Your key, shown once", value));
+            if server.is_empty() {
+                let _ = write!(out, r#"<p class="desc">{}</p>"#, keys::NO_SERVER);
+            }
             out.push_str(&copy_block(
                 "cred-cmd",
                 "In Claude Code",
                 "/plugin marketplace add e8kor/open-memory-lab\n/plugin install oml@open-memory-lab",
             ));
+            let url = if server.is_empty() {
+                "the server's address as <code>url</code>".to_owned()
+            } else {
+                format!("<code>{}</code> as <code>url</code>", attr(server))
+            };
             let _ = write!(
                 out,
-                r#"<p class="dim">The install asks for the plugin's options: paste the key as <code>api_key</code> and <code>{}</code> as <code>url</code>. Then run <code>/reload-plugins</code>.</p>"#,
-                attr(server)
+                r#"<p class="dim">The install asks for the plugin's options: paste the key as <code>api_key</code> and {url}. Then run <code>/reload-plugins</code>.</p>"#
             );
         }
         (_, Secret::Key { value, .. }) => {
-            out.push_str(&copy_block("cred-url", "MCP URL", &mcp));
+            if server.is_empty() {
+                let _ = write!(out, r#"<p class="desc">{}</p>"#, keys::NO_SERVER);
+            } else {
+                out.push_str(&copy_block("cred-url", "MCP URL", &mcp));
+            }
             out.push_str(&copy_block(
                 "cred-key",
                 "Your key, shown once, as a Bearer token",
@@ -706,6 +717,39 @@ pub async fn setup(State(web): State<Web>, Extension(session): Extension<Session
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A key's card with no server address known names `no_server` and shows
+    /// no empty URL, neither as the plugin's `url` nor as an MCP URL
+    /// (ADR-0076 d8).
+    #[test]
+    fn a_new_keys_card_with_no_server_address_names_no_server_and_shows_no_empty_url() {
+        let key = |client| {
+            let secret = Secret::Key {
+                name: "alice-agent".to_owned(),
+                value: "oml_value".to_owned(),
+                server: String::new(),
+            };
+            credential_card(client, &secret, "")
+        };
+        for client in [Client::ClaudeCode, Client::Other] {
+            let card = key(client);
+            assert!(card.contains("no_server"), "{card}");
+            assert!(card.contains("oml_value"), "{card}");
+            assert!(!card.contains("<code></code>"), "{card}");
+            assert!(!card.contains(r#"<pre id="cred-url">/mcp</pre>"#), "{card}");
+        }
+        let with = credential_card(
+            Client::ClaudeCode,
+            &Secret::Key {
+                name: "alice-agent".to_owned(),
+                value: "oml_value".to_owned(),
+                server: "https://oml.example.com".to_owned(),
+            },
+            "https://oml.example.com",
+        );
+        assert!(!with.contains("no_server"), "{with}");
+        assert!(with.contains("https://oml.example.com"), "{with}");
+    }
 
     /// The setup view shows the server's own address as the URL to give
     /// agents, and with none known names `no_server` and shows no URL; it

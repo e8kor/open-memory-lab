@@ -191,6 +191,33 @@ impl Git {
             .map(|_| ())
     }
 
+    /// Removes every value of a multi-valued local git config entry of this
+    /// clone that equals `value`; no such value is not an error.
+    ///
+    /// # Errors
+    /// git cannot run, or fails for a reason other than there being no such
+    /// value (exit status 5).
+    pub fn unset_value(&self, name: &str, value: &str) -> Result<(), String> {
+        let out = self
+            .command(&[
+                "config",
+                "--local",
+                "--fixed-value",
+                "--unset-all",
+                name,
+                value,
+            ])
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        match out.status.code() {
+            Some(0 | 5) => Ok(()),
+            _ => Err(format!(
+                "git config --unset-all {name} failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )),
+        }
+    }
+
     /// Sets a local git config value of this clone.
     ///
     /// # Errors
@@ -442,10 +469,13 @@ pub fn authorize_shared_server(
     }
     let git = Git::at(source).ok();
     let origin = origin_of(url);
-    if git
+    let held = git
         .as_ref()
-        .is_some_and(|git| git.config_all(ALLOW_PUBLIC_CONFIG).contains(&origin))
-    {
+        .map(|git| git.config_all(ALLOW_PUBLIC_CONFIG))
+        .unwrap_or_default();
+    // An explicit opt-in over a legacy `true` is recorded again, so the
+    // `true` is dropped and `sync_consent_unbound` clears.
+    if held.contains(&origin) && !(explicit && held.iter().any(|v| v == "true")) {
         return Ok(SharedServerConsent::Recorded);
     }
     if !explicit {
@@ -464,13 +494,21 @@ pub fn authorize_shared_server(
 }
 
 /// Record the disclosed first opt-in for `url`'s origin in the clone
-/// containing the sync source, beside any other origin it holds.
+/// containing the sync source, beside any other origin it holds, and drops
+/// a legacy `true`.
 ///
 /// # Errors
 /// The source is outside a clone or its local git config cannot be written.
 pub fn record_shared_server_consent(source: &Path, url: &str) -> Result<(), String> {
     let git = Git::at(source)
         .map_err(|e| format!("cannot record shared-server consent for this clone: {e}"))?;
-    git.add_config(ALLOW_PUBLIC_CONFIG, &origin_of(url))
-        .map_err(|e| format!("could not record {ALLOW_PUBLIC_CONFIG} for this clone: {e}"))
+    let origin = origin_of(url);
+    if !git.config_all(ALLOW_PUBLIC_CONFIG).contains(&origin) {
+        git.add_config(ALLOW_PUBLIC_CONFIG, &origin)
+            .map_err(|e| format!("could not record {ALLOW_PUBLIC_CONFIG} for this clone: {e}"))?;
+    }
+    // The `true` ADR-0057 d6 wrote names no server and is not consent; the
+    // opt-in `sync_consent_unbound` asks for replaces it.
+    git.unset_value(ALLOW_PUBLIC_CONFIG, "true")
+        .map_err(|e| format!("could not drop the legacy {ALLOW_PUBLIC_CONFIG}=true: {e}"))
 }

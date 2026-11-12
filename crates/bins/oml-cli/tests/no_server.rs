@@ -52,7 +52,8 @@ fn doctor_with_no_pair_prints_fail_no_server_and_probes_nothing() {
     assert!(
         stdout.contains(
             "fail no_server: no server URL is configured (--url, OML_URL or the credentials \
-             file); nothing was probed"
+             file); no server API was called, and the metrics listener is read only where \
+             OML_METRICS_URL names it"
         ),
         "{stdout}"
     );
@@ -73,6 +74,15 @@ fn a_verb_with_no_pair_is_refused_with_the_no_server_name_and_oml_login() {
         assert!(stderr.contains("no_server: "), "{env:?}: {stderr}");
         assert!(stderr.contains("oml login <server>"), "{env:?}: {stderr}");
     }
+    // `bootstrap claim` sends no key and reads only the URL, and says so by
+    // the same name, naming each place it looked.
+    let out = oml(&dir, &["bootstrap", "claim", "admin", "--token-stdin"], &[]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("no_server: "), "{stderr}");
+    assert!(stderr.contains("--url"), "{stderr}");
+    assert!(stderr.contains("OML_URL"), "{stderr}");
+    assert!(stderr.contains("credentials.toml"), "{stderr}");
     std::fs::remove_dir_all(&dir).expect("cleaned up");
 }
 

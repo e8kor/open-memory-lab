@@ -58,8 +58,10 @@ def findings() -> list[str]:
     found: list[str] = []
     for path in tracked():
         try:
-            text = (ROOT / path).read_text(encoding="utf-8")
-        except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
+            # errors="replace": a file that is not valid UTF-8 is still read, so
+            # a name cannot hide in one.
+            text = (ROOT / path).read_text(encoding="utf-8", errors="replace")
+        except (FileNotFoundError, IsADirectoryError):
             continue
         for number, line in enumerate(text.splitlines(), 1):
             for pattern, what in ((HOSTED, "names the hosted service"), (CONSTANT, "declares a default-server constant")):

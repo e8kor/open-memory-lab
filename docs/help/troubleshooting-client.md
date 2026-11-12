@@ -29,7 +29,7 @@ The other lines that name a missing or shared server:
 - **`plugin : warn plugin_no_server`**: the plugin has a key and no `url`, so its tools reach no server. Set `url` with `oml setup claude-code --url <server>` or `claude plugin configure oml@open-memory-lab`.
 - **`oauth : warn server_origin`** (an admin key): the server sets no `oauth.issuer`, so its pages cannot show agents the URL to set beside their keys. Set `oauth.issuer` ([configuration](../operations/configuration.md)).
 - **`sync : warn sync_shared_server`**: the server says it is shared and this clone holds no consent for it. Run `oml sync` once with `--allow-public-server` ([sync](../use/sync.md)).
-- **`sync : warn sync_consent_unbound`**: the clone holds the old `oml.allowPublicServer=true`, which names no server and is no longer read. Opt in once more against the server you mean.
+- **`sync : warn sync_consent_unbound`**: the clone holds the old `oml.allowPublicServer=true`, which names no server and is no longer read. Run `oml sync` once with `--allow-public-server` against the server you mean: it records that server's origin and removes the old value, and the line goes.
 - **`error: refused setup.no_server`** from `oml setup claude-code`: a key came without a URL off a terminal. Pass `--url` beside `--key-file`, or export `OML_URL` with `OML_API_KEY`.
 
 ## `oml login` fails
