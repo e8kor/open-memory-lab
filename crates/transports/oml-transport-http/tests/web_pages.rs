@@ -2625,3 +2625,101 @@ async fn whoami_tells_a_session_key_whether_it_carries_a_denial_and_no_other_key
         }
     }
 }
+
+/// A person whose `<user>-web` key carries a denial, on `universe`, on her
+/// root or on a workarea outside it, downloads the export she downloaded
+/// before: the same text, the same keys, a 200. The route reads nothing of the
+/// key's denials, as sign-out reads none, because the export serves what
+/// the person wrote in her own root and widens no access (ADR-0070 d2, the
+/// operator's decision of 2026-11-12; #335).
+#[tokio::test]
+async fn a_denied_session_key_still_downloads_its_export() {
+    for workarea in ["universe", "alice", "team"] {
+        let rig = rig().await;
+        let (cookie, _) = alice_with_a_memory(&rig).await;
+        let (status, before) = get_as_web(&rig, &cookie, "/v2/web/export").await;
+        assert_eq!(status, StatusCode::OK, "{before}");
+        assert_eq!(before["memories"].as_array().map(Vec::len), Some(1));
+        let (status, team) = as_admin(
+            &rig,
+            "/v2/workareas",
+            "team",
+            json!({"name": "team", "parent": "universe"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{team}");
+        let (status, denial) = as_admin(
+            &rig,
+            "/v2/keys/alice-web/denials",
+            "deny-alice-web",
+            json!({"workarea": workarea}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{workarea}: {denial}");
+        // The denial is on the key: the three key acts refuse it.
+        let (status, refused) = as_web(
+            &rig,
+            &cookie,
+            "web",
+            "/v2/keys",
+            json!({"name": "alice-tablet", "role": "writer", "connect_code": false}),
+        )
+        .await;
+        assert_session_key_denied(status, &refused, "issue_key");
+        let (status, mut after) = get_as_web(&rig, &cookie, "/v2/web/export").await;
+        assert_eq!(status, StatusCode::OK, "{workarea}: {after}");
+        let mut before = before;
+        for export in [&mut before, &mut after] {
+            export
+                .as_object_mut()
+                .expect("an object")
+                .remove("exported_at");
+        }
+        assert_eq!(after, before, "{workarea}: the export is what it was");
+    }
+}
+
+/// The same person files a deletion request: `web.deletion_requested`
+/// journals under the denied key, once, and the request is pending for the
+/// admin to close (ADR-0070 d2, the operator's decision of 2026-11-12; #335).
+#[tokio::test]
+async fn a_denied_session_key_still_files_its_deletion_request() {
+    for workarea in ["universe", "alice", "team"] {
+        let rig = rig().await;
+        let (cookie, _) = alice_with_a_memory(&rig).await;
+        let (status, team) = as_admin(
+            &rig,
+            "/v2/workareas",
+            "team",
+            json!({"name": "team", "parent": "universe"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{team}");
+        let (status, denial) = as_admin(
+            &rig,
+            "/v2/keys/alice-web/denials",
+            "deny-alice-web",
+            json!({"workarea": workarea}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{workarea}: {denial}");
+        let (status, asked) =
+            as_web(&rig, &cookie, "web", "/v2/web/deletion-requests", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{workarea}: {asked}");
+        let web = key_named(&rig, "alice-web").await.key_id;
+        let requested: Vec<_> = rig
+            .store
+            .events_range(rig.boot.tenant_id, 1, 1000)
+            .await
+            .expect("the chain")
+            .into_iter()
+            .filter(|e| e.envelope.event_type == "web.deletion_requested")
+            .collect();
+        assert_eq!(requested.len(), 1, "{workarea}: journalled once");
+        assert_eq!(
+            requested[0].envelope.api_key_id,
+            Some(web),
+            "{workarea}: under the denied session key"
+        );
+    }
+}

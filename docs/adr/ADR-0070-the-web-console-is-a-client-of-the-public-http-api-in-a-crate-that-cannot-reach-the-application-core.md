@@ -1,13 +1,13 @@
 <!--
 id: adr/ADR-0070-the-web-console-is-a-client-of-the-public-http-api-in-a-crate-that-cannot-reach-the-application-core
 tier: engineering
-status: accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325) and the three on sign-out (#327) were accepted on 2026-11-12
+status: accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335) and the three on sign-out (#327) were accepted on 2026-11-12
 answers: why the web pages stop calling oml-app's use cases and call the public HTTP API instead; which crate serves the pages and what it may depend on; how a signed-in person's session becomes an API credential without a key value at rest or in the browser; which middleware layer owns the request id, the session, CSRF, CSP, rate limits, audit and error mapping; how oml-web, always its own process, reaches the API; which existing operation serves each web call and which operations are new; what stays in the auth context; the bounded contexts; the migration phases and the test that proves parity; the overhead budget; what it amends in ADR-0042 and ADR-0045
 -->
 
 # ADR-0070 — The web console is a client of the public HTTP API, in a crate that cannot reach the application core
 
-**Status:** accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325) and the three on sign-out (#327) were accepted on 2026-11-12
+**Status:** accepted design · 2026-11-07, amended 2026-11-10, 2026-11-11 and 2026-11-12; two rows await the operator's acceptance: the in-flight cap and the rate share (the measurement of 2026-11-11); the two rows on the session gate, the two on a denied session key's acts (#325), the one that keeps its export and deletion request open (#335) and the three on sign-out (#327) were accepted on 2026-11-12
 
 **Amends:** ADR-0045 (d1: the page routes move to `oml-web` and the sign-in routes to the auth
 context; d6: a session key gains a per-session credential; d7: that credential, never the
@@ -51,7 +51,9 @@ re-measurement (#286; d8 revised): see
 reads (#297; d2 and d8 revised): see
 [The session gate's reads](#the-session-gates-reads-2026-11-12-297). Amended on 2026-11-12, and
 accepted by the operator the same day: a denied session key's acts (#325; d2 and d8 revised): see
-[A denied session key's acts](#a-denied-session-keys-acts-2026-11-12-325); and sign-out on every
+[A denied session key's acts](#a-denied-session-keys-acts-2026-11-12-325), which also holds, by the
+operator's decision, that the export and the deletion request stay open to that key (#335; d2
+revised); and sign-out on every
 page (#327; d2, d3 layer 4 and d5 revised): see
 [Sign-out on every page](#sign-out-on-every-page-2026-11-12-327).
 
@@ -899,7 +901,9 @@ The operator decided on 2026-11-12 that
 [#325](https://github.com/e8kor/open-memory-lab/issues/325) is fixed in v0.7.3. The two rows below
 are as built, and the operator accepted both on 2026-11-12, with what they state: any denial
 refuses, and for good; the end of the session stays open to a denied key; and each of the three
-key acts reads the chain head before the key's access.
+key acts reads the chain head before the key's access. A third row, below the tests, records the
+operator's decision of the same day that the export and the deletion request stay open to a
+denied key as well.
 
 The audit of this record found four acts of a session key that acted as the caller the gate built
 and consulted none of the key's grants or denials (the table of #297 above). A `<user>-web` key an
@@ -924,10 +928,20 @@ which denies the key on a workarea outside the person's root,
 `a_cut_off_persons_key_acts_are_refused_on_the_page_as_the_api_refuses_them`, which holds each
 page's status, code and message equal to the API's.
 
-Not decided here: a denied `<user>-web` still asks for the person's deletion
-(`POST /v2/web/deletion-requests`) and reads their export (`GET /v2/web/export`), by reading the
-code; #325 names neither, and [#335](https://github.com/e8kor/open-memory-lab/issues/335) asks
-whether a cut-off key keeps them.
+Decided by the operator on 2026-11-12, accepted (#335), and not proposed: the operator decided it
+directly, on the question this section left open.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d2 | a denied `<user>-web` still asked for the person's deletion (`POST /v2/web/deletion-requests`) and read their export (`GET /v2/web/export`), by reading the code: neither reads the key's grants or denials, and whether that should stay was not decided | both stay open to a session key that carries a denial, on any workarea, as the end of the session does: the export answers `200` with what it served before the denial, and the deletion request journals `web.deletion_requested` under the denied key. The Start page draws the export link and the deletion form for a denied person, and the sentence the Keys and Start pages show a denied person names both, with sign-out, as still working | they widen no access: the export serves what the person already wrote in their own root, and the deletion request asks for less. The privacy page promises both, and a person an admin cut off would otherwise have no way to take their memories out or to ask for their account to end. Rejected, both put to the operator: keep the deletion request and refuse the export, which withholds data the privacy page promises the person and holds back no access in return; and refuse both, which leaves a cut-off person unable to leave. The operator chose keeping both ("Keep both") |
+
+Tests, each over the lead's router: `a_denied_session_key_still_downloads_its_export` (a denial on
+`universe`, on the person's root and on a workarea outside it; the export is the same, apart from
+its `exported_at`, as before the denial) and `a_denied_session_key_still_files_its_deletion_request`
+in `crates/transports/oml-transport-http/tests/web_pages.rs`; and through `oml-web`,
+`a_denied_person_still_exports_and_requests_deletion_from_the_start_page`, which downloads the
+export and files the request from the Start page. Each fails if the refusal of the three key acts
+is added to the route.
 
 ## Sign-out on every page (2026-11-12, #327)
 

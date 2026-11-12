@@ -5552,6 +5552,85 @@ async fn a_denied_persons_keys_and_start_pages_state_the_refusal_and_draw_no_key
     }
 }
 
+/// A person whose `<user>-web` key carries a denial, on `universe`, on
+/// their root or on a workarea outside it, still downloads their export from
+/// the Start page and still files a deletion request from its form: the
+/// download is what it was before the denial, and `web.deletion_requested`
+/// journals under the denied key (ADR-0070 d2, the operator's decision of
+/// 2026-11-12; #335).
+#[tokio::test]
+async fn a_denied_person_still_exports_and_requests_deletion_from_the_start_page() {
+    for target in ["universe", "alice", "team"] {
+        let rig = rig().await;
+        let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+        let value = laptop_key(&rig, &cookie).await;
+        agent_writes(&rig, &value, "a kestrel the export keeps").await;
+        issuer_app(&rig)
+            .create_workarea(
+                &rig.boot.admin_key.value,
+                &Name::parse("team").expect("a name"),
+                Some(rig.boot.root_workarea_id.into()),
+                None,
+            )
+            .await
+            .expect("a workarea outside alice's root");
+        let exported = |body: &str| {
+            let mut export: Value = serde_json::from_str(body).expect("an export");
+            export
+                .as_object_mut()
+                .expect("an object")
+                .remove("exported_at");
+            export
+        };
+        let (status, _, body) = send(&rig.router, get("/web/start/export", Some(&cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{target}: {body}");
+        let before = exported(&body);
+        let name = |name: &str| oml_app::domain::name::Reference::Name(Name::parse(name).unwrap());
+        rig.app
+            .deny_key(&rig.boot.admin_key.value, name("alice-web"), name(target))
+            .await
+            .expect("the admin denies alice-web");
+        let (status, headers, body) =
+            send(&rig.router, get("/web/start/export", Some(&cookie))).await;
+        assert_eq!(status, StatusCode::OK, "{target}: {body}");
+        assert!(
+            headers[header::CONTENT_DISPOSITION]
+                .to_str()
+                .unwrap()
+                .starts_with("attachment"),
+        );
+        assert!(
+            body.contains("a kestrel the export keeps"),
+            "{target}: {body}"
+        );
+        assert_eq!(
+            exported(&body),
+            before,
+            "{target}: the export is what it was"
+        );
+        let (status, headers, body) = act(
+            &rig,
+            &cookie,
+            "/web/start",
+            &[("action", "request_deletion"), ("confirm", "delete")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{target}: {body}");
+        assert_eq!(headers[header::LOCATION], "/web/start?done=requested");
+        let web = key_named(&rig, "alice-web").await.key_id;
+        let requested: Vec<_> = rig
+            .store
+            .events_range(rig.boot.tenant_id, 1, 1000)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.envelope.event_type == "web.deletion_requested")
+            .collect();
+        assert_eq!(requested.len(), 1, "{target}: journalled once");
+        assert_eq!(requested[0].envelope.api_key_id, Some(web), "{target}");
+    }
+}
+
 #[tokio::test]
 async fn the_old_review_and_keys_urls_are_not_found_and_their_acts_run_nothing() {
     // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
