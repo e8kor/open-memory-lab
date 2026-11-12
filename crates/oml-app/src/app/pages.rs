@@ -465,13 +465,17 @@ where
     /// `<user>-web`; with `connector`, a connector key and its connect code.
     /// Issuance never amplifies authority: `<user>-web` holds writer there, and
     /// the key it issues holds no more, so a `<user>-web` that carries a
-    /// denial issues none (#325).
+    /// denial issues none (#325). The person may end the key on a date,
+    /// `expiry`, later than now as at every issuance; the key takes no rate
+    /// of its own here, and the date changes afterwards only by an admin key
+    /// (ADR-0079 d1, d5, the operator's answer 3).
     pub async fn issue_own_key(
         &self,
         web: &Caller,
         suffix: &str,
         role: Role,
         connector: bool,
+        expiry: Option<EventTime>,
     ) -> Result<IssuedKey, AppError> {
         let (web, head) = &self.undenied(web, "issue_key").await?;
         let user_name = self.web_user_of(web).await?;
@@ -517,7 +521,7 @@ where
             grants,
             connect_code: connector,
             user: Some(user_name),
-            expiry: None,
+            expiry,
             requests_per_minute: None,
         };
         self.issue_key_by(&web.key, &req, Issuance::PersonsOwn(head))

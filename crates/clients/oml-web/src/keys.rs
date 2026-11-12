@@ -92,6 +92,18 @@ pub(crate) fn denied(session: &Session) -> bool {
     session.whoami.denied == Some(true)
 }
 
+/// The one optional input of a person's issue form: the day the key ends,
+/// which a browser sends as `YYYY-MM-DD` with no script. The label names
+/// the instant, so no zone is left to guess (ADR-0079 d1, the operator's
+/// answer 3).
+const EXPIRES_INPUT: &str = r#"<label>Key expires (optional; end of that day, UTC)<input type="date" name="expires"></label>"#;
+
+/// What the form's day becomes: its last second in UTC.
+const END_OF_DAY: &str = "T23:59:59Z";
+
+/// The line beside the input: a person sets the date once (ADR-0079 d5).
+const EXPIRES_NOTE: &str = "A key's expiry date is optional; only an admin can change it later.";
+
 /// The notice a `done` the view's own acts name shows; any other is none.
 fn notice(done: Option<&str>) -> Option<&'static str> {
     match done? {
@@ -485,7 +497,7 @@ async fn user_view(
             action,
             &csrf,
             &format!(
-                "{}{}{}",
+                "{}{}{EXPIRES_INPUT}{}",
                 input("name", &format!("name, after {prefix}"), "", true),
                 select(
                     "role",
@@ -500,7 +512,7 @@ async fn user_view(
     };
     let _ = write!(
         body,
-        "<h2>Agent key</h2><p class=\"desc\">Your workarea only. The value is shown once.</p>{}<h2>Connector key</h2><p class=\"desc\">For Claude on the web or a phone; its connect code is shown once.</p>{}",
+        "<h2>Agent key</h2><p class=\"desc\">Your workarea only. The value is shown once. {EXPIRES_NOTE}</p>{}<h2>Connector key</h2><p class=\"desc\">For Claude on the web or a phone; its connect code is shown once. {EXPIRES_NOTE}</p>{}",
         issue("issue_key", "Issue key", true),
         issue("connect_key", "Issue connector key", false)
     );
@@ -577,7 +589,7 @@ pub async fn admin_page(
 /// `user`.
 fn defined(side: Side, action: &str, name: &str) -> bool {
     match action {
-        "issue_key" | "connect_key" => matches!(name, "name" | "role"),
+        "issue_key" | "connect_key" => matches!(name, "name" | "role" | "expires"),
         "cut_off" => matches!(name, "key" | "confirm") || (side == Side::Admin && name == "user"),
         _ => name == "key",
     }
@@ -717,7 +729,17 @@ async fn act(
             let user = session.whoami.user.as_ref().map_or("", |u| u.name.as_str());
             let name = format!("{user}-{}", fields.given("name").unwrap_or_default());
             let connector = action == "connect_key";
-            match web.api.issue_key(&call, &key, &name, role, connector).await {
+            // The form's date is the end of that day in UTC. The API judges
+            // the instant, so a value that is no date, or a day that has
+            // passed, is refused by it and shown as it answers (ADR-0079 d1).
+            let expiry = fields
+                .given("expires")
+                .map(|day| format!("{day}{END_OF_DAY}"));
+            match web
+                .api
+                .issue_key(&call, &key, &name, role, connector, expiry.as_deref())
+                .await
+            {
                 // A replay, which shows neither: the first answer's cookie
                 // holds the secret, and this one sets none over it.
                 Ok(issued) if issued.replayed() => return acts::see_other(USER_KEYS_PATH, &[]),

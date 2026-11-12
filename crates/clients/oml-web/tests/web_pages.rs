@@ -5408,6 +5408,117 @@ const KEY_FORMS: [&str; 7] = [
     r#"value="issue_other""#,
 ];
 
+/// A person sets a date on a key they issue from the Keys page: each of the
+/// two issue forms has one optional date input, sent as the end of that day
+/// in UTC, and the key's row then shows the expiry the API serves. A date
+/// that has passed and a value that is no date are refused on the page as
+/// the API refuses them, by its status, code and message, and issue no key.
+/// The Start page's one-button issue has no such input (ADR-0079 d1, the
+/// operator's answer 3; #352).
+#[tokio::test]
+async fn a_person_issues_a_key_with_an_expiry_date_from_the_keys_page() {
+    let rig = rig().await;
+    let cookie = signed_in(&rig, "sub-1", EMAIL).await;
+    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(
+        page.matches(r#"<input type="date" name="expires">"#)
+            .count(),
+        2,
+        "one optional date input on each issue form: {page}"
+    );
+    assert_eq!(
+        page.matches("only an admin can change it later").count(),
+        2,
+        "{page}"
+    );
+    let start = start_pages(&rig, &cookie).await;
+    assert!(!start.contains(r#"name="expires""#), "{start}");
+
+    // Refused as the API refuses the instant the page sends.
+    let head = rig.head().await;
+    for (day, name) in [("2026-10-28", "past"), ("tomorrow", "nodate")] {
+        let (api_status, refusal) = api_as_web(
+            &rig,
+            &cookie,
+            "/v2/keys",
+            json!({
+                "name": format!("alice-{name}"),
+                "role": "writer",
+                "connect_code": false,
+                "expiry": format!("{day}T23:59:59Z"),
+            }),
+        )
+        .await;
+        assert_eq!(api_status, StatusCode::BAD_REQUEST, "{day}: {refusal}");
+        assert_eq!(refusal["error"]["code"], "request.validation", "{refusal}");
+        assert_eq!(refusal["error"]["details"]["field"], "/expiry", "{refusal}");
+        let message = refusal["error"]["message"].as_str().expect("a message");
+        for action in ["issue_key", "connect_key"] {
+            let (status, _, page) = act(
+                &rig,
+                &cookie,
+                "/web/keys",
+                &[
+                    ("action", action),
+                    ("name", name),
+                    ("role", "writer"),
+                    ("expires", day),
+                ],
+            )
+            .await;
+            assert_eq!(status, api_status, "{action} {day}: {page}");
+            assert!(
+                page.contains(&format!("request.validation: {message}")),
+                "{action} {day}: the page names the API's code and message: {page}"
+            );
+        }
+    }
+    assert_eq!(rig.head().await, head, "nothing journalled");
+
+    // Issued with a date: the row shows the expiry `GET /v2/keys` serves,
+    // the end of that day in UTC; without one, no date.
+    for (action, name, day) in [
+        ("issue_key", "laptop", "2026-10-29"),
+        ("connect_key", "phone", "2999-01-01"),
+        ("issue_key", "tablet", ""),
+    ] {
+        let (status, _, body) = act(
+            &rig,
+            &cookie,
+            "/web/keys",
+            &[
+                ("action", action),
+                ("name", name),
+                ("role", "writer"),
+                ("expires", day),
+            ],
+        )
+        .await;
+        assert_eq!(status, StatusCode::SEE_OTHER, "{action} {name}: {body}");
+    }
+    let items = api_keys(&rig, &cookie, "web", "").await;
+    let expiry_of = |name: &str| {
+        items
+            .iter()
+            .find(|k| k["name"] == name)
+            .unwrap_or_else(|| panic!("no key {name}: {items:?}"))["expiry"]
+            .clone()
+    };
+    assert_eq!(expiry_of("alice-laptop"), "2026-10-29T23:59:59.000000Z");
+    assert_eq!(expiry_of("alice-phone"), "2999-01-01T23:59:59.000000Z");
+    assert_eq!(expiry_of("alice-tablet"), Value::Null);
+    let (status, _, page) = send(&rig.router, get("/web/keys", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_rows_equal_the_api(&page, &items);
+    for key in ["alice-past", "alice-nodate"] {
+        assert!(
+            items.iter().all(|k| k["name"] != key),
+            "no key {key}: {items:?}"
+        );
+    }
+}
+
 /// The Start page as it is drawn with no client chosen and for each of its
 /// three clients, one after another.
 async fn start_pages(rig: &Rig, cookie: &str) -> String {

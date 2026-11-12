@@ -322,7 +322,7 @@ Built in phases (a) to (d), 2026-11-10 to 2026-11-11; the records below say how.
     record leaves the claim, which a resubmission answers `idempotency.in_progress` rather
     than acting again (#233, the table of 2026-11-11 below). The three key operations of the table above serve a
     session key through the page's own use case: `POST /v2/keys` as `<user>-web` is
-    `web_issue_key` (name, role and `connect_code` only), `POST /v2/keys/{key}/connect-codes`
+    `web_issue_key` (name, role and `connect_code` only; from v0.7.3 also an optional `expiry`, [ADR-0079](ADR-0079-a-key-ends-on-a-date-and-is-held-to-a-request-rate-both-set-at-issuance-and-changed-only-by-an-admin-key-that-is-not-the-key-itself.md) d1 and the operator's answer 3), `POST /v2/keys/{key}/connect-codes`
     as `<user>-web` is `web_connect_code`, and `POST /v2/keys/{key}/denials` as `<user>-web`
     or `<user>-admin` is `web_cut_off`, on `universe` alone. Five of the ten (#2, #3, #8, #9, #10) need the admin key role; #1 needs it for any
     user but the caller's own. #3 is one operation for two acts because both are one job: an

@@ -1565,29 +1565,39 @@ async fn a_session_key_has_no_value_and_no_connect_code() {
     assert!(format!("{refused:?}").contains("SessionKey"), "{refused:?}");
 }
 
-/// A person's own issuance sets no limit: `POST /v2/keys` as `<user>-web`
-/// with `expiry` or `requests_per_minute` is `request.validation` naming
-/// the member, journals nothing and issues no key; a date or a rate on a
-/// person's key is an admin key's to set (ADR-0079 d1, open question 3;
-/// ADR-0045 d9).
+/// A person's own issuance sets the key's expiry and nothing else of its
+/// limits: `POST /v2/keys` as `<user>-web` with `expiry` issues a key that
+/// carries the date, under the rule of every issuance, so a bare date or an
+/// instant that is not later than the server's clock is `request.validation`
+/// naming `/expiry`; `requests_per_minute` is still `request.validation`
+/// naming the member. A refusal journals nothing and issues no key. Changing
+/// or clearing the date afterwards stays with the admin key role: the
+/// person's session key is refused the limits route (ADR-0079 d1, d5, the
+/// operator's answer 3; ADR-0045 d9).
 #[tokio::test]
-async fn a_persons_own_issuance_takes_no_expiry_and_no_rate() {
+async fn a_persons_own_issuance_takes_an_expiry_and_no_rate() {
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let head = rig.head().await;
     for (member, value) in [
-        ("expiry", json!("2999-01-01T00:00:00Z")),
         ("requests_per_minute", json!(60)),
+        ("expiry", json!("2999-01-01")),
+        ("expiry", json!("2999-01-01T00:00:00")),
+        ("expiry", json!("2000-01-01T00:00:00Z")),
     ] {
         let mut body = json!({"name": "alice-laptop", "role": "writer", "connect_code": false});
-        body[member] = value;
+        body[member] = value.clone();
         let (status, answer) = as_web(&rig, &cookie, "web", "/v2/keys", body).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{member}: {answer}");
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{member} {value}: {answer}"
+        );
         assert_eq!(answer["error"]["code"], "request.validation", "{answer}");
         assert_eq!(
-            answer["error"]["details"],
-            json!({ "field": format!("/{member}") }),
-            "{answer}"
+            answer["error"]["details"]["field"],
+            format!("/{member}"),
+            "{value}: {answer}"
         );
     }
     assert_eq!(rig.head().await, head, "nothing journalled");
@@ -1602,9 +1612,65 @@ async fn a_persons_own_issuance_takes_no_expiry_and_no_rate() {
         .expect("a lookup");
     assert_eq!(named, None, "no key was issued");
 
-    // The same issuance without a limit is the person's to make.
-    let _ = issued(&rig, &cookie, "laptop").await;
-    let key = key_named(&rig, "alice-laptop").await;
+    // With a date later than now the key is issued and carries it, for a
+    // key with a value and for a connector key alike.
+    for (name, connect_code) in [("alice-laptop", false), ("alice-phone", true)] {
+        let (status, key) = as_web(
+            &rig,
+            &cookie,
+            "web",
+            "/v2/keys",
+            json!({
+                "name": name,
+                "role": "writer",
+                "connect_code": connect_code,
+                "expiry": "2999-01-01T00:00:00+01:00",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{name}: {key}");
+        assert_eq!(key["expiry"], "2998-12-31T23:00:00.000000Z", "{key}");
+        assert_eq!(key["requests_per_minute"], Value::Null, "{key}");
+        let record = key_named(&rig, name).await;
+        assert_eq!(
+            (
+                record.expiry.as_ref().map(|at| at.as_str().to_owned()),
+                record.requests_per_minute
+            ),
+            (Some("2998-12-31T23:00:00.000000Z".to_owned()), None),
+            "{name}"
+        );
+    }
+
+    // The date is the admin key role's to change: the person's session key
+    // is refused, whether it moves the date or clears it, and the date stays.
+    let head = rig.head().await;
+    for change in [
+        json!({"expiry": null}),
+        json!({"expiry": "3000-01-01T00:00:00Z"}),
+    ] {
+        let (status, answer) = as_web(
+            &rig,
+            &cookie,
+            "web",
+            "/v2/keys/alice-laptop/limits",
+            change.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{change}: {answer}");
+        assert_eq!(answer["error"]["code"], "access.verb_ceiling", "{answer}");
+    }
+    assert_eq!(rig.head().await, head, "nothing journalled");
+    let record = key_named(&rig, "alice-laptop").await;
+    assert_eq!(
+        record.expiry.as_ref().map(|at| at.as_str()),
+        Some("2998-12-31T23:00:00.000000Z")
+    );
+
+    // An issuance without a date is still the person's to make, and its
+    // key does not expire.
+    let _ = issued(&rig, &cookie, "tablet").await;
+    let key = key_named(&rig, "alice-tablet").await;
     assert_eq!((key.expiry, key.requests_per_minute), (None, None));
 }
 

@@ -518,6 +518,9 @@ pub async fn act(
                 &name,
                 "writer",
                 client == Client::ClaudeAi,
+                // The one-button issue sets no date: the Keys page's forms
+                // take one (ADR-0079, the operator's answer 3).
+                None,
             )
             .await;
         match issued {

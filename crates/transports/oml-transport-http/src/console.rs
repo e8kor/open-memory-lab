@@ -28,9 +28,9 @@ use oml_app::types::{AppError, Bearer, Credential, GrantRecord};
 use crate::error::{ApiError, ErrorContext, map_app_error};
 use crate::traffic::Rid;
 use crate::{
-    ApiState, KeyIssueBody, PAGE_LIMIT_DEFAULT, acting, connect_code_json, denial_json, finish,
-    idempotency_key, json_response, key_issued_json, page_limit, parse_json, parse_role, reference,
-    retry_chain, session,
+    ApiState, KeyIssueBody, PAGE_LIMIT_DEFAULT, acting, connect_code_json, denial_json,
+    expiry_instant, finish, idempotency_key, json_response, key_issued_json, page_limit,
+    parse_json, parse_role, reference, retry_chain, session,
 };
 
 /// The most workareas one capacities request names.
@@ -1229,9 +1229,11 @@ where
 
     /// `POST /v2/keys` as `<user>-web`: the person's own issuance, a reader
     /// or writer key named `<user>-<suffix>` on their root, its grants the
-    /// use case's, never the body's; every other field is refused naming
-    /// it. Any other session capacity is `session_capacity` (ADR-0070 d2,
-    /// d5; ADR-0045 d9, d16).
+    /// use case's, never the body's. The person may set the key's `expiry`,
+    /// under the rule of every issuance (ADR-0079 d1, the operator's answer
+    /// 3); every other field, `requests_per_minute` included, is refused
+    /// naming it. Any other session capacity is `session_capacity`
+    /// (ADR-0070 d2, d5; ADR-0045 d9, d16).
     ///
     /// A resubmission under the same `Idempotency-Key` and body replays the
     /// answer without the value or the connect code, which are shown once
@@ -1247,12 +1249,15 @@ where
         if !is_web_session_key(&caller) {
             return Err(session_capacity(&caller, "issue_key"));
         }
+        // An RFC 3339 instant with its offset; the use case refuses one
+        // that is not later than now (ADR-0079 d1).
+        let expiry = req.expiry.as_deref().map(expiry_instant).transpose()?;
         let digest = act_digest("", body);
         let claim = match st.claim(&caller, "keys.issue", idem, &digest).await? {
             Claimed::Replayed(replayed) => return Ok(replayed),
             Claimed::Act(claim) => claim,
         };
-        let set: [(&str, bool); 11] = [
+        let set: [(&str, bool); 10] = [
             ("/grants", !req.grants.is_empty()),
             ("/label", req.label.is_some()),
             ("/principal", req.principal.is_some()),
@@ -1262,12 +1267,11 @@ where
             ("/user", req.user.is_some()),
             ("/guardrail_scope", req.guardrail_scope.is_some()),
             ("/profile", req.profile.is_some() || req.tenant.is_some()),
-            ("/expiry", req.expiry.is_some()),
             ("/requests_per_minute", req.requests_per_minute.is_some()),
         ];
         if let Some((field, _)) = set.iter().find(|(_, set)| *set) {
             return Err(ApiError::validation(format!(
-                "{field} is the person's own issuance's to set: send name, role and connect_code"
+                "{field} is the person's own issuance's to set: send name, role, connect_code and, to end the key on a date, expiry"
             ))
             .with_details(json!({ "field": field })));
         }
@@ -1290,18 +1294,18 @@ where
         let st = st.clone();
         claim
             .run(async move {
-                let issued =
-                    retry_chain(|| st.app.issue_own_key(&caller, &suffix, role, connect_code))
-                        .await
-                        .map_err(|e| {
-                            ActFailure::first(match e {
-                                AppError::WebField { field, message } => {
-                                    ApiError::validation(message)
-                                        .with_details(json!({ "field": format!("/{field}") }))
-                                }
-                                e => map_app_error(e, ErrorContext::Write),
-                            })
-                        })?;
+                let issued = retry_chain(|| {
+                    st.app
+                        .issue_own_key(&caller, &suffix, role, connect_code, expiry.clone())
+                })
+                .await
+                .map_err(|e| {
+                    ActFailure::first(match e {
+                        AppError::WebField { field, message } => ApiError::validation(message)
+                            .with_details(json!({ "field": format!("/{field}") })),
+                        e => map_app_error(e, ErrorContext::Write),
+                    })
+                })?;
                 let answer = key_issued_json(&issued, None);
                 let kept = without_secrets(&answer);
                 Ok(Acted {
