@@ -2627,7 +2627,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        bearer(headers)?;
         let idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
         let req: ConnectCodeBody = if body.is_empty() {
@@ -2652,6 +2652,8 @@ where
         // A resubmission replays the answer without the code, which is
         // shown once, and mints none: a second code would void the first
         // (ADR-0031 d7; #233).
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253, #281).
         let caller = st.console_caller(headers).await?;
         let digest = console::act_digest(key_id, body);
         let claim = match st
@@ -2666,8 +2668,11 @@ where
         claim
             .run(async move {
                 let code = retry_chain(|| {
-                    st.app
-                        .mint_connect_code_with_ttl(&token, key.clone(), ttl_seconds)
+                    st.app.mint_connect_code_with_ttl(
+                        Bearer::Session(&caller),
+                        key.clone(),
+                        ttl_seconds,
+                    )
                 })
                 .await
                 .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;

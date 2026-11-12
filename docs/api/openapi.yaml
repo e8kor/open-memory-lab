@@ -3125,7 +3125,7 @@ components:
         workarea_path: { type: string }
         text: { type: string }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail], description: "The kind the version was written as; the admin page refuses to supersede or retire a guardrail by it (ADR-0037 d17; ADR-0070 d5). Since v0.7.0." }
-        key: { type: string, description: The authoring key's name. }
+        key: { type: [string, 'null'], description: "The authoring key's name; null for a key that has no name, which key_id names (ADR-0070 d5)." }
         key_id: { type: string, description: "The authoring key's id, which names a key that has no name (ADR-0070 d5). Since v0.7.0." }
         principal: { type: [string, 'null'] }
         user: { type: [string, 'null'] }

@@ -292,6 +292,177 @@ async fn a_creation_replays_under_the_same_key_and_request_and_refuses_the_key_o
     assert!(root.iter().all(|n| n.name.as_str() != "other"), "{root:?}");
 }
 
+// -- each act costs one request of the person's rate (#253, #281) ---------
+
+/// ann, a person of the sign-up tenant at one request a minute: her root
+/// `universe.ann` → `proj` and `draft`, her dreamer key on both, and the
+/// router over an app with sign-up on and a clock that never leaves its
+/// minute, so each test spends one window (ADR-0068 d5).
+async fn world_at_one_request_a_minute() -> World {
+    let store = MemStore::new();
+    let app = app(&store);
+    let boot = app
+        .bootstrap_tenant(&BootstrapRequest {
+            tenant_name: name("acme"),
+            admin_key_name: name("acme-admin"),
+            admin_principal: "acme-admin".to_owned(),
+        })
+        .await
+        .expect("bootstrap");
+    let admin = boot.admin_key.value.clone();
+    let person_key = |key_name: &str, grants: Vec<GrantRequest>| IssueKeyRequest {
+        profile: None,
+        role: Role::Dreamer,
+        name: name(key_name),
+        principal: "ann".to_owned(),
+        held_by: Some(HeldBy::Human),
+        default_workarea: None,
+        crew: None,
+        grants,
+        connect_code: false,
+        user: Some(name("ann")),
+        guardrail_scope: None,
+    };
+    // The first key naming ann creates her root (ADR-0044 d3).
+    let first = app
+        .issue_key(&admin, &person_key("ann-first", Vec::new()))
+        .await
+        .expect("ann's first key");
+    let root = store
+        .key(boot.tenant_id, first.key_id)
+        .await
+        .unwrap()
+        .and_then(|k| k.user)
+        .expect("ann's root");
+    let mut nodes = Vec::new();
+    for n in ["proj", "draft"] {
+        nodes.push(
+            app.create_workarea(&admin, &name(n), Some(root.into()), None)
+                .await
+                .expect("a workarea")
+                .workarea
+                .workarea_id,
+        );
+    }
+    let grants = nodes
+        .iter()
+        .flat_map(|node| {
+            [Role::Dreamer, Role::Reader].map(|role| GrantRequest {
+                node: (*node).into(),
+                role,
+                deny: Vec::new(),
+                covers: Covers::Subtree,
+            })
+        })
+        .collect();
+    let ann = app
+        .issue_key(&admin, &person_key("ann-review", grants))
+        .await
+        .expect("ann's key")
+        .value;
+    let app = app.with_signup(oml_app::types::SignupPolicy {
+        mode: oml_app::domain::signup::SignupMode::Allowlist,
+        tenant_id: boot.tenant_id,
+        issuer: name("acme-admin"),
+        terms_version: "2026-11-06".to_owned(),
+        terms_url: "https://oml.example.com/terms".to_owned(),
+        privacy_url: "https://oml.example.com/privacy".to_owned(),
+        per_ip_per_hour: 10,
+        quotas: oml_app::domain::signup::Quotas {
+            requests_per_minute: 1,
+            ..oml_app::domain::signup::Quotas::default()
+        },
+    });
+    World {
+        router: state(&store, app).into_router(),
+        tenant: boot.tenant_id,
+        store,
+        admin,
+        ann,
+        proj: nodes[0],
+        draft: nodes[1],
+    }
+}
+
+/// ann's next request in the minute is refused `limit.rate`: her one
+/// request was spent, and spent once.
+async fn the_minute_is_spent(w: &World) {
+    let (status, _, refused) = send(
+        &w.router,
+        &format!("/v2/workareas/{}/mode", w.draft),
+        &w.ann,
+        "spent",
+        Some(json!({"mode": "standard"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{refused}");
+    assert_eq!(refused["error"]["code"], "limit.rate", "{refused}");
+}
+
+/// A proposal resolves its caller once, so at one request a minute the
+/// person's first request proposes (#253).
+#[tokio::test]
+async fn a_proposal_by_a_persons_key_costs_one_request_of_its_rate() {
+    let w = world_at_one_request_a_minute().await;
+    let path = format!("/v2/workareas/{}/transitions", w.proj);
+    let (status, _, proposal) = send(
+        &w.router,
+        &path,
+        &w.ann,
+        "p-1",
+        Some(json!({"to": "committed"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
+    the_minute_is_spent(&w).await;
+}
+
+/// A ratification resolves its caller once, so at one request a minute
+/// the person's first request ratifies (#253).
+#[tokio::test]
+async fn a_ratification_by_a_persons_key_costs_one_request_of_its_rate() {
+    let w = world_at_one_request_a_minute().await;
+    let propose = format!("/v2/workareas/{}/transitions", w.proj);
+    let (status, _, proposal) = send(
+        &w.router,
+        &propose,
+        &w.admin,
+        "p-1",
+        Some(json!({"to": "committed"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{proposal}");
+    let id = proposal["transition_id"].as_str().expect("an id");
+    let (status, _, ratified) = send(
+        &w.router,
+        &format!("/v2/workareas/{}/transitions/{id}/ratify", w.proj),
+        &w.ann,
+        "r-1",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ratified}");
+    the_minute_is_spent(&w).await;
+}
+
+/// A mode change resolves its caller once, so at one request a minute the
+/// person's first request sets the mode (#253).
+#[tokio::test]
+async fn a_mode_change_by_a_persons_key_costs_one_request_of_its_rate() {
+    let w = world_at_one_request_a_minute().await;
+    let path = format!("/v2/workareas/{}/mode", w.draft);
+    let (status, _, set) = send(
+        &w.router,
+        &path,
+        &w.ann,
+        "m-1",
+        Some(json!({"mode": "in_progress"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{set}");
+    the_minute_is_spent(&w).await;
+}
+
 // -- the claim an act takes on its key before it acts (#233) ---------------
 
 /// The claim scope and request digest `POST /v2/workareas` takes for
