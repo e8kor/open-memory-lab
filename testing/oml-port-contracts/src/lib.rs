@@ -46,13 +46,13 @@ use oml_app::search::{
     Retrieved, RetrieverKind, SparsePending,
 };
 use oml_app::types::{
-    AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord, ClaimEdgeSelection,
-    ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant, ConnectOutcome,
-    ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching, GrantRecord,
-    GuardrailFields, HeldFilter, HeldRow, KeyAccess, KeyRecord, ListingFilter, ListingPosition,
-    ListingScope, MemoryRecord, MintedToken, OAuthClientRecord, RefreshFacts, RefreshOutcome,
-    SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord, TransitionState, UnnamedRows,
-    WorkareaRecord,
+    Approval, AuthorizationRecord, BriefEdgeRecord, ClaimEdgePosition, ClaimEdgeRecord,
+    ClaimEdgeSelection, ClaimKeyState, ClientDescription, ClientKind, ConnectCode, ConnectGrant,
+    ConnectOutcome, ConnectionRecord, Credential, Crew, CrewRecord, DenialRecord, DocumentCaching,
+    GrantRecord, GuardrailFields, HeldFilter, HeldRow, KeyAccess, KeyRecord, ListingFilter,
+    ListingPosition, ListingScope, MemoryRecord, MintedToken, OAuthClientRecord, RefreshFacts,
+    RefreshOutcome, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
+    TransitionState, UnnamedRows, WorkareaRecord,
 };
 use oml_app::types::{FindingVerdict, FoundBy, VersionFinding};
 use serde_json::{Value, json};
@@ -82,6 +82,10 @@ pub struct ChainRig {
     n: u64,
     /// Whether the store created this rig's tenant partitions.
     partitioned: bool,
+    /// Whether the rig's store holds a schema before migration 0044, which
+    /// takes a promotion with no approval; every other store refuses one
+    /// (ADR-0077 d6).
+    before_approval: bool,
 }
 
 impl ChainRig {
@@ -94,7 +98,21 @@ impl ChainRig {
             head: None,
             n: 0,
             partitioned: false,
+            before_approval: false,
         }
+    }
+
+    /// This rig's store holds a schema before migration 0044: its
+    /// promotions carry no approval, as such a store takes them.
+    #[must_use]
+    pub fn before_approval(mut self) -> Self {
+        self.before_approval = true;
+        self
+    }
+
+    /// The approval a promotion through this rig carries.
+    fn approval(&self) -> Option<Box<Approval>> {
+        (!self.before_approval).then(fixture_approval)
     }
 
     fn at(n: u64) -> EventTime {
@@ -467,8 +485,20 @@ pub fn held_memory(
         anchor: None,
         origin_kind: None,
         source_check: None,
+        approval: None,
         format: Box::default(),
     }
+}
+
+/// An approving verdict for a law to store: a person's, at a fixed time
+/// (ADR-0077 d6).
+#[must_use]
+pub fn fixture_approval() -> Box<Approval> {
+    Box::new(Approval {
+        held_by: HeldBy::Human,
+        same_user: Some(false),
+        at: EventTime::parse("2026-10-29T14:00:00.000000Z").expect("fixture time"),
+    })
 }
 
 /// Commits `memory` held through the rig, enqueued for review.
@@ -501,7 +531,10 @@ async fn promote<S: JournalStore>(
         store,
         event_types::LIFECYCLE_PROMOTE,
         json!({ "artifact_id": memory_id.to_string() }),
-        MetadataFold::MemoryPromoted { memory_id },
+        MetadataFold::MemoryPromoted {
+            memory_id,
+            approval: rig.approval(),
+        },
         None,
     )
     .await
@@ -526,6 +559,7 @@ async fn supersede_tip<S: JournalStore>(
             successor,
             replaced,
             replaced_valid_until: None,
+            approval: rig.approval(),
         },
         None,
     )
@@ -849,7 +883,10 @@ pub async fn journal_memory_fold_and_lookup<S: JournalStore>(store: &S) {
         store,
         event_types::LIFECYCLE_PROMOTE,
         json!({ "artifact_id": memory_id.to_string() }),
-        MetadataFold::MemoryPromoted { memory_id },
+        MetadataFold::MemoryPromoted {
+            memory_id,
+            approval: rig.approval(),
+        },
         None,
     )
     .await
@@ -4622,6 +4659,7 @@ pub async fn a_chain_whose_ratification_loses_the_compare_and_set_journals_no_ve
                     successor: m.memory_id,
                     replaced: v1.memory_id,
                     replaced_valid_until: None,
+                    approval: Some(fixture_approval()),
                 },
             ),
         ]
@@ -7548,6 +7586,174 @@ pub async fn a_ratified_edge_between_a_memory_and_a_term_is_absent_from_the_rati
     );
 }
 
+/// A promotion stores the approving verdict that ratified the version on
+/// its row, read back exactly, a first version's and a successor's alike;
+/// a held version holds none, a successor's ratification leaves the
+/// replaced version's own approval as it was, and a promotion or a
+/// ratification sent with no approval is refused with
+/// [`StoreError::ApprovalMissing`], the version staying as it was (ADR-0077
+/// d6).
+pub async fn a_promotion_stores_the_approving_verdict_on_its_row_and_a_held_version_holds_none<
+    S: JournalStore,
+>(
+    store: &S,
+) {
+    let mut rig = ChainRig::new(477);
+    rig.seed_chain(store, 0).await;
+    let tenant = rig.tenant_id;
+    let wa = Uuid::from_u128(0xE2);
+    let key = Uuid::from_u128(0xE5);
+    let v1 = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0x7701),
+        "rita",
+        key,
+        "the api is at v3",
+    );
+    hold(&mut rig, store, v1.clone()).await.expect("hold v1");
+    let read = |id: Uuid| async move {
+        store
+            .memory(tenant, id)
+            .await
+            .expect("read")
+            .expect("the version")
+    };
+    assert_eq!(
+        read(v1.memory_id).await.approval,
+        None,
+        "a held version holds no approval"
+    );
+    let first = Box::new(Approval {
+        held_by: HeldBy::Agent,
+        same_user: Some(true),
+        at: EventTime::parse("2026-10-29T15:00:00.123456Z").expect("fixture time"),
+    });
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_PROMOTE,
+        json!({ "artifact_id": v1.memory_id.to_string() }),
+        MetadataFold::MemoryPromoted {
+            memory_id: v1.memory_id,
+            approval: Some(first.clone()),
+        },
+        None,
+    )
+    .await
+    .expect("promote v1");
+    assert_eq!(
+        read(v1.memory_id).await.approval,
+        Some(first.clone()),
+        "the promoted version reads back the verdict that ratified it"
+    );
+    let v2 = successor_of(&v1, Uuid::from_u128(0x7702), "the api is at v4", false);
+    hold(&mut rig, store, v2.clone()).await.expect("hold v2");
+    assert_eq!(
+        read(v2.memory_id).await.approval,
+        None,
+        "a held successor holds no approval"
+    );
+    rig.commit(
+        store,
+        event_types::LIFECYCLE_SUPERSEDE,
+        json!({
+            "new_artifact_id": v2.memory_id.to_string(),
+            "replaces_artifact_id": v1.memory_id.to_string(),
+        }),
+        MetadataFold::TipSuperseded {
+            successor: v2.memory_id,
+            replaced: v1.memory_id,
+            replaced_valid_until: None,
+            approval: Some(fixture_approval()),
+        },
+        None,
+    )
+    .await
+    .expect("ratify v2");
+    assert_eq!(
+        read(v2.memory_id).await.approval,
+        Some(fixture_approval()),
+        "the ratified successor reads back its own verdict"
+    );
+    assert_eq!(
+        read(v1.memory_id).await.approval,
+        Some(first),
+        "the replaced version keeps its own approval"
+    );
+    let listed = store
+        .memories(tenant, &[v1.memory_id, v2.memory_id])
+        .await
+        .expect("read both");
+    assert!(
+        listed.iter().all(|m| m.approval.is_some()),
+        "the set-wise read carries the approval as the single read does"
+    );
+    // A promotion that carries no approval is refused, and the version stays
+    // held; so is a ratification that carries none.
+    let bare = held_memory(
+        tenant,
+        wa,
+        Uuid::from_u128(0x7703),
+        "rita",
+        key,
+        "the api is versioned",
+    );
+    hold(&mut rig, store, bare.clone()).await.expect("hold");
+    let refused = rig
+        .commit(
+            store,
+            event_types::LIFECYCLE_PROMOTE,
+            json!({ "artifact_id": bare.memory_id.to_string() }),
+            MetadataFold::MemoryPromoted {
+                memory_id: bare.memory_id,
+                approval: None,
+            },
+            None,
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(StoreError::ApprovalMissing { memory_id }) if memory_id == bare.memory_id),
+        "a promotion sent with no approval is refused by name: {refused:?}"
+    );
+    let after = read(bare.memory_id).await;
+    assert_eq!(
+        (after.status, after.is_tip, after.approval),
+        (MemoryStatus::Held, false, None),
+        "the refused promotion changed nothing"
+    );
+    let v3 = successor_of(&v2, Uuid::from_u128(0x7704), "the api is at v5", false);
+    hold(&mut rig, store, v3.clone()).await.expect("hold v3");
+    let refused = rig
+        .commit(
+            store,
+            event_types::LIFECYCLE_SUPERSEDE,
+            json!({
+                "new_artifact_id": v3.memory_id.to_string(),
+                "replaces_artifact_id": v2.memory_id.to_string(),
+            }),
+            MetadataFold::TipSuperseded {
+                successor: v3.memory_id,
+                replaced: v2.memory_id,
+                replaced_valid_until: None,
+                approval: None,
+            },
+            None,
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(StoreError::ApprovalMissing { memory_id }) if memory_id == v3.memory_id),
+        "a ratification sent with no approval is refused by name: {refused:?}"
+    );
+    assert_eq!(
+        (
+            read(v2.memory_id).await.is_tip,
+            read(v3.memory_id).await.is_tip
+        ),
+        (true, false),
+        "the refused ratification left the tip where it was"
+    );
+}
+
 /// Every journal-store law in one call, each against a fresh store.
 /// A ratified supersession that gives the replaced version an end writes it
 /// in the same commit that moves the tip, readable back exactly; an end the
@@ -7590,6 +7796,7 @@ pub async fn a_ratified_end_is_written_with_the_tip_move_or_not_at_all<S: Journa
                 successor: v2.memory_id,
                 replaced: v1.memory_id,
                 replaced_valid_until: Some(Box::new(before)),
+                approval: Some(fixture_approval()),
             },
             None,
         )
@@ -7616,6 +7823,7 @@ pub async fn a_ratified_end_is_written_with_the_tip_move_or_not_at_all<S: Journa
             successor: v2.memory_id,
             replaced: v1.memory_id,
             replaced_valid_until: Some(Box::new(end.clone())),
+            approval: Some(fixture_approval()),
         },
         None,
     )
@@ -7666,6 +7874,12 @@ where
     Box::pin(a_ratified_end_is_written_with_the_tip_move_or_not_at_all(
         &new_store().await,
     ))
+    .await;
+    Box::pin(
+        a_promotion_stores_the_approving_verdict_on_its_row_and_a_held_version_holds_none(
+            &new_store().await,
+        ),
+    )
     .await;
     Box::pin(recall_serves_promoted_tips_only_within_the_readable_set(
         &new_store().await,

@@ -43,6 +43,13 @@ pub enum StoreError {
     /// the committing transaction; the commit wrote nothing (ADR-0030 d6).
     #[error("a version in the committed subtree is still held")]
     HeldRemaining,
+    /// A promotion or ratification carried no approval to a store whose
+    /// schema keeps one (migration 0044): the commit wrote nothing. The
+    /// application always sends one; only a store over a schema before 0044
+    /// takes `None`, as the migration laws' older databases do (ADR-0077
+    /// d6).
+    #[error("the promotion of version {memory_id} carries no approval, and this schema keeps one")]
+    ApprovalMissing { memory_id: Uuid },
     #[error("chain head moved: expected seq {expected_seq}, commit carries seq {found_seq}")]
     SeqConflict { expected_seq: u64, found_seq: u64 },
     #[error("prev_hash does not match the stored head at seq {seq}")]
@@ -167,6 +174,10 @@ pub enum StoreError {
 /// (ADR-0026 d1, d5); a row that names a crew names one of its own tenant's
 /// crew records, or the store refuses it (postgres-schema.md `crews`).
 #[derive(Debug, Clone)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "MemoryHeld carries the whole record, 8 bytes past the lint's bound since the record names its approval (ADR-0077 d6); a commit builds one or two folds and moves them"
+)]
 pub enum MetadataFold {
     /// `tenant.genesis`: the tenant's row, named, unique in the deployment.
     /// The PoC creates its tenant here, since the provider chain's
@@ -324,9 +335,16 @@ pub enum MetadataFold {
     /// Ratification of a claim's first version: it is promoted and becomes
     /// the tip, and `promoted_at` is the event's `at`. The store refuses a
     /// second promoted tip of one `claim_key` in one workarea
-    /// (postgres-schema.md `memories_served_tip`; ADR-0025 d10).
+    /// (postgres-schema.md `memories_served_tip`; ADR-0025 d10). `approval`
+    /// is the approving verdict the event's `ratification_event_id` names,
+    /// stored on the row with the promotion (ADR-0077 d6). The application
+    /// always sends one. A store whose schema keeps the approval refuses
+    /// `None` with [`StoreError::ApprovalMissing`]; one over a schema
+    /// before migration 0044 takes it and writes none, as the migration
+    /// laws send it.
     MemoryPromoted {
         memory_id: Uuid,
+        approval: Option<Box<crate::types::Approval>>,
     },
     MemoryRejected {
         memory_id: Uuid,
@@ -362,6 +380,10 @@ pub enum MetadataFold {
         /// successor's declared start, when it begins inside the replaced
         /// version's interval; `None` changes no end (proposed ADR-0059 d4).
         replaced_valid_until: Option<Box<oml_domain::valid_time::ValidEnd>>,
+        /// The approving verdict that ratified the successor, stored on its
+        /// row with the promotion; `None` as on [`Self::MemoryPromoted`]
+        /// (ADR-0077 d6).
+        approval: Option<Box<crate::types::Approval>>,
     },
     /// `web.email_allowed`: the entry's row, with no pinned subject. The
     /// store refuses an email another tenant's entry holds with
