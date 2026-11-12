@@ -338,7 +338,7 @@ pub fn shell(
     document(
         title,
         &format!(
-            r#"<header class="top">{}{nav}<span class="end"><span class="who">{}{}</span>{}</span></header><main class="wrap">{notice}{body}</main>"#,
+            r#"<header class="top">{}{nav}<div class="end"><span class="who">{}{}</span>{}</div></header><main class="wrap">{notice}{body}</main>"#,
             brand(true),
             glyph_svg("person"),
             short(who),
@@ -369,7 +369,7 @@ pub fn refusal_page(
         format!(r#"<p class="desc">Request <code>{}</code></p>"#, escape(id))
     });
     let end = csrf.map_or_else(String::new, |csrf| {
-        format!(r#"<span class="end">{}</span>"#, sign_out(csrf))
+        format!(r#"<div class="end">{}</div>"#, sign_out(csrf))
     });
     document(
         "Not available",
@@ -443,7 +443,7 @@ mod tests {
     fn the_header_draws_the_sign_out_control_only_for_a_signed_in_session() {
         let signed_in = shell("t", "alice", Some("c5"), &[], "", None, "");
         assert!(signed_in.contains(
-            r#"<form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="c5"><button type="submit" class="linkish">Sign out</button></form></span></header>"#
+            r#"<form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="c5"><button type="submit" class="linkish">Sign out</button></form></div></header>"#
         ), "{signed_in}");
         assert!(!signed_in.contains(r#"href="/web?action=sign_out"#));
         let no_one = shell("t", "", None, &[], "", None, "");
@@ -454,11 +454,11 @@ mod tests {
     /// token is given, and none for no one (#327).
     #[test]
     fn a_refusal_page_draws_the_sign_out_control_only_for_a_signed_in_session() {
-        let control = r#"<span class="end"><form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="c5"><button type="submit" class="linkish">Sign out</button></form></span></header>"#;
+        let control = r#"<div class="end"><form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="c5"><button type="submit" class="linkish">Sign out</button></form></div></header>"#;
         let signed_in = refusal_page("access.not_found", "not found", Some("req-1"), Some("c5"));
         assert!(signed_in.contains(control), "{signed_in}");
         assert!(
-            shell("t", "alice", Some("c5"), &[], "", None, "").contains(&control[18..]),
+            shell("t", "alice", Some("c5"), &[], "", None, "").contains(&control[17..]),
             "the control is the one shell draws"
         );
         for no_one in [

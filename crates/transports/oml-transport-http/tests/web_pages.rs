@@ -857,7 +857,7 @@ async fn the_leads_refusal_page_draws_the_sign_out_control_for_a_live_session_an
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let csrf = csrf_for(&cookie);
     let control = format!(
-        r#"<form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="{csrf}"><button type="submit" class="linkish">Sign out</button></form></span></header>"#
+        r#"<form method="post" action="/web"><input type="hidden" name="action" value="sign_out"><input type="hidden" name="csrf_token" value="{csrf}"><button type="submit" class="linkish">Sign out</button></form></div></header>"#
     );
     let (status, _, page) = send(&rig.router, get("/web?view=keys", Some(&cookie))).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{page}");

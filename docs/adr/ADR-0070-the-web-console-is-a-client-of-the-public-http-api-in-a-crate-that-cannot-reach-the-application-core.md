@@ -299,7 +299,7 @@ Built in phases (a) to (d), 2026-11-10 to 2026-11-11; the records below say how.
     | 2 | `GET /v2/review/queue` | none | `{items: [{workarea_id, path, held, oldest_at}]}`, no content | `web_queue` (main) | ADR-0045 d10, the designed `reviewQueue` | admin |
     | 3 | `POST /v2/web/users/{user}/capacities` | `{capacity: review \| curate, workareas: [id or name]}`, 1 to 50 workareas | `{key: {id, name}, grants_added: [...], journal_seq}` | `web_grant_review`, `web_grant_curation` (main) | ADR-0045 d10, ADR-0044 d7 | admin |
     | 4 | `GET /v2/workareas/{workarea}/offers` | none | `{workarea_id, status, mode, transitions: [{op, to, transition_id?, from?}], mode_change: {to} \| null, commit: {offered, held}}`, each offered only where the verb's own check admits the caller now; an unreadable workarea `access.not_found` | `workarea_offers`, `workarea_offer_check` (#163) | ADR-0045 d28 | no |
-    | 5 | `POST /v2/web/session/end` | none | `204` | no page: sign-out stays the lead's `POST /web` (the seventh table), which the sign-out control in every page's header posts to (#327) | ADR-0045 d5 | an `omls_` credential only; it ends the session it derives from |
+    | 5 | `POST /v2/web/session/end` | none | `204` | no page: sign-out stays the lead's `POST /web` (the seventh table), which the sign-out control in a page's header posts to (proposed amendment, [Sign-out on every page](#sign-out-on-every-page-2026-11-12-327)) | ADR-0045 d5 | an `omls_` credential only; it ends the session it derives from |
     | 6 | `GET /v2/web/export` | none | `application/json` attachment of what the person holds, at most 100000 memories | `web_export` (#167) | ADR-0068 d6 | session user key only |
     | 7 | `POST /v2/web/deletion-requests` | none | `{requested_at, journal_seq}` | `web_request_deletion` (#167) | ADR-0068 d6 | session user key only |
     | 8 | `POST /v2/web/users/{user}/quota` | `{memories?, keys?, connections?, requests_per_minute?}`, each a limit or `null` | the user's row as `GET /v2/web/users` serves it | `web_set_quota` (#167) | ADR-0068 d5 | admin |
@@ -924,7 +924,8 @@ page's status, code and message equal to the API's.
 
 Not decided here: a denied `<user>-web` still asks for the person's deletion
 (`POST /v2/web/deletion-requests`) and reads their export (`GET /v2/web/export`), by reading the
-code; #325 names neither.
+code; #325 names neither, and [#335](https://github.com/e8kor/open-memory-lab/issues/335) asks
+whether a cut-off key keeps them.
 
 ## Sign-out on every page (2026-11-12, #327)
 
@@ -943,7 +944,10 @@ the control is a form, and the act it posts existed.
 | d5 | #5, `POST /v2/web/session/end`, serves no page, and no page draws the sign-out form | the control posts to the lead's `POST /web`; #5 still serves no page | the lead set the cookie and is the one process that can clear it under the same attributes without a second copy of them; opening and ending a session is the auth context's, which `oml-web` never does (d6); and a route in `oml-web` would add a path to the proxy's, the compose router's and the Ingress's lists, where a missing entry strands the control. The cost: #5 has no caller in the console; whether it stays served is not decided here |
 | d3 layer 4 | every `POST` passes `oml-web`'s same-origin and CSRF check | the sign-out post never reaches `oml-web`: the proxy sends `POST /web` to the lead, whose act makes the same checks itself, the same-origin rule of `oml-page` and the session's `csrf_token` compared in constant time, and refuses a form that carries any other field. It is a `POST` alone: a `GET` naming `sign_out` ends nothing | one rule in `oml-page` for both processes (#230); a link would let any page a person opens sign them out |
 
-Tests: `the_header_draws_the_sign_out_control_only_for_a_signed_in_session` in `oml-page`; in
+Tests: `the_header_draws_the_sign_out_control_only_for_a_signed_in_session` and
+`a_refusal_page_draws_the_sign_out_control_only_for_a_signed_in_session` in `oml-page`;
+`a_failure_page_draws_the_sign_out_control_once_the_request_carries_a_session` in `oml-web`'s
+`outcome`, which holds the page of a session check refused by its rate or not answered; in
 `crates/clients/oml-web/tests/web_pages.rs`, over the lead and `oml-web` behind the path router,
 `every_signed_in_page_draws_the_sign_out_control_in_its_header` (the 18 page routes of
 `oml_web::PAGES` and a page an act answers),
@@ -956,10 +960,13 @@ page for `oml-web`'s refusal of a form without the token),
 `signing_out_clears_the_cookie_as_it_was_set_and_lands_on_the_sign_in_page`,
 `sign_out_is_a_same_origin_post_with_the_sessions_csrf_token_and_never_a_get` and
 `a_cut_off_person_signs_out_from_the_page`; and over the lead's router alone,
-`sign_out_ends_the_session_and_clears_the_cookie` in
+`sign_out_ends_the_session_and_clears_the_cookie` and
+`the_leads_refusal_page_draws_the_sign_out_control_for_a_live_session_and_for_no_one_else` in
 `crates/transports/oml-transport-http/tests/web_pages.rs`. The header was looked at in Chromium
-as a static render of `shell` under the stylesheet, at 1100px and 390px in both colour schemes;
-the running console was not.
+as a static render of `shell` under the stylesheet, at 1100px and 390px in both colour schemes,
+with the control's container a `span`; it is a `div` now, since a form is no phrasing content,
+under the same rule of the stylesheet, and neither that header nor the refusal page's was looked
+at since. The running console was not.
 
 ## Consequences
 
