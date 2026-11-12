@@ -1377,3 +1377,170 @@ async fn a_key_issuance_sent_again_under_its_claim_is_one_key_at_the_limit_and_a
     assert_eq!(drift(&rig).await["drift"], json!([]));
     drop_db(&rig.db).await;
 }
+
+/// A recall never waits on its account's meter: it answers while another
+/// session holds the meters' tables, and its count arrives once they are
+/// free (ADR-0071 d2, d5, d8).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_recall_answers_while_its_accounts_meter_is_locked_and_its_count_arrives_after() {
+    let Some(rig) = rig().await else { return };
+    let ada = sign_up(&rig, 13, "ada@example.com").await;
+    let key = agent_key(&rig, &ada).await;
+    let (status, body) = remember(&rig, &key, "k0", "The canary drains first.").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let recall = || {
+        api(
+            "POST",
+            "/v1/memories/recall",
+            &key,
+            Some(json!({"query": "canary"})),
+        )
+    };
+    let (status, _, body) = json(&rig, recall()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(used(&rig, &key).await[3], 1);
+
+    let mut locker = PgConnection::connect(&superuser_url(&rig.db))
+        .await
+        .expect("superuser connect");
+    locker.execute("BEGIN").await.expect("begin");
+    locker
+        .execute("LOCK TABLE account_meters, account_activity IN ACCESS EXCLUSIVE MODE")
+        .await
+        .expect("lock the meters");
+    let answered =
+        tokio::time::timeout(std::time::Duration::from_secs(5), json(&rig, recall())).await;
+    locker.execute("ROLLBACK").await.expect("unlock");
+    let (status, _, body) = answered.expect("the recall answers while its meter is locked");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // Reading the usage waits for the counts handed off before it.
+    assert_eq!(used(&rig, &key).await[3], 2, "the count arrives");
+    drop_db(&rig.db).await;
+}
+
+/// The ledger names the profile each account is on when its day closes:
+/// the one an admin assigned, and otherwise the sign-up profile, as the
+/// usage read names it, so the export keeps it after the configuration
+/// moves on (ADR-0071 d4, d5).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_ledger_names_the_profile_each_account_is_on_assigned_or_not() {
+    let Some(rig) = rig().await else { return };
+    let ada = sign_up(&rig, 14, "ada@example.com").await;
+    let bob = sign_up(&rig, 15, "bob@example.com").await;
+    let (ada_key, bob_key) = (agent_key(&rig, &ada).await, agent_key(&rig, &bob).await);
+    let mut accounts = Vec::new();
+    for key in [&ada_key, &bob_key] {
+        let (status, body) = remember(&rig, key, "k0", "A fact.").await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        accounts.push(
+            own_usage(&rig, key).await["account"]
+                .as_str()
+                .expect("an account")
+                .to_owned(),
+        );
+    }
+    set_profile(&rig, &accounts[1], json!({"profile": "pro"})).await;
+    assert_eq!(own_usage(&rig, &ada_key).await["profile"], "free");
+    assert_eq!(own_usage(&rig, &bob_key).await["profile"], "pro");
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after the epoch")
+        .as_micros();
+    let now = i64::try_from(now).expect("fits");
+    let today = EventTime::from_unix_micros(now).expect("a time");
+    let tomorrow = EventTime::from_unix_micros(now + 86_400_000_000).expect("a time");
+    let (tenants, appended) = oml_server_lead::roll_up_usage(&rig.store, &tomorrow)
+        .await
+        .expect("the rollup");
+    assert!(tenants >= 1 && appended >= 2, "{tenants} {appended}");
+    let period = &today.as_str()[..7];
+    let (status, _, body) = json(
+        &rig,
+        api(
+            "GET",
+            &format!("/v2/admin/usage?period={period}"),
+            &rig.boot.admin_key.value,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let profile_of = |account: &str| {
+        body["rows"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .find(|r| r["account"] == account)
+            .unwrap_or_else(|| panic!("a row of {account}: {body}"))["profile"]
+            .clone()
+    };
+    assert_eq!(profile_of(&accounts[0]), "free", "the sign-up profile");
+    assert_eq!(profile_of(&accounts[1]), "pro", "the assigned profile");
+    drop_db(&rig.db).await;
+}
+
+/// An admin takes an account's profile and overrides away with `DELETE`,
+/// journalled as `account.profile_set` with no profile, and the account is
+/// on the deployment's default again; no other key may (ADR-0071 d5).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_admin_unassigns_an_accounts_profile_and_it_is_on_the_deployments_default_again() {
+    let Some(rig) = rig().await else { return };
+    let ada = sign_up(&rig, 16, "ada@example.com").await;
+    let key = agent_key(&rig, &ada).await;
+    let account = own_usage(&rig, &key).await["account"]
+        .as_str()
+        .expect("an account")
+        .to_owned();
+    set_profile(
+        &rig,
+        &account,
+        json!({"profile": "pro", "overrides": {"memories": 2}}),
+    )
+    .await;
+    let usage = own_usage(&rig, &key).await;
+    assert_eq!(usage["profile"], "pro");
+    assert_eq!(meter(&usage, "memories")["limit"], 2);
+    let delete = |key: &str| {
+        Request::delete(format!("/v2/admin/accounts/{account}/profile"))
+            .header(header::AUTHORIZATION, format!("Bearer {key}"))
+            .body(Body::empty())
+            .expect("a request")
+    };
+    // The person's own key may not.
+    let (status, _, body) = json(&rig, delete(&key)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["error"]["code"], "access.verb_ceiling", "{body}");
+    assert_eq!(own_usage(&rig, &key).await["profile"], "pro");
+
+    let journalled = events(&rig).await.len();
+    let (status, _, body) = json(&rig, delete(&rig.boot.admin_key.value)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["profile"], "free", "the sign-up profile again: {body}");
+    assert_eq!(meter(&body, "memories")["limit"], 5, "and no override");
+    let all = events(&rig).await;
+    assert_eq!(all.len(), journalled + 1);
+    let (event_type, payload) = all.last().expect("an event");
+    assert_eq!(event_type, "account.profile_set");
+    assert_eq!(payload["user_root"], account.as_str());
+    assert_eq!(payload["profile"], Value::Null);
+    assert_eq!(payload["overrides"], json!({}));
+    // An account that has none answers the same and journals the act.
+    let (status, _, body) = json(&rig, delete(&rig.boot.admin_key.value)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["profile"], "free");
+    // An account that is not one of the tenant's is not found.
+    let (status, _, body) = json(
+        &rig,
+        Request::delete("/v2/admin/accounts/nobody/profile")
+            .header(
+                header::AUTHORIZATION,
+                format!("Bearer {}", rig.boot.admin_key.value),
+            )
+            .body(Body::empty())
+            .expect("a request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    drop_db(&rig.db).await;
+}

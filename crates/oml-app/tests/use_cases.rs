@@ -14483,3 +14483,186 @@ async fn a_write_over_quota_is_refused_naming_the_quota_its_limit_and_what_is_us
         }
     }
 }
+
+/// A fresh store served under open sign-up into `tenant_id` with these
+/// profiles, on a clock the test moves; `tenant_id` of `None` is the
+/// bootstrapped tenant's.
+async fn metered_on_a_clock(
+    profiles: oml_app::types::QuotaProfiles,
+    tenant_id: Option<Uuid>,
+) -> (TestApp, MemStore, FixedClock, BootstrapResult) {
+    let store = MemStore::new();
+    let clock = FixedClock::new();
+    let probe = App::new(
+        store.clone(),
+        MemSigner::new(TEST_SEED),
+        clock.clone(),
+        SeqIdGen::new(),
+        MarkerScanner::default(),
+    );
+    let boot = bootstrap(&probe).await;
+    let quotas = profiles
+        .get(&profiles.signup_profile)
+        .expect("the sign-up profile is declared");
+    let app = probe
+        .with_signup(oml_app::types::SignupPolicy {
+            mode: oml_app::domain::signup::SignupMode::Open,
+            tenant_id: tenant_id.unwrap_or(boot.tenant_id),
+            issuer: name("root-admin"),
+            terms_version: "2026-11-06".to_owned(),
+            terms_url: "https://example.com/terms".to_owned(),
+            privacy_url: "https://example.com/privacy".to_owned(),
+            per_ip_per_hour: 100,
+            quotas,
+        })
+        .with_quota_profiles(profiles);
+    (app, store, clock, boot)
+}
+
+/// An account on a profile the configuration no longer declares is refused
+/// every write as `limit.quota` and still reads, in the minute the profile
+/// went and in every minute after: no quota refuses a read, and the
+/// refusal of d8 is `limit.quota`, never `limit.rate` (ADR-0071 d5, d8).
+#[tokio::test]
+async fn an_account_on_an_undeclared_profile_reads_in_every_minute_and_its_writes_are_limit_quota()
+{
+    use oml_app::domain::signup::{Quota, Quotas};
+    use oml_app::types::{ProfileAssignment, QuotaProfiles};
+    let declared = QuotaProfiles {
+        profiles: [
+            ("default".to_owned(), Quotas::default()),
+            (
+                "gold".to_owned(),
+                Quotas::default().with(Quota::Memories, 3),
+            ),
+        ]
+        .into(),
+        signup_profile: "default".to_owned(),
+    };
+    let (app, _store, clock, boot) = metered_on_a_clock(declared, None).await;
+    let (writer, _) = account_keys(&app, &boot.admin_key.value).await;
+    app.admin_set_profile(
+        &boot.admin_key.value,
+        "ada",
+        &ProfileAssignment {
+            profile: "gold".to_owned(),
+            overrides: Vec::new(),
+        },
+    )
+    .await
+    .expect("gold is declared");
+    app.submit_memory(&writer.value, &submit_req("i1", "the canary drains first"))
+        .await
+        .expect("a write on gold");
+    // The configuration stops declaring gold.
+    let app = app.with_quota_profiles(QuotaProfiles::only(Quotas::default()));
+    let refused_as_quota = |err: AppError| {
+        assert!(
+            matches!(
+                &err,
+                AppError::QuotaReached(r)
+                    if r.quota == Quota::Memories && r.limit == 0 && r.used == 1
+            ),
+            "{err:?}"
+        );
+    };
+    // In the minute the profile went, and in the two after it.
+    for minute in 0..3 {
+        if minute > 0 {
+            clock.advance(60);
+        }
+        let usage = app
+            .account_usage(&writer.value)
+            .await
+            .unwrap_or_else(|e| panic!("minute {minute}: reading its usage answers: {e:?}"));
+        assert!(!usage.profile_declared);
+        assert_eq!(usage.profile.as_deref(), Some("gold"));
+        app.recall(&writer.value, &recall_req("canary"))
+            .await
+            .unwrap_or_else(|e| panic!("minute {minute}: a recall answers: {e:?}"));
+        refused_as_quota(
+            app.submit_memory(
+                &writer.value,
+                &submit_req(&format!("again-{minute}"), "the fleet follows the canary"),
+            )
+            .await
+            .unwrap_err(),
+        );
+    }
+}
+
+/// A write reads its account's limits once: the check before the signature
+/// and the ceiling the commit carries are one read, made before the head,
+/// so nothing is looked up inside the window a conflicting commit reopens
+/// (ADR-0071 d3; #100).
+#[tokio::test]
+async fn a_write_reads_its_accounts_limits_once() {
+    use oml_app::domain::signup::Quotas;
+    let (app, store, _clock, boot) =
+        metered_on_a_clock(oml_app::types::QuotaProfiles::only(Quotas::default()), None).await;
+    let (writer, dreamer) = account_keys(&app, &boot.admin_key.value).await;
+    // The first request of the minute reads the rate; these follow it.
+    let first = promoted(
+        &app,
+        &writer.value,
+        &dreamer.value,
+        &submit_req("i1", "the canary drains first"),
+    )
+    .await;
+    let before = store.account_profile_reads();
+    app.submit_memory(
+        &writer.value,
+        &submit_req("i2", "the fleet follows the canary"),
+    )
+    .await
+    .expect("a second memory");
+    assert_eq!(
+        store.account_profile_reads() - before,
+        1,
+        "a new memory reads its account's profile once"
+    );
+    let before = store.account_profile_reads();
+    app.supersede(
+        &writer.value,
+        &supersede_req("sup-1", first, "the canary drains and settles first"),
+    )
+    .await
+    .expect("a revision");
+    assert_eq!(
+        store.account_profile_reads() - before,
+        1,
+        "a revision reads its account's profile once"
+    );
+}
+
+/// With open sign-up, a key of an account under no limits, one outside the
+/// sign-up tenant with no profile assigned, has its limits looked up at the
+/// first request of each minute and not at the ones after it, as a key
+/// under limits has (ADR-0068 d5; ADR-0071 d5).
+#[tokio::test]
+async fn a_key_of_an_account_under_no_limits_has_its_limits_looked_up_once_a_minute() {
+    use oml_app::domain::signup::Quotas;
+    // Sign-up is open into another tenant, so ada's account is under none.
+    let (app, store, clock, boot) = metered_on_a_clock(
+        oml_app::types::QuotaProfiles::only(Quotas::default()),
+        Some(Uuid::from_u128(0x51_6e_00)),
+    )
+    .await;
+    let (writer, _) = account_keys(&app, &boot.admin_key.value).await;
+    let before = store.account_profile_reads();
+    for _ in 0..3 {
+        app.recall(&writer.value, &recall_req("canary"))
+            .await
+            .expect("a recall");
+    }
+    assert_eq!(
+        store.account_profile_reads() - before,
+        1,
+        "three requests in one minute look the limits up once"
+    );
+    clock.advance(60);
+    app.recall(&writer.value, &recall_req("canary"))
+        .await
+        .expect("a recall in the next minute");
+    assert_eq!(store.account_profile_reads() - before, 2);
+}

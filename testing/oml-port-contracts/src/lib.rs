@@ -110,6 +110,36 @@ impl ChainRig {
         self
     }
 
+    /// Another writer on this rig's tenant, as a second process is: the
+    /// same tenant and signing key, event ids of its own, and no head until
+    /// [`Self::follow`] reads the store's.
+    #[must_use]
+    pub fn lane(&self, lane: u64) -> Self {
+        Self {
+            tenant_id: self.tenant_id,
+            tenant_name: self.tenant_name.clone(),
+            key: self.key.clone(),
+            head: None,
+            n: lane * 10_000,
+            partitioned: true,
+            before_approval: self.before_approval,
+        }
+    }
+
+    /// Takes the store's head as this rig's, so its next event extends it.
+    pub async fn follow<S: JournalStore>(&mut self, store: &S) {
+        let head = store
+            .chain_head(self.tenant_id)
+            .await
+            .expect("head")
+            .expect("the tenant has a chain");
+        self.head = store
+            .events_range(self.tenant_id, head.seq, 1)
+            .await
+            .expect("the head event")
+            .pop();
+    }
+
     /// The approval a promotion through this rig carries.
     fn approval(&self) -> Option<Box<Approval>> {
         (!self.before_approval).then(fixture_approval)
@@ -8035,6 +8065,86 @@ pub async fn a_commit_past_its_ceiling_writes_nothing_and_the_usage_read_is_the_
     );
 }
 
+/// A version's write is counted on the UTC day of the version's own
+/// `created_at`, the one clock read its row holds, so the month's writes
+/// are the month's stored versions whatever the event's `at` reads, and
+/// nothing drifts across a month's end (ADR-0071 d2, d3).
+pub async fn a_versions_write_is_counted_on_the_day_its_row_was_stored<S: JournalStore>(store: &S) {
+    use oml_app::domain::usage::Month;
+    let mut rig = ChainRig::new(72);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0x7210), None, "universe");
+    let root = WorkareaRecord {
+        user_root: true,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0x7211),
+            Some(universe.workarea_id),
+            "ada",
+        )
+    };
+    for w in [universe, root.clone()] {
+        rig.create_workarea(store, w).await;
+    }
+    let account = root.workarea_id;
+    let key_id = Uuid::from_u128(0x7220);
+    rig.issue_key(
+        store,
+        KeyRecord {
+            user: Some(account),
+            ..key_record(t, key_id, Role::Writer, None)
+        },
+    )
+    .await;
+    // The row's clock read falls in September's last second; the rig's
+    // events are all of 29 October.
+    let stored = EventTime::parse("2026-09-30T23:59:59.000000Z").expect("a time");
+    let events = EventTime::parse("2026-10-29T13:00:00.000000Z").expect("a time");
+    let memory = MemoryRecord {
+        created_at: stored.clone(),
+        ..held_memory(t, account, Uuid::from_u128(0x7230), "ada", key_id, "a fact")
+    };
+    rig.commit(
+        store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": memory.memory_id.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory,
+            enqueue: true,
+            findings: Box::default(),
+        },
+        None,
+    )
+    .await
+    .expect("held");
+    assert_eq!(
+        store
+            .user_usage(t, account, &stored)
+            .await
+            .expect("usage")
+            .writes,
+        1,
+        "the write is September's, as its row is"
+    );
+    assert_eq!(
+        store
+            .user_usage(t, account, &events)
+            .await
+            .expect("usage")
+            .writes,
+        0
+    );
+    for month in [Month::of(&stored), Month::of(&events)] {
+        assert_eq!(
+            store.usage_drift(t, month).await.expect("drift"),
+            Vec::new(),
+            "{}",
+            month.as_string()
+        );
+    }
+}
+
 /// A commit under an idempotency key already recorded writes nothing and
 /// moves no meter, and it is refused as the recorded key it is even where
 /// its fold would pass its account's ceiling: the caller answers the record,
@@ -8185,6 +8295,10 @@ where
             &new_store().await,
         ),
     )
+    .await;
+    Box::pin(a_versions_write_is_counted_on_the_day_its_row_was_stored(
+        &new_store().await,
+    ))
     .await;
     Box::pin(journal_commit_refuses_conflicts(&new_store().await)).await;
     Box::pin(journal_events_range_pages(&new_store().await)).await;
@@ -10796,6 +10910,84 @@ pub async fn a_registered_client_unconnected_after_24_hours_is_removed<S: Connec
     }
 }
 
+/// The connections meter counts the open connections of an account's live
+/// keys: a revoked key's connection leaves it with the key, and revoking
+/// that connection afterwards takes nothing more off (ADR-0071 d2).
+pub async fn a_revoked_keys_open_connection_leaves_the_connections_meter_with_the_key<
+    S: ConnectionStore,
+>(
+    store: &S,
+) {
+    use oml_app::domain::usage::Month;
+    let mut rig = ChainRig::new(73);
+    rig.seed_chain(store, 0).await;
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(0x7310), None, "universe");
+    let root = WorkareaRecord {
+        user_root: true,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(0x7311),
+            Some(universe.workarea_id),
+            "ada",
+        )
+    };
+    for w in [universe, root.clone()] {
+        rig.create_workarea(store, w).await;
+    }
+    let account = root.workarea_id;
+    let at = fixture_time("2026-10-29T13:00:00.000000Z");
+    let (kept, gone) = (
+        KeyRecord {
+            user: Some(account),
+            ..connector_key(t, Uuid::from_u128(0x7320))
+        },
+        KeyRecord {
+            user: Some(account),
+            ..connector_key(t, Uuid::from_u128(0x7321))
+        },
+    );
+    let (kept_connection, gone_connection) = (Uuid::from_u128(0x7340), Uuid::from_u128(0x7341));
+    for (key, code, connection) in [
+        (&kept, Uuid::from_u128(0x7330), kept_connection),
+        (&gone, Uuid::from_u128(0x7331), gone_connection),
+    ] {
+        rig.issue_key(store, key.clone()).await;
+        rig.opened_connection(store, key.key_id, code, connection, None, None)
+            .await;
+    }
+    let held = |usage: oml_app::types::UserUsage| (usage.keys, usage.connections);
+    assert_eq!(
+        held(store.user_usage(t, account, &at).await.expect("usage")),
+        (2, 2)
+    );
+    rig.revoke_key(store, gone.key_id).await.expect("revoke");
+    assert_eq!(
+        held(store.user_usage(t, account, &at).await.expect("usage")),
+        (1, 1),
+        "the revoked key's open connection is no longer one of the account's"
+    );
+    rig.revoke_connection(store, gone_connection, RevokedCause::Admin)
+        .await
+        .expect("revoke the connection");
+    assert_eq!(
+        held(store.user_usage(t, account, &at).await.expect("usage")),
+        (1, 1),
+        "revoking it afterwards takes nothing more off"
+    );
+    rig.revoke_connection(store, kept_connection, RevokedCause::Admin)
+        .await
+        .expect("revoke the live key's connection");
+    assert_eq!(
+        held(store.user_usage(t, account, &at).await.expect("usage")),
+        (1, 0)
+    );
+    assert_eq!(
+        store.usage_drift(t, Month::of(&at)).await.expect("drift"),
+        Vec::new()
+    );
+}
+
 /// Every connection-store law in one call, each against a fresh store.
 pub async fn run_connection_store_suite<S, F, Fut>(new_store: F)
 where
@@ -10811,6 +11003,8 @@ where
     )
     .await;
     key_revoked_voids_the_keys_unredeemed_codes(&new_store().await).await;
+    a_revoked_keys_open_connection_leaves_the_connections_meter_with_the_key(&new_store().await)
+        .await;
     connection_opened_revokes_the_keys_earlier_open_connection_as_replaced(&new_store().await)
         .await;
     a_keys_connections_are_listed_in_every_state_and_no_other_keys(&new_store().await).await;

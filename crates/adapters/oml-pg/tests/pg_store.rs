@@ -10914,3 +10914,400 @@ async fn migration_0045_fills_each_accounts_meters_from_the_rows_stored_before_i
     }
     drop_dbs(&created).await;
 }
+
+/// An account of `rig`'s tenant under a `universe`: its root's id.
+async fn metered_account(rig: &mut ChainRig, store: &PgStore, seed: u128) -> Uuid {
+    let t = rig.tenant_id;
+    let universe = workarea_record(t, Uuid::from_u128(seed), None, "universe");
+    let root = oml_app::types::WorkareaRecord {
+        user_root: true,
+        ..workarea_record(
+            t,
+            Uuid::from_u128(seed + 1),
+            Some(universe.workarea_id),
+            "ada",
+        )
+    };
+    let account = root.workarea_id;
+    for w in [universe, root] {
+        rig.create_workarea(store, w).await;
+    }
+    account
+}
+
+/// The indexes on `table`'s chain columns that are attached to
+/// `memories_chain_first`, by partition.
+async fn chain_indexes(conn: &mut PgConnection) -> Vec<(String, String, bool)> {
+    sqlx::query_as(
+        "SELECT x.indrelid::regclass::text, pg_get_indexdef(x.indexrelid), x.indisvalid \
+           FROM pg_inherits i JOIN pg_index x ON x.indexrelid = i.inhrelid \
+          WHERE i.inhparent = to_regclass('memories_chain_first') \
+          ORDER BY 1",
+    )
+    .fetch_all(conn)
+    .await
+    .expect("the chain index's partitions")
+}
+
+/// 0045 gives every tenant's partition the index a chain's first version is
+/// read by, attached to the parent's and valid, and a tenant created after
+/// it inherits one: the fold's account lookup is an index probe on the
+/// chain in every partition, never a scan of its workarea (ADR-0071 d2,
+/// d3).
+#[tokio::test]
+async fn migration_0045_gives_every_tenants_partition_the_chain_index_and_a_later_tenant_inherits_it()
+ {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let (db, conn) = schema_through(&created, 43).await;
+    drop(conn);
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    let mut before = ChainRig::new(450).before_approval();
+    before.seed_chain(&store, 0).await;
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("0045 applies over a database at 0043");
+    let mut after = ChainRig::new(451);
+    after.seed_chain(&store, 0).await;
+
+    let mut owner = owner_conn(&store).await;
+    let indexes = chain_indexes(&mut owner).await;
+    assert_eq!(
+        indexes.len(),
+        2,
+        "one for each tenant's partition: {indexes:?}"
+    );
+    for (partition, definition, valid) in &indexes {
+        assert!(
+            definition.ends_with("(tenant_id, workarea_id, claim_key, version, created_at)"),
+            "{partition}: {definition}"
+        );
+        assert!(valid, "{partition}");
+    }
+    let parent_valid: bool = sqlx::query_scalar(
+        "SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('memories_chain_first')",
+    )
+    .fetch_one(&mut owner)
+    .await
+    .expect("the parent's index");
+    assert!(parent_valid, "every partition's index is attached");
+    // The account lookup names no status, so the live-states index cannot
+    // answer it, and it orders a chain's versions as the index does.
+    let lookup: String =
+        sqlx::query_scalar("SELECT prosrc FROM pg_proc WHERE proname = 'oml_chain_account'")
+            .fetch_one(&mut owner)
+            .await
+            .expect("the function");
+    assert!(
+        lookup.contains("ORDER BY m.version, m.created_at"),
+        "{lookup}"
+    );
+    drop(owner);
+    drop_dbs(&created).await;
+}
+
+/// A tenant key's first version of a claim charges no account and starts a
+/// chain that is no account's, so its commit runs no metering statement:
+/// it commits with the meters' tables locked by another session and the
+/// functions the meters read renamed away (ADR-0071 d1, d3; #100).
+#[tokio::test]
+async fn a_tenant_keys_first_version_commits_without_touching_the_meters() {
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut rig = ChainRig::new(452);
+    rig.seed_chain(&store, 0).await;
+    let t = rig.tenant_id;
+    let crew = workarea_record(t, Uuid::from_u128(0x4520), None, "universe");
+    rig.create_workarea(&store, crew.clone()).await;
+    let tenant_key = Uuid::from_u128(0x4521);
+    rig.issue_key(&store, key_record(t, tenant_key, Role::Writer, None))
+        .await;
+    let held = |n: u128| {
+        held_memory(
+            t,
+            crew.workarea_id,
+            Uuid::from_u128(0x4530 + n),
+            "crew",
+            tenant_key,
+            "a crew's fact",
+        )
+    };
+    let write = |memory: MemoryRecord| {
+        let payload = json!({ "artifact_id": memory.memory_id.to_string() });
+        let fold = MetadataFold::MemoryHeld {
+            memory,
+            enqueue: true,
+            findings: Box::default(),
+        };
+        (payload, fold)
+    };
+    // A first commit, so the store has found the meters.
+    let (payload, fold) = write(held(1));
+    rig.commit(
+        &store,
+        event_types::SUBMISSION_REMEMBER,
+        payload,
+        fold,
+        None,
+    )
+    .await
+    .expect("a tenant key's write");
+
+    let mut owner = owner_conn(&store).await;
+    for function in ["oml_chain_live", "oml_chain_account"] {
+        owner
+            .execute(
+                format!("ALTER FUNCTION {function}(uuid, uuid, text) RENAME TO away_{function}")
+                    .as_str(),
+            )
+            .await
+            .expect("rename");
+    }
+    let mut locker = owner_conn(&store).await;
+    locker.execute("BEGIN").await.expect("begin");
+    locker
+        .execute("LOCK TABLE account_meters, account_activity IN ACCESS EXCLUSIVE MODE")
+        .await
+        .expect("lock the meters");
+    let (payload, fold) = write(held(2));
+    let committed = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        rig.commit(
+            &store,
+            event_types::SUBMISSION_REMEMBER,
+            payload,
+            fold,
+            None,
+        ),
+    )
+    .await;
+    locker.execute("ROLLBACK").await.expect("unlock");
+    for function in ["oml_chain_live", "oml_chain_account"] {
+        owner
+            .execute(
+                format!("ALTER FUNCTION away_{function}(uuid, uuid, text) RENAME TO {function}")
+                    .as_str(),
+            )
+            .await
+            .expect("rename back");
+    }
+    committed
+        .expect("the commit does not wait on the meters' tables")
+        .expect("the commit calls neither function");
+    assert_eq!(
+        store
+            .usage_accounts(t, oml_app::domain::usage::Month::of(&held(1).created_at))
+            .await
+            .expect("accounts"),
+        Vec::new(),
+        "a tenant key's rows make no account"
+    );
+    drop(owner);
+    drop(locker);
+    drop_dbs(&created).await;
+}
+
+/// A counter never goes below zero: the table refuses a negative count,
+/// and a fold that takes one off a counter already at zero, which only a
+/// drifted counter is, leaves it at zero and commits, so a rejection or a
+/// revocation is never refused for its account's bookkeeping; the drift
+/// report still names the counter (ADR-0071 d3, d8).
+#[tokio::test]
+async fn a_counter_never_goes_below_zero_and_a_fold_on_a_drifted_one_still_commits() {
+    use oml_app::domain::usage::{Meter, Month};
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut rig = ChainRig::new(453);
+    rig.seed_chain(&store, 0).await;
+    let t = rig.tenant_id;
+    let account = metered_account(&mut rig, &store, 0x4540).await;
+    let key_id = Uuid::from_u128(0x4550);
+    rig.issue_key(
+        &store,
+        KeyRecord {
+            user: Some(account),
+            ..key_record(t, key_id, Role::Writer, None)
+        },
+    )
+    .await;
+    let memory = held_memory(t, account, Uuid::from_u128(0x4560), "ada", key_id, "a fact");
+    rig.commit(
+        &store,
+        event_types::SUBMISSION_REMEMBER,
+        json!({ "artifact_id": memory.memory_id.to_string() }),
+        MetadataFold::MemoryHeld {
+            memory: memory.clone(),
+            enqueue: true,
+            findings: Box::default(),
+        },
+        None,
+    )
+    .await
+    .expect("held");
+
+    let mut owner = owner_conn(&store).await;
+    sqlx::query("SELECT set_config('oml.tenant_id', $1, false)")
+        .bind(t.to_string())
+        .execute(&mut owner)
+        .await
+        .expect("tenant");
+    let negative = sqlx::query("UPDATE account_meters SET memories = -1 WHERE user_root = $1")
+        .bind(account)
+        .execute(&mut owner)
+        .await;
+    assert_eq!(
+        refused_code(negative, "a negative count"),
+        "23514",
+        "the table's check refuses it"
+    );
+    // The counters drift to zero by hand, then the folds take one off each.
+    sqlx::query("UPDATE account_meters SET memories = 0, keys = 0 WHERE user_root = $1")
+        .bind(account)
+        .execute(&mut owner)
+        .await
+        .expect("a drifted counter");
+    reject(&mut rig, &store, memory.memory_id)
+        .await
+        .expect("the rejection commits");
+    rig.revoke_key(&store, key_id)
+        .await
+        .expect("the revocation commits");
+    let usage = store
+        .user_usage(t, account, &memory.created_at)
+        .await
+        .expect("usage");
+    assert_eq!((usage.memories, usage.keys), (0, 0));
+    let stored: (i64, i64) =
+        sqlx::query_as("SELECT memories, keys FROM account_meters WHERE user_root = $1")
+            .bind(account)
+            .fetch_one(&mut owner)
+            .await
+            .expect("the row");
+    assert_eq!(stored, (0, 0), "never below zero");
+    assert_eq!(
+        store
+            .usage_drift(t, Month::of(&memory.created_at))
+            .await
+            .expect("drift")
+            .iter()
+            .map(|d| d.meter)
+            .collect::<Vec<_>>(),
+        Vec::<Meter>::new(),
+        "the rows hold none of either now, as the counters say"
+    );
+    drop(owner);
+    drop_dbs(&created).await;
+}
+
+/// Writers that make no check before they commit race at the ceiling
+/// itself: each extends whatever head it reads and commits, again after a
+/// conflict, until it is in or refused. Of eight at three free memories
+/// exactly three commit, and the commit's own ceiling refuses the other
+/// five, each naming the limit and the count it found reached; the
+/// counters are the rows (ADR-0071 d3).
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn writers_that_skip_the_pre_check_are_held_by_the_commits_own_ceiling() {
+    use oml_app::domain::signup::{Quota, QuotaReached, Quotas};
+    use oml_app::domain::usage::Month;
+    use oml_app::ports::Ceiling;
+    if !splits().await {
+        return;
+    }
+    let created = Mutex::new(Vec::new());
+    let store = fresh_store(&created).await;
+    let mut rig = ChainRig::new(454);
+    rig.seed_chain(&store, 0).await;
+    let t = rig.tenant_id;
+    let account = metered_account(&mut rig, &store, 0x4570).await;
+    let key_id = Uuid::from_u128(0x4580);
+    rig.issue_key(
+        &store,
+        KeyRecord {
+            user: Some(account),
+            ..key_record(t, key_id, Role::Writer, None)
+        },
+    )
+    .await;
+    let ceiling = Ceiling {
+        user_root: account,
+        quotas: Quotas::default().with(Quota::Memories, 3),
+    };
+    let writers: Vec<_> = (1..=8_u64)
+        .map(|lane| {
+            let (store, mut lane_rig) = (store.clone(), rig.lane(lane));
+            tokio::spawn(async move {
+                let memory = held_memory(
+                    t,
+                    account,
+                    Uuid::from_u128(0x4590 + u128::from(lane)),
+                    "ada",
+                    key_id,
+                    "a fact",
+                );
+                loop {
+                    lane_rig.follow(&store).await;
+                    match lane_rig
+                        .commit_charged(
+                            &store,
+                            event_types::SUBMISSION_REMEMBER,
+                            json!({ "artifact_id": memory.memory_id.to_string() }),
+                            MetadataFold::MemoryHeld {
+                                memory: memory.clone(),
+                                enqueue: true,
+                                findings: Box::default(),
+                            },
+                            None,
+                            Some(ceiling),
+                        )
+                        .await
+                    {
+                        Ok(_) => return None,
+                        Err(
+                            StoreError::SeqConflict { .. } | StoreError::PrevHashConflict { .. },
+                        ) => {}
+                        Err(StoreError::QuotaReached(reached)) => return Some(reached),
+                        Err(other) => {
+                            panic!("a writer fails only at the head or the ceiling: {other}")
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+    let mut refused = Vec::new();
+    for writer in writers {
+        refused.extend(writer.await.expect("a writer"));
+    }
+    assert_eq!(
+        refused,
+        vec![
+            QuotaReached {
+                quota: Quota::Memories,
+                limit: 3,
+                used: 3,
+            };
+            5
+        ],
+        "five are refused by the ceiling, at the count that reached it"
+    );
+    let at = held_memory(t, account, Uuid::nil(), "ada", key_id, "").created_at;
+    let usage = store.user_usage(t, account, &at).await.expect("usage");
+    assert_eq!((usage.memories, usage.writes), (3, 3));
+    assert_eq!(
+        store.usage_drift(t, Month::of(&at)).await.expect("drift"),
+        Vec::new()
+    );
+    drop_dbs(&created).await;
+}

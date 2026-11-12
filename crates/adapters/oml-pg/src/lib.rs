@@ -4516,9 +4516,7 @@ async fn meter_plan(
             Some((memory.workarea_id, memory.claim_key.clone()))
         }
         MetadataFold::MemoryPromoted { memory_id, .. }
-        | MetadataFold::MemoryRejected { memory_id } => {
-            chain_of(tx, tenant_id, *memory_id).await?
-        }
+        | MetadataFold::MemoryRejected { memory_id } => chain_of(tx, tenant_id, *memory_id).await?,
         MetadataFold::TipSuperseded { successor, .. } => {
             chain_of(tx, tenant_id, *successor).await?
         }

@@ -420,6 +420,10 @@ pub struct MemStore {
     /// the declining nodes and the reference counts — shared by every
     /// handle, so a law can hold that a recall made none (ADR-0072 d12).
     federation_reads: Arc<AtomicU64>,
+    /// How many reads of an account's profile the store answered, shared
+    /// by every handle, so a law can hold how often a request looks its
+    /// account's limits up (ADR-0071 d3, d5).
+    account_profile_reads: Arc<AtomicU64>,
     /// How many widen-signal reads the store answered: a held signal's
     /// query forms, read on a `scope` recall in place of any count
     /// (ADR-0072 d8, d12, as built by #244).
@@ -542,6 +546,13 @@ impl MemStore {
     #[must_use]
     pub fn federation_reads(&self) -> u64 {
         self.federation_reads.load(Ordering::SeqCst)
+    }
+
+    /// How many reads of an account's profile every handle of this store
+    /// answered.
+    #[must_use]
+    pub fn account_profile_reads(&self) -> u64 {
+        self.account_profile_reads.load(Ordering::SeqCst)
     }
 
     /// Makes the next vocabulary read yield once before it reads (#244).
@@ -2706,6 +2717,7 @@ impl JournalStore for MemStore {
         tenant_id: Uuid,
         user_root: Uuid,
     ) -> Result<Option<String>, StoreError> {
+        self.account_profile_reads.fetch_add(1, Ordering::SeqCst);
         Ok(self.tenant_existing(tenant_id).and_then(|state| {
             state
                 .lock()
