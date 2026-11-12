@@ -64,6 +64,8 @@ journalctl -u oml-server -o cat | jq -c 'select(.event=="http_request" and .stat
 
 The lead's hourly usage rollup (at its start, then every hour) writes `event` `usage_rollup` with the `tenants` it rolled up and the ledger `rows` it appended. A pass that fails writes `usage_rollup_failed` with its `reason`, stops neither the lead nor the next pass, and the next pass appends the closed days it missed, up to 62 days back ([ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d4). No account is ever a metric label: the per-account record is the ledger.
 
+A recall hands its count to a queue and never waits for the write. Counts the queue dropped because it was full, or that the store refused, write `event` `usage_recall_counts_lost` with their `count` and the `reason`. The month's `recalls` meter then reads low by that count, and nothing recomputes it (ADR-0071 d8).
+
 ### What logs never hold
 
 No log line holds a memory body, a recall query, an API key, a token or an authorization code. Logs carry ids and digests. They do hold `client_ip`, `key_name` and `user_agent`, which are personal data.

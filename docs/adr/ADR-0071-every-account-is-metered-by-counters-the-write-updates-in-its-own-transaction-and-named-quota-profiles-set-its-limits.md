@@ -52,10 +52,10 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     |---|---|---|
     | `memories` | live chains the account started: a chain (`workarea_id`, `claim_key`) whose first version a key of the account wrote, that holds a version `held`, `promoted` or `demoted`, and whose promoted tip is not a retirement. A rejected-only, retired or erased chain is not counted. A new version of a chain is not a new memory. | stock |
     | `text_bytes` | UTF-8 bytes of the claim text, as captured after NFC, of every version a key of the account wrote, rejected versions included, since R4 keeps them | stock |
-    | `writes` | versions a key of the account submitted in the UTC calendar month: every remember, learn and supersede that was held. A refused write and an idempotent replay are not writes | flow, per month |
-    | `recalls` | recall requests a key of the account made in the UTC calendar month, on HTTP or MCP, whatever they returned | flow, per month |
+    | `writes` | versions a key of the account submitted in the UTC calendar month: every remember, learn and supersede that was held, counted on the UTC day of the version's own `created_at`. A refused write and an idempotent replay are not writes | flow, per month |
+    | `recalls` | recall requests a key of the account made in the UTC calendar month, on HTTP or MCP, whatever they returned. A recall hands its count to a queue and never waits for the write (d8) | flow, per month |
     | `keys` | the account's live bearer and connector keys; session keys are not counted (ADR-0068 d5) | stock |
-    | `connections` | open OAuth connections of those keys (ADR-0068 d5) | stock |
+    | `connections` | open OAuth connections of those keys, the live ones: a revoked key's open connection leaves the meter with the key (ADR-0068 d5) | stock |
 
     No attachment meter exists, because every write refuses attachments. One joins when
     attachments are built. The `memories` definition replaces ADR-0068 d5's "every state", the
@@ -67,9 +67,16 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
   `account_activity` holds one row per account per UTC day with its two flows. The commit that
   folds a metered event updates them in its own transaction, under the tenant's chain lock
   (ADR-0002 d3). The events are a held version, a promotion, a rejection, a supersession, a key
-  issued or revoked, and a connection opened or revoked. For a memory fold the store reads whether the
-  chain is live before and after the fold, both by index on the chain, and moves `memories` by
-  the difference. The commit carries the account's limits. When a meter the commit raises passes
+  issued or revoked, and a connection opened or revoked. A first version of a claim starts its
+  chain, which is its author's account's and live once held, so that commit reads nothing. For
+  any other memory fold the store reads the chain's account and whether the chain is live before
+  the fold, and whether it is live after, and moves `memories` by the difference. Each read is an
+  index probe on the chain: `memories_chain_first` for the account, `memories_claim_version` and
+  `memories_served_tip` for the liveness. A chain that is no account's is read once and no meter
+  moves. An account's stocks move in one statement and its day's writes in another, so inside
+  the lock a new memory by an account key costs two statements, a revision four, a promotion or
+  a rejection two or three, and a tenant key's new claim none. The application reads the
+  account's limits once, before the head, and the commit carries them. When a meter the commit raises passes
   its limit, the store refuses the commit with `quota_reached`, and the transaction rolls back
   with the journal row. The client gets `429 limit.quota`
   `{quota, limit, used}` and nothing is journalled. The application checks the same counters
@@ -83,11 +90,18 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     of d2. It also sums the month's flows from `account_activity`. It lists each account whose
     counter differs. `oml doctor` under an admin key prints `warn usage: <n> accounts drift from
     their rows (<user> <meter> counter <a> rows <b>, …)`, and nothing when none does. Nothing
-    repairs a counter by itself. A silent repair would hide the bug that caused the drift.
+    repairs a counter by itself. A silent repair would hide the bug that caused the drift. A
+    counter never goes below zero: the table refuses it, and a fold that takes one off a counter
+    already at zero, which only a drifted counter is, leaves it there and commits, so no
+    rejection or revocation is refused for its account's bookkeeping. The
+    [runbook](../operations/runbooks.md#a-usage-counter-drifts-from-its-rows) says what an
+    operator does with a drift.
 
 - **d4 — Usage history is a ledger of daily rows, appended once and kept 25 months. No meter is a
   per-account metric label.** `usage_daily` holds one row per account per closed UTC day: the
-  four stocks as the rollup read them, that day's two flows, and the account's profile. The
+  four stocks as the rollup read them, that day's two flows, and the profile the account is on:
+  the one an admin assigned, else `quota.signup_profile` in the sign-up tenant, and null for an
+  account under no limits (d5). The row keeps that name after the configuration moves on. The
   lead rolls up every hour. Each pass appends the rows of every closed day after the last
   rolled-up one, `ON CONFLICT DO NOTHING`, so two leads append each row once. The serving role
   may insert and read the rows, never update them. The same pass deletes rows older than 25
@@ -110,14 +124,24 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     - **Assigning.** `PUT /v2/admin/accounts/{account}/profile` `{profile, overrides}` replaces the
       account's profile and its overrides. It is journalled as `account.profile_set` and folded
       into `account_profiles` and `user_quotas`. `web.quota_set` keeps writing one override.
+    - **Un-assigning (proposed 2026-11-12).** `DELETE /v2/admin/accounts/{account}/profile` takes
+      the assigned profile and every override away. It is journalled as `account.profile_set`
+      with a null `profile` and no overrides, and the account is on the deployment's default
+      again: `quota.signup_profile` in the sign-up tenant, no limits outside it. An admin key
+      alone may; every other role is `access.verb_ceiling`. It deletes no memory, key or count.
+      Without it an account outside the sign-up tenant could not return to no limits once
+      assigned.
     - **A profile that disappeared.** An account whose profile the configuration no longer declares
-      is held to zero on every quota until an admin reassigns it. It fails closed, and `oml
-      doctor` prints `warn usage: <n> accounts on profile <name>, which the configuration does
-      not declare`.
+      is refused every write, key and connection as `limit.quota`: those five quotas are zero
+      until an admin reassigns it or the configuration declares the profile again. It fails
+      closed for writes and still reads, at `default`'s request rate, since reading never
+      blocks. `oml doctor` prints `warn usage: <n> accounts on profile <name>, which the
+      configuration does not declare`.
     - **The two thresholds.** A meter at 80% of its limit or more is in state `warning`. At its
       limit it is in state `reached`, and the next write that would pass the limit is refused
-      `limit.quota`. The usage endpoints, `/web/start` and the account page show both states.
-      The doctor line of ADR-0068 d5 moves from 90% to 80%, so there is one threshold.
+      `limit.quota`. The usage endpoints carry both states. No page shows them: the meters card
+      is not built (d6). The doctor line of ADR-0068 d5 moves from 90% to 80%, so there is one
+      threshold.
     - **Reading never blocks.** No quota refuses a recall, a get or a list, and `recalls` has no
       limit. `requests_per_minute` stays a rate (ADR-0068 d5), not a meter.
 
@@ -132,14 +156,15 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     | `GET /v2/admin/accounts/{account}/usage` | an admin key of the tenant | the same, for one account by root id or user name |
     | `GET /v2/admin/usage?period=YYYY-MM[&format=csv]` | an admin key | the month's ledger rows, every account, as JSON or CSV for billing |
     | `PUT /v2/admin/accounts/{account}/profile` | an admin key | `account.profile_set` (d5) |
+    | `DELETE /v2/admin/accounts/{account}/profile` | an admin key | `account.profile_set` with no profile (d5, proposed 2026-11-12) |
     | `GET /v2/admin/usage/drift` | an admin key | the drift report of d3 |
 
     The own-usage route takes no account parameter, so no request can name another account. A
     tenant key, which belongs to no account, gets `access.not_found`. The admin routes sit on
-    the lab ring with the other admin routes (ADR-0022), not on `/v1`. `/web/start` and the
-    account page show the person's meters as `oml-meter` bars with their state. `/web/admin/users`
-    lists every account with its profile and meters. The pages read through the same use cases
-    as the endpoints.
+    the lab ring with the other admin routes (ADR-0022), not on `/v1`. No page shows the meters:
+    the meters card of the start and account pages, and the profile and meter columns of the
+    users page, were built in the lead's pages before ADR-0070 and are not built in `oml-web`,
+    which owns the pages now. The note below says what the pages do show.
 
     **The ledger's consumer is outside this repository.** `GET /v2/admin/usage?period=YYYY-MM` is the
     whole export: the closed UTC days of one month, one row per account per day, read with an admin
@@ -153,7 +178,7 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     totals a month sums the flows (`writes`, `recalls`) and reads the stocks as they stand on
     each day. (`crates/transports/oml-transport-http/src/metering.rs`, `admin_usage_route`.)
 
-    **As landed on main, after ADR-0070 (2026-11-12).** The pages are `oml-web`'s and read over
+    **As landed on main, after ADR-0070 (2026-11-12), for v0.7.3.** The pages are `oml-web`'s and read over
     `/v2`, so the lead serves none of the three named above. `GET /v2/whoami`'s `person` and each
     row of `GET /v2/web/users` carry the `text_bytes` and `writes` counts beside the ones they had.
     They also carry the `text_bytes` and `writes_per_month` limits, null when unlimited. The
@@ -174,23 +199,32 @@ d2, d3; [ADR-0046](ADR-0046-the-lifecycle-claim-edges-and-the-brief-ship-in-v0-5
     | a write, key or connection past its limit | `429 limit.quota` `{quota, limit, used}` | `warn quota` at 80% (ADR-0068 d5) |
     | two writers at the last free unit | the second gets `limit.quota` from the commit | — |
     | a counter that differs from its rows | — | `warn usage: … drift` (d3) |
-    | an account on an undeclared profile | every quota is zero, `limit.quota` | `warn usage: … profile` (d5) |
+    | an account on an undeclared profile | every write, key and connection is `limit.quota`; reads answer | `warn usage: … profile` (d5) |
+    | the drift report cannot be read | — | `warn usage: the drift report was not read (<reason>)` |
     | `PUT …/profile` naming an undeclared profile or quota | `request.validation`, `profile` / `overrides` | — |
     | a rollup pass that fails | — | log `usage_rollup_failed`; the next pass appends what it missed |
-    | a recall count that fails to write | — (the recall is served: reading never blocks) | the month's `recalls` reads low; nothing recomputes it |
+    | a recall count that the queue drops or that fails to write | — (the recall is served: reading never blocks) | log `usage_recall_counts_lost` with the count; the month's `recalls` reads low; nothing recomputes it |
     | `period` not `YYYY-MM` | `request.validation`, `period` | — |
 
 ## Consequences
 
 - Migration 0045 adds `account_meters`, `account_activity`, `usage_daily` and `account_profiles`
-  under the tenant RLS of 0004. It widens the `user_quotas` check to six quotas and sets the
+  under the tenant RLS of 0004, and the index `memories_chain_first` on every tenant's
+  partition of `memories`. It widens the `user_quotas` check to six quotas and sets the
   serving grants (`usage_daily`: SELECT, INSERT and DELETE for the 25-month retention, no UPDATE).
   It fills `account_meters` and `account_activity` from the rows already stored, so a live
   database starts with no drift: each account's `memories`, `text_bytes`, `keys` and
   `connections` by d2's definitions, and its `writes` per day for the last 62 days from each
   stored version's `created_at`. `recalls` starts at zero, since nothing stored counts them. It
   assigns no profile and adds no limit. The migration's header names the locks it holds and its
-  measured time: under half a second with 100,000 versions stored.
+  measured time, the index build's and the fill's: 563 to 630 ms with 100,000 versions stored.
+  It runs at the lead's start, so that time is the upgrade's.
+- Two things a deployment with open sign-up sees change, beside the meters. An admin key that
+  issues a key naming a person is now held to that person's `keys` quota by the commit's
+  ceiling, so a sixth key for a person at five is `limit.quota`; ADR-0068 d5 checked the
+  person's own issuance only. And `oml doctor` warns at 80% of a quota where it warned at 90%.
+  `memories` cannot count more than ADR-0068 d5 counted for any account: a person's keys write
+  only inside their root (d1), and rejected-only and retired chains no longer count.
 - `account.profile_set` joins the [event catalog](../data/event-catalog.md). `limit.quota`'s
   `details.quota` gains `text_bytes` and `writes_per_month`.
 - [http-api](../api/http-api.md) and openapi.yaml gain the five routes, and the SDKs are
