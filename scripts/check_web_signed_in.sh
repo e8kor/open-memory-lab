@@ -9,19 +9,20 @@
 #   1. POST /web/sign-in for GitHub, from the issuer's origin, next the page;
 #   2. the provider's callback with the sealed state, which opens a session;
 #   3. GET /web/guardrails with that session: 200 and the view's content;
-#   4. GET /web?view=guardrails: the lead's 303 to /web/guardrails;
+#   4. GET /web?view=guardrails: 404 with no redirect, the old URL's 303
+#      deleted in v0.7.1 (ADR-0070, "The old URLs deleted");
 #   5. GET /web/workareas: 200 and the Workareas view, from oml-web;
 #   6. two acts end to end: oml-web creates <user>.proj through the API,
 #      its form sent twice creating it once, then confirms putting it in
 #      progress, and the confirmation's form, sent twice, runs the act once
 #      and lands back on the view;
-#   7. GET /web?view=workarea: the lead's 303 to /web/workareas;
+#   7. GET /web?view=workarea: 404 with no redirect;
 #   8. GET /web/memories and GET /web/atlas: 200, the list and the Atlas,
-#      from oml-web; GET /web?view=memories: the lead's 303 to /web/memories.
+#      from oml-web; GET /web?view=memories: 404 with no redirect.
 #   9. GET /web: the lead's 303 to /web/keys; GET /web/keys from oml-web, and
 #      one act: issuing a reader key, whose value is shown once on the
 #      redirect target, carried there in a sealed cookie and never in the URL;
-#  10. GET /web?view=review: the lead's 303 to /web/review; GET /web/review
+#  10. GET /web?view=review: 404 with no redirect; GET /web/review
 #      from oml-web, and one act: review next, which lands back on the view.
 #
 # Usage: scripts/check_web_signed_in.sh <origin the router answers> <oauth.issuer>
@@ -67,8 +68,8 @@ grep -q '<a href="/web/guardrails" class="on"' "$work/page.html" || fail "the Gu
 
 code="$(curl -s -o /dev/null -D "$work/old" -w '%{http_code}' \
     -H "Cookie: __Host-oml_session=$session" "$origin/web?view=guardrails")"
-location="$(header "$work/old" location)"
-[ "$code $location" = "303 /web/guardrails" ] || fail "GET /web?view=guardrails answered '$code $location'"
+location="$(header "$work/old" location || true)"
+[ "$code $location" = "404 " ] || fail "GET /web?view=guardrails answered '$code $location'"
 
 jar="Cookie: __Host-oml_session=$session"
 field() { # <file> <name>: the value of the first input named so
@@ -116,8 +117,8 @@ grep -q "universe\.$user\.proj</td><td class=\"mono\">$user\.proj</td><td>develo
     || fail "the act did not put $user.proj in progress: $(head -c 600 "$work/after.html")"
 
 code="$(curl -s -o /dev/null -D "$work/old-workareas" -w '%{http_code}' -H "$jar" "$origin/web?view=workarea")"
-location="$(header "$work/old-workareas" location)"
-[ "$code $location" = "303 /web/workareas" ] || fail "GET /web?view=workarea answered '$code $location'"
+location="$(header "$work/old-workareas" location || true)"
+[ "$code $location" = "404 " ] || fail "GET /web?view=workarea answered '$code $location'"
 
 code="$(curl -s -o "$work/memories.html" -w '%{http_code}' -H "$jar" "$origin/web/memories")"
 [ "$code" = 200 ] || fail "GET /web/memories answered $code: $(head -c 400 "$work/memories.html")"
@@ -128,8 +129,8 @@ code="$(curl -s -o "$work/atlas.html" -w '%{http_code}' -H "$jar" "$origin/web/a
 grep -q 'id="atlas-table"' "$work/atlas.html" || fail "GET /web/atlas did not draw the Atlas"
 grep -q '<a href="/web/atlas" class="on"' "$work/atlas.html" || fail "the Atlas tab is not the current one"
 code="$(curl -s -o /dev/null -D "$work/old-memories" -w '%{http_code}' -H "$jar" "$origin/web?view=memories")"
-location="$(header "$work/old-memories" location)"
-[ "$code $location" = "303 /web/memories" ] || fail "GET /web?view=memories answered '$code $location'"
+location="$(header "$work/old-memories" location || true)"
+[ "$code $location" = "404 " ] || fail "GET /web?view=memories answered '$code $location'"
 
 
 code="$(curl -s -o /dev/null -D "$work/landing" -w '%{http_code}' -H "$jar" "$origin/web")"
@@ -155,8 +156,8 @@ grep -q "OML_API_KEY=oml_" "$work/shown.html" || fail "the redirect target did n
 grep -qi '^set-cookie: __Host-oml_once=;' "$work/shown" || fail "the redirect target did not clear the sealed secret"
 
 code="$(curl -s -o /dev/null -D "$work/old-review" -w '%{http_code}' -H "$jar" "$origin/web?view=review")"
-location="$(header "$work/old-review" location)"
-[ "$code $location" = "303 /web/review" ] || fail "GET /web?view=review answered '$code $location'"
+location="$(header "$work/old-review" location || true)"
+[ "$code $location" = "404 " ] || fail "GET /web?view=review answered '$code $location'"
 code="$(curl -s -o "$work/review.html" -w '%{http_code}' -H "$jar" "$origin/web/review")"
 [ "$code" = 200 ] || fail "GET /web/review answered $code: $(head -c 400 "$work/review.html")"
 grep -q '<a href="/web/review" class="on"' "$work/review.html" || fail "the Review tab is not the current one"
@@ -173,4 +174,4 @@ esac
 code="$(curl -s -o /dev/null -w '%{http_code}' -H "$jar" "$origin$location")"
 [ "$code" = 200 ] || fail "GET $location answered $code"
 
-echo "signed-in page: $origin served /web/guardrails, /web/workareas, /web/memories, /web/atlas, /web/keys and /web/review to a signed-in session through oml-web, ran acts on the Workareas, Keys and Review views through the API, and the old URLs redirect there"
+echo "signed-in page: $origin served /web/guardrails, /web/workareas, /web/memories, /web/atlas, /web/keys and /web/review to a signed-in session through oml-web, ran acts on the Workareas, Keys and Review views through the API, and the old ?view= URLs are not found"

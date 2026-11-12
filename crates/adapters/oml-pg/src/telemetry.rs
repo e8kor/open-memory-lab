@@ -85,15 +85,20 @@ impl PgTelemetry {
             queue,
             meter: Arc::clone(&meter),
         });
-        let writer = Writer {
-            pool,
-            meter,
-            last_pass,
-            per_key_today: BTreeMap::new(),
-            last_unrecalled: None,
-            no_use_marks: BTreeMap::new(),
-        };
+        let writer = Writer::new(pool, meter, last_pass);
         (telemetry, tokio::spawn(writer.run(rx)))
+    }
+
+    /// One labeller's pass over `pool`, counted into `meter`, awaited to
+    /// its end: the lag it found, `no_use`, the purge and the unrecalled
+    /// count, as the spawned writer runs each minute. For tests alone,
+    /// which drive it in place of the writer's minute so no assertion waits
+    /// on a clock (ADR-0054 d13; #278); the lead runs [`Self::spawn`].
+    #[doc(hidden)]
+    pub async fn pass_once(pool: PgPool, meter: Arc<dyn TelemetryMeter>) {
+        Writer::new(pool, meter, Arc::new(AtomicI64::new(unix_now())))
+            .pass()
+            .await;
     }
 
     fn depth(&self) -> i64 {
@@ -359,6 +364,19 @@ struct Writer {
 }
 
 impl Writer {
+    /// A writer with nothing counted yet: the one setup `spawn` and
+    /// `pass_once` share.
+    fn new(pool: PgPool, meter: Arc<dyn TelemetryMeter>, last_pass: Arc<AtomicI64>) -> Self {
+        Self {
+            pool,
+            meter,
+            last_pass,
+            per_key_today: BTreeMap::new(),
+            last_unrecalled: None,
+            no_use_marks: BTreeMap::new(),
+        }
+    }
+
     async fn run(mut self, mut rx: mpsc::Receiver<Msg>) {
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

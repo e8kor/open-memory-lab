@@ -1362,7 +1362,10 @@ async fn the_admin_workareas_page_refuses_a_create_as_no_action_of_its_own_and_c
 }
 
 #[tokio::test]
-async fn the_old_workareas_urls_and_acts_go_through_the_lead_to_the_moved_pages_own_paths() {
+async fn the_old_workareas_urls_are_not_found_and_their_acts_run_nothing() {
+    // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
+    // "The old URLs deleted"): an old URL is not found, an old act is
+    // refused and runs nothing, and the moved page answers at its own path.
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
@@ -1373,13 +1376,13 @@ async fn the_old_workareas_urls_and_acts_go_through_the_lead_to_the_moved_pages_
         ("/web/admin?view=workarea", &boss, "/web/admin/workareas"),
     ] {
         let (status, headers, _) = send(&rig.router, get(old, Some(who))).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
-        assert_eq!(headers[header::LOCATION], new, "{old}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
+        assert!(headers.get(header::LOCATION).is_none(), "{old}");
         let (status, _, page) = send(&rig.router, get(new, Some(who))).await;
         assert_eq!(status, StatusCode::OK, "{page}");
         assert!(page.contains("<h1>Workareas</h1>"), "{page}");
     }
-    // An old form's act runs nothing and lands on the view.
+    // An old form's act is no action of POST /web and runs nothing.
     let (status, headers, _) = act(
         &rig,
         &cookie,
@@ -1391,8 +1394,8 @@ async fn the_old_workareas_urls_and_acts_go_through_the_lead_to_the_moved_pages_
         ],
     )
     .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/web/workareas");
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(headers.get(header::LOCATION).is_none());
     let node = rig
         .store
         .workarea(rig.boot.tenant_id, proj)
@@ -1400,8 +1403,8 @@ async fn the_old_workareas_urls_and_acts_go_through_the_lead_to_the_moved_pages_
         .unwrap()
         .unwrap();
     assert!(!node.in_progress);
-    // An old form's create runs nothing either and lands on the view, where
-    // creating a workarea is the view's own act through the API.
+    // An old form's create runs nothing either: creating a workarea is the
+    // view's own act through the API.
     let (status, headers, _) = act(
         &rig,
         &cookie,
@@ -1409,8 +1412,8 @@ async fn the_old_workareas_urls_and_acts_go_through_the_lead_to_the_moved_pages_
         &[("action", "create_workarea"), ("name", "docs")],
     )
     .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/web/workareas");
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(headers.get(header::LOCATION).is_none());
     let root = key_named(&rig, "alice-web").await.user.expect("a root");
     let docs = || async {
         rig.store
@@ -1490,15 +1493,16 @@ async fn a_moved_page_draws_the_header_and_tabs_the_leads_pages_draw() {
 }
 
 #[tokio::test]
-async fn the_old_guardrails_url_goes_through_the_lead_to_the_moved_pages_own_path() {
+async fn the_old_guardrails_url_is_not_found_and_the_view_answers_at_its_own_path() {
     // ADR-0070 d7 (b) as amended: each moved page has its own path under
-    // /web/; the lead answers the old ?view= form with a 303 to it.
+    // /web/; the lead's 303 from the old ?view= form is deleted in v0.7.1
+    // (ADR-0070, "The old URLs deleted").
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     for old in ["/web?view=guardrails", "/web?view=guardrails&workarea=x"] {
         let (status, headers, _) = send(&rig.router, get(old, Some(&cookie))).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
-        assert_eq!(headers[header::LOCATION], "/web/guardrails", "{old}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
+        assert!(headers.get(header::LOCATION).is_none(), "{old}");
     }
     let (status, _, page) = send(&rig.router, get("/web/guardrails", Some(&cookie))).await;
     assert_eq!(status, StatusCode::OK, "{page}");
@@ -2257,7 +2261,10 @@ async fn a_resubmitted_supersede_form_proposes_one_version_and_lands_on_the_memo
 }
 
 #[tokio::test]
-async fn the_old_memory_and_curate_urls_go_through_the_lead_to_the_moved_pages_own_paths() {
+async fn the_old_memory_and_curate_urls_are_not_found_and_the_pages_answer_at_their_own_paths() {
+    // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
+    // "The old URLs deleted"): an old URL is not found, an old act is
+    // refused and runs nothing, and the moved page answers at its own path.
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     let value = laptop_key(&rig, &cookie).await;
@@ -2282,8 +2289,8 @@ async fn the_old_memory_and_curate_urls_go_through_the_lead_to_the_moved_pages_o
         ),
     ] {
         let (status, headers, _) = send(&rig.router, get(&old, Some(who))).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
-        assert_eq!(headers[header::LOCATION], new.as_str(), "{old}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
+        assert!(headers.get(header::LOCATION).is_none(), "{old}");
         let (status, _, page) = send(&rig.router, get(&new, Some(who))).await;
         assert_eq!(status, StatusCode::OK, "{new}: {page}");
     }
@@ -2789,7 +2796,10 @@ async fn the_start_status_and_export_are_data_and_answer_nothing_without_a_sessi
 }
 
 #[tokio::test]
-async fn the_old_setup_and_admin_urls_go_through_the_lead_to_the_moved_pages_own_paths() {
+async fn the_old_setup_and_admin_urls_are_not_found_and_the_pages_answer_at_their_own_paths() {
+    // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
+    // "The old URLs deleted"): an old URL is not found, an old act is
+    // refused and runs nothing, and the moved page answers at its own path.
     let rig = rig().await;
     let cookie = signed_in(&rig, "sub-1", EMAIL).await;
     rig.allow("boss@example.com", "boss", true).await;
@@ -2800,8 +2810,8 @@ async fn the_old_setup_and_admin_urls_go_through_the_lead_to_the_moved_pages_own
         ("/web/admin?view=people", boss.as_str(), "/web/admin/people"),
     ] {
         let (status, headers, _) = send(&rig.router, get(old, Some(who))).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
-        assert_eq!(headers[header::LOCATION], new, "{old}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
+        assert!(headers.get(header::LOCATION).is_none(), "{old}");
         let (status, _, page) = send(&rig.router, get(new, Some(who))).await;
         assert_eq!(status, StatusCode::OK, "{new}: {page}");
     }
@@ -4257,12 +4267,19 @@ async fn a_cut_off_confirmation_sent_twice_cuts_the_key_off_once() {
 }
 
 #[tokio::test]
-async fn the_old_review_and_keys_urls_and_acts_go_through_the_lead_to_the_moved_pages_own_paths() {
+async fn the_old_review_and_keys_urls_are_not_found_and_their_acts_run_nothing() {
+    // The lead's 303s from the old URLs are deleted in v0.7.1 (ADR-0070,
+    // "The old URLs deleted"): an old URL is not found, an old act is
+    // refused and runs nothing, and the moved page answers at its own path.
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
     let cookie = signed_in(&rig, "sub-boss", "boss@example.com").await;
+    // A signed-in GET /web naming no view is the console's landing, the
+    // Keys view; it is not an old URL.
+    let (status, headers, _) = send(&rig.router, get("/web", Some(&cookie))).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[header::LOCATION], "/web/keys");
     for (old, new) in [
-        ("/web", "/web/keys"),
         ("/web?view=keys", "/web/keys"),
         ("/web?view=review", "/web/review"),
         ("/web/admin?view=review", "/web/admin/review"),
@@ -4270,16 +4287,16 @@ async fn the_old_review_and_keys_urls_and_acts_go_through_the_lead_to_the_moved_
         ("/web/admin?view=queue", "/web/admin/review"),
     ] {
         let (status, headers, _) = send(&rig.router, get(old, Some(&cookie))).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
-        assert_eq!(headers[header::LOCATION], new, "{old}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
+        assert!(headers.get(header::LOCATION).is_none(), "{old}");
         let (status, _, page) = send(&rig.router, get(new, Some(&cookie))).await;
         assert_eq!(status, StatusCode::OK, "{new}: {page}");
     }
-    for (page, action, new) in [
-        ("/web", "issue_key", "/web/keys"),
-        ("/web", "review_next", "/web/review"),
-        ("/web/admin", "bulk_verdict", "/web/admin/review"),
-        ("/web/admin", "cut_off", "/web/admin/keys"),
+    for (page, action, refused) in [
+        ("/web", "issue_key", StatusCode::BAD_REQUEST),
+        ("/web", "review_next", StatusCode::BAD_REQUEST),
+        ("/web/admin", "bulk_verdict", StatusCode::NOT_FOUND),
+        ("/web/admin", "cut_off", StatusCode::NOT_FOUND),
     ] {
         let (status, headers, _) = act(
             &rig,
@@ -4288,8 +4305,8 @@ async fn the_old_review_and_keys_urls_and_acts_go_through_the_lead_to_the_moved_
             &[("action", action), ("name", "laptop"), ("role", "writer")],
         )
         .await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{action}");
-        assert_eq!(headers[header::LOCATION], new, "{action}");
+        assert_eq!(status, refused, "{page} {action}");
+        assert!(headers.get(header::LOCATION).is_none(), "{action}");
     }
     assert!(
         rig.store
@@ -5114,11 +5131,11 @@ async fn the_atlas_draws_and_counts_only_the_workareas_and_rows_the_viewer_may_r
 }
 
 #[tokio::test]
-async fn the_old_memories_urls_go_through_the_lead_to_the_moved_pages_own_paths() {
+async fn the_old_memories_urls_are_not_found_and_the_list_and_atlas_answer_at_their_own_paths() {
     // ADR-0070 d7 (b) as amended: the Memories list and the Atlas each have
-    // their own path under /web/; the lead answers the old ?view= forms
-    // with a 303 there, carrying nothing from the request, and still serves
-    // one memory opened by its id.
+    // their own path under /web/, and one memory its own page; the lead's
+    // 303s from the old ?view= forms are deleted in v0.7.1 (ADR-0070, "The
+    // old URLs deleted").
     let rig = rig().await;
     rig.allow("boss@example.com", "boss", true).await;
     let (cookie, agent) = person_with_agent(&rig, "sub-1", EMAIL).await;
@@ -5136,14 +5153,14 @@ async fn the_old_memories_urls_go_through_the_lead_to_the_moved_pages_own_paths(
         ),
     ] {
         let (status, headers, _) = send(&rig.router, get(old, Some(who))).await;
-        assert_eq!(status, StatusCode::SEE_OTHER, "{old}");
-        assert_eq!(headers[header::LOCATION], new, "{old}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{old}");
+        assert!(headers.get(header::LOCATION).is_none(), "{old}");
         let (status, _, page) = send(&rig.router, get(new, Some(who))).await;
         assert_eq!(status, StatusCode::OK, "{page}");
         assert!(page.contains("<h1>Memories</h1>"), "{new}: {page}");
     }
-    // The list's rows link to one memory's own page, which the old link
-    // reaches through the lead.
+    // The list's rows link to one memory's own page; the old link to it is
+    // not found.
     let (_, _, list) = send(&rig.router, get("/web/memories", Some(&cookie))).await;
     assert!(
         list.contains(&format!(
@@ -5159,11 +5176,8 @@ async fn the_old_memories_urls_go_through_the_lead_to_the_moved_pages_own_paths(
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(
-        headers[header::LOCATION],
-        format!("/web/memory?id={memory}").as_str()
-    );
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(headers.get(header::LOCATION).is_none());
     let (status, _, opened) = send(
         &rig.router,
         get(&format!("/web/memory?id={memory}"), Some(&cookie)),

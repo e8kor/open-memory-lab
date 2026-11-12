@@ -781,11 +781,11 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
     assert!(!rpc.to_string().contains("vendor audit"), "{rpc}");
     // Web: Bob's pages, status, counts and export hold nothing of Ada's.
     // The Memories list is oml-web's (ADR-0070 d7 (b)): the lead answers
-    // its old URL with a redirect that holds no page, and oml-web's own
+    // its old URL not found, its redirect deleted in v0.7.1, and oml-web's own
     // isolation case is `a_person_reaches_nothing_of_another_persons_root_on_oml_webs_pages`.
     let (status, headers, _) = send(&rig.router, page("/web?view=memories", Some(&bob))).await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/web/memories");
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(headers.get(header::LOCATION).is_none());
     for path in ["/web/start"] {
         let (_, _, html) = send(&rig.router, page(path, Some(&bob))).await;
         assert!(!html.contains("Zanzibar"), "{path}: {html}");
@@ -804,12 +804,9 @@ async fn a_second_person_cannot_see_count_or_recall_the_first_persons_memories()
         assert!(!bob_held.to_string().contains(secret), "{bob_held}");
         // Neither old URL is a page on the lead any more: curate was never
         // a user view, and the list is oml-web's.
-        for (path, want) in [
-            ("/web?view=curate", StatusCode::NOT_FOUND),
-            ("/web?view=memories", StatusCode::SEE_OTHER),
-        ] {
+        for path in ["/web?view=curate", "/web?view=memories"] {
             let (status, _, html) = send(&rig.router, page(path, Some(&bob))).await;
-            assert_eq!(status, want, "{path}");
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
             assert!(!html.contains(secret), "{path}: {html}");
         }
         for path in ["/v2/review/held", "/v2/events", "/v1/memories"] {
@@ -962,7 +959,6 @@ async fn at_the_memories_quota_a_replay_returns_its_receipt_and_a_new_version_is
     drop_db(&rig.db).await;
 }
 
-/// The drawn user of GitHub account `id`, read off the journal.
 /// A console act resolves its caller once and acts as it, so a create by
 /// an agent key costs one request of the key's rate, not two (#253): at
 /// one request a minute, the first request of the key creates.
@@ -987,6 +983,7 @@ async fn a_workarea_create_by_an_agent_key_costs_one_request_of_its_rate() {
     drop_db(&rig.db).await;
 }
 
+/// The drawn user of GitHub account `id`, read off the journal.
 async fn rig_user(rig: &Rig, _id: u64) -> String {
     events(rig)
         .await

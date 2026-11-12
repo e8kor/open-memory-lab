@@ -6,7 +6,7 @@ answers: "how to install the oml CLI on Linux and Windows; the flags and variabl
 
 # Install the `oml` command
 
-Two scripts install the `oml` CLI for the current user, write one file and print the next command. The lines below fetch them at the tag `v0.6.3`.
+Two scripts install the `oml` CLI for the current user, write one file and print the next command. The lines below fetch them at the tag `v0.7.0`.
 
 !!! warning "macOS"
     Releases after v0.5.2 carry no macOS build, and the installer stops on a Mac with that message. Build from source: `cargo install --git https://github.com/e8kor/open-memory-lab --tag vX.Y.Z oml-cli`.
@@ -14,7 +14,7 @@ Two scripts install the `oml` CLI for the current user, write one file and print
 === "Linux"
 
     ```sh
-    curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.3/scripts/install/install.sh | sh
+    curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.7.0/scripts/install/install.sh | sh
     ```
 
     Static musl binary for x86_64 and arm64.
@@ -24,7 +24,7 @@ Two scripts install the `oml` CLI for the current user, write one file and print
     In Windows PowerShell 5.1 or PowerShell 7:
 
     ```powershell
-    irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.3/scripts/install/install.ps1 | iex
+    irm https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.7.0/scripts/install/install.ps1 | iex
     ```
 
     Native on x86_64; Windows on ARM64 runs it under emulation.
@@ -49,7 +49,7 @@ Next, connect to your server with your agent key:
 
 | `install.sh` | `install.ps1` | Variable | Default |
 |---|---|---|---|
-| `--version X.Y.Z` or `latest` | `-Version` | `OML_VERSION` | the release the script was cut with: 0.6.3 at `v0.6.3` |
+| `--version X.Y.Z` or `latest` | `-Version` | `OML_VERSION` | the release the script was cut with: 0.7.0 at `v0.7.0` |
 | `--dir PATH` | `-Dir` | `OML_INSTALL_DIR` | `$HOME/.local/bin`; `%LOCALAPPDATA%\Programs\oml\bin` |
 | `--require-signature` | `-RequireSignature` | `OML_REQUIRE_SIGNATURE=1` | off |
 
@@ -68,7 +68,7 @@ The installer checks the archive for you. This section says what it checks and h
 - A server can tell a pipe from a download and serve each different bytes. To read the script before it runs, download it, read it, then run it:
 
     ```sh
-    curl -fsSLO --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.6.3/scripts/install/install.sh
+    curl -fsSLO --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/e8kor/open-memory-lab/v0.7.0/scripts/install/install.sh
     less install.sh
     sh install.sh
     ```
@@ -85,7 +85,7 @@ the release's `SHA256SUMS` over HTTPS, and compares the archive's SHA-256 with i
   verify-blob` under the release workflow's identity, pinned to the exact tag. It prints:
 
     ```text
-    oml install: checked: cosign verified SHA256SUMS's signature by the release workflow at v0.6.3, and the archive matches it
+    oml install: checked: cosign verified SHA256SUMS's signature by the release workflow at v0.7.0, and the archive matches it
     ```
 
 - **Without cosign** it compares the checksum only, and prints:

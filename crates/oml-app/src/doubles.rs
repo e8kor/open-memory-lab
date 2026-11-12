@@ -421,6 +421,16 @@ pub struct MemStore {
     /// Whether the next vocabulary read yields once before it reads, so a
     /// test can commit while a widen signal's build is in flight (#244).
     pause_vocabulary: Arc<AtomicBool>,
+    /// How many memory rows the recall path's reads visited, across every
+    /// handle: a recall's work, counted, so a law can hold that it does not
+    /// grow with rows the key cannot read (ADR-0072 d13 test 7; #278).
+    rows_read: Arc<AtomicU64>,
+    /// The keys `key` answers absent while a user root's listing still
+    /// names them: a key gone between a use case's listing and its read.
+    vanished_keys: Arc<Mutex<BTreeSet<Uuid>>>,
+    /// Whether the next vocabulary read never returns, so a test can hold
+    /// that the refresh stops a build at its timeout (#268).
+    hang_vocabulary: Arc<AtomicBool>,
 }
 
 /// A future that is pending once, waking itself, then ready: a point where
@@ -497,6 +507,31 @@ impl MemStore {
         }
     }
 
+    /// How many memory rows the recall path's reads (`retrieve`, the
+    /// reference and vocabulary counts, steering) visited on any handle.
+    #[must_use]
+    pub fn rows_read(&self) -> u64 {
+        self.rows_read.load(Ordering::SeqCst)
+    }
+
+    /// The rows on `nodes`, read by workarea and counted in
+    /// [`Self::rows_read`]: the one way the recall path's reads reach a
+    /// memory row, so no read of it can skip the count (#278).
+    fn rows_on<'s, 'n>(
+        &self,
+        state: &'s TenantState,
+        nodes: impl Iterator<Item = &'n Uuid>,
+    ) -> impl Iterator<Item = &'s MemoryRecord> {
+        let rows_read = Arc::clone(&self.rows_read);
+        nodes
+            .filter_map(|n| state.by_workarea.get(n))
+            .flatten()
+            .filter_map(|id| state.memories.get(id))
+            .inspect(move |_| {
+                rows_read.fetch_add(1, Ordering::SeqCst);
+            })
+    }
+
     /// How many federation reads every handle of this store answered.
     #[must_use]
     pub fn federation_reads(&self) -> u64 {
@@ -506,6 +541,11 @@ impl MemStore {
     /// Makes the next vocabulary read yield once before it reads (#244).
     pub fn pause_next_vocabulary_read(&self) {
         self.pause_vocabulary.store(true, Ordering::SeqCst);
+    }
+
+    /// Makes the next vocabulary read never return (#268).
+    pub fn hang_next_vocabulary_read(&self) {
+        self.hang_vocabulary.store(true, Ordering::SeqCst);
     }
 
     /// How many widen-signal reads every handle of this store answered.
@@ -734,6 +774,16 @@ impl MemStore {
         if let Some(key) = state.keys.get_mut(&key_id) {
             key.user = user;
         }
+    }
+
+    /// Makes `key` answer `key_id` absent from now on while
+    /// `web_user_keys` still lists it: a key gone since a use case listed
+    /// its user root's keys, which no verb does (ADR-0068 d8, #277).
+    pub fn vanish_key(&self, key_id: Uuid) {
+        self.vanished_keys
+            .lock()
+            .expect("vanished lock")
+            .insert(key_id);
     }
 
     /// Test visibility: how many names have been looked up through
@@ -2305,12 +2355,7 @@ impl Retriever for MemStore {
             nodes.extend(own.nodes.iter().copied());
         }
         let rows_of = |nodes: &BTreeSet<Uuid>| -> Vec<&MemoryRecord> {
-            nodes
-                .iter()
-                .filter_map(|n| state.by_workarea.get(n))
-                .flatten()
-                .filter_map(|id| state.memories.get(id))
-                .collect()
+            self.rows_on(&state, nodes.iter()).collect()
         };
         let scoped = rows_of(&nodes);
         // The scope is the core's: promoted served tips on its nodes, and
@@ -2858,12 +2903,7 @@ impl JournalStore for MemStore {
             .collect();
         if let Some(tenant) = self.tenant_existing(tenant_id) {
             let state = tenant.lock().expect("tenant lock");
-            let rows = scope
-                .nodes
-                .iter()
-                .filter_map(|n| state.by_workarea.get(n))
-                .flatten()
-                .filter_map(|id| state.memories.get(id));
+            let rows = self.rows_on(&state, scope.nodes.iter());
             for m in rows {
                 if !reference_row(m, &scope.kinds, scope.expired_at) {
                     continue;
@@ -2899,16 +2939,14 @@ impl JournalStore for MemStore {
         if self.pause_vocabulary.swap(false, Ordering::SeqCst) {
             YieldOnce(false).await;
         }
+        if self.hang_vocabulary.swap(false, Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
         let mut rows: BTreeMap<Uuid, u64> = scope.nodes.iter().map(|n| (*n, 0)).collect();
         let mut df: BTreeMap<(Uuid, i64), u64> = BTreeMap::new();
         if let Some(tenant) = self.tenant_existing(tenant_id) {
             let state = tenant.lock().expect("tenant lock");
-            let held = scope
-                .nodes
-                .iter()
-                .filter_map(|n| state.by_workarea.get(n))
-                .flatten()
-                .filter_map(|id| state.memories.get(id));
+            let held = self.rows_on(&state, scope.nodes.iter());
             for m in held {
                 if !reference_row(m, &scope.kinds, scope.expired_at) {
                     continue;
@@ -2974,11 +3012,8 @@ impl JournalStore for MemStore {
         // A promoted version always carries the `promoted_at` its fold
         // stamped, so no row in force is passed over here.
         // The named nodes' rows alone, read by workarea.
-        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = nodes
-            .iter()
-            .filter_map(|n| state.by_workarea.get(n))
-            .flatten()
-            .filter_map(|id| state.memories.get(id))
+        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = self
+            .rows_on(&state, nodes.iter())
             .filter(|m| served_tip(m) && m.kind == MemoryKind::Steering)
             .filter_map(|m| {
                 let depth = nodes.iter().position(|n| *n == m.workarea_id)?;
@@ -3003,11 +3038,8 @@ impl JournalStore for MemStore {
             return Ok(Vec::new());
         };
         let state = tenant.lock().expect("tenant lock");
-        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = nodes
-            .iter()
-            .filter_map(|n| state.by_workarea.get(n))
-            .flatten()
-            .filter_map(|id| state.memories.get(id))
+        let mut rows: Vec<(u32, EventTime, MemoryRecord)> = self
+            .rows_on(&state, nodes.iter())
             .filter(|m| m.kind == MemoryKind::Steering && !m.retirement && tip_at(&state, m, as_of))
             .filter_map(|m| {
                 let depth = nodes.iter().position(|n| *n == m.workarea_id)?;
@@ -3563,6 +3595,14 @@ impl JournalStore for MemStore {
     }
 
     async fn key(&self, tenant_id: Uuid, key_id: Uuid) -> Result<Option<KeyRecord>, StoreError> {
+        if self
+            .vanished_keys
+            .lock()
+            .expect("vanished lock")
+            .contains(&key_id)
+        {
+            return Ok(None);
+        }
         let Some(tenant) = self.tenant_existing(tenant_id) else {
             return Ok(None);
         };

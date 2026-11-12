@@ -1094,22 +1094,11 @@ where
         // its answer is composed (ADR-0072 d12, as built by #244).
         if st.app.widen_signals_wanted() {
             let app = Arc::clone(&st.app);
+            // One refresh at a time in the process, one build at a time,
+            // tenants in turn; a build past its timeout is stopped, counted
+            // and marked, and the next goes on.
             tokio::spawn(async move {
-                // One refresh at a time in the process, one build at a time
-                // in the order recalls asked; a build past its timeout is
-                // stopped, counted and marked, and the next goes on.
-                let Some(refresh) = app.begin_widen_refresh() else {
-                    return;
-                };
-                while let Some(build) = app.next_widen_build(&refresh) {
-                    let run = app.run_widen_build(&build);
-                    if tokio::time::timeout(app.widen_build_timeout(), run)
-                        .await
-                        .is_err()
-                    {
-                        app.widen_build_stopped(&build);
-                    }
-                }
+                app.refresh_widen_signals_with(tokio::time::sleep).await;
             });
         }
         // The budget object is present if and only if max_tokens was sent
@@ -2679,7 +2668,7 @@ where
         body: &Bytes,
     ) -> Result<Response, ApiError> {
         st.require_writes_open()?;
-        let token = bearer(headers)?;
+        bearer(headers)?;
         let idem = idempotency_key(headers)?;
         let key = reference("key", key_id)?;
         let req: ConnectCodeBody = if body.is_empty() {
@@ -2704,6 +2693,8 @@ where
         // A resubmission replays the answer without the code, which is
         // shown once, and mints none: a second code would void the first
         // (ADR-0031 d7; #233).
+        // The act runs as the caller this request just resolved, so the
+        // request costs one of its key's rate, not two (#253, #281).
         let caller = st.console_caller(headers).await?;
         let digest = console::act_digest(key_id, body);
         let claim = match st
@@ -2718,8 +2709,11 @@ where
         claim
             .run(async move {
                 let code = retry_chain(|| {
-                    st.app
-                        .mint_connect_code_with_ttl(&token, key.clone(), ttl_seconds)
+                    st.app.mint_connect_code_with_ttl(
+                        Bearer::Session(&caller),
+                        key.clone(),
+                        ttl_seconds,
+                    )
                 })
                 .await
                 .map_err(|e| console::ActFailure::first(map_app_error(e, ErrorContext::Write)))?;

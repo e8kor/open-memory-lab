@@ -8866,11 +8866,13 @@ where
     /// `not_confined`; ADR-0067 d3).
     pub async fn mint_connect_code_with_ttl(
         &self,
-        api_key: &str,
+        api_key: impl Into<Bearer<'_>>,
         key: Reference,
         ttl_secs: Option<i64>,
     ) -> Result<ConnectCodeIssued, AppError> {
-        let admin = self.authenticate(api_key).await?.key;
+        // A caller the request already resolved is not charged again
+        // against its rate (#253, #281).
+        let admin = self.authenticate_bearer(api_key.into()).await?.key;
         require_role(&admin, Role::Admin, "mint_connect_code")?;
         self.mint_connect_code_by_with_ttl(&admin, key, ttl_secs)
             .await

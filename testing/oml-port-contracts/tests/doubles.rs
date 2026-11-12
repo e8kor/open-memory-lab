@@ -64,9 +64,38 @@ async fn federated_recall_double_passes_the_leakage_suite() {
     .await;
 }
 
-/// Test 7 over the double: an unreadable workarea of 100,000 matching rows
-/// moves neither p50 nor p95 of a wide recall (ADR-0072 d6, d13).
+/// Test 7 over the double, its deterministic half: an unreadable
+/// workarea of 100,000 matching rows changes no `wide` answer, byte for
+/// byte, and no recall's work: the rows its reads visit are the same count
+/// with the copies as without, so its time cannot depend on them
+/// (ADR-0072 d6, d13; #278).
 #[tokio::test]
+async fn federated_recall_double_answers_and_rows_read_do_not_depend_on_an_unreadable_workarea() {
+    use contracts::federation::{answer_sample, timing_world};
+    let t = timing_world(MemStore::new().answering_bm25_with_any_word()).await;
+    let read = t.world.store.rows_read();
+    let without = answer_sample(&t, "bm25").await;
+    let work_without = t.world.store.rows_read() - read;
+    assert!(work_without > 0, "the recalls read rows");
+    for template in t.templates {
+        t.world.store.seed_copies(t.world.tenant, template, 100_000);
+    }
+    let read = t.world.store.rows_read();
+    assert_eq!(answer_sample(&t, "bm25").await, without);
+    assert_eq!(
+        t.world.store.rows_read() - read,
+        work_without,
+        "a wide recall visited rows of an unreadable workarea"
+    );
+}
+
+/// Test 7 over the double, its timing half, a measurement run by hand or
+/// by the weekly bench (`--ignored`): an unreadable workarea of 100,000
+/// matching rows moves neither p50 nor p95 of a wide recall (ADR-0072 d6,
+/// d13). Wall-clock quantiles move with the host's load, so it gates no
+/// change (#278).
+#[tokio::test]
+#[ignore = "a measurement: wall-clock quantiles, run by the weekly bench"]
 async fn federated_recall_double_timing_does_not_depend_on_an_unreadable_workarea() {
     use contracts::federation::{assert_within_noise, timing_sample, timing_world};
     let t = timing_world(MemStore::new().answering_bm25_with_any_word()).await;
@@ -142,6 +171,58 @@ async fn a_stopped_build_marks_its_own_signal_and_the_builds_behind_it_go_on() {
         MemStore::new().answering_bm25_with_any_word(),
     )
     .await;
+}
+
+/// The refresh a recall spawns runs each build under its timeout: a build
+/// whose read never returns is stopped, counted as failed and marked, and
+/// the builds behind it go on. This is the call the transport spawns, with
+/// its timer, not the loop's steps run by hand (#268).
+#[tokio::test]
+async fn the_refresh_stops_a_build_past_its_timeout_and_builds_the_ones_behind_it() {
+    use std::time::Duration;
+
+    use oml_app::app::WidenLimits;
+    use oml_app::federation::Sources;
+    let store = MemStore::new().answering_bm25_with_any_word();
+    let limits = WidenLimits {
+        build_timeout: Duration::from_millis(100),
+        ..WidenLimits::default()
+    };
+    let (w, key) = contracts::federation::kiwi_world_within(store.clone(), true, limits).await;
+    for scope in ["home", "legal", "product"] {
+        let answer = w
+            .recall(&key, "kiwi", scope, Some(Sources::Scope), "bm25", 10)
+            .await
+            .expect("scope");
+        assert!(answer.widen.is_none());
+    }
+    store.hang_next_vocabulary_read();
+    let refresh = w.app.refresh_widen_signals_with(tokio::time::sleep);
+    let built = tokio::time::timeout(Duration::from_secs(10), refresh)
+        .await
+        .expect("the refresh never stopped the build whose read hung");
+    assert_eq!(built, 2, "the builds behind the stopped one went on");
+    let (settings, _) = w
+        .app
+        .federation_settings(w.admin.as_str())
+        .await
+        .expect("settings");
+    assert_eq!(settings.widen_signal.failed, 1);
+    assert!(
+        settings
+            .widen_signal
+            .last_failure
+            .as_deref()
+            .is_some_and(|f| f.contains("stopped")),
+        "{:?}",
+        settings.widen_signal.last_failure
+    );
+    // home, asked for first, hung and was stopped: it is marked.
+    assert_eq!(contracts::federation::kiwi_hint(&w, &key, 10).await, None);
+    assert!(
+        !w.app.widen_signals_wanted(),
+        "the stopped signal was asked for again within the bound"
+    );
 }
 
 /// A build that began before a status transition committed, and read its

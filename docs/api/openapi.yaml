@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Open Memory Lab HTTP API
-  version: 0.6.3-design
+  version: 0.7.0-design
   summary: >-
     The two-ring JSON API of OML, an agentic external memory provider: /v1 the provider ring,
     /v2 the memory lab.
@@ -2206,7 +2206,7 @@ paths:
       tags: [web]
       operationId: disableWebUser
       summary: Disable a person, ending their sessions and cutting off their agent keys.
-      description: 'Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin''s, answers access.not_found and journals nothing. The body is empty: no reason is journalled in this build, so a reason is refused rather than dropped. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act''s last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
+      description: 'Requires: admin key role (ADR-0068 d8; ADR-0070 d5). For a person the tenant holds who is not an admin: web.user_disabled, which disables every entry of the user and ends their sessions, then one key.denied on universe for each live bearer and connector key of their root. A user no entry holds, or an admin''s, answers access.not_found and journals nothing. A live admin key whose row names the person''s root, which no verb makes and no denial cuts off, answers 409 workarea.admin_key_under_root naming it and journals nothing (since v0.7.1). A key gone between the listing and its denial is skipped and left out of keys_cut_off. The body is empty: no reason is journalled in this build, so a reason is refused rather than dropped. A resubmission under the same Idempotency-Key answers the recorded response with Idempotency-Replay: true and acts nothing again, the key claimed before the act and its outcome recorded after the act''s last commit, so a resubmission while the first attempt holds the key waits up to 5 s for its answer, then is idempotency.in_progress; the same key on another request is idempotency.digest_mismatch (ADR-0070 d3 layer 4). Since v0.6.4.'
       parameters:
         - { $ref: '#/components/parameters/XRequestId' }
         - { $ref: '#/components/parameters/XCorrelationId' }
@@ -2614,26 +2614,27 @@ paths:
     get:
       tags: [web]
       operationId: userPage
-      summary: The sign-in page without a session; the user page with one.
-      description: 'Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Views by query: view (keys, setup, review, and memories with memory, one memory opened by its id), memory. The Memories list and the Atlas are oml-web''s, at /web/memories and /web/atlas. Served with the connect page''s headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.'
+      summary: The sign-in page without a session; a signed-in browser goes on to the Keys view.
+      description: 'Authenticated by the __Host-oml_session cookie alone; an Authorization header is refused with access.verb_ceiling, details.reason web_is_human_only (ADR-0045 d7). Every view of the user page is oml-web''s at a path of its own (ADR-0070 d7 (b)); a signed-in request naming a view is access.not_found, the old ?view= URLs'' 303s having been deleted in v0.7.1 (ADR-0070, "The old URLs deleted"). Served with the connect page''s headers (ADR-0045 d8). Routed only on the lead and only where oauth.issuer and a sign-in provider are set. Since v0.5.0.'
       security: []
-      parameters:
-        - { name: view, in: query, required: false, schema: { type: string, enum: [keys, setup, memories, workarea, review] } }
-        - { name: q, in: query, required: false, schema: { type: string, maxLength: 512 } }
-        - { name: memory, in: query, required: false, schema: { type: string } }
       responses:
         '200':
-          description: The page.
+          description: The sign-in page.
           content:
             text/html:
               schema: { type: string }
         '303':
-          description: 'A view oml-web now serves at its own path, view=guardrails or view=workarea: to the fixed /web/guardrails or /web/workareas; view=memories without memory: to /web/memories, or /web/atlas with display=atlas; each carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4; the memories views since v0.7.0.'
+          description: Signed in and naming no view, to the Keys view at /web/keys, carrying nothing from the request.
+        '404':
+          description: access.not_found, on a page, for a signed-in request naming a view.
+          content:
+            text/html:
+              schema: { type: string }
     post:
       tags: [web]
       operationId: userPageAct
-      summary: One act of the user page, named by action.
-      description: 'Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is one of issue_key, connect_key, connect_code, cut_off, review_next, verdict, sign_out; review_next and verdict run as the session''s <user>-review key, which holds dreamer and reader on the person''s own root from the first sign-in, R2 checked on that key and the lineage closure; every other action runs as <user>-web; no field names who acts, and a field the action does not define is request.validation (ADR-0045 d6, d9). create_workarea, workarea_mode, workarea_transition and workarea_ratify are the Workareas view''s acts, which oml-web runs at /web/workareas over the API: the lead runs none of them and answers 303 /web/workareas (ADR-0070 d7 (b); since v0.6.4). An issued key''s value or connect code is shown once on the answering page, never in a redirect. Since v0.5.0.'
+      summary: Sign out, the one act the lead keeps.
+      description: 'Requires a session, csrf_token and the same-origin check (oauth.origin_refused; request.validation with details.field csrf_token). action is sign_out, which takes no other field; every other act is oml-web''s at its view''s own path, and an old form''s action is request.validation with details.field action, running nothing (ADR-0070 d6, d7 (b); the moved acts'' 303s deleted in v0.7.1). Since v0.5.0.'
       security: []
       requestBody:
         required: true
@@ -2643,16 +2644,16 @@ paths:
               type: object
               required: [action, csrf_token]
               properties:
-                action: { type: string, enum: [issue_key, connect_key, connect_code, cut_off, create_workarea, workarea_mode, workarea_transition, workarea_ratify, review_next, verdict, sign_out] }
+                action: { type: string, enum: [sign_out] }
                 csrf_token: { type: string }
       responses:
-        '200':
-          description: The page after the act.
+        '303':
+          description: To /web, the session ended and its cookie cleared.
+        '400':
+          description: request.validation, on a page.
           content:
             text/html:
               schema: { type: string }
-        '303':
-          description: After sign_out, to /web; for create_workarea, workarea_mode, workarea_transition and workarea_ratify, to /web/workareas, having run nothing.
 
   /web/sign-in:
     get:
@@ -2721,55 +2722,6 @@ paths:
           content:
             text/html:
               schema: { type: string }
-
-  /web/admin:
-    get:
-      tags: [web]
-      operationId: adminPage
-      summary: The admin page, for a session whose allowlist entry is an admin's.
-      description: 'Every view is oml-web''s: the lead answers 303 to the view''s own path, /web/admin/people when none is named, before reading a session and carrying nothing from the request but, for one memory, its id (ADR-0070 d7 (b); the overview since v0.7.0). The admin read (POST /v2/admin/memories/search, GET /v2/admin/memories/{artifact_id}) as <user>-admin serves oml-web''s memory views, each read journalled (ADR-0045 d10, d21). Since v0.5.0.'
-      security: []
-      parameters:
-        - { name: view, in: query, required: false, schema: { type: string, enum: [people, queue, review, held, curate, memories, workarea] } }
-        - { name: q, in: query, required: false, schema: { type: string, maxLength: 512 } }
-        - { name: memory, in: query, required: false, schema: { type: string } }
-      responses:
-        '200':
-          description: The page.
-          content:
-            text/html:
-              schema: { type: string }
-        '303':
-          description: 'view=workarea, which oml-web serves at its own path: to the fixed /web/admin/workareas, carrying nothing from the request, signed in or not (ADR-0070 d7 (b)). Since v0.6.4.'
-        '404':
-          description: access.not_found, on a page.
-          content:
-            text/html:
-              schema: { type: string }
-    post:
-      tags: [web]
-      operationId: adminPageAct
-      summary: One act of the admin page, named by action, run as the capacity it needs.
-      description: 'Requires an admin session, csrf_token and the same-origin check. allow_email, remove_email, set_admin, grant_review and grant_curation run as <user>-admin; review_next, verdict and supersede (dreamer propose) as <user>-review; curate and supersede of the curator''s own universe claims as <user>-curate; demote, since v0.6.0, as <user>-admin. R2 is enforced on the reviewing key and the lineage closure; the admin key is never offered a verdict (ADR-0045 d10, d11, d12). workarea_mode, workarea_transition and workarea_ratify are the Workareas view''s acts, which oml-web runs at /web/admin/workareas over the API: the lead runs none of them and answers 303 /web/admin/workareas (ADR-0070 d7 (b); since v0.6.4). Since v0.5.0.'
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              required: [action, csrf_token]
-              properties:
-                action: { type: string, enum: [allow_email, remove_email, set_admin, grant_review, grant_curation, review_next, verdict, bulk_confirm, bulk_verdict, curate, supersede, cut_off, workarea_mode, workarea_transition, workarea_ratify] }
-                csrf_token: { type: string }
-      responses:
-        '200':
-          description: The page after the act.
-          content:
-            text/html:
-              schema: { type: string }
-        '303':
-          description: For workarea_mode, workarea_transition and workarea_ratify, to /web/admin/workareas, having run nothing (ADR-0070 d7 (b)). Since v0.6.4.
 
   /web/sign-up:
     post:
@@ -3177,7 +3129,7 @@ components:
         workarea_path: { type: string }
         text: { type: string }
         kind: { type: string, enum: [memory, derived_fact, steering, term, term_mapping, vocab_release, guardrail], description: "The kind the version was written as; the admin page refuses to supersede or retire a guardrail by it (ADR-0037 d17; ADR-0070 d5). Since v0.7.0." }
-        key: { type: string, description: The authoring key's name. }
+        key: { type: [string, 'null'], description: "The authoring key's name; null for a key that has no name, which key_id names (ADR-0070 d5)." }
         key_id: { type: string, description: "The authoring key's id, which names a key that has no name (ADR-0070 d5). Since v0.7.0." }
         principal: { type: [string, 'null'] }
         user: { type: [string, 'null'] }
@@ -3217,6 +3169,10 @@ components:
             keys: { type: integer }
             connections: { type: integer }
             requests_per_minute: { type: integer }
+        admin_keys:
+          type: array
+          items: { type: string }
+          description: "Each live admin key whose row names the person's user root, by name: a row no verb makes, which refuses the person's disable with workarea.admin_key_under_root and which oml doctor warns about (ADR-0068 d8, d11). Since v0.7.1."
 
     WebEmail:
       type: object
@@ -3358,6 +3314,7 @@ components:
         - workarea.frozen
         - workarea.in_progress_refused
         - workarea.held_remaining
+        - workarea.admin_key_under_root
         - workarea.transition_refused
         - review.author_in_lineage
         - review.ratifier_is_proposer

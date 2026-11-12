@@ -1148,6 +1148,34 @@ pub async fn timing_sample<S: JournalStore + Clone>(
     out
 }
 
+/// Test 7's deterministic half: the [`fingerprint`] of each query's `wide`
+/// recall under `search`, every hit outside W. Equal before and after W's
+/// copies, it shows no copied row and no statistic of one reaches the
+/// answer, whatever the host's load; the timing half is a measurement run
+/// outside the gating suite (#278).
+pub async fn answer_sample<S: JournalStore + Clone>(
+    t: &TimingWorld<S>,
+    search: &str,
+) -> Vec<String> {
+    let mut out = Vec::with_capacity(QUERIES.len());
+    for query in QUERIES {
+        let answer = t
+            .world
+            .recall(&t.key, query, "home", Some(Sources::Wide), search, 10)
+            .await
+            .expect("wide");
+        assert!(
+            answer
+                .hits
+                .iter()
+                .all(|h| !t.w.contains(&h.served.memory.workarea_id)),
+            "a row of an unreadable workarea was served"
+        );
+        out.push(fingerprint(&answer));
+    }
+    out
+}
+
 /// Test 7, the comparison: W with no copies against W with many, p50 and
 /// p95 within noise — p50 within a factor of 2 and 3 ms, p95, which the
 /// suite's other tests running beside it move most, within a factor of 3
@@ -1297,7 +1325,7 @@ pub async fn kiwi_world<S: JournalStore + Clone>(
 }
 
 /// [`kiwi_world`] under the widen signal's bounds `limits`.
-async fn kiwi_world_within<S: JournalStore + Clone>(
+pub async fn kiwi_world_within<S: JournalStore + Clone>(
     store: S,
     orchard: bool,
     limits: WidenLimits,

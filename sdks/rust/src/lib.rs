@@ -618,6 +618,11 @@ pub struct WebUser {
     pub under_quotas: bool,
     pub usage: Usage,
     pub quotas: Limits,
+    /// Each live admin key whose row names the person's root, a row no verb
+    /// makes, which refuses their disable (ADR-0068 d8, d11); empty from a
+    /// server before v0.7.1.
+    #[serde(default)]
+    pub admin_keys: Vec<String>,
 }
 
 /// A pending deletion request.
@@ -850,6 +855,25 @@ pub struct ConnectCode {
 }
 
 impl ConnectCode {
+    /// A connect code as a first answer, not a replay: what a fake transport
+    /// or a caller's test builds, since the replay mark is the client's to
+    /// set (#281).
+    #[must_use]
+    pub fn new(
+        code_id: String,
+        code: Option<String>,
+        expires_at: String,
+        connector_url: String,
+    ) -> Self {
+        Self {
+            code_id,
+            code,
+            expires_at,
+            connector_url,
+            replayed: false,
+        }
+    }
+
     /// Whether the API answered `Idempotency-Replay: true`: a replay of a
     /// recorded outcome, which shows no code.
     #[must_use]
@@ -887,6 +911,25 @@ pub struct KeyIssued {
 }
 
 impl KeyIssued {
+    /// A key issue as a first answer, not a replay: what a fake transport
+    /// or a caller's test builds, since the replay mark is the client's to
+    /// set (#281).
+    #[must_use]
+    pub fn new(
+        key_id: String,
+        name: String,
+        value: Option<String>,
+        connect_code: Option<ConnectCode>,
+    ) -> Self {
+        Self {
+            key_id,
+            name,
+            value,
+            connect_code,
+            replayed: false,
+        }
+    }
+
     /// Whether the API answered `Idempotency-Replay: true`: a replay of a
     /// recorded issue, which shows neither the value nor the code.
     #[must_use]

@@ -679,38 +679,70 @@ async fn a_replay_scores_the_labelled_queries_and_its_answer_holds_no_text_and_n
     drop_db(&w.db).await;
 }
 
-#[tokio::test]
-async fn no_row_older_than_30_days_is_read_and_the_purge_deletes_it_and_reports_the_lag() {
-    let Some(w) = world().await else { return };
-    // The lead's own writer passes at its start and then each minute: let
-    // its first pass end, so the rows below meet this test's writer.
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    let tenant = w.a.boot.tenant_id;
-    let pool = w.serving().await;
-    let insert = |days: i64| {
-        format!(
-            "INSERT INTO recall_events (tenant_id, recall_id, created_at, key_id, principal, \
-               scope_workarea_id, pipeline, access, query_digest, hit_ids, hit_scores) \
-             VALUES ('{tenant}', gen_random_uuid(), now() - interval '{days} days', gen_random_uuid(), \
-               'p', gen_random_uuid(), 'bm25', 'scan', decode(repeat('00', 32), 'hex'), '{{}}', '{{}}')"
-        )
-    };
+/// Inserts one `recall_events` row of `tenant` for each age in `days`, as
+/// the serving role.
+async fn aged_events(pool: &PgPool, tenant: Uuid, days: &[i64]) {
     let mut tx = pool.begin().await.expect("tx");
     sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
         .bind(tenant.to_string())
         .execute(&mut *tx)
         .await
         .expect("set");
-    for days in [40, 31, 1] {
-        tx.execute(insert(days).as_str()).await.expect("a row");
+    for days in days {
+        tx.execute(
+            format!(
+                "INSERT INTO recall_events (tenant_id, recall_id, created_at, key_id, principal, \
+                   scope_workarea_id, pipeline, access, query_digest, hit_ids, hit_scores) \
+                 VALUES ('{tenant}', gen_random_uuid(), now() - interval '{days} days', gen_random_uuid(), \
+                   'p', gen_random_uuid(), 'bm25', 'scan', decode(repeat('00', 32), 'hex'), '{{}}', '{{}}')"
+            )
+            .as_str(),
+        )
+        .await
+        .expect("a row");
     }
     tx.commit().await.expect("commit");
-    // No read serves a row past the 30 days, purged or not.
-    assert_eq!(w.events(&w.a).await.len(), 1);
+}
 
-    // A writer's first pass reports the lag it found, then purges, in
-    // batches the serving role commits one by one; nothing but telemetry
-    // is touched.
+/// No read serves a row past the 30 days, whether the lead's own writer
+/// has purged it yet or not: the answer is the same either way, so the
+/// test does not wait on the writer's minute (ADR-0054 d2, d13; #278).
+#[tokio::test]
+async fn no_row_older_than_30_days_is_read_whether_or_not_it_was_purged() {
+    let Some(w) = world().await else { return };
+    let pool = w.serving().await;
+    aged_events(&pool, w.a.boot.tenant_id, &[40, 31, 1]).await;
+    assert_eq!(w.events(&w.a).await.len(), 1);
+    drop_db(&w.db).await;
+}
+
+/// One labeller's pass, driven to its end with no lead and so no other
+/// writer beside it: it reports the lag it found (one tenant holds rows
+/// past the 30 days and a pass), then purges them in batches the serving
+/// role commits, and touches nothing but telemetry. Before #278 the test
+/// raced the lead's own writer, which could purge the rows first and leave
+/// no lag to report (ADR-0054 d13).
+#[tokio::test]
+async fn a_pass_reports_the_lag_it_found_then_purges_the_rows_past_30_days_and_no_journal_row() {
+    let db = fresh_name();
+    if !mint_database(&db).await {
+        return;
+    }
+    let store = PgStore::connect(&serving_url(&db))
+        .await
+        .expect("connect")
+        .with_owner_url(&owner_url(&db));
+    store
+        .migrate(&owner_url(&db))
+        .await
+        .expect("embedded migrations apply");
+    let side = lead_app(&store, SigningKey::from_bytes(&[11; 32]));
+    let a = tenant(&side, "acme").await;
+    let _b = tenant(&side, "globex").await;
+    let tenant = a.boot.tenant_id;
+    let pool = PgPool::connect(&serving_url(&db)).await.expect("serving");
+    aged_events(&pool, tenant, &[40, 31, 1]).await;
+    assert_eq!(visible(&pool, Some(tenant)).await.0, 3, "the rows are in");
     let journal_count = || async {
         let mut tx = pool.begin().await.expect("tx");
         sqlx::query("SELECT set_config('oml.tenant_id', $1, true)")
@@ -727,20 +759,16 @@ async fn no_row_older_than_30_days_is_read_and_the_purge_deletes_it_and_reports_
     };
     let journal_before = journal_count().await;
     let traffic = Traffic::new(TrustedProxies::default());
-    let (_t, writer) = oml_pg::telemetry::PgTelemetry::spawn(
+    oml_pg::telemetry::PgTelemetry::pass_once(
         pool.clone(),
         Arc::clone(traffic.metrics()) as Arc<dyn oml_app::ports::TelemetryMeter>,
+    )
+    .await;
+    assert_eq!(
+        visible(&pool, Some(tenant)).await.0,
+        1,
+        "the pass left rows past the 30 days"
     );
-    let mut purged = false;
-    for _ in 0..50 {
-        if visible(&pool, Some(tenant)).await.0 == 1 {
-            purged = true;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    writer.abort();
-    assert!(purged, "the pass left rows past the 30 days");
     // The pass reported the lag it found before it purged.
     let text = traffic.metrics().encode();
     assert!(text.contains("oml_telemetry_purge_overdue 1"), "{text}");
@@ -750,7 +778,17 @@ async fn no_row_older_than_30_days_is_read_and_the_purge_deletes_it_and_reports_
         journal_before,
         "the purge touched the journal"
     );
-    drop_db(&w.db).await;
+    // A second pass finds no lag left.
+    oml_pg::telemetry::PgTelemetry::pass_once(
+        pool.clone(),
+        Arc::clone(traffic.metrics()) as Arc<dyn oml_app::ports::TelemetryMeter>,
+    )
+    .await;
+    let text = traffic.metrics().encode();
+    assert!(text.contains("oml_telemetry_purge_overdue 0"), "{text}");
+    drop(pool);
+    drop(store);
+    drop_db(&db).await;
 }
 
 #[tokio::test]
