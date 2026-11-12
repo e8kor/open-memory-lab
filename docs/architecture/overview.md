@@ -86,7 +86,7 @@ sequenceDiagram
     S->>S: scan (same call, can veto)
     S->>P: one transaction: signed event (held),<br/>metadata row, outbox row
     P-->>S: commit
-    S-->>A: acknowledged; state held, visible to the author only
+    S-->>A: acknowledged: held, visible to the author only
 ```
 
 The acknowledgment means one thing: the event, the metadata and the outbox row committed together. See [admission](admission.md).
