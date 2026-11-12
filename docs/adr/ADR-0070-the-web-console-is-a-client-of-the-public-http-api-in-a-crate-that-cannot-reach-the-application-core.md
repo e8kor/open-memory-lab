@@ -894,6 +894,25 @@ its session is, so the session check is no round of its own, or a session gate t
 capacity credential in fewer reads; and the offers of every node of a subtree in one call for the
 Workareas views.
 
+## The session gate's reads (2026-11-12, #297)
+
+[#297](https://github.com/e8kor/open-memory-lab/issues/297) took the second remedy the
+re-measurement above names, a session gate that resolves a capacity credential in fewer reads,
+and left the first, a page whose own read is its session check, and the Workareas views' offers
+undecided. No operation, field or page call changed: the pages make the calls and rounds they made.
+The two rows on the gate are as built, offered for the operator's acceptance.
+
+| Decision | Was | Is | Why |
+|---|---|---|---|
+| d2, d8 | the gate resolved a capacity credential in four store calls, and six for `<user>-web`: the credential's session, the key by its name, the key, its access, and for the web key its root and the person's keys, each a transaction of its own, 22 and 30 statements | one store call, `web_credential_rows`: the same statements in one transaction under one snapshot, 12 and 14. The store returns rows and decides nothing. The gate makes every check it made, on those rows and in the same order: the session unexpired, and ended when it is past; the capacity a capacity; the admin capacity only for an admin's entry; the key the row holding the capacity's name, a session key serving the session's user, not revoked; its access held by its tenant; a user key's root a user root; the web key's own set the keys naming its root; and the request rate last | one snapshot is what the separate reads return when nothing changes between them, and a change landing between two of them was seen by the later read alone. `the_session_gates_rows_read_in_one_transaction_are_the_rows_its_separate_reads_return` holds Postgres's read equal to the separate reads, which stay every other store's |
+| d8 | a session key's verb read the key's access, and a user key's root, again straight after the gate read them | on a request without a body (`GET`, `HEAD`) the request's first resolution of the caller decides on the access the gate read. Every later resolution in that request reads the access when it runs, as does every resolution of a request with a body, so an act reads it at its verb and again after a wait on its idempotency claim, as before | the two reads were of the same rows in one request with only the handler's dispatch between them. A body can arrive slowly between the gate and the verb, so a request with one keeps the verb's read. Nothing outlives the request: a cache of resolved sessions stays refused |
+| d8 | `whoami` without the person block read 9 store calls for a `web` session key and 6 for an `admin` one | 2 each: the gate's one and the record's references. A page's own call spends the gate's one where it spent 5 to 8 before its own reads | `tests/web_console_reads.rs` holds the counts |
+| d8 | missed on 7 of 21 pages at 6 workareas and 11 at 48 | measured on a loaded host, so provisional: `bench/web/run.py` at `e80efde6` and at `11aeb6bf`, back to back, the one-minute load 5.4 to 10.8 where the runs above had 1.3 to 2.4, because other builds shared the host. At 6 workareas 13 of 21 miss before the change and 4 after: the admin Workareas view (+27.7 ms p95), the admin Memories list (+117.0), the admin Memories JSON (+14.3) and the admin memory page (+14.9). At 48 workareas 13 miss before and 1 after, Users (+5.3). Of the six pages the re-measurement named at both sizes, five are within the budget at both: the admin Atlas (+4.9, +2.7), the memory page (+0.7, +0.5), Keys (+1.4, +1.9), Start (+4.2, +4.5) and People (+2.8, +2.9). Users is within it at 6 workareas (+3.8) and over it at 48 (+5.3) | the in-process side ran at a load of 1.3 to 3.0, so these p95 are upper bounds, and the three admin memory pages' misses at 6 workareas are the load: each is one read of 45 to 95 ms p50 whose p95 was within the budget at 48 workareas in the same hour. The committed results and [Web console overhead](../benchmarks/web.md) stay the runs of #286 until the pair is run again on a quiet host |
+
+Not decided here: the offers of every node of a subtree in one call. The admin Workareas view
+still makes 3 + 3N calls, each now 4 store calls lighter; at 6 workareas it missed by +27.7 ms
+p95 at that load, and at 48 it was within the budget.
+
 ## Consequences
 
 - `oml-web`, `oml-page` and `oml-sdk` join the workspace; `oml-transport-http` loses its page
