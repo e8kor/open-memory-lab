@@ -5468,7 +5468,7 @@ const KEY_FORMS: [&str; 7] = [
 /// A person sets a date on a key they issue from the Keys page: each of the
 /// two issue forms has one optional date input, sent as the end of that day
 /// in UTC, and the key's row then shows the expiry the API serves. A date
-/// that has passed and a value that is no date are refused on the page as
+/// that has passed and a value that is not `YYYY-MM-DD` are refused on the page as
 /// the API refuses them, by its status, code and message, and issue no key.
 /// The Start page's one-button issue has no such input (ADR-0079 d1, the
 /// operator's answer 3; #352).

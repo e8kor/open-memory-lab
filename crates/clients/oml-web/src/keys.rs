@@ -769,8 +769,9 @@ async fn act(
             let name = format!("{user}-{}", fields.given("name").unwrap_or_default());
             let connector = action == "connect_key";
             // The form's date is the end of that day in UTC. The API judges
-            // the instant, so a value that is no date, or a day that has
-            // passed, is refused by it and shown as it answers (ADR-0079 d1).
+            // the instant, so a value that is not `YYYY-MM-DD`, or a day that
+            // has passed, is refused by it and shown as it answers; a day its
+            // month does not hold is read as that many days on (ADR-0079 d1).
             let expiry = fields
                 .given("expires")
                 .map(|day| format!("{day}{END_OF_DAY}"));

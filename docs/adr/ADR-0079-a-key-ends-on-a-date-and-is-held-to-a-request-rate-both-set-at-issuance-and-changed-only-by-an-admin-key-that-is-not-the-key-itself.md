@@ -191,11 +191,15 @@ questions at the recommendation it carried.
    `<user>-web` admits `expiry` under d1's rule and still refuses `requests_per_minute`. The
    Keys page's two issue forms, for an agent key and for a connector key, each carry one
    optional date input, which works without script and is sent as the last second of that day
-   in UTC (`YYYY-MM-DDT23:59:59Z`); a day that has passed, or a value that is no date, is
-   refused on the page as the API refuses the instant. The Start page's one-button issue sets
+   in UTC (`YYYY-MM-DDT23:59:59Z`); a day that has passed, or a value that is not
+   `YYYY-MM-DD`, is refused on the page as the API refuses the instant; a day its month does
+   not hold, such as `2026-11-31`, is read as the day that many days on (`2026-12-01`), as
+   every `date-time` of the API reads it. The Start page's one-button issue sets
    no date. A person's own issuance never issues an admin key, so d1's rule for admin keys is
    untouched, and their session key is still `access.verb_ceiling` on
-   `POST /v2/keys/{key}/limits`, so the date moves or clears only by an admin key (d5). A
+   `POST /v2/keys/{key}/limits`, so the date moves or clears only by an admin key (d5). An
+   allowlist admin's `<user>-admin` is of the admin key role and is admitted there, though no
+   page sends the request. A
    rate on a person's own key is still an admin key's to set.
 4. **Whether an expired key leaves its account's `keys` meter.** It stays (d3). Decided, at the
    recommendation: it stays, since the key can be given a later date and would then pass a

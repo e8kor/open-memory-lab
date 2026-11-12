@@ -999,9 +999,12 @@ at since. The running console was not.
 
 [#343](https://github.com/e8kor/open-memory-lab/issues/343) asked that a person whose `<user>-web`
 carries a denial is not offered the three key acts that key is refused. The three rows below are
-as built, and the operator accepted all three on 2026-11-12, with what they state: `GET
+as built. The operator accepted on 2026-11-12 what the first two state, that the pages draw
+no form the key is refused and that `GET
 /v2/whoami` tells a person's `<user>-web` session key, and no other key, whether it carries a
-denial, as a boolean and nothing more ("Accept, web session key only"). The same decision amends
+denial, as a boolean and nothing more ("Accept, web session key only"). The wording of the
+sentence a denied person reads, its place on the Keys page and the `restricted` mark on the
+calling key's own row are the build's. The same decision amends
 [ADR-0039](ADR-0039-the-api-rewritten-for-v0-4-0.md) d15, which says so in place.
 
 The refusal of #325 is permanent, and the Keys page and the Start page went on drawing the forms
