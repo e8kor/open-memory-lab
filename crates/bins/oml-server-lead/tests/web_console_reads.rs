@@ -138,7 +138,21 @@ impl Answer {
 
 /// `GET path` with `bearer`, and the web client's secret where `web`.
 async fn get(router: &Router, path: &str, bearer: &str, web: bool) -> Answer {
-    let mut request = Request::get(path).header(header::AUTHORIZATION, format!("Bearer {bearer}"));
+    send(router, Request::get(path), "", bearer, web).await
+}
+
+/// `request` with `body`, `bearer`, and the web client's secret where
+/// `web`.
+async fn send(
+    router: &Router,
+    request: axum::http::request::Builder,
+    body: &'static str,
+    bearer: &str,
+    web: bool,
+) -> Answer {
+    let mut request = request
+        .header(header::AUTHORIZATION, format!("Bearer {bearer}"))
+        .header(header::CONTENT_TYPE, "application/json");
     if web {
         request = request.header("oml-web-client", SECRET);
     }
@@ -147,7 +161,7 @@ async fn get(router: &Router, path: &str, bearer: &str, web: bool) -> Answer {
     let guard = tracing::subscriber::set_default(log_subscriber(move || sink.clone()));
     let response = router
         .clone()
-        .oneshot(request.body(Body::empty()).expect("a request"))
+        .oneshot(request.body(Body::from(body)).expect("a request"))
         .await
         .expect("the router answers");
     let status = response.status();
@@ -168,6 +182,11 @@ async fn get(router: &Router, path: &str, bearer: &str, web: bool) -> Answer {
     }
 }
 
+/// `POST path` with an empty JSON object, as [`get`] sends a `GET`.
+async fn post(router: &Router, path: &str, bearer: &str, web: bool) -> Answer {
+    send(router, Request::post(path), "{}", bearer, web).await
+}
+
 fn web(token: &str, capacity: &str) -> String {
     capacity_credential(token, capacity)
 }
@@ -177,16 +196,15 @@ fn web(token: &str, capacity: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// The session check's `whoami`, without the person block: the record a
-/// session key's caller reads, in the session gate's calls and at most
-/// three more (the key's access, its user root where it names one, and the
-/// record's references), where the `web` capacity's took nine more before,
-/// resolving the session key twice and reading the person block (#286).
+/// session key's caller reads, in the session gate's one call, which
+/// reads the session, the key, its access and for `web` its root and the
+/// person's own keys, and one more, the record's references. The gate
+/// made six calls for `web` and four for `admin` before, and `whoami`
+/// read the access and the root again (#286, #297).
 #[tokio::test]
 async fn whoami_without_the_person_block_reads_the_session_keys_access_once() {
     let rig = rig().await;
-    // The gate: the credential, the key by name, the key, its access, and
-    // for `web` the root and the person's own keys; then whoami's own.
-    for (capacity, gate, own) in [("web", 6, 3), ("admin", 4, 2)] {
+    for (capacity, gate, own) in [("web", 1, 1), ("admin", 1, 1)] {
         let me = get(
             &rig.router,
             "/v2/whoami?person=false",
@@ -199,6 +217,57 @@ async fn whoami_without_the_person_block_reads_the_session_keys_access_once() {
         assert!(me.body.get("person").is_none(), "{}", me.body);
         assert_eq!(me.store_calls(), gate + own, "{capacity}: {}", me.line);
     }
+}
+
+/// A session key's read without a body costs the gate's one store call
+/// and the verb's own: its first resolution of the caller decides on the
+/// access the gate read. Where one request resolves the caller twice, as
+/// the counted tree with `offers=true` does, the second reads the access
+/// again, and a request with a body reads it when its verb runs (#297).
+#[tokio::test]
+async fn a_session_keys_read_resolves_its_caller_on_the_gates_access_once_and_a_request_with_a_body_reads_it_again()
+ {
+    let rig = rig().await;
+    let admin = web(&rig.alice, "admin");
+    let tree = get(
+        &rig.router,
+        "/v2/workareas/universe/tree?counts=true",
+        &admin,
+        true,
+    )
+    .await;
+    let offers = get(&rig.router, "/v2/workareas/universe/offers", &admin, true).await;
+    let both = get(
+        &rig.router,
+        "/v2/workareas/universe/tree?counts=true&offers=true",
+        &admin,
+        true,
+    )
+    .await;
+    assert_eq!(tree.status, StatusCode::OK, "{}", tree.body);
+    assert_eq!(offers.status, StatusCode::OK, "{}", offers.body);
+    assert_eq!(both.status, StatusCode::OK, "{}", both.body);
+    // One gate call each; the tree and the offers read apart resolve the
+    // caller once each on the gate's read, and together one of them reads
+    // the admin key's access again: one call more than their own work.
+    let own = (tree.store_calls() - 1) + (offers.store_calls() - 1);
+    assert_eq!(both.store_calls(), 1 + own + 1, "{}", both.line);
+
+    // The same search with and without the gate's read to decide on: the
+    // key value resolves and reads its access (two calls), the session key
+    // on a POST is resolved by the gate (one) and reads its access when
+    // the verb runs (one more).
+    let by_value = post(&rig.router, "/v2/admin/memories/search", &rig.admin, false).await;
+    let by_session = post(&rig.router, "/v2/admin/memories/search", &admin, true).await;
+    assert_eq!(by_value.status, StatusCode::OK, "{}", by_value.body);
+    assert_eq!(by_session.status, StatusCode::OK, "{}", by_session.body);
+    assert_eq!(
+        by_session.store_calls(),
+        by_value.store_calls(),
+        "{} / {}",
+        by_session.line,
+        by_value.line
+    );
 }
 
 /// A key value's `whoami` without the person block: the key's lookup, its
@@ -226,7 +295,7 @@ async fn whoami_serves_the_person_block_unless_asked_not_to_in_one_resolution() 
     assert_eq!(me.body["person"]["under_quotas"], false, "{}", me.body);
     assert_eq!(me.body["person"]["deletion_requested_at"], Value::Null);
     assert!(me.body["person"].get("start").is_none(), "{}", me.body);
-    assert_eq!(me.store_calls(), 6 + 3 + 2, "{}", me.line);
+    assert_eq!(me.store_calls(), 1 + 1 + 2, "{}", me.line);
     let asked = get(
         &rig.router,
         "/v2/whoami?person=true",

@@ -26,7 +26,8 @@ use crate::types::{
     HeldRow, KeyAccess, KeyRecord, KeyReferences, ListingFilter, ListingPosition, MemoryRecord,
     OAuthClientRecord, PinOutcome, ProviderAnswer, ProviderFailure, QueueDepth, RefreshFacts,
     RefreshOutcome, SourceCheck, SweepReport, TenantRow, TokenPair, TokenRecord, TransitionRecord,
-    UnnamedRows, VersionFinding, WebEntry, WebSessionRecord, WorkareaRecord,
+    UnnamedRows, VersionFinding, WebCredentialKey, WebCredentialRows, WebEntry, WebSessionRecord,
+    WorkareaRecord,
 };
 use oml_domain::web::Provider;
 
@@ -1551,6 +1552,12 @@ pub trait JournalStore: Retriever + Send + Sync {
     ) -> impl Future<Output = Result<Vec<(String, String)>, StoreError>> + Send;
 }
 
+/// The name of the session key a capacity names for a session's user, as
+/// the session gate gives it to [`WebStore::web_credential_rows`]: the
+/// user and the capacity word the credential's row stores, to the key's
+/// name, or `None` for a word that names no key.
+pub type SessionKeyName = fn(&Name, &str) -> Option<Name>;
+
 /// The web pages' rows (ADR-0045 d2, d4, d5; postgres-schema.md "web"):
 /// the reads of the allowlist, the pre-tenant lookups of an entry by its
 /// email's digest and of a session by its token's digest, the pin of a
@@ -1605,6 +1612,27 @@ pub trait WebStore: JournalStore {
         &self,
         credential_hash: &Sha256Hash,
     ) -> impl Future<Output = Result<Option<(WebSessionRecord, String)>, StoreError>> + Send;
+
+    /// Everything the session gate reads to decide one capacity credential
+    /// (ADR-0070 d2, d8; #297): the session and capacity
+    /// [`Self::web_session_credential`] reads, then the key the tenant holds
+    /// under the name `key_name` gives for the session's user and that
+    /// capacity, its access as [`JournalStore::key_access`] reads it, and
+    /// for a key that names a user root the root's row and the keys naming
+    /// it, as [`JournalStore::workarea`] and [`Self::web_user_keys`] read
+    /// them. `None` for a digest no row holds; a `key_name` that answers
+    /// `None`, or a name no row holds, leaves the key `None`. A store may
+    /// read them in one transaction under one snapshot, which is what the
+    /// separate reads answer when nothing changes between them; it decides
+    /// nothing, and the gate checks every row as it checked each read.
+    /// Without an override, the separate reads in the gate's order.
+    fn web_credential_rows(
+        &self,
+        credential_hash: &Sha256Hash,
+        key_name: SessionKeyName,
+    ) -> impl Future<Output = Result<Option<WebCredentialRows>, StoreError>> + Send {
+        web_credential_rows_read_apart(self, credential_hash, key_name)
+    }
 
     /// The session a token's digest names, before any tenant is known;
     /// `None` for a digest no row holds.
@@ -1679,6 +1707,52 @@ pub trait SignInExchange: Send + Sync {
         verifier: &str,
         redirect_uri: &str,
     ) -> impl Future<Output = Result<ProviderAnswer, ProviderFailure>> + Send;
+}
+
+/// [`WebStore::web_credential_rows`] as one read after another, each in a
+/// transaction of its own: the reads the session gate made before #297, in
+/// its order. The default of every store, and what a store that reads them
+/// in one transaction is held equal to.
+pub async fn web_credential_rows_read_apart<W: WebStore + ?Sized>(
+    store: &W,
+    credential_hash: &Sha256Hash,
+    key_name: SessionKeyName,
+) -> Result<Option<WebCredentialRows>, StoreError> {
+    let Some((session, capacity)) = store.web_session_credential(credential_hash).await? else {
+        return Ok(None);
+    };
+    let tenant_id = session.tenant_id;
+    let key = match key_name(&session.user, &capacity) {
+        Some(name) => match store.resolve_name(tenant_id, NamedKind::Key, &name).await? {
+            Some(id) => store.key(tenant_id, id).await?,
+            None => None,
+        },
+        None => None,
+    };
+    let key = match key {
+        Some(key) => {
+            let access = store.key_access(tenant_id, key.key_id).await?;
+            let (user_root, own_keys) = match key.user {
+                Some(root) => (
+                    store.workarea(tenant_id, root).await?,
+                    store.web_user_keys(tenant_id, root).await?,
+                ),
+                None => (None, Vec::new()),
+            };
+            Some(WebCredentialKey {
+                key,
+                access,
+                user_root,
+                own_keys,
+            })
+        }
+        None => None,
+    };
+    Ok(Some(WebCredentialRows {
+        session,
+        capacity,
+        key,
+    }))
 }
 
 /// The connection rows of a store that serves connector keys

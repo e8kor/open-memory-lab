@@ -273,9 +273,46 @@ pub struct Caller {
     /// `<user>-web` session key owns every key naming its user (ADR-0045
     /// d16, amending ADR-0025 d3). Empty means the key alone.
     own_keys: Vec<Uuid>,
+    /// The access the session gate read for this request, held for the
+    /// request's first resolution of the caller, which takes it in place
+    /// of reading the same rows again; `None` on every other caller and
+    /// once taken, so a later resolution reads them now (ADR-0070 d8,
+    /// #297).
+    gate_read: std::sync::Mutex<Option<KeyAccess>>,
 }
 
 impl Caller {
+    /// The caller `key` acts as under `access` as stored, `None` for a
+    /// provider-level key. Such a key carries no grant and no denial,
+    /// since no tenant's row can name it (postgres-schema.md): it holds no
+    /// access, so every verb refuses it by its role (ADR-0025 d13).
+    fn of(key: KeyRecord, access: Option<KeyAccess>) -> Self {
+        let Some(access) = access else {
+            return Caller {
+                key,
+                grants: Vec::new(),
+                denials: Vec::new(),
+                permission_epoch: 0,
+                own_keys: Vec::new(),
+                gate_read: std::sync::Mutex::new(None),
+            };
+        };
+        Caller {
+            key,
+            permission_epoch: access.permission_epoch(),
+            grants: access.grants.into_iter().map(|g| g.grant).collect(),
+            denials: access.denials.into_iter().map(|d| d.denial).collect(),
+            own_keys: Vec::new(),
+            gate_read: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// The access the session gate read for this request, once: the first
+    /// resolution of the caller takes it, and every later one finds none.
+    fn take_gate_read(&self) -> Option<KeyAccess> {
+        self.gate_read.lock().expect("unpoisoned").take()
+    }
+
     /// The key the request acts as.
     #[must_use]
     pub fn key(&self) -> &KeyRecord {
@@ -1592,7 +1629,13 @@ where
                 self.caller_of(caller.key.clone()).await
             }
             Bearer::Session(caller) => {
-                let mut fresh = self.caller_of(caller.key.clone()).await?;
+                // The gate read this key's access at the head of this
+                // request: its first resolution decides on those rows, and
+                // any later one reads them now (ADR-0070 d8, #297).
+                let mut fresh = match caller.take_gate_read() {
+                    Some(access) => Caller::of(caller.key.clone(), Some(access)),
+                    None => self.caller_of(caller.key.clone()).await?,
+                };
                 fresh.own_keys.clone_from(&caller.own_keys);
                 Ok(fresh)
             }
@@ -1610,25 +1653,7 @@ where
     /// The caller `key` acts as: its grants and denials, read now.
     async fn caller_of(&self, key: KeyRecord) -> Result<Caller, AppError> {
         let access = self.access_of(&key).await?;
-        // A provider-level key carries no grant and no denial, since no
-        // tenant's row can name it (postgres-schema.md): it holds no access,
-        // so every verb refuses it by its role (ADR-0025 d13).
-        let Some(access) = access else {
-            return Ok(Caller {
-                key,
-                grants: Vec::new(),
-                denials: Vec::new(),
-                permission_epoch: 0,
-                own_keys: Vec::new(),
-            });
-        };
-        Ok(Caller {
-            key,
-            permission_epoch: access.permission_epoch(),
-            grants: access.grants.into_iter().map(|g| g.grant).collect(),
-            denials: access.denials.into_iter().map(|d| d.denial).collect(),
-            own_keys: Vec::new(),
-        })
+        Ok(Caller::of(key, access))
     }
 
     /// The live key the value names and its access as stored, `None` for a

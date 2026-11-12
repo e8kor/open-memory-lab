@@ -27,9 +27,27 @@ use crate::ports::{
     WebStore,
 };
 use crate::types::{
-    AppError, Credential, GrantRequest, IssueKeyRequest, KeyRecord, OpenedSession, PinOutcome,
-    ProviderAnswer, ProviderFailure, SignupPolicy, WebEntry, WebSessionRecord,
+    AppError, Credential, GrantRequest, IssueKeyRequest, KeyAccess, KeyRecord, OpenedSession,
+    PROVIDER_TENANT, PinOutcome, ProviderAnswer, ProviderFailure, SignupPolicy, WebCredentialKey,
+    WebCredentialRows, WebEntry, WebSessionRecord,
 };
+
+/// The name of the session key `capacity` names for `user`, for the
+/// store's read of the session gate's rows: `None` for a word that is no
+/// capacity or a name that is not a name, which then reads no key.
+fn session_key_name(user: &Name, capacity: &str) -> Option<Name> {
+    Capacity::parse(capacity).and_then(|c| key_name(user, c.suffix()).ok())
+}
+
+/// Whether `key` is the session key `name` of `session`'s user: the row
+/// holding the name, a session key serving that user, not revoked
+/// (ADR-0045 d6).
+fn serves_session(key: &KeyRecord, session: &WebSessionRecord, name: &Name) -> bool {
+    key.name.as_ref() == Some(name)
+        && key.credential == Credential::Session
+        && key.session_user.as_ref() == Some(&session.user)
+        && key.revoked_at.is_none()
+}
 
 /// What a provider callback carries for the application to judge
 /// (ADR-0045 d3): the provider in the path, the query's `code` and
@@ -240,27 +258,6 @@ where
             .collect())
     }
 
-    /// The live session and the capacity a capacity credential names
-    /// (ADR-0070 d2): `None` for a credential no live session holds, and
-    /// for one whose session is past its expiry, which is ended here, as
-    /// [`Self::web_session`] ends it.
-    pub async fn web_session_of_credential(
-        &self,
-        credential: &str,
-    ) -> Result<Option<(WebSessionRecord, String)>, AppError> {
-        let digest = Sha256Hash::digest(credential.as_bytes());
-        let Some((session, capacity)) = self.journal.web_session_credential(&digest).await? else {
-            return Ok(None);
-        };
-        if session.expires_at.unix_micros() <= self.clock.now().unix_micros() {
-            self.journal
-                .web_session_end(session.tenant_id, &session.token_hash)
-                .await?;
-            return Ok(None);
-        }
-        Ok(Some((session, capacity)))
-    }
-
     /// The live session a cookie's token names: `None` for no row, and for
     /// a row past its expiry, which is ended here (ADR-0045 d5). A row ends
     /// with its entry, so a live row's entry stands as the row says.
@@ -378,12 +375,64 @@ where
     /// (ADR-0045 d6): the key serving the session's user, live, and for
     /// the admin capacity only while the entry is an admin's. The web key's
     /// own set is every key naming its user (d16). The request line names
-    /// the key.
+    /// the key. The rows are read one after another, and checked as the
+    /// session gate checks them.
     pub async fn web_caller(
         &self,
         session: &WebSessionRecord,
         capacity: Capacity,
     ) -> Result<Caller, AppError> {
+        if capacity == Capacity::Admin && !session.admin {
+            return Err(AppError::NotFound);
+        }
+        let tenant_id = session.tenant_id;
+        let name = key_name(&session.user, capacity.suffix())?;
+        let key = match self
+            .journal
+            .resolve_name(tenant_id, NamedKind::Key, &name)
+            .await?
+        {
+            Some(id) => self.journal.key(tenant_id, id).await?,
+            None => None,
+        };
+        let rows = match key.filter(|k| serves_session(k, session, &name)) {
+            Some(key) => {
+                let access = self.journal.key_access(tenant_id, key.key_id).await?;
+                let (user_root, own_keys) = match key.user {
+                    Some(root) => (
+                        self.journal.workarea(tenant_id, root).await?,
+                        self.journal.web_user_keys(tenant_id, root).await?,
+                    ),
+                    None => (None, Vec::new()),
+                };
+                Some(WebCredentialKey {
+                    key,
+                    access,
+                    user_root,
+                    own_keys,
+                })
+            }
+            None => None,
+        };
+        self.session_key_caller(session, capacity, rows)
+            .map(|(caller, _)| caller)
+    }
+
+    /// The caller `rows` make for `capacity` of `session`, with the access
+    /// it was built from: every check a session key's caller passes
+    /// (ADR-0045 d6; ADR-0070 d2), made on rows already read. The admin
+    /// capacity only for an admin's entry; the key the one holding the
+    /// capacity's name, a session key serving the session's user, not
+    /// revoked; its access held by its tenant; a user key's root a user
+    /// root (ADR-0044 d14); and the web key's own set every key naming its
+    /// user (ADR-0045 d16). The request line names the key once it is
+    /// found.
+    fn session_key_caller(
+        &self,
+        session: &WebSessionRecord,
+        capacity: Capacity,
+        rows: Option<WebCredentialKey>,
+    ) -> Result<(Caller, Option<KeyAccess>), AppError> {
         let missing = AppError::WebKeyMissing {
             capacity: capacity.suffix(),
         };
@@ -391,37 +440,35 @@ where
             return Err(AppError::NotFound);
         }
         let name = key_name(&session.user, capacity.suffix())?;
-        let key = match self
-            .journal
-            .resolve_name(session.tenant_id, NamedKind::Key, &name)
-            .await?
-        {
-            Some(id) => self.journal.key(session.tenant_id, id).await?,
-            None => None,
-        }
-        .filter(|k| {
-            k.credential == Credential::Session
-                && k.session_user.as_ref() == Some(&session.user)
-                && k.revoked_at.is_none()
-        })
-        .ok_or(missing)?;
-        self.observer.credential(Some(&key), None);
-        let mut caller = self.caller_of(key).await?;
-        if capacity == Capacity::Web
-            && let Some(root) = caller.key.user
-        {
-            caller.own_keys = self
-                .journal
-                .web_user_keys(session.tenant_id, root)
-                .await?
-                .into_iter()
-                .map(|k| k.key_id)
-                .collect();
+        let rows = rows
+            .filter(|r| serves_session(&r.key, session, &name))
+            .ok_or(missing)?;
+        self.observer.credential(Some(&rows.key), None);
+        // As `access_of` reads it: nothing for a provider-level key, and a
+        // key its own tenant does not hold fails closed.
+        let access = if rows.key.tenant_id == PROVIDER_TENANT {
+            None
+        } else {
+            let access = rows.access.ok_or(AppError::Unauthorized)?;
+            if let Some(root) = rows.key.user {
+                let is_root = rows
+                    .user_root
+                    .as_ref()
+                    .is_some_and(|w| w.workarea_id == root && w.user_root);
+                if !is_root {
+                    return Err(AppError::UserRootInvalid);
+                }
+            }
+            Some(access)
+        };
+        let mut caller = Caller::of(rows.key, access.clone());
+        if capacity == Capacity::Web && caller.key.user.is_some() {
+            caller.own_keys = rows.own_keys.iter().map(|k| k.key_id).collect();
             if !caller.own_keys.contains(&caller.key.key_id) {
                 caller.own_keys.push(caller.key.key_id);
             }
         }
-        Ok(caller)
+        Ok((caller, access))
     }
 
     /// The caller a capacity credential acts as (ADR-0070 d2): the live
@@ -430,21 +477,52 @@ where
     /// no live session holds, or whose capacity the session no longer
     /// reaches, is [`AppError::Unauthorized`]; the API answers it
     /// `auth.invalid`, as it answers an unknown key.
+    ///
+    /// The session, the key and its access are read in one store call
+    /// (#297), and every check is made on those rows as it was made on
+    /// each read. With `first_resolution`, which the gate passes for a
+    /// request that carries no body, the request's first resolution of
+    /// the caller decides on the access read here in place of reading the
+    /// same rows again; every later one, and every resolution of a request
+    /// with a body, reads them when it runs, as before.
     pub async fn web_credential_caller(
         &self,
         credential: &str,
+        first_resolution: bool,
     ) -> Result<(Caller, WebSessionRecord), AppError> {
-        let Some((session, capacity)) = self.web_session_of_credential(credential).await? else {
+        let digest = Sha256Hash::digest(credential.as_bytes());
+        let Some(rows) = self
+            .journal
+            .web_credential_rows(&digest, session_key_name)
+            .await?
+        else {
             self.observer.credential(None, None);
             return Err(AppError::Unauthorized);
         };
+        let WebCredentialRows {
+            session,
+            capacity,
+            key,
+        } = rows;
+        // A row past its expiry is ended here and names no session
+        // (ADR-0045 d5), whatever else was read beside it.
+        if session.expires_at.unix_micros() <= self.clock.now().unix_micros() {
+            self.journal
+                .web_session_end(session.tenant_id, &session.token_hash)
+                .await?;
+            self.observer.credential(None, None);
+            return Err(AppError::Unauthorized);
+        }
         let capacity = Capacity::parse(&capacity).ok_or(AppError::Unauthorized)?;
-        match self.web_caller(&session, capacity).await {
+        match self.session_key_caller(&session, capacity, key) {
             // A person of the sign-up tenant's request rate binds their
             // session keys at the API as it binds their agent keys
             // (ADR-0068 d5).
-            Ok(caller) => {
+            Ok((caller, access)) => {
                 self.admit_request(&caller.key).await?;
+                if first_resolution {
+                    *caller.gate_read.lock().expect("unpoisoned") = access;
+                }
                 Ok((caller, session))
             }
             Err(AppError::Store(e)) => Err(AppError::Store(e)),

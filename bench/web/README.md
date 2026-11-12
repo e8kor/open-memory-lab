@@ -62,9 +62,9 @@ instead.
 `person=false` and resolves its credential once, the text search reads the person's keys beside
 the recall, and the admin Atlas reads the scope's offers in its counted tree. Same seed, same
 host. `oml-web-6` ran at `b3c7a757`, its one-minute load 1.92 to 2.35; `oml-web-48` at `cdf88fe0`
-(the same code but the admin Atlas's fallback for an API one release behind), 1.31 to 2.44. The
-results files hold these runs; the runs of 2026-11-11 are in git history and in ADR-0070's table of
-that date.
+(the same code but the admin Atlas's fallback for an API one release behind), 1.31 to 2.44. These
+runs and the runs of 2026-11-11 are in git history and in ADR-0070's tables of those dates; the
+results files hold the runs of #297, below.
 
 1. **The budget is missed on 7 of the 21 pages at 6 workareas**, by +9.1 to +35.7 ms p95, where 16
    missed: the admin Workareas view (+35.7), the admin Atlas (+9.1), the memory page (+9.5), Keys
@@ -89,6 +89,64 @@ that date.
 6. **What still misses at both sizes.** The admin Atlas, the memory page, Keys, Start, People and
    Users: the session check's round, and for the five pages of three calls in two rounds the session
    gate's reads paid twice. The hop outside the lead stays at most 3.7 ms p95 at both sizes.
+
+## Findings of 2026-11-12 (#297)
+
+`oml-web-6` and `oml-web-48` again after
+[#297](https://github.com/e8kor/open-memory-lab/issues/297): the session gate reads a capacity
+credential's session, key and access in one store call, and a request without a body decides on
+that read. No page's calls or rounds changed. Same seed, harness and host, and the in-process side
+is the run of 2026-11-11. Each size ran twice: with the change at `9a2f4bd2`, the branch with main
+at `47ef9ffa` merged in, and without it, main at `47ef9ffa`. The results files hold the two runs
+with the change. The side without it ran the lead built at `e80efde6`, since no source the lead
+links changed from there to `47ef9ffa`, beside the `oml-web` of `9a2f4bd2`, which the change does
+not touch.
+
+Other jobs shared the host that day. A run started only below a one-minute load of 2.0, and the
+load was sampled every 5 seconds through it:
+
+| run | time | load at start | load at end | mean | highest | samples over 3 |
+|---|---|---|---|---|---|---|
+| with the change, 6 | 11:15 to 11:28 | 1.88 | 1.70 | 2.42 | 3.64 | 23 of 151 |
+| without it, 6 | 13:01 to 13:16 | 1.78 | 1.58 | 2.21 | 3.23 | 5 of 170 |
+| with the change, 48 | 13:16 to 13:23 | 1.77 | 1.56 | 2.22 | 2.85 | 0 of 89 |
+| without it, 48 | 13:23 to 13:32 | 1.59 | 2.21 | 2.24 | 2.73 | 0 of 102 |
+
+The 48-workarea runs stayed under 3 throughout. The 6-workarea runs passed it for part of the run,
+so they are the quietest pair of the day, not runs on an idle host. Four more 6-workarea runs with
+the change, three at loads that reached 5.7 to 9.8 and one, before main was merged in, at 2.35
+falling to 1.73, each put the admin Workareas view over the budget, by +7.1 to +18.9 ms; the run
+at 9.8 also put the admin Memories list over it, and no run put any other page over.
+
+1. **At 6 workareas the budget is missed on 1 of the 21 pages, where main misses 8.** The admin
+   Workareas view adds +6.2 ms p95 (96.3 against 90.0 in process), where it added +27.9. Main's
+   other seven are within it: the admin Atlas (+0.6, was +9.0), the memory page (-0.9, was +9.2),
+   Curate (-0.4, was +5.2), Keys (+1.2, was +11.0), Start (+3.5, was +13.2), People (+2.3, was
+   +10.9) and Users (+3.8, was +12.4).
+2. **At 48 workareas it is missed on 1 of 21, where main misses 10.** The admin Memories list adds
+   +5.8 ms p95 (151.7 against 145.9), 0.8 ms over the line, where it added +10.5; at 6 workareas
+   it is within it (-3.9). Its one search takes 119 ms p50 at the lead in 156 store calls, and the
+   gate's change took 3 of them. Main's other nine are within it: the guardrails (-5.8, was
+   +5.4), the admin Atlas (+1.5, was +10.0), the memory page (-0.2, was +10.6), the admin memory
+   page (-0.6, was +11.4), Curate (+0.2, was +5.7), Keys (+1.9, was +13.0), Start (+3.9, was
+   +14.4), People (+2.7, was +11.7) and Users (+4.8, was +13.1).
+3. **Three pages are within the budget by less than 3 ms.** Users (+3.8 and +4.8), Start (+3.5 and
+   +3.9) and People (+2.3 and +2.7): each makes three calls in two rounds where the in-process
+   page read its session once. Users at 48 workareas is 0.2 ms inside the line, which one more
+   run could move to either side.
+4. **The session check costs under half what it did.** Its `whoami` takes 1.5 to 3.3 ms p50 at
+   the lead in 2 store calls, where it took 3.3 to 7.0 in 9 for the web key and 6 for the admin
+   key; every other call runs 3 to 7 store calls fewer. Review and Setup, which call nothing
+   else, take 4.2 to 4.8 ms p50 against 5.6 to 6.0 in process: -0.8 to -1.8 ms p95.
+5. **The Workareas views make the calls they made, each lighter.** One offers call runs 17 store
+   calls where it ran 21, one workarea read 5 where 9. The admin view takes 71.1 ms p50 at 6
+   workareas where it took 88.6, and 288.7 at 48 where 356.2, in the same 24 and 150 calls and 6
+   and 22 rounds. It misses at 6 workareas and not at 48 (-226.6), as in #286: its in-process
+   counterpart grows with the workareas faster than its bounded fan-out.
+6. **The hop outside the lead is unchanged**: at most 3.7 ms p95 at both sizes.
+
+What these runs do not show: the commits main gained after `47ef9ffa` are in neither side; no LAN
+was measured; and one client on a shared host makes every figure an upper bound.
 
 ## Files
 

@@ -587,7 +587,16 @@ where
             Bearer::Connection(caller) => (caller.key.clone(), true),
             Bearer::Session(caller) => (caller.key.clone(), false),
         };
-        let access = self.access_of(&key).await?;
+        // A session key's access is the one the gate read for this request,
+        // where this is its first resolution (#297); else read now.
+        let gate_read = match bearer {
+            Bearer::Session(caller) => caller.take_gate_read(),
+            Bearer::Key(_) | Bearer::Connection(_) => None,
+        };
+        let access = match gate_read {
+            Some(access) => Some(access),
+            None => self.access_of(&key).await?,
+        };
         if admit {
             // A person of the sign-up tenant's key under its request rate
             // (ADR-0068 d5), after the access read, as `authenticate` does.

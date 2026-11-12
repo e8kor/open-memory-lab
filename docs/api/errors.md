@@ -97,7 +97,7 @@ See [idempotency](http-api.md). A successful replay is not an error. It answers 
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `idempotency.in_progress` | 409 | A replay arrived while the first attempt is still running. Retryable, with `Retry-After`. A key of a person of the sign-up tenant past its requests per minute is `limit.rate` with `details.quota: requests_per_minute`; sign-ups from one client address past the hour's limit are `limit.rate` too ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d5, d9). |
+| `idempotency.in_progress` | 409 | A replay arrived while the first attempt is still running. Retryable, with `Retry-After`. |
 | `idempotency.digest_mismatch` | 409 | The same `Idempotency-Key` was sent with a different request. |
 
 ## `submission` — admission refusals
@@ -188,7 +188,7 @@ Reserved. This build serves no attachment uploads.
 
 | Code | HTTP | Fires when |
 |---|---|---|
-| `limit.rate` | 429 | Unused OAuth client registrations passed 10,000, or a read's `feedback` would pass 1,000 labels in a UTC day. Retryable, with `Retry-After`. |
+| `limit.rate` | 429 | Unused OAuth client registrations passed 10,000, or a read's `feedback` would pass 1,000 labels in a UTC day. A key of a person of the sign-up tenant past its requests per minute is `limit.rate` with `details.quota: requests_per_minute`; sign-ups from one client address past the hour's limit are `limit.rate` too ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d5, d9). Retryable, with `Retry-After`. |
 | `limit.quota` | 429 | A person of the sign-up tenant is past a quota of memories, keys or connections, with `details: {quota, limit, used}`. Nothing is journaled, and an admin raises the limit on `/web/admin/users` ([ADR-0068](../adr/ADR-0068-anyone-signs-in-and-gets-a-private-root-under-quotas-when-the-operator-opens-sign-up.md) d5). Any account on a quota profile past `memories`, `text_bytes`, `writes_per_month`, `keys` or `connections` is refused by the write's own commit, so two writers at the limit never both pass ([ADR-0071](../adr/ADR-0071-every-account-is-metered-by-counters-the-write-updates-in-its-own-transaction-and-named-quota-profiles-set-its-limits.md) d3, d5). |
 
 ## `export` and `settings`

@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Request, State};
-use axum::http::{HeaderMap, header};
+use axum::http::{HeaderMap, Method, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
@@ -263,7 +263,11 @@ where
             answer.extensions_mut().insert(crate::traffic::Unrecorded);
             return answer;
         }
-        match st.app.web_credential_caller(&credential).await {
+        // A request without a body runs its verb straight after this gate,
+        // so its first resolution of the caller decides on the access read
+        // here; one with a body reads it again when its verb runs (#297).
+        let bodiless = matches!(*req.method(), Method::GET | Method::HEAD);
+        match st.app.web_credential_caller(&credential, bodiless).await {
             Ok((caller, session)) => {
                 let resolved = Resolved {
                     caller: Arc::new(caller),
